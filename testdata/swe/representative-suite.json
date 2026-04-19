@@ -5,6 +5,7 @@
     "min_tasks": 28,
     "required_families": [
       "direct_question",
+      "debug_logs",
       "verification_only",
       "locate",
       "locate_then_implement",
@@ -26,6 +27,7 @@
     ],
     "required_tags": [
       "read-only",
+      "logs",
       "verification",
       "locate",
       "explore",
@@ -132,9 +134,11 @@
       "budget_ledger",
       "evidence_delta",
       "claim_confidence",
+      "context_compaction",
       "route_ambiguity",
       "verification_feedback",
       "tool_failure_confidence",
+      "control_rails",
       "changed_files",
       "evidence_paths",
       "language_capabilities",
@@ -222,6 +226,18 @@
         },
         "final_assistant_contains": ["redacted"],
         "forbid_final_assistant_contains": ["raw secret"],
+        "require_control_rails": {
+          "lane": "main",
+          "contract": "direct_answer",
+          "task_family": "direct_answer",
+          "permission_profile": "conversation_only",
+          "require_evidence": ["answer_addresses_prompt"],
+          "require_forbidden_tools": ["shell"],
+          "verification_contract": "not_required_for_read_only_lane",
+          "require_stop_conditions": ["required_evidence_satisfied"],
+          "require_final_critic": ["answers_actual_user_request"],
+          "failure_to_eval": false
+        },
         "require_verification": "none",
         "require_approval": false
       },
@@ -231,6 +247,44 @@
         "require_no_summary_rejections": true,
         "max_tool_requests": 2,
         "max_duration_millis": 60000
+      }
+    },
+    {
+      "id": "debug-logs-latest-failure",
+      "family": "debug_logs",
+      "prompt": "Check the most recent logs and tell me why this failed.",
+      "tags": ["read-only", "logs", "failure-report"],
+      "scenario": {
+        "name": "debug-logs-latest-failure",
+        "prompt_contains": ["most recent logs"],
+        "require_route_plan": {
+          "initial_lane": "explore",
+          "reason": "explore_request",
+          "contract": "grounded_explanation",
+          "thoroughness": "medium"
+        },
+        "require_control_rails": {
+          "lane": "explore",
+          "contract": "grounded_explanation",
+          "task_family": "debug_logs",
+          "permission_profile": "read_only_workspace",
+          "require_evidence": ["log_record", "failure_output", "timestamp_or_latest_selection"],
+          "require_tools": ["log_inspection"],
+          "require_forbidden_tools": ["edit_file", "write_file", "append_file", "mkdir", "mutating_shell"],
+          "require_readiness_gate": ["latest_log_selected", "failure_cause_supported_by_log", "low_confidence_triggers_deepening"],
+          "require_search_policy": ["start_with_most_recent_log", "extract_failure_window"],
+          "verification_contract": "not_required_for_read_only_lane",
+          "require_stop_conditions": ["log_cause_identified_or_log_gap_declared"],
+          "require_final_critic": ["answers_actual_user_request", "required_evidence_cited"],
+          "failure_to_eval": true
+        },
+        "forbid_tools": ["edit_file", "write_file", "append_file", "mkdir"],
+        "require_verification": "none"
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "max_tool_requests": 8
       }
     },
     {
@@ -245,6 +299,21 @@
           "initial_lane": "main",
           "reason": "direct_conversation",
           "contract": "direct_answer"
+        },
+        "require_control_rails": {
+          "lane": "main",
+          "contract": "direct_answer",
+          "task_family": "verification_only",
+          "permission_profile": "read_only_verification_shell",
+          "require_evidence": ["verification_command", "pass_fail_status"],
+          "require_tools": ["shell"],
+          "require_forbidden_tools": ["edit_file", "write_file", "append_file", "mkdir", "mutating_shell"],
+          "require_readiness_gate": ["verification_status_reported"],
+          "require_search_policy": ["run_requested_check", "capture_failure_output", "do_not_edit"],
+          "verification_contract": "not_required_for_read_only_lane",
+          "require_stop_conditions": ["required_evidence_satisfied"],
+          "require_final_critic": ["answers_actual_user_request"],
+          "failure_to_eval": false
         },
         "require_tools": ["shell"],
         "require_approval": false
@@ -927,6 +996,61 @@
       "oracle": {
         "max_errors": 2,
         "max_tool_requests": 30
+      }
+    },
+    {
+      "id": "context-compaction-long-session",
+      "family": "multi_turn_state",
+      "prompt": "Carry a long debugging context forward, then summarize the latest concrete path without editing files.",
+      "turns": [
+        "Remember that the initial target path is internal/app/app.go.",
+        "Also remember that the likely eval path is internal/eval/eval.go.",
+        "Track that no edit should be made during this investigation.",
+        "Keep the current focus on context compaction behavior.",
+        "Note that task memory should pin important paths.",
+        "Note that recent turns should remain available.",
+        "Record that the route should stay read-only.",
+        "Record that verification should not run unless code changes.",
+        "Record that no approval should be requested.",
+        "Record that pinned evidence should survive history trimming.",
+        "Record that the answer should mention internal/app/app.go.",
+        "Now summarize the carried context and the latest concrete path."
+      ],
+      "tags": [
+        "multi-turn",
+        "context",
+        "read-only"
+      ],
+      "scenario": {
+        "name": "context-compaction-long-session",
+        "prompt_contains": [
+          "latest concrete path"
+        ],
+        "require_route_plan": {
+          "initial_lane": "main",
+          "reason": "direct_conversation",
+          "contract": "direct_answer"
+        },
+        "require_context_compaction": {
+          "min_dropped_messages": 1,
+          "require_pinned_paths": [
+            "internal/app/app.go"
+          ],
+          "strategy_contains": [
+            "pinned"
+          ]
+        },
+        "final_assistant_contains": [
+          "internal/app/app.go"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "min_user_turns": 12,
+        "max_tool_requests": 10
       }
     },
     {

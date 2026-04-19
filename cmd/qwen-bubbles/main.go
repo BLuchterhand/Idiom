@@ -1,0 +1,121 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"qwen-bubbles/internal/app"
+	"qwen-bubbles/internal/config"
+	"qwen-bubbles/internal/llama"
+)
+
+type promptRunner func(config.Config, string) (string, error)
+type modeRunner func(config.Config) error
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, runPromptOnce, runTUI, runServerOnly))
+}
+
+func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, tuiRun modeRunner, serverRun modeRunner) int {
+	var configPath string
+	var serverOnly bool
+	var prompt string
+
+	fs := flag.NewFlagSet("qwen-bubbles", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&configPath, "config", "config.json", "path to config file")
+	fs.BoolVar(&serverOnly, "server-only", false, "run only llama-server and block")
+	fs.StringVar(&prompt, "prompt", "", "run one prompt headlessly, print the answer, and exit")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	if serverOnly {
+		if err := serverRun(cfg); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
+
+	if prompt != "" {
+		answer, err := promptRun(cfg, prompt)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintln(stdout, answer)
+		return 0
+	}
+
+	if err := tuiRun(cfg); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func runTUI(cfg config.Config) error {
+	model := app.New(cfg)
+	defer model.Close()
+
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	if _, err := program.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runPromptOnce(cfg config.Config, prompt string) (string, error) {
+	model := app.New(cfg)
+	defer model.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Chat.RequestTimeoutSeconds+cfg.Chat.ServerStartTimeoutSecs)*time.Second)
+	defer cancel()
+	return model.RunPromptOnce(ctx, prompt)
+}
+
+func runServerOnly(cfg config.Config) error {
+	client := llama.NewClient(cfg.BaseURL(), 0)
+	controller := llama.NewServerController(cfg.LlamaServer, client)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Chat.ServerStartTimeoutSecs)*time.Second)
+	defer cancel()
+
+	if err := controller.Start(ctx); err != nil {
+		return err
+	}
+	if err := controller.WaitUntilReady(ctx); err != nil {
+		return err
+	}
+
+	fmt.Printf("llama-server ready on %s\n", cfg.BaseURL())
+	fmt.Printf("model: %s\n", cfg.LlamaServer.Model)
+	fmt.Printf("log: %s\n", controller.LogPath())
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer stopCancel()
+
+	if err := controller.Stop(stopCtx); err != nil {
+		return err
+	}
+	return nil
+}

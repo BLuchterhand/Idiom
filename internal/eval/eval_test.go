@@ -23,9 +23,11 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"review","used_model_calls":3,"used_deepening_passes":2,"max_deepening_passes":2,"used_tool_results":4,"new_evidence_paths":1,"total_evidence_paths":2,"stop_reason":"fallback_after_exhausted_readiness_attempts","budget_exhausted":true,"user_visible_uncertainty":"state that bounded readiness budget was exhausted"}`}},
 		{Type: "message", Data: map[string]any{"role": "evidence_delta", "content": `{"lane":"review","attempt":1,"new_evidence_paths":["internal/app/app.go"],"total_paths":2,"tool_results":2,"successful_tools":2,"failed_tools":0,"marginal_value":"medium"}`}},
 		{Type: "message", Data: map[string]any{"role": "claim_confidence", "content": `{"lane":"review","confidence":"high","supported_claims":1,"evidence_paths":["internal/app/app.go"],"calibration_basis":"contract acceptance plus grounded evidence path coverage"}`}},
+		{Type: "message", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":4,"retained_messages":8,"max_history":8,"pinned_paths":["internal/app/app.go"],"pinned_memory_kind":"investigation","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`}},
 		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"review","reason":"review_request","signals":["review","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected review"}`}},
 		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"confidence":"medium","commands":["go test ./internal/app"],"failed_commands":[],"learned_recommendation":"keep current verification plan"}`}},
 		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"review","tool":"read_file","confidence_impact":"degrade_until_alternate_evidence_covers_gap"}`}},
+		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","followup_lane":"implement","contract":"review_findings","task_family":"review","permission_profile":"analysis_read_only_then_guarded_writes","required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection","implementation_handoff"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","forbidden_tools_absent","target_packet_or_changed_files_present","verification_contract_resolved","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","blocked_by_missing_permission_or_information","budget_exhausted_with_uncertainty_declared","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","no_overconfident_claims","findings_first"],"failure_to_eval":false}`}},
 		{Type: "tool_request", Data: map[string]any{"tool": "edit_file", "broad": false}},
 		{Type: "tool_result", Data: map[string]any{"agent": "implement_verify", "summary": "Edited internal/app/app.go", "error": ""}},
 		{Type: "phase", Data: map[string]any{"lane": "implement", "phase": "verify", "state": "done", "detail": "Verification passed"}},
@@ -101,6 +103,9 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	if len(metrics.ClaimConfidences) != 1 || metrics.ClaimConfidences[0].Confidence != "high" {
 		t.Fatalf("expected claim confidence metric, got %#v", metrics.ClaimConfidences)
 	}
+	if len(metrics.ContextCompactions) != 1 || metrics.ContextCompactions[0].DroppedMessages != 4 || !containsStringFold(metrics.ContextCompactions[0].PinnedPaths, "internal/app/app.go") {
+		t.Fatalf("expected context compaction metric, got %#v", metrics.ContextCompactions)
+	}
 	if len(metrics.RouteAmbiguities) != 1 || !metrics.RouteAmbiguities[0].Ambiguous {
 		t.Fatalf("expected route ambiguity metric, got %#v", metrics.RouteAmbiguities)
 	}
@@ -109,6 +114,9 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 	if len(metrics.ToolFailureConfidence) != 1 || metrics.ToolFailureConfidence[0].ConfidenceImpact == "" {
 		t.Fatalf("expected tool-failure confidence metric, got %#v", metrics.ToolFailureConfidence)
+	}
+	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "review" || metrics.ControlRails[0].PermissionProfile != "analysis_read_only_then_guarded_writes" {
+		t.Fatalf("expected control rails metric, got %#v", metrics.ControlRails)
 	}
 }
 
@@ -189,6 +197,12 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 			Confidence:       "high",
 			MinEvidencePaths: intPtr(1),
 		},
+		RequireContextCompaction: &ContextCompactionExpectation{
+			MinDroppedMessages: intPtr(1),
+			RequirePinnedPaths: []string{"internal/app/app.go"},
+			PinnedMemoryKind:   "investigation",
+			StrategyContains:   []string{"pinned"},
+		},
 		RequireRouteAmbiguity: &RouteAmbiguityExpectation{
 			SelectedLane:   "review",
 			Ambiguous:      boolPtr(true),
@@ -202,6 +216,21 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 			Lane:             "review",
 			Tool:             "read_file",
 			ConfidenceImpact: "degrade_until_alternate_evidence_covers_gap",
+		},
+		RequireControlRails: &ControlRailsExpectation{
+			Lane:                  "review",
+			Contract:              "review_findings",
+			TaskFamily:            "review",
+			PermissionProfile:     "analysis_read_only_then_guarded_writes",
+			RequireEvidence:       []string{"bounded_finding_evidence"},
+			RequireTools:          []string{"workspace_inspection"},
+			RequireForbiddenTools: []string{"edit_file"},
+			RequireReadinessGate:  []string{"required_evidence_present"},
+			RequireSearchPolicy:   []string{"deepen_if_no_bounded_finding"},
+			VerificationContract:  "tests_passed_or_failed_or_skipped_with_blocker",
+			RequireStopConditions: []string{"implementation_verified_or_failure_reported"},
+			RequireFinalCritic:    []string{"findings_first"},
+			FailureToEval:         boolPtr(false),
 		},
 		RequireLanguageCapabilities: []LanguageCapabilityExpectation{{
 			Language: "go",
@@ -219,7 +248,7 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 		t.Fatalf("expected scenario to fail, got %#v", report)
 	}
 	joined := strings.Join(report.Findings, "\n")
-	for _, expected := range []string{"required tool", "route plan mismatch", "replan recommendation mismatch", "evidence paths do not include", "verification plan mismatch", "required readiness check", "required deepening attempt", "required final answer critic", "required effort policy", "required long-horizon state", "required budget ledger", "required evidence delta", "required claim confidence", "required route ambiguity", "required verification feedback", "required tool-failure confidence", "language capabilities do not include", "broad tool requests exceeded", "repeated dead-end requests exceeded", "summary rejections exceeded", "verification did not pass"} {
+	for _, expected := range []string{"required tool", "route plan mismatch", "replan recommendation mismatch", "evidence paths do not include", "verification plan mismatch", "required readiness check", "required deepening attempt", "required final answer critic", "required effort policy", "required long-horizon state", "required budget ledger", "required evidence delta", "required claim confidence", "required context compaction", "required route ambiguity", "required verification feedback", "required tool-failure confidence", "required control rails", "language capabilities do not include", "broad tool requests exceeded", "repeated dead-end requests exceeded", "summary rejections exceeded", "verification did not pass"} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("expected finding containing %q, got %q", expected, joined)
 		}
@@ -254,6 +283,88 @@ func TestEvaluateScenarioAcceptsRequiredRoutePlan(t *testing.T) {
 	}
 }
 
+func TestEvaluateScenarioAcceptsFrontierControllerTelemetry(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "review routing thoroughly"}},
+		{Type: "message", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"review","used_model_calls":3,"used_deepening_passes":2,"max_deepening_passes":2,"used_tool_results":4,"new_evidence_paths":1,"total_evidence_paths":2,"stop_reason":"fallback_after_exhausted_readiness_attempts","budget_exhausted":true,"user_visible_uncertainty":"state that bounded readiness budget was exhausted and identify unresolved gaps"}`}},
+		{Type: "message", Data: map[string]any{"role": "evidence_delta", "content": `{"lane":"review","attempt":2,"new_evidence_paths":["internal/eval/eval.go"],"total_paths":2,"tool_results":2,"successful_tools":1,"failed_tools":1,"marginal_value":"medium"}`}},
+		{Type: "message", Data: map[string]any{"role": "claim_confidence", "content": `{"lane":"review","confidence":"low","supported_claims":0,"evidence_paths":["internal/app/app.go","internal/eval/eval.go"],"unresolved_uncertainty":["summary does not satisfy lane contract"],"calibration_basis":"contract acceptance plus grounded evidence path coverage"}`}},
+		{Type: "message", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":6,"retained_messages":8,"max_history":8,"pinned_paths":["internal/app/app.go","internal/eval/eval.go"],"pinned_memory_kind":"investigation","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`}},
+		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"review","reason":"review_request","signals":["review","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected review"}`}},
+		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"risk_level":"high","coverage":"targeted package verification","confidence":"medium","commands":["go test ./internal/app"],"failed_commands":["go test ./internal/app"],"learned_recommendation":"repair failing checks before widening scope"}`}},
+		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"review","tool":"read_file","action":"alternate_evidence_required","confidence_impact":"degrade_until_alternate_evidence_covers_gap","reason":"read_file failed during deepening"}`}},
+		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","contract":"review_findings","task_family":"review","permission_profile":"read_only_workspace","required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection"],"forbidden_tools":["edit_file","write_file"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"not_required_for_read_only_lane","stop_conditions":["required_evidence_satisfied","budget_exhausted_with_uncertainty_declared"],"final_critic":["answers_actual_user_request","required_evidence_cited","findings_first"],"failure_to_eval":false}`}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "No bounded finding yet; uncertainty remains explicit."}},
+	}
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name: "frontier telemetry",
+		RequireBudgetLedger: &BudgetLedgerExpectation{
+			Lane:              "review",
+			StopReason:        "fallback",
+			MinModelCalls:     intPtr(3),
+			MinEvidencePaths:  intPtr(2),
+			BudgetExhausted:   boolPtr(true),
+			UncertaintyPolicy: "bounded readiness budget",
+		},
+		RequireEvidenceDelta: &EvidenceDeltaExpectation{
+			Lane:           "review",
+			MinNewPaths:    intPtr(1),
+			MarginalValue:  "medium",
+			MinToolResults: intPtr(2),
+			MaxFailedTools: intPtr(1),
+		},
+		RequireClaimConfidence: &ClaimConfidenceExpectation{
+			Lane:             "review",
+			Confidence:       "low",
+			MinEvidencePaths: intPtr(2),
+			MaxUnresolved:    intPtr(1),
+			CalibrationBasis: "grounded evidence",
+		},
+		RequireContextCompaction: &ContextCompactionExpectation{
+			MinDroppedMessages:  intPtr(6),
+			MinRetainedMessages: intPtr(8),
+			MaxHistory:          intPtr(8),
+			RequirePinnedPaths:  []string{"internal/app/app.go", "internal/eval/eval.go"},
+			PinnedMemoryKind:    "investigation",
+			StrategyContains:    []string{"pinned_task_memory"},
+		},
+		RequireRouteAmbiguity: &RouteAmbiguityExpectation{
+			SelectedLane:     "review",
+			Ambiguous:        boolPtr(true),
+			RequireSignals:   []string{"review", "implement"},
+			TieBreakContains: []string{"selected review"},
+		},
+		RequireVerificationFeedback: &VerificationFeedbackExpectation{
+			Confidence:             "medium",
+			RequireFailedCommands:  []string{"go test ./internal/app"},
+			RecommendationContains: []string{"repair failing checks"},
+		},
+		RequireToolFailureConfidence: &ToolFailureConfidenceExpectation{
+			Lane:             "review",
+			Tool:             "read_file",
+			ConfidenceImpact: "degrade_until_alternate_evidence_covers_gap",
+		},
+		RequireControlRails: &ControlRailsExpectation{
+			Lane:                  "review",
+			Contract:              "review_findings",
+			TaskFamily:            "review",
+			PermissionProfile:     "read_only_workspace",
+			RequireEvidence:       []string{"bounded_finding_evidence"},
+			RequireTools:          []string{"workspace_inspection"},
+			RequireForbiddenTools: []string{"edit_file"},
+			RequireReadinessGate:  []string{"low_confidence_triggers_deepening"},
+			RequireSearchPolicy:   []string{"deepen_if_no_bounded_finding"},
+			VerificationContract:  "not_required_for_read_only_lane",
+			RequireStopConditions: []string{"budget_exhausted_with_uncertainty_declared"},
+			RequireFinalCritic:    []string{"findings_first"},
+			FailureToEval:         boolPtr(false),
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected frontier telemetry scenario to pass, got %#v", report)
+	}
+}
+
 func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "remove the banner text"}},
@@ -269,9 +380,11 @@ func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"locate","used_model_calls":2,"used_deepening_passes":1,"max_deepening_passes":2,"used_tool_results":1,"new_evidence_paths":1,"total_evidence_paths":1,"stop_reason":"fallback_after_exhausted_readiness_attempts","budget_exhausted":true,"user_visible_uncertainty":"state that bounded readiness budget was exhausted"}`}},
 		{Type: "message", Data: map[string]any{"role": "evidence_delta", "content": `{"lane":"locate","attempt":1,"new_evidence_paths":["internal/app/app.go"],"total_paths":1,"tool_results":1,"successful_tools":1,"failed_tools":0,"marginal_value":"medium"}`}},
 		{Type: "message", Data: map[string]any{"role": "claim_confidence", "content": `{"lane":"locate","confidence":"low","supported_claims":0,"evidence_paths":["internal/app/app.go"],"unresolved_uncertainty":["response explicitly reports insufficient evidence"],"calibration_basis":"contract acceptance plus grounded evidence path coverage"}`}},
+		{Type: "message", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":3,"retained_messages":5,"max_history":5,"pinned_paths":["internal/app/app.go"],"pinned_memory_kind":"partial_repair","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`}},
 		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"locate","reason":"locate_request","signals":["locate","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected locate"}`}},
 		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"risk_level":"high","coverage":"full-suite escalation","confidence":"high","commands":["go test ./..."],"failed_commands":[],"learned_recommendation":"record full-suite success for similar high-risk surfaces"}`}},
 		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"locate","tool":"read_file","action":"alternate_evidence_required","confidence_impact":"degrade_until_alternate_evidence_covers_gap","reason":"read_file failed during deepening"}`}},
+		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"locate","followup_lane":"implement","contract":"locate_targets","task_family":"locate","permission_profile":"analysis_read_only_then_guarded_writes","required_evidence":["exact_workspace_path","line_or_snippet","target_match_reason"],"required_tools":["search_content","read_file","implementation_handoff"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","target_packet_or_changed_files_present","verification_contract_resolved"],"search_policy":["literal_search_first","fallback_pattern_search","read_best_candidate"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","exact_target_or_no_match"],"failure_to_eval":false}`}},
 		{Type: "message", Data: map[string]any{"role": "explore_summary", "content": "explore summary rejected: failed grounded explanation contract"}},
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "search_content", "broad": false}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "summary": "Found 1 matching line at internal/app/app.go:42", "error": ""}},
@@ -335,6 +448,9 @@ func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 	if scenario.RequireClaimConfidence == nil || scenario.RequireClaimConfidence.MaxUnresolved == nil || *scenario.RequireClaimConfidence.MaxUnresolved != 1 || scenario.RequireClaimConfidence.CalibrationBasis == "" {
 		t.Fatalf("expected suggested claim confidence, got %#v", scenario.RequireClaimConfidence)
 	}
+	if scenario.RequireContextCompaction == nil || scenario.RequireContextCompaction.MinDroppedMessages == nil || *scenario.RequireContextCompaction.MinDroppedMessages != 3 || !containsStringFold(scenario.RequireContextCompaction.RequirePinnedPaths, "internal/app/app.go") {
+		t.Fatalf("expected suggested context compaction, got %#v", scenario.RequireContextCompaction)
+	}
 	if scenario.RequireRouteAmbiguity == nil || scenario.RequireRouteAmbiguity.Ambiguous == nil || !*scenario.RequireRouteAmbiguity.Ambiguous || !containsStringFold(scenario.RequireRouteAmbiguity.RequireSignals, "implement") {
 		t.Fatalf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity)
 	}
@@ -343,6 +459,9 @@ func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 	}
 	if scenario.RequireToolFailureConfidence == nil || scenario.RequireToolFailureConfidence.Tool != "read_file" || scenario.RequireToolFailureConfidence.ConfidenceImpact == "" {
 		t.Fatalf("expected suggested tool-failure confidence, got %#v", scenario.RequireToolFailureConfidence)
+	}
+	if scenario.RequireControlRails == nil || scenario.RequireControlRails.TaskFamily != "locate" || scenario.RequireControlRails.VerificationContract != "tests_passed_or_failed_or_skipped_with_blocker" {
+		t.Fatalf("expected suggested control rails, got %#v", scenario.RequireControlRails)
 	}
 	if scenario.MaxSummaryRejections == nil || *scenario.MaxSummaryRejections != 1 {
 		t.Fatalf("expected suggested summary rejection budget, got %#v", scenario.MaxSummaryRejections)
@@ -479,6 +598,123 @@ func TestParseLongHorizonState(t *testing.T) {
 		Resumable:        boolPtr(true),
 	}) {
 		t.Fatalf("expected long-horizon matcher to accept %#v", state)
+	}
+}
+
+func TestParseContextCompaction(t *testing.T) {
+	compaction := parseContextCompaction(`{"dropped_messages":3,"retained_messages":5,"max_history":5,"pinned_paths":["internal/app/app.go"],"pinned_memory_kind":"partial_repair","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`)
+	if compaction.Raw == "" {
+		t.Fatal("expected context compaction to parse")
+	}
+	if !contextCompactionMatches(compaction, ContextCompactionExpectation{
+		MinDroppedMessages:  intPtr(3),
+		MinRetainedMessages: intPtr(5),
+		MaxHistory:          intPtr(5),
+		RequirePinnedPaths:  []string{"internal/app/app.go"},
+		PinnedMemoryKind:    "partial_repair",
+		StrategyContains:    []string{"pinned_task_memory"},
+	}) {
+		t.Fatalf("expected context compaction matcher to accept %#v", compaction)
+	}
+}
+
+func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
+	if budgetLedgerMatches(BudgetLedgerSnapshot{
+		Lane:               "review",
+		UsedModelCalls:     1,
+		TotalEvidencePaths: 0,
+		StopReason:         "ready_initial_answer",
+		BudgetExhausted:    false,
+	}, BudgetLedgerExpectation{
+		Lane:             "review",
+		StopReason:       "fallback",
+		MinModelCalls:    intPtr(2),
+		MinEvidencePaths: intPtr(1),
+		BudgetExhausted:  boolPtr(true),
+	}) {
+		t.Fatal("expected budget ledger mismatch to be rejected")
+	}
+	if evidenceDeltaMatches(EvidenceDeltaSnapshot{
+		Lane:             "review",
+		NewEvidencePaths: nil,
+		ToolResults:      1,
+		FailedTools:      1,
+		MarginalValue:    "blocked_by_tool_failures",
+	}, EvidenceDeltaExpectation{
+		Lane:           "review",
+		MinNewPaths:    intPtr(1),
+		MarginalValue:  "medium",
+		MinToolResults: intPtr(2),
+		MaxFailedTools: intPtr(0),
+	}) {
+		t.Fatal("expected evidence delta mismatch to be rejected")
+	}
+	if claimConfidenceMatches(ClaimConfidenceSnapshot{
+		Lane:                  "review",
+		Confidence:            "low",
+		EvidencePaths:         nil,
+		UnresolvedUncertainty: []string{"not enough evidence"},
+		CalibrationBasis:      "contract acceptance without explicit evidence paths",
+	}, ClaimConfidenceExpectation{
+		Lane:             "review",
+		Confidence:       "high",
+		MinEvidencePaths: intPtr(1),
+		MaxUnresolved:    intPtr(0),
+		CalibrationBasis: "grounded",
+	}) {
+		t.Fatal("expected claim confidence mismatch to be rejected")
+	}
+	if contextCompactionMatches(ContextCompactionSnapshot{
+		DroppedMessages:  1,
+		RetainedMessages: 2,
+		MaxHistory:       2,
+		PinnedPaths:      []string{"internal/app/app.go"},
+		PinnedMemoryKind: "investigation",
+		Strategy:         "retain_recent_history",
+	}, ContextCompactionExpectation{
+		MinDroppedMessages:  intPtr(3),
+		MinRetainedMessages: intPtr(5),
+		MaxHistory:          intPtr(5),
+		RequirePinnedPaths:  []string{"internal/eval/eval.go"},
+		PinnedMemoryKind:    "partial_repair",
+		StrategyContains:    []string{"pinned_task_memory"},
+	}) {
+		t.Fatal("expected context compaction mismatch to be rejected")
+	}
+	if routeAmbiguityMatches(RouteAmbiguitySnapshot{
+		SelectedLane: "architecture",
+		Signals:      []string{"architecture"},
+		Ambiguous:    false,
+		TieBreak:     "",
+	}, RouteAmbiguityExpectation{
+		SelectedLane:     "review",
+		Ambiguous:        boolPtr(true),
+		RequireSignals:   []string{"implement"},
+		TieBreakContains: []string{"selected review"},
+	}) {
+		t.Fatal("expected route ambiguity mismatch to be rejected")
+	}
+	if verificationFeedbackMatches(VerificationFeedbackSnapshot{
+		Confidence:            "low",
+		FailedCommands:        []string{"go test ./internal/app"},
+		LearnedRecommendation: "repair failing checks before widening scope",
+	}, VerificationFeedbackExpectation{
+		Confidence:             "high",
+		RequireFailedCommands:  []string{"go test ./..."},
+		RecommendationContains: []string{"full-suite success"},
+	}) {
+		t.Fatal("expected verification feedback mismatch to be rejected")
+	}
+	if toolFailureConfidenceMatches(ToolFailureConfidenceSnapshot{
+		Lane:             "review",
+		Tool:             "read_file",
+		ConfidenceImpact: "degrade_until_alternate_evidence_covers_gap",
+	}, ToolFailureConfidenceExpectation{
+		Lane:             "explore",
+		Tool:             "search_content",
+		ConfidenceImpact: "ignore_failure",
+	}) {
+		t.Fatal("expected tool-failure confidence mismatch to be rejected")
 	}
 }
 

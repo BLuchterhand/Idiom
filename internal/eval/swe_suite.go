@@ -1061,6 +1061,9 @@ func taskScenarioAssertions(task SWETask) []string {
 	if scenario.RequireClaimConfidence != nil {
 		assertions = append(assertions, "claim_confidence")
 	}
+	if scenario.RequireContextCompaction != nil {
+		assertions = append(assertions, "context_compaction")
+	}
 	if scenario.RequireRouteAmbiguity != nil {
 		assertions = append(assertions, "route_ambiguity")
 	}
@@ -1069,6 +1072,9 @@ func taskScenarioAssertions(task SWETask) []string {
 	}
 	if scenario.RequireToolFailureConfidence != nil {
 		assertions = append(assertions, "tool_failure_confidence")
+	}
+	if scenario.RequireControlRails != nil {
+		assertions = append(assertions, "control_rails")
 	}
 	if len(scenario.RequireChangedFiles) > 0 {
 		assertions = append(assertions, "changed_files")

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"qwen-bubbles/internal/workspace"
@@ -64,6 +65,14 @@ func representativeSWEPromptSuite() []representativeSWEPromptCase {
 			reason:       promptRouteReasonExploreRequest,
 			contract:     answerContractGroundedExplanation,
 			thoroughness: workspace.ThoroughnessThorough,
+		},
+		{
+			name:         "latest logs failure inspection",
+			prompt:       "Check the most recent logs and tell me why this failed.",
+			lane:         analysisLaneExplore,
+			reason:       promptRouteReasonExploreRequest,
+			contract:     answerContractGroundedExplanation,
+			thoroughness: workspace.ThoroughnessMedium,
 		},
 		{
 			name:         "longer search when confidence is low",
@@ -140,6 +149,31 @@ func representativeSWEPromptSuite() []representativeSWEPromptCase {
 			thoroughness: workspace.ThoroughnessMedium,
 		},
 		{
+			name:         "review then implement",
+			prompt:       "Review this codebase for regressions and apply the fix if you find a bounded issue.",
+			lane:         analysisLaneReview,
+			followupLane: analysisLaneImplement,
+			reason:       promptRouteReasonReviewRequest,
+			contract:     answerContractReviewFindings,
+			thoroughness: workspace.ThoroughnessMedium,
+		},
+		{
+			name:         "explore then docs update",
+			prompt:       "Explore the routing flow first, then update docs/frontier-routing-implementation-plan.md with what you find.",
+			lane:         analysisLaneExplore,
+			followupLane: analysisLaneImplement,
+			reason:       promptRouteReasonExploreRequest,
+			contract:     answerContractGroundedExplanation,
+			thoroughness: workspace.ThoroughnessMedium,
+		},
+		{
+			name:     "concrete architecture refactor",
+			prompt:   "Using the prior architecture recommendation, refactor internal/app/app.go in one shot and split existing code into cohesive new files.",
+			lane:     analysisLaneImplement,
+			reason:   promptRouteReasonDirectImplementation,
+			contract: answerContractImplementation,
+		},
+		{
 			name:     "targeted code edit",
 			prompt:   "Update the code in internal/app/app.go to improve the execution panel label.",
 			lane:     analysisLaneImplement,
@@ -188,6 +222,111 @@ func representativeSWEPromptSuite() []representativeSWEPromptCase {
 			reason:   promptRouteReasonDirectImplementation,
 			contract: answerContractImplementation,
 		},
+	}
+}
+
+func TestDeterministicControlRailsForDebugLogs(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	plan := classifyPromptExecutionPlan("Check the latest logs and explain why this failed.", mgr)
+	rails := buildDeterministicControlRails("Check the latest logs and explain why this failed.", plan)
+	if rails.TaskFamily != "debug_logs" {
+		t.Fatalf("expected debug_logs family, got %#v", rails)
+	}
+	if rails.Lane != "explore" || rails.Contract != string(answerContractGroundedExplanation) {
+		t.Fatalf("expected explore grounded contract, got %#v", rails)
+	}
+	if rails.PermissionProfile != "read_only_workspace" {
+		t.Fatalf("expected read-only permission profile, got %#v", rails)
+	}
+	for _, want := range []string{"log_record", "failure_output", "timestamp_or_latest_selection"} {
+		if !testContainsFold(rails.RequiredEvidence, want) {
+			t.Fatalf("expected required evidence %q, got %#v", want, rails.RequiredEvidence)
+		}
+	}
+	if !testContainsFold(rails.RequiredTools, "log_inspection") {
+		t.Fatalf("expected log inspection precondition, got %#v", rails.RequiredTools)
+	}
+	if !testContainsFold(rails.SearchPolicy, "start_with_most_recent_log") {
+		t.Fatalf("expected latest-log search policy, got %#v", rails.SearchPolicy)
+	}
+	if !rails.FailureToEval {
+		t.Fatalf("expected failure-to-eval capture for failure prompt, got %#v", rails)
+	}
+}
+
+func TestDeterministicControlRailsForImplementation(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	plan := classifyPromptExecutionPlan("Update internal/app/app.go to improve route plan rendering.", mgr)
+	rails := buildDeterministicControlRails("Update internal/app/app.go to improve route plan rendering.", plan)
+	if rails.TaskFamily != "implementation" || rails.PermissionProfile != "guarded_workspace_writes" {
+		t.Fatalf("unexpected implementation rails: %#v", rails)
+	}
+	for _, want := range []string{"changed_files_or_noop_reason", "verification_result", "risk_contract"} {
+		if !testContainsFold(rails.RequiredEvidence, want) {
+			t.Fatalf("expected implementation evidence %q, got %#v", want, rails.RequiredEvidence)
+		}
+	}
+	if rails.VerificationContract != "tests_passed_or_failed_or_skipped_with_blocker" {
+		t.Fatalf("expected verification contract, got %#v", rails)
+	}
+	if !testContainsFold(rails.FinalCritic, "changed_files_section") || !testContainsFold(rails.FinalCritic, "verification_section") {
+		t.Fatalf("expected implementation final critic checks, got %#v", rails.FinalCritic)
+	}
+}
+
+func TestDeterministicControlRailsForVerificationOnlyAllowsShellChecks(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	prompt := "Run the Go test suite and report any failures."
+	plan := classifyPromptExecutionPlan(prompt, mgr)
+	rails := buildDeterministicControlRails(prompt, plan)
+	if rails.TaskFamily != "verification_only" {
+		t.Fatalf("expected verification_only family, got %#v", rails)
+	}
+	if rails.PermissionProfile != "read_only_verification_shell" {
+		t.Fatalf("expected verification shell permission profile, got %#v", rails)
+	}
+	if !testContainsFold(rails.RequiredTools, "shell") {
+		t.Fatalf("expected shell as required verification tool, got %#v", rails.RequiredTools)
+	}
+	if testContainsFold(rails.ForbiddenTools, "shell") {
+		t.Fatalf("verification-only rails must not forbid shell checks, got %#v", rails.ForbiddenTools)
+	}
+	if controlRailPreExecute(rails, workspace.ToolRequest{Tool: "shell", Command: "go test ./..."}) != nil {
+		t.Fatalf("expected verification shell command to pass rails")
+	}
+	if blocked := controlRailPreExecute(rails, workspace.ToolRequest{Tool: "shell", Command: "rm -rf /tmp/example"}); blocked == nil {
+		t.Fatalf("expected mutating shell command to be blocked")
+	}
+}
+
+func TestDeterministicControlRailsPreferImplementationFamilyForFailureFix(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	prompt := "Fix internal/app/app.go because it failed."
+	plan := classifyPromptExecutionPlan(prompt, mgr)
+	rails := buildDeterministicControlRails(prompt, plan)
+	if plan.lane != analysisLaneImplement {
+		t.Fatalf("expected implementation lane, got %q", plan.lane)
+	}
+	if rails.TaskFamily != "implementation" {
+		t.Fatalf("expected implementation rails despite failure wording, got %#v", rails)
+	}
+}
+
+func TestControlRailsFinalAnswerRepairsMissingVerificationContract(t *testing.T) {
+	rails := buildDeterministicControlRails("Fix internal/app/app.go", promptExecutionPlan{
+		lane:     analysisLaneImplement,
+		contract: answerContractForLane(analysisLaneImplement),
+	})
+	enforcement := controlRailsEnforcementForAnswer(rails, "Changed files:\n- internal/app/app.go", nil, []string{"internal/app/app.go"}, false)
+	if enforcement.Passed {
+		t.Fatalf("expected missing verification contract to fail rails")
+	}
+	if !testContainsFold(enforcement.Violations, "verification_contract_unresolved") {
+		t.Fatalf("expected verification violation, got %#v", enforcement.Violations)
+	}
+	repaired := repairControlRailsAnswer("Changed files:\n- internal/app/app.go", enforcement)
+	if !strings.Contains(repaired, "Control-rail gaps:") || !strings.Contains(repaired, "verification_contract_unresolved") {
+		t.Fatalf("expected repaired control-rail answer, got %q", repaired)
 	}
 }
 

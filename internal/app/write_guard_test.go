@@ -10,9 +10,11 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 
+	"qwen-bubbles/internal/agent"
 	"qwen-bubbles/internal/config"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/semantic"
+	"qwen-bubbles/internal/transcript"
 	"qwen-bubbles/internal/workspace"
 )
 
@@ -166,6 +168,40 @@ func TestClassifyPromptExecutionPlanRoutesArchitectureThenImplementPrompt(t *tes
 	}
 	if plan.reason != promptRouteReasonArchitectureRequest {
 		t.Fatalf("expected architecture route reason, got %q", plan.reason)
+	}
+}
+
+func TestClassifyPromptExecutionPlanRoutesConcreteRefactorToImplement(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+
+	plan := classifyPromptExecutionPlan(
+		"Using the prior architecture recommendation, refactor internal/app/app.go in one shot and split existing code into cohesive new files.",
+		mgr,
+	)
+	if plan.lane != analysisLaneImplement {
+		t.Fatalf("expected implement lane, got %q", plan.lane)
+	}
+	if plan.followupLane != "" {
+		t.Fatalf("expected no follow-up lane, got %q", plan.followupLane)
+	}
+	if plan.reason != promptRouteReasonDirectImplementation {
+		t.Fatalf("expected direct implementation route reason, got %q", plan.reason)
+	}
+	if plan.contract != answerContractImplementation {
+		t.Fatalf("expected implementation answer contract, got %q", plan.contract)
+	}
+}
+
+func TestWriteToolResultChangedRejectsNoOpEdits(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "edit_file", Path: "internal/app/app.go"}
+	if writeToolResultChanged(req, workspace.ToolResult{Tool: "edit_file", Summary: "No-op edit for internal/app/app.go"}) {
+		t.Fatal("expected no-op edit to not count as a changed path")
+	}
+	if !writeToolResultChanged(req, workspace.ToolResult{Tool: "edit_file", Summary: "Edited internal/app/app.go"}) {
+		t.Fatal("expected successful edit to count as a changed path")
+	}
+	if writeToolResultChanged(workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go"}, workspace.ToolResult{Tool: "read_file", Summary: "Read file"}) {
+		t.Fatal("expected read-only tool to not count as a changed path")
 	}
 }
 
@@ -368,6 +404,97 @@ func TestFrontierControllerSnapshots(t *testing.T) {
 	}
 }
 
+func TestRequestMessagesLogsContextCompaction(t *testing.T) {
+	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
+		Dir:  t.TempDir(),
+		Mode: transcript.DebugLogModeFull,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	m := &Model{
+		cfg: config.Config{Chat: config.Chat{MaxHistory: 2}},
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "first"},
+			{Role: "assistant", Content: "second"},
+			{Role: "user", Content: "third"},
+			{Role: "assistant", Content: "fourth"},
+		},
+		executionPanel: executionPanelState{Summary: "Focused evidence: internal/app/app.go"},
+		taskMemory: &longHorizonTaskMemory{
+			Kind:          "partial_repair",
+			ChosenTargets: []string{"internal/eval/eval.go"},
+		},
+		debugLogger: logger,
+	}
+	messages := m.requestMessages()
+	if len(messages) != 2 || messages[0].Content != "third" || messages[1].Content != "fourth" {
+		t.Fatalf("expected max-history retained messages, got %#v", messages)
+	}
+	data, err := os.ReadFile(logger.Path())
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	log := string(data)
+	for _, want := range []string{
+		`"role":"context_compaction"`,
+		`\"dropped_messages\":2`,
+		`\"retained_messages\":2`,
+		`\"pinned_memory_kind\":\"partial_repair\"`,
+		`internal/app/app.go`,
+		`internal/eval/eval.go`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected context compaction log to contain %q, got %s", want, log)
+		}
+	}
+}
+
+func TestRequestMessagesDropsTrailingAssistantDraftBeforeCompaction(t *testing.T) {
+	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
+		Dir:  t.TempDir(),
+		Mode: transcript.DebugLogModeFull,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	m := &Model{
+		cfg: config.Config{Chat: config.Chat{MaxHistory: 2}},
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "first"},
+			{Role: "assistant", Content: "second"},
+			{Role: "user", Content: "third"},
+			{Role: "assistant", Content: ""},
+		},
+		debugLogger: logger,
+	}
+	messages := m.requestMessages()
+	if len(messages) != 2 || messages[0].Content != "second" || messages[1].Content != "third" {
+		t.Fatalf("expected trailing assistant draft to be removed before history compaction, got %#v", messages)
+	}
+	data, err := os.ReadFile(logger.Path())
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	log := string(data)
+	for _, want := range []string{
+		`"role":"context_compaction"`,
+		`\"dropped_messages\":1`,
+		`\"retained_messages\":2`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected context compaction log to contain %q, got %s", want, log)
+		}
+	}
+	if strings.Contains(log, "partial_repair") {
+		t.Fatalf("unexpected task-memory pin in draft-only compaction log: %s", log)
+	}
+}
+
 func TestAnalysisFinalAnswerCriticCoversNonImplementationContracts(t *testing.T) {
 	locate := critiqueAnalysisFinalAnswer("I found it.", analysisLaneLocate, nil)
 	if locate.Passed {
@@ -376,6 +503,73 @@ func TestAnalysisFinalAnswerCriticCoversNonImplementationContracts(t *testing.T)
 	architecture := critiqueAnalysisFinalAnswer("Architecture: internal/app/app.go is the hotspot for package boundary work.", analysisLaneArchitecture, []string{"internal/app/app.go"})
 	if !architecture.Passed {
 		t.Fatalf("expected grounded architecture answer to pass, got %#v", architecture)
+	}
+}
+
+func TestAnalysisFinalAnswerCriticRejectsWeakLaneAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		answer   string
+		lane     analysisLane
+		evidence []string
+		finding  string
+	}{
+		{
+			name:     "empty",
+			answer:   "",
+			lane:     analysisLaneExplore,
+			evidence: []string{"internal/app/app.go"},
+			finding:  "empty",
+		},
+		{
+			name:     "review without finding framing",
+			answer:   "internal/app/app.go has some interesting structure.",
+			lane:     analysisLaneReview,
+			evidence: []string{"internal/app/app.go"},
+			finding:  "finding",
+		},
+		{
+			name:     "architecture without structure framing",
+			answer:   "internal/app/app.go may need work.",
+			lane:     analysisLaneArchitecture,
+			evidence: []string{"internal/app/app.go"},
+			finding:  "structural",
+		},
+		{
+			name:     "low confidence without uncertainty framing",
+			answer:   "Finding: internal/app/app.go is relevant, but I am not confident.",
+			lane:     analysisLaneReview,
+			evidence: []string{"internal/app/app.go"},
+			finding:  "uncertainty",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			critic := critiqueAnalysisFinalAnswer(tc.answer, tc.lane, tc.evidence)
+			if critic.Passed {
+				t.Fatalf("expected critic rejection, got %#v", critic)
+			}
+			if !strings.Contains(strings.ToLower(strings.Join(critic.Findings, "\n")), tc.finding) {
+				t.Fatalf("expected finding containing %q, got %#v", tc.finding, critic.Findings)
+			}
+		})
+	}
+}
+
+func TestRouteAmbiguitySnapshotCoversAmbiguousAndUnambiguousPrompts(t *testing.T) {
+	ambiguous := buildRouteAmbiguitySnapshot("Find where the banner is rendered and remove it.", promptExecutionPlan{
+		lane:   analysisLaneLocate,
+		reason: promptRouteReasonLocateRequest,
+	})
+	if !ambiguous.Ambiguous || !testContainsFold(ambiguous.Signals, "locate") || !testContainsFold(ambiguous.Signals, "implement") || !strings.Contains(ambiguous.TieBreak, "locate") {
+		t.Fatalf("expected locate/implement ambiguity, got %#v", ambiguous)
+	}
+
+	direct := buildRouteAmbiguitySnapshot("Update README.md with a troubleshooting note.", promptExecutionPlan{
+		lane:   analysisLaneImplement,
+		reason: promptRouteReasonDirectImplementation,
+	})
+	if direct.Ambiguous || !testContainsFold(direct.Signals, "implement") || direct.TieBreak != "" {
+		t.Fatalf("expected unambiguous implement route, got %#v", direct)
 	}
 }
 
@@ -855,6 +1049,32 @@ func TestBuildAnalysisDeepeningResultCarriesRetryEvidence(t *testing.T) {
 	}
 }
 
+func TestBuildAnalysisDeepeningResultCountsFailedTools(t *testing.T) {
+	result := buildAnalysisDeepeningResult(
+		"review routing",
+		analysisLaneReview,
+		2,
+		[]workspace.ToolResult{{
+			Tool:  "read_file",
+			Error: "path has not been discovered yet",
+		}},
+		[]string{"internal/app/app.go"},
+		"readiness gate failed; alternate evidence required",
+	)
+	if !result.Attempted || !result.Exhausted {
+		t.Fatalf("expected failed-only deepening to be attempted and exhausted, got %#v", result)
+	}
+	if result.ToolResults != 1 || result.FailedTools != 1 {
+		t.Fatalf("expected failed tool accounting, got %#v", result)
+	}
+	if evidenceMarginalValue(result.NewPaths, result.FailedTools, result.ToolResults) != "blocked_by_tool_failures" {
+		t.Fatalf("expected blocked marginal value for failed-only deepening, got %#v", result)
+	}
+	if len(result.NewPaths) != 0 {
+		t.Fatalf("expected no new paths from failed tool, got %#v", result.NewPaths)
+	}
+}
+
 func TestBuildEffortPolicySnapshotReflectsLaneAndThoroughness(t *testing.T) {
 	policy := buildEffortPolicySnapshot(promptExecutionPlan{
 		lane:         analysisLaneReview,
@@ -872,6 +1092,134 @@ func TestBuildEffortPolicySnapshotReflectsLaneAndThoroughness(t *testing.T) {
 	}
 	if policy.MaxOutputTokens != 2048 || policy.ReasoningBudget != -1 {
 		t.Fatalf("unexpected token budget policy: %#v", policy)
+	}
+}
+
+func TestFrontierPolicyBranching(t *testing.T) {
+	if shouldDeepenAfterReadiness(analysisReadinessAssessment{Ready: true, Action: "retry"}) {
+		t.Fatal("ready answers must not trigger deepening")
+	}
+	if !shouldDeepenAfterReadiness(analysisReadinessAssessment{Ready: false, Action: ""}) {
+		t.Fatal("not-ready empty action should allow deepening")
+	}
+	if !shouldDeepenAfterReadiness(analysisReadinessAssessment{Ready: false, Action: "retry"}) {
+		t.Fatal("not-ready retry action should allow deepening")
+	}
+	if shouldDeepenAfterReadiness(analysisReadinessAssessment{Ready: false, Action: "fallback"}) {
+		t.Fatal("fallback action should not trigger another deepening pass")
+	}
+
+	readyActions := analysisBudgetNextActions("ready_after_retry")
+	if len(readyActions) != 1 || readyActions[0] != "answer" {
+		t.Fatalf("unexpected ready budget actions: %#v", readyActions)
+	}
+	fallbackActions := analysisBudgetNextActions("fallback_after_exhausted_readiness_attempts")
+	if !testContainsFold(fallbackActions, "answer_with_explicit_uncertainty") || !strings.Contains(uncertaintyForStopReason("fallback_after_exhausted_readiness_attempts"), "bounded readiness budget") {
+		t.Fatalf("expected fallback uncertainty policy, actions=%#v uncertainty=%q", fallbackActions, uncertaintyForStopReason("fallback_after_exhausted_readiness_attempts"))
+	}
+	if !strings.Contains(uncertaintyForStopReason("no_usable_summary"), "no usable lane-conformant") {
+		t.Fatalf("expected no-usable uncertainty policy, got %q", uncertaintyForStopReason("no_usable_summary"))
+	}
+}
+
+func TestEffortPolicyCoversQuickBoundedAndLocateFollowup(t *testing.T) {
+	quick := buildEffortPolicySnapshot(promptExecutionPlan{
+		lane:         analysisLaneExplore,
+		thoroughness: workspace.ThoroughnessQuick,
+	}, 4, 30, 512, 0)
+	if quick.Level != "quick" || quick.AnalysisToolBudget != 4 || quick.DeepeningPasses != 2 || quick.ConfidenceFloor != "low_with_explicit_uncertainty" {
+		t.Fatalf("unexpected quick effort policy: %#v", quick)
+	}
+
+	implement := buildEffortPolicySnapshot(promptExecutionPlan{
+		lane: analysisLaneImplement,
+	}, 20, 120, 4096, 1024)
+	if implement.Level != "bounded" || implement.ImplementToolBudget != 14 || implement.AnalysisToolBudget != 0 || implement.ConfidenceFloor != "verified_or_failed" {
+		t.Fatalf("unexpected bounded implementation policy: %#v", implement)
+	}
+
+	locateThenImplement := buildEffortPolicySnapshot(promptExecutionPlan{
+		lane:         analysisLaneLocate,
+		followupLane: analysisLaneImplement,
+	}, 8, 60, 1024, 0)
+	if locateThenImplement.AnalysisToolBudget != 8 || locateThenImplement.ImplementToolBudget != 8 {
+		t.Fatalf("expected locate follow-up to reserve both analysis and implementation budgets, got %#v", locateThenImplement)
+	}
+}
+
+func TestImplementToolBudgetForRequestExpandsStructuralRefactors(t *testing.T) {
+	normal := implementToolBudgetForRequest(20, "Change the label in internal/app/rendering.go.", implementationTargetPacket{})
+	if normal != implementToolBudget(20) {
+		t.Fatalf("expected normal requests to keep bounded budget, got %d", normal)
+	}
+
+	packet := implementationTargetPacket{
+		PrimaryPaths:  []string{"internal/app/app.go"},
+		StrategyHints: []string{"split package responsibilities"},
+	}
+	prompt := "Refactor internal/app/app.go in one shot as an explicit multi-file refactor across multiple files. Split the monolithic file into cohesive package-level Go files."
+	if got := implementToolBudgetForRequest(8, prompt, packet); got < 32 {
+		t.Fatalf("expected large structural refactor budget to expand, got %d", got)
+	}
+	if got := implementToolBudgetForRequest(80, prompt, packet); got != 48 {
+		t.Fatalf("expected expanded structural refactor budget to remain capped, got %d", got)
+	}
+
+	tagPrompt := `Use go_file_outline once, then one batch go_move_declarations call with pattern:"tag:model_state", pattern:"tag:lifecycle", pattern:"tag:prompt_routing", pattern:"tag:rendering", pattern:"tag:task_memory", pattern:"tag:implementation", pattern:"tag:write_guard", pattern:"tag:analysis_agents".`
+	if got := implementToolBudgetForRequest(12, tagPrompt, implementationTargetPacket{}); got < 32 {
+		t.Fatalf("expected explicit batch tag prompt to expand budget, got %d", got)
+	}
+}
+
+func TestImplementRunPolicyForRequestUsesModelDecidedCompletionForStructuralRefactors(t *testing.T) {
+	normal := implementRunPolicyForRequest(20, "Change the label in internal/app/rendering.go.", implementationTargetPacket{})
+	if normal.MaxToolSteps != implementToolBudget(20) || normal.MaxNoProgressTurns <= 0 {
+		t.Fatalf("expected normal implementation policy to keep bounded steps, got %#v", normal)
+	}
+
+	structural := implementRunPolicyForRequest(16, "Refactor internal/app/app.go in one shot as an explicit multi-file refactor across multiple files.", implementationTargetPacket{
+		PrimaryPaths: []string{"internal/app/app.go"},
+	})
+	if structural.MaxToolSteps != 0 {
+		t.Fatalf("expected structural implementation policy to use no fixed step cap, got %#v", structural)
+	}
+	if structural.MaxNoProgressTurns < 8 {
+		t.Fatalf("expected structural implementation policy to use a larger no-progress fuse, got %#v", structural)
+	}
+}
+
+func TestImplementationCompletionGateRejectsPrematureImplementationFinal(t *testing.T) {
+	requests := map[int]agent.ToolRequestEvent{}
+	results := map[int]agent.ToolResultEvent{}
+	gate := implementationCompletionGate(
+		"Refactor internal/app/app.go in one shot by splitting the monolithic file into cohesive files.",
+		nil,
+		requests,
+		results,
+	)
+	rejected := gate(agent.CompletionGateInput{
+		Reply: "Done.",
+		Results: []workspace.ToolResult{{
+			Tool:    "go_file_outline",
+			Summary: "Outlined internal/app/app.go",
+		}},
+	})
+	if rejected.Accept || !strings.Contains(rejected.Error, "go_move_declarations") {
+		t.Fatalf("expected premature whole-file refactor final to be rejected, got %#v", rejected)
+	}
+
+	requests[2] = agent.ToolRequestEvent{Request: workspace.ToolRequest{
+		Tool:        "go_move_declarations",
+		Path:        "internal/app/app.go",
+		Destination: "internal/app/rendering.go",
+	}}
+	results[2] = agent.ToolResultEvent{Result: workspace.ToolResult{
+		Tool:    "go_move_declarations",
+		Summary: "Moved declarations",
+	}}
+	accepted := gate(agent.CompletionGateInput{Reply: "Done."})
+	if !accepted.Accept {
+		t.Fatalf("expected completion gate to accept after changed path evidence, got %#v", accepted)
 	}
 }
 
@@ -1804,6 +2152,26 @@ func TestPromptMentionedWorkspacePathsSupportsAtAnchors(t *testing.T) {
 	}
 }
 
+func TestPromptMentionedWorkspacePathsIgnoresMoveDestinations(t *testing.T) {
+	paths := promptMentionedWorkspacePaths(`Use go_move_declarations with path:"internal/app/app.go" and moves: {destination:"internal/app/model_state.go", pattern:"tag:model_state"}.`)
+	if !containsString(paths, "internal/app/app.go") {
+		t.Fatalf("expected path field to be extracted, got %#v", paths)
+	}
+	if containsString(paths, "internal/app/model_state.go") {
+		t.Fatalf("destination files should not be treated as existing primary targets, got %#v", paths)
+	}
+}
+
+func TestPromptShouldSkipDirectQuotedEditForStructuralToolPrompts(t *testing.T) {
+	prompt := `Use go_file_outline once, then go_move_declarations with pattern:"tag:model_state" into "internal/app/model_state.go".`
+	if !promptShouldSkipDirectQuotedEdit(prompt) {
+		t.Fatal("expected structural tool prompt to skip direct quoted edit shortcut")
+	}
+	if promptShouldSkipDirectQuotedEdit(`Replace "old" with "new" in internal/app/app.go.`) {
+		t.Fatal("simple quoted replacement should remain eligible for direct edit shortcut")
+	}
+}
+
 func TestBuildImplementationTargetPacketCapturesAnalogyPaths(t *testing.T) {
 	packet := buildImplementationTargetPacket("Update @internal/app/app.go so its status rendering works like @internal/llama/client.go.", nil)
 	if !containsString(packet.PrimaryPaths, "internal/app/app.go") {
@@ -1815,7 +2183,7 @@ func TestBuildImplementationTargetPacketCapturesAnalogyPaths(t *testing.T) {
 }
 
 func TestBuildImplementationTargetPacketCapturesSymbolHints(t *testing.T) {
-	packet := buildImplementationTargetPacket("Update Model.bootstrapImplementationEvidence in @internal/app/app.go to match runImplementAgentWithGrant.", nil)
+	packet := buildImplementationTargetPacket("Update Model.bootstrapImplementationEvidence in @internal/app/implementation.go to match runImplementAgentWithGrant.", nil)
 	if !containsString(packet.SymbolHints, "Model.bootstrapImplementationEvidence") {
 		t.Fatalf("expected method symbol hint, got %#v", packet.SymbolHints)
 	}
@@ -1826,10 +2194,10 @@ func TestBuildImplementationTargetPacketCapturesSymbolHints(t *testing.T) {
 
 func TestEnrichImplementationTargetPacketResolvesSymbolAnchors(t *testing.T) {
 	mgr := workspace.NewManager(testWorkspaceConfig())
-	packet := enrichImplementationTargetPacket(mgr, buildImplementationTargetPacket("Update Model.bootstrapImplementationEvidence in @internal/app/app.go.", nil))
+	packet := enrichImplementationTargetPacket(mgr, buildImplementationTargetPacket("Update Model.bootstrapImplementationEvidence in @internal/app/implementation.go.", nil))
 	found := false
 	for _, symbol := range packet.Symbols {
-		if symbol.Path == "internal/app/app.go" && implementationQualifiedSymbol(symbol) == "Model.bootstrapImplementationEvidence" {
+		if symbol.Path == "internal/app/implementation.go" && implementationQualifiedSymbol(symbol) == "Model.bootstrapImplementationEvidence" {
 			found = true
 			break
 		}
@@ -2039,16 +2407,16 @@ func TestBootstrapImplementationEvidenceReadsSymbolAnchorFirst(t *testing.T) {
 	bootstrap := m.bootstrapImplementationEvidence(
 		context.Background(),
 		mgr,
-		"Update Model.bootstrapImplementationEvidence in @internal/app/app.go.",
+		"Update Model.bootstrapImplementationEvidence in @internal/app/implementation.go.",
 		implementationTargetPacket{
-			PrimaryPaths: []string{"internal/app/app.go"},
+			PrimaryPaths: []string{"internal/app/implementation.go"},
 			Symbols: []semantic.SymbolMatch{{
-				Path:      "internal/app/app.go",
+				Path:      "internal/app/implementation.go",
 				Name:      "bootstrapImplementationEvidence",
 				Receiver:  "Model",
-				Line:      1614,
-				StartLine: 1614,
-				EndLine:   1710,
+				Line:      1202,
+				StartLine: 1202,
+				EndLine:   1377,
 			}},
 		},
 		nil,
@@ -2058,7 +2426,7 @@ func TestBootstrapImplementationEvidenceReadsSymbolAnchorFirst(t *testing.T) {
 	}
 	foundRead := false
 	for _, result := range bootstrap.results {
-		if result.Tool == "read_file" && strings.Contains(result.Summary, "internal/app/app.go") {
+		if result.Tool == "read_file" && strings.Contains(result.Summary, "internal/app/implementation.go") {
 			foundRead = true
 			break
 		}
@@ -2155,11 +2523,27 @@ func TestImplementTargetGuardBlocksRedundantFullFileReadAfterBootstrap(t *testin
 	}
 }
 
+func TestImplementTargetGuardAllowsFullFileReadForWholeFileRefactor(t *testing.T) {
+	guard := newImplementTargetGuard(
+		nil,
+		implementationTargetPacket{PrimaryPaths: []string{"internal/app/app.go"}},
+		[]workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/app.go lines 469-478",
+		}},
+	)
+	guard.allowFullTargetRead = promptRequestsWholeFileRefactor("Refactor internal/app/app.go in one shot by splitting existing code into cohesive new files.")
+	result := guard.PreExecute(workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go"})
+	if result != nil {
+		t.Fatalf("expected whole-file refactor read to be allowed, got %#v", result)
+	}
+}
+
 func TestImplementTargetGuardRedirectsBroadDiscoveryToTargetRead(t *testing.T) {
 	mgr := workspace.NewManager(testWorkspaceConfig())
 	guard := newImplementTargetGuard(mgr, implementationTargetPacket{
 		PrimaryPaths: []string{"internal/app/app.go"},
-		Anchors:      []implementationTarget{{Path: "internal/app/app.go", Line: 2112}},
+		Anchors:      []implementationTarget{{Path: "internal/app/app.go", Line: 700}},
 	}, nil)
 
 	result := guard.PreExecute(workspace.ToolRequest{Tool: "list_files", Path: "."})
@@ -2183,13 +2567,13 @@ func TestImplementTargetGuardRedirectsBroadDiscoveryToTargetRead(t *testing.T) {
 func TestImplementTargetGuardRedirectsBroadSearchToScopedSearchContent(t *testing.T) {
 	mgr := workspace.NewManager(testWorkspaceConfig())
 	guard := newImplementTargetGuard(mgr, implementationTargetPacket{
-		PrimaryPaths: []string{"internal/app/app.go"},
+		PrimaryPaths: []string{"internal/app/implementation.go"},
 	}, nil)
 
 	result := guard.PreExecute(workspace.ToolRequest{
 		Tool:    "search_files",
 		Path:    ".",
-		Pattern: "runImplementAgent",
+		Pattern: "bootstrapImplementationEvidence",
 	})
 	if result == nil {
 		t.Fatal("expected redirected scoped search result")
@@ -2203,8 +2587,8 @@ func TestImplementTargetGuardRedirectsBroadSearchToScopedSearchContent(t *testin
 	if !strings.Contains(result.Summary, "redirected search_files to search_content") {
 		t.Fatalf("unexpected redirected search summary: %q", result.Summary)
 	}
-	if !strings.Contains(result.Output, "runImplementAgent") {
-		t.Fatalf("expected redirected search output to mention runImplementAgent, got %q", result.Output)
+	if !strings.Contains(result.Output, "bootstrapImplementationEvidence") {
+		t.Fatalf("expected redirected search output to mention bootstrapImplementationEvidence, got %q", result.Output)
 	}
 }
 
@@ -2469,6 +2853,30 @@ func TestFinalAnswerCriticRepairsUnsafeImplementationSummary(t *testing.T) {
 	}
 	if !critiqueImplementationFinalAnswer(repaired, []string{"internal/app/app.go"}, verify).Passed {
 		t.Fatalf("expected repaired summary to pass critic, got:\n%s", repaired)
+	}
+}
+
+func TestFinalAnswerCriticRepairsStaleBlockerAfterVerifiedChanges(t *testing.T) {
+	verify := implementationVerification{
+		commands:   []string{"go test ./internal/app"},
+		results:    []workspace.ToolResult{{Tool: "shell"}},
+		riskLevel:  "high",
+		confidence: "high",
+	}
+	model := &Model{}
+	repaired := model.applyFinalAnswerCritic(
+		"Implementation agent did not complete the requested edit.\n\nFinal blocker:\n- repeated tool\n\nChanged files:\n- internal/app/app.go\n\nVerification:\n- `go test ./internal/app`: passed\n- risk: high",
+		[]string{"internal/app/app.go"},
+		verify,
+		nil,
+	)
+	if strings.Contains(strings.ToLower(repaired), "did not complete") || strings.Contains(strings.ToLower(repaired), "blocker:") {
+		t.Fatalf("expected stale blocker language to be removed, got:\n%s", repaired)
+	}
+	for _, want := range []string{"Changed files:", "internal/app/app.go", "Verification:", "`go test ./internal/app`: passed"} {
+		if !strings.Contains(repaired, want) {
+			t.Fatalf("expected repaired summary to include %q, got:\n%s", want, repaired)
+		}
 	}
 }
 

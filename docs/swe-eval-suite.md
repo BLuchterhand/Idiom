@@ -70,7 +70,7 @@ The suite can also define a `coverage` contract:
 - `required_thoroughness`: explicit thoroughness levels that must be represented.
 - `required_verification`: verification outcomes such as `none`, `passed`, and `failed`.
 - `required_scenario_assertions`: built-in scenario assertion types that must be exercised.
-- New frontier-control scenario assertions include `budget_ledger`, `evidence_delta`, `claim_confidence`, `route_ambiguity`, `verification_feedback`, and `tool_failure_confidence`.
+- New frontier-control scenario assertions include `budget_ledger`, `evidence_delta`, `claim_confidence`, `context_compaction`, `route_ambiguity`, `verification_feedback`, `tool_failure_confidence`, and `control_rails`.
 - `required_oracle_assertions`: oracle assertion capabilities that must be exercised.
 - `required_readiness_actions`: readiness outcomes that must be represented, such as `answer`, `retry`, and `fallback`.
 - `required_deepening_actions`: deterministic deepening outcomes that must be represented, such as `retry_with_evidence`.

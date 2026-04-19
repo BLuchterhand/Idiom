@@ -3,5 +3,4 @@ bin/
 logs/
 models/
 transcripts/
-qwen-bubbles
-
+/qwen-bubbles

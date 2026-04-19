@@ -76,6 +76,176 @@ func TestExecuteReadWriteAndExploreWriteRejection(t *testing.T) {
 	}
 }
 
+func TestGoFileOutlineReportsDeclarations(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "widget.go"), `package sample
+
+import "fmt"
+
+type Model struct{}
+
+func (m *Model) View() string {
+	return fmt.Sprint("ok")
+}
+
+func helper() {}
+`)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_file_outline", Path: "widget.go"})
+	if result.Error != "" {
+		t.Fatalf("go_file_outline failed: %#v", result)
+	}
+	for _, want := range []string{"Model.View", "helper", "imports:", "tags: rendering"} {
+		if !strings.Contains(result.Output, want) {
+			t.Fatalf("expected outline to contain %q, got:\n%s", want, result.Output)
+		}
+	}
+}
+
+func TestGoMoveDeclarationsMovesSelectedBlocksAndRepairsImports(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "source.go"), `package sample
+
+import (
+	"fmt"
+	"strings"
+)
+
+type Model struct{}
+
+func (m *Model) View() string {
+	return fmt.Sprint("ok")
+}
+
+func normalize(value string) string {
+	return strings.TrimSpace(value)
+}
+`)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:         "go_move_declarations",
+		Path:         "source.go",
+		Destination:  "rendering.go",
+		Declarations: []string{"Model.View"},
+	})
+	if result.Error != "" {
+		t.Fatalf("go_move_declarations failed: %#v", result)
+	}
+
+	source := readTestFile(t, filepath.Join(dir, "source.go"))
+	dest := readTestFile(t, filepath.Join(dir, "rendering.go"))
+	if strings.Contains(source, "func (m *Model) View") {
+		t.Fatalf("source still contains moved method:\n%s", source)
+	}
+	if !strings.Contains(source, `"strings"`) || strings.Contains(source, `"fmt"`) {
+		t.Fatalf("source imports were not repaired:\n%s", source)
+	}
+	if !strings.Contains(dest, "func (m *Model) View") || !strings.Contains(dest, `"fmt"`) {
+		t.Fatalf("destination missing moved method or import:\n%s", dest)
+	}
+	if strings.Contains(dest, `"strings"`) {
+		t.Fatalf("destination retained unused import:\n%s", dest)
+	}
+}
+
+func TestGoMoveDeclarationsAcceptsResponsibilityTagPattern(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "source.go"), `package sample
+
+import "fmt"
+
+func renderView() string {
+	return fmt.Sprint("ok")
+}
+
+func coreValue() int {
+	return 1
+}
+`)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:        "go_move_declarations",
+		Path:        "source.go",
+		Destination: "rendering.go",
+		Pattern:     "tag:rendering",
+	})
+	if result.Error != "" {
+		t.Fatalf("go_move_declarations tag pattern failed: %#v", result)
+	}
+	source := readTestFile(t, filepath.Join(dir, "source.go"))
+	dest := readTestFile(t, filepath.Join(dir, "rendering.go"))
+	if strings.Contains(source, "renderView") || !strings.Contains(dest, "renderView") {
+		t.Fatalf("tag move did not move rendering declaration\nsource:\n%s\ndest:\n%s", source, dest)
+	}
+	if !strings.Contains(source, "coreValue") {
+		t.Fatalf("tag move should leave core declaration in source:\n%s", source)
+	}
+}
+
+func TestGoMoveDeclarationsAcceptsBatchMoves(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "source.go"), `package sample
+
+import (
+	"fmt"
+	"strings"
+)
+
+func renderView() string {
+	return fmt.Sprint("ok")
+}
+
+func normalize(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func coreValue() int {
+	return 1
+}
+`)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "go_move_declarations",
+		Path: "source.go",
+		Moves: []GoDeclarationMove{
+			{Destination: "rendering.go", Pattern: "tag:rendering"},
+			{Destination: "task_memory.go", Declarations: []string{"normalize"}},
+		},
+	})
+	if result.Error != "" {
+		t.Fatalf("go_move_declarations batch failed: %#v", result)
+	}
+	if source := readTestFile(t, filepath.Join(dir, "source.go")); strings.Contains(source, "renderView") || strings.Contains(source, "normalize") || !strings.Contains(source, "coreValue") {
+		t.Fatalf("batch move left unexpected source content:\n%s", source)
+	}
+	if dest := readTestFile(t, filepath.Join(dir, "rendering.go")); !strings.Contains(dest, "renderView") {
+		t.Fatalf("rendering destination missing moved declaration:\n%s", dest)
+	}
+	if dest := readTestFile(t, filepath.Join(dir, "task_memory.go")); !strings.Contains(dest, "normalize") {
+		t.Fatalf("task memory destination missing moved declaration:\n%s", dest)
+	}
+}
+
 func TestListFilesSkipsNoisyDirsFromRootListing(t *testing.T) {
 	dir := t.TempDir()
 	for _, path := range []string{
@@ -109,6 +279,25 @@ func TestListFilesSkipsNoisyDirsFromRootListing(t *testing.T) {
 	if !strings.Contains(result.Output, "internal/app/app.go") {
 		t.Fatalf("expected source path in root listing, got:\n%s", result.Output)
 	}
+}
+
+func writeTestFile(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+}
+
+func readTestFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%q): %v", path, err)
+	}
+	return string(data)
 }
 
 func TestExecuteRejectsPathTraversalAndUnsupportedTools(t *testing.T) {

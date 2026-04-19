@@ -1257,6 +1257,8 @@ Implementation status:
   - `context_compaction` debug-log records when `MaxHistory` truncates chat history
   - retained/dropped message counts, pinned paths, pinned memory kind, and compaction strategy fields
   - pinned paths sourced from execution summaries, task memory, and resumable refactor targets
+  - evaluator assertions through `require_context_compaction`
+  - representative suite coverage through `context_compaction` scenario assertions
 
 ### Phase 42: Contract Critics Beyond Implementation
 
@@ -1336,6 +1338,27 @@ Implementation status:
   - calibrated answer confidence through `claim_confidence`
   - user-visible uncertainty policy in budget-ledger stop records
 
+### Phase 48: Deterministic Control Rails
+
+The frontier behavior gap is no longer just route quality. The harness needs an explicit deterministic scaffold that makes unsupported claims, unsafe writes, weak stop conditions, and missing verification visible and testable.
+
+Implementation status:
+
+- complete
+- implemented:
+  - dedicated follow-up tracker in `docs/deterministic-control-rails-tracker.md`
+  - `control_rails` debug-log records for every prompt plan
+  - lane, follow-up lane, answer contract, task family, permission profile, required evidence, required conceptual tools, forbidden tool classes, readiness gates, search policy, verification contract, stop conditions, final-critic checks, and failure-to-eval capture policy
+  - log/failure-inspection prompts route to read-only exploration instead of direct conversation
+  - verification-only prompts receive a read-only shell-verification rail profile instead of generic main-lane shell denial
+  - forbidden tool classes are enforced through control-rail pre-execution checks
+  - final answers emit `control_rails_enforcement` records and are deterministically repaired when evidence, changed-file/no-op, or verification contracts are missing
+  - evaluator assertions through `require_control_rails`
+  - suggested scenario generation from observed control rails
+  - CLI metric display for the latest control-rails snapshot
+  - SWE suite scenario assertion coverage for `control_rails`
+  - regression tests for debug-log rails, implementation rails, eval parsing/matching, suggested scenarios, and CLI output
+
 ### Testing suite
 
 The routing/testing baseline should cover:
@@ -1361,6 +1384,7 @@ The routing/testing baseline should cover:
 - context compaction with pinned evidence
 - verification feedback records
 - tool-failure confidence degradation
+- deterministic control-rails contracts and task-family preconditions
 - long-horizon task memory and resumable investigations
 - negative-evidence tasks where the correct answer is "not found" or "not enough evidence"
 - captured-log result summaries by coverage dimension

@@ -129,6 +129,15 @@ type ClaimConfidenceExpectation struct {
 	CalibrationBasis string `json:"calibration_basis,omitempty"`
 }
 
+type ContextCompactionExpectation struct {
+	MinDroppedMessages  *int     `json:"min_dropped_messages,omitempty"`
+	MinRetainedMessages *int     `json:"min_retained_messages,omitempty"`
+	MaxHistory          *int     `json:"max_history,omitempty"`
+	RequirePinnedPaths  []string `json:"require_pinned_paths,omitempty"`
+	PinnedMemoryKind    string   `json:"pinned_memory_kind,omitempty"`
+	StrategyContains    []string `json:"strategy_contains,omitempty"`
+}
+
 type RouteAmbiguityExpectation struct {
 	SelectedLane     string   `json:"selected_lane,omitempty"`
 	Ambiguous        *bool    `json:"ambiguous,omitempty"`
@@ -146,6 +155,23 @@ type ToolFailureConfidenceExpectation struct {
 	Lane             string `json:"lane,omitempty"`
 	Tool             string `json:"tool,omitempty"`
 	ConfidenceImpact string `json:"confidence_impact,omitempty"`
+}
+
+type ControlRailsExpectation struct {
+	Lane                  string   `json:"lane,omitempty"`
+	FollowupLane          string   `json:"followup_lane,omitempty"`
+	Contract              string   `json:"contract,omitempty"`
+	TaskFamily            string   `json:"task_family,omitempty"`
+	PermissionProfile     string   `json:"permission_profile,omitempty"`
+	RequireEvidence       []string `json:"require_evidence,omitempty"`
+	RequireTools          []string `json:"require_tools,omitempty"`
+	RequireForbiddenTools []string `json:"require_forbidden_tools,omitempty"`
+	RequireReadinessGate  []string `json:"require_readiness_gate,omitempty"`
+	RequireSearchPolicy   []string `json:"require_search_policy,omitempty"`
+	VerificationContract  string   `json:"verification_contract,omitempty"`
+	RequireStopConditions []string `json:"require_stop_conditions,omitempty"`
+	RequireFinalCritic    []string `json:"require_final_critic,omitempty"`
+	FailureToEval         *bool    `json:"failure_to_eval,omitempty"`
 }
 
 type Scenario struct {
@@ -171,9 +197,11 @@ type Scenario struct {
 	RequireBudgetLedger          *BudgetLedgerExpectation          `json:"require_budget_ledger,omitempty"`
 	RequireEvidenceDelta         *EvidenceDeltaExpectation         `json:"require_evidence_delta,omitempty"`
 	RequireClaimConfidence       *ClaimConfidenceExpectation       `json:"require_claim_confidence,omitempty"`
+	RequireContextCompaction     *ContextCompactionExpectation     `json:"require_context_compaction,omitempty"`
 	RequireRouteAmbiguity        *RouteAmbiguityExpectation        `json:"require_route_ambiguity,omitempty"`
 	RequireVerificationFeedback  *VerificationFeedbackExpectation  `json:"require_verification_feedback,omitempty"`
 	RequireToolFailureConfidence *ToolFailureConfidenceExpectation `json:"require_tool_failure_confidence,omitempty"`
+	RequireControlRails          *ControlRailsExpectation          `json:"require_control_rails,omitempty"`
 	RequireChangedFiles          []string                          `json:"require_changed_files,omitempty"`
 	RequireEvidencePaths         []string                          `json:"require_evidence_paths,omitempty"`
 	RequireLanguageCapabilities  []LanguageCapabilityExpectation   `json:"require_language_capabilities,omitempty"`
@@ -326,6 +354,16 @@ type ClaimConfidenceSnapshot struct {
 	Raw                   string   `json:"raw,omitempty"`
 }
 
+type ContextCompactionSnapshot struct {
+	DroppedMessages  int      `json:"dropped_messages,omitempty"`
+	RetainedMessages int      `json:"retained_messages,omitempty"`
+	MaxHistory       int      `json:"max_history,omitempty"`
+	PinnedPaths      []string `json:"pinned_paths,omitempty"`
+	PinnedMemoryKind string   `json:"pinned_memory_kind,omitempty"`
+	Strategy         string   `json:"strategy,omitempty"`
+	Raw              string   `json:"raw,omitempty"`
+}
+
 type RouteAmbiguitySnapshot struct {
 	SelectedLane string   `json:"selected_lane,omitempty"`
 	Reason       string   `json:"reason,omitempty"`
@@ -354,6 +392,24 @@ type ToolFailureConfidenceSnapshot struct {
 	Raw              string `json:"raw,omitempty"`
 }
 
+type ControlRailsSnapshot struct {
+	Lane                 string   `json:"lane,omitempty"`
+	FollowupLane         string   `json:"followup_lane,omitempty"`
+	Contract             string   `json:"contract,omitempty"`
+	TaskFamily           string   `json:"task_family,omitempty"`
+	PermissionProfile    string   `json:"permission_profile,omitempty"`
+	RequiredEvidence     []string `json:"required_evidence,omitempty"`
+	RequiredTools        []string `json:"required_tools,omitempty"`
+	ForbiddenTools       []string `json:"forbidden_tools,omitempty"`
+	ReadinessGate        []string `json:"readiness_gate,omitempty"`
+	SearchPolicy         []string `json:"search_policy,omitempty"`
+	VerificationContract string   `json:"verification_contract,omitempty"`
+	StopConditions       []string `json:"stop_conditions,omitempty"`
+	FinalCritic          []string `json:"final_critic,omitempty"`
+	FailureToEval        bool     `json:"failure_to_eval"`
+	Raw                  string   `json:"raw,omitempty"`
+}
+
 type Metrics struct {
 	LastUser                  string                          `json:"last_user"`
 	FinalAssistant            string                          `json:"final_assistant"`
@@ -379,9 +435,11 @@ type Metrics struct {
 	BudgetLedgers             []BudgetLedgerSnapshot          `json:"budget_ledgers,omitempty"`
 	EvidenceDeltas            []EvidenceDeltaSnapshot         `json:"evidence_deltas,omitempty"`
 	ClaimConfidences          []ClaimConfidenceSnapshot       `json:"claim_confidences,omitempty"`
+	ContextCompactions        []ContextCompactionSnapshot     `json:"context_compactions,omitempty"`
 	RouteAmbiguities          []RouteAmbiguitySnapshot        `json:"route_ambiguities,omitempty"`
 	VerificationFeedback      []VerificationFeedbackSnapshot  `json:"verification_feedback,omitempty"`
 	ToolFailureConfidence     []ToolFailureConfidenceSnapshot `json:"tool_failure_confidence,omitempty"`
+	ControlRails              []ControlRailsSnapshot          `json:"control_rails,omitempty"`
 	VerificationChecks        int                             `json:"verification_checks"`
 	VerificationPassed        bool                            `json:"verification_passed"`
 	VerificationFailed        bool                            `json:"verification_failed"`
@@ -604,6 +662,20 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			CalibrationBasis: latest.CalibrationBasis,
 		}
 	}
+	if len(metrics.ContextCompactions) > 0 {
+		latest := metrics.ContextCompactions[len(metrics.ContextCompactions)-1]
+		minDropped := latest.DroppedMessages
+		minRetained := latest.RetainedMessages
+		maxHistory := latest.MaxHistory
+		scenario.RequireContextCompaction = &ContextCompactionExpectation{
+			MinDroppedMessages:  &minDropped,
+			MinRetainedMessages: &minRetained,
+			MaxHistory:          &maxHistory,
+			RequirePinnedPaths:  append([]string(nil), latest.PinnedPaths...),
+			PinnedMemoryKind:    latest.PinnedMemoryKind,
+			StrategyContains:    nonEmptySingleton(latest.Strategy),
+		}
+	}
 	if len(metrics.RouteAmbiguities) > 0 {
 		latest := metrics.RouteAmbiguities[len(metrics.RouteAmbiguities)-1]
 		ambiguous := latest.Ambiguous
@@ -628,6 +700,26 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			Lane:             latest.Lane,
 			Tool:             latest.Tool,
 			ConfidenceImpact: latest.ConfidenceImpact,
+		}
+	}
+	if len(metrics.ControlRails) > 0 {
+		latest := metrics.ControlRails[len(metrics.ControlRails)-1]
+		failureToEval := latest.FailureToEval
+		scenario.RequireControlRails = &ControlRailsExpectation{
+			Lane:                  latest.Lane,
+			FollowupLane:          latest.FollowupLane,
+			Contract:              latest.Contract,
+			TaskFamily:            latest.TaskFamily,
+			PermissionProfile:     latest.PermissionProfile,
+			RequireEvidence:       append([]string(nil), latest.RequiredEvidence...),
+			RequireTools:          append([]string(nil), latest.RequiredTools...),
+			RequireForbiddenTools: append([]string(nil), latest.ForbiddenTools...),
+			RequireReadinessGate:  append([]string(nil), latest.ReadinessGate...),
+			RequireSearchPolicy:   append([]string(nil), latest.SearchPolicy...),
+			VerificationContract:  latest.VerificationContract,
+			RequireStopConditions: append([]string(nil), latest.StopConditions...),
+			RequireFinalCritic:    append([]string(nil), latest.FinalCritic...),
+			FailureToEval:         &failureToEval,
 		}
 	}
 	if len(metrics.RoutePlans) > 0 {
@@ -805,6 +897,10 @@ func Analyze(records []Record) Metrics {
 				if confidence := parseClaimConfidence(content); confidence.Raw != "" {
 					metrics.ClaimConfidences = append(metrics.ClaimConfidences, confidence)
 				}
+			case "context_compaction":
+				if compaction := parseContextCompaction(content); compaction.Raw != "" {
+					metrics.ContextCompactions = append(metrics.ContextCompactions, compaction)
+				}
 			case "route_ambiguity":
 				if ambiguity := parseRouteAmbiguity(content); ambiguity.Raw != "" {
 					metrics.RouteAmbiguities = append(metrics.RouteAmbiguities, ambiguity)
@@ -816,6 +912,10 @@ func Analyze(records []Record) Metrics {
 			case "tool_failure_confidence":
 				if failure := parseToolFailureConfidence(content); failure.Raw != "" {
 					metrics.ToolFailureConfidence = append(metrics.ToolFailureConfidence, failure)
+				}
+			case "control_rails":
+				if rails := parseControlRails(content); rails.Raw != "" {
+					metrics.ControlRails = append(metrics.ControlRails, rails)
 				}
 			}
 			if caps := parseLanguageCapabilities(content); len(caps) > 0 {
@@ -1102,6 +1202,21 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 				latest.Lane, latest.Confidence, len(latest.EvidencePaths), len(latest.UnresolvedUncertainty), latest.CalibrationBasis)
 		}
 	}
+	if scenario.RequireContextCompaction != nil {
+		if len(metrics.ContextCompactions) == 0 {
+			addFinding("required context compaction was not observed")
+		} else if !contextCompactionMatches(metrics.ContextCompactions[len(metrics.ContextCompactions)-1], *scenario.RequireContextCompaction) {
+			latest := metrics.ContextCompactions[len(metrics.ContextCompactions)-1]
+			addFinding("context compaction mismatch: got dropped=%d retained=%d max_history=%d pinned=%v memory=%q strategy=%q",
+				latest.DroppedMessages,
+				latest.RetainedMessages,
+				latest.MaxHistory,
+				latest.PinnedPaths,
+				latest.PinnedMemoryKind,
+				latest.Strategy,
+			)
+		}
+	}
 	if scenario.RequireRouteAmbiguity != nil {
 		if len(metrics.RouteAmbiguities) == 0 {
 			addFinding("required route ambiguity was not observed")
@@ -1127,6 +1242,24 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			latest := metrics.ToolFailureConfidence[len(metrics.ToolFailureConfidence)-1]
 			addFinding("tool-failure confidence mismatch: got lane=%q tool=%q impact=%q",
 				latest.Lane, latest.Tool, latest.ConfidenceImpact)
+		}
+	}
+	if scenario.RequireControlRails != nil {
+		if len(metrics.ControlRails) == 0 {
+			addFinding("required control rails were not observed")
+		} else if !controlRailsMatches(metrics.ControlRails[len(metrics.ControlRails)-1], *scenario.RequireControlRails) {
+			latest := metrics.ControlRails[len(metrics.ControlRails)-1]
+			addFinding("control rails mismatch: got lane=%q followup=%q contract=%q family=%q permission=%q evidence=%v tools=%v verification=%q failure_to_eval=%t",
+				latest.Lane,
+				latest.FollowupLane,
+				latest.Contract,
+				latest.TaskFamily,
+				latest.PermissionProfile,
+				latest.RequiredEvidence,
+				latest.RequiredTools,
+				latest.VerificationContract,
+				latest.FailureToEval,
+			)
 		}
 	}
 	for _, required := range scenario.RequireChangedFiles {
@@ -1666,6 +1799,50 @@ func claimConfidenceMatches(actual ClaimConfidenceSnapshot, expected ClaimConfid
 	return true
 }
 
+func parseContextCompaction(content string) ContextCompactionSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ContextCompactionSnapshot{}
+	}
+	var compaction ContextCompactionSnapshot
+	if err := json.Unmarshal([]byte(content), &compaction); err != nil {
+		return ContextCompactionSnapshot{}
+	}
+	compaction.Raw = content
+	compaction.PinnedPaths = uniqueNonEmptyStrings(compaction.PinnedPaths)
+	compaction.PinnedMemoryKind = strings.TrimSpace(compaction.PinnedMemoryKind)
+	compaction.Strategy = strings.TrimSpace(compaction.Strategy)
+	return compaction
+}
+
+func contextCompactionMatches(actual ContextCompactionSnapshot, expected ContextCompactionExpectation) bool {
+	if expected.MinDroppedMessages != nil && actual.DroppedMessages < *expected.MinDroppedMessages {
+		return false
+	}
+	if expected.MinRetainedMessages != nil && actual.RetainedMessages < *expected.MinRetainedMessages {
+		return false
+	}
+	if expected.MaxHistory != nil && actual.MaxHistory != *expected.MaxHistory {
+		return false
+	}
+	for _, path := range expected.RequirePinnedPaths {
+		if !containsStringFold(actual.PinnedPaths, path) {
+			return false
+		}
+	}
+	if expected.PinnedMemoryKind != "" && !strings.EqualFold(actual.PinnedMemoryKind, expected.PinnedMemoryKind) {
+		return false
+	}
+	strategy := strings.ToLower(actual.Strategy)
+	for _, required := range expected.StrategyContains {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required != "" && !strings.Contains(strategy, required) {
+			return false
+		}
+	}
+	return true
+}
+
 func parseRouteAmbiguity(content string) RouteAmbiguitySnapshot {
 	content = strings.TrimSpace(content)
 	if content == "" {
@@ -1769,6 +1946,92 @@ func toolFailureConfidenceMatches(actual ToolFailureConfidenceSnapshot, expected
 		return false
 	}
 	if expected.ConfidenceImpact != "" && !strings.EqualFold(actual.ConfidenceImpact, expected.ConfidenceImpact) {
+		return false
+	}
+	return true
+}
+
+func parseControlRails(content string) ControlRailsSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ControlRailsSnapshot{}
+	}
+	var rails ControlRailsSnapshot
+	if err := json.Unmarshal([]byte(content), &rails); err != nil {
+		return ControlRailsSnapshot{}
+	}
+	rails.Raw = content
+	rails.Lane = strings.TrimSpace(rails.Lane)
+	rails.FollowupLane = strings.TrimSpace(rails.FollowupLane)
+	rails.Contract = strings.TrimSpace(rails.Contract)
+	rails.TaskFamily = strings.TrimSpace(rails.TaskFamily)
+	rails.PermissionProfile = strings.TrimSpace(rails.PermissionProfile)
+	rails.RequiredEvidence = uniqueNonEmptyStrings(rails.RequiredEvidence)
+	rails.RequiredTools = uniqueNonEmptyStrings(rails.RequiredTools)
+	rails.ForbiddenTools = uniqueNonEmptyStrings(rails.ForbiddenTools)
+	rails.ReadinessGate = uniqueNonEmptyStrings(rails.ReadinessGate)
+	rails.SearchPolicy = uniqueNonEmptyStrings(rails.SearchPolicy)
+	rails.VerificationContract = strings.TrimSpace(rails.VerificationContract)
+	rails.StopConditions = uniqueNonEmptyStrings(rails.StopConditions)
+	rails.FinalCritic = uniqueNonEmptyStrings(rails.FinalCritic)
+	return rails
+}
+
+func controlRailsMatches(actual ControlRailsSnapshot, expected ControlRailsExpectation) bool {
+	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
+		return false
+	}
+	if expected.FollowupLane != "" && !strings.EqualFold(actual.FollowupLane, expected.FollowupLane) {
+		return false
+	}
+	if expected.Contract != "" && !strings.EqualFold(actual.Contract, expected.Contract) {
+		return false
+	}
+	if expected.TaskFamily != "" && !strings.EqualFold(actual.TaskFamily, expected.TaskFamily) {
+		return false
+	}
+	if expected.PermissionProfile != "" && !strings.EqualFold(actual.PermissionProfile, expected.PermissionProfile) {
+		return false
+	}
+	for _, required := range expected.RequireEvidence {
+		if !containsStringFold(actual.RequiredEvidence, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireTools {
+		if !containsStringFold(actual.RequiredTools, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireForbiddenTools {
+		if !containsStringFold(actual.ForbiddenTools, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireReadinessGate {
+		if !containsStringFold(actual.ReadinessGate, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireSearchPolicy {
+		if !containsStringFold(actual.SearchPolicy, required) {
+			return false
+		}
+	}
+	if expected.VerificationContract != "" && !strings.EqualFold(actual.VerificationContract, expected.VerificationContract) {
+		return false
+	}
+	for _, required := range expected.RequireStopConditions {
+		if !containsStringFold(actual.StopConditions, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireFinalCritic {
+		if !containsStringFold(actual.FinalCritic, required) {
+			return false
+		}
+	}
+	if expected.FailureToEval != nil && actual.FailureToEval != *expected.FailureToEval {
 		return false
 	}
 	return true

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,38 +13,54 @@ import (
 	"qwen-bubbles/internal/eval"
 )
 
+var output io.Writer = os.Stdout
+
 func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	oldOutput := output
+	output = stdout
+	defer func() {
+		output = oldOutput
+	}()
+
 	var suitePath string
 	var logsDir string
 	var jsonOut bool
 	var suiteOnly bool
 
-	flag.StringVar(&suitePath, "suite", "testdata/swe/representative-suite.json", "path to a SWE task suite JSON file")
-	flag.StringVar(&logsDir, "logs", "", "directory containing one <task-id>.jsonl log per suite task")
-	flag.BoolVar(&jsonOut, "json", false, "emit JSON instead of human-readable text")
-	flag.BoolVar(&suiteOnly, "suite-only", false, "validate suite coverage and lint without loading task logs")
-	flag.Parse()
+	fs := flag.NewFlagSet("qwen-swe-eval", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&suitePath, "suite", "testdata/swe/representative-suite.json", "path to a SWE task suite JSON file")
+	fs.StringVar(&logsDir, "logs", "", "directory containing one <task-id>.jsonl log per suite task")
+	fs.BoolVar(&jsonOut, "json", false, "emit JSON instead of human-readable text")
+	fs.BoolVar(&suiteOnly, "suite-only", false, "validate suite coverage and lint without loading task logs")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	suite, err := eval.ReadSWESuite(suitePath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	if suiteOnly {
 		report := eval.EvaluateSWESuiteDefinitionWithFixtures(suite, suitePath)
-		printOrEncodeReport(report, jsonOut)
+		printOrEncodeReport(report, jsonOut, stdout)
 		if !report.Passed {
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 	if err := eval.ValidateSWESuite(suite); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	if err := eval.ValidateSWESuiteFixtures(suite, suitePath); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	recordsByTask := make(map[string][]eval.Record, len(suite.Tasks))
 	logPaths := make(map[string]string, len(suite.Tasks))
@@ -63,15 +80,16 @@ func main() {
 	}
 
 	report := eval.EvaluateSWESuiteWithLoadErrors(suite, recordsByTask, logPaths, loadErrors)
-	printOrEncodeReport(report, jsonOut)
+	printOrEncodeReport(report, jsonOut, stdout)
 	if !report.Passed {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
-func printOrEncodeReport(report eval.SWESuiteReport, jsonOut bool) {
+func printOrEncodeReport(report eval.SWESuiteReport, jsonOut bool, stdout io.Writer) {
 	if jsonOut {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(report)
 	} else {
@@ -97,7 +115,7 @@ func printSuiteReport(report eval.SWESuiteReport) {
 	if !report.Passed {
 		status = "FAIL"
 	}
-	fmt.Printf("%s %s (%d tasks)\n", status, fallback(report.Suite, "<unnamed suite>"), reportTaskCount(report))
+	fmt.Fprintf(output, "%s %s (%d tasks)\n", status, fallback(report.Suite, "<unnamed suite>"), reportTaskCount(report))
 	printCoverage(report.Coverage)
 	printLint(report.LintFindings)
 	printSummary(report.Summary)
@@ -106,23 +124,23 @@ func printSuiteReport(report eval.SWESuiteReport) {
 		if !task.Passed {
 			taskStatus = "FAIL"
 		}
-		fmt.Printf("- %s %s", taskStatus, fallback(task.TaskID, "<unnamed task>"))
+		fmt.Fprintf(output, "- %s %s", taskStatus, fallback(task.TaskID, "<unnamed task>"))
 		if strings.TrimSpace(task.Family) != "" {
-			fmt.Printf(" [%s]", task.Family)
+			fmt.Fprintf(output, " [%s]", task.Family)
 		}
-		fmt.Printf(": tools=%d broad=%d verification=%s", task.Metrics.ToolRequests, task.Metrics.BroadToolRequests, verificationStatus(task.Metrics))
+		fmt.Fprintf(output, ": tools=%d broad=%d verification=%s", task.Metrics.ToolRequests, task.Metrics.BroadToolRequests, verificationStatus(task.Metrics))
 		if task.Metrics.DurationMillis > 0 {
-			fmt.Printf(" duration=%dms", task.Metrics.DurationMillis)
+			fmt.Fprintf(output, " duration=%dms", task.Metrics.DurationMillis)
 		}
 		if len(task.Metrics.ChangedFiles) > 0 {
-			fmt.Printf(" changed=%s", strings.Join(task.Metrics.ChangedFiles, ","))
+			fmt.Fprintf(output, " changed=%s", strings.Join(task.Metrics.ChangedFiles, ","))
 		}
 		if task.Metrics.SummaryRejections > 0 {
-			fmt.Printf(" summary_rejections=%d", task.Metrics.SummaryRejections)
+			fmt.Fprintf(output, " summary_rejections=%d", task.Metrics.SummaryRejections)
 		}
-		fmt.Println()
+		fmt.Fprintln(output)
 		for _, finding := range task.Findings {
-			fmt.Printf("  - %s\n", finding)
+			fmt.Fprintf(output, "  - %s\n", finding)
 		}
 	}
 }
@@ -131,7 +149,7 @@ func printSummary(summary eval.SWEResultSummary) {
 	if summary.PassedTasks == 0 && summary.FailedTasks == 0 && summary.MissingLogs == 0 && summary.LoadErrors == 0 {
 		return
 	}
-	fmt.Printf(
+	fmt.Fprintf(output,
 		"Results: passed=%d failed=%d missing_logs=%d load_errors=%d\n",
 		summary.PassedTasks,
 		summary.FailedTasks,
@@ -170,17 +188,17 @@ func printFailedBuckets(label string, buckets map[string]eval.SWEResultBucket) {
 		bucket := buckets[key]
 		parts = append(parts, fmt.Sprintf("%s=%d/%d", key, bucket.Failed, bucket.Total))
 	}
-	fmt.Printf("%s: %s\n", label, strings.Join(parts, ", "))
+	fmt.Fprintf(output, "%s: %s\n", label, strings.Join(parts, ", "))
 }
 
 func printLint(findings []string) {
 	if len(findings) == 0 {
-		fmt.Println("Lint: PASS")
+		fmt.Fprintln(output, "Lint: PASS")
 		return
 	}
-	fmt.Printf("Lint: FAIL findings=%d\n", len(findings))
+	fmt.Fprintf(output, "Lint: FAIL findings=%d\n", len(findings))
 	for _, finding := range findings {
-		fmt.Printf("  - %s\n", finding)
+		fmt.Fprintf(output, "  - %s\n", finding)
 	}
 }
 
@@ -196,7 +214,7 @@ func printCoverage(coverage eval.SWECoverageReport) {
 	if !coverage.Passed {
 		status = "FAIL"
 	}
-	fmt.Printf(
+	fmt.Fprintf(output,
 		"Coverage: %s families=%d tags=%d fixtures=%d task_shapes=%d initial_lanes=%d followup_lanes=%d route_reasons=%d contracts=%d thoroughness=%d verification=%d scenario_assertions=%d oracle_assertions=%d readiness_actions=%d deepening_actions=%d final_critic_actions=%d effort_levels=%d long_horizon_actions=%d long_horizon_kinds=%d negative_evidence=%d tools=%d forbidden_tools=%d file_surfaces=%d evidence_surfaces=%d tasks=%d\n",
 		status,
 		len(coverage.Families),
@@ -225,7 +243,7 @@ func printCoverage(coverage eval.SWECoverageReport) {
 		coverage.TotalTasks,
 	)
 	for _, finding := range coverage.Findings {
-		fmt.Printf("  - %s\n", finding)
+		fmt.Fprintf(output, "  - %s\n", finding)
 	}
 }
 

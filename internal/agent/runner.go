@@ -14,11 +14,33 @@ type Runner struct {
 	Client                *llama.Client
 	Workspace             *workspace.Manager
 	MaxToolSteps          int
+	Policy                RunPolicy
 	AgentName             string
 	InitialNeedsNarrowing bool
 	InitialBroadInspects  int
 	SeedResults           []workspace.ToolResult
 	PreExecute            func(step int, req workspace.ToolRequest) *workspace.ToolResult
+	CompletionGate        CompletionGate
+}
+
+type RunPolicy struct {
+	MaxToolSteps       int
+	MaxNoProgressTurns int
+}
+
+type CompletionGate func(CompletionGateInput) CompletionGateResult
+
+type CompletionGateInput struct {
+	AgentName string
+	Reply     string
+	Results   []workspace.ToolResult
+	Steps     int
+}
+
+type CompletionGateResult struct {
+	Accept  bool
+	Summary string
+	Error   string
 }
 
 type ToolRequestEvent struct {
@@ -47,12 +69,15 @@ func (r *Runner) Run(
 	onToolResult func(ToolResultEvent),
 ) (string, error) {
 	turnMessages := append([]llama.ChatMessage(nil), messages...)
+	policy := r.effectivePolicy()
 	var lastToolKey string
 	needsNarrowingAfterBroad := r.InitialNeedsNarrowing
 	broadInspectionCount := r.InitialBroadInspects
 	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
 	rejectedActions := make(map[string]int)
 	consecutiveRejectedActions := 0
+	completionGateRejections := 0
+	consecutiveNoProgress := 0
 
 	rejectTool := func(stepNumber int, req workspace.ToolRequest, summary string, errorText string) (string, error, bool) {
 		result := workspace.ToolResult{
@@ -79,10 +104,31 @@ func (r *Runner) Run(
 		return "", nil, false
 	}
 
-	for step := 0; step < r.MaxToolSteps; step++ {
+	rejectCompletion := func(stepNumber int, reply string, result workspace.ToolResult) {
+		completionGateRejections++
+		consecutiveNoProgress++
+		collectedResults = append(collectedResults, result)
+		if onToolResult != nil {
+			onToolResult(ToolResultEvent{Step: stepNumber, Agent: r.agentName(), Result: result})
+		}
+		turnMessages = append(turnMessages, llama.ChatMessage{
+			Role:    "assistant",
+			Content: reply,
+		})
+		turnMessages = append(turnMessages, llama.ChatMessage{
+			Role:    "system",
+			Content: workspace.FormatToolResultForModel(result),
+		})
+	}
+
+	for step := 0; policy.unbounded() || step < policy.MaxToolSteps; step++ {
 		stepNumber := step + 1
 		if onStatus != nil && step > 0 {
-			onStatus(fmt.Sprintf("Qwen is still working (%d/%d).", stepNumber, r.MaxToolSteps))
+			if policy.unbounded() {
+				onStatus(fmt.Sprintf("Qwen is still working (%d steps).", stepNumber))
+			} else {
+				onStatus(fmt.Sprintf("Qwen is still working (%d/%d).", stepNumber, policy.MaxToolSteps))
+			}
 		}
 
 		reply, err := r.Client.CompleteChat(ctx, turnMessages, opts)
@@ -109,6 +155,16 @@ func (r *Runner) Run(
 			continue
 		}
 		if !ok {
+			if result, rejected := r.completionGateRejection(reply, collectedResults, stepNumber); rejected {
+				if completionGateRejections >= 3 {
+					return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Completion gate has rejected the final answer repeatedly. Do not request any more tools. Summarize the concrete blocker and the next action required.")
+				}
+				rejectCompletion(stepNumber, reply, result)
+				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
+					return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Progress appears stalled. Do not request any more tools. Summarize the work completed, the last blocker, and the narrowest remaining next action.")
+				}
+				continue
+			}
 			return r.ensureNonEmptyAnswer(ctx, turnMessages, reply, opts, collectedResults)
 		}
 
@@ -163,12 +219,40 @@ func (r *Runner) Run(
 			}
 			continue
 		}
-		if toolKey != "" && toolKey == lastToolKey {
+		if shouldRejectFullReadAfterGoOutline(req, collectedResults) {
+			answer, err, done := rejectTool(
+				stepNumber,
+				req,
+				"Full file read rejected after Go outline",
+				"go_file_outline already produced declaration boundaries and recommended move batches for this file. For a structural refactor, choose a destination batch and call go_move_declarations with pattern:\"tag:<responsibility>\" instead of reading the whole file.",
+			)
+			if done {
+				return answer, err
+			}
+			continue
+		}
+		if shouldRejectRepeatedGoOutline(req, collectedResults) {
+			answer, err, done := rejectTool(
+				stepNumber,
+				req,
+				"Repeated Go outline rejected",
+				"you already have the Go outline and its recommended move batches. The next structural-refactor step must be go_move_declarations with pattern:\"tag:<responsibility>\", not another outline.",
+			)
+			if done {
+				return answer, err
+			}
+			continue
+		}
+		if toolKey != "" && toolKey == lastToolKey && strings.TrimSpace(req.Tool) != "go_file_outline" {
+			errorText := "you just ran the same tool request. Do not loop on broad inspection. Use search_files, search_content, read_file on a discovered handle, or a targeted shell search/read command to narrow, or answer with what you already know."
+			if strings.TrimSpace(req.Tool) == "go_move_declarations" {
+				errorText = "you just ran the same declaration move. Choose a different destination/declaration batch, run verification, or answer with the current blocker."
+			}
 			answer, err, done := rejectTool(
 				stepNumber,
 				req,
 				"Repeated tool request rejected",
-				"you just ran the same tool request. Do not loop on broad inspection. Use search_files, search_content, read_file on a discovered handle, or a targeted shell search/read command to narrow, or answer with what you already know.",
+				errorText,
 			)
 			if done {
 				return answer, err
@@ -204,6 +288,11 @@ func (r *Runner) Run(
 		collectedResults = append(collectedResults, result)
 		lastToolKey = toolKey
 		consecutiveRejectedActions = 0
+		if toolResultMadeProgress(req, result) {
+			consecutiveNoProgress = 0
+		} else {
+			consecutiveNoProgress++
+		}
 		switch {
 		case workspace.IsBroadInspectionRequest(req):
 			needsNarrowingAfterBroad = true
@@ -219,9 +308,66 @@ func (r *Runner) Run(
 			Role:    "system",
 			Content: workspace.FormatToolResultForModel(result),
 		})
+		if policy.shouldStopForNoProgress(consecutiveNoProgress) {
+			return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Progress appears stalled. Do not request any more tools. Summarize the work completed, the last blocker, and the narrowest remaining next action.")
+		}
 	}
 
 	return r.completeWithoutMoreTools(ctx, turnMessages, opts, collectedResults)
+}
+
+func (r *Runner) effectivePolicy() RunPolicy {
+	policy := r.Policy
+	if policy.MaxToolSteps == 0 && r.MaxToolSteps != 0 {
+		policy.MaxToolSteps = r.MaxToolSteps
+	}
+	if policy.MaxNoProgressTurns <= 0 {
+		policy.MaxNoProgressTurns = 6
+	}
+	return policy
+}
+
+func (p RunPolicy) unbounded() bool {
+	return p.MaxToolSteps <= 0
+}
+
+func (p RunPolicy) shouldStopForNoProgress(consecutiveNoProgress int) bool {
+	return p.MaxNoProgressTurns > 0 && consecutiveNoProgress >= p.MaxNoProgressTurns
+}
+
+func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int) (workspace.ToolResult, bool) {
+	if shouldRejectProseAfterGoOutline(reply, results) {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Final answer rejected",
+			Error:   "go_file_outline produced declaration boundaries, but no declaration move has succeeded. Continue with go_move_declarations or report a concrete blocker from a failed move.",
+		}, true
+	}
+	if r.CompletionGate == nil {
+		return workspace.ToolResult{}, false
+	}
+	gate := r.CompletionGate(CompletionGateInput{
+		AgentName: r.agentName(),
+		Reply:     reply,
+		Results:   append([]workspace.ToolResult(nil), results...),
+		Steps:     step,
+	})
+	if gate.Accept {
+		return workspace.ToolResult{}, false
+	}
+	summary := strings.TrimSpace(gate.Summary)
+	if summary == "" {
+		summary = "Final answer rejected"
+	}
+	errorText := strings.TrimSpace(gate.Error)
+	if errorText == "" {
+		errorText = "the answer does not satisfy the task completion gate; continue with the next tool call or state a concrete blocker"
+	}
+	return workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: summary,
+		Error:   errorText,
+	}, true
 }
 
 func toolRequestKey(req workspace.ToolRequest) string {
@@ -251,15 +397,75 @@ func toolActionClass(req workspace.ToolRequest) string {
 		return "edit_file:" + normalizeActionToken(req.Path)
 	case "search_files", "search_content", "rg":
 		return tool + ":" + normalizeActionToken(req.Path) + ":" + normalizeActionToken(req.Pattern) + ":" + normalizeActionToken(req.Glob)
-	case "go_find_symbol", "go_find_type", "go_find_const", "go_read_symbol",
+	case "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_workspace_symbol",
 		"go_definition", "go_references", "go_implementations",
 		"go_calls_from", "go_calls_into", "go_extract_body", "go_importers", "go_diagnostics":
 		target := firstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Path), strings.TrimSpace(req.ID))
 		return tool + ":" + normalizeActionToken(target)
+	case "go_move_declarations":
+		target := firstNonEmpty(strings.TrimSpace(req.Path)+"->"+strings.TrimSpace(req.Destination), strings.TrimSpace(req.Pattern))
+		if len(req.Moves) > 0 {
+			target = strings.TrimSpace(req.Path) + "->batch"
+		}
+		return tool + ":" + normalizeActionToken(target)
 	default:
 		return tool
 	}
+}
+
+func shouldRejectProseAfterGoOutline(reply string, results []workspace.ToolResult) bool {
+	normalized := strings.ToLower(strings.TrimSpace(reply))
+	if normalized == "" {
+		return false
+	}
+	hasOutline := false
+	hasMove := false
+	for _, result := range results {
+		if result.Error == "" && result.Tool == "go_file_outline" {
+			hasOutline = true
+		}
+		if result.Error == "" && result.Tool == "go_move_declarations" {
+			hasMove = true
+		}
+	}
+	return hasOutline && !hasMove
+}
+
+func shouldRejectRepeatedGoOutline(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(req.Tool) != "go_file_outline" || strings.TrimSpace(req.Path) == "" {
+		return false
+	}
+	count := 0
+	for _, result := range results {
+		if result.Error != "" || result.Tool != "go_file_outline" {
+			continue
+		}
+		if strings.Contains(result.Summary, req.Path) {
+			count++
+		}
+	}
+	return count >= 1
+}
+
+func shouldRejectFullReadAfterGoOutline(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return false
+	}
+	path := strings.TrimSpace(req.Path)
+	if path == "" || strings.TrimSpace(req.ID) != "" || req.StartLine != 0 || req.EndLine != 0 {
+		return false
+	}
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if result.Error != "" || result.Tool != "go_file_outline" {
+			continue
+		}
+		if strings.Contains(result.Summary, path) {
+			return true
+		}
+	}
+	return false
 }
 
 func shellActionClass(command string) string {
@@ -310,11 +516,23 @@ func (r *Runner) completeWithoutMoreTools(
 	opts llama.ChatOptions,
 	collectedResults []workspace.ToolResult,
 ) (string, error) {
+	return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Tool budget is exhausted. Do not request any more tools. Answer with the evidence you already have, explain any missing file or uncertainty clearly, and if needed ask the user for a more specific target instead of emitting another tool block.")
+}
+
+func (r *Runner) completeWithoutMoreToolsWithReason(
+	ctx context.Context,
+	turnMessages []llama.ChatMessage,
+	opts llama.ChatOptions,
+	collectedResults []workspace.ToolResult,
+	reason string,
+) (string, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Do not request any more tools. Answer with the evidence you already have and explain any remaining blocker clearly."
+	}
 	turnMessages = append(turnMessages, llama.ChatMessage{
-		Role: "system",
-		Content: "Tool budget is exhausted. Do not request any more tools. " +
-			"Answer with the evidence you already have, explain any missing file or uncertainty clearly, " +
-			"and if needed ask the user for a more specific target instead of emitting another tool block.",
+		Role:    "system",
+		Content: reason,
 	})
 
 	reply, err := r.Client.CompleteChat(ctx, turnMessages, opts)
@@ -332,6 +550,27 @@ func (r *Runner) completeWithoutMoreTools(
 	}
 
 	return r.ensureNonEmptyAnswer(ctx, turnMessages, reply, opts, collectedResults)
+}
+
+func toolResultMadeProgress(req workspace.ToolRequest, result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+	switch strings.TrimSpace(req.Tool) {
+	case "edit_file", "write_file", "append_file", "mkdir", "go_move_declarations":
+		summary := strings.ToLower(strings.TrimSpace(result.Summary))
+		return summary != "" && !strings.Contains(summary, "no-op")
+	case "read_file", "search_files", "search_content", "rg",
+		"go_file_outline", "go_find_symbol", "go_find_type", "go_find_const", "go_read_symbol",
+		"go_find_package", "go_related_files", "go_workspace_symbol",
+		"go_definition", "go_references", "go_implementations",
+		"go_calls_from", "go_calls_into", "go_extract_body", "go_importers", "go_diagnostics":
+		return strings.TrimSpace(result.Output) != "" || strings.TrimSpace(result.Summary) != ""
+	case "shell":
+		return strings.TrimSpace(result.Output) != "" || strings.TrimSpace(result.Summary) != ""
+	default:
+		return strings.TrimSpace(result.Output) != "" || strings.TrimSpace(result.Summary) != ""
+	}
 }
 
 func (r *Runner) ensureNonEmptyAnswer(

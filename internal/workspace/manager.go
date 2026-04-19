@@ -59,21 +59,30 @@ const (
 )
 
 type ToolRequest struct {
-	Tool       string `json:"tool"`
-	ID         string `json:"id,omitempty"`
-	Path       string `json:"path,omitempty"`
-	StartLine  int    `json:"start_line,omitempty"`
-	EndLine    int    `json:"end_line,omitempty"`
-	Pattern    string `json:"pattern,omitempty"`
-	Glob       string `json:"glob,omitempty"`
-	Workdir    string `json:"workdir,omitempty"`
-	Command    string `json:"command,omitempty"`
-	Content    string `json:"content,omitempty"`
-	OldText    string `json:"old_text,omitempty"`
-	NewText    string `json:"new_text,omitempty"`
-	ReplaceAll bool   `json:"replace_all,omitempty"`
-	Recursive  bool   `json:"recursive,omitempty"`
-	MaxDepth   int    `json:"max_depth,omitempty"`
+	Tool         string              `json:"tool"`
+	ID           string              `json:"id,omitempty"`
+	Path         string              `json:"path,omitempty"`
+	StartLine    int                 `json:"start_line,omitempty"`
+	EndLine      int                 `json:"end_line,omitempty"`
+	Pattern      string              `json:"pattern,omitempty"`
+	Glob         string              `json:"glob,omitempty"`
+	Workdir      string              `json:"workdir,omitempty"`
+	Command      string              `json:"command,omitempty"`
+	Content      string              `json:"content,omitempty"`
+	OldText      string              `json:"old_text,omitempty"`
+	NewText      string              `json:"new_text,omitempty"`
+	ReplaceAll   bool                `json:"replace_all,omitempty"`
+	Recursive    bool                `json:"recursive,omitempty"`
+	MaxDepth     int                 `json:"max_depth,omitempty"`
+	Destination  string              `json:"destination,omitempty"`
+	Declarations []string            `json:"declarations,omitempty"`
+	Moves        []GoDeclarationMove `json:"moves,omitempty"`
+}
+
+type GoDeclarationMove struct {
+	Destination  string   `json:"destination,omitempty"`
+	Pattern      string   `json:"pattern,omitempty"`
+	Declarations []string `json:"declarations,omitempty"`
 }
 
 type ToolResult struct {
@@ -303,6 +312,7 @@ func (m *Manager) goDiscoveryInstructions(explore bool) string {
 		"- go_find_symbol {\"pattern\":\"Run\"}",
 		"- go_find_type {\"pattern\":\"Runner\"}",
 		"- go_find_const {\"pattern\":\"ModeExplore\"}",
+		"- go_file_outline {\"path\":\"internal/app/app.go\"}",
 		"- go_read_symbol {\"pattern\":\"Run\",\"path\":\"internal/agent\"}",
 		"- go_find_package {\"pattern\":\"internal/app\"}",
 		"- go_related_files {\"pattern\":\"explore cache\"}",
@@ -320,14 +330,20 @@ func (m *Manager) goDiscoveryInstructions(explore bool) string {
 		lines = append(lines,
 			"Go-tool rules:",
 			"- Prefer go_overview or go_entrypoints before broad shell inspection in Go repos.",
-			"- Prefer go_find_symbol, go_read_symbol, and go_find_package over raw grep when you already know the concept you are looking for.",
+			"- Prefer go_find_symbol, go_file_outline, go_read_symbol, and go_find_package over raw grep when you already know the concept you are looking for.",
 			"- Use go_workspace_symbol when you need broader symbol lookup across the module.",
 		)
 	} else {
 		lines = append(lines,
+			"- go_move_declarations {\"path\":\"internal/app/app.go\",\"destination\":\"internal/app/rendering.go\",\"pattern\":\"tag:rendering\"}",
+			"- go_move_declarations {\"path\":\"internal/app/app.go\",\"moves\":[{\"destination\":\"internal/app/model_state.go\",\"pattern\":\"tag:model_state\"},{\"destination\":\"internal/app/rendering.go\",\"pattern\":\"tag:rendering\"}]}",
+			"- go_move_declarations {\"path\":\"internal/app/app.go\",\"destination\":\"internal/app/rendering.go\",\"declarations\":[\"Model.View\",\"bodyView\",\"renderMessages\"]}",
+		)
+		lines = append(lines,
 			"Go-tool rules:",
 			"- Prefer the Go-specific tools over raw shell/grep for package, symbol, and entrypoint discovery in Go repos.",
 			"- Use read_file on returned handles after go_find_symbol/go_entrypoints if you need surrounding source.",
+			"- For large Go refactors, use go_file_outline to identify declaration boundaries, then use go_move_declarations for model-chosen batches instead of rewriting giant files by hand. The pattern form pattern:\"tag:<responsibility>\" moves all declarations from the outline with that responsibility tag.",
 		)
 	}
 	return strings.Join(lines, "\n") + "\n"
@@ -403,6 +419,8 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
 		return m.goFindType(req)
 	case "go_find_const":
 		return m.goFindConst(req)
+	case "go_file_outline":
+		return m.goFileOutline(req)
 	case "go_read_symbol":
 		return m.goReadSymbol(req)
 	case "cpp_overview":
@@ -463,6 +481,11 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
 		return m.goDiagnostics(ctx, req)
 	case "go_workspace_symbol":
 		return m.goWorkspaceSymbol(ctx, req)
+	case "go_move_declarations":
+		if mode == ModeExplore {
+			return ToolResult{Tool: "go_move_declarations", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before moving declarations"}
+		}
+		return m.goMoveDeclarations(req)
 	case "mkdir":
 		if mode == ModeExplore {
 			return ToolResult{Tool: "mkdir", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before creating directories"}
@@ -636,7 +659,7 @@ func IsNarrowingRequest(req ToolRequest) bool {
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg", "read_file",
-		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_read_symbol",
+		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
 		"go_definition", "go_references", "go_implementations",
 		"go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
@@ -660,7 +683,7 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg",
-		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_read_symbol",
+		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
 		"go_definition", "go_references", "go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
 		"cpp_overview", "cpp_entrypoints", "cpp_find_symbol", "cpp_read_symbol", "cpp_related_files",
