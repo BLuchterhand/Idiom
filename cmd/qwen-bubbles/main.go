@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -17,23 +18,35 @@ import (
 	"qwen-bubbles/internal/llama"
 )
 
-type promptRunner func(config.Config, string) (string, error)
-type modeRunner func(config.Config) error
-
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, runPromptOnce, runTUI, runServerOnly))
+type runOptions struct {
+	JSONEvents bool
+	Resume     string
 }
 
-func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, tuiRun modeRunner, serverRun modeRunner) int {
+type promptRunner func(config.Config, string, runOptions, io.Writer) (string, error)
+type modeRunner func(config.Config) error
+type listSessionsRunner func(config.Config, io.Writer) error
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, runPromptOnce, runTUI, runServerOnly, runListSessions))
+}
+
+func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, tuiRun modeRunner, serverRun modeRunner, listSessions listSessionsRunner) int {
 	var configPath string
 	var serverOnly bool
 	var prompt string
+	var jsonEvents bool
+	var resume string
+	var listSessionsFlag bool
 
 	fs := flag.NewFlagSet("qwen-bubbles", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&configPath, "config", "config.json", "path to config file")
 	fs.BoolVar(&serverOnly, "server-only", false, "run only llama-server and block")
 	fs.StringVar(&prompt, "prompt", "", "run one prompt headlessly, print the answer, and exit")
+	fs.BoolVar(&jsonEvents, "json", false, "emit structured JSONL events to stdout (only with --prompt)")
+	fs.StringVar(&resume, "resume", "", "resume a prior session by id (filename without .jsonl) before running")
+	fs.BoolVar(&listSessionsFlag, "list-sessions", false, "print recent session ids from the debug log directory and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -42,6 +55,14 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+
+	if listSessionsFlag {
+		if err := listSessions(cfg, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	}
 
 	if serverOnly {
@@ -53,12 +74,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	}
 
 	if prompt != "" {
-		answer, err := promptRun(cfg, prompt)
+		opts := runOptions{JSONEvents: jsonEvents, Resume: resume}
+		answer, err := promptRun(cfg, prompt, opts, stdout)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintln(stdout, answer)
+		if !jsonEvents {
+			fmt.Fprintln(stdout, answer)
+		}
 		return 0
 	}
 
@@ -80,13 +104,55 @@ func runTUI(cfg config.Config) error {
 	return nil
 }
 
-func runPromptOnce(cfg config.Config, prompt string) (string, error) {
+func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.Writer) (string, error) {
 	model := app.New(cfg)
 	defer model.Close()
+
+	if opts.Resume != "" {
+		path := app.ResolveSessionLogPath(cfg, opts.Resume)
+		if err := model.LoadHistoryFromSession(path); err != nil {
+			return "", fmt.Errorf("resume %q: %w", opts.Resume, err)
+		}
+	}
+
+	if opts.JSONEvents {
+		sessionID := ""
+		if path := model.DebugLogPath(); path != "" {
+			sessionID = sessionIDFromPath(path)
+		}
+		model.SetJSONEventStream(stdout, sessionID)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Chat.RequestTimeoutSeconds+cfg.Chat.ServerStartTimeoutSecs)*time.Second)
 	defer cancel()
 	return model.RunPromptOnce(ctx, prompt)
+}
+
+func sessionIDFromPath(path string) string {
+	base := filepath.Base(path)
+	if ext := filepath.Ext(base); ext != "" {
+		base = base[:len(base)-len(ext)]
+	}
+	return base
+}
+
+func runListSessions(cfg config.Config, stdout io.Writer) error {
+	sessions, err := app.ListRecordedSessions(cfg)
+	if err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		fmt.Fprintln(stdout, "no sessions found")
+		return nil
+	}
+	for _, s := range sessions {
+		summary := s.FirstPrompt
+		if summary == "" {
+			summary = "(no user prompt recorded)"
+		}
+		fmt.Fprintf(stdout, "%s\tmsgs=%d/%d\t%s\n", s.ID, s.UserMessages, s.AssistMessage, summary)
+	}
+	return nil
 }
 
 func runServerOnly(cfg config.Config) error {

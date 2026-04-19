@@ -1,13 +1,10 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/ast"
-	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -284,9 +281,6 @@ func buildImplementationTargetPacket(prompt string, history []llama.ChatMessage)
 	for _, path := range implementationAnalogyPaths(prompt) {
 		addPath(&packet.AnalogyPaths, analogySeen, path)
 	}
-	if hasUILocationHint(strings.ToLower(prompt)) {
-		addPath(&packet.PrimaryPaths, primarySeen, "internal/app/app.go")
-	}
 	if implementationPromptForbidsDeclarationMoves(prompt) {
 		packet.StrategyHints = append(packet.StrategyHints, "declaration moves forbidden; make any refactor with edit_file inside the approved primary file")
 	}
@@ -340,39 +334,163 @@ func applyTaskResumeContextToImplementationTargetPacket(packet implementationTar
 	return packet
 }
 
-func exactAnalysisSummaryTargetRefactorRequested(prompt string, history []llama.ChatMessage, packet implementationTargetPacket) bool {
-	if !slices.Contains(packet.PrimaryPaths, "internal/app/analysis_agents.go") {
-		return false
+func implementationResumeContextFromPromptPlan(mgr *workspace.Manager, prompt string, history []llama.ChatMessage, plan promptExecutionPlan, base taskResumeContext) taskResumeContext {
+	resume := base
+	root := ""
+	if mgr != nil {
+		root = mgr.Root()
 	}
-	var combined strings.Builder
-	combined.WriteString(strings.ToLower(prompt))
-	combined.WriteByte('\n')
-	for _, hint := range packet.StrategyHints {
-		combined.WriteString(strings.ToLower(hint))
-		combined.WriteByte('\n')
+	var approved []string
+	var destinations []string
+	addApproved := func(path string) {
+		path = normalizeGuardedPath(path)
+		if path == "" {
+			return
+		}
+		approved = append(approved, path)
 	}
-	for _, msg := range history {
-		combined.WriteString(strings.ToLower(msg.Content))
-		combined.WriteByte('\n')
+	addDestination := func(path string) {
+		path = normalizeGuardedPath(path)
+		if path == "" {
+			return
+		}
+		destinations = append(destinations, path)
 	}
-	text := combined.String()
-	return strings.Contains(text, "analysissummarytargets") &&
-		strings.Contains(text, "parseanalysissummarytargettoken")
+	for _, ref := range plan.intent.TargetRefs {
+		if path, ok := resolveExistingImplementationRef(root, ref); ok {
+			addApproved(path)
+		}
+	}
+	for _, ref := range recentImplementationPlanWorkspaceRefs(prompt, history) {
+		if path, ok := resolveExistingImplementationRef(root, ref); ok {
+			addApproved(path)
+			continue
+		}
+		if implementationRefLooksLikeNewDestination(ref) {
+			addDestination(ref)
+		}
+	}
+	if len(approved) == 0 && len(destinations) == 0 {
+		return resume
+	}
+	resume.Active = true
+	if len(resume.ApprovedEditTargets) == 0 {
+		resume.ApprovedEditTargets = uniqueLimitedStrings(approved, 8)
+	} else {
+		resume.ApprovedEditTargets = uniqueLimitedStrings(append(resume.ApprovedEditTargets, approved...), 8)
+	}
+	resume.AllowedDestinations = uniqueLimitedStrings(append(resume.AllowedDestinations, destinations...), 8)
+	return resume
 }
 
-func analysisSummaryTargetRefactorAlreadySatisfied(root string) bool {
-	root = strings.TrimSpace(root)
+func resolveExistingImplementationRef(root string, ref string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" || !looksLikeWorkspacePathToken(strings.TrimPrefix(ref, "@")) {
+		return "", false
+	}
 	if root == "" {
+		path := normalizeGuardedPath(ref)
+		if path == "" || !strings.Contains(path, "/") {
+			return "", false
+		}
+		return path, true
+	}
+	for _, path := range resolveImplementationPrimaryPaths(root, []string{ref}) {
+		path = normalizeGuardedPath(path)
+		if path == "" {
+			continue
+		}
+		if workspaceRelativeFileExists(root, path) {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+func implementationRefLooksLikeNewDestination(ref string) bool {
+	ref = normalizeGuardedPath(strings.TrimPrefix(strings.TrimSpace(ref), "@"))
+	return ref != "" && strings.Contains(ref, "/") && looksLikeWorkspacePathToken(ref)
+}
+
+func recentImplementationPlanWorkspaceRefs(prompt string, history []llama.ChatMessage) []string {
+	if !implementationApprovalShouldUseRecentPlan(prompt) || len(history) == 0 {
+		return nil
+	}
+	refs := make([]string, 0, 4)
+	for i := len(history) - 1; i >= 0 && len(history)-i <= 8; i-- {
+		msg := history[i]
+		if normalizeHistoryRole(msg.Role) != "assistant" {
+			continue
+		}
+		content := implementationPlanRelevantSection(prompt, msg.Content)
+		paths := promptMentionedWorkspacePaths(content)
+		if len(paths) == 0 {
+			continue
+		}
+		refs = append(refs, paths...)
+		break
+	}
+	return uniqueLimitedStrings(refs, 8)
+}
+
+func implementationApprovalShouldUseRecentPlan(prompt string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	if normalized == "" {
 		return false
 	}
-	data, err := os.ReadFile(filepath.Join(root, "internal", "app", "analysis_agents.go"))
-	if err != nil {
-		return false
+	return looksLikeEllipticalImplementationFollowup(normalized) ||
+		looksLikeDurablePlanApprovalPrompt(normalized) ||
+		looksLikeTerseDurablePlanApprovalPrompt(normalized) ||
+		(containsAny(normalized, "go ahead", "proceed", "begin", "start", "do phase", "phase 1", "phase one") &&
+			containsAny(normalized, "phase", "do", "implement", "extract", "refactor"))
+}
+
+func implementationPlanRelevantSection(prompt string, content string) string {
+	normalizedPrompt := strings.ToLower(strings.TrimSpace(prompt))
+	phase := ""
+	for _, match := range regexp.MustCompile(`(?i)\bphase\s+([0-9]+|one|two|three|four|five)\b`).FindAllStringSubmatch(normalizedPrompt, -1) {
+		if len(match) == 2 {
+			phase = strings.ToLower(match[1])
+			break
+		}
 	}
-	content := string(data)
-	return strings.Contains(content, "func parseAnalysisSummaryTargetToken(field string) (string, int, bool)") &&
-		strings.Contains(content, "parseAnalysisSummaryTargetToken(field)") &&
-		strings.Contains(content, "add(path, line)")
+	if phase == "" {
+		return content
+	}
+	normalizedContent := strings.ToLower(content)
+	candidates := []string{"phase " + phase}
+	switch phase {
+	case "1":
+		candidates = append(candidates, "phase one")
+	case "2":
+		candidates = append(candidates, "phase two")
+	case "3":
+		candidates = append(candidates, "phase three")
+	case "one":
+		candidates = append(candidates, "phase 1")
+	case "two":
+		candidates = append(candidates, "phase 2")
+	case "three":
+		candidates = append(candidates, "phase 3")
+	}
+	start := -1
+	for _, candidate := range candidates {
+		if idx := strings.Index(normalizedContent, candidate); idx >= 0 && (start < 0 || idx < start) {
+			start = idx
+		}
+	}
+	if start < 0 {
+		return content
+	}
+	rest := content[start:]
+	lowerRest := strings.ToLower(rest)
+	end := len(rest)
+	for _, marker := range []string{"\n**phase ", "\nphase "} {
+		if idx := strings.Index(lowerRest[1:], marker); idx >= 0 && idx+1 < end {
+			end = idx + 1
+		}
+	}
+	return rest[:end]
 }
 
 func implementationPromptPrimaryPaths(prompt string) []string {
@@ -565,7 +683,7 @@ func implementationSymbolHints(prompt string) []string {
 	stopwords := map[string]struct{}{
 		"add": {}, "and": {}, "apis": {}, "app": {}, "approved": {}, "banner": {}, "bit": {}, "build": {}, "can": {}, "change": {},
 		"code": {}, "edit": {}, "file": {}, "fix": {}, "for": {}, "from": {}, "header": {}, "implement": {},
-		"do": {}, "in": {}, "it": {}, "keep": {}, "like": {}, "make": {}, "match": {}, "padding": {}, "please": {}, "remove": {},
+		"do": {}, "go": {}, "in": {}, "it": {}, "keep": {}, "like": {}, "make": {}, "match": {}, "padding": {}, "please": {}, "remove": {},
 		"render": {}, "same": {}, "small": {}, "status": {}, "text": {}, "the": {}, "this": {}, "to": {},
 		"execute": {}, "run": {}, "top": {}, "underneath": {}, "update": {}, "use": {}, "where": {}, "window": {}, "with": {}, "work": {},
 	}
@@ -876,27 +994,6 @@ func (m *Model) runImplementAgentWithGrant(
 		}
 		return blocked
 	}
-	if exactAnalysisSummaryTargetRefactorRequested(prompt, history, targetPacket) && analysisSummaryTargetRefactorAlreadySatisfied(implementWorkspace.Root()) {
-		m.logMessage("implement_exact_refactor_noop", "analysisSummaryTargets already delegates token parsing to parseAnalysisSummaryTargetToken")
-		verify := m.runImplementationVerification(ctx, implementWorkspace, len(bootstrap.results)+1, "internal/app/analysis_agents.go")
-		return finalizeImplementation("No file edits were needed: the approved analysis_agents.go refactor is already present. analysisSummaryTargets delegates summary token parsing to parseAnalysisSummaryTargetToken.", nil, verify), nil
-	}
-	if os.Getenv("QWEN_BUBBLES_ENABLE_DETERMINISTIC_APP_SPLIT") == "1" {
-		if shortcut := m.tryDeterministicAppGoSplit(ctx, implementWorkspace, prompt, targetPacket, len(bootstrap.results)+1); shortcut.applied {
-			verify := m.runImplementationVerification(ctx, implementWorkspace, shortcut.nextStep, shortcut.changedPaths...)
-			if !verify.failed {
-				return finalizeImplementation(shortcut.summary, shortcut.changedPaths, verify), nil
-			}
-			preChangedPaths = uniqueNonEmptyStrings(append(preChangedPaths, shortcut.changedPaths...))
-			history = append(history, llama.ChatMessage{Role: "system", Content: "A deterministic package split already changed the workspace:\n" + shortcut.summary})
-			for _, result := range verify.results {
-				history = append(history, llama.ChatMessage{Role: "system", Content: workspace.FormatToolResultForModel(result)})
-			}
-			taskPrompt = buildImplementRepairPrompt(prompt)
-			m.emitPhaseCard(analysisLaneImplement, "repair", phaseStateActive, "Verification failed. Repairing the deterministic package split before continuing.")
-			m.events <- infoMsg{text: "Verification failed after the deterministic package split. Qwen is repairing the change."}
-		}
-	}
 	if shortcut := m.tryDirectPromptEdit(ctx, implementWorkspace, prompt, len(bootstrap.results)+1, journalRecorder, writeGuard, guardBlocked); shortcut.applied {
 		verify := m.runImplementationVerification(ctx, implementWorkspace, shortcut.nextStep, shortcut.changedPaths...)
 		if !verify.failed {
@@ -1199,328 +1296,6 @@ type directImplementationShortcut struct {
 	nextStep     int
 	terminal     bool
 	proposal     *writeApprovalProposal
-}
-
-func (m *Model) tryDeterministicAppGoSplit(ctx context.Context, mgr *workspace.Manager, prompt string, packet implementationTargetPacket, startStep int) directImplementationShortcut {
-	_ = ctx
-	if mgr == nil || !promptRequestsWholeFileRefactor(prompt) {
-		return directImplementationShortcut{}
-	}
-	if !slices.Contains(packet.PrimaryPaths, "internal/app/app.go") {
-		return directImplementationShortcut{}
-	}
-	changedPaths, err := deterministicSplitAppGo(mgr.Root())
-	if err != nil {
-		if m != nil {
-			m.logMessage("deterministic_app_split", "skipped: "+err.Error())
-		}
-		return directImplementationShortcut{}
-	}
-	if len(changedPaths) == 0 {
-		if m != nil {
-			m.logMessage("deterministic_app_split", "skipped: no file changes produced")
-		}
-		return directImplementationShortcut{}
-	}
-	if m != nil {
-		m.logMessage("deterministic_app_split", fmt.Sprintf("split internal/app/app.go into %d package files", len(changedPaths)))
-	}
-	return directImplementationShortcut{
-		applied:      true,
-		changedPaths: changedPaths,
-		summary:      "Split internal/app/app.go into package-level files by responsibility while keeping package app and preserving exported APIs.",
-		nextStep:     startStep,
-	}
-}
-
-func deterministicSplitAppGo(root string) ([]string, error) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return nil, fmt.Errorf("workspace root is not configured")
-	}
-	appPath := filepath.Join(root, "internal/app/app.go")
-	src, err := os.ReadFile(appPath)
-	if err != nil {
-		return nil, fmt.Errorf("read app.go: %w", err)
-	}
-	if len(strings.Split(string(src), "\n")) < 5000 {
-		return nil, fmt.Errorf("app.go is already below whole-file split threshold")
-	}
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, appPath, src, parser.ParseComments)
-	if err != nil {
-		return nil, fmt.Errorf("parse app.go: %w", err)
-	}
-	imports := appSplitImports(src, fset, file)
-	buckets := make(map[string][]ast.Decl)
-	for _, decl := range file.Decls {
-		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
-			continue
-		}
-		name := appSplitFileForDecl(decl)
-		buckets[name] = append(buckets[name], decl)
-	}
-	ordered := []string{
-		"app.go",
-		"model_state.go",
-		"lifecycle.go",
-		"prompt_routing.go",
-		"rendering.go",
-		"task_memory.go",
-		"implementation.go",
-		"write_guard.go",
-		"analysis_agents.go",
-	}
-	changed := make([]string, 0, len(ordered))
-	for _, name := range ordered {
-		decls := buckets[name]
-		if len(decls) == 0 {
-			continue
-		}
-		outPath := filepath.Join(root, "internal/app", name)
-		content, err := renderAppSplitFile(src, fset, imports, decls)
-		if err != nil {
-			return nil, fmt.Errorf("render %s: %w", name, err)
-		}
-		if existing, err := os.ReadFile(outPath); err == nil && bytes.Equal(existing, content) {
-			continue
-		}
-		if err := os.WriteFile(outPath, content, 0o644); err != nil {
-			return nil, fmt.Errorf("write %s: %w", name, err)
-		}
-		changed = append(changed, filepath.ToSlash(filepath.Join("internal/app", name)))
-	}
-	if testChanged, err := patchAppSplitTests(root); err != nil {
-		return nil, err
-	} else if testChanged {
-		changed = append(changed, "internal/app/write_guard_test.go")
-	}
-	return uniqueNonEmptyStrings(changed), nil
-}
-
-func patchAppSplitTests(root string) (bool, error) {
-	path := filepath.Join(root, "internal/app/write_guard_test.go")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false, nil
-	}
-	original := string(data)
-	updated := original
-	replacements := [][2]string{
-		{
-			`packet := enrichImplementationTargetPacket(mgr, buildImplementationTargetPacket("Update Model.bootstrapImplementationEvidence in @internal/app/app.go.", nil))`,
-			`packet := enrichImplementationTargetPacket(mgr, buildImplementationTargetPacket("Update Model.bootstrapImplementationEvidence in @internal/app/implementation.go.", nil))`,
-		},
-		{
-			`if symbol.Path == "internal/app/app.go" && implementationQualifiedSymbol(symbol) == "Model.bootstrapImplementationEvidence" {`,
-			`if symbol.Path == "internal/app/implementation.go" && implementationQualifiedSymbol(symbol) == "Model.bootstrapImplementationEvidence" {`,
-		},
-		{
-			`"Update Model.bootstrapImplementationEvidence in @internal/app/app.go.",
-		implementationTargetPacket{
-			PrimaryPaths: []string{"internal/app/app.go"},
-			Symbols: []semantic.SymbolMatch{{
-				Path:      "internal/app/app.go",
-				Name:      "bootstrapImplementationEvidence",
-				Receiver:  "Model",
-				Line:      1614,
-				StartLine: 1614,
-				EndLine:   1710,
-			}},`,
-			`"Update Model.bootstrapImplementationEvidence in @internal/app/implementation.go.",
-		implementationTargetPacket{
-			PrimaryPaths: []string{"internal/app/implementation.go"},
-			Symbols: []semantic.SymbolMatch{{
-				Path:      "internal/app/implementation.go",
-				Name:      "bootstrapImplementationEvidence",
-				Receiver:  "Model",
-				Line:      1200,
-				StartLine: 1200,
-				EndLine:   1375,
-			}},`,
-		},
-		{
-			`foundRead := false
-	for _, result := range bootstrap.results {
-		if result.Tool == "read_file" && strings.Contains(result.Summary, "internal/app/app.go") {
-			foundRead = true
-			break
-		}
-	}
-	if !foundRead {
-		t.Fatalf("expected symbol bootstrap evidence to include a read_file result, got %#v", bootstrap.results)
-	}`,
-			`foundRead := false
-	for _, result := range bootstrap.results {
-		if result.Tool == "read_file" && strings.Contains(result.Summary, "internal/app/implementation.go") {
-			foundRead = true
-			break
-		}
-	}
-	if !foundRead {
-		t.Fatalf("expected symbol bootstrap evidence to include a read_file result, got %#v", bootstrap.results)
-	}`,
-		},
-		{
-			`Anchors:      []implementationTarget{{Path: "internal/app/app.go", Line: 2112}},`,
-			`Anchors:      []implementationTarget{{Path: "internal/app/app.go", Line: 700}},`,
-		},
-		{
-			`func TestImplementTargetGuardRedirectsBroadSearchToScopedSearchContent(t *testing.T) {
-	mgr := workspace.NewManager(testWorkspaceConfig())
-	guard := newImplementTargetGuard(mgr, implementationTargetPacket{
-		PrimaryPaths: []string{"internal/app/app.go"},
-	}, nil)`,
-			`func TestImplementTargetGuardRedirectsBroadSearchToScopedSearchContent(t *testing.T) {
-	mgr := workspace.NewManager(testWorkspaceConfig())
-	guard := newImplementTargetGuard(mgr, implementationTargetPacket{
-		PrimaryPaths: []string{"internal/app/implementation.go"},
-	}, nil)`,
-		},
-	}
-	for _, replacement := range replacements {
-		updated = strings.Replace(updated, replacement[0], replacement[1], 1)
-	}
-	if updated == original {
-		return false, nil
-	}
-	formatted, err := format.Source([]byte(updated))
-	if err != nil {
-		return false, fmt.Errorf("format write_guard_test.go after app split: %w", err)
-	}
-	if err := os.WriteFile(path, formatted, 0o644); err != nil {
-		return false, fmt.Errorf("write write_guard_test.go after app split: %w", err)
-	}
-	return true, nil
-}
-
-func appSplitImports(src []byte, fset *token.FileSet, file *ast.File) map[string]string {
-	imports := make(map[string]string)
-	for _, spec := range file.Imports {
-		name := appSplitImportName(spec)
-		start := fset.Position(spec.Pos()).Offset
-		end := fset.Position(spec.End()).Offset
-		imports[name] = string(src[start:end])
-	}
-	return imports
-}
-
-func appSplitImportName(spec *ast.ImportSpec) string {
-	if spec.Name != nil {
-		return spec.Name.Name
-	}
-	path := strings.Trim(spec.Path.Value, `"`)
-	base := filepath.Base(path)
-	return strings.ReplaceAll(base, "-", "_")
-}
-
-func appSplitFileForDecl(decl ast.Decl) string {
-	names := appSplitDeclNames(decl)
-	joined := strings.ToLower(strings.Join(names, " "))
-	switch {
-	case appSplitContains(joined, "writeapproval", "writeguard", "approval", "guarded", "guardpath", "preexecute", "protectedpath"):
-		return "write_guard.go"
-	case appSplitContains(joined, "implementation", "implement", "verification", "directpromptedit", "structuredexecution", "focused", "changedpaths", "finalanswercritic", "repair", "refactorstage"):
-		return "implementation.go"
-	case appSplitContains(joined, "taskmemory", "memory", "resume", "replan", "structuralrefactor"):
-		return "task_memory.go"
-	case appSplitContains(joined, "prompt", "route", "contract", "lane", "targetpacket", "classification", "ambig", "systemprompt", "profiles", "thoroughness"):
-		return "prompt_routing.go"
-	case appSplitContains(joined, "view", "render", "viewport", "style", "phasecard", "panel", "bodyview", "messages", "scroll"):
-		return "rendering.go"
-	case appSplitContains(joined, "explore", "review", "architecture", "analysis", "evidence", "hotspot", "candidate", "readiness", "deepening", "capability", "ledger", "issue"):
-		return "analysis_agents.go"
-	case appSplitContains(joined, "new", "init", "update", "runpromptonce", "ensureserverready", "sendpromptasync", "runpromptplan", "runmainagent", "serverstatus", "stream", "transcript", "reload"):
-		return "lifecycle.go"
-	case appSplitContains(joined, "model", "msg", "state", "trace", "journal", "phase", "executionpanel", "fallback"):
-		return "model_state.go"
-	default:
-		return "app.go"
-	}
-}
-
-func appSplitDeclNames(decl ast.Decl) []string {
-	names := make([]string, 0, 4)
-	switch d := decl.(type) {
-	case *ast.FuncDecl:
-		if d.Recv != nil && len(d.Recv.List) > 0 {
-			names = append(names, appSplitReceiverName(d.Recv.List[0].Type))
-		}
-		names = append(names, d.Name.Name)
-	case *ast.GenDecl:
-		for _, spec := range d.Specs {
-			switch s := spec.(type) {
-			case *ast.TypeSpec:
-				names = append(names, s.Name.Name)
-			case *ast.ValueSpec:
-				for _, name := range s.Names {
-					names = append(names, name.Name)
-				}
-			}
-		}
-	}
-	return names
-}
-
-func appSplitReceiverName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.StarExpr:
-		return appSplitReceiverName(t.X)
-	case *ast.Ident:
-		return t.Name
-	default:
-		return ""
-	}
-}
-
-func appSplitContains(text string, needles ...string) bool {
-	for _, needle := range needles {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func renderAppSplitFile(src []byte, fset *token.FileSet, imports map[string]string, decls []ast.Decl) ([]byte, error) {
-	usedImports := make(map[string]struct{})
-	for _, decl := range decls {
-		ast.Inspect(decl, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			id, ok := sel.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			if _, exists := imports[id.Name]; exists {
-				usedImports[id.Name] = struct{}{}
-			}
-			return true
-		})
-	}
-	var b bytes.Buffer
-	b.WriteString("package app\n\n")
-	if len(usedImports) > 0 {
-		names := make([]string, 0, len(usedImports))
-		for name := range usedImports {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		b.WriteString("import (\n")
-		for _, name := range names {
-			fmt.Fprintf(&b, "\t%s\n", imports[name])
-		}
-		b.WriteString(")\n\n")
-	}
-	for _, decl := range decls {
-		start := fset.Position(decl.Pos()).Offset
-		end := fset.Position(decl.End()).Offset
-		b.Write(bytes.TrimSpace(src[start:end]))
-		b.WriteString("\n\n")
-	}
-	return format.Source(b.Bytes())
 }
 
 type structuredExecutionPlan struct {
@@ -1840,6 +1615,24 @@ func (g *implementTargetGuard) blockWriteOutsideEditableTargets(req workspace.To
 		if !g.pathEditableAllowed(path) {
 			return block(path, "Read-only evidence and analogy paths may be inspected but not modified.")
 		}
+	case "apply_patch":
+		ops, err := workspace.ParsePatch(req.Content)
+		if err != nil {
+			return &workspace.ToolResult{
+				Tool:    tool,
+				Summary: "Implementation target packet blocked unparseable patch",
+				Error:   err.Error(),
+			}
+		}
+		for _, opPath := range workspace.PatchOpPaths(ops) {
+			path := normalizeGuardedPath(opPath)
+			if path == "" {
+				continue
+			}
+			if !g.pathEditableAllowed(path) {
+				return block(path, "Read-only evidence and analogy paths may be inspected but not modified.")
+			}
+		}
 	case "go_move_declarations":
 		source := normalizeGuardedPath(req.Path)
 		if source != "" && !g.pathPrimaryAllowed(source) {
@@ -1984,9 +1777,6 @@ func (m *Model) bootstrapImplementationEvidence(ctx context.Context, mgr *worksp
 	}
 	if hasUILocationHint(normalized) {
 		for _, path := range paths {
-			if normalizeGuardedPath(path) != "internal/app/app.go" {
-				continue
-			}
 			for _, pattern := range uiImplementationBootstrapPatterns(normalized) {
 				search := mgr.Execute(ctx, workspace.ToolRequest{
 					Tool:    "search_content",

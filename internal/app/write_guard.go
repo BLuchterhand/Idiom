@@ -323,7 +323,7 @@ func (g *mainWriteGuard) PreExecute(req workspace.ToolRequest) *workspace.ToolRe
 		return nil
 	}
 	switch req.Tool {
-	case "edit_file", "write_file", "append_file", "mkdir", "go_move_declarations":
+	case "edit_file", "write_file", "append_file", "mkdir", "go_move_declarations", "apply_patch":
 		return &workspace.ToolResult{
 			Tool:    req.Tool,
 			Summary: "Guarded write policy blocked main-lane mutation",
@@ -479,6 +479,49 @@ func (g *implementWriteGuard) PreExecute(req workspace.ToolRequest) *workspace.T
 				Tool:    "mkdir",
 				Summary: "Guarded write policy blocked directory creation",
 				Error:   "guarded writes only allow mkdir when the prompt explicitly asks to create a directory. Ask explicitly or switch to /writes auto.",
+			}
+		}
+		return nil
+	case "apply_patch":
+		if g.shellOnly {
+			return &workspace.ToolResult{
+				Tool:    "apply_patch",
+				Summary: "Guarded write policy blocked shell-only patch",
+				Error:   "guarded writes do not permit satisfying a shell-only mutation request with apply_patch. Relax the request so Qwen can use file tools safely, or switch to /writes auto.",
+			}
+		}
+		ops, err := workspace.ParsePatch(req.Content)
+		if err != nil {
+			return &workspace.ToolResult{
+				Tool:    "apply_patch",
+				Summary: "Guarded write policy blocked unparseable patch",
+				Error:   err.Error(),
+			}
+		}
+		for _, opPath := range workspace.PatchOpPaths(ops) {
+			if blocked := g.guardPathScope(req.Tool, normalizeGuardedPath(opPath)); blocked != nil {
+				return blocked
+			}
+		}
+		for _, op := range ops {
+			opPath := normalizeGuardedPath(op.Path)
+			switch op.Kind {
+			case workspace.PatchOpAdd:
+				if !g.explicitCreateRequested(opPath) {
+					return &workspace.ToolResult{
+						Tool:    "apply_patch",
+						Summary: "Guarded write policy blocked file creation in patch",
+						Error:   fmt.Sprintf("apply_patch Add File for %s requires the prompt to explicitly ask to create that file, or switch to /writes auto.", opPath),
+					}
+				}
+			case workspace.PatchOpUpdate:
+				if op.MoveTo == "" && !g.fileExists(opPath) {
+					return &workspace.ToolResult{
+						Tool:    "apply_patch",
+						Summary: "Guarded write policy blocked update of missing file",
+						Error:   fmt.Sprintf("apply_patch Update File for %s found no existing file. Use Add File or correct the path.", opPath),
+					}
+				}
 			}
 		}
 		return nil

@@ -194,12 +194,6 @@ func scoreLocateCandidate(prompt string, candidate locateCandidate) int {
 	region := classifyLocateRegion(candidate)
 	score := 0
 
-	if strings.Contains(candidate.Path, "internal/app/") {
-		score += 6
-	}
-	if strings.HasSuffix(candidate.Path, "app.go") {
-		score += 4
-	}
 	if strings.Contains(text, "qwen is working") {
 		score += 2
 	}
@@ -2454,7 +2448,7 @@ func renderBoundedOneFileArchitecturePlan(hotspot architectureHotspot) string {
 	} else {
 		b.WriteString("- Why safe: this is a git-clean candidate selected from deterministic hotspot scoring. Keep exported APIs and call sites unchanged.\n")
 	}
-	b.WriteString("- Exact intended change: inspect the local helper/control-flow cluster in ")
+	b.WriteString("- Candidate intended change: inspect the local helper/control-flow cluster in ")
 	b.WriteString(hotspot.Path)
 	b.WriteString(" and consolidate the smallest repeated normalization or branching logic into an unexported helper in the same file.\n")
 	b.WriteString("- Verification: run go test ./")
@@ -2491,15 +2485,9 @@ func renderTargetedArchitecturePlan(hotspot architectureHotspot, focused bool) s
 	b.WriteString("\n")
 	if focused {
 		b.WriteString("- Phase 1: stage 1 scope is to edit only this existing Go file; do not create files or move declarations.\n")
-		if exact := focusedSameFileRefactorInstruction(hotspot.Path); exact != "" {
-			b.WriteString("- Phase 2: ")
-			b.WriteString(exact)
-			b.WriteString("\n")
-		} else {
-			b.WriteString("- Phase 2: inspect the local helper/control-flow cluster in ")
-			b.WriteString(hotspot.Path)
-			b.WriteString(" and consolidate the smallest repeated normalization or branching logic into an unexported helper in the same file, keeping exported APIs and call sites unchanged.\n")
-		}
+		b.WriteString("- Phase 2: inspect the local helper/control-flow cluster in ")
+		b.WriteString(hotspot.Path)
+		b.WriteString(" and consolidate the smallest repeated normalization or branching logic into an unexported helper in the same file, keeping exported APIs and call sites unchanged.\n")
 		b.WriteString("- Verification: Phase 3 runs go test ./")
 		b.WriteString(packageTestPathForFile(hotspot.Path))
 		b.WriteString(", then go test ./... if behavior-affecting code changed.\n\n")
@@ -2507,15 +2495,6 @@ func renderTargetedArchitecturePlan(hotspot architectureHotspot, focused bool) s
 	}
 	b.WriteString("- Safe sequence: extract one responsibility at a time, keep existing callers stable, run focused tests after each move, then repeat only after the boundary is proven.\n\n")
 	return b.String()
-}
-
-func focusedSameFileRefactorInstruction(path string) string {
-	switch normalizeGuardedPath(path) {
-	case "internal/app/analysis_agents.go":
-		return "inside analysisSummaryTargets, extract the inline summary-token parsing into a new unexported helper named parseAnalysisSummaryTargetToken(field string) (string, int, bool), then replace the inline parsing block with that helper; keep behavior and call sites unchanged."
-	default:
-		return ""
-	}
 }
 
 func explicitlyRequestedArchitectureHotspot(hotspots []architectureHotspot) (architectureHotspot, bool) {

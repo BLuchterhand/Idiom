@@ -241,6 +241,9 @@ func (m *Manager) Instructions() string {
 			"- edit_file {\"path\":\"relative/path\",\"start_line\":299,\"end_line\":299,\"content\":\"replacement line(s)\"}\n"+
 			"- write_file {\"path\":\"relative/path\",\"content\":\"full file contents\"}\n"+
 			"- append_file {\"path\":\"relative/path\",\"content\":\"text to append\"}\n"+
+			"- apply_patch {\"content\":\"*** Begin Patch\\n*** Update File: relative/path\\n@@\\n context line\\n-old line\\n+new line\\n*** End Patch\"} (multi-file unified-diff envelope; supports Add File / Update File / Delete File and an optional `*** Move to: new/path` inside Update File)\n"+
+			"- git_status {\"workdir\":\".\"}\n"+
+			"- git_diff {\"workdir\":\".\",\"path\":\"optional/relative/path\"}\n"+
 			"- shell {\"command\":\"awk 'NR<=80 {print}' README.md\",\"workdir\":\".\"}\n%s%s\n"+
 			"Rules:\n"+
 			"- For complex multi-step work, use task_ledger to track pending, in_progress, completed, blocked, or cancelled items. Keep at most one item in_progress.\n"+
@@ -297,6 +300,8 @@ func (m *Manager) exploreInstructions() string {
 			"- search_content {\"pattern\":\"token refresh\",\"path\":\".\",\"glob\":\"*.go\"}\n"+
 			"- read_file {\"id\":\"f12\",\"start_line\":1,\"end_line\":160}\n"+
 			"- read_file {\"path\":\"README.md\",\"start_line\":1,\"end_line\":120} (allowed for an exact existing workspace file; handles are preferred)\n"+
+			"- git_status {\"workdir\":\".\"}\n"+
+			"- git_diff {\"workdir\":\".\",\"path\":\"optional/relative/path\"}\n"+
 			"- shell {\"command\":\"git diff --stat\",\"workdir\":\".\"}\n%s%s\n"+
 			"Explore mode rules:\n"+
 			"- Read-only only: do not use mkdir, edit_file, write_file, append_file, package installers, or any state-changing command.\n"+
@@ -522,8 +527,17 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
 			return ToolResult{Tool: "append_file", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before appending files"}
 		}
 		return m.writeFile(req, true)
+	case "apply_patch":
+		if mode == ModeExplore {
+			return ToolResult{Tool: "apply_patch", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before applying patches"}
+		}
+		return m.applyPatch(req)
 	case "shell":
 		return m.runShell(ctx, req)
+	case "git_status":
+		return m.gitStatus(ctx, req)
+	case "git_diff":
+		return m.gitDiff(ctx, req)
 	default:
 		return ToolResult{
 			Tool:    tool,
@@ -531,6 +545,52 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
 			Error:   fmt.Sprintf("unsupported tool %q", tool),
 		}
 	}
+}
+
+func (m *Manager) gitStatus(ctx context.Context, req ToolRequest) ToolResult {
+	workdir, err := m.resolveWorkdir(req.Workdir)
+	if err != nil {
+		return ToolResult{Tool: "git_status", Summary: "Failed to resolve workdir", Error: err.Error()}
+	}
+	output, execErr := m.runCommand(ctx, workdir, "git", "status", "--porcelain=v1", "--branch", "--untracked-files=normal")
+	result := ToolResult{
+		Tool:    "git_status",
+		Summary: fmt.Sprintf("Read git status in %s", m.displayPath(workdir)),
+		Output:  strings.TrimSpace(output),
+	}
+	if execErr != nil {
+		result.Error = execErr.Error()
+	}
+	return result
+}
+
+func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
+	workdir, err := m.resolveWorkdir(req.Workdir)
+	if err != nil {
+		return ToolResult{Tool: "git_diff", Summary: "Failed to resolve workdir", Error: err.Error()}
+	}
+	args := []string{"diff", "--no-color"}
+	if req.Path != "" {
+		// Validate the path resolves under the workspace before passing to git.
+		if _, err := m.resolvePath(req.Path, req.Workdir); err != nil {
+			return ToolResult{Tool: "git_diff", Summary: "Failed to resolve path", Error: err.Error()}
+		}
+		args = append(args, "--", req.Path)
+	}
+	output, execErr := m.runCommand(ctx, workdir, "git", args...)
+	scope := "working tree"
+	if req.Path != "" {
+		scope = req.Path
+	}
+	result := ToolResult{
+		Tool:    "git_diff",
+		Summary: fmt.Sprintf("Read git diff for %s in %s", scope, m.displayPath(workdir)),
+		Output:  strings.TrimSpace(output),
+	}
+	if execErr != nil {
+		result.Error = execErr.Error()
+	}
+	return result
 }
 
 func ParseToolRequest(text string) (ToolRequest, string, bool, error) {

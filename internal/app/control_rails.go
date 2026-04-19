@@ -133,6 +133,9 @@ func canonicalPromptTaskFamily(profile promptRouteProfile, plan promptExecutionP
 	case plan.lane == analysisLaneArchitecture:
 		return "architecture"
 	case plan.lane == analysisLaneExplore:
+		if profile.wantsArchitecture {
+			return "architecture"
+		}
 		return "investigation"
 	case plan.lane == analysisLaneMain:
 		return "direct_answer"
@@ -234,6 +237,9 @@ func controlRailAllowedTools(rails deterministicControlRailsSnapshot) []string {
 		"edit_file",
 		"write_file",
 		"append_file",
+		"apply_patch",
+		"git_status",
+		"git_diff",
 		"shell",
 	}
 	forbidden := make(map[string]struct{}, len(rails.ForbiddenTools))
@@ -254,7 +260,7 @@ func controlRailAllowedTools(rails deterministicControlRailsSnapshot) []string {
 		}
 		if _, blocked := forbidden["workspace_edit"]; blocked {
 			switch tool {
-			case "mkdir", "edit_file", "write_file", "append_file", "go_move_declarations":
+			case "mkdir", "edit_file", "write_file", "append_file", "apply_patch", "go_move_declarations":
 				continue
 			}
 		}
@@ -266,12 +272,12 @@ func controlRailAllowedTools(rails deterministicControlRailsSnapshot) []string {
 func controlRailForbiddenTools(family string, plan promptExecutionPlan) []string {
 	switch plan.lane {
 	case analysisLaneLocate, analysisLaneExplore, analysisLaneReview, analysisLaneArchitecture:
-		return []string{"edit_file", "write_file", "append_file", "mkdir", "mutating_shell"}
+		return []string{"edit_file", "write_file", "append_file", "mkdir", "apply_patch", "mutating_shell"}
 	case analysisLaneMain:
 		if family == "verification_only" {
-			return []string{"edit_file", "write_file", "append_file", "mkdir", "mutating_shell"}
+			return []string{"edit_file", "write_file", "append_file", "mkdir", "apply_patch", "mutating_shell"}
 		}
-		return []string{"edit_file", "write_file", "append_file", "mkdir", "shell"}
+		return []string{"edit_file", "write_file", "append_file", "mkdir", "apply_patch", "shell"}
 	case analysisLaneImplement:
 		return []string{"unbounded_write", "unapproved_protected_write"}
 	default:
@@ -501,7 +507,7 @@ func controlRailPermissionPolicy(rails deterministicControlRailsSnapshot) agent.
 	}
 	for _, forbidden := range rails.ForbiddenTools {
 		switch forbidden {
-		case "edit_file", "write_file", "append_file", "mkdir", "shell":
+		case "edit_file", "write_file", "append_file", "mkdir", "apply_patch", "shell":
 			deny(forbidden)
 		}
 	}

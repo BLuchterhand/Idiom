@@ -1305,9 +1305,16 @@ func TestPromptIntentVerifierPromptIsStrictForSmallClassifier(t *testing.T) {
 		"Return exactly one JSON object",
 		"Required JSON shape:",
 		"Allowed primary_intent values:",
+		"Classify by the requested deliverable and answer contract",
+		"Maintainability, structural optimization, refactor opportunity",
+		"Do not invent refs or include generic nouns like project files",
 		"Failure wording inside a fix request is context",
 		"Durable-plan approvals",
 		`Prompt: "check the latest log and fix it"`,
+		`Prompt: "Can you identify an opportunity for us to optimize any of our project files for future maintainability?"`,
+		`"recommended_lane":"architecture"`,
+		`Prompt: "look around this repo and explain what it contains"`,
+		`"recommended_lane":"explore"`,
 		`"recommended_lane":"implement"`,
 	} {
 		if !strings.Contains(system, want) {
@@ -1335,6 +1342,8 @@ func TestPromptIntentVerifierPromptIsStrictForSmallClassifier(t *testing.T) {
 		"Recent conversation excerpt:",
 		"Active task memory:",
 		"Host route snapshot:",
+		"File inspection is evidence gathering, not the intent.",
+		"Preserve host architecture routes",
 		"route_classifier_enabled",
 	} {
 		if !strings.Contains(task, want) {
@@ -1531,6 +1540,46 @@ func TestIntentVerifierPreservesHostArchitectureWhenClassifierUsesExploreIntent(
 	}
 }
 
+func TestIntentVerifierPreservesHostArchitectureForMaintainabilityOpportunityWhenVerifierOnlySaysExplore(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	prompt := "Can you identify an opportunity for us to optimize any of our project files for future maintainability?"
+	plan := classifyPromptExecutionPlan(prompt, mgr)
+	if plan.lane != analysisLaneArchitecture || plan.contract != answerContractArchitecture {
+		t.Fatalf("test setup expected host architecture route, got %#v", plan)
+	}
+	verifier := normalizePromptIntentVerifierResult(promptIntentVerifierResult{
+		PrimaryIntent:     "explore_codebase",
+		WantsEdits:        false,
+		WantsPlanOnly:     false,
+		NeedsVerification: false,
+		Risk:              "low",
+		Confidence:        "high",
+		RecommendedLane:   "explore",
+		TaskFamily:        "explore_codebase",
+		PermissionProfile: "read_only_workspace",
+		Reason:            "The user asks to identify optimization opportunities, which requires exploring the codebase.",
+	})
+	reconciled, changed, safetyOverride, notes := reconcilePromptPlanWithVerifier(prompt, plan, verifier)
+	if safetyOverride {
+		t.Fatalf("generic explore downgrade should not become a safety override, notes=%#v", notes)
+	}
+	if !changed {
+		t.Fatalf("expected reconciliation to update intent metadata, notes=%#v", notes)
+	}
+	if reconciled.lane != analysisLaneArchitecture || reconciled.contract != answerContractArchitecture {
+		t.Fatalf("host architecture route must be sticky for maintainability opportunity prompts, got %#v notes=%#v", reconciled, notes)
+	}
+	if reconciled.taskFamily != "architecture" || reconciled.permissionProfile != "read_only_workspace" {
+		t.Fatalf("expected architecture task metadata after preservation, got %#v notes=%#v", reconciled, notes)
+	}
+	if reconciled.intent.Intent != "plan_architecture" {
+		t.Fatalf("expected preserved route to normalize intent to plan_architecture, got %#v notes=%#v", reconciled.intent, notes)
+	}
+	if !strings.Contains(strings.ToLower(strings.Join(notes, "\n")), "preserved host architecture lane") {
+		t.Fatalf("expected preservation note, got %#v", notes)
+	}
+}
+
 func TestArchitectureControlRailsRejectBudgetFailureWithoutRecommendations(t *testing.T) {
 	mgr := workspace.NewManager(testWorkspaceConfig())
 	prompt := "can you recommend some parts of the codebase we can architecturally optimize for long-term maintainability"
@@ -1543,6 +1592,37 @@ func TestArchitectureControlRailsRejectBudgetFailureWithoutRecommendations(t *te
 	}
 	if !testContainsFold(enforcement.Violations, "architecture_recommendations_missing_after_budget_failure") {
 		t.Fatalf("expected architecture recommendation violation, got %#v", enforcement)
+	}
+}
+
+func TestExploreLaneUsesArchitectureRailsForMaintainabilityOpportunityPrompts(t *testing.T) {
+	prompt := "Can you identify an opportunity for us to optimize any of our project files for future maintainability?"
+	plan := promptExecutionPlan{
+		lane:     analysisLaneExplore,
+		reason:   promptRouteReasonExploreRequest,
+		contract: answerContractForLane(analysisLaneExplore),
+		intent: promptIntentDecision{
+			Intent:        "explore_codebase",
+			SelectedLane:  string(analysisLaneExplore),
+			Confidence:    "high",
+			Risk:          "low",
+			WantsEdits:    false,
+			WantsPlanOnly: false,
+		},
+	}
+	rails := buildDeterministicControlRails(prompt, finalizePromptExecutionPlan(prompt, buildPromptRouteProfile(prompt), plan))
+	if rails.TaskFamily != "architecture" {
+		t.Fatalf("architecture-shaped explore prompts should receive architecture rails, got %#v", rails)
+	}
+	answer := "Exploration did not complete cleanly.\n\nFinal blocker:\n- Failed to stat path: stat ./Dockerfile: no such file or directory"
+	enforcement := controlRailsEnforcementForAnswer(rails, answer, []string{"README.md", "go.mod"}, nil, false)
+	if enforcement.Passed {
+		t.Fatalf("expected architecture rails to reject blocker-only explore answer, got %#v", enforcement)
+	}
+	for _, want := range []string{"architecture_recommendations_missing_after_budget_failure", "architecture_structural_framing_missing", "architecture_recommendation_or_hotspot_missing"} {
+		if !testContainsFold(enforcement.Violations, want) {
+			t.Fatalf("expected violation %q, got %#v", want, enforcement.Violations)
+		}
 	}
 }
 
@@ -1620,24 +1700,28 @@ func TestIntentVerifierTargetRefsAreRetainedForFollowupPlanning(t *testing.T) {
 
 func TestIntentVerifierTargetRefsIgnoredForOpenEndedOpportunityDiscovery(t *testing.T) {
 	mgr := workspace.NewManager(testWorkspaceConfig())
-	prompt := "Explore this Go codebase and identify one bounded optimization/refactor opportunity that can be implemented by editing only one existing git-clean Go file. Avoid files already modified in git status. Prepare a concrete refactor plan only; do not edit files yet."
-	plan := classifyPromptExecutionPlan(prompt, mgr)
-	verifier := normalizePromptIntentVerifierResult(promptIntentVerifierResult{
-		PrimaryIntent:       "plan_architecture",
-		WantsPlanOnly:       true,
-		Risk:                "low",
-		Confidence:          "high",
-		RecommendedLane:     string(analysisLaneArchitecture),
-		RecommendedContract: string(answerContractArchitecture),
-		TaskFamily:          "architecture",
-		TargetRefs:          []string{"internal/app/implementation.go", "internal/agent/runner.go"},
-	})
-	reconciled, _, _, notes := reconcilePromptPlanWithVerifier(prompt, plan, verifier)
-	if len(reconciled.intent.TargetRefs) != 0 {
-		t.Fatalf("expected open-ended opportunity prompt to ignore verifier target refs, got %#v", reconciled.intent.TargetRefs)
-	}
-	if !testContainsFold(notes, "ignored verifier target refs for open-ended opportunity discovery") {
-		t.Fatalf("expected ignored-target note, got %#v", notes)
+	for _, prompt := range []string{
+		"Explore this Go codebase and identify one bounded optimization/refactor opportunity that can be implemented by editing only one existing git-clean Go file. Avoid files already modified in git status. Prepare a concrete refactor plan only; do not edit files yet.",
+		"Can you identify an opportunity for us to optimize any of our project files for future maintainability?",
+	} {
+		plan := classifyPromptExecutionPlan(prompt, mgr)
+		verifier := normalizePromptIntentVerifierResult(promptIntentVerifierResult{
+			PrimaryIntent:       "plan_architecture",
+			WantsPlanOnly:       true,
+			Risk:                "low",
+			Confidence:          "high",
+			RecommendedLane:     string(analysisLaneArchitecture),
+			RecommendedContract: string(answerContractArchitecture),
+			TaskFamily:          "architecture",
+			TargetRefs:          []string{"internal/app/implementation.go", "internal/agent/runner.go"},
+		})
+		reconciled, _, _, notes := reconcilePromptPlanWithVerifier(prompt, plan, verifier)
+		if len(reconciled.intent.TargetRefs) != 0 {
+			t.Fatalf("expected open-ended opportunity prompt to ignore verifier target refs, prompt=%q refs=%#v", prompt, reconciled.intent.TargetRefs)
+		}
+		if !testContainsFold(notes, "ignored verifier target refs for open-ended opportunity discovery") {
+			t.Fatalf("expected ignored-target note, prompt=%q notes=%#v", prompt, notes)
+		}
 	}
 }
 

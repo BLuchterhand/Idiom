@@ -118,7 +118,7 @@ func (s *ServerController) Restart(ctx context.Context) error {
 }
 
 func (s *ServerController) WaitUntilReady(ctx context.Context) error {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {

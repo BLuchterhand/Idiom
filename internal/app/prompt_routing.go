@@ -97,7 +97,9 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
+	m.emitJSONStart(prompt)
 	if err := m.ensureServerReady(ctx); err != nil {
+		m.emitJSONError("server_not_ready", err.Error())
 		return "", err
 	}
 	m.lastAssistantReasoningContent = ""
@@ -115,10 +117,12 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 	m.logMessage("thinking_config", m.samplingSummary())
 	reply, err := m.runPromptPlan(ctx, prompt, m.requestMessages(), m.chatOptions(), plan)
 	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
 		return "", err
 	}
 	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply, ReasoningContent: m.takeLastAssistantReasoningContent()})
 	m.logMessage("assistant", reply)
+	m.emitJSONFinal(reply)
 	return reply, nil
 }
 
@@ -542,6 +546,7 @@ func (m *Model) runPromptPlan(
 		return m.runImplementAgent(ctx, prompt, appendAnalysisSummary(history, "explore", summary), opts)
 	case analysisLaneImplement:
 		m.emitPhaseCard(analysisLaneImplement, "targeting", phaseStateActive, "Consuming the target packet and preparing a bounded edit.")
+		resumeContext = implementationResumeContextFromPromptPlan(m.workspace, prompt, history, plan, resumeContext)
 		return m.runImplementAgent(ctx, prompt, history, opts, resumeContext)
 	default:
 		reply, err := m.runMainAgent(ctx, prompt, history, opts, rails)
@@ -1093,6 +1098,9 @@ func buildPromptIntentVerifierSystemPrompt() string {
 		"Allowed recommended_contract values: direct_answer, locate_result, exploration_result, review_findings, architecture_assessment, implementation_result.",
 		"Allowed risk values: low, medium, high. Allowed confidence values: low, medium, high.",
 		"Routing rules:",
+		"- Classify by the requested deliverable and answer contract, not by the evidence-gathering method; needing to inspect or search files does not by itself make a request explore_codebase.",
+		"- Maintainability, structural optimization, refactor opportunity, package-boundary, modularity, or long-term architecture prompts should use primary_intent=plan_architecture, recommended_lane=architecture, and recommended_contract=architecture_assessment unless the user asks only for repo inventory or file location.",
+		"- Use explore_codebase for repo inventory, orientation, or factual codebase exploration where the requested deliverable is an exploration summary rather than an architecture recommendation or plan.",
 		"- Plan-only requests must set wants_plan_only=true, wants_edits=false, and use a read-only lane such as architecture, explore, review, locate, or main.",
 		"- Explicit edit/fix/update/implement requests must set wants_edits=true and recommended_lane=implement unless the user explicitly says not to edit.",
 		"- Failure wording inside a fix request is context, not a reason to downgrade away from implementation.",
@@ -1100,11 +1108,13 @@ func buildPromptIntentVerifierSystemPrompt() string {
 		"- Latest-log/debug inspection requests without an edit request should use primary_intent=debug_logs and a read-only lane.",
 		"- Durable-plan approvals such as do it, begin, proceed, go ahead, or commence must set approval_detected=true and recommended_lane=implement when active durable-plan memory is present.",
 		"- User boundaries such as don't push, don't deploy, don't commit, wait for review, or ask before writing must be copied into required_boundaries.",
-		"- Put mentioned file paths, symbols, packages, commands, or logs in target_refs when present.",
+		"- Put mentioned file paths, symbols, packages, commands, or logs in target_refs when present. Do not invent refs or include generic nouns like project files.",
 		"Examples:",
 		`Prompt: "check the latest log and explain why it failed" -> {"primary_intent":"debug_logs","secondary_intents":[],"wants_edits":false,"wants_plan_only":false,"needs_verification":false,"approval_detected":false,"risk":"low","confidence":"high","reason":"The user asks for failure inspection, not edits.","recommended_lane":"main","recommended_followup_lane":"","recommended_contract":"direct_answer","task_family":"debug_logs","permission_profile":"read_only_evidence","required_boundaries":[],"target_refs":["latest log"]}`,
 		`Prompt: "check the latest log and fix it" -> {"primary_intent":"implement","secondary_intents":["debug_logs"],"wants_edits":true,"wants_plan_only":false,"needs_verification":true,"approval_detected":false,"risk":"medium","confidence":"high","reason":"The user asks to inspect failure context and apply a fix.","recommended_lane":"implement","recommended_followup_lane":"","recommended_contract":"implementation_result","task_family":"implementation","permission_profile":"guarded_workspace_writes","required_boundaries":[],"target_refs":["latest log"]}`,
-		`Prompt: "prepare a refactor plan for internal/app/app.go" -> {"primary_intent":"plan_architecture","secondary_intents":[],"wants_edits":false,"wants_plan_only":true,"needs_verification":false,"approval_detected":false,"risk":"low","confidence":"high","reason":"The user asks for a plan artifact only.","recommended_lane":"architecture","recommended_followup_lane":"","recommended_contract":"architecture_assessment","task_family":"planning","permission_profile":"read_only_evidence","required_boundaries":[],"target_refs":["internal/app/app.go"]}`,
+		`Prompt: "prepare a refactor plan for src/server/router.go" -> {"primary_intent":"plan_architecture","secondary_intents":[],"wants_edits":false,"wants_plan_only":true,"needs_verification":false,"approval_detected":false,"risk":"low","confidence":"high","reason":"The user asks for a plan artifact only.","recommended_lane":"architecture","recommended_followup_lane":"","recommended_contract":"architecture_assessment","task_family":"planning","permission_profile":"read_only_evidence","required_boundaries":[],"target_refs":["src/server/router.go"]}`,
+		`Prompt: "Can you identify an opportunity for us to optimize any of our project files for future maintainability?" -> {"primary_intent":"plan_architecture","secondary_intents":[],"wants_edits":false,"wants_plan_only":false,"needs_verification":false,"approval_detected":false,"risk":"low","confidence":"high","reason":"The user asks for a maintainability recommendation, not a repo inventory.","recommended_lane":"architecture","recommended_followup_lane":"","recommended_contract":"architecture_assessment","task_family":"architecture","permission_profile":"read_only_evidence","required_boundaries":[],"target_refs":[]}`,
+		`Prompt: "look around this repo and explain what it contains" -> {"primary_intent":"explore_codebase","secondary_intents":[],"wants_edits":false,"wants_plan_only":false,"needs_verification":false,"approval_detected":false,"risk":"low","confidence":"high","reason":"The user asks for a general codebase orientation summary.","recommended_lane":"explore","recommended_followup_lane":"","recommended_contract":"exploration_result","task_family":"investigation","permission_profile":"read_only_evidence","required_boundaries":[],"target_refs":[]}`,
 	}, "\n")
 }
 
@@ -1123,6 +1133,9 @@ func buildPromptIntentVerifierTaskPrompt(prompt string, history []llama.ChatMess
 		"Verify the prompt-routing decision below.",
 		"Return exactly one JSON object with these keys: primary_intent, secondary_intents, wants_edits, wants_plan_only, needs_verification, approval_detected, risk, confidence, reason, recommended_lane, recommended_followup_lane, recommended_contract, task_family, permission_profile, required_boundaries, target_refs.",
 		"If the host route is safe and semantically correct, return the same lane/contract with high confidence. If the user request is ambiguous, classify conservatively and preserve user-stated boundaries.",
+		"Verifier focus:",
+		"- Decide the lane from the user's requested deliverable. File inspection is evidence gathering, not the intent.",
+		"- Preserve host architecture routes for maintainability, refactor, or optimization-opportunity prompts unless the host route is unsafe.",
 		"Recent conversation excerpt:",
 		truncateText(renderIntentVerifierHistory(history), 1600),
 		"Active task memory:",
@@ -1391,7 +1404,21 @@ func shouldPreserveHostArchitectureLane(plan promptExecutionPlan, verifier promp
 	if recommended == analysisLaneArchitecture || recommended == analysisLaneImplement {
 		return false
 	}
+	if recommended == analysisLaneExplore && !verifier.WantsEdits && verifierExploreOnlyIntent(verifier) {
+		return true
+	}
 	return verifierIndicatesArchitecture(verifier)
+}
+
+func verifierExploreOnlyIntent(verifier promptIntentVerifierResult) bool {
+	switch normalizeIntentToken(verifier.PrimaryIntent) {
+	case "explore_codebase", "explore", "investigate", "investigation":
+		return true
+	}
+	if normalizeIntentToken(verifier.TaskFamily) == "explore_codebase" || normalizeIntentToken(verifier.TaskFamily) == "investigation" {
+		return true
+	}
+	return false
 }
 
 func verifierIndicatesArchitecture(verifier promptIntentVerifierResult) bool {
@@ -1941,8 +1968,13 @@ func shouldIgnoreVerifierTargetRefsForPrompt(prompt string, targetRefs []string)
 		return false
 	}
 	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	return containsAny(normalized, "identify one bounded optimization", "identify one bounded", "optimization/refactor opportunity", "optimization opportunity", "optimization opportunities", "refactor opportunity", "refactor opportunities") &&
-		containsAny(normalized, "explore", "discover", "identify")
+	if containsAny(normalized, "identify one bounded optimization", "identify one bounded", "optimization/refactor opportunity", "optimization opportunity", "optimization opportunities", "refactor opportunity", "refactor opportunities") &&
+		containsAny(normalized, "explore", "discover", "identify") {
+		return true
+	}
+	return containsAny(normalized, "opportunity", "opportunities", "recommend", "suggest") &&
+		containsAny(normalized, "optimize", "optimization", "maintainability", "refactor", "future") &&
+		containsAny(normalized, "any of", "any project", "project files", "codebase", "repo", "repository", "harness", "can you identify", "identify")
 }
 
 func (m *Model) contextualPromptExecutionPlan(prompt string, base promptExecutionPlan) (promptExecutionPlan, bool) {

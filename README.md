@@ -32,6 +32,21 @@ If you want the server without the TUI:
 ./scripts/run-server.sh
 ```
 
+Headless one-shot prompt with structured JSONL events on stdout:
+
+```bash
+./qwen-bubbles --prompt "summarize internal/agent/runner.go" --json
+```
+
+List or resume prior sessions (sessions are the JSONL files in `chat.debug_log_dir`):
+
+```bash
+./qwen-bubbles --list-sessions
+./qwen-bubbles --prompt "what did we conclude?" --resume 20260418-055543.504
+```
+
+`--resume` only replays the prior conversation's user/assistant messages into the new run's history. Per-workspace plan/workflow/task-memory state still auto-resumes from its own persisted store on Model construction.
+
 Or use `make`:
 
 ```bash
@@ -278,6 +293,8 @@ The harness now gives Qwen a tool loop for workspace operations. When needed, th
 - create directories with `mkdir`
 - make targeted in-place edits with `edit_file`
 - overwrite or append files with `write_file` and `append_file`
+- apply multi-file unified-diff patches with `apply_patch` (Codex-style `*** Begin Patch / *** Update File / @@ / *** End Patch` envelope; supports `*** Add File`, `*** Update File` with optional `*** Move to:`, and `*** Delete File`)
+- inspect git state with `git_status` and `git_diff` (read-only; `git_diff` accepts an optional `path`)
 - run shell commands with `shell`
 
 Shell access is intentionally powerful: it runs with the same OS permissions as the app process. The configured workspace is the default cwd, not a hard sandbox.

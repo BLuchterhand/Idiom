@@ -85,11 +85,20 @@ func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
 		"```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
 		"Blocked by the read guard.",
 	}
+	type requestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+	}
+	var payloads []requestPayload
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
+		var payload requestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
 		reply := replies[requests]
 		requests++
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -101,6 +110,7 @@ func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
 	defer server.Close()
 
 	var states []runnerNextActionState
+	var feedback []runnerFailureFeedbackPacket
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -119,14 +129,22 @@ func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
 			}
 		},
 		OnEvent: func(event RunEvent) {
-			if event.Role != "next_action_state" {
+			switch event.Role {
+			case "next_action_state":
+				var state runnerNextActionState
+				if err := json.Unmarshal([]byte(event.Content), &state); err != nil {
+					t.Fatalf("decode next action state %q: %v", event.Content, err)
+				}
+				states = append(states, state)
+			case "failure_feedback":
+				var packet runnerFailureFeedbackPacket
+				if err := json.Unmarshal([]byte(event.Content), &packet); err != nil {
+					t.Fatalf("decode failure feedback %q: %v", event.Content, err)
+				}
+				feedback = append(feedback, packet)
+			default:
 				return
 			}
-			var state runnerNextActionState
-			if err := json.Unmarshal([]byte(event.Content), &state); err != nil {
-				t.Fatalf("decode next action state %q: %v", event.Content, err)
-			}
-			states = append(states, state)
 		},
 	}
 	answer, err := runner.Run(
@@ -152,6 +170,27 @@ func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(state.NextValidActions, "\n"), "edit_file on the approved target") {
 		t.Fatalf("expected edit guidance, got %#v", state.NextValidActions)
+	}
+	if len(feedback) != 1 {
+		t.Fatalf("expected one failure feedback packet, got %#v", feedback)
+	}
+	if !containsRunnerString(feedback[0].DoNotRepeat, "duplicate_read_file_on_bootstrapped_target") {
+		t.Fatalf("expected duplicate read in do-not-repeat actions, got %#v", feedback[0])
+	}
+	if len(payloads) < 2 {
+		t.Fatalf("expected second model request after failure feedback, got %d", len(payloads))
+	}
+	var sawFeedback bool
+	for _, message := range payloads[1].Messages {
+		if strings.Contains(message.Content, "[failure feedback packet]") &&
+			strings.Contains(message.Content, "duplicate_read_file_on_bootstrapped_target") &&
+			strings.Contains(message.Content, "edit_file on the approved target") {
+			sawFeedback = true
+			break
+		}
+	}
+	if !sawFeedback {
+		t.Fatalf("expected second model request to include failure feedback packet, got %#v", payloads[1].Messages)
 	}
 }
 
@@ -363,65 +402,13 @@ func TestRunnerAllowsChangedFileReadAfterRejectingUnrelatedPostEditRead(t *testi
 	}
 }
 
-func TestRunnerRejectsExactPlanEditOutsideApprovedWindow(t *testing.T) {
-	root := t.TempDir()
-	if err := writeTestFile(root, "internal/app/analysis_agents.go", strings.Repeat("line\n", 220)); err != nil {
-		t.Fatalf("write seed file: %v", err)
-	}
-
-	replies := []string{
-		"```tool\n{\"tool\":\"edit_file\",\"path\":\"internal/app/analysis_agents.go\",\"start_line\":184,\"end_line\":184,\"content\":\"bad\\n\"}\n```",
-		"Blocked by exact scope.",
-	}
-	var requests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests >= len(replies) {
-			t.Fatalf("unexpected extra chat request")
+func containsRunnerString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
 		}
-		reply := replies[requests]
-		requests++
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	var scopeRejected bool
-	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root:         root,
-			CWD:          root,
-			EnableWrites: true,
-		}),
-		Policy: RunPolicy{MaxToolSteps: 2, MaxNoProgressTurns: 2},
 	}
-	answer, err := runner.Run(
-		context.Background(),
-		[]llama.ChatMessage{
-			{Role: "system", Content: "Approved plan: edit internal/app/analysis_agents.go inside analysisSummaryTargets and parseAnalysisSummaryTargetToken only."},
-			{Role: "user", Content: "Please start"},
-		},
-		llama.ChatOptions{},
-		nil,
-		nil,
-		func(event ToolResultEvent) {
-			if event.Result.Tool == "edit_file" && strings.Contains(event.Result.Summary, "Exact-plan edit scope rejected") {
-				scopeRejected = true
-			}
-		},
-	)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if answer != "Blocked by exact scope." {
-		t.Fatalf("unexpected answer %q", answer)
-	}
-	if !scopeRejected {
-		t.Fatal("expected out-of-window exact-plan edit to be rejected")
-	}
+	return false
 }
 
 func TestRunnerPreservesReasoningContentBetweenToolTurns(t *testing.T) {
@@ -930,6 +917,21 @@ func coreValue() int {
 	}
 }
 
+func TestDeclarationMoveConstraintUsesCurrentImplementationTurnOnly(t *testing.T) {
+	if declarationMovesForbiddenByMessages([]llama.ChatMessage{
+		{Role: "assistant", Content: "Earlier plan said: do not create files or move declarations."},
+		{Role: "user", Content: "Implement phase 1 by moving declarations into the new file."},
+	}) {
+		t.Fatal("stale no-move wording from old history should not block the current implementation turn")
+	}
+	if !declarationMovesForbiddenByMessages([]llama.ChatMessage{
+		{Role: "assistant", Content: "Earlier plan allowed moves."},
+		{Role: "user", Content: "Edit only source.go. Do not create files or move declarations."},
+	}) {
+		t.Fatal("current user turn should still be able to forbid declaration moves")
+	}
+}
+
 func TestRunnerExecutesReadOnlyChildTask(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "route evidence\n"); err != nil {
@@ -1191,7 +1193,7 @@ func TestRunnerRepeatedBroadInspectionStillHitsExploreGuard(t *testing.T) {
 	}))
 	defer server.Close()
 
-	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: "."})
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	if err := mgr.SetMode(workspace.ModeExplore); err != nil {
 		t.Fatalf("set explore mode: %v", err)
 	}
@@ -1232,6 +1234,147 @@ func TestRunnerRepeatedBroadInspectionStillHitsExploreGuard(t *testing.T) {
 	}
 	if replayed {
 		t.Fatal("repeated broad inspection must not bypass explore guard through replay")
+	}
+}
+
+func TestRunnerStopsExploreAfterRepeatedMissingPathProbes(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"list_files\",\"path\":\"pkg\",\"recursive\":false,\"max_depth\":1}\n```",
+		"```tool\n{\"tool\":\"list_files\",\"path\":\".github\",\"recursive\":false,\"max_depth\":1}\n```",
+		"Use README.md and the bootstrapped evidence; no more path probes are needed.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	if err := mgr.SetMode(workspace.ModeExplore); err != nil {
+		t.Fatalf("set explore mode: %v", err)
+	}
+	var ledger runnerBudgetLedger
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy: RunPolicy{
+			MaxToolSteps:       8,
+			MaxNoProgressTurns: 8,
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role != "budget_ledger" {
+				return
+			}
+			if err := json.Unmarshal([]byte(event.Content), &ledger); err != nil {
+				t.Fatalf("decode budget ledger %q: %v", event.Content, err)
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "explore the repo from bootstrap evidence"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Use README.md and the bootstrapped evidence; no more path probes are needed." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if requests != 3 {
+		t.Fatalf("expected forced completion after two missing path probes, got %d requests", requests)
+	}
+	if ledger.StopReason != "missing_path_probe_budget_exhausted" || !ledger.BudgetExhausted {
+		t.Fatalf("expected missing-path budget ledger, got %#v", ledger)
+	}
+}
+
+func TestRunnerAllowsMissingPathProbeAfterProgress(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"list_files\",\"path\":\"pkg\",\"recursive\":false,\"max_depth\":1}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":20}\n```",
+		"```tool\n{\"tool\":\"list_files\",\"path\":\".github\",\"recursive\":false,\"max_depth\":1}\n```",
+		"Completed without forced missing-path stop.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	if err := mgr.SetMode(workspace.ModeExplore); err != nil {
+		t.Fatalf("set explore mode: %v", err)
+	}
+	var ledger runnerBudgetLedger
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy: RunPolicy{
+			MaxToolSteps:       8,
+			MaxNoProgressTurns: 8,
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role != "budget_ledger" {
+				return
+			}
+			if err := json.Unmarshal([]byte(event.Content), &ledger); err != nil {
+				t.Fatalf("decode budget ledger %q: %v", event.Content, err)
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "explore the repo from bootstrap evidence"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Completed without forced missing-path stop." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if requests != 4 {
+		t.Fatalf("expected all scripted model requests, got %d", requests)
+	}
+	if ledger.StopReason != "model_final" || ledger.BudgetExhausted {
+		t.Fatalf("expected ordinary model final after non-consecutive missing path probes, got %#v", ledger)
 	}
 }
 

@@ -54,6 +54,7 @@ type Model struct {
 	workingFrame                  int
 	debugLogger                   *transcript.DebugLogger
 	debugLogPath                  string
+	eventStream                   *jsonEventStream
 	exploreCache                  *exploreSessionCache
 	pendingWrite                  *writeApprovalProposal
 	lastJournal                   *executionJournal
@@ -1358,6 +1359,7 @@ func (m *Model) contextSourceNames() []string {
 }
 
 func (m *Model) logMessage(role, content string) {
+	m.emitJSONMessage(role, content)
 	if m.debugLogger == nil {
 		return
 	}
@@ -1376,6 +1378,7 @@ func (m *Model) takeLastAssistantReasoningContent() string {
 }
 
 func (m *Model) logToolRequest(event agent.ToolRequestEvent) {
+	m.emitJSONToolRequest(event)
 	if m.debugLogger == nil {
 		return
 	}
@@ -1392,6 +1395,7 @@ func (m *Model) logToolRequest(event agent.ToolRequestEvent) {
 }
 
 func (m *Model) logToolResult(event agent.ToolResultEvent) {
+	m.emitJSONToolResult(event)
 	if m.debugLogger == nil {
 		return
 	}
@@ -1399,6 +1403,7 @@ func (m *Model) logToolResult(event agent.ToolResultEvent) {
 }
 
 func (m *Model) logError(kind, message string) {
+	m.emitJSONError(kind, message)
 	if m.debugLogger == nil {
 		return
 	}

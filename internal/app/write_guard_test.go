@@ -2067,7 +2067,7 @@ func TestBoundedOneFileArchitectureFallbackIncludesConcretePlan(t *testing.T) {
 		"",
 		ledger,
 	)
-	for _, want := range []string{"Focused refactor plan:", "Target: internal/app/clean.go", "edit only this existing Go file", "Exact intended change:", "Verification: run go test ./internal/app"} {
+	for _, want := range []string{"Focused refactor plan:", "Target: internal/app/clean.go", "edit only this existing Go file", "Candidate intended change:", "Verification: run go test ./internal/app"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("expected bounded plan to include %q, got:\n%s", want, summary)
 		}
@@ -2134,7 +2134,7 @@ func TestArchitectureFallbackSummaryTreatsWorkPlanAsFocusedPlan(t *testing.T) {
 	}
 }
 
-func TestFocusedArchitecturePlanNamesConcreteAnalysisAgentsRefactor(t *testing.T) {
+func TestFocusedArchitecturePlanUsesGenericSameFileGuidance(t *testing.T) {
 	hotspot := architectureHotspot{
 		Path:             "internal/app/analysis_agents.go",
 		Responsibilities: []string{"routing", "workspace", "agent", "state"},
@@ -2142,50 +2142,18 @@ func TestFocusedArchitecturePlanNamesConcreteAnalysisAgentsRefactor(t *testing.T
 	got := renderTargetedArchitecturePlan(hotspot, true)
 	for _, want := range []string{
 		"do not create files or move declarations",
-		"analysisSummaryTargets",
-		"parseAnalysisSummaryTargetToken",
+		"inspect the local helper/control-flow cluster",
+		"consolidate the smallest repeated normalization or branching logic",
 		"internal/app/analysis_agents.go",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected focused plan to include %q, got:\n%s", want, got)
 		}
 	}
-}
-
-func TestExactAnalysisSummaryTargetRefactorAlreadySatisfied(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "internal", "app")
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	content := `package app
-
-func analysisSummaryTargets() {
-	for _, field := range fields {
-		if path, line, ok := parseAnalysisSummaryTargetToken(field); ok {
-			add(path, line)
+	for _, notWant := range []string{"analysisSummaryTargets", "parseAnalysisSummaryTargetToken"} {
+		if strings.Contains(got, notWant) {
+			t.Fatalf("focused plan should not include hard-coded refactor token %q, got:\n%s", notWant, got)
 		}
-	}
-}
-
-func parseAnalysisSummaryTargetToken(field string) (string, int, bool) {
-	return "", 0, false
-}
-`
-	if err := os.WriteFile(filepath.Join(path, "analysis_agents.go"), []byte(content), 0o644); err != nil {
-		t.Fatalf("write analysis_agents.go: %v", err)
-	}
-
-	packet := implementationTargetPacket{
-		PrimaryPaths:  []string{"internal/app/analysis_agents.go"},
-		StrategyHints: []string{"inside analysisSummaryTargets, extract parseAnalysisSummaryTargetToken"},
-	}
-	history := []llama.ChatMessage{{Role: "system", Content: "Use parseAnalysisSummaryTargetToken from analysisSummaryTargets."}}
-	if !exactAnalysisSummaryTargetRefactorRequested("Please start", history, packet) {
-		t.Fatal("expected exact refactor request to be detected")
-	}
-	if !analysisSummaryTargetRefactorAlreadySatisfied(root) {
-		t.Fatal("expected satisfied helper refactor to be detected")
 	}
 }
 
@@ -2774,10 +2742,10 @@ func TestImplementationTargetPathsIncludesLocateSummaryPath(t *testing.T) {
 	}
 }
 
-func TestImplementationTargetPathsIncludesAppForUIEditPrompt(t *testing.T) {
+func TestImplementationTargetPathsDoesNotHardcodeAppForUIEditPrompt(t *testing.T) {
 	paths := implementationTargetPaths("Can we add a small bit of padding underneath the banner?", nil)
-	if !containsString(paths, "internal/app/app.go") {
-		t.Fatalf("expected UI edit prompt to seed internal/app/app.go, got %#v", paths)
+	if containsString(paths, "internal/app/app.go") {
+		t.Fatalf("UI edit prompt should not hard-code internal/app/app.go without evidence, got %#v", paths)
 	}
 }
 
@@ -2828,6 +2796,62 @@ func TestBuildImplementationTargetPacketCapturesSymbolHints(t *testing.T) {
 	}
 	if !containsString(packet.SymbolHints, "runImplementAgentWithGrant") {
 		t.Fatalf("expected function symbol hint, got %#v", packet.SymbolHints)
+	}
+}
+
+func TestBuildImplementationTargetPacketDoesNotTreatGoAheadAsGoSymbol(t *testing.T) {
+	packet := buildImplementationTargetPacket("Go ahead and do phase 1", nil)
+	if containsString(packet.SymbolHints, "Go") {
+		t.Fatalf("go-ahead approval should not create a Go symbol hint, got %#v", packet.SymbolHints)
+	}
+	packet = enrichImplementationTargetPacket(workspace.NewManager(testWorkspaceConfig()), packet)
+	if containsString(packet.PrimaryPaths, "internal/semantic/go_index.go") {
+		t.Fatalf("go-ahead approval should not target semantic Go index, got %#v with symbols %#v", packet.PrimaryPaths, packet.Symbols)
+	}
+}
+
+func TestImplementationResumeContextUsesVerifierTargetsAndRecentPhasePlan(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	history := []llama.ChatMessage{{
+		Role: "assistant",
+		Content: strings.Join([]string{
+			"**Proposed Refactor Plan for `implementation.go`:**",
+			"**Phase 1: Extract Plan Creation Logic**",
+			"- **Target:** `createImplementationPlan`, `createImplementationPlanFromExisting`, `validateImplementationPlan`",
+			"- **New File:** `internal/app/implementation_plan.go`",
+			"**Phase 2: Extract Execution Logic**",
+			"- **New File:** `internal/app/implementation_execute.go`",
+		}, "\n"),
+	}}
+	plan := promptExecutionPlan{
+		intent: promptIntentDecision{
+			TargetRefs: []string{"implementation.go", "createImplementationPlan", "createImplementationPlanFromExisting"},
+		},
+	}
+	resume := implementationResumeContextFromPromptPlan(mgr, "Go ahead and do phase 1", history, plan, taskResumeContext{})
+	if !resume.Active {
+		t.Fatal("expected implementation approval context to become active")
+	}
+	if got := resume.ApprovedEditTargets; len(got) != 1 || got[0] != "internal/app/implementation.go" {
+		t.Fatalf("expected verifier basename to resolve to implementation.go, got %#v", got)
+	}
+	if got := resume.AllowedDestinations; len(got) != 1 || got[0] != "internal/app/implementation_plan.go" {
+		t.Fatalf("expected only phase-1 destination to be approved, got %#v", got)
+	}
+	if containsString(resume.AllowedDestinations, "internal/app/implementation_execute.go") {
+		t.Fatalf("phase-2 destination should not be approved for phase-1 prompt, got %#v", resume.AllowedDestinations)
+	}
+
+	packet := applyTaskResumeContextToImplementationTargetPacket(
+		buildImplementationTargetPacket("Go ahead and do phase 1", history),
+		resume,
+	)
+	packet = enrichImplementationTargetPacket(mgr, packet)
+	if got := packet.PrimaryPaths; len(got) != 1 || got[0] != "internal/app/implementation.go" {
+		t.Fatalf("expected target packet to focus on implementation.go, got %#v", got)
+	}
+	if !containsString(packet.AllowedDestinations, "internal/app/implementation_plan.go") {
+		t.Fatalf("expected target packet to carry plan-approved destination, got %#v", packet.AllowedDestinations)
 	}
 }
 
