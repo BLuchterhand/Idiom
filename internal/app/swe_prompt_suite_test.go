@@ -153,6 +153,14 @@ func representativeSWEPromptSuite() []representativeSWEPromptCase {
 			thoroughness: workspace.ThoroughnessMedium,
 		},
 		{
+			name:         "optimization opportunity discovery shorthand",
+			prompt:       "Discovery optimization opportunities.",
+			lane:         analysisLaneArchitecture,
+			reason:       promptRouteReasonArchitectureRequest,
+			contract:     answerContractArchitecture,
+			thoroughness: workspace.ThoroughnessMedium,
+		},
+		{
 			name:         "language capability architecture",
 			prompt:       "Which languages does this harness support, and how extensible is that architecture?",
 			lane:         analysisLaneArchitecture,
@@ -228,6 +236,13 @@ func representativeSWEPromptSuite() []representativeSWEPromptCase {
 			lane:     analysisLaneImplement,
 			reason:   promptRouteReasonDirectImplementation,
 			contract: answerContractImplementation,
+		},
+		{
+			name:     "plan a refactor read-only",
+			prompt:   "Plan a refactor for internal/app/analysis_agents.go.",
+			lane:     analysisLaneArchitecture,
+			reason:   promptRouteReasonArchitectureRequest,
+			contract: answerContractArchitecture,
 		},
 		{
 			name:     "prompt behavior edit",
@@ -543,6 +558,352 @@ func TestRefactorPlanOnlyPromptDoesNotRouteToImplementation(t *testing.T) {
 	}
 	if plan.intent.Confidence == "" || plan.intent.Risk == "" {
 		t.Fatalf("expected intent confidence and risk snapshot, got %#v", plan.intent)
+	}
+}
+
+func TestPlanARefactorPromptDoesNotRouteToImplementation(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	prompts := []string{
+		"Plan a refactor for internal/app/analysis_agents.go.",
+		"Please plan the refactor for internal/app/analysis_agents.go.",
+		"Plan a refactoring for internal/app/analysis_agents.go.",
+	}
+	for _, prompt := range prompts {
+		plan := classifyPromptExecutionPlan(prompt, mgr)
+		if plan.lane == analysisLaneImplement || plan.followupLane == analysisLaneImplement {
+			t.Fatalf("plan-a-refactor prompt should remain read-only, prompt=%q plan=%#v", prompt, plan)
+		}
+		if plan.lane != analysisLaneArchitecture || plan.contract != answerContractArchitecture {
+			t.Fatalf("plan-a-refactor prompt should route to architecture, prompt=%q plan=%#v", prompt, plan)
+		}
+		if !plan.intent.WantsPlanOnly || !testContainsFold(plan.intent.Vetoes, "plan_only_blocks_edits") {
+			t.Fatalf("expected plan-only veto, prompt=%q intent=%#v", prompt, plan.intent)
+		}
+	}
+}
+
+func TestOptimizationOpportunityDiscoveryRoutesToArchitecture(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	prompts := []string{
+		"Discovery optimization opportunities.",
+		"Discover optimization opportunities.",
+		"Identify optimization opportunities in the harness.",
+		"Explore this Go codebase and identify one bounded optimization/refactor opportunity that can be implemented by editing only one existing git-clean Go file. Avoid files already modified in git status. Prepare a concrete refactor plan only; do not edit files yet.",
+	}
+	for _, prompt := range prompts {
+		plan := classifyPromptExecutionPlan(prompt, mgr)
+		if plan.lane != analysisLaneArchitecture {
+			t.Fatalf("optimization-opportunity discovery should route architecture, prompt=%q plan=%#v", prompt, plan)
+		}
+		if plan.followupLane != "" {
+			t.Fatalf("optimization-opportunity discovery should not auto-implement, prompt=%q plan=%#v", prompt, plan)
+		}
+	}
+}
+
+func TestThreeTurnOpportunityPlanPerformRefactorWorkflowRoutesStably(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	discovery := classifyPromptExecutionPlan("Discovery optimization opportunities.", mgr)
+	if discovery.lane != analysisLaneArchitecture || discovery.followupLane != "" {
+		t.Fatalf("discovery should be read-only architecture, got %#v", discovery)
+	}
+	planning := classifyPromptExecutionPlan("Plan a refactor for internal/app/analysis_agents.go.", mgr)
+	if planning.lane != analysisLaneArchitecture || planning.followupLane != "" || !planning.intent.WantsPlanOnly {
+		t.Fatalf("planning turn should be durable-plan architecture, got %#v", planning)
+	}
+	memory := buildAnalysisTaskMemory(
+		"Plan a refactor for internal/app/analysis_agents.go.",
+		analysisLaneArchitecture,
+		"Focused refactor plan:\n- Target: internal/app/analysis_agents.go\n- Evidence: internal/app/implementation.go\n\nVerification:\n- go test ./internal/app",
+		[]string{"internal/app/analysis_agents.go", "internal/app/implementation.go"},
+		"run go test ./internal/app",
+	)
+	memory = decorateDurablePlanArtifactMemory(memory, memory.Prompt, analysisLaneArchitecture, memory.Summary, []string{"internal/app/analysis_agents.go", "internal/app/implementation.go"}, "run go test ./internal/app")
+	if !shouldResumeTaskMemoryPrompt("Perform the refactor.", memory) {
+		t.Fatal("perform-the-refactor should approve and resume the durable plan")
+	}
+	if shouldResumeTaskMemoryPrompt("Do not perform the refactor yet.", memory) {
+		t.Fatal("negative perform-the-refactor phrasing must not approve the durable plan")
+	}
+	if got := laneForTaskMemoryWithPrompt(memory, "Perform the refactor."); got != analysisLaneImplement {
+		t.Fatalf("perform-the-refactor should switch durable plan to implementation, got %q", got)
+	}
+	resumePrompt := buildTaskMemoryResumePrompt(memory, "Perform the refactor.")
+	if !strings.Contains(resumePrompt, "Plan approval: explicit approval detected") {
+		t.Fatalf("expected explicit build handoff in resume prompt, got:\n%s", resumePrompt)
+	}
+}
+
+func TestTypedWorkflowStateTracksDiscoveryPlanApproval(t *testing.T) {
+	model := &Model{workspace: workspace.NewManager(testWorkspaceConfig())}
+	model.rememberAnalysisTaskMemory(
+		"Discovery optimization opportunities.",
+		analysisLaneArchitecture,
+		"Architecture hotspot board:\n- internal/app/analysis_agents.go: split orchestration/state handling from helper and rendering concerns.",
+		[]string{"internal/app/analysis_agents.go"},
+		"prepare a refactor plan for internal/app/analysis_agents.go",
+	)
+	state := model.currentWorkflowState()
+	if state == nil || state.Kind != agentWorkflowKindOptimizationRefactor || state.Phase != agentWorkflowPhaseDiscovered {
+		t.Fatalf("expected discovered optimization workflow state, got %#v", state)
+	}
+
+	plan := model.classifyPromptExecutionPlan("Plan a refactor for internal/app/analysis_agents.go.")
+	if plan.lane != analysisLaneArchitecture || plan.followupLane != "" {
+		t.Fatalf("workflow planning follow-up should remain read-only architecture, got %#v", plan)
+	}
+	if plan.workflowKind != agentWorkflowKindOptimizationRefactor || plan.workflowPhase != agentWorkflowPhasePlanning {
+		t.Fatalf("expected route plan to expose workflow planning state, got %#v", plan)
+	}
+
+	model.rememberAnalysisTaskMemory(
+		"Plan a refactor for internal/app/analysis_agents.go.",
+		analysisLaneArchitecture,
+		"Focused refactor plan:\n- Target: internal/app/analysis_agents.go\n- Evidence: internal/app/implementation.go\n\nVerification:\n- go test ./internal/app",
+		[]string{"internal/app/analysis_agents.go", "internal/app/implementation.go"},
+		"run go test ./internal/app",
+	)
+	state = model.currentWorkflowState()
+	if state == nil || state.Phase != agentWorkflowPhaseAwaitingApproval {
+		t.Fatalf("expected durable workflow plan awaiting approval, got %#v", state)
+	}
+	if !testContainsFold(state.EditableTargets, "internal/app/analysis_agents.go") {
+		t.Fatalf("expected editable target from durable plan, got %#v", state.EditableTargets)
+	}
+	if !testContainsFold(state.ReadOnlyEvidence, "internal/app/implementation.go") {
+		t.Fatalf("expected read-only evidence from durable plan, got %#v", state.ReadOnlyEvidence)
+	}
+	if !shouldResumeWorkflowPrompt("Perform the refactor.", state) {
+		t.Fatal("expected perform-the-refactor to resume typed workflow state")
+	}
+	if shouldResumeWorkflowPrompt("Do not perform the refactor yet.", state) {
+		t.Fatal("negative approval phrasing must not resume typed workflow state")
+	}
+
+	build := model.classifyPromptExecutionPlan("Perform the refactor.")
+	if build.lane != analysisLaneImplement || !build.intent.WantsEdits {
+		t.Fatalf("approved workflow prompt should route to implementation, got %#v", build)
+	}
+	if build.workflowKind != agentWorkflowKindOptimizationRefactor || build.workflowPhase != agentWorkflowPhaseBuilding {
+		t.Fatalf("expected build route to carry workflow build state, got %#v", build)
+	}
+	resume := buildWorkflowResumePrompt(state, "Perform the refactor.")
+	for _, want := range []string{"Resume the typed agent workflow", "Workflow-approved editable targets", "internal/app/analysis_agents.go", "Build-switch reminder"} {
+		if !strings.Contains(resume, want) {
+			t.Fatalf("expected workflow resume prompt to include %q, got:\n%s", want, resume)
+		}
+	}
+	ctx := buildWorkflowResumeContext(state)
+	if !testContainsFold(ctx.ApprovedEditTargets, "internal/app/analysis_agents.go") {
+		t.Fatalf("expected typed resume context approved target, got %#v", ctx)
+	}
+	if testContainsFold(ctx.ReadOnlyEvidencePaths, "internal/app/analysis_agents.go") {
+		t.Fatalf("editable target must not be duplicated as read-only evidence, got %#v", ctx.ReadOnlyEvidencePaths)
+	}
+}
+
+func TestWorkflowStatePersistsAndReloads(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.go")
+	if err := os.WriteFile(target, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	saveDir := filepath.Join(root, "transcripts")
+	cfg := config.Config{
+		Chat: config.Chat{SaveDir: saveDir},
+		Workspace: config.Workspace{
+			Root: root,
+			CWD:  root,
+		},
+	}
+	model := &Model{
+		cfg:       cfg,
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+	model.rememberWorkflowState(&agentWorkflowState{
+		Active:          true,
+		Kind:            agentWorkflowKindOptimizationRefactor,
+		Phase:           agentWorkflowPhaseAwaitingApproval,
+		Objective:       "Plan a refactor for target.go.",
+		EditableTargets: []string{"target.go"},
+		Verification:    []string{"go test ./..."},
+	}, "test persist")
+	if model.currentWorkflowState() == nil {
+		t.Fatal("expected workflow state to persist in model")
+	}
+	if len(model.currentWorkflowState().FileFingerprints) == 0 {
+		t.Fatalf("expected persisted workflow state to include target fingerprints, got %#v", model.currentWorkflowState())
+	}
+
+	reloaded := &Model{
+		cfg:       cfg,
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+	reloaded.loadPersistedWorkflowState()
+	if reloaded.currentWorkflowState() == nil || !testContainsFold(reloaded.currentWorkflowState().EditableTargets, "target.go") {
+		t.Fatalf("expected persisted workflow state to reload, got %#v", reloaded.workflowState)
+	}
+
+	unfingerprinted := &Model{
+		cfg:       cfg,
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+	stale, reason := unfingerprinted.workflowStateStaleOnLoad(&agentWorkflowState{
+		Active:          true,
+		Kind:            agentWorkflowKindOptimizationRefactor,
+		Phase:           agentWorkflowPhaseAwaitingApproval,
+		EditableTargets: []string{"target.go"},
+	})
+	if !stale || !strings.Contains(reason, "predates target fingerprints") {
+		t.Fatalf("expected unfingerprinted workflow state to require replanning, stale=%t reason=%q", stale, reason)
+	}
+
+	if err := os.WriteFile(target, []byte("package main\n\nfunc changed() {}\n"), 0o644); err != nil {
+		t.Fatalf("modify target: %v", err)
+	}
+	staleModel := &Model{
+		cfg:       cfg,
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+	staleModel.loadPersistedWorkflowState()
+	if staleModel.currentWorkflowState() != nil {
+		t.Fatalf("expected stale workflow state to be cleared after target changed, got %#v", staleModel.currentWorkflowState())
+	}
+}
+
+func TestGenericDurablePlanWorkflowKindDoesNotMasqueradeAsOptimizationRefactor(t *testing.T) {
+	model := &Model{workspace: workspace.NewManager(testWorkspaceConfig())}
+	model.rememberWorkflowFromTaskMemory(
+		"Create an implementation plan for docs/api.md.",
+		analysisLaneArchitecture,
+		&longHorizonTaskMemory{
+			Active:        true,
+			Kind:          "durable_plan",
+			Prompt:        "Create an implementation plan for docs/api.md.",
+			Lane:          string(analysisLaneArchitecture),
+			Summary:       "Durable plan artifact\nTarget: docs/api.md\nVerification:\n- go test ./...",
+			ChosenTargets: []string{"docs/api.md"},
+			NextActions:   []string{"wait for approval before editing docs/api.md"},
+		},
+		[]string{"docs/api.md"},
+		"wait for approval before editing docs/api.md",
+	)
+	state := model.currentWorkflowState()
+	if state == nil {
+		t.Fatal("expected generic durable plan to create typed workflow state")
+	}
+	if state.Kind != agentWorkflowKindDurablePlan {
+		t.Fatalf("expected generic durable plan workflow kind, got %#v", state)
+	}
+	if state.Kind == agentWorkflowKindOptimizationRefactor {
+		t.Fatalf("generic durable plan must not inherit optimization-refactor semantics, got %#v", state)
+	}
+}
+
+func TestWorkflowApprovalRequiresAwaitingApprovalScope(t *testing.T) {
+	state := &agentWorkflowState{
+		Active:          true,
+		Kind:            agentWorkflowKindOptimizationRefactor,
+		Phase:           agentWorkflowPhasePlanning,
+		EditableTargets: []string{"internal/app/analysis_agents.go"},
+	}
+	if shouldResumeWorkflowPrompt("Perform the refactor.", state) {
+		t.Fatal("planning-phase workflow must not resume implementation before durable approval state exists")
+	}
+
+	state.Phase = agentWorkflowPhaseAwaitingApproval
+	state.EditableTargets = nil
+	if shouldResumeWorkflowPrompt("Perform the refactor.", state) {
+		t.Fatal("approval prompt must not resume workflow without editable targets or allowed destinations")
+	}
+
+	state.EditableTargets = []string{"internal/app/analysis_agents.go"}
+	if !shouldResumeWorkflowPrompt("Perform the refactor.", state) {
+		t.Fatal("awaiting-approval workflow with scoped targets should resume implementation")
+	}
+}
+
+func TestWorkflowImplementationAcceptedRequiresNewVerifiedJournal(t *testing.T) {
+	state := &agentWorkflowState{
+		Active: true,
+		Kind:   agentWorkflowKindOptimizationRefactor,
+		Phase:  agentWorkflowPhaseBuilding,
+	}
+	previous := &executionJournal{
+		Paths:              []string{"internal/app/workflow_state.go"},
+		Summary:            "Updated workflow state.",
+		VerificationPassed: true,
+	}
+	model := &Model{lastJournal: previous}
+	if model.workflowImplementationAccepted(state, previous) {
+		t.Fatal("workflow completion must not accept an old journal from before the implementation run")
+	}
+
+	model.lastJournal = &executionJournal{
+		Paths:   []string{"internal/app/workflow_state.go"},
+		Summary: "Updated workflow state.",
+	}
+	if model.workflowImplementationAccepted(state, previous) {
+		t.Fatal("workflow completion must require verification evidence")
+	}
+
+	model.lastJournal = &executionJournal{
+		Paths:              []string{"internal/app/workflow_state.go"},
+		Summary:            "Control-rail gaps: verification_contract_unresolved.",
+		VerificationPassed: true,
+	}
+	if model.workflowImplementationAccepted(state, previous) {
+		t.Fatal("workflow completion must reject control-rail gap summaries")
+	}
+
+	model.lastJournal = &executionJournal{
+		Paths:              []string{"internal/app/workflow_state.go"},
+		Summary:            "Updated workflow state and verified the focused app tests.",
+		VerificationPassed: true,
+	}
+	if !model.workflowImplementationAccepted(state, previous) {
+		t.Fatal("workflow completion should accept a new journal with changed paths and passed verification")
+	}
+
+	model.lastJournal = &executionJournal{
+		Summary:            "No file edits were needed: the approved refactor is already present.\n\nVerification:\n- `go test ./...`: passed",
+		VerificationPassed: true,
+	}
+	if !model.workflowImplementationAccepted(state, previous) {
+		t.Fatal("workflow completion should accept a verified no-op journal")
+	}
+}
+
+func TestWorkflowStateIncludedInClassifierMemory(t *testing.T) {
+	model := &Model{
+		workflowState: &agentWorkflowState{
+			Active:          true,
+			Kind:            agentWorkflowKindOptimizationRefactor,
+			Phase:           agentWorkflowPhaseAwaitingApproval,
+			Objective:       "Plan a refactor for internal/app/analysis_agents.go.",
+			EditableTargets: []string{"internal/app/analysis_agents.go"},
+			Verification:    []string{"go test ./internal/app"},
+		},
+	}
+	memory := model.renderRoutingMemoryForVerifier()
+	for _, want := range []string{"Persisted workflow state", "awaiting_approval", "internal/app/analysis_agents.go", "go test ./internal/app"} {
+		if !strings.Contains(memory, want) {
+			t.Fatalf("expected classifier routing memory to include %q, got:\n%s", want, memory)
+		}
+	}
+}
+
+func TestPerformRefactorUsesRecentPlanContextWhenMemoryIsUnavailable(t *testing.T) {
+	model := &Model{workspace: workspace.NewManager(testWorkspaceConfig())}
+	model.messages = []llama.ChatMessage{
+		{Role: "assistant", Content: "Focused refactor plan.\nTarget: internal/app/analysis_agents.go\nRecommended implementation order: split one responsibility, then run go test ./internal/app."},
+	}
+	plan := model.classifyPromptExecutionPlan("Perform the refactor.")
+	if plan.lane != analysisLaneImplement {
+		t.Fatalf("perform-the-refactor should use recent focused plan context, got %#v", plan)
+	}
+	if plan.reason != promptRouteReasonDirectImplementation || !plan.intent.WantsEdits {
+		t.Fatalf("expected direct implementation intent from recent plan context, got %#v", plan)
 	}
 }
 
@@ -1257,6 +1618,29 @@ func TestIntentVerifierTargetRefsAreRetainedForFollowupPlanning(t *testing.T) {
 	}
 }
 
+func TestIntentVerifierTargetRefsIgnoredForOpenEndedOpportunityDiscovery(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	prompt := "Explore this Go codebase and identify one bounded optimization/refactor opportunity that can be implemented by editing only one existing git-clean Go file. Avoid files already modified in git status. Prepare a concrete refactor plan only; do not edit files yet."
+	plan := classifyPromptExecutionPlan(prompt, mgr)
+	verifier := normalizePromptIntentVerifierResult(promptIntentVerifierResult{
+		PrimaryIntent:       "plan_architecture",
+		WantsPlanOnly:       true,
+		Risk:                "low",
+		Confidence:          "high",
+		RecommendedLane:     string(analysisLaneArchitecture),
+		RecommendedContract: string(answerContractArchitecture),
+		TaskFamily:          "architecture",
+		TargetRefs:          []string{"internal/app/implementation.go", "internal/agent/runner.go"},
+	})
+	reconciled, _, _, notes := reconcilePromptPlanWithVerifier(prompt, plan, verifier)
+	if len(reconciled.intent.TargetRefs) != 0 {
+		t.Fatalf("expected open-ended opportunity prompt to ignore verifier target refs, got %#v", reconciled.intent.TargetRefs)
+	}
+	if !testContainsFold(notes, "ignored verifier target refs for open-ended opportunity discovery") {
+		t.Fatalf("expected ignored-target note, got %#v", notes)
+	}
+}
+
 func TestIntentVerifierDoesNotEraseHostEditIntent(t *testing.T) {
 	mgr := workspace.NewManager(testWorkspaceConfig())
 	prompt := "Update README.md with the latest usage note."
@@ -1313,6 +1697,18 @@ func TestControlRailsFinalAnswerRepairsMissingVerificationContract(t *testing.T)
 	repaired := repairControlRailsAnswer("Changed files:\n- internal/app/app.go", enforcement)
 	if !strings.Contains(repaired, "Control-rail gaps:") || !strings.Contains(repaired, "verification_contract_unresolved") {
 		t.Fatalf("expected repaired control-rail answer, got %q", repaired)
+	}
+}
+
+func TestControlRailsAcceptsNoFileEditNoopEvidence(t *testing.T) {
+	rails := buildDeterministicControlRails("Fix internal/app/app.go", promptExecutionPlan{
+		lane:     analysisLaneImplement,
+		contract: answerContractForLane(analysisLaneImplement),
+	})
+	answer := "No file edits were needed: the requested change is already present.\n\nVerification:\n- `go test ./...`: passed"
+	enforcement := controlRailsEnforcementForAnswer(rails, answer, nil, nil, true)
+	if !enforcement.Passed {
+		t.Fatalf("expected no-op implementation evidence to pass rails, got %#v", enforcement)
 	}
 }
 

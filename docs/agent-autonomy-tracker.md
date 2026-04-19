@@ -47,6 +47,23 @@ Detailed design for the remaining frontier capabilities lives in [frontier-agent
 - [x] Add classifier health debounce and recovery logging so a down local route-classifier does not spam the UI while still surfacing degraded routing.
 - [x] Add on-demand local route-classifier auto-start with dedicated binary/model/port/log/start-timeout settings and managed shutdown.
 - [x] Add first-run classifier preflight and schema-first JSON prompt coverage so missing local models fail clearly and the small classifier sees explicit route examples.
+- [x] Add explicit agent modes (`auto`, `plan`, `build`, `review`, `explore`) with route-plan, intent, and control-rail visibility.
+- [x] Preserve explicit user read-only and verification-only boundaries even when build mode is selected.
+- [x] Add workflow command templates for latest-log debugging, durable-plan implementation, verification-only checks, frontier audits, and OpenCode-style audits.
+- [x] Add dynamic tool-policy snapshots that expose allowed and forbidden tools derived from deterministic control rails.
+- [x] Add a read-only `task` child-runner tool with bounded child budgets, declarative read-only permissions, and nested-task prevention.
+- [x] Add durable plan approval-scope schema with editable targets, read-only evidence, allowed new destinations, forbidden paths, verification expectations, and plan-exit handoff.
+- [x] Carry plan-approved new destinations into typed resume context and implementation target packets.
+- [x] Add regression coverage for the three-turn optimization workflow: discover optimization opportunities -> plan a refactor for a chosen file -> perform the approved refactor.
+- [x] Expand plan-only and build-approval language so "plan a refactor" remains read-only and "perform the refactor" resumes the durable plan instead of starting an ungrounded new route.
+- [x] Add a persisted typed workflow-state machine for optimization/refactor workflows with explicit `discovered`, `planning`, `awaiting_approval`, `building`, and `complete` phases.
+- [x] Route workflow approval turns through typed workflow state, including editable targets, read-only evidence, allowed destinations, forbidden paths, and verification expectations.
+- [x] Expose workflow kind/phase in route-plan and control-rail logs so reviewers can diagnose state-machine decisions.
+- [x] Include active workflow state in route-classifier memory so the small classifier can classify terse approval turns with the same context as the host.
+- [x] Extend eval log parsing with `workflow_state` assertions for phase, target, evidence, and verification coverage.
+- [x] Gate workflow completion on a new execution journal with changed paths and passing verification instead of any nil implementation error.
+- [x] Fingerprint workflow-state targets and clear stale or legacy un-fingerprinted workflows before resuming build-mode execution.
+- [x] Preserve generic durable-plan workflow kind so non-refactor durable plans do not inherit optimization-refactor approval behavior.
 - [ ] Add token/cost budget accounting once token usage is available from the local backend.
 - [x] Add UI/debug snapshots for progress, done-gate rejection, and stall fuse decisions.
 
@@ -64,7 +81,12 @@ OpenCode-style plan mode needs to be durable, explicit, and auditable. This trac
 - [x] Implement build-switch reminders at the plan-to-build handoff.
 - [x] Implement explore-before-plan execution ordering through architecture evidence gathering before durable plan persistence.
 - [x] Require a verification section for structural plan artifacts.
+- [x] Persist a machine-readable approval scope and plan-exit contract inside durable plan artifacts.
+- [x] Resume plan-approved new destinations without widening read-only evidence into editable targets.
 - [x] Add tests that prove plan-only prompts remain read-only until approved.
+- [x] Persist plan/build workflow state separately from prose conversation history so a three-turn workflow can advance deterministically without target drift.
+- [x] Validate persisted workflow targets against file fingerprints and require replanning when targets changed after approval.
+- [x] Keep incomplete implementation attempts resumable when verification or control-rail acceptance does not prove completion.
 
 ## Acceptance Criteria
 

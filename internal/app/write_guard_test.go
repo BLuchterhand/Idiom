@@ -45,6 +45,38 @@ func TestClassifyPromptExecutionPlanRoutesShellOnlyCreateToImplement(t *testing.
 	}
 }
 
+func TestLimitShortcutTokensCapsFocusedModelCalls(t *testing.T) {
+	opts := llama.ChatOptions{MaxTokens: 8192}
+	limitShortcutTokens(&opts)
+	if opts.MaxTokens != 2048 {
+		t.Fatalf("MaxTokens = %d, want 2048", opts.MaxTokens)
+	}
+
+	opts = llama.ChatOptions{MaxTokens: 512}
+	limitShortcutTokens(&opts)
+	if opts.MaxTokens != 512 {
+		t.Fatalf("MaxTokens = %d, want existing small budget", opts.MaxTokens)
+	}
+
+	opts = llama.ChatOptions{}
+	limitShortcutTokens(&opts)
+	if opts.MaxTokens != 2048 {
+		t.Fatalf("MaxTokens = %d, want default shortcut cap", opts.MaxTokens)
+	}
+}
+
+func TestIsShortcutContextError(t *testing.T) {
+	if !isShortcutContextError(context.DeadlineExceeded) {
+		t.Fatal("expected deadline exceeded to be treated as shortcut context error")
+	}
+	if !isShortcutContextError(context.Canceled) {
+		t.Fatal("expected cancellation to be treated as shortcut context error")
+	}
+	if isShortcutContextError(os.ErrNotExist) {
+		t.Fatal("unexpected context classification for unrelated error")
+	}
+}
+
 func TestClassifyPromptExecutionPlanRoutesLocateThenImplementForMixedPrompt(t *testing.T) {
 	mgr := workspace.NewManager(testWorkspaceConfig())
 
@@ -760,6 +792,23 @@ func TestRequestMessagesDropsTrailingAssistantDraftBeforeCompaction(t *testing.T
 	}
 	if strings.Contains(log, "partial_repair") {
 		t.Fatalf("unexpected task-memory pin in draft-only compaction log: %s", log)
+	}
+}
+
+func TestRequestMessagesPreservesAssistantReasoningContent(t *testing.T) {
+	m := &Model{
+		cfg: config.Config{Chat: config.Chat{MaxHistory: 4}},
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "first"},
+			{Role: "assistant", Content: "second", ReasoningContent: "hidden reasoning"},
+		},
+	}
+	messages := m.requestMessages()
+	if len(messages) != 2 {
+		t.Fatalf("expected two messages, got %#v", messages)
+	}
+	if messages[1].Role != "assistant" || messages[1].Content != "second" || messages[1].ReasoningContent != "hidden reasoning" {
+		t.Fatalf("expected assistant reasoning to be preserved, got %#v", messages[1])
 	}
 }
 
@@ -1971,6 +2020,60 @@ func TestRankArchitectureHotspotsPrioritizesExplicitTarget(t *testing.T) {
 	}
 }
 
+func TestRankArchitectureHotspotsCanExcludeDirtyPaths(t *testing.T) {
+	idx := &semantic.GoIndex{
+		Files: []semantic.GoFile{
+			{
+				Path:      "internal/app/dirty.go",
+				Package:   "app",
+				Funcs:     30,
+				SourceDir: "internal",
+			},
+			{
+				Path:      "internal/app/clean.go",
+				Package:   "app",
+				Funcs:     12,
+				SourceDir: "internal",
+			},
+		},
+		Package: map[string]semantic.GoPackage{
+			"internal/app": {Name: "app", Files: 2},
+		},
+	}
+	hotspots := rankArchitectureHotspotsWithOptions(
+		"identify one bounded optimization/refactor opportunity",
+		idx,
+		nil,
+		2,
+		architectureHotspotOptions{ExcludedPaths: map[string]struct{}{"internal/app/dirty.go": {}}},
+	)
+	if len(hotspots) == 0 || hotspots[0].Path != "internal/app/clean.go" {
+		t.Fatalf("expected dirty path to be excluded, got %#v", hotspots)
+	}
+}
+
+func TestBoundedOneFileArchitectureFallbackIncludesConcretePlan(t *testing.T) {
+	prompt := "Explore this Go codebase and identify one bounded optimization/refactor opportunity that can be implemented by editing only one existing git-clean Go file. Prepare a concrete refactor plan only."
+	ledger := deterministicEvidenceLedger(prompt, nil, []string{"internal/app/clean.go"}, "architecture_hotspot_ranker")
+	summary := buildArchitectureFallbackSummary(
+		prompt,
+		[]architectureHotspot{{
+			Path:         "internal/app/clean.go",
+			FuncsMethods: 12,
+			Reasons:      []string{"12 funcs/methods"},
+		}},
+		"- internal/app/clean.go (score 10)",
+		"",
+		"",
+		ledger,
+	)
+	for _, want := range []string{"Focused refactor plan:", "Target: internal/app/clean.go", "edit only this existing Go file", "Exact intended change:", "Verification: run go test ./internal/app"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected bounded plan to include %q, got:\n%s", want, summary)
+		}
+	}
+}
+
 func TestArchitectureFallbackSummaryFocusesTargetedPlanWithoutRepeatingBoard(t *testing.T) {
 	summary := buildArchitectureFallbackSummary(
 		"can you prepare a refactoring plan for the analysis_agents.go recommendation?",
@@ -2028,6 +2131,61 @@ func TestArchitectureFallbackSummaryTreatsWorkPlanAsFocusedPlan(t *testing.T) {
 		if strings.Contains(summary, notWant) {
 			t.Fatalf("work-plan response should not repeat generic section %q, got:\n%s", notWant, summary)
 		}
+	}
+}
+
+func TestFocusedArchitecturePlanNamesConcreteAnalysisAgentsRefactor(t *testing.T) {
+	hotspot := architectureHotspot{
+		Path:             "internal/app/analysis_agents.go",
+		Responsibilities: []string{"routing", "workspace", "agent", "state"},
+	}
+	got := renderTargetedArchitecturePlan(hotspot, true)
+	for _, want := range []string{
+		"do not create files or move declarations",
+		"analysisSummaryTargets",
+		"parseAnalysisSummaryTargetToken",
+		"internal/app/analysis_agents.go",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected focused plan to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestExactAnalysisSummaryTargetRefactorAlreadySatisfied(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "app")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := `package app
+
+func analysisSummaryTargets() {
+	for _, field := range fields {
+		if path, line, ok := parseAnalysisSummaryTargetToken(field); ok {
+			add(path, line)
+		}
+	}
+}
+
+func parseAnalysisSummaryTargetToken(field string) (string, int, bool) {
+	return "", 0, false
+}
+`
+	if err := os.WriteFile(filepath.Join(path, "analysis_agents.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write analysis_agents.go: %v", err)
+	}
+
+	packet := implementationTargetPacket{
+		PrimaryPaths:  []string{"internal/app/analysis_agents.go"},
+		StrategyHints: []string{"inside analysisSummaryTargets, extract parseAnalysisSummaryTargetToken"},
+	}
+	history := []llama.ChatMessage{{Role: "system", Content: "Use parseAnalysisSummaryTargetToken from analysisSummaryTargets."}}
+	if !exactAnalysisSummaryTargetRefactorRequested("Please start", history, packet) {
+		t.Fatal("expected exact refactor request to be detected")
+	}
+	if !analysisSummaryTargetRefactorAlreadySatisfied(root) {
+		t.Fatal("expected satisfied helper refactor to be detected")
 	}
 }
 
@@ -2699,6 +2857,25 @@ func TestEnrichImplementationTargetPacketDoesNotWidenExplicitPrimaryPaths(t *tes
 	}
 }
 
+func TestEnrichImplementationTargetPacketKeepsApprovalSymbolsWithinPrimaryPath(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	packet := enrichImplementationTargetPacket(mgr, buildImplementationTargetPacket(
+		"Approved. Execute the one-file plan exactly as written. Edit only internal/app/app.go. Do not create files or move declarations. Run gofmt and go test ./internal/app.",
+		nil,
+	))
+	if got := packet.PrimaryPaths; len(got) != 1 || got[0] != "internal/app/app.go" {
+		t.Fatalf("expected explicit primary target to stay focused, got %#v", got)
+	}
+	for _, symbol := range packet.Symbols {
+		if symbol.Path != "internal/app/app.go" {
+			t.Fatalf("expected approval-derived symbols to stay within primary target, got %#v", packet.Symbols)
+		}
+	}
+	if !strings.Contains(strings.Join(packet.StrategyHints, "\n"), "declaration moves forbidden") {
+		t.Fatalf("expected no-move constraint in strategy hints, got %#v", packet.StrategyHints)
+	}
+}
+
 func TestBuildImplementationTargetPacketIgnoresAttemptedSearchEvidenceWhenResumeTargetsExist(t *testing.T) {
 	prompt := strings.Join([]string{
 		"Resume the saved long-horizon task from persisted memory.",
@@ -2928,6 +3105,42 @@ func TestBootstrapImplementationEvidenceReadsResolvedBasenameTarget(t *testing.T
 	}
 	if !foundRead {
 		t.Fatalf("expected bootstrap to read resolved basename target, got %#v", bootstrap.results)
+	}
+}
+
+func TestBootstrapImplementationEvidenceReadsPrimaryBeforeEvidenceSymbols(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	m := &Model{}
+	packet := implementationTargetPacket{
+		PrimaryPaths:  []string{"internal/app/analysis_agents.go"},
+		EvidencePaths: []string{"internal/app/implementation.go"},
+		Symbols: []semantic.SymbolMatch{{
+			Path:      "internal/app/implementation.go",
+			Name:      "runImplementAgentWithGrant",
+			StartLine: 700,
+			EndLine:   760,
+		}},
+	}
+	bootstrap := m.bootstrapImplementationEvidence(
+		context.Background(),
+		mgr,
+		"Refactor internal/app/analysis_agents.go using implementation.go as evidence.",
+		packet,
+		nil,
+	)
+	firstReadPath := ""
+	for _, result := range bootstrap.results {
+		if result.Tool != "read_file" || result.Error != "" {
+			continue
+		}
+		path, _, _, ok := parseReadWindowSummary(result.Summary)
+		if ok {
+			firstReadPath = path
+			break
+		}
+	}
+	if firstReadPath != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected first successful bootstrap read to target editable primary file, got %q in %#v", firstReadPath, bootstrap.results)
 	}
 }
 
@@ -3266,6 +3479,22 @@ func TestFocusedRewriteWindowUsesBootstrappedReadSnippet(t *testing.T) {
 	}
 	if !strings.Contains(snippet, "header := titleStyle.Render") {
 		t.Fatalf("unexpected focused rewrite snippet: %q", snippet)
+	}
+}
+
+func TestFocusedRewriteWindowAcceptsDefaultBootstrapWindow(t *testing.T) {
+	_, _, _, _, ok := focusedRewriteWindow(
+		implementationTargetPacket{PrimaryPaths: []string{"internal/app/app.go"}},
+		implementationBootstrap{
+			results: []workspace.ToolResult{{
+				Tool:    "read_file",
+				Summary: "Read f1 internal/app/app.go lines 1-180",
+				Output:  "1:package app\n2:\n3:import \"strings\"\n4:\n5:func helper() {}",
+			}},
+		},
+	)
+	if !ok {
+		t.Fatal("expected default 180-line implementation bootstrap window to be usable")
 	}
 }
 

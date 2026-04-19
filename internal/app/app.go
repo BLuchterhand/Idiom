@@ -56,13 +56,16 @@ func looksLikeWorkspacePathToken(candidate string) bool {
 	case "README.md", "go.mod", "go.sum", "config.json", "Makefile":
 		return true
 	}
-	return strings.HasSuffix(candidate, ".go") ||
-		strings.HasSuffix(candidate, ".md") ||
-		strings.HasSuffix(candidate, ".json") ||
-		strings.HasSuffix(candidate, ".yaml") ||
-		strings.HasSuffix(candidate, ".yml") ||
-		strings.HasSuffix(candidate, ".toml") ||
-		strings.HasSuffix(candidate, ".txt")
+	return hasWorkspaceFileExtension(candidate)
+}
+
+func hasWorkspaceFileExtension(candidate string) bool {
+	switch filepath.Ext(candidate) {
+	case ".go", ".md", ".json", ".yaml", ".yml", ".toml", ".txt":
+		return true
+	default:
+		return false
+	}
 }
 
 type locateOutcome struct {

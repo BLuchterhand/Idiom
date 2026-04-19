@@ -20,13 +20,17 @@ type rollbackSnapshot struct {
 }
 
 type executionJournal struct {
-	Prompt      string
-	Paths       []string
-	Snapshots   map[string]rollbackSnapshot
-	Summary     string
-	Refactor    *structuralRefactorStage
-	CreatedAt   time.Time
-	CommittedAt time.Time
+	Prompt                 string
+	Paths                  []string
+	Snapshots              map[string]rollbackSnapshot
+	Summary                string
+	VerificationCommands   []string
+	VerificationPassed     bool
+	VerificationFailed     bool
+	VerificationConfidence string
+	Refactor               *structuralRefactorStage
+	CreatedAt              time.Time
+	CommittedAt            time.Time
 }
 
 type executionJournalRecorder struct {

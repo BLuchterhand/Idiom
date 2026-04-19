@@ -83,6 +83,7 @@ func New(cfg config.Config) *Model {
 	m.initDebugLogger()
 	m.loadPersistedStructuralRefactorStage()
 	m.loadPersistedTaskMemory()
+	m.loadPersistedWorkflowState()
 	return m
 }
 
@@ -175,7 +176,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.appendPendingAssistantContent(msg.text)
 		m.renderMessages(false)
 	case assistantReplyMsg:
-		m.setPendingAssistantContent(msg.text)
+		m.setPendingAssistantMessage(llama.ChatMessage{Role: "assistant", Content: msg.text, ReasoningContent: msg.reasoningContent})
 		if !msg.logged {
 			m.logMessage("assistant", msg.text)
 		}
@@ -342,7 +343,7 @@ func (m *Model) runMainAgent(
 			return mainGuard.PreExecute(req)
 		},
 	}
-	return runner.Run(
+	answer, err := runner.Run(
 		ctx,
 		history,
 		opts,
@@ -362,6 +363,10 @@ func (m *Model) runMainAgent(
 			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(event.Result)}
 		},
 	)
+	if err == nil {
+		m.lastAssistantReasoningContent = strings.TrimSpace(runner.LastAssistantMessage.ReasoningContent)
+	}
+	return answer, err
 }
 
 func (m *Model) tryDirectConfigFieldUpdate(

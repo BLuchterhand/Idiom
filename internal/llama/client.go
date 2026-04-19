@@ -20,8 +20,9 @@ type Client struct {
 }
 
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type ChatOptions struct {
@@ -71,7 +72,9 @@ type chatResponse struct {
 	} `json:"error,omitempty"`
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Role             string `json:"role"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
 }
@@ -82,10 +85,13 @@ type chatStreamChunk struct {
 	} `json:"error,omitempty"`
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content,omitempty"`
 		} `json:"delta"`
 		Message struct {
-			Content string `json:"content"`
+			Role             string `json:"role"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content,omitempty"`
 		} `json:"message"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
@@ -225,6 +231,14 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 }
 
 func (c *Client) CompleteChat(ctx context.Context, messages []ChatMessage, opts ChatOptions) (string, error) {
+	reply, err := c.CompleteChatMessage(ctx, messages, opts)
+	if err != nil {
+		return "", err
+	}
+	return reply.Content, nil
+}
+
+func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage, opts ChatOptions) (ChatMessage, error) {
 	if opts.Model == "" {
 		opts.Model = "local-model"
 	}
@@ -246,19 +260,19 @@ func (c *Client) CompleteChat(ctx context.Context, messages []ChatMessage, opts 
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return ChatMessage{}, fmt.Errorf("marshal request: %w", err)
 	}
 
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/chat/completions", bytes.NewReader(data))
 		if err != nil {
-			return "", err
+			return ChatMessage{}, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return "", err
+			return ChatMessage{}, err
 		}
 
 		if resp.StatusCode >= http.StatusBadRequest {
@@ -267,33 +281,42 @@ func (c *Client) CompleteChat(ctx context.Context, messages []ChatMessage, opts 
 			bodyText := strings.TrimSpace(string(body))
 			if shouldRetryLoadingModel(resp.StatusCode, bodyText) {
 				if err := sleepWithContext(ctx, loadingModelRetryDelay); err != nil {
-					return "", err
+					return ChatMessage{}, err
 				}
 				continue
 			}
-			return "", fmt.Errorf("chat request failed: %s", bodyText)
+			return ChatMessage{}, fmt.Errorf("chat request failed: %s", bodyText)
 		}
 
 		var parsed chatResponse
 		err = json.NewDecoder(resp.Body).Decode(&parsed)
 		_ = resp.Body.Close()
 		if err != nil {
-			return "", fmt.Errorf("decode chat response: %w", err)
+			return ChatMessage{}, fmt.Errorf("decode chat response: %w", err)
 		}
 		if parsed.Error != nil {
 			if shouldRetryLoadingModel(http.StatusServiceUnavailable, parsed.Error.Message) {
 				if err := sleepWithContext(ctx, loadingModelRetryDelay); err != nil {
-					return "", err
+					return ChatMessage{}, err
 				}
 				continue
 			}
-			return "", fmt.Errorf("%s", parsed.Error.Message)
+			return ChatMessage{}, fmt.Errorf("%s", parsed.Error.Message)
 		}
 		if len(parsed.Choices) == 0 {
-			return "", fmt.Errorf("chat response did not contain any choices")
+			return ChatMessage{}, fmt.Errorf("chat response did not contain any choices")
 		}
 
-		return parsed.Choices[0].Message.Content, nil
+		message := parsed.Choices[0].Message
+		role := strings.TrimSpace(message.Role)
+		if role == "" {
+			role = "assistant"
+		}
+		return ChatMessage{
+			Role:             role,
+			Content:          message.Content,
+			ReasoningContent: message.ReasoningContent,
+		}, nil
 	}
 }
 

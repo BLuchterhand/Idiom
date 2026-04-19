@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"qwen-bubbles/internal/agent"
 	"qwen-bubbles/internal/llama"
@@ -55,24 +56,30 @@ func analysisSummaryTargets(history []llama.ChatMessage) []implementationTarget 
 			continue
 		}
 		for _, field := range strings.Fields(msg.Content) {
-			candidate := strings.Trim(field, "`'\"()[]{}<>,:;!?.")
-			idx := strings.LastIndex(candidate, ":")
-			if idx <= 0 || idx >= len(candidate)-1 {
-				continue
+			if path, line, ok := parseAnalysisSummaryTargetToken(field); ok {
+				add(path, line)
 			}
-			path := candidate[:idx]
-			lineText := candidate[idx+1:]
-			line, err := strconv.Atoi(lineText)
-			if err != nil || !looksLikeWorkspacePathToken(path) {
-				continue
-			}
-			add(path, line)
 		}
 		if len(targets) > 0 {
 			break
 		}
 	}
 	return targets
+}
+
+func parseAnalysisSummaryTargetToken(field string) (string, int, bool) {
+	candidate := strings.Trim(field, "`'\"()[]{}<>,:;!?.")
+	idx := strings.LastIndex(candidate, ":")
+	if idx <= 0 || idx >= len(candidate)-1 {
+		return "", 0, false
+	}
+	path := candidate[:idx]
+	lineText := candidate[idx+1:]
+	line, err := strconv.Atoi(lineText)
+	if err != nil || !looksLikeWorkspacePathToken(path) {
+		return "", 0, false
+	}
+	return path, line, true
 }
 
 func latestAnalysisSummary(history []llama.ChatMessage) (string, string, bool) {
@@ -923,11 +930,22 @@ func (m *Model) bootstrapArchitectureEvidence(
 		}
 	}
 
-	hotspots := rankArchitectureHotspots(prompt, goIndex, explicitTargets, architectureHotspotBudget(level))
+	excludedPaths := architectureExcludedPathsForPrompt(architectureWorkspace.Root(), prompt)
+	if len(excludedPaths) > 0 {
+		m.logMessage("architecture_excluded_paths", "Excluded dirty workspace paths:\n- "+strings.Join(mapKeysSorted(excludedPaths), "\n- "))
+		bootstrap.messages = append(bootstrap.messages, llama.ChatMessage{
+			Role:    "system",
+			Content: "User requested git-clean targets. Exclude these dirty workspace paths from architecture target selection:\n- " + strings.Join(mapKeysSorted(excludedPaths), "\n- "),
+		})
+	}
+	hotspots := rankArchitectureHotspotsWithOptions(prompt, goIndex, explicitTargets, architectureHotspotBudget(level), architectureHotspotOptions{
+		ExcludedPaths: excludedPaths,
+	})
 	bootstrap.hotspots = hotspots
 	readPaths := append([]string{}, explicitTargets...)
 	readPaths = append(readPaths, architectureHotspotPaths(hotspots)...)
 	readPaths = append(readPaths, architectureRelevantPaths(prompt, goIndex, architectureRelevantFileBudget(level))...)
+	readPaths = filterArchitecturePaths(readPaths, excludedPaths)
 	for _, path := range uniqueLimitedStrings(readPaths, architectureReadBudget(level)) {
 		architectureWorkspace.PrimeDiscoveredPaths([]string{path})
 		discoveredFiles[path] = struct{}{}
@@ -1137,7 +1155,87 @@ func architectureRelevantPaths(prompt string, goIndex *semantic.GoIndex, limit i
 	return goIndex.RelevantFiles(exploreQueryTerms(prompt), limit)
 }
 
+func architectureExcludedPathsForPrompt(root string, prompt string) map[string]struct{} {
+	normalized := strings.ToLower(prompt)
+	if !containsAny(normalized, "git-clean", "git clean", "avoid files already modified", "avoid modified", "already modified", "git status") {
+		return nil
+	}
+	return parseGitStatusDirtyPaths(gitStatusShort(root))
+}
+
+func gitStatusShort(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", root, "status", "--short").Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+func parseGitStatusDirtyPaths(output string) map[string]struct{} {
+	dirty := make(map[string]struct{})
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if path == "" {
+			continue
+		}
+		if before, after, ok := strings.Cut(path, " -> "); ok {
+			if normalized := normalizeGuardedPath(before); normalized != "" {
+				dirty[normalized] = struct{}{}
+			}
+			path = after
+		}
+		if normalized := normalizeGuardedPath(path); normalized != "" {
+			dirty[normalized] = struct{}{}
+		}
+	}
+	if len(dirty) == 0 {
+		return nil
+	}
+	return dirty
+}
+
+func filterArchitecturePaths(paths []string, excluded map[string]struct{}) []string {
+	if len(excluded) == 0 {
+		return paths
+	}
+	filtered := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if _, skip := excluded[normalizeGuardedPath(path)]; skip {
+			continue
+		}
+		filtered = append(filtered, path)
+	}
+	return filtered
+}
+
+func mapKeysSorted(values map[string]struct{}) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+type architectureHotspotOptions struct {
+	ExcludedPaths map[string]struct{}
+}
+
 func rankArchitectureHotspots(prompt string, goIndex *semantic.GoIndex, explicitTargets []string, limit int) []architectureHotspot {
+	return rankArchitectureHotspotsWithOptions(prompt, goIndex, explicitTargets, limit, architectureHotspotOptions{})
+}
+
+func rankArchitectureHotspotsWithOptions(prompt string, goIndex *semantic.GoIndex, explicitTargets []string, limit int, opts architectureHotspotOptions) []architectureHotspot {
 	if goIndex == nil || limit == 0 {
 		return nil
 	}
@@ -1155,6 +1253,9 @@ func rankArchitectureHotspots(prompt string, goIndex *semantic.GoIndex, explicit
 
 	hotspots := make([]architectureHotspot, 0, len(goIndex.Files))
 	for _, file := range goIndex.Files {
+		if _, excluded := opts.ExcludedPaths[normalizeGuardedPath(file.Path)]; excluded {
+			continue
+		}
 		if file.IsTest {
 			continue
 		}
@@ -2272,6 +2373,10 @@ func buildArchitectureFallbackSummary(prompt string, hotspots []architectureHots
 	default:
 		b.WriteString("- medium: repository structure was profiled, but no concrete hotspot dominated.\n\n")
 	}
+	if architecturePromptWantsBoundedOneFilePlan(prompt) && len(hotspots) > 0 {
+		b.WriteString(renderBoundedOneFileArchitecturePlan(hotspots[0]))
+		return strings.TrimSpace(b.String())
+	}
 	if hasTargetedHotspot {
 		b.WriteString(renderTargetedArchitecturePlan(targetedHotspot, focusedPlan))
 		if focusedPlan {
@@ -2329,6 +2434,43 @@ func architecturePromptWantsFocusedTargetPlan(prompt string) bool {
 		containsAny(normalized, "drill down", "deeper", "go deeper", "recommendation", "this one", "this file", "focused plan", "targeted plan")
 }
 
+func architecturePromptWantsBoundedOneFilePlan(prompt string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	return looksLikePlanOnlyPrompt(normalized) &&
+		containsAny(normalized, "one existing", "one-file", "single file", "editing only one", "only one existing")
+}
+
+func renderBoundedOneFileArchitecturePlan(hotspot architectureHotspot) string {
+	var b strings.Builder
+	b.WriteString("Focused refactor plan:\n")
+	b.WriteString("- Target: ")
+	b.WriteString(hotspot.Path)
+	b.WriteString("\n")
+	b.WriteString("- Scope: edit only this existing Go file; do not create files or move declarations.\n")
+	if len(hotspot.Reasons) > 0 {
+		b.WriteString("- Why safe: this is a git-clean candidate selected from deterministic hotspot scoring because ")
+		b.WriteString(strings.Join(uniqueLimitedStrings(hotspot.Reasons, 3), ", "))
+		b.WriteString(". Keep exported APIs and call sites unchanged.\n")
+	} else {
+		b.WriteString("- Why safe: this is a git-clean candidate selected from deterministic hotspot scoring. Keep exported APIs and call sites unchanged.\n")
+	}
+	b.WriteString("- Exact intended change: inspect the local helper/control-flow cluster in ")
+	b.WriteString(hotspot.Path)
+	b.WriteString(" and consolidate the smallest repeated normalization or branching logic into an unexported helper in the same file.\n")
+	b.WriteString("- Verification: run go test ./")
+	b.WriteString(packageTestPathForFile(hotspot.Path))
+	b.WriteString(", then go test ./... if behavior-affecting code changed.\n")
+	return b.String()
+}
+
+func packageTestPathForFile(path string) string {
+	dir := filepath.Dir(normalizeGuardedPath(path))
+	if dir == "." || dir == "" {
+		return "..."
+	}
+	return filepath.ToSlash(dir)
+}
+
 func renderTargetedArchitecturePlan(hotspot architectureHotspot, focused bool) string {
 	var b strings.Builder
 	if focused {
@@ -2348,16 +2490,32 @@ func renderTargetedArchitecturePlan(hotspot architectureHotspot, focused bool) s
 	b.WriteString(architectureHotspotDirection(hotspot))
 	b.WriteString("\n")
 	if focused {
-		b.WriteString("- Phase 1: inspect callers and helpers around ")
-		b.WriteString(hotspot.Path)
-		b.WriteString(" to choose one responsibility boundary before moving code.\n")
-		b.WriteString("- Phase 2: extract the smallest cohesive responsibility behind stable function/type names, leaving existing call sites intact.\n")
-		b.WriteString("- Phase 3: run focused tests after the move, then repeat only if the boundary is proven.\n")
-		b.WriteString("- Verification: run the narrow package tests first, then the full Go suite if the package boundary changed.\n\n")
+		b.WriteString("- Phase 1: stage 1 scope is to edit only this existing Go file; do not create files or move declarations.\n")
+		if exact := focusedSameFileRefactorInstruction(hotspot.Path); exact != "" {
+			b.WriteString("- Phase 2: ")
+			b.WriteString(exact)
+			b.WriteString("\n")
+		} else {
+			b.WriteString("- Phase 2: inspect the local helper/control-flow cluster in ")
+			b.WriteString(hotspot.Path)
+			b.WriteString(" and consolidate the smallest repeated normalization or branching logic into an unexported helper in the same file, keeping exported APIs and call sites unchanged.\n")
+		}
+		b.WriteString("- Verification: Phase 3 runs go test ./")
+		b.WriteString(packageTestPathForFile(hotspot.Path))
+		b.WriteString(", then go test ./... if behavior-affecting code changed.\n\n")
 		return b.String()
 	}
 	b.WriteString("- Safe sequence: extract one responsibility at a time, keep existing callers stable, run focused tests after each move, then repeat only after the boundary is proven.\n\n")
 	return b.String()
+}
+
+func focusedSameFileRefactorInstruction(path string) string {
+	switch normalizeGuardedPath(path) {
+	case "internal/app/analysis_agents.go":
+		return "inside analysisSummaryTargets, extract the inline summary-token parsing into a new unexported helper named parseAnalysisSummaryTargetToken(field string) (string, int, bool), then replace the inline parsing block with that helper; keep behavior and call sites unchanged."
+	default:
+		return ""
+	}
 }
 
 func explicitlyRequestedArchitectureHotspot(hotspots []architectureHotspot) (architectureHotspot, bool) {

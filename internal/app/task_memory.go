@@ -42,12 +42,12 @@ type taskResumeContext struct {
 }
 
 type durablePlanArtifact struct {
-	Version       int                       `json:"version"`
-	Objective     string                    `json:"objective,omitempty"`
-	SourceLane    string                    `json:"source_lane,omitempty"`
-	Summary       string                    `json:"summary,omitempty"`
-	ApprovalScope durablePlanApprovalScope  `json:"approval_scope"`
-	PlanExit      string                    `json:"plan_exit,omitempty"`
+	Version       int                      `json:"version"`
+	Objective     string                   `json:"objective,omitempty"`
+	SourceLane    string                   `json:"source_lane,omitempty"`
+	Summary       string                   `json:"summary,omitempty"`
+	ApprovalScope durablePlanApprovalScope `json:"approval_scope"`
+	PlanExit      string                   `json:"plan_exit,omitempty"`
 }
 
 type durablePlanApprovalScope struct {
@@ -334,6 +334,9 @@ func looksLikeDurablePlanApprovalPrompt(prompt string) bool {
 	if normalized == "" {
 		return false
 	}
+	if containsAny(normalized, "don't", "do not", "not yet", "hold off", "wait", "without performing", "without applying") {
+		return false
+	}
 	return containsAny(normalized,
 		"implement this plan",
 		"implement the plan",
@@ -344,6 +347,22 @@ func looksLikeDurablePlanApprovalPrompt(prompt string) bool {
 		"apply the plan",
 		"proceed with this plan",
 		"go ahead with the plan",
+		"perform the refactor",
+		"perform this refactor",
+		"perform that refactor",
+		"execute the refactor",
+		"execute this refactor",
+		"execute that refactor",
+		"apply the refactor",
+		"apply this refactor",
+		"apply that refactor",
+		"do the refactor",
+		"start the refactor",
+		"begin the refactor",
+		"commence the refactor",
+		"perform the approved plan",
+		"execute the approved plan",
+		"build the approved plan",
 	)
 }
 
@@ -365,6 +384,13 @@ func looksLikeTerseDurablePlanApprovalPrompt(prompt string) bool {
 		"please start",
 		"begin",
 		"please begin",
+		"commence",
+		"please commence",
+		"let's commence",
+		"lets commence",
+		"build it",
+		"please build it",
+		"perform it",
 		"yes",
 		"yes please",
 		"approved",
@@ -950,23 +976,45 @@ func durablePlanReadOnlyEvidence(evidencePaths []string, editable []string) []st
 }
 
 func durablePlanCandidateDestinations(summary string, editable []string, evidence []string) []string {
-	paths := promptMentionedWorkspacePaths(summary)
 	blocked := make(map[string]struct{}, len(editable)+len(evidence))
 	for _, path := range append(append([]string(nil), editable...), evidence...) {
 		if normalized := normalizeGuardedPath(path); normalized != "" {
 			blocked[normalized] = struct{}{}
 		}
 	}
-	destinations := make([]string, 0, len(paths))
-	for _, path := range paths {
-		path = normalizeGuardedPath(path)
-		if path == "" {
+	destinations := make([]string, 0, 4)
+	addPaths := func(text string) {
+		for _, path := range promptMentionedWorkspacePaths(text) {
+			path = normalizeGuardedPath(path)
+			if path == "" {
+				continue
+			}
+			if _, ok := blocked[path]; ok {
+				continue
+			}
+			destinations = append(destinations, path)
+		}
+	}
+	for _, line := range strings.Split(summary, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
+		if trimmed == "" {
 			continue
 		}
-		if _, ok := blocked[path]; ok {
+		lower := strings.ToLower(trimmed)
+		for _, prefix := range []string{"allowed destinations:", "plan-approved new destinations:", "new destinations:"} {
+			if strings.HasPrefix(lower, prefix) {
+				_, tail, _ := strings.Cut(trimmed, ":")
+				addPaths(tail)
+				continue
+			}
+		}
+		if idx := strings.Index(lower, " into "); idx >= 0 && containsAny(lower[:idx], "split", "extract", "move", "separate") {
+			addPaths(trimmed[idx+len(" into "):])
 			continue
 		}
-		destinations = append(destinations, path)
+		if containsAny(lower, "create new file", "add new file", "new helper file", "new destination file") {
+			addPaths(trimmed)
+		}
 	}
 	return uniqueLimitedStrings(destinations, 8)
 }
@@ -1063,6 +1111,7 @@ func (m *Model) rememberAnalysisTaskMemory(prompt string, lane analysisLane, sum
 		memory = decorateDurablePlanArtifactMemory(memory, prompt, lane, summary, evidencePaths, nextAction)
 		reason = "plan-only analysis produced a durable plan artifact"
 	}
+	m.rememberWorkflowFromTaskMemory(prompt, lane, memory, evidencePaths, nextAction)
 	m.rememberTaskMemory(memory, reason)
 }
 

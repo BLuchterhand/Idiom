@@ -40,32 +40,34 @@ type Model struct {
 	input    textarea.Model
 	spinner  spinner.Model
 
-	messages       []llama.ChatMessage
-	promptStack    promptstack.Stack
-	activeProfiles []string
-	streaming      bool
-	bootingServer  bool
-	serverUp       bool
-	managedServer  bool
-	modelID        string
-	status         string
-	contextError   string
-	runtimeError   string
-	workingFrame   int
-	debugLogger    *transcript.DebugLogger
-	debugLogPath   string
-	exploreCache   *exploreSessionCache
-	pendingWrite   *writeApprovalProposal
-	lastJournal    *executionJournal
-	refactorStage  *structuralRefactorStage
-	taskMemory     *longHorizonTaskMemory
-	lastReplan     *analysisReplanRecommendationState
-	agentMode      agentDecisionMode
-	traceMode      traceDisplayMode
-	compactTrace   compactTraceState
-	phaseCard      phaseCardState
-	panelVisible   bool
-	executionPanel executionPanelState
+	messages                      []llama.ChatMessage
+	promptStack                   promptstack.Stack
+	activeProfiles                []string
+	streaming                     bool
+	bootingServer                 bool
+	serverUp                      bool
+	managedServer                 bool
+	modelID                       string
+	status                        string
+	contextError                  string
+	runtimeError                  string
+	workingFrame                  int
+	debugLogger                   *transcript.DebugLogger
+	debugLogPath                  string
+	exploreCache                  *exploreSessionCache
+	pendingWrite                  *writeApprovalProposal
+	lastJournal                   *executionJournal
+	lastAssistantReasoningContent string
+	refactorStage                 *structuralRefactorStage
+	taskMemory                    *longHorizonTaskMemory
+	workflowState                 *agentWorkflowState
+	lastReplan                    *analysisReplanRecommendationState
+	agentMode                     agentDecisionMode
+	traceMode                     traceDisplayMode
+	compactTrace                  compactTraceState
+	phaseCard                     phaseCardState
+	panelVisible                  bool
+	executionPanel                executionPanelState
 
 	routeClassifierOfflineNotified bool
 	routeClassifierStartMu         sync.Mutex
@@ -73,8 +75,9 @@ type Model struct {
 }
 
 type assistantReplyMsg struct {
-	text   string
-	logged bool
+	text             string
+	logged           bool
+	reasoningContent string
 }
 
 type infoMsg struct {
@@ -1197,11 +1200,25 @@ func (m *Model) appendExecutionProgress(line string) {
 	m.executionPanel.UpdatedAt = time.Now()
 }
 
-func (m *Model) rememberExecutionJournal(recorder *executionJournalRecorder, changedPaths []string, summary string, refactorStage *structuralRefactorStage) {
+func (m *Model) rememberExecutionJournal(recorder *executionJournalRecorder, changedPaths []string, summary string, refactorStage *structuralRefactorStage, verify implementationVerification) {
 	if recorder == nil {
 		return
 	}
 	m.lastJournal = recorder.Finalize(changedPaths, summary)
+	if m.lastJournal == nil && len(uniqueNormalizedPaths(changedPaths)) == 0 && implementationSummaryReportsNoop(summary) {
+		m.lastJournal = &executionJournal{
+			Prompt:      strings.TrimSpace(recorder.prompt),
+			Summary:     strings.TrimSpace(summary),
+			CreatedAt:   time.Now(),
+			CommittedAt: time.Now(),
+		}
+	}
+	if m.lastJournal != nil {
+		m.lastJournal.VerificationCommands = append([]string(nil), verify.commands...)
+		m.lastJournal.VerificationPassed = len(verify.results) > 0 && !verify.failed
+		m.lastJournal.VerificationFailed = verify.failed
+		m.lastJournal.VerificationConfidence = strings.TrimSpace(verify.confidence)
+	}
 	if m.lastJournal != nil && refactorStage != nil {
 		cloned := cloneStructuralRefactorStage(refactorStage)
 		m.lastJournal.Refactor = cloned
@@ -1298,12 +1315,17 @@ func (m *Model) insertBeforePendingAssistant(message llama.ChatMessage) {
 }
 
 func (m *Model) setPendingAssistantContent(content string) {
+	m.setPendingAssistantMessage(llama.ChatMessage{Role: "assistant", Content: content})
+}
+
+func (m *Model) setPendingAssistantMessage(message llama.ChatMessage) {
+	message.Role = fallback(strings.TrimSpace(message.Role), "assistant")
 	idx := m.pendingAssistantIndex()
 	if idx == -1 {
-		m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: content})
+		m.messages = append(m.messages, message)
 		return
 	}
-	m.messages[idx].Content = content
+	m.messages[idx] = message
 }
 
 func (m *Model) appendPendingAssistantContent(content string) {
@@ -1344,7 +1366,13 @@ func (m *Model) logMessage(role, content string) {
 
 func (m *Model) emitAssistantReply(reply string) {
 	m.logMessage("assistant", reply)
-	m.events <- assistantReplyMsg{text: reply, logged: true}
+	m.events <- assistantReplyMsg{text: reply, logged: true, reasoningContent: m.takeLastAssistantReasoningContent()}
+}
+
+func (m *Model) takeLastAssistantReasoningContent() string {
+	reasoning := strings.TrimSpace(m.lastAssistantReasoningContent)
+	m.lastAssistantReasoningContent = ""
+	return reasoning
 }
 
 func (m *Model) logToolRequest(event agent.ToolRequestEvent) {

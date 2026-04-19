@@ -10,7 +10,7 @@ import (
 func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "please edit the banner"}},
-		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=locate followup=implement reason=locate_request contract=locate_targets thoroughness=medium"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=locate followup=implement reason=locate_request contract=locate_targets mode=plan workflow=optimization_refactor phase=awaiting_approval thoroughness=medium"}},
 		{Type: "message", Data: map[string]any{"role": "replan_recommendation", "content": "review -> architecture: review produced structural evidence without a bounded finding"}},
 		{Type: "message", Data: map[string]any{"role": "explore_bootstrap", "content": "Repository profile:\nLanguage capability registry:\n- go tools: go_overview, go_find_symbol | signals: go.mod, internal/app/app.go\n- shell tools: search_content, read_file | signals: scripts/run.sh"}},
 		{Type: "message", Data: map[string]any{"role": "review_summary", "content": "initial summary rejected: failed lane-specific grounding or contract"}},
@@ -20,6 +20,7 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "final_answer_critic", "content": `{"contract":"implementation_result","passed":true,"action":"accept"}`}},
 		{Type: "message", Data: map[string]any{"role": "effort_policy", "content": `{"lane":"review","level":"thorough","max_tool_steps":12,"analysis_tool_budget":6,"implement_tool_budget":6,"deepening_passes":2,"time_budget_seconds":90,"max_output_tokens":2048,"reasoning_budget":-1,"confidence_floor":"high_or_exhausted_budget","budget_exhaustion_mode":"answer_with_explicit_uncertainty_or_fallback"}`}},
 		{Type: "message", Data: map[string]any{"role": "long_horizon_state", "content": `{"action":"persist","source_lane":"architecture","stage":1,"focus_path":"internal/app/app.go","changed":["internal/app/app.go"],"remaining":["internal/workspace/manager.go"],"next_step":"Continue with the workspace manager extraction.","verification":"passed","resumable":true}`}},
+		{Type: "message", Data: map[string]any{"role": "workflow_state", "content": `{"action":"persist","kind":"optimization_refactor","phase":"awaiting_approval","source_lane":"architecture","target_refs":["internal/app/app.go"],"editable_targets":["internal/app/app.go"],"read_only_evidence":["internal/workspace/manager.go"],"evidence_paths":["internal/app/app.go","internal/workspace/manager.go"],"verification":["go test ./internal/app"],"next_actions":["wait for explicit approval before build-mode execution"],"resumable":true}`}},
 		{Type: "message", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"review","used_model_calls":3,"used_deepening_passes":2,"max_deepening_passes":2,"used_tool_results":4,"new_evidence_paths":1,"total_evidence_paths":2,"stop_reason":"fallback_after_exhausted_readiness_attempts","budget_exhausted":true,"user_visible_uncertainty":"state that bounded readiness budget was exhausted"}`}},
 		{Type: "message", Data: map[string]any{"role": "evidence_delta", "content": `{"lane":"review","attempt":1,"new_evidence_paths":["internal/app/app.go"],"total_paths":2,"tool_results":2,"successful_tools":2,"failed_tools":0,"marginal_value":"medium"}`}},
 		{Type: "message", Data: map[string]any{"role": "claim_confidence", "content": `{"lane":"review","confidence":"high","supported_claims":1,"evidence_paths":["internal/app/app.go"],"calibration_basis":"contract acceptance plus grounded evidence path coverage"}`}},
@@ -27,7 +28,7 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"review","reason":"review_request","signals":["review","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected review"}`}},
 		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"confidence":"medium","commands":["go test ./internal/app"],"failed_commands":[],"learned_recommendation":"keep current verification plan"}`}},
 		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"review","tool":"read_file","confidence_impact":"degrade_until_alternate_evidence_covers_gap"}`}},
-		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","followup_lane":"implement","contract":"review_findings","task_family":"review","permission_profile":"analysis_read_only_then_guarded_writes","target_refs":["internal/app/app.go"],"required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection","implementation_handoff"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","forbidden_tools_absent","target_packet_or_changed_files_present","verification_contract_resolved","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","blocked_by_missing_permission_or_information","budget_exhausted_with_uncertainty_declared","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","no_overconfident_claims","findings_first"],"failure_to_eval":false}`}},
+		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","followup_lane":"implement","contract":"review_findings","agent_mode":"plan","workflow_kind":"optimization_refactor","workflow_phase":"awaiting_approval","task_family":"review","permission_profile":"analysis_read_only_then_guarded_writes","target_refs":["internal/app/app.go"],"required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection","implementation_handoff"],"allowed_tools":["task","search_content","read_file"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","forbidden_tools_absent","target_packet_or_changed_files_present","verification_contract_resolved","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","blocked_by_missing_permission_or_information","budget_exhausted_with_uncertainty_declared","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","no_overconfident_claims","findings_first"],"failure_to_eval":false}`}},
 		{Type: "tool_request", Data: map[string]any{"tool": "edit_file", "broad": false}},
 		{Type: "tool_result", Data: map[string]any{"agent": "implement_verify", "summary": "Edited internal/app/app.go", "error": ""}},
 		{Type: "phase", Data: map[string]any{"lane": "implement", "phase": "verify", "state": "done", "detail": "Verification passed"}},
@@ -51,7 +52,7 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 		t.Fatalf("expected one route plan, got %#v", metrics.RoutePlans)
 	}
 	plan := metrics.RoutePlans[0]
-	if plan.InitialLane != "locate" || plan.FollowupLane != "implement" || plan.Reason != "locate_request" || plan.Contract != "locate_targets" || plan.Thoroughness != "medium" {
+	if plan.InitialLane != "locate" || plan.FollowupLane != "implement" || plan.Reason != "locate_request" || plan.Contract != "locate_targets" || plan.AgentMode != "plan" || plan.WorkflowKind != "optimization_refactor" || plan.WorkflowPhase != "awaiting_approval" || plan.Thoroughness != "medium" {
 		t.Fatalf("unexpected route plan: %#v", plan)
 	}
 	if !containsStringFold(metrics.EvidencePaths, "internal/app/app.go") {
@@ -94,6 +95,12 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	if len(metrics.LongHorizonStates) != 1 || metrics.LongHorizonStates[0].Action != "persist" || !metrics.LongHorizonStates[0].Resumable {
 		t.Fatalf("expected long-horizon state metric, got %#v", metrics.LongHorizonStates)
 	}
+	if len(metrics.WorkflowStates) != 1 || metrics.WorkflowStates[0].Phase != "awaiting_approval" || !metrics.WorkflowStates[0].Resumable {
+		t.Fatalf("expected workflow state metric, got %#v", metrics.WorkflowStates)
+	}
+	if !containsStringFold(metrics.WorkflowStates[0].EditableTargets, "internal/app/app.go") || !containsStringFold(metrics.WorkflowStates[0].Verification, "go test ./internal/app") {
+		t.Fatalf("expected workflow target and verification metrics, got %#v", metrics.WorkflowStates[0])
+	}
 	if len(metrics.BudgetLedgers) != 1 || !metrics.BudgetLedgers[0].BudgetExhausted {
 		t.Fatalf("expected budget ledger metric, got %#v", metrics.BudgetLedgers)
 	}
@@ -120,6 +127,9 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 	if !containsStringFold(metrics.ControlRails[0].TargetRefs, "internal/app/app.go") {
 		t.Fatalf("expected control rails target refs, got %#v", metrics.ControlRails[0].TargetRefs)
+	}
+	if metrics.ControlRails[0].AgentMode != "plan" || metrics.ControlRails[0].WorkflowKind != "optimization_refactor" || metrics.ControlRails[0].WorkflowPhase != "awaiting_approval" || !containsStringFold(metrics.ControlRails[0].AllowedTools, "task") {
+		t.Fatalf("expected control rails mode and allowed tools, got %#v", metrics.ControlRails[0])
 	}
 }
 
@@ -181,6 +191,14 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 			SourceLane: "architecture",
 			Stage:      intPtr(1),
 			Resumable:  boolPtr(true),
+		},
+		RequireWorkflowState: &WorkflowStateExpectation{
+			Action:              "persist",
+			Kind:                "optimization_refactor",
+			Phase:               "awaiting_approval",
+			RequireEditable:     []string{"internal/app/app.go"},
+			RequireVerification: []string{"go test ./internal/app"},
+			Resumable:           boolPtr(true),
 		},
 		RequireBudgetLedger: &BudgetLedgerExpectation{
 			Lane:             "review",
@@ -251,7 +269,7 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 		t.Fatalf("expected scenario to fail, got %#v", report)
 	}
 	joined := strings.Join(report.Findings, "\n")
-	for _, expected := range []string{"required tool", "route plan mismatch", "replan recommendation mismatch", "evidence paths do not include", "verification plan mismatch", "required readiness check", "required deepening attempt", "required final answer critic", "required effort policy", "required long-horizon state", "required budget ledger", "required evidence delta", "required claim confidence", "required context compaction", "required route ambiguity", "required verification feedback", "required tool-failure confidence", "required control rails", "language capabilities do not include", "broad tool requests exceeded", "repeated dead-end requests exceeded", "summary rejections exceeded", "verification did not pass"} {
+	for _, expected := range []string{"required tool", "route plan mismatch", "replan recommendation mismatch", "evidence paths do not include", "verification plan mismatch", "required readiness check", "required deepening attempt", "required final answer critic", "required effort policy", "required long-horizon state", "required workflow state", "required budget ledger", "required evidence delta", "required claim confidence", "required context compaction", "required route ambiguity", "required verification feedback", "required tool-failure confidence", "required control rails", "language capabilities do not include", "broad tool requests exceeded", "repeated dead-end requests exceeded", "summary rejections exceeded", "verification did not pass"} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("expected finding containing %q, got %q", expected, joined)
 		}

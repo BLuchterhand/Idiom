@@ -133,6 +133,8 @@ Implementation:
 
 - Add an agent-role registry: `implement`, `explore`, `review`, `verify`, and later project-defined roles.
 - Add a child-runner API that can run read-only or write-enabled work with separate prompts, tool policy, ledger subset, and debug session id.
+- Implement the first read-only `task` tool with delegated prompt, child agent label, read-only mode, bounded child budgets, and nested-task prevention.
+- Deny write tools in read-only children through declarative permission policy rather than relying on prompt text.
 - For write-enabled child work, create a git worktree under `/tmp` or configured scratch space.
 - Require child outputs to return a patch summary, changed files, verification result, and confidence.
 - Main runner decides whether to apply or reject child diffs.
@@ -141,6 +143,8 @@ Implementation:
 Tests:
 
 - Read-only child cannot write.
+- Read-only child can complete a bounded delegated task and return evidence to the parent runner.
+- Nested `task` calls are denied inside child runners.
 - Write child runs in an isolated worktree and does not mutate the main tree until accepted.
 - Child result includes changed paths and verification evidence.
 - Main runner can reject a child patch without changing the workspace.
@@ -184,6 +188,7 @@ Problem: OpenCode-style planning is not just a routing choice. It is a durable a
 Implementation:
 
 - Add a durable plan artifact that records the objective, constraints, assumptions, open questions, proposed phases, verification section, and build-switch reminder.
+- Add a machine-readable plan schema with `approval_scope` and `plan_exit` fields so the host can recover editable targets, read-only evidence, allowed new destinations, forbidden paths, and verification expectations without prose guessing.
 - Treat plan mode as a read-only workflow with explicit exit or approval semantics before build-mode execution begins.
 - Preserve plan artifacts in logs and tracker updates so later turns can reuse the same intent rather than reconstructing it from scratch.
 - Require an explore-before-plan phase for ambiguous requests: gather evidence first, then write the plan artifact, then proceed to build only if the plan is approved.
@@ -194,6 +199,7 @@ Implementation:
 Tests:
 
 - Plan-only requests produce a durable plan artifact and no writes.
+- Durable plan artifacts include a parseable approval scope and allowed-destination list.
 - Plan exit requires explicit approval or an equivalent exit signal before build mode.
 - Build handoff emits a reminder and keeps the plan artifact visible in the run record.
 - Explore-before-plan prompts surface exploration output before the durable plan artifact.
@@ -212,15 +218,16 @@ Problem: Persisted plans and long-horizon memory are useful only if the implemen
 Implementation:
 
 - Add a typed resume context derived from persisted task memory.
-- Carry approved edit targets separately from read-only evidence paths, forbidden paths, attempted searches, open gaps, and verification plan entries.
+- Carry approved edit targets separately from read-only evidence paths, allowed new destinations, forbidden paths, attempted searches, open gaps, and verification plan entries.
 - Apply typed resume context directly to implementation target packets before deterministic enrichment.
-- Render target packets with explicit editable primary paths, read-only evidence files, analogy files, forbidden files, and strategy/verification hints.
+- Render target packets with explicit editable primary paths, read-only evidence files, plan-approved new destinations, analogy files, forbidden files, and strategy/verification hints.
 - Prime implementation evidence from editable and read-only paths without widening editable scope.
 - Keep prose resume prompts for model continuity, but treat the typed context as the authoritative host contract.
 
 Tests:
 
 - Durable plan resumption keeps only approved targets editable.
+- Plan-approved new destinations can be written without converting read-only evidence into editable source files.
 - Evidence paths from prior searches remain available for read-only inspection.
 - Verification intent from memory becomes an implementation strategy hint.
 - Basename and symbol enrichment do not widen explicit primary targets.
@@ -310,6 +317,74 @@ Acceptance:
 - First-run failures point at the missing model/binary/config issue instead of appearing as generic route-classifier silence.
 - Routing remains safe because deterministic rails stay host-owned.
 
+### 11. Explicit Mode And Tool-Policy Control Plane
+
+Problem: Frontier harnesses expose deterministic control surfaces for user intent while keeping the model responsible for task execution. A user should be able to force plan/build/review/explore behavior, and logs should show which tools were available under that route rather than requiring a reviewer to infer policy from prompts.
+
+Implementation:
+
+- Add explicit agent modes: `auto`, `plan`, `build`, `review`, and `explore`.
+- Keep `auto` as the default host/classifier route, but let `/agent plan|build|review|explore` impose a visible mode override.
+- Preserve safety boundaries: build mode must not override explicit verification-only, plan-only, or read-only user instructions.
+- Carry selected agent mode through route-plan logs, intent snapshots, control rails, and eval route expectations.
+- Add workflow command templates for recurring high-value flows: latest-log debugging, implement-plan, verification, frontier audit, and OpenCode-style audit.
+- Emit a dynamic tool-policy snapshot with allowed and forbidden tool sets derived from deterministic control rails.
+- Extend eval assertions so scenarios can require agent mode and allowed-tool visibility.
+
+Tests:
+
+- `/agent plan` forces a read-only architecture plan route and blocks edit intent.
+- `/agent build` does not override explicit verification-only/read-only prompts.
+- Workflow templates resolve to concrete prompts.
+- Control rails and route-plan eval parsing understand `agent_mode`/`mode`.
+- Tool-policy snapshots include allowed tools and forbidden tools for the selected route.
+
+Acceptance:
+
+- Deterministic mode is observable, testable, and subordinate to explicit user safety boundaries.
+- Recurring workflows do not depend on ad hoc prompt wording.
+- Tool availability is an auditable contract, not merely an instruction hidden in the system prompt.
+
+### 12. Typed Workflow State Machine
+
+Problem: The harness was still too phrase-sensitive across multi-turn work. A sequence like "Discovery optimization opportunities" -> "Plan a refactor for this file" -> "Perform the refactor" should not be reconstructed from recent prose or scattered keyword checks every turn. It needs an explicit workflow object with a phase, target roles, verification expectations, and allowed transitions.
+
+Implementation:
+
+- Add a persisted workflow-state artifact under the app state directory.
+- Track workflow kind, phase, objective, last prompt, source lane, target refs, evidence paths, editable targets, read-only evidence, allowed destinations, forbidden paths, verification expectations, and next actions.
+- Start an `optimization_refactor` workflow from architecture/optimization discovery prompts.
+- Preserve a generic `durable_plan` workflow kind for non-refactor durable plans.
+- Advance the workflow from `discovered` to `planning` for plan-only refactor follow-ups.
+- Convert durable plan artifacts into `awaiting_approval` workflow state with typed editable/read-only roles.
+- Persist file fingerprints for editable targets and read-only evidence, and reject stale or legacy un-fingerprinted workflow state before build-mode resume.
+- Resume approved plans through typed workflow state rather than re-parsing the prior answer.
+- Route approval turns such as "perform the refactor" to implementation with workflow kind/phase visible in route-plan and control-rail logs.
+- Keep negative approval language such as "do not perform yet" read-only.
+- Pass workflow state to the small route-classifier prompt so semantic verification sees the active workflow context.
+- Mark a resumed workflow complete only after a new execution journal records changed paths and passed verification; otherwise keep the workflow resumable with an incomplete-run next action.
+- Add eval parsing and assertions for `workflow_state` log records so captured logs can verify phase transitions.
+
+Tests:
+
+- Discovery prompts persist a typed `optimization_refactor` workflow in the `discovered` phase.
+- Plan-only refactor follow-ups remain read-only and expose workflow `planning` in route plans.
+- Durable plan persistence advances workflow state to `awaiting_approval` with editable targets and read-only evidence separated.
+- Approval prompts route to implementation and carry workflow `building` metadata.
+- Negative approval prompts do not resume the workflow.
+- Workflow state persists and reloads for the same workspace.
+- Workflow state rejects stale targets and legacy state without target fingerprints.
+- Generic durable plans keep `durable_plan` kind instead of being over-classified as optimization/refactor workflows.
+- Completion acceptance rejects old journals, missing verification, failed verification, and control-rail gap summaries.
+- Classifier routing memory includes active workflow state.
+- Eval log analysis extracts workflow-state metrics and can require workflow phase, targets, and verification.
+
+Acceptance:
+
+- Multi-turn plan/build workflows are state-machine driven rather than merely phrase-driven.
+- The implementation handoff consumes a typed workflow contract with target roles and verification requirements.
+- Logs can prove whether a workflow was discovered, planned, approved, resumed, or completed.
+
 ## Implementation Order
 
 0. Hybrid intent classifier and deterministic control plane.
@@ -323,6 +398,8 @@ Acceptance:
 8. Live target-role enforcement.
 9. Deterministic structural-refactor fallback.
 10. Route-classifier health and degraded-mode debounce.
+11. Explicit mode and tool-policy control plane.
+12. Typed workflow state machine.
 
 This order is intentional: the ledger gives the model durable intent, compaction preserves that intent, budgets explain termination, child work expands capability, and declarative safety makes the broader autonomy acceptable.
 

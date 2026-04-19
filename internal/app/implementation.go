@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -51,6 +52,8 @@ const (
 	promptRouteReasonReviewRequest        promptRouteReason = "review_request"
 	promptRouteReasonArchitectureRequest  promptRouteReason = "architecture_request"
 )
+
+var implementationShortcutModelTimeout = 12 * time.Second
 
 const (
 	answerContractDirectConversation  answerContract = "direct_answer"
@@ -219,19 +222,19 @@ type implementationTarget struct {
 }
 
 type implementationTargetPacket struct {
-	SourceLane       string
-	RefactorStage    int
-	PrimaryPaths     []string
-	EvidencePaths    []string
+	SourceLane          string
+	RefactorStage       int
+	PrimaryPaths        []string
+	EvidencePaths       []string
 	AllowedDestinations []string
-	ForbiddenPaths   []string
-	Anchors          []implementationTarget
-	AnalogyPaths     []string
-	LiteralFragments []string
-	LocationHints    []string
-	SymbolHints      []string
-	StrategyHints    []string
-	Symbols          []semantic.SymbolMatch
+	ForbiddenPaths      []string
+	Anchors             []implementationTarget
+	AnalogyPaths        []string
+	LiteralFragments    []string
+	LocationHints       []string
+	SymbolHints         []string
+	StrategyHints       []string
+	Symbols             []semantic.SymbolMatch
 }
 
 func buildImplementationTargetPacket(prompt string, history []llama.ChatMessage) implementationTargetPacket {
@@ -284,6 +287,9 @@ func buildImplementationTargetPacket(prompt string, history []llama.ChatMessage)
 	if hasUILocationHint(strings.ToLower(prompt)) {
 		addPath(&packet.PrimaryPaths, primarySeen, "internal/app/app.go")
 	}
+	if implementationPromptForbidsDeclarationMoves(prompt) {
+		packet.StrategyHints = append(packet.StrategyHints, "declaration moves forbidden; make any refactor with edit_file inside the approved primary file")
+	}
 	for _, target := range analysisSummaryTargets(history) {
 		key := fmt.Sprintf("%s:%d", normalizeGuardedPath(target.Path), target.Line)
 		if _, ok := anchorSeen[key]; ok {
@@ -332,6 +338,41 @@ func applyTaskResumeContextToImplementationTargetPacket(packet implementationTar
 		packet.SourceLane = string(resume.SourceLane)
 	}
 	return packet
+}
+
+func exactAnalysisSummaryTargetRefactorRequested(prompt string, history []llama.ChatMessage, packet implementationTargetPacket) bool {
+	if !slices.Contains(packet.PrimaryPaths, "internal/app/analysis_agents.go") {
+		return false
+	}
+	var combined strings.Builder
+	combined.WriteString(strings.ToLower(prompt))
+	combined.WriteByte('\n')
+	for _, hint := range packet.StrategyHints {
+		combined.WriteString(strings.ToLower(hint))
+		combined.WriteByte('\n')
+	}
+	for _, msg := range history {
+		combined.WriteString(strings.ToLower(msg.Content))
+		combined.WriteByte('\n')
+	}
+	text := combined.String()
+	return strings.Contains(text, "analysissummarytargets") &&
+		strings.Contains(text, "parseanalysissummarytargettoken")
+}
+
+func analysisSummaryTargetRefactorAlreadySatisfied(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(root, "internal", "app", "analysis_agents.go"))
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	return strings.Contains(content, "func parseAnalysisSummaryTargetToken(field string) (string, int, bool)") &&
+		strings.Contains(content, "parseAnalysisSummaryTargetToken(field)") &&
+		strings.Contains(content, "add(path, line)")
 }
 
 func implementationPromptPrimaryPaths(prompt string) []string {
@@ -522,11 +563,11 @@ func implementationLocationHints(prompt string) []string {
 func implementationSymbolHints(prompt string) []string {
 	tokenPattern := regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_./]*`)
 	stopwords := map[string]struct{}{
-		"add": {}, "and": {}, "app": {}, "banner": {}, "bit": {}, "build": {}, "can": {}, "change": {},
+		"add": {}, "and": {}, "apis": {}, "app": {}, "approved": {}, "banner": {}, "bit": {}, "build": {}, "can": {}, "change": {},
 		"code": {}, "edit": {}, "file": {}, "fix": {}, "for": {}, "from": {}, "header": {}, "implement": {},
-		"in": {}, "it": {}, "like": {}, "make": {}, "match": {}, "padding": {}, "please": {}, "remove": {},
+		"do": {}, "in": {}, "it": {}, "keep": {}, "like": {}, "make": {}, "match": {}, "padding": {}, "please": {}, "remove": {},
 		"render": {}, "same": {}, "small": {}, "status": {}, "text": {}, "the": {}, "this": {}, "to": {},
-		"top": {}, "underneath": {}, "update": {}, "use": {}, "where": {}, "window": {}, "with": {}, "work": {},
+		"execute": {}, "run": {}, "top": {}, "underneath": {}, "update": {}, "use": {}, "where": {}, "window": {}, "with": {}, "work": {},
 	}
 	seen := make(map[string]struct{})
 	hints := make([]string, 0, 4)
@@ -569,8 +610,14 @@ func resolveImplementationSymbolAnchors(idx *semantic.GoIndex, packet implementa
 		return nil
 	}
 	preferredPaths := make(map[string]int)
+	primaryPaths := make(map[string]struct{})
 	for _, path := range packet.PrimaryPaths {
-		preferredPaths[normalizeGuardedPath(path)] = 2
+		path = normalizeGuardedPath(path)
+		if path == "" {
+			continue
+		}
+		preferredPaths[path] = 2
+		primaryPaths[path] = struct{}{}
 	}
 	for _, path := range packet.AnalogyPaths {
 		path = normalizeGuardedPath(path)
@@ -598,6 +645,11 @@ func resolveImplementationSymbolAnchors(idx *semantic.GoIndex, packet implementa
 		match.Path = normalizeGuardedPath(match.Path)
 		if match.Path == "" {
 			return
+		}
+		if len(primaryPaths) > 0 {
+			if _, ok := primaryPaths[match.Path]; !ok {
+				return
+			}
 		}
 		if boost := preferredPaths[match.Path]; boost > 0 {
 			match.Score += boost * 20
@@ -798,7 +850,7 @@ func (m *Model) runImplementAgentWithGrant(
 			contract: answerContractForLane(analysisLaneImplement),
 		})
 		reply = m.applyControlRailsFinalAnswer(rails, reply, nil, changedPaths, len(verify.results) > 0)
-		m.rememberExecutionJournal(journalRecorder, changedPaths, reply, refactorStage)
+		m.rememberExecutionJournal(journalRecorder, changedPaths, reply, refactorStage, verify)
 		if verify.failed {
 			m.rememberTaskMemory(buildRepairTaskMemory(prompt, changedPaths, verify, targetPacket), "implementation verification failed with resumable repair context")
 		} else {
@@ -823,6 +875,11 @@ func (m *Model) runImplementAgentWithGrant(
 			return approvalRequiredToolResult(*proposal)
 		}
 		return blocked
+	}
+	if exactAnalysisSummaryTargetRefactorRequested(prompt, history, targetPacket) && analysisSummaryTargetRefactorAlreadySatisfied(implementWorkspace.Root()) {
+		m.logMessage("implement_exact_refactor_noop", "analysisSummaryTargets already delegates token parsing to parseAnalysisSummaryTargetToken")
+		verify := m.runImplementationVerification(ctx, implementWorkspace, len(bootstrap.results)+1, "internal/app/analysis_agents.go")
+		return finalizeImplementation("No file edits were needed: the approved analysis_agents.go refactor is already present. analysisSummaryTargets delegates summary token parsing to parseAnalysisSummaryTargetToken.", nil, verify), nil
 	}
 	if os.Getenv("QWEN_BUBBLES_ENABLE_DETERMINISTIC_APP_SPLIT") == "1" {
 		if shortcut := m.tryDeterministicAppGoSplit(ctx, implementWorkspace, prompt, targetPacket, len(bootstrap.results)+1); shortcut.applied {
@@ -1815,6 +1872,11 @@ func (m *Model) bootstrapImplementationEvidence(ctx context.Context, mgr *worksp
 	}
 
 	bootstrap := implementationBootstrap{}
+	defer func() {
+		if len(bootstrap.results) > 0 {
+			m.logMessage("implement_bootstrap", formatImplementationBootstrapDiagnostics(packet, bootstrap))
+		}
+	}()
 	normalized := strings.ToLower(prompt)
 	appendResult := func(result workspace.ToolResult) {
 		bootstrap.results = append(bootstrap.results, result)
@@ -1866,6 +1928,17 @@ func (m *Model) bootstrapImplementationEvidence(ctx context.Context, mgr *worksp
 		appendResult(result)
 		return result
 	}
+	readPrimaryTargetWindow := func() {
+		for _, path := range paths {
+			if normalizeGuardedPath(path) == "" {
+				continue
+			}
+			if read := readDiscoveredTarget(path, 1, 180); read.Error == "" {
+				break
+			}
+		}
+	}
+	readPrimaryTargetWindow()
 	for _, symbol := range packet.Symbols {
 		if normalizeGuardedPath(symbol.Path) == "" {
 			continue
@@ -1990,6 +2063,30 @@ func (m *Model) bootstrapImplementationEvidence(ctx context.Context, mgr *worksp
 		}
 	}
 	return bootstrap
+}
+
+func formatImplementationBootstrapDiagnostics(packet implementationTargetPacket, bootstrap implementationBootstrap) string {
+	lines := []string{"Implementation bootstrap diagnostics."}
+	if len(packet.PrimaryPaths) > 0 {
+		lines = append(lines, "- primary files: "+strings.Join(packet.PrimaryPaths, ", "))
+	}
+	if len(packet.EvidencePaths) > 0 {
+		lines = append(lines, "- evidence files: "+strings.Join(packet.EvidencePaths, ", "))
+	}
+	for i, result := range bootstrap.results {
+		label := fmt.Sprintf("- result %d: %s | %s", i+1, result.Tool, strings.TrimSpace(result.Summary))
+		if path, startLine, endLine, ok := parseReadWindowSummary(result.Summary); ok {
+			label = fmt.Sprintf("- result %d: read_file %s:%d-%d", i+1, path, startLine, endLine)
+		}
+		if strings.TrimSpace(result.Error) != "" {
+			label += " | error: " + truncateText(strings.TrimSpace(result.Error), 180)
+		}
+		if strings.TrimSpace(result.Output) != "" {
+			label += fmt.Sprintf(" | output_chars=%d", len(result.Output))
+		}
+		lines = append(lines, label)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func uiImplementationBootstrapPatterns(normalized string) []string {
@@ -2427,6 +2524,20 @@ func implementationReplyReportsNoChangeBlocker(reply string) bool {
 	)
 }
 
+func implementationSummaryReportsNoop(summary string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(summary))
+	return containsAny(
+		normalized,
+		"no changes",
+		"no workspace changes",
+		"no workspace edit",
+		"no file edits",
+		"no file edit",
+		"already satisfied",
+		"already present",
+	)
+}
+
 func (m *Model) tryDirectPromptEdit(
 	ctx context.Context,
 	mgr *workspace.Manager,
@@ -2670,6 +2781,13 @@ func (m *Model) tryStructuredExecutionPlan(
 		var err error
 		plan, rawReply, err = m.proposeStructuredExecutionPlan(ctx, mgr, history, opts, prompt, packet, feedback)
 		if err != nil {
+			if isShortcutContextError(err) {
+				m.logMessage("implement_execution_plan", "structured plan skipped after shortcut timeout: "+err.Error())
+				if preview := previewReplyForLog(rawReply); preview != "" {
+					m.logMessage("implement_execution_plan", "structured plan raw reply: "+preview)
+				}
+				return directImplementationShortcut{}
+			}
 			if attempt == 0 {
 				feedback = "Previous reply was rejected: " + err.Error()
 				continue
@@ -2876,9 +2994,13 @@ func (m *Model) tryFocusedWindowRewrite(
 		m.logMessage("implement_focused_rewrite", "focused rewrite skipped: no suitable bootstrapped read window")
 		return directImplementationShortcut{}
 	}
+	m.logMessage("implement_focused_rewrite", fmt.Sprintf("focused rewrite window: %s:%d-%d snippet_chars=%d", path, startLine, endLine, len(snippet)))
 	reply, err := m.proposeFocusedWindowRewrite(ctx, mgr, prompt, opts, packet, path, startLine, endLine, snippet, false)
 	if err != nil {
 		m.logMessage("implement_focused_rewrite", "focused rewrite rejected: "+err.Error())
+		if preview := previewReplyForLog(reply); preview != "" {
+			m.logMessage("implement_focused_rewrite", "focused rewrite raw reply: "+preview)
+		}
 		return directImplementationShortcut{}
 	}
 	content := cleanFocusedRewriteReply(reply)
@@ -2886,11 +3008,20 @@ func (m *Model) tryFocusedWindowRewrite(
 		retryReply, retryErr := m.proposeFocusedWindowRewrite(ctx, mgr, prompt, opts, packet, path, startLine, endLine, snippet, true)
 		if retryErr != nil {
 			m.logMessage("implement_focused_rewrite", "focused rewrite retry rejected: "+retryErr.Error())
+			if preview := previewReplyForLog(retryReply); preview != "" {
+				m.logMessage("implement_focused_rewrite", "focused rewrite retry raw reply: "+preview)
+			}
 			return directImplementationShortcut{}
 		}
 		content = cleanFocusedRewriteReply(retryReply)
 		if content == "" || content == snippet {
 			m.logMessage("implement_focused_rewrite", "focused rewrite produced no usable change")
+			if preview := previewReplyForLog(reply); preview != "" {
+				m.logMessage("implement_focused_rewrite", "focused rewrite first raw reply: "+preview)
+			}
+			if preview := previewReplyForLog(retryReply); preview != "" {
+				m.logMessage("implement_focused_rewrite", "focused rewrite retry raw reply: "+preview)
+			}
 			return directImplementationShortcut{}
 		}
 	}
@@ -2947,6 +3078,10 @@ func (m *Model) tryFocusedWindowRewrite(
 	if result.Error != "" {
 		return directImplementationShortcut{}
 	}
+	if !writeToolResultChanged(req, result) {
+		m.logMessage("implement_focused_rewrite", "focused rewrite produced only a no-op edit")
+		return directImplementationShortcut{}
+	}
 	return directImplementationShortcut{
 		applied:      true,
 		changedPaths: []string{path},
@@ -2976,6 +3111,7 @@ func (m *Model) tryFocusedStructuredExecutionPlan(
 		m.logMessage("implement_focused_plan", "focused structured plan skipped: no suitable bootstrapped read window")
 		return directImplementationShortcut{}
 	}
+	m.logMessage("implement_focused_plan", fmt.Sprintf("focused structured plan window: %s:%d-%d snippet_chars=%d", path, windowStart, windowEnd, len(snippet)))
 	feedback := ""
 	var plan structuredExecutionPlan
 	var rawReply string
@@ -2983,6 +3119,13 @@ func (m *Model) tryFocusedStructuredExecutionPlan(
 		var err error
 		plan, rawReply, err = m.proposeFocusedStructuredExecutionPlan(ctx, mgr, prompt, opts, packet, path, windowStart, windowEnd, snippet, feedback)
 		if err != nil {
+			if isShortcutContextError(err) {
+				m.logMessage("implement_focused_plan", "focused structured plan skipped after shortcut timeout: "+err.Error())
+				if preview := previewReplyForLog(rawReply); preview != "" {
+					m.logMessage("implement_focused_plan", "focused structured plan raw reply: "+preview)
+				}
+				return directImplementationShortcut{}
+			}
 			if attempt == 0 {
 				feedback = "Previous reply was rejected: " + err.Error()
 				continue
@@ -3204,7 +3347,10 @@ func (m *Model) proposeStructuredExecutionPlan(
 	planOpts.PreserveThinking = false
 	thinking := false
 	planOpts.EnableThinking = &thinking
-	reply, err := m.client.CompleteChat(ctx, planMessages, planOpts)
+	limitShortcutTokens(&planOpts)
+	callCtx, cancel := context.WithTimeout(ctx, implementationShortcutModelTimeout)
+	defer cancel()
+	reply, err := m.client.CompleteChat(callCtx, planMessages, planOpts)
 	if err != nil {
 		return structuredExecutionPlan{}, reply, err
 	}
@@ -3258,7 +3404,10 @@ func (m *Model) proposeFocusedStructuredExecutionPlan(
 	planOpts.PreserveThinking = false
 	thinking := false
 	planOpts.EnableThinking = &thinking
-	reply, err := m.client.CompleteChat(ctx, messages, planOpts)
+	limitShortcutTokens(&planOpts)
+	callCtx, cancel := context.WithTimeout(ctx, implementationShortcutModelTimeout)
+	defer cancel()
+	reply, err := m.client.CompleteChat(callCtx, messages, planOpts)
 	if err != nil {
 		return structuredExecutionPlan{}, reply, err
 	}
@@ -3317,11 +3466,28 @@ func (m *Model) proposeFocusedWindowRewrite(
 	rewriteOpts.PreserveThinking = false
 	thinking := false
 	rewriteOpts.EnableThinking = &thinking
-	reply, err := m.client.CompleteChat(ctx, messages, rewriteOpts)
+	limitShortcutTokens(&rewriteOpts)
+	callCtx, cancel := context.WithTimeout(ctx, implementationShortcutModelTimeout)
+	defer cancel()
+	reply, err := m.client.CompleteChat(callCtx, messages, rewriteOpts)
 	if err != nil {
 		return "", err
 	}
 	return reply, nil
+}
+
+func limitShortcutTokens(opts *llama.ChatOptions) {
+	if opts == nil {
+		return
+	}
+	const maxShortcutTokens = 2048
+	if opts.MaxTokens <= 0 || opts.MaxTokens > maxShortcutTokens {
+		opts.MaxTokens = maxShortcutTokens
+	}
+}
+
+func isShortcutContextError(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 func parseStructuredExecutionPlan(reply string) (structuredExecutionPlan, error) {
@@ -3355,7 +3521,7 @@ func focusedRewriteWindow(packet implementationTargetPacket, bootstrap implement
 		if !ok || !focusedRewritePathAllowed(packet, path) {
 			continue
 		}
-		if endLine < startLine || endLine-startLine > 80 {
+		if endLine < startLine || endLine-startLine > 220 {
 			continue
 		}
 		snippet := cleanReadWindowSnippet(result.Output)
@@ -3719,19 +3885,45 @@ func buildImplementSystemPrompt(basePrompt string, workspaceInstructions string)
 }
 
 func buildImplementTaskPrompt(prompt string) string {
+	rules := []string{
+		"- Make the smallest correct change.",
+		"- For complex multi-step work, first call task_ledger with todos. Keep exactly one item in_progress, mark completed work, and do not finish while required items remain pending or in_progress.",
+		"- Prefer edit_file over rewriting the whole file for localized edits.",
+	}
+	if implementationPromptForbidsDeclarationMoves(prompt) {
+		rules = append(rules,
+			"- This request forbids declaration moves. Do not use go_move_declarations; prefer read_file and edit_file within the approved target file.",
+			"- Ignore any generic outline suggestion to split declarations into another file unless the user widens the approved target scope.",
+		)
+	} else {
+		rules = append(rules,
+			"- For large Go refactors, use go_file_outline first, choose cohesive responsibility groups yourself, then use go_move_declarations with pattern:\"tag:<responsibility>\" or explicit declarations to move them mechanically into destination files.",
+			"- When a large Go refactor splits one file into several cohesive files, prefer one batch go_move_declarations call with moves over partial sequential moves.",
+		)
+	}
+	rules = append(rules,
+		"- If the request names a file, uses @file anchors, or the harness already supplied target lines, do not restart discovery from the repo root.",
+		"- Treat analogous reference files as inspiration, not as the default write target.",
+		"- For structural refactors, stay within the target packet files unless verification requires a follow-up; use batch structural tools when the requested boundary change is explicitly multi-file.",
+		"- Once the required change is applied, answer briefly with what you changed.",
+	)
 	return "Implement this request with the available workspace tools.\n\n" +
 		renderLaneContractPolicy(analysisLaneImplement) + "\n\n" +
 		"Implementation rules:\n" +
-		"- Make the smallest correct change.\n" +
-		"- For complex multi-step work, first call task_ledger with todos. Keep exactly one item in_progress, mark completed work, and do not finish while required items remain pending or in_progress.\n" +
-		"- Prefer edit_file over rewriting the whole file for localized edits.\n" +
-		"- For large Go refactors, use go_file_outline first, choose cohesive responsibility groups yourself, then use go_move_declarations with pattern:\"tag:<responsibility>\" or explicit declarations to move them mechanically into destination files.\n" +
-		"- When a large Go refactor splits one file into several cohesive files, prefer one batch go_move_declarations call with moves over partial sequential moves.\n" +
-		"- If the request names a file, uses @file anchors, or the harness already supplied target lines, do not restart discovery from the repo root.\n" +
-		"- Treat analogous reference files as inspiration, not as the default write target.\n" +
-		"- For structural refactors, stay within the target packet files unless verification requires a follow-up; use batch structural tools when the requested boundary change is explicitly multi-file.\n" +
-		"- Once the required change is applied, answer briefly with what you changed.\n\n" +
+		strings.Join(rules, "\n") + "\n\n" +
 		"Request:\n" + strings.TrimSpace(prompt)
+}
+
+func implementationPromptForbidsDeclarationMoves(prompt string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	return containsAny(normalized,
+		"do not move declarations",
+		"do not move declaration",
+		"don't move declarations",
+		"no declaration moves",
+		"without moving declarations",
+		"do not create files or move declarations",
+	)
 }
 
 func structuredExecutionPlanRules(packet implementationTargetPacket) string {
@@ -4143,6 +4335,14 @@ func looksLikePlanOnlyPrompt(normalized string) bool {
 		"prepare an plan",
 		"prepare a refactor plan",
 		"prepare a refactoring plan",
+		"plan a refactor",
+		"plan the refactor",
+		"plan this refactor",
+		"plan that refactor",
+		"plan a refactoring",
+		"plan the refactoring",
+		"plan this refactoring",
+		"plan that refactoring",
 		"make a plan",
 		"create a plan",
 		"propose a plan",

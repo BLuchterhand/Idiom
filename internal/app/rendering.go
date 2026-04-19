@@ -131,8 +131,9 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 	}
 	for _, msg := range history[start:] {
 		messages = append(messages, llama.ChatMessage{
-			Role:    normalizeHistoryRole(msg.Role),
-			Content: msg.Content,
+			Role:             normalizeHistoryRole(msg.Role),
+			Content:          msg.Content,
+			ReasoningContent: msg.ReasoningContent,
 		})
 	}
 	return messages

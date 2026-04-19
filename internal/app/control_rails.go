@@ -12,6 +12,8 @@ type deterministicControlRailsSnapshot struct {
 	FollowupLane         string   `json:"followup_lane,omitempty"`
 	Contract             string   `json:"contract,omitempty"`
 	AgentMode            string   `json:"agent_mode,omitempty"`
+	WorkflowKind         string   `json:"workflow_kind,omitempty"`
+	WorkflowPhase        string   `json:"workflow_phase,omitempty"`
 	Intent               string   `json:"intent,omitempty"`
 	IntentConfidence     string   `json:"intent_confidence,omitempty"`
 	Risk                 string   `json:"risk,omitempty"`
@@ -73,6 +75,8 @@ func buildDeterministicControlRails(prompt string, plan promptExecutionPlan) det
 		FollowupLane:         string(plan.followupLane),
 		Contract:             string(promptPlanAnswerContract(plan)),
 		AgentMode:            string(plan.agentMode),
+		WorkflowKind:         string(plan.workflowKind),
+		WorkflowPhase:        string(plan.workflowPhase),
 		Intent:               plan.intent.Intent,
 		IntentConfidence:     plan.intent.Confidence,
 		Risk:                 plan.intent.Risk,
@@ -564,7 +568,7 @@ func controlRailsEnforcementForAnswer(rails deterministicControlRailsSnapshot, a
 		}
 	}
 	if rails.TaskFamily == "implementation" {
-		if len(changedPaths) == 0 && !containsAny(normalized, "no changes", "no workspace changes", "no file edits") {
+		if len(changedPaths) == 0 && !containsAny(normalized, "no changes", "no workspace changes", "no workspace edit", "no file edits", "no file edit") {
 			addViolation("changed_files_or_noop_missing")
 		}
 		if !verificationResolved {

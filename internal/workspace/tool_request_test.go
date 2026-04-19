@@ -54,6 +54,11 @@ func TestParseToolRequestRepairsSafeMissingToolAliases(t *testing.T) {
 			want: "shell",
 		},
 		{
+			name: "child task",
+			text: "```tool\n{\"agent\":\"explorer\",\"prompt\":\"inspect routing\"}\n```",
+			want: "task",
+		},
+		{
 			name: "line edit",
 			text: "```tool\n{\"path\":\"internal/app/app.go\",\"start_line\":10,\"end_line\":10,\"content\":\"replacement\"}\n```",
 			want: "edit_file",

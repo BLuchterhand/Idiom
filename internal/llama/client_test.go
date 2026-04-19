@@ -19,12 +19,12 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hello"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","reasoning_content":"hidden chain","content":"hello"}}]}`))
 	}))
 	defer server.Close()
 
 	client := NewClient(server.URL, time.Second)
-	reply, err := client.CompleteChat(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, ChatOptions{
+	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "hi", ReasoningContent: "prior hidden"}}, ChatOptions{
 		Model:             "model",
 		Temperature:       0.7,
 		TopP:              0.8,
@@ -39,10 +39,10 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteChat: %v", err)
 	}
-	if reply != "hello" {
-		t.Fatalf("expected reply hello, got %q", reply)
+	if reply.Content != "hello" || reply.ReasoningContent != "hidden chain" {
+		t.Fatalf("expected reply with preserved reasoning, got %#v", reply)
 	}
-	if got.Model != "model" || got.Messages[0].Content != "hi" || got.Stream {
+	if got.Model != "model" || got.Messages[0].Content != "hi" || got.Messages[0].ReasoningContent != "prior hidden" || got.Stream {
 		t.Fatalf("unexpected request payload: %#v", got)
 	}
 	if got.ChatTemplateKwargs == nil || got.ChatTemplateKwargs.EnableThinking == nil || *got.ChatTemplateKwargs.EnableThinking {

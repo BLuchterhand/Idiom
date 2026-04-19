@@ -29,6 +29,8 @@ type promptExecutionPlan struct {
 	taskFamily        string
 	permissionProfile string
 	agentMode         agentDecisionMode
+	workflowKind      agentWorkflowKind
+	workflowPhase     agentWorkflowPhase
 	intent            promptIntentDecision
 }
 
@@ -98,6 +100,7 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 	if err := m.ensureServerReady(ctx); err != nil {
 		return "", err
 	}
+	m.lastAssistantReasoningContent = ""
 	plan := m.classifyPromptExecutionPlan(prompt)
 	if m.workspace != nil {
 		m.workspace.PrimeDiscoveredPaths(promptMentionedWorkspacePaths(prompt))
@@ -109,11 +112,12 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 	if summary := formatPromptExecutionPlan(plan); summary != "" {
 		m.logMessage("route_plan", summary)
 	}
+	m.logMessage("thinking_config", m.samplingSummary())
 	reply, err := m.runPromptPlan(ctx, prompt, m.requestMessages(), m.chatOptions(), plan)
 	if err != nil {
 		return "", err
 	}
-	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply})
+	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply, ReasoningContent: m.takeLastAssistantReasoningContent()})
 	m.logMessage("assistant", reply)
 	return reply, nil
 }
@@ -152,11 +156,16 @@ func (m *Model) sendPromptAsync(prompt string) {
 		m.resumeStructuralRefactorAsync(prompt)
 		return
 	}
+	if shouldResumeWorkflowPrompt(prompt, m.currentWorkflowState()) {
+		m.resumeWorkflowAsync(prompt)
+		return
+	}
 	if shouldResumeTaskMemoryPrompt(prompt, m.currentTaskMemory()) {
 		m.resumeTaskMemoryAsync(prompt)
 		return
 	}
 	plan := m.classifyPromptExecutionPlan(prompt)
+	m.lastAssistantReasoningContent = ""
 	if m.workspace != nil {
 		m.workspace.PrimeDiscoveredPaths(promptMentionedWorkspacePaths(prompt))
 	}
@@ -169,6 +178,7 @@ func (m *Model) sendPromptAsync(prompt string) {
 	if summary := formatPromptExecutionPlan(plan); summary != "" {
 		m.logMessage("route_plan", summary)
 	}
+	m.logMessage("thinking_config", m.samplingSummary())
 	m.streaming = true
 	m.workingFrame = 0
 	m.clearRuntimeError()
@@ -281,6 +291,14 @@ func formatPromptExecutionPlan(plan promptExecutionPlan) string {
 	if plan.agentMode != "" {
 		b.WriteString(" mode=")
 		b.WriteString(string(plan.agentMode))
+	}
+	if plan.workflowKind != "" {
+		b.WriteString(" workflow=")
+		b.WriteString(string(plan.workflowKind))
+	}
+	if plan.workflowPhase != "" {
+		b.WriteString(" phase=")
+		b.WriteString(string(plan.workflowPhase))
 	}
 	if plan.intent.Intent != "" {
 		b.WriteString(" intent=")
@@ -1049,7 +1067,7 @@ func (m *Model) runPromptIntentVerifier(
 	verifierOpts.EnableThinking = &thinking
 	messages := []llama.ChatMessage{
 		{Role: "system", Content: buildPromptIntentVerifierSystemPrompt()},
-		{Role: "user", Content: buildPromptIntentVerifierTaskPrompt(prompt, history, plan, rails, reasons, renderTaskMemoryForModel(m.currentTaskMemory()))},
+		{Role: "user", Content: buildPromptIntentVerifierTaskPrompt(prompt, history, plan, rails, reasons, m.renderRoutingMemoryForVerifier())},
 	}
 	reply, err := classifierClient.CompleteChat(classifierCtx, messages, verifierOpts)
 	if err != nil {
@@ -1290,8 +1308,10 @@ func reconcilePromptPlanWithVerifier(prompt string, plan promptExecutionPlan, ve
 	if verifier.NeedsVerification {
 		plan.intent.WantsVerify = true
 	}
-	if len(verifier.TargetRefs) > 0 {
+	if len(verifier.TargetRefs) > 0 && !shouldIgnoreVerifierTargetRefsForPrompt(prompt, verifier.TargetRefs) {
 		plan.intent.TargetRefs = uniqueNormalizedPaths(append(plan.intent.TargetRefs, verifier.TargetRefs...))
+	} else if len(verifier.TargetRefs) > 0 {
+		notes = append(notes, "ignored verifier target refs for open-ended opportunity discovery")
 	}
 	plan.intent.Source = "host_structured_intent+model_verifier"
 	plan.intent.Vetoes = uniqueNonEmptyStrings(plan.intent.Vetoes)
@@ -1883,6 +1903,7 @@ func (m *Model) classifyPromptExecutionPlan(prompt string) promptExecutionPlan {
 			plan = contextual
 		}
 	}
+	plan = m.applyWorkflowStateToPromptExecutionPlan(prompt, plan)
 	plan = m.attachPromptIntentDecision(prompt, plan)
 	return m.applyAgentDecisionMode(prompt, plan)
 }
@@ -1905,11 +1926,23 @@ func finalizePromptExecutionPlan(prompt string, profile promptRouteProfile, plan
 		plan.intent.SelectedLane = string(plan.lane)
 		plan.intent.FollowupLane = string(plan.followupLane)
 	}
+	if plan.lane == analysisLaneImplement && !plan.intent.WantsPlanOnly && !plan.intent.WantsVerify {
+		plan.intent.WantsEdits = true
+	}
 	if plan.agentMode == "" {
 		plan.agentMode = agentDecisionModeAuto
 	}
 	plan.intent.AgentMode = string(plan.agentMode)
 	return plan
+}
+
+func shouldIgnoreVerifierTargetRefsForPrompt(prompt string, targetRefs []string) bool {
+	if len(targetRefs) == 0 || len(promptMentionedWorkspacePaths(prompt)) > 0 {
+		return false
+	}
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	return containsAny(normalized, "identify one bounded optimization", "identify one bounded", "optimization/refactor opportunity", "optimization opportunity", "optimization opportunities", "refactor opportunity", "refactor opportunities") &&
+		containsAny(normalized, "explore", "discover", "identify")
 }
 
 func (m *Model) contextualPromptExecutionPlan(prompt string, base promptExecutionPlan) (promptExecutionPlan, bool) {
@@ -2027,6 +2060,16 @@ func looksLikeEllipticalImplementationFollowup(normalized string) bool {
 		"implement all of it",
 		"implement that",
 		"implement those changes",
+		"perform the refactor",
+		"perform this refactor",
+		"perform that refactor",
+		"execute the refactor",
+		"execute this refactor",
+		"execute that refactor",
+		"apply the refactor",
+		"apply this refactor",
+		"apply that refactor",
+		"do the refactor",
 		"make the change",
 		"make those changes":
 		return true
@@ -2090,6 +2133,8 @@ func buildPromptRouteProfile(prompt string) promptRouteProfile {
 
 func promptInitialRoute(profile promptRouteProfile) (analysisLane, promptRouteReason) {
 	switch {
+	case profile.wantsArchitecture && (profile.wantsPlanOnly || profile.wantsExploration):
+		return analysisLaneArchitecture, promptRouteReasonArchitectureRequest
 	case profile.wantsLocate:
 		return analysisLaneLocate, promptRouteReasonLocateRequest
 	case profile.wantsDirectImplement && !promptRequestsAnalysisBeforeImplementation(profile.normalized) && (profile.hasConcreteTarget || !profile.wantsExploration):
@@ -2188,6 +2233,8 @@ func looksLikeInvestigationPrompt(normalized string) bool {
 	hasInvestigationVerb := containsAny(
 		normalized,
 		"explore",
+		"discover",
+		"discovery",
 		"investigate",
 		"investigation",
 		"inspect",
@@ -2337,6 +2384,10 @@ func looksLikeArchitecturePrompt(normalized string) bool {
 		"improve architecture",
 		"structural improvement",
 		"structural improvements",
+		"optimization opportunity",
+		"optimization opportunities",
+		"discovery optimization",
+		"discover optimization",
 		"maintainability",
 		"long-term maintainability",
 		"long term maintainability",

@@ -37,6 +37,540 @@ func TestToolActionClassNormalizesRepeatedDeadEndKeys(t *testing.T) {
 	}
 }
 
+func TestBuildRunnerNextActionStateGuidesAfterBootstrappedReadBlocker(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go"}
+	result := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Implementation bootstrap already inspected this target",
+		Error:   "internal/app/app.go has already been read in the implementation bootstrap; use edit_file or a narrow line range instead",
+		Output:  "internal/app/app.go: already inspected",
+	}
+	state := buildRunnerNextActionState(
+		"implement",
+		3,
+		"pre_execute_guard",
+		req,
+		result,
+		[]workspace.ToolResult{result},
+		true,
+	)
+	if state.Lane != "implement" || state.Step != 3 || state.LastTool != "read_file" || state.LastTarget != "internal/app/app.go" {
+		t.Fatalf("unexpected state identity: %#v", state)
+	}
+	if !strings.Contains(strings.Join(state.Constraints, "\n"), "declaration_moves_forbidden") {
+		t.Fatalf("expected declaration move constraint, got %#v", state.Constraints)
+	}
+	if !strings.Contains(strings.Join(state.Constraints, "\n"), "bootstrap_evidence_available") {
+		t.Fatalf("expected bootstrap evidence constraint, got %#v", state.Constraints)
+	}
+	if !strings.Contains(strings.Join(state.InvalidNextActions, "\n"), "duplicate_read_file_on_bootstrapped_target") {
+		t.Fatalf("expected duplicate read invalid action, got %#v", state.InvalidNextActions)
+	}
+	actions := strings.Join(state.NextValidActions, "\n")
+	if !strings.Contains(actions, "edit_file on the approved target") {
+		t.Fatalf("expected edit guidance, got %#v", state.NextValidActions)
+	}
+	if !strings.Contains(actions, "narrow read_file") {
+		t.Fatalf("expected narrow read guidance, got %#v", state.NextValidActions)
+	}
+}
+
+func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
+		"Blocked by the read guard.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var states []runnerNextActionState
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 2, MaxNoProgressTurns: 2},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if req.Tool != "read_file" {
+				return nil
+			}
+			return &workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: "Implementation bootstrap already inspected this target",
+				Error:   "README.md has already been read in the implementation bootstrap; use edit_file or a narrow line range instead",
+			}
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role != "next_action_state" {
+				return
+			}
+			var state runnerNextActionState
+			if err := json.Unmarshal([]byte(event.Content), &state); err != nil {
+				t.Fatalf("decode next action state %q: %v", event.Content, err)
+			}
+			states = append(states, state)
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "read README.md"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Blocked by the read guard." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if len(states) != 1 {
+		t.Fatalf("expected one next_action_state event, got %#v", states)
+	}
+	state := states[0]
+	if state.Reason != "pre_execute_guard" || state.LastTool != "read_file" || state.LastTarget != "README.md" {
+		t.Fatalf("unexpected state: %#v", state)
+	}
+	if !strings.Contains(strings.Join(state.NextValidActions, "\n"), "edit_file on the approved target") {
+		t.Fatalf("expected edit guidance, got %#v", state.NextValidActions)
+	}
+}
+
+func TestRunnerBootstrappedReadReminderDoesNotPoisonNarrowRead(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "line 1\nline 2\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":1}\n```",
+		"Done after narrow read.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var replayedBootstrapReminder bool
+	var narrowReadSucceeded bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 4},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if req.Tool == "read_file" && req.Path == "README.md" && req.StartLine == 0 && req.EndLine == 0 {
+				return &workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Implementation bootstrap already inspected this target",
+					Error:   "README.md has already been read in the implementation bootstrap; use edit_file or a narrow line range instead",
+				}
+			}
+			return nil
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "use the bootstrapped README evidence"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "read_file" && strings.Contains(event.Result.Summary, "replayed same blocker") {
+				replayedBootstrapReminder = true
+			}
+			if event.Result.Tool == "read_file" && event.Result.Error == "" && strings.Contains(event.Result.Summary, "lines 1-1") {
+				narrowReadSucceeded = true
+			}
+			if strings.Contains(event.Result.Summary, "Repeated dead-end action rejected") {
+				t.Fatalf("bootstrapped read reminder should not become a repeated dead-end: %#v", event.Result)
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done after narrow read." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if !replayedBootstrapReminder {
+		t.Fatal("expected repeated full read to replay the bootstrap reminder once")
+	}
+	if !narrowReadSucceeded {
+		t.Fatal("expected narrow read to execute after bootstrapped-read reminder")
+	}
+}
+
+func TestRunnerRejectsBroadDiscoveryAfterWorkspaceEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "old\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":1,\"content\":\"new\\n\"}\n```",
+		"```tool\n{\"tool\":\"list_files\",\"path\":\".\",\"recursive\":true,\"max_depth\":2}\n```",
+		"Blocked on post-edit focus.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var broadRejected bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "edit README and stay focused"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "list_files" && strings.Contains(event.Result.Summary, "Post-edit broad discovery rejected") {
+				broadRejected = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Blocked on post-edit focus." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if !broadRejected {
+		t.Fatal("expected broad discovery to be rejected after a workspace edit")
+	}
+}
+
+func TestRunnerAllowsChangedFileReadAfterRejectingUnrelatedPostEditRead(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "old\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	if err := writeTestFile(root, "go.mod", "module example.com/test\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":1,\"content\":\"new\\n\"}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"go.mod\"}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":1}\n```",
+		"Done after changed-file read.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var unrelatedReadRejected bool
+	var changedReadSucceeded bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "edit README and verify the changed file"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "read_file" && strings.Contains(event.Result.Summary, "Post-edit unrelated read rejected") {
+				unrelatedReadRejected = true
+			}
+			if event.Result.Tool == "read_file" && event.Result.Error == "" && strings.Contains(event.Result.Summary, "README.md lines 1-1") {
+				changedReadSucceeded = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done after changed-file read." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if !unrelatedReadRejected {
+		t.Fatal("expected unrelated read to be rejected after a workspace edit")
+	}
+	if !changedReadSucceeded {
+		t.Fatal("expected read of changed file to remain allowed")
+	}
+}
+
+func TestRunnerRejectsExactPlanEditOutsideApprovedWindow(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/app/analysis_agents.go", strings.Repeat("line\n", 220)); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"edit_file\",\"path\":\"internal/app/analysis_agents.go\",\"start_line\":184,\"end_line\":184,\"content\":\"bad\\n\"}\n```",
+		"Blocked by exact scope.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var scopeRejected bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 2, MaxNoProgressTurns: 2},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{
+			{Role: "system", Content: "Approved plan: edit internal/app/analysis_agents.go inside analysisSummaryTargets and parseAnalysisSummaryTargetToken only."},
+			{Role: "user", Content: "Please start"},
+		},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "edit_file" && strings.Contains(event.Result.Summary, "Exact-plan edit scope rejected") {
+				scopeRejected = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Blocked by exact scope." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if !scopeRejected {
+		t.Fatal("expected out-of-window exact-plan edit to be rejected")
+	}
+}
+
+func TestRunnerPreservesReasoningContentBetweenToolTurns(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	type requestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+	}
+	var payloads []requestPayload
+	replies := []string{
+		"{\"choices\":[{\"message\":{\"role\":\"assistant\",\"reasoning_content\":\"tool-call reasoning\",\"content\":\"```tool\\n{\\\"tool\\\":\\\"read_file\\\",\\\"path\\\":\\\"README.md\\\"}\\n```\"}}]}",
+		`{"choices":[{"message":{"role":"assistant","content":"Done."}}]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload requestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
+		if len(payloads) > len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		_, _ = w.Write([]byte(replies[len(payloads)-1]))
+	}))
+	defer server.Close()
+
+	enableThinking := true
+	var thinkingEvents []runnerThinkingTrace
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 2},
+		OnEvent: func(event RunEvent) {
+			if event.Role != "thinking_trace" {
+				return
+			}
+			var trace runnerThinkingTrace
+			if err := json.Unmarshal([]byte(event.Content), &trace); err != nil {
+				t.Fatalf("decode thinking trace %q: %v", event.Content, err)
+			}
+			thinkingEvents = append(thinkingEvents, trace)
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "read README.md"}},
+		llama.ChatOptions{Model: "model", EnableThinking: &enableThinking, PreserveThinking: true, MaxTokens: 128},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("expected two model requests, got %d", len(payloads))
+	}
+	var foundPreserved bool
+	for _, message := range payloads[1].Messages {
+		if message.Role == "assistant" && message.ReasoningContent == "tool-call reasoning" {
+			foundPreserved = true
+			break
+		}
+	}
+	if !foundPreserved {
+		t.Fatalf("expected second request to include prior assistant reasoning_content, got %#v", payloads[1].Messages)
+	}
+	var sawPreservedTrace bool
+	for _, trace := range thinkingEvents {
+		if trace.ReasoningChars > 0 && trace.PreservedInHistory {
+			sawPreservedTrace = true
+			break
+		}
+	}
+	if !sawPreservedTrace {
+		t.Fatalf("expected thinking_trace to report preserved reasoning, got %#v", thinkingEvents)
+	}
+}
+
+func TestRunnerPreservesEmptyReplyReasoningForRetry(t *testing.T) {
+	root := t.TempDir()
+	type requestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+	}
+	var payloads []requestPayload
+	replies := []string{
+		`{"choices":[{"message":{"role":"assistant","reasoning_content":"unfinished reasoning","content":""}}]}`,
+		`{"choices":[{"message":{"role":"assistant","content":"Done."}}]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload requestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
+		if len(payloads) > len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		_, _ = w.Write([]byte(replies[len(payloads)-1]))
+	}))
+	defer server.Close()
+
+	enableThinking := true
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 2},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "answer"}},
+		llama.ChatOptions{Model: "model", EnableThinking: &enableThinking, PreserveThinking: true, MaxTokens: 128},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("expected two model requests, got %d", len(payloads))
+	}
+	var foundPreserved bool
+	for _, message := range payloads[1].Messages {
+		if message.Role == "assistant" && message.ReasoningContent == "unfinished reasoning" {
+			foundPreserved = true
+			break
+		}
+	}
+	if !foundPreserved {
+		t.Fatalf("expected retry request to include empty reply reasoning_content, got %#v", payloads[1].Messages)
+	}
+}
+
 func writeTestFile(root string, path string, content string) error {
 	fullPath := filepath.Join(root, path)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
@@ -96,11 +630,11 @@ func TestRecommendedGoMoveAfterOutlineRespectsPreExecuteGuard(t *testing.T) {
 	}}
 	runner := &Runner{
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
-			if req.Tool == "go_move_declarations" && req.Destination == "implementation.go" {
+			if req.Tool == "go_move_declarations" {
 				return &workspace.ToolResult{
 					Tool:    req.Tool,
 					Summary: "Implementation target packet blocked write outside approved targets",
-					Error:   "implementation.go is not an approved editable target",
+					Error:   req.Destination + " is not an approved editable target",
 				}
 			}
 			return nil
@@ -125,6 +659,26 @@ func TestShouldRejectProseAfterGoOutlineAllowsConcreteFailedMoveBlocker(t *testi
 	}
 	if shouldRejectProseAfterGoOutline("Blocked: destination is not approved by the current target scope.", results) {
 		t.Fatal("expected concrete failed-move blocker to be allowed")
+	}
+}
+
+func TestGoOutlineGuardsStopAfterFailedMove(t *testing.T) {
+	results := []workspace.ToolResult{
+		{Tool: "go_file_outline", Summary: "Outlined source.go", Output: `tool: {"tool":"go_move_declarations","path":"source.go","destination":"blocked.go","pattern":"tag:blocked"}`},
+		{Tool: "go_move_declarations", Summary: "Recommended declaration move rejected by guard", Error: "blocked.go is not an approved editable target"},
+	}
+	if shouldRejectFullReadAfterGoOutline(workspace.ToolRequest{Tool: "read_file", Path: "source.go"}, results) {
+		t.Fatal("failed move should allow a follow-up read instead of forcing the same rejected fallback")
+	}
+	if shouldRejectRepeatedGoOutline(workspace.ToolRequest{Tool: "go_file_outline", Path: "source.go"}, results) {
+		t.Fatal("failed move should allow a repeated outline if the agent needs alternative boundaries")
+	}
+	afterFollowUpOutline := append(results, workspace.ToolResult{Tool: "go_file_outline", Summary: "Outlined source.go after failed move"})
+	if !shouldRejectRepeatedGoOutline(workspace.ToolRequest{Tool: "go_file_outline", Path: "source.go"}, afterFollowUpOutline) {
+		t.Fatal("second outline after a failed move should be rejected to prevent outline loops")
+	}
+	if shouldRejectBroadInspectionAfterGoOutline(workspace.ToolRequest{Tool: "list_files", Path: "."}, results) {
+		t.Fatal("failed move should allow broader recovery instead of exhausting on the same rejected fallback")
 	}
 }
 
@@ -205,6 +759,248 @@ func coreValue() int {
 	}
 }
 
+func TestRunnerRejectsOutlineAndAllowsReadWhenDeclarationMovesForbidden(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "source.go", `package sample
+
+import "fmt"
+
+func renderView() string {
+	return fmt.Sprint("ok")
+}
+
+func coreValue() int {
+	return 1
+}
+`); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"go_file_outline\",\"path\":\"source.go\"}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"source.go\"}\n```",
+		"Inspected source.go without moving declarations.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var moved bool
+	var readFullFile bool
+	var outlineRejected bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Edit only source.go. Do not create files or move declarations."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "go_file_outline" && event.Result.Error != "" {
+				outlineRejected = true
+			}
+			if event.Result.Tool == "go_move_declarations" {
+				moved = true
+			}
+			if event.Result.Tool == "read_file" && event.Result.Error == "" {
+				readFullFile = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if moved {
+		t.Fatal("did not expect deterministic declaration move when task forbids moves")
+	}
+	if !outlineRejected {
+		t.Fatal("expected go_file_outline to be rejected when declaration moves are forbidden")
+	}
+	if !readFullFile {
+		t.Fatal("expected read_file request to execute instead of being replaced by go_move_declarations")
+	}
+	if answer != "Inspected source.go without moving declarations." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+}
+
+func TestRunnerAllowsReadWhenRecommendedGoMoveIsGuarded(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "source.go", `package sample
+
+import "fmt"
+
+func renderView() string {
+	return fmt.Sprint("ok")
+}
+
+func coreValue() int {
+	return 1
+}
+`); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"go_file_outline\",\"path\":\"source.go\"}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"source.go\"}\n```",
+		"Blocked: the recommended declaration move was outside the approved target scope; inspected source.go after the guarded move.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var moved bool
+	var readFullFile bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if req.Tool == "go_move_declarations" {
+				return &workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Implementation target packet blocked write outside approved targets",
+					Error:   req.Destination + " is not an approved editable target",
+				}
+			}
+			return nil
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Refactor source.go without widening target scope."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "go_move_declarations" {
+				moved = true
+			}
+			if event.Result.Tool == "read_file" && event.Result.Error == "" {
+				readFullFile = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if moved {
+		t.Fatal("did not expect guarded deterministic declaration move to be emitted as a tool result")
+	}
+	if !readFullFile {
+		t.Fatal("expected original read_file request to execute after guarded fallback")
+	}
+	if answer != "Blocked: the recommended declaration move was outside the approved target scope; inspected source.go after the guarded move." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+}
+
+func TestRunnerExecutesReadOnlyChildTask(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "route evidence\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"```tool\n{\"tool\":\"task\",\"agent\":\"explorer\",\"mode\":\"read_only\",\"prompt\":\"inspect README\"}\n```",
+		"Child evidence: README.md mentions route evidence.",
+		"Final: child evidence found in README.md.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 2},
+	}
+	var sawTask bool
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "delegate focused inspection"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "task" && strings.Contains(event.Result.Output, "Child evidence") {
+				sawTask = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sawTask {
+		t.Fatal("expected task tool result with child output")
+	}
+	if !strings.Contains(answer, "Final") {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+}
+
+func TestReadOnlyChildTaskPermissionPolicyDeniesWritesAndAllowsReads(t *testing.T) {
+	policy := readOnlyChildTaskPermissionPolicy()
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "edit_file", Path: "README.md"}); decision.Decision != PermissionDeny {
+		t.Fatalf("edit_file decision = %q, want deny", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "read_file", Path: "README.md"}); decision.Decision != PermissionAllow {
+		t.Fatalf("read_file decision = %q, want allow", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "task", Prompt: "nested"}); decision.Decision != PermissionDeny {
+		t.Fatalf("task decision = %q, want deny", decision.Decision)
+	}
+}
+
 func TestRunnerExecutesRecommendedGoMoveAfterBroadRediscovery(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "source.go", `package sample
@@ -282,7 +1078,7 @@ func coreValue() int {
 	}
 }
 
-func TestRunnerReplaysFirstRepeatedToolRequestAndStopsOnNoProgressBudget(t *testing.T) {
+func TestRunnerReplaysFirstRepeatedToolRequestThenRejectsExactLoop(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
 		t.Fatalf("write seed file: %v", err)
@@ -310,6 +1106,7 @@ func TestRunnerReplaysFirstRepeatedToolRequestAndStopsOnNoProgressBudget(t *test
 	defer server.Close()
 
 	var replayedSummary string
+	var rejectedSummary string
 	var budgetEvent string
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
@@ -339,6 +1136,9 @@ func TestRunnerReplaysFirstRepeatedToolRequestAndStopsOnNoProgressBudget(t *test
 			if strings.Contains(strings.ToLower(event.Result.Summary), "replayed prior evidence") {
 				replayedSummary = event.Result.Summary
 			}
+			if strings.Contains(event.Result.Summary, "Repeated tool request rejected") {
+				rejectedSummary = event.Result.Summary
+			}
 		},
 	)
 	if err != nil {
@@ -353,11 +1153,14 @@ func TestRunnerReplaysFirstRepeatedToolRequestAndStopsOnNoProgressBudget(t *test
 	if replayedSummary == "" {
 		t.Fatal("expected repeated tool request to replay prior evidence before stopping")
 	}
+	if rejectedSummary == "" {
+		t.Fatal("expected second exact repeat to be rejected instead of replayed indefinitely")
+	}
 	var ledger runnerBudgetLedger
 	if err := json.Unmarshal([]byte(budgetEvent), &ledger); err != nil {
 		t.Fatalf("decode budget ledger %q: %v", budgetEvent, err)
 	}
-	if ledger.StopReason != "no_progress_budget_exhausted" || !ledger.BudgetExhausted {
+	if ledger.StopReason != "model_final" || ledger.BudgetExhausted {
 		t.Fatalf("unexpected budget ledger: %#v", ledger)
 	}
 }

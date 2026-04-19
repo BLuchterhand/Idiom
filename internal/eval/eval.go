@@ -23,11 +23,14 @@ type PhaseExpectation struct {
 }
 
 type RoutePlanExpectation struct {
-	InitialLane  string `json:"initial_lane,omitempty"`
-	FollowupLane string `json:"followup_lane,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	Contract     string `json:"contract,omitempty"`
-	Thoroughness string `json:"thoroughness,omitempty"`
+	InitialLane   string `json:"initial_lane,omitempty"`
+	FollowupLane  string `json:"followup_lane,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Contract      string `json:"contract,omitempty"`
+	AgentMode     string `json:"agent_mode,omitempty"`
+	WorkflowKind  string `json:"workflow_kind,omitempty"`
+	WorkflowPhase string `json:"workflow_phase,omitempty"`
+	Thoroughness  string `json:"thoroughness,omitempty"`
 }
 
 type ReplanExpectation struct {
@@ -104,6 +107,21 @@ type LongHorizonStateExpectation struct {
 	Resumable                  *bool    `json:"resumable,omitempty"`
 }
 
+type WorkflowStateExpectation struct {
+	Action              string   `json:"action,omitempty"`
+	Kind                string   `json:"kind,omitempty"`
+	Phase               string   `json:"phase,omitempty"`
+	SourceLane          string   `json:"source_lane,omitempty"`
+	RequireTargetRefs   []string `json:"require_target_refs,omitempty"`
+	RequireEditable     []string `json:"require_editable_targets,omitempty"`
+	RequireEvidence     []string `json:"require_evidence_paths,omitempty"`
+	RequireReadOnly     []string `json:"require_read_only_evidence,omitempty"`
+	RequireDestinations []string `json:"require_allowed_destinations,omitempty"`
+	RequireVerification []string `json:"require_verification,omitempty"`
+	RequireNextActions  []string `json:"require_next_actions,omitempty"`
+	Resumable           *bool    `json:"resumable,omitempty"`
+}
+
 type BudgetLedgerExpectation struct {
 	Lane              string `json:"lane,omitempty"`
 	StopReason        string `json:"stop_reason,omitempty"`
@@ -161,8 +179,12 @@ type ControlRailsExpectation struct {
 	Lane                  string   `json:"lane,omitempty"`
 	FollowupLane          string   `json:"followup_lane,omitempty"`
 	Contract              string   `json:"contract,omitempty"`
+	AgentMode             string   `json:"agent_mode,omitempty"`
+	WorkflowKind          string   `json:"workflow_kind,omitempty"`
+	WorkflowPhase         string   `json:"workflow_phase,omitempty"`
 	TaskFamily            string   `json:"task_family,omitempty"`
 	PermissionProfile     string   `json:"permission_profile,omitempty"`
+	RequireAllowedTools   []string `json:"require_allowed_tools,omitempty"`
 	RequireTargetRefs     []string `json:"require_target_refs,omitempty"`
 	RequireEvidence       []string `json:"require_evidence,omitempty"`
 	RequireTools          []string `json:"require_tools,omitempty"`
@@ -195,6 +217,7 @@ type Scenario struct {
 	RequireFinalAnswerCritic     *FinalAnswerCriticExpectation     `json:"require_final_answer_critic,omitempty"`
 	RequireEffortPolicy          *EffortPolicyExpectation          `json:"require_effort_policy,omitempty"`
 	RequireLongHorizonState      *LongHorizonStateExpectation      `json:"require_long_horizon_state,omitempty"`
+	RequireWorkflowState         *WorkflowStateExpectation         `json:"require_workflow_state,omitempty"`
 	RequireBudgetLedger          *BudgetLedgerExpectation          `json:"require_budget_ledger,omitempty"`
 	RequireEvidenceDelta         *EvidenceDeltaExpectation         `json:"require_evidence_delta,omitempty"`
 	RequireClaimConfidence       *ClaimConfidenceExpectation       `json:"require_claim_confidence,omitempty"`
@@ -218,12 +241,15 @@ type PhaseSnapshot struct {
 }
 
 type RoutePlanSnapshot struct {
-	InitialLane  string `json:"initial_lane,omitempty"`
-	FollowupLane string `json:"followup_lane,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	Contract     string `json:"contract,omitempty"`
-	Thoroughness string `json:"thoroughness,omitempty"`
-	Raw          string `json:"raw,omitempty"`
+	InitialLane   string `json:"initial_lane,omitempty"`
+	FollowupLane  string `json:"followup_lane,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Contract      string `json:"contract,omitempty"`
+	AgentMode     string `json:"agent_mode,omitempty"`
+	WorkflowKind  string `json:"workflow_kind,omitempty"`
+	WorkflowPhase string `json:"workflow_phase,omitempty"`
+	Thoroughness  string `json:"thoroughness,omitempty"`
+	Raw           string `json:"raw,omitempty"`
 }
 
 type ReplanSnapshot struct {
@@ -316,6 +342,24 @@ type LongHorizonStateSnapshot struct {
 	Raw                 string   `json:"raw,omitempty"`
 }
 
+type WorkflowStateSnapshot struct {
+	Action              string   `json:"action,omitempty"`
+	Kind                string   `json:"kind,omitempty"`
+	Phase               string   `json:"phase,omitempty"`
+	SourceLane          string   `json:"source_lane,omitempty"`
+	Objective           string   `json:"objective,omitempty"`
+	TargetRefs          []string `json:"target_refs,omitempty"`
+	EditableTargets     []string `json:"editable_targets,omitempty"`
+	ReadOnlyEvidence    []string `json:"read_only_evidence,omitempty"`
+	EvidencePaths       []string `json:"evidence_paths,omitempty"`
+	AllowedDestinations []string `json:"allowed_destinations,omitempty"`
+	Verification        []string `json:"verification,omitempty"`
+	NextActions         []string `json:"next_actions,omitempty"`
+	Resumable           bool     `json:"resumable"`
+	Reason              string   `json:"reason,omitempty"`
+	Raw                 string   `json:"raw,omitempty"`
+}
+
 type BudgetLedgerSnapshot struct {
 	Lane                   string   `json:"lane,omitempty"`
 	Level                  string   `json:"level,omitempty"`
@@ -398,11 +442,15 @@ type ControlRailsSnapshot struct {
 	Lane                 string   `json:"lane,omitempty"`
 	FollowupLane         string   `json:"followup_lane,omitempty"`
 	Contract             string   `json:"contract,omitempty"`
+	AgentMode            string   `json:"agent_mode,omitempty"`
+	WorkflowKind         string   `json:"workflow_kind,omitempty"`
+	WorkflowPhase        string   `json:"workflow_phase,omitempty"`
 	TaskFamily           string   `json:"task_family,omitempty"`
 	PermissionProfile    string   `json:"permission_profile,omitempty"`
 	TargetRefs           []string `json:"target_refs,omitempty"`
 	RequiredEvidence     []string `json:"required_evidence,omitempty"`
 	RequiredTools        []string `json:"required_tools,omitempty"`
+	AllowedTools         []string `json:"allowed_tools,omitempty"`
 	ForbiddenTools       []string `json:"forbidden_tools,omitempty"`
 	ReadinessGate        []string `json:"readiness_gate,omitempty"`
 	SearchPolicy         []string `json:"search_policy,omitempty"`
@@ -435,6 +483,7 @@ type Metrics struct {
 	FinalAnswerCritics        []FinalAnswerCriticSnapshot     `json:"final_answer_critics,omitempty"`
 	EffortPolicies            []EffortPolicySnapshot          `json:"effort_policies,omitempty"`
 	LongHorizonStates         []LongHorizonStateSnapshot      `json:"long_horizon_states,omitempty"`
+	WorkflowStates            []WorkflowStateSnapshot         `json:"workflow_states,omitempty"`
 	BudgetLedgers             []BudgetLedgerSnapshot          `json:"budget_ledgers,omitempty"`
 	EvidenceDeltas            []EvidenceDeltaSnapshot         `json:"evidence_deltas,omitempty"`
 	ClaimConfidences          []ClaimConfidenceSnapshot       `json:"claim_confidences,omitempty"`
@@ -712,6 +761,9 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			Lane:                  latest.Lane,
 			FollowupLane:          latest.FollowupLane,
 			Contract:              latest.Contract,
+			AgentMode:             latest.AgentMode,
+			WorkflowKind:          latest.WorkflowKind,
+			WorkflowPhase:         latest.WorkflowPhase,
 			TaskFamily:            latest.TaskFamily,
 			PermissionProfile:     latest.PermissionProfile,
 			RequireTargetRefs:     append([]string(nil), latest.TargetRefs...),
@@ -729,11 +781,32 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 	if len(metrics.RoutePlans) > 0 {
 		latest := metrics.RoutePlans[len(metrics.RoutePlans)-1]
 		scenario.RequireRoutePlan = &RoutePlanExpectation{
-			InitialLane:  latest.InitialLane,
-			FollowupLane: latest.FollowupLane,
-			Reason:       latest.Reason,
-			Contract:     latest.Contract,
-			Thoroughness: latest.Thoroughness,
+			InitialLane:   latest.InitialLane,
+			FollowupLane:  latest.FollowupLane,
+			Reason:        latest.Reason,
+			Contract:      latest.Contract,
+			AgentMode:     latest.AgentMode,
+			WorkflowKind:  latest.WorkflowKind,
+			WorkflowPhase: latest.WorkflowPhase,
+			Thoroughness:  latest.Thoroughness,
+		}
+	}
+	if len(metrics.WorkflowStates) > 0 {
+		latest := metrics.WorkflowStates[len(metrics.WorkflowStates)-1]
+		resumable := latest.Resumable
+		scenario.RequireWorkflowState = &WorkflowStateExpectation{
+			Action:              latest.Action,
+			Kind:                latest.Kind,
+			Phase:               latest.Phase,
+			SourceLane:          latest.SourceLane,
+			RequireTargetRefs:   append([]string(nil), latest.TargetRefs...),
+			RequireEditable:     append([]string(nil), latest.EditableTargets...),
+			RequireEvidence:     append([]string(nil), latest.EvidencePaths...),
+			RequireReadOnly:     append([]string(nil), latest.ReadOnlyEvidence...),
+			RequireDestinations: append([]string(nil), latest.AllowedDestinations...),
+			RequireVerification: append([]string(nil), latest.Verification...),
+			RequireNextActions:  append([]string(nil), latest.NextActions...),
+			Resumable:           &resumable,
 		}
 	}
 	if len(metrics.Replans) > 0 {
@@ -888,6 +961,10 @@ func Analyze(records []Record) Metrics {
 			case "long_horizon_state":
 				if state := parseLongHorizonState(content); state.Raw != "" {
 					metrics.LongHorizonStates = append(metrics.LongHorizonStates, state)
+				}
+			case "workflow_state":
+				if state := parseWorkflowState(content); state.Raw != "" {
+					metrics.WorkflowStates = append(metrics.WorkflowStates, state)
 				}
 			case "budget_ledger":
 				if ledger := parseBudgetLedger(content); ledger.Raw != "" {
@@ -1182,6 +1259,24 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+	if scenario.RequireWorkflowState != nil {
+		if len(metrics.WorkflowStates) == 0 {
+			addFinding("required workflow state was not observed")
+		} else if !workflowStateMatches(metrics.WorkflowStates[len(metrics.WorkflowStates)-1], *scenario.RequireWorkflowState) {
+			latest := metrics.WorkflowStates[len(metrics.WorkflowStates)-1]
+			addFinding("workflow state mismatch: got action=%q kind=%q phase=%q source_lane=%q targets=%v editable=%v evidence=%v read_only=%v resumable=%t",
+				latest.Action,
+				latest.Kind,
+				latest.Phase,
+				latest.SourceLane,
+				latest.TargetRefs,
+				latest.EditableTargets,
+				latest.EvidencePaths,
+				latest.ReadOnlyEvidence,
+				latest.Resumable,
+			)
+		}
+	}
 	if scenario.RequireBudgetLedger != nil {
 		if len(metrics.BudgetLedgers) == 0 {
 			addFinding("required budget ledger was not observed")
@@ -1328,6 +1423,12 @@ func parseRoutePlan(content string) RoutePlanSnapshot {
 			plan.Reason = value
 		case "contract":
 			plan.Contract = value
+		case "mode":
+			plan.AgentMode = value
+		case "workflow":
+			plan.WorkflowKind = value
+		case "phase":
+			plan.WorkflowPhase = value
 		case "thoroughness":
 			plan.Thoroughness = value
 		}
@@ -1346,6 +1447,15 @@ func routePlanMatches(actual RoutePlanSnapshot, expected RoutePlanExpectation) b
 		return false
 	}
 	if expected.Contract != "" && !strings.EqualFold(actual.Contract, expected.Contract) {
+		return false
+	}
+	if expected.AgentMode != "" && !strings.EqualFold(actual.AgentMode, expected.AgentMode) {
+		return false
+	}
+	if expected.WorkflowKind != "" && !strings.EqualFold(actual.WorkflowKind, expected.WorkflowKind) {
+		return false
+	}
+	if expected.WorkflowPhase != "" && !strings.EqualFold(actual.WorkflowPhase, expected.WorkflowPhase) {
 		return false
 	}
 	if expected.Thoroughness != "" && !strings.EqualFold(actual.Thoroughness, expected.Thoroughness) {
@@ -1693,6 +1803,86 @@ func longHorizonStateMatches(actual LongHorizonStateSnapshot, expected LongHoriz
 	return true
 }
 
+func parseWorkflowState(content string) WorkflowStateSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return WorkflowStateSnapshot{}
+	}
+	var state WorkflowStateSnapshot
+	if err := json.Unmarshal([]byte(content), &state); err != nil {
+		return WorkflowStateSnapshot{}
+	}
+	state.Raw = content
+	state.Action = strings.TrimSpace(state.Action)
+	state.Kind = strings.TrimSpace(state.Kind)
+	state.Phase = strings.TrimSpace(state.Phase)
+	state.SourceLane = strings.TrimSpace(state.SourceLane)
+	state.Objective = strings.TrimSpace(state.Objective)
+	state.TargetRefs = uniqueNonEmptyStrings(state.TargetRefs)
+	state.EditableTargets = uniqueNonEmptyStrings(state.EditableTargets)
+	state.ReadOnlyEvidence = uniqueNonEmptyStrings(state.ReadOnlyEvidence)
+	state.EvidencePaths = uniqueNonEmptyStrings(state.EvidencePaths)
+	state.AllowedDestinations = uniqueNonEmptyStrings(state.AllowedDestinations)
+	state.Verification = uniqueNonEmptyStrings(state.Verification)
+	state.NextActions = uniqueNonEmptyStrings(state.NextActions)
+	state.Reason = strings.TrimSpace(state.Reason)
+	return state
+}
+
+func workflowStateMatches(actual WorkflowStateSnapshot, expected WorkflowStateExpectation) bool {
+	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
+		return false
+	}
+	if expected.Kind != "" && !strings.EqualFold(actual.Kind, expected.Kind) {
+		return false
+	}
+	if expected.Phase != "" && !strings.EqualFold(actual.Phase, expected.Phase) {
+		return false
+	}
+	if expected.SourceLane != "" && !strings.EqualFold(actual.SourceLane, expected.SourceLane) {
+		return false
+	}
+	for _, required := range expected.RequireTargetRefs {
+		if !containsStringFold(actual.TargetRefs, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireEditable {
+		if !containsStringFold(actual.EditableTargets, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireEvidence {
+		if !containsStringFold(actual.EvidencePaths, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireReadOnly {
+		if !containsStringFold(actual.ReadOnlyEvidence, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireDestinations {
+		if !containsStringFold(actual.AllowedDestinations, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireVerification {
+		if !containsStringFold(actual.Verification, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireNextActions {
+		if !containsStringFold(actual.NextActions, required) {
+			return false
+		}
+	}
+	if expected.Resumable != nil && actual.Resumable != *expected.Resumable {
+		return false
+	}
+	return true
+}
+
 func parseBudgetLedger(content string) BudgetLedgerSnapshot {
 	content = strings.TrimSpace(content)
 	if content == "" {
@@ -1972,10 +2162,14 @@ func parseControlRails(content string) ControlRailsSnapshot {
 	rails.Lane = strings.TrimSpace(rails.Lane)
 	rails.FollowupLane = strings.TrimSpace(rails.FollowupLane)
 	rails.Contract = strings.TrimSpace(rails.Contract)
+	rails.AgentMode = strings.TrimSpace(rails.AgentMode)
+	rails.WorkflowKind = strings.TrimSpace(rails.WorkflowKind)
+	rails.WorkflowPhase = strings.TrimSpace(rails.WorkflowPhase)
 	rails.TaskFamily = strings.TrimSpace(rails.TaskFamily)
 	rails.PermissionProfile = strings.TrimSpace(rails.PermissionProfile)
 	rails.RequiredEvidence = uniqueNonEmptyStrings(rails.RequiredEvidence)
 	rails.RequiredTools = uniqueNonEmptyStrings(rails.RequiredTools)
+	rails.AllowedTools = uniqueNonEmptyStrings(rails.AllowedTools)
 	rails.ForbiddenTools = uniqueNonEmptyStrings(rails.ForbiddenTools)
 	rails.ReadinessGate = uniqueNonEmptyStrings(rails.ReadinessGate)
 	rails.SearchPolicy = uniqueNonEmptyStrings(rails.SearchPolicy)
@@ -1993,6 +2187,15 @@ func controlRailsMatches(actual ControlRailsSnapshot, expected ControlRailsExpec
 		return false
 	}
 	if expected.Contract != "" && !strings.EqualFold(actual.Contract, expected.Contract) {
+		return false
+	}
+	if expected.AgentMode != "" && !strings.EqualFold(actual.AgentMode, expected.AgentMode) {
+		return false
+	}
+	if expected.WorkflowKind != "" && !strings.EqualFold(actual.WorkflowKind, expected.WorkflowKind) {
+		return false
+	}
+	if expected.WorkflowPhase != "" && !strings.EqualFold(actual.WorkflowPhase, expected.WorkflowPhase) {
 		return false
 	}
 	if expected.TaskFamily != "" && !strings.EqualFold(actual.TaskFamily, expected.TaskFamily) {
@@ -2013,6 +2216,11 @@ func controlRailsMatches(actual ControlRailsSnapshot, expected ControlRailsExpec
 	}
 	for _, required := range expected.RequireTools {
 		if !containsStringFold(actual.RequiredTools, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireAllowedTools {
+		if !containsStringFold(actual.AllowedTools, required) {
 			return false
 		}
 	}

@@ -27,6 +27,7 @@ type Runner struct {
 	CheckpointPolicy      CheckpointPolicy
 	OnEvent               func(RunEvent)
 	DisableTaskTool       bool
+	LastAssistantMessage  llama.ChatMessage
 }
 
 type RunPolicy struct {
@@ -105,15 +106,22 @@ func (r *Runner) Run(
 	}
 	var lastToolKey string
 	var lastToolResult *workspace.ToolResult
+	replayedToolRequests := make(map[string]int)
 	needsNarrowingAfterBroad := r.InitialNeedsNarrowing
 	broadInspectionCount := r.InitialBroadInspects
 	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
+	declarationMovesForbidden := declarationMovesForbiddenByMessages(turnMessages)
+	exactEditScope := exactPlanEditScopeFromMessages(turnMessages)
 	rejectedActions := make(map[string]int)
 	consecutiveRejectedActions := 0
 	completionGateRejections := 0
 	consecutiveNoProgress := 0
 	taskLedger := newTaskLedgerState(r.TaskLedger)
 	checkpointCreated := false
+
+	emitNextActionState := func(stepNumber int, reason string, req workspace.ToolRequest, result workspace.ToolResult) {
+		r.emitNextActionState(stepNumber, reason, req, result, collectedResults, declarationMovesForbidden)
+	}
 
 	rejectTool := func(stepNumber int, req workspace.ToolRequest, summary string, errorText string) (string, error, bool) {
 		metrics.RejectedActions++
@@ -134,6 +142,7 @@ func (r *Runner) Run(
 			Role:    "system",
 			Content: workspace.FormatToolResultForModel(result),
 		})
+		emitNextActionState(stepNumber, "tool_rejected", req, result)
 		if consecutiveRejectedActions >= 2 {
 			answer, err := r.completeWithoutMoreTools(ctx, turnMessages, opts, collectedResults)
 			return answer, err, true
@@ -141,7 +150,7 @@ func (r *Runner) Run(
 		return "", nil, false
 	}
 
-	rejectCompletion := func(stepNumber int, reply string, result workspace.ToolResult) {
+	rejectCompletion := func(stepNumber int, reply llama.ChatMessage, result workspace.ToolResult) {
 		completionGateRejections++
 		metrics.CompletionGateRejections++
 		consecutiveNoProgress++
@@ -150,13 +159,16 @@ func (r *Runner) Run(
 			onToolResult(ToolResultEvent{Step: stepNumber, Agent: r.agentName(), Result: result})
 		}
 		turnMessages = append(turnMessages, llama.ChatMessage{
-			Role:    "assistant",
-			Content: reply,
+			Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+			Content:          reply.Content,
+			ReasoningContent: reply.ReasoningContent,
 		})
+		r.emitThinkingTrace(stepNumber, "completion_gate_reply_preserved", reply, opts, true)
 		turnMessages = append(turnMessages, llama.ChatMessage{
 			Role:    "system",
 			Content: workspace.FormatToolResultForModel(result),
 		})
+		emitNextActionState(stepNumber, "completion_gate_rejected", workspace.ToolRequest{Tool: "completion_gate"}, result)
 	}
 
 	replayRepeatedToolRequest := func(req workspace.ToolRequest, source workspace.ToolResult) workspace.ToolResult {
@@ -202,10 +214,12 @@ func (r *Runner) Run(
 		}
 
 		metrics.ModelCalls++
-		reply, err := r.Client.CompleteChat(ctx, turnMessages, opts)
+		assistantMessage, err := r.Client.CompleteChatMessage(ctx, turnMessages, opts)
 		if err != nil {
 			return finish("", err, "model_error", false)
 		}
+		reply := assistantMessage.Content
+		r.emitThinkingTrace(stepNumber, "model_reply", assistantMessage, opts, false)
 
 		req, raw, ok, err := workspace.ParseToolRequest(reply)
 		if err != nil {
@@ -224,26 +238,28 @@ func (r *Runner) Run(
 				Role:    "system",
 				Content: workspace.FormatToolResultForModel(result),
 			})
+			emitNextActionState(stepNumber, "tool_parse_rejected", workspace.ToolRequest{Tool: "tool_parse"}, result)
 			continue
 		}
 		if !ok {
-			if result, rejected := r.completionGateRejection(reply, collectedResults, stepNumber, taskLedger); rejected {
+			if result, rejected := r.completionGateRejection(reply, collectedResults, stepNumber, taskLedger, declarationMovesForbidden); rejected {
 				if completionGateRejections >= 3 {
 					answer, err := r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Completion gate has rejected the final answer repeatedly. Do not request any more tools. Summarize the concrete blocker and the next action required.")
 					return finish(answer, err, "completion_gate_repeated_rejection", true)
 				}
-				rejectCompletion(stepNumber, reply, result)
+				rejectCompletion(stepNumber, assistantMessage, result)
 				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 					answer, err := r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Progress appears stalled. Do not request any more tools. Summarize the work completed, the last blocker, and the narrowest remaining next action.")
 					return finish(answer, err, "no_progress_budget_exhausted", true)
 				}
 				continue
 			}
-			answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, reply, opts, collectedResults)
+			answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, opts, collectedResults)
 			return finish(answer, err, "model_final", false)
 		}
 
-		turnMessages = append(turnMessages, llama.ChatMessage{Role: "assistant", Content: reply})
+		turnMessages = append(turnMessages, assistantMessage)
+		r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantMessage, opts, true)
 		metrics.ToolCalls++
 		actionClass := toolActionClass(req)
 		if onToolRequest != nil {
@@ -295,41 +311,99 @@ func (r *Runner) Run(
 			}
 			continue
 		}
-		if shouldRejectBroadInspectionAfterGoOutline(req, collectedResults) {
+		if declarationMovesForbidden && strings.TrimSpace(req.Tool) == "go_move_declarations" {
+			answer, err, done := rejectTool(
+				stepNumber,
+				req,
+				"Declaration move rejected by task constraint",
+				"the current task explicitly forbids moving declarations. Continue with read_file, edit_file within the approved target, verification, or report a concrete blocker.",
+			)
+			if done {
+				return finish(answer, err, "go_refactor_guard_exhausted", true)
+			}
+			continue
+		}
+		if declarationMovesForbidden && strings.TrimSpace(req.Tool) == "go_file_outline" {
+			answer, err, done := rejectTool(
+				stepNumber,
+				req,
+				"Go outline rejected by task constraint",
+				"the current task explicitly forbids declaration moves, and go_file_outline primarily suggests declaration-move batches. Use read_file for exact lines, edit_file within the approved target, verification, or report a concrete blocker.",
+			)
+			if done {
+				return finish(answer, err, "go_refactor_guard_exhausted", true)
+			}
+			continue
+		}
+		if summary, errorText, reject := exactPlanScopeRejection(req, exactEditScope); reject {
+			answer, err, done := rejectTool(stepNumber, req, summary, errorText)
+			if done {
+				return finish(answer, err, "exact_plan_scope_budget_exhausted", true)
+			}
+			continue
+		}
+		if summary, errorText, reject := postWriteFocusRejection(req, collectedResults); reject {
+			answer, err, done := rejectTool(stepNumber, req, summary, errorText)
+			if done {
+				return finish(answer, err, "post_write_focus_budget_exhausted", true)
+			}
+			continue
+		}
+		if !declarationMovesForbidden && shouldRejectBroadInspectionAfterGoOutline(req, collectedResults) {
 			if fallback, guarded, ok := r.recommendedGoMoveAfterOutline(req, collectedResults, stepNumber); ok {
 				if guarded != nil {
-					answer, err, done := rejectTool(
-						stepNumber,
-						fallback,
-						"Recommended declaration move rejected by guard",
-						guarded.Error+". Choose a declaration move that stays within approved editable targets, request a target-scope update, or report this blocker.",
-					)
-					if done {
-						return finish(answer, err, "go_refactor_guard_exhausted", true)
+					if strings.TrimSpace(req.Tool) == "read_file" {
+						collectedResults = append(collectedResults, *guarded)
+						turnMessages = append(turnMessages, llama.ChatMessage{
+							Role:    "system",
+							Content: workspace.FormatToolResultForModel(*guarded),
+						})
+						emitNextActionState(stepNumber, "deterministic_tool_fallback_skipped", fallback, *guarded)
+						r.emitEvent(marshalRunEvent("deterministic_tool_fallback_skipped", map[string]string{
+							"from":          "broad_after_go_outline_guard",
+							"tool":          fallback.Tool,
+							"path":          fallback.Path,
+							"target":        fallback.Destination,
+							"guard_summary": guarded.Summary,
+							"guard_error":   guarded.Error,
+							"original_tool": req.Tool,
+							"original_path": req.Path,
+						}))
+					} else {
+						answer, err, done := rejectTool(
+							stepNumber,
+							fallback,
+							"Recommended declaration move rejected by guard",
+							guarded.Error+". Choose a declaration move that stays within approved editable targets, request a target-scope update, or report this blocker.",
+						)
+						if done {
+							return finish(answer, err, "go_refactor_guard_exhausted", true)
+						}
+						continue
 					}
-					continue
-				}
-				req = fallback
-				raw = marshalToolRequestRaw(req)
-				toolKey = toolRequestKey(req)
-				actionClass = toolActionClass(req)
-				r.emitEvent(marshalRunEvent("deterministic_tool_fallback", map[string]string{
-					"from":   "broad_after_go_outline_guard",
-					"tool":   req.Tool,
-					"path":   req.Path,
-					"target": req.Destination,
-				}))
-				if onToolRequest != nil {
-					onToolRequest(ToolRequestEvent{
-						Step:      stepNumber,
-						Agent:     r.agentName(),
-						Raw:       raw,
-						Request:   req,
-						Mode:      r.Workspace.Mode(),
-						Broad:     workspace.IsBroadInspectionRequest(req),
-						Narrowing: workspace.IsNarrowingRequest(req),
-						Action:    actionClass,
-					})
+				} else {
+					req = fallback
+					raw = marshalToolRequestRaw(req)
+					toolKey = toolRequestKey(req)
+					actionClass = toolActionClass(req)
+					r.emitEvent(marshalRunEvent("deterministic_tool_fallback", map[string]string{
+						"from":   "broad_after_go_outline_guard",
+						"tool":   req.Tool,
+						"path":   req.Path,
+						"target": req.Destination,
+					}))
+					if onToolRequest != nil {
+						onToolRequest(ToolRequestEvent{
+							Step:      stepNumber,
+							Agent:     r.agentName(),
+							Raw:       raw,
+							Request:   req,
+							Mode:      r.Workspace.Mode(),
+							Broad:     workspace.IsBroadInspectionRequest(req),
+							Narrowing: workspace.IsNarrowingRequest(req),
+							Action:    actionClass,
+						})
+					}
 				}
 			} else {
 				answer, err, done := rejectTool(
@@ -344,41 +418,48 @@ func (r *Runner) Run(
 				continue
 			}
 		}
-		if shouldRejectFullReadAfterGoOutline(req, collectedResults) {
+		if !declarationMovesForbidden && shouldRejectFullReadAfterGoOutline(req, collectedResults) {
 			if fallback, guarded, ok := r.recommendedGoMoveAfterOutline(req, collectedResults, stepNumber); ok {
 				if guarded != nil {
-					answer, err, done := rejectTool(
-						stepNumber,
-						fallback,
-						"Recommended declaration move rejected by guard",
-						guarded.Error+". Choose a declaration move that stays within approved editable targets, request a target-scope update, or report this blocker.",
-					)
-					if done {
-						return finish(answer, err, "go_refactor_guard_exhausted", true)
-					}
-					continue
-				}
-				req = fallback
-				raw = marshalToolRequestRaw(req)
-				toolKey = toolRequestKey(req)
-				actionClass = toolActionClass(req)
-				r.emitEvent(marshalRunEvent("deterministic_tool_fallback", map[string]string{
-					"from":   "go_file_outline_guard",
-					"tool":   req.Tool,
-					"path":   req.Path,
-					"target": req.Destination,
-				}))
-				if onToolRequest != nil {
-					onToolRequest(ToolRequestEvent{
-						Step:      stepNumber,
-						Agent:     r.agentName(),
-						Raw:       raw,
-						Request:   req,
-						Mode:      r.Workspace.Mode(),
-						Broad:     workspace.IsBroadInspectionRequest(req),
-						Narrowing: workspace.IsNarrowingRequest(req),
-						Action:    actionClass,
+					collectedResults = append(collectedResults, *guarded)
+					turnMessages = append(turnMessages, llama.ChatMessage{
+						Role:    "system",
+						Content: workspace.FormatToolResultForModel(*guarded),
 					})
+					emitNextActionState(stepNumber, "deterministic_tool_fallback_skipped", fallback, *guarded)
+					r.emitEvent(marshalRunEvent("deterministic_tool_fallback_skipped", map[string]string{
+						"from":          "go_file_outline_guard",
+						"tool":          fallback.Tool,
+						"path":          fallback.Path,
+						"target":        fallback.Destination,
+						"guard_summary": guarded.Summary,
+						"guard_error":   guarded.Error,
+						"original_tool": req.Tool,
+						"original_path": req.Path,
+					}))
+				} else {
+					req = fallback
+					raw = marshalToolRequestRaw(req)
+					toolKey = toolRequestKey(req)
+					actionClass = toolActionClass(req)
+					r.emitEvent(marshalRunEvent("deterministic_tool_fallback", map[string]string{
+						"from":   "go_file_outline_guard",
+						"tool":   req.Tool,
+						"path":   req.Path,
+						"target": req.Destination,
+					}))
+					if onToolRequest != nil {
+						onToolRequest(ToolRequestEvent{
+							Step:      stepNumber,
+							Agent:     r.agentName(),
+							Raw:       raw,
+							Request:   req,
+							Mode:      r.Workspace.Mode(),
+							Broad:     workspace.IsBroadInspectionRequest(req),
+							Narrowing: workspace.IsNarrowingRequest(req),
+							Action:    actionClass,
+						})
+					}
 				}
 			} else {
 				answer, err, done := rejectTool(
@@ -393,7 +474,19 @@ func (r *Runner) Run(
 				continue
 			}
 		}
-		if shouldRejectRepeatedGoOutline(req, collectedResults) {
+		if !declarationMovesForbidden && shouldRejectRepeatedGoOutline(req, collectedResults) {
+			if repeatedGoOutlineAfterFailedMove(req, collectedResults) {
+				answer, err, done := rejectTool(
+					stepNumber,
+					req,
+					"Repeated Go outline rejected after failed move",
+					"a recommended declaration move already failed and a follow-up outline was already available. Stop repeating go_file_outline; use edit_file inside approved target paths, request a target-scope update, or report the concrete blocker.",
+				)
+				if done {
+					return finish(answer, err, "go_refactor_guard_exhausted", true)
+				}
+				continue
+			}
 			if fallback, guarded, ok := r.recommendedGoMoveAfterOutline(req, collectedResults, stepNumber); ok {
 				if guarded != nil {
 					answer, err, done := rejectTool(
@@ -444,7 +537,20 @@ func (r *Runner) Run(
 		}
 		if toolKey != "" && toolKey == lastToolKey && strings.TrimSpace(req.Tool) != "go_file_outline" {
 			if lastToolResult != nil {
+				if replayedToolRequests[toolKey] > 0 {
+					answer, err, done := rejectTool(
+						stepNumber,
+						req,
+						"Repeated tool request rejected",
+						"this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker.",
+					)
+					if done {
+						return finish(answer, err, "repeated_tool_budget_exhausted", true)
+					}
+					continue
+				}
 				replayed := replayRepeatedToolRequest(req, *lastToolResult)
+				replayedToolRequests[toolKey]++
 				collectedResults = append(collectedResults, replayed)
 				consecutiveRejectedActions = 0
 				consecutiveNoProgress++
@@ -456,6 +562,7 @@ func (r *Runner) Run(
 					Content: workspace.FormatToolResultForModel(replayed),
 				})
 				lastToolResult = &replayed
+				emitNextActionState(stepNumber, "tool_replayed", req, replayed)
 				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 					answer, err := r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Repeated tool request reused prior evidence, but the no-progress budget is exhausted. Do not request any more tools. Summarize the blocker and the narrowest remaining next action.")
 					return finish(answer, err, "no_progress_budget_exhausted", true)
@@ -489,6 +596,7 @@ func (r *Runner) Run(
 				Role:    "system",
 				Content: workspace.FormatToolResultForModel(result),
 			})
+			emitNextActionState(stepNumber, "permission_denied", req, result)
 			if decision.Decision == PermissionAsk {
 				answer, err := r.completeWithoutMoreTools(ctx, turnMessages, opts, collectedResults)
 				return finish(answer, err, "permission_approval_required", false)
@@ -528,6 +636,7 @@ func (r *Runner) Run(
 				Role:    "system",
 				Content: workspace.FormatToolResultForModel(result),
 			})
+			emitNextActionState(stepNumber, "child_task_result", req, result)
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Progress appears stalled after the child task. Do not request any more tools. Summarize the work completed, the child-task result, and the narrowest remaining next action.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
@@ -554,6 +663,7 @@ func (r *Runner) Run(
 				Role:    "system",
 				Content: workspace.FormatToolResultForModel(result),
 			})
+			emitNextActionState(stepNumber, "task_ledger_result", req, result)
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Progress appears stalled. Do not request any more tools. Summarize the work completed, the last blocker, and the narrowest remaining next action.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
@@ -564,10 +674,17 @@ func (r *Runner) Run(
 		if r.PreExecute != nil {
 			if guarded := r.PreExecute(stepNumber, req); guarded != nil {
 				collectedResults = append(collectedResults, *guarded)
-				if actionClass != "" && strings.TrimSpace(guarded.Error) != "" {
+				lastToolKey = toolKey
+				resultCopy := *guarded
+				lastToolResult = &resultCopy
+				bootstrapReadReminder := isBootstrappedTargetReadReminder(req, *guarded)
+				if actionClass != "" && strings.TrimSpace(guarded.Error) != "" && !bootstrapReadReminder {
 					rejectedActions[actionClass]++
 					consecutiveRejectedActions++
 					metrics.RejectedActions++
+				} else if strings.TrimSpace(guarded.Error) != "" {
+					metrics.RejectedActions++
+					consecutiveNoProgress++
 				}
 				if onToolResult != nil {
 					onToolResult(ToolResultEvent{Step: stepNumber, Agent: r.agentName(), Result: *guarded})
@@ -576,13 +693,18 @@ func (r *Runner) Run(
 					Role:    "system",
 					Content: workspace.FormatToolResultForModel(*guarded),
 				})
+				emitNextActionState(stepNumber, "pre_execute_guard", req, *guarded)
 				if strings.TrimSpace(guarded.Summary) == "Write approval required" {
 					answer, err := r.completeWithoutMoreTools(ctx, turnMessages, opts, collectedResults)
 					return finish(answer, err, "write_approval_required", false)
 				}
-				if strings.TrimSpace(guarded.Error) != "" && consecutiveRejectedActions >= 2 {
+				if strings.TrimSpace(guarded.Error) != "" && !bootstrapReadReminder && consecutiveRejectedActions >= 2 {
 					answer, err := r.completeWithoutMoreTools(ctx, turnMessages, opts, collectedResults)
 					return finish(answer, err, "guard_rejection_budget_exhausted", true)
+				}
+				if bootstrapReadReminder && policy.shouldStopForNoProgress(consecutiveNoProgress) {
+					answer, err := r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "The implementation target was already available from bootstrap evidence, but progress stalled on duplicate reads. Do not request more tools. Summarize the blocker and the narrowest remaining action.")
+					return finish(answer, err, "no_progress_budget_exhausted", true)
 				}
 				continue
 			}
@@ -605,6 +727,7 @@ func (r *Runner) Run(
 					Role:    "system",
 					Content: workspace.FormatToolResultForModel(result),
 				})
+				emitNextActionState(stepNumber, "checkpoint_failed", req, result)
 				continue
 			}
 			checkpointCreated = true
@@ -638,6 +761,7 @@ func (r *Runner) Run(
 			Role:    "system",
 			Content: workspace.FormatToolResultForModel(result),
 		})
+		emitNextActionState(stepNumber, "tool_result", req, result)
 		if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 			answer, err := r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Progress appears stalled. Do not request any more tools. Summarize the work completed, the last blocker, and the narrowest remaining next action.")
 			return finish(answer, err, "no_progress_budget_exhausted", true)
@@ -646,6 +770,137 @@ func (r *Runner) Run(
 
 	answer, err = r.completeWithoutMoreTools(ctx, turnMessages, opts, collectedResults)
 	return finish(answer, err, "tool_step_budget_exhausted", true)
+}
+
+func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		prompt = strings.TrimSpace(req.Content)
+	}
+	if prompt == "" {
+		return workspace.ToolResult{
+			Tool:    "task",
+			Summary: "Child task rejected",
+			Error:   "task prompt is required",
+		}
+	}
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "read_only"
+	}
+	if mode != "read_only" && mode != "readonly" && mode != "explore" {
+		return workspace.ToolResult{
+			Tool:    "task",
+			Summary: "Child task rejected",
+			Error:   "only read_only child tasks are currently supported",
+		}
+	}
+	agentName := strings.TrimSpace(req.Agent)
+	if agentName == "" {
+		agentName = "child"
+	}
+	childPolicy := RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 2, MaxModelCalls: 6, MaxDuration: 90 * time.Second}
+	if effective := r.effectivePolicy(); effective.MaxContextMessages > 0 || effective.MaxContextChars > 0 {
+		childPolicy.MaxContextMessages = effective.MaxContextMessages
+		childPolicy.MaxContextChars = effective.MaxContextChars
+	}
+	child := &Runner{
+		Client:           r.Client,
+		Workspace:        r.Workspace,
+		Policy:           childPolicy,
+		AgentName:        "child:" + agentName,
+		PermissionPolicy: readOnlyChildTaskPermissionPolicy(),
+		TaskLedger:       TaskLedgerPolicy{Disabled: true},
+		DisableTaskTool:  true,
+	}
+	workspaceInstructions := ""
+	if r.Workspace != nil {
+		workspaceInstructions = r.Workspace.Instructions()
+	}
+	answer, err := child.Run(
+		ctx,
+		[]llama.ChatMessage{
+			{
+				Role: "system",
+				Content: strings.Join([]string{
+					"You are a bounded read-only child task.",
+					"Answer the delegated question with concise evidence.",
+					"Do not edit files, create files, install packages, push, publish, deploy, or spawn more tasks.",
+					"Prefer search_files, search_content, read_file, and read-only symbol tools before shell.",
+					workspaceInstructions,
+				}, "\n"),
+			},
+			{Role: "user", Content: prompt},
+		},
+		opts,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		return workspace.ToolResult{
+			Tool:    "task",
+			Summary: "Child task failed",
+			Error:   err.Error(),
+		}
+	}
+	return workspace.ToolResult{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output:  strings.TrimSpace(answer),
+	}
+}
+
+func readOnlyChildTaskPermissionPolicy() ToolPermissionPolicy {
+	allowTool := func(tool string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: tool, Decision: PermissionAllow}
+	}
+	allowShellPrefix := func(prefix string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionAllow}
+	}
+	return ToolPermissionPolicy{
+		Default: PermissionDeny,
+		Rules: []ToolPermissionRule{
+			allowTool("pwd"),
+			allowTool("list_files"),
+			allowTool("search_files"),
+			allowTool("search_content"),
+			allowTool("read_file"),
+			allowTool("go_overview"),
+			allowTool("go_find_symbol"),
+			allowTool("go_find_function"),
+			allowTool("go_find_type"),
+			allowTool("go_references"),
+			allowTool("go_definition"),
+			allowTool("go_implementations"),
+			allowTool("go_read_symbol"),
+			allowTool("go_extract_body"),
+			allowTool("go_file_outline"),
+			allowTool("cpp_overview"),
+			allowTool("cpp_find_symbol"),
+			allowTool("cpp_references"),
+			allowTool("cpp_definition"),
+			allowShellPrefix("rg "),
+			allowShellPrefix("grep "),
+			allowShellPrefix("awk "),
+			allowShellPrefix("sed -n"),
+			allowShellPrefix("cat "),
+			allowShellPrefix("head "),
+			allowShellPrefix("tail "),
+			allowShellPrefix("wc "),
+			allowShellPrefix("pwd"),
+			allowShellPrefix("ls "),
+			allowShellPrefix("find "),
+			allowShellPrefix("git status"),
+			allowShellPrefix("git diff"),
+			allowShellPrefix("git log"),
+			allowShellPrefix("git show"),
+			allowShellPrefix("git grep"),
+			allowShellPrefix("go test"),
+			allowShellPrefix("go list"),
+			allowShellPrefix("go env"),
+		},
+	}
 }
 
 func (r *Runner) effectivePolicy() RunPolicy {
@@ -702,6 +957,33 @@ type runnerBudgetLedger struct {
 	UserVisibleUncertainty   string   `json:"user_visible_uncertainty,omitempty"`
 }
 
+type runnerNextActionState struct {
+	Lane               string   `json:"lane"`
+	Step               int      `json:"step"`
+	Reason             string   `json:"reason"`
+	LastTool           string   `json:"last_tool,omitempty"`
+	LastTarget         string   `json:"last_target,omitempty"`
+	ResultSummary      string   `json:"result_summary,omitempty"`
+	ResultError        string   `json:"result_error,omitempty"`
+	ResultOutputChars  int      `json:"result_output_chars,omitempty"`
+	EvidencePaths      []string `json:"evidence_paths,omitempty"`
+	Constraints        []string `json:"constraints,omitempty"`
+	InvalidNextActions []string `json:"invalid_next_actions,omitempty"`
+	NextValidActions   []string `json:"next_valid_actions,omitempty"`
+	StateSummary       string   `json:"state_summary,omitempty"`
+}
+
+type runnerThinkingTrace struct {
+	Lane               string `json:"lane"`
+	Step               int    `json:"step"`
+	Reason             string `json:"reason"`
+	EnableThinking     string `json:"enable_thinking"`
+	PreserveThinking   bool   `json:"preserve_thinking"`
+	ContentChars       int    `json:"content_chars"`
+	ReasoningChars     int    `json:"reasoning_chars"`
+	PreservedInHistory bool   `json:"preserved_in_history"`
+}
+
 type runnerContextCompaction struct {
 	Lane             string   `json:"lane"`
 	DroppedMessages  int      `json:"dropped_messages"`
@@ -711,6 +993,261 @@ type runnerContextCompaction struct {
 	PinnedPaths      []string `json:"pinned_paths,omitempty"`
 	PinnedMemoryKind string   `json:"pinned_memory_kind"`
 	Strategy         string   `json:"strategy"`
+}
+
+func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMessage, opts llama.ChatOptions, preservedInHistory bool) {
+	if r == nil || r.OnEvent == nil {
+		return
+	}
+	if opts.EnableThinking == nil && !opts.PreserveThinking && strings.TrimSpace(message.ReasoningContent) == "" {
+		return
+	}
+	trace := runnerThinkingTrace{
+		Lane:               r.agentName(),
+		Step:               step,
+		Reason:             strings.TrimSpace(reason),
+		EnableThinking:     thinkingOptionForLog(opts.EnableThinking),
+		PreserveThinking:   opts.PreserveThinking,
+		ContentChars:       len(message.Content),
+		ReasoningChars:     len(message.ReasoningContent),
+		PreservedInHistory: preservedInHistory && strings.TrimSpace(message.ReasoningContent) != "",
+	}
+	data, err := json.Marshal(trace)
+	if err != nil {
+		return
+	}
+	r.OnEvent(RunEvent{Role: "thinking_trace", Content: string(data)})
+}
+
+func thinkingOptionForLog(enableThinking *bool) string {
+	if enableThinking == nil {
+		return "auto"
+	}
+	if *enableThinking {
+		return "on"
+	}
+	return "off"
+}
+
+func (r *Runner) emitNextActionState(step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool) {
+	if r == nil || r.OnEvent == nil {
+		return
+	}
+	state := buildRunnerNextActionState(r.agentName(), step, reason, req, result, results, declarationMovesForbidden)
+	data, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	r.OnEvent(RunEvent{Role: "next_action_state", Content: string(data)})
+}
+
+func buildRunnerNextActionState(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool) runnerNextActionState {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = strings.TrimSpace(result.Tool)
+	}
+	state := runnerNextActionState{
+		Lane:              strings.TrimSpace(agent),
+		Step:              step,
+		Reason:            strings.TrimSpace(reason),
+		LastTool:          tool,
+		LastTarget:        runnerToolRequestTarget(req),
+		ResultSummary:     truncateRunnerStateText(result.Summary, 220),
+		ResultError:       truncateRunnerStateText(result.Error, 260),
+		ResultOutputChars: len(result.Output),
+		EvidencePaths:     pinnedPathsFromToolResults(results, 6),
+	}
+	state.Constraints = runnerActionConstraints(result, declarationMovesForbidden)
+	state.InvalidNextActions = runnerInvalidNextActions(reason, req, result, declarationMovesForbidden)
+	state.NextValidActions = runnerNextValidActions(reason, req, result, declarationMovesForbidden)
+	state.StateSummary = runnerStateSummary(state)
+	return state
+}
+
+func runnerToolRequestTarget(req workspace.ToolRequest) string {
+	target := firstNonEmpty(
+		strings.TrimSpace(req.Path),
+		strings.TrimSpace(req.ID),
+		strings.TrimSpace(req.Destination),
+		strings.TrimSpace(req.Pattern),
+		strings.TrimSpace(req.Glob),
+		strings.TrimSpace(req.Workdir),
+		strings.TrimSpace(req.Agent),
+		strings.TrimSpace(req.Command),
+	)
+	return truncateRunnerStateText(target, 180)
+}
+
+func runnerActionConstraints(result workspace.ToolResult, declarationMovesForbidden bool) []string {
+	var constraints []string
+	if declarationMovesForbidden {
+		constraints = appendUniqueRunnerState(constraints, "declaration_moves_forbidden")
+	}
+	combined := strings.ToLower(strings.Join([]string{result.Summary, result.Error, result.Output}, "\n"))
+	if strings.Contains(combined, "implementation target packet") || strings.Contains(combined, "approved editable target") {
+		constraints = appendUniqueRunnerState(constraints, "approved_target_scope_enforced")
+	}
+	if strings.Contains(combined, "write approval required") {
+		constraints = appendUniqueRunnerState(constraints, "write_approval_required")
+	}
+	if strings.Contains(combined, "completion gate") {
+		constraints = appendUniqueRunnerState(constraints, "completion_gate_active")
+	}
+	if strings.Contains(combined, "bootstrap already inspected") {
+		constraints = appendUniqueRunnerState(constraints, "bootstrap_evidence_available")
+	}
+	return constraints
+}
+
+func runnerInvalidNextActions(reason string, req workspace.ToolRequest, result workspace.ToolResult, declarationMovesForbidden bool) []string {
+	var invalid []string
+	tool := strings.TrimSpace(req.Tool)
+	combined := strings.ToLower(strings.Join([]string{reason, result.Summary, result.Error}, "\n"))
+	if declarationMovesForbidden {
+		invalid = appendUniqueRunnerState(invalid, "go_move_declarations")
+	}
+	if strings.Contains(combined, "malformed tool request") || strings.Contains(combined, "tool_parse") {
+		invalid = appendUniqueRunnerState(invalid, "malformed_json_tool_request")
+	}
+	if strings.Contains(combined, "repeated") || strings.Contains(combined, "replayed") || strings.Contains(combined, "already failed earlier") {
+		if tool != "" {
+			invalid = appendUniqueRunnerState(invalid, "repeat_exact_"+tool+"_request")
+		} else {
+			invalid = appendUniqueRunnerState(invalid, "repeat_exact_tool_request")
+		}
+	}
+	if strings.Contains(combined, "broad inspection") {
+		invalid = appendUniqueRunnerState(invalid, "additional_broad_workspace_inspection")
+	}
+	if strings.Contains(combined, "bootstrap already inspected") && strings.TrimSpace(req.Tool) == "read_file" {
+		invalid = appendUniqueRunnerState(invalid, "duplicate_read_file_on_bootstrapped_target")
+	}
+	if strings.Contains(combined, "completion gate") || strings.Contains(combined, "final answer rejected") {
+		invalid = appendUniqueRunnerState(invalid, "final_answer_without_satisfying_completion_gate")
+	}
+	return invalid
+}
+
+func runnerNextValidActions(reason string, req workspace.ToolRequest, result workspace.ToolResult, declarationMovesForbidden bool) []string {
+	var actions []string
+	combined := strings.ToLower(strings.Join([]string{reason, result.Summary, result.Error}, "\n"))
+	tool := strings.TrimSpace(req.Tool)
+	if strings.Contains(combined, "malformed tool request") || strings.Contains(combined, "tool_parse") {
+		actions = appendUniqueRunnerState(actions, "emit exactly one valid JSON tool object")
+		actions = appendUniqueRunnerState(actions, "answer normally only if the task is complete")
+		return actions
+	}
+	if strings.Contains(combined, "bootstrap already inspected") {
+		actions = appendUniqueRunnerState(actions, "edit_file on the approved target using bootstrapped evidence")
+		actions = appendUniqueRunnerState(actions, "narrow read_file with start_line/end_line only if exact lines are missing")
+		actions = appendUniqueRunnerState(actions, "search_content scoped to the approved target")
+		actions = appendUniqueRunnerState(actions, "answer with a concrete blocker or no-op reason")
+	}
+	if strings.Contains(combined, "repeated dead-end") || strings.Contains(combined, "already failed earlier") || strings.Contains(combined, "replayed same blocker") || strings.Contains(combined, "replayed prior evidence") {
+		actions = appendUniqueRunnerState(actions, "choose a materially different tool or target")
+		actions = appendUniqueRunnerState(actions, "answer with the explicit blocker and evidence")
+	}
+	if strings.Contains(combined, "broad inspection") {
+		actions = appendUniqueRunnerState(actions, "search_files on a discovered path or pattern")
+		actions = appendUniqueRunnerState(actions, "search_content for a specific symbol or phrase")
+		actions = appendUniqueRunnerState(actions, "read_file on a discovered handle or narrow line range")
+		actions = appendUniqueRunnerState(actions, "use a targeted read-only shell search")
+	}
+	if strings.Contains(combined, "post-edit") || strings.Contains(combined, "workspace edit already landed") {
+		actions = appendUniqueRunnerState(actions, "run targeted verification")
+		actions = appendUniqueRunnerState(actions, "read the changed file if exact failure lines are needed")
+		actions = appendUniqueRunnerState(actions, "update task_ledger or answer with the concrete blocker")
+	}
+	if strings.Contains(combined, "exact-plan") || strings.Contains(combined, "approved plan only allows") {
+		actions = appendUniqueRunnerState(actions, "edit only inside the approved line window")
+		actions = appendUniqueRunnerState(actions, "run verification if the target is already satisfied")
+		actions = appendUniqueRunnerState(actions, "answer with a no-op reason if no edit is needed")
+	}
+	if strings.Contains(combined, "approved editable target") || strings.Contains(combined, "implementation target packet") {
+		actions = appendUniqueRunnerState(actions, "edit_file inside approved target paths")
+		actions = appendUniqueRunnerState(actions, "request a target-scope update if the approved target is wrong")
+		actions = appendUniqueRunnerState(actions, "report the guard as a concrete blocker")
+	}
+	if strings.Contains(combined, "write approval required") {
+		actions = appendUniqueRunnerState(actions, "stop and report that write approval is required")
+	}
+	if strings.Contains(combined, "completion gate") || strings.Contains(combined, "final answer rejected") {
+		actions = appendUniqueRunnerState(actions, "use a tool to gather or edit the missing evidence")
+		actions = appendUniqueRunnerState(actions, "update task_ledger if the gate requires ledger state")
+		actions = appendUniqueRunnerState(actions, "answer only after the gate condition is satisfied")
+	}
+	if declarationMovesForbidden {
+		actions = appendUniqueRunnerState(actions, "use edit_file instead of go_move_declarations")
+	}
+	switch tool {
+	case "read_file", "go_extract_body", "go_read_symbol":
+		if strings.TrimSpace(result.Error) == "" {
+			actions = appendUniqueRunnerState(actions, "edit_file using the inspected evidence")
+			actions = appendUniqueRunnerState(actions, "search_content or narrow read_file for any missing exact lines")
+		}
+	case "search_files", "search_content", "rg", "go_find_symbol", "go_find_type", "go_references", "go_definition":
+		if strings.TrimSpace(result.Error) == "" {
+			actions = appendUniqueRunnerState(actions, "read_file or symbol-read the highest-confidence hit")
+			actions = appendUniqueRunnerState(actions, "edit_file if the target is already clear")
+		}
+	case "edit_file", "write_file", "append_file", "go_move_declarations":
+		if strings.TrimSpace(result.Error) == "" {
+			actions = appendUniqueRunnerState(actions, "run targeted verification")
+			actions = appendUniqueRunnerState(actions, "update task_ledger or answer with the change summary")
+		}
+	case "task_ledger":
+		actions = appendUniqueRunnerState(actions, "continue with the next incomplete ledger item")
+		actions = appendUniqueRunnerState(actions, "answer if all required ledger items are complete")
+	}
+	if len(actions) == 0 {
+		actions = appendUniqueRunnerState(actions, "continue from the latest evidence with a targeted tool")
+		actions = appendUniqueRunnerState(actions, "answer only if the task is complete or concretely blocked")
+	}
+	return actions
+}
+
+func runnerStateSummary(state runnerNextActionState) string {
+	parts := []string{state.Reason}
+	if state.LastTool != "" {
+		if state.LastTarget != "" {
+			parts = append(parts, state.LastTool+" "+state.LastTarget)
+		} else {
+			parts = append(parts, state.LastTool)
+		}
+	}
+	if state.ResultError != "" {
+		parts = append(parts, "blocked: "+state.ResultError)
+	} else if state.ResultSummary != "" {
+		parts = append(parts, state.ResultSummary)
+	}
+	return truncateRunnerStateText(strings.Join(parts, " | "), 320)
+}
+
+func appendUniqueRunnerState(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func truncateRunnerStateText(value string, max int) string {
+	value = strings.TrimSpace(value)
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	if max <= 1 {
+		return value[:max]
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return strings.TrimSpace(value[:max-3]) + "..."
 }
 
 func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopReason string, exhausted bool) {
@@ -877,7 +1414,7 @@ func runnerCompactionPrefixEnd(messages []llama.ChatMessage) int {
 func chatMessagesCharCount(messages []llama.ChatMessage) int {
 	total := 0
 	for _, msg := range messages {
-		total += len(msg.Role) + len(msg.Content)
+		total += len(msg.Role) + len(msg.Content) + len(msg.ReasoningContent)
 	}
 	return total
 }
@@ -1136,13 +1673,13 @@ func taskLedgerFinalHasTerminalReason(reply string) bool {
 	)
 }
 
-func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState) (workspace.ToolResult, bool) {
+func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
 	if taskLedger != nil {
 		if result, rejected := taskLedger.completionRejection(reply); rejected {
 			return result, true
 		}
 	}
-	if shouldRejectProseAfterGoOutline(reply, results) {
+	if !declarationMovesForbidden && shouldRejectProseAfterGoOutline(reply, results) {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Final answer rejected",
@@ -1222,6 +1759,12 @@ func toolActionClass(req workspace.ToolRequest) string {
 	}
 }
 
+func isBootstrappedTargetReadReminder(req workspace.ToolRequest, result workspace.ToolResult) bool {
+	return strings.TrimSpace(req.Tool) == "read_file" &&
+		strings.TrimSpace(result.Summary) == "Implementation bootstrap already inspected this target" &&
+		strings.TrimSpace(result.Error) != ""
+}
+
 func shouldRejectProseAfterGoOutline(reply string, results []workspace.ToolResult) bool {
 	normalized := strings.ToLower(strings.TrimSpace(reply))
 	if normalized == "" {
@@ -1242,8 +1785,31 @@ func goMoveDeclarationFailed(results []workspace.ToolResult) bool {
 	return false
 }
 
+func declarationMovesForbiddenByMessages(messages []llama.ChatMessage) bool {
+	for _, message := range messages {
+		normalized := strings.ToLower(strings.TrimSpace(message.Content))
+		if containsAny(normalized,
+			"do not move declarations",
+			"do not move declaration",
+			"don't move declarations",
+			"no declaration moves",
+			"without moving declarations",
+			"do not create files or move declarations",
+		) {
+			return true
+		}
+	}
+	return false
+}
+
 func shouldRejectRepeatedGoOutline(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	if strings.TrimSpace(req.Tool) != "go_file_outline" || strings.TrimSpace(req.Path) == "" {
+		return false
+	}
+	if repeatedGoOutlineAfterFailedMove(req, results) {
+		return true
+	}
+	if goMoveDeclarationFailed(results) {
 		return false
 	}
 	count := 0
@@ -1258,7 +1824,36 @@ func shouldRejectRepeatedGoOutline(req workspace.ToolRequest, results []workspac
 	return count >= 1
 }
 
+func repeatedGoOutlineAfterFailedMove(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(req.Tool) != "go_file_outline" || strings.TrimSpace(req.Path) == "" {
+		return false
+	}
+	lastFailedMove := -1
+	for i, result := range results {
+		if result.Tool == "go_move_declarations" && strings.TrimSpace(result.Error) != "" {
+			lastFailedMove = i
+		}
+	}
+	if lastFailedMove < 0 {
+		return false
+	}
+	path := strings.TrimSpace(req.Path)
+	outlinesAfterFailure := 0
+	for _, result := range results[lastFailedMove+1:] {
+		if result.Error != "" || result.Tool != "go_file_outline" {
+			continue
+		}
+		if strings.Contains(result.Summary, path) {
+			outlinesAfterFailure++
+		}
+	}
+	return outlinesAfterFailure >= 1
+}
+
 func shouldRejectFullReadAfterGoOutline(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if goMoveDeclarationFailed(results) {
+		return false
+	}
 	if strings.TrimSpace(req.Tool) != "read_file" {
 		return false
 	}
@@ -1279,6 +1874,9 @@ func shouldRejectFullReadAfterGoOutline(req workspace.ToolRequest, results []wor
 }
 
 func shouldRejectBroadInspectionAfterGoOutline(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if goMoveDeclarationFailed(results) {
+		return false
+	}
 	if !workspace.IsBroadInspectionRequest(req) {
 		return false
 	}
@@ -1428,10 +2026,12 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		Content: reason,
 	})
 
-	reply, err := r.Client.CompleteChat(ctx, turnMessages, opts)
+	assistantMessage, err := r.Client.CompleteChatMessage(ctx, turnMessages, opts)
 	if err != nil {
 		return "", err
 	}
+	reply := assistantMessage.Content
+	r.emitThinkingTrace(0, "forced_completion_reply", assistantMessage, opts, false)
 
 	if _, _, ok, parseErr := workspace.ParseToolRequest(reply); parseErr != nil {
 		return "", parseErr
@@ -1442,7 +2042,7 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		return "", fmt.Errorf("tool loop exhausted and model still requested another tool instead of answering")
 	}
 
-	return r.ensureNonEmptyAnswer(ctx, turnMessages, reply, opts, collectedResults)
+	return r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, opts, collectedResults)
 }
 
 func toolResultMadeProgress(req workspace.ToolRequest, result workspace.ToolResult) bool {
@@ -1468,6 +2068,164 @@ func toolResultMadeProgress(req workspace.ToolRequest, result workspace.ToolResu
 	}
 }
 
+func postWriteFocusRejection(req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
+	changedPaths := changedPathsFromToolResults(results)
+	if len(changedPaths) == 0 {
+		return "", "", false
+	}
+	changedList := strings.Join(mapKeys(changedPaths), ", ")
+	if workspace.IsBroadInspectionRequest(req) {
+		return "Post-edit broad discovery rejected",
+			"a workspace edit already landed in " + changedList + ". Continue with targeted verification, a narrow read of the changed file, task_ledger, or a final blocker; do not restart broad discovery.",
+			true
+	}
+	if strings.TrimSpace(req.Tool) != "read_file" || strings.TrimSpace(req.Path) == "" {
+		return "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if _, ok := changedPaths[path]; ok {
+		return "", "", false
+	}
+	return "Post-edit unrelated read rejected",
+		"a workspace edit already landed in " + changedList + ". Read the changed file, run verification, update task_ledger, or answer with the concrete blocker instead of inspecting unrelated files.",
+		true
+}
+
+type exactPlanEditScope struct {
+	Active      bool
+	Path        string
+	StartLine   int
+	EndLine     int
+	Description string
+}
+
+func exactPlanEditScopeFromMessages(messages []llama.ChatMessage) exactPlanEditScope {
+	var combined strings.Builder
+	for _, msg := range messages {
+		combined.WriteString(strings.ToLower(msg.Content))
+		combined.WriteByte('\n')
+	}
+	text := combined.String()
+	if strings.Contains(text, "internal/app/analysis_agents.go") &&
+		strings.Contains(text, "analysissummarytargets") &&
+		strings.Contains(text, "parseanalysissummarytargettoken") {
+		return exactPlanEditScope{
+			Active:      true,
+			Path:        "internal/app/analysis_agents.go",
+			StartLine:   30,
+			EndLine:     130,
+			Description: "analysisSummaryTargets and parseAnalysisSummaryTargetToken",
+		}
+	}
+	return exactPlanEditScope{}
+}
+
+func exactPlanScopeRejection(req workspace.ToolRequest, scope exactPlanEditScope) (string, string, bool) {
+	if !scope.Active || !isWriteTool(req) {
+		return "", "", false
+	}
+	tool := strings.TrimSpace(req.Tool)
+	path := normalizeRunnerPath(req.Path)
+	if path != "" && path != scope.Path {
+		return "Exact-plan edit scope rejected",
+			"the approved plan is scoped to " + scope.Path + " around " + scope.Description + ". Do not edit " + path + "; request a target-scope update or answer with a blocker.",
+			true
+	}
+	if tool != "edit_file" {
+		return "Exact-plan write tool rejected",
+			"the approved plan requires a precise edit_file change inside " + scope.Description + ". Do not use " + tool + " for this bounded refactor.",
+			true
+	}
+	if req.StartLine <= 0 && req.EndLine <= 0 {
+		return "", "", false
+	}
+	start := req.StartLine
+	end := req.EndLine
+	if end == 0 {
+		end = start
+	}
+	if start < scope.StartLine || end > scope.EndLine {
+		return "Exact-plan edit scope rejected",
+			fmt.Sprintf("the approved plan only allows edits in %s lines %d-%d around %s. Use a narrow edit in that region, run verification, or answer that the target is already satisfied.", scope.Path, scope.StartLine, scope.EndLine, scope.Description),
+			true
+	}
+	return "", "", false
+}
+
+func changedPathsFromToolResults(results []workspace.ToolResult) map[string]struct{} {
+	paths := make(map[string]struct{})
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		for _, path := range changedPathsFromToolResult(result) {
+			paths[normalizeRunnerPath(path)] = struct{}{}
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	return paths
+}
+
+func changedPathsFromToolResult(result workspace.ToolResult) []string {
+	switch strings.TrimSpace(result.Tool) {
+	case "edit_file", "write_file", "append_file", "mkdir":
+		return changedPathFromSummary(result.Summary)
+	case "go_move_declarations":
+		return changedGoMovePathsFromSummary(result.Summary)
+	default:
+		return nil
+	}
+}
+
+func changedPathFromSummary(summary string) []string {
+	fields := strings.Fields(strings.TrimSpace(summary))
+	if len(fields) < 2 {
+		return nil
+	}
+	switch fields[0] {
+	case "Edited", "Wrote", "Appended":
+		return []string{fields[1]}
+	case "Created":
+		if len(fields) >= 3 && fields[1] == "directory" {
+			return []string{fields[2]}
+		}
+	}
+	return nil
+}
+
+func changedGoMovePathsFromSummary(summary string) []string {
+	fields := strings.Fields(strings.TrimSpace(summary))
+	if len(fields) == 0 || fields[0] != "Moved" {
+		return nil
+	}
+	var paths []string
+	for i, field := range fields {
+		switch field {
+		case "from", "to":
+			if i+1 < len(fields) {
+				paths = append(paths, fields[i+1])
+			}
+		}
+	}
+	return paths
+}
+
+func normalizeRunnerPath(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.TrimPrefix(path, "./")
+	return path
+}
+
+func mapKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func isWriteTool(req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case "edit_file", "write_file", "append_file", "mkdir", "go_move_declarations":
@@ -1480,26 +2238,36 @@ func isWriteTool(req workspace.ToolRequest) bool {
 func (r *Runner) ensureNonEmptyAnswer(
 	ctx context.Context,
 	turnMessages []llama.ChatMessage,
-	reply string,
+	reply llama.ChatMessage,
 	opts llama.ChatOptions,
 	collectedResults []workspace.ToolResult,
 ) (string, error) {
-	trimmed := strings.TrimSpace(reply)
+	trimmed := strings.TrimSpace(reply.Content)
 	if trimmed != "" {
+		r.LastAssistantMessage = reply
 		return trimmed, nil
 	}
 
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
+	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
+		retryMessages = append(retryMessages, llama.ChatMessage{
+			Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+			Content:          reply.Content,
+			ReasoningContent: reply.ReasoningContent,
+		})
+	}
 	retryMessages = append(retryMessages, llama.ChatMessage{
 		Role: "system",
 		Content: "Your last response was empty. Reply now with a concise, non-empty message. " +
 			"Do not emit a tool block, and do not leave the response blank.",
 	})
 
-	retryReply, err := r.Client.CompleteChat(ctx, retryMessages, opts)
+	retryMessage, err := r.Client.CompleteChatMessage(ctx, retryMessages, opts)
 	if err != nil {
 		return "", err
 	}
+	retryReply := retryMessage.Content
+	r.emitThinkingTrace(0, "empty_answer_retry_reply", retryMessage, opts, false)
 	if _, _, ok, parseErr := workspace.ParseToolRequest(retryReply); parseErr != nil {
 		return "", parseErr
 	} else if ok {
@@ -1516,6 +2284,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 		}
 		return "", fmt.Errorf("%s agent returned an empty response", r.agentName())
 	}
+	r.LastAssistantMessage = retryMessage
 	return retryTrimmed, nil
 }
 
