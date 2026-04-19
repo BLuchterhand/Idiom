@@ -11,10 +11,11 @@ import (
 )
 
 type Config struct {
-	AppName     string      `json:"app_name"`
-	LlamaServer LlamaServer `json:"llama_server"`
-	Chat        Chat        `json:"chat"`
-	Workspace   Workspace   `json:"workspace"`
+	AppName         string          `json:"app_name"`
+	LlamaServer     LlamaServer     `json:"llama_server"`
+	Chat            Chat            `json:"chat"`
+	RouteClassifier RouteClassifier `json:"route_classifier"`
+	Workspace       Workspace       `json:"workspace"`
 }
 
 type LlamaServer struct {
@@ -59,6 +60,26 @@ type Chat struct {
 	MaxToolSteps           int      `json:"max_tool_steps"`
 	RequestTimeoutSeconds  int      `json:"request_timeout_seconds"`
 	ServerStartTimeoutSecs int      `json:"server_start_timeout_seconds"`
+}
+
+type RouteClassifier struct {
+	Enabled             bool     `json:"enabled"`
+	BaseURL             string   `json:"base_url"`
+	Model               string   `json:"model"`
+	AlwaysOn            bool     `json:"always_on"`
+	MaxTokens           int      `json:"max_tokens"`
+	TimeoutSeconds      int      `json:"timeout_seconds"`
+	StartTimeoutSeconds int      `json:"start_timeout_seconds"`
+	AutoStartServer     bool     `json:"auto_start_server"`
+	Binary              string   `json:"binary"`
+	Host                string   `json:"host"`
+	Port                int      `json:"port"`
+	ServerModel         string   `json:"server_model"`
+	CtxSize             int      `json:"ctx_size"`
+	Threads             int      `json:"threads"`
+	GPULayers           int      `json:"gpu_layers"`
+	LogFile             string   `json:"log_file"`
+	ExtraArgs           []string `json:"extra_args"`
 }
 
 type Workspace struct {
@@ -116,7 +137,7 @@ func Default() Config {
 			DefaultProfiles:        []string{"coding"},
 			ProjectRoot:            "",
 			ProjectPromptFiles:     []string{},
-			Preset:                 "qwen3-coding",
+			Preset:                 "qwen3-coding-preserve",
 			Temperature:            0.6,
 			TopP:                   0.95,
 			TopK:                   20,
@@ -124,12 +145,25 @@ func Default() Config {
 			PresencePenalty:        0.0,
 			RepetitionPenalty:      1.0,
 			EnableThinking:         boolPtr(true),
-			PreserveThinking:       false,
+			PreserveThinking:       true,
 			MaxTokens:              8192,
 			MaxHistory:             20,
 			MaxToolSteps:           16,
 			RequestTimeoutSeconds:  900,
 			ServerStartTimeoutSecs: 240,
+		},
+		RouteClassifier: RouteClassifier{
+			Enabled:             true,
+			Model:               "",
+			AlwaysOn:            true,
+			MaxTokens:           512,
+			TimeoutSeconds:      20,
+			StartTimeoutSeconds: 120,
+			Host:                "127.0.0.1",
+			Port:                11437,
+			CtxSize:             8192,
+			LogFile:             "logs/route-classifier.log",
+			ExtraArgs:           []string{},
 		},
 		Workspace: Workspace{
 			Root:                  "",
@@ -217,6 +251,37 @@ func (c Config) Validate() error {
 	if c.Chat.ServerStartTimeoutSecs <= 0 {
 		return fmt.Errorf("chat.server_start_timeout_seconds must be positive")
 	}
+	if c.RouteClassifier.Enabled {
+		if c.RouteClassifier.MaxTokens <= 0 {
+			return fmt.Errorf("route_classifier.max_tokens must be positive when enabled")
+		}
+		if c.RouteClassifier.TimeoutSeconds <= 0 {
+			return fmt.Errorf("route_classifier.timeout_seconds must be positive when enabled")
+		}
+		if c.RouteClassifier.StartTimeoutSeconds <= 0 {
+			return fmt.Errorf("route_classifier.start_timeout_seconds must be positive when enabled")
+		}
+		if c.RouteClassifier.AutoStartServer {
+			if strings.TrimSpace(c.RouteClassifier.Binary) == "" && strings.TrimSpace(c.LlamaServer.Binary) == "" {
+				return fmt.Errorf("route_classifier.binary is required when auto_start_server is enabled")
+			}
+			if strings.TrimSpace(c.RouteClassifier.ServerModel) == "" {
+				return fmt.Errorf("route_classifier.server_model is required when auto_start_server is enabled")
+			}
+			if strings.TrimSpace(c.RouteClassifier.Host) == "" {
+				return fmt.Errorf("route_classifier.host is required when auto_start_server is enabled")
+			}
+			if c.RouteClassifier.Port <= 0 {
+				return fmt.Errorf("route_classifier.port must be positive when auto_start_server is enabled")
+			}
+			if c.RouteClassifier.CtxSize <= 0 {
+				return fmt.Errorf("route_classifier.ctx_size must be positive when auto_start_server is enabled")
+			}
+			if c.RouteClassifier.GPULayers < 0 {
+				return fmt.Errorf("route_classifier.gpu_layers must be non-negative")
+			}
+		}
+	}
 	if c.Workspace.CommandTimeoutSeconds <= 0 {
 		return fmt.Errorf("workspace.command_timeout_seconds must be positive")
 	}
@@ -245,9 +310,68 @@ func (c Config) BaseURL() string {
 	return fmt.Sprintf("http://%s:%d", c.LlamaServer.Host, c.LlamaServer.Port)
 }
 
+func (c Config) RouteClassifierBaseURL() string {
+	if strings.TrimSpace(c.RouteClassifier.BaseURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(c.RouteClassifier.BaseURL), "/")
+	}
+	if !c.RouteClassifier.AutoStartServer {
+		return ""
+	}
+	host := strings.TrimSpace(c.RouteClassifier.Host)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := c.RouteClassifier.Port
+	if port <= 0 {
+		port = 11437
+	}
+	return fmt.Sprintf("http://%s:%d", host, port)
+}
+
+func (c Config) RouteClassifierServerConfig() LlamaServer {
+	host := strings.TrimSpace(c.RouteClassifier.Host)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := c.RouteClassifier.Port
+	if port <= 0 {
+		port = 11437
+	}
+	binary := strings.TrimSpace(c.RouteClassifier.Binary)
+	if binary == "" {
+		binary = c.LlamaServer.Binary
+	}
+	logFile := strings.TrimSpace(c.RouteClassifier.LogFile)
+	if logFile == "" {
+		logFile = "logs/route-classifier.log"
+	}
+	ctxSize := c.RouteClassifier.CtxSize
+	if ctxSize <= 0 {
+		ctxSize = 8192
+	}
+	return LlamaServer{
+		Binary:          binary,
+		Host:            host,
+		Port:            port,
+		Model:           c.RouteClassifier.ServerModel,
+		CtxSize:         ctxSize,
+		Threads:         c.RouteClassifier.Threads,
+		GPULayers:       c.RouteClassifier.GPULayers,
+		Jinja:           true,
+		FlashAttention:  false,
+		Reasoning:       "off",
+		ReasoningFormat: "none",
+		ReasoningBudget: 0,
+		LogFile:         logFile,
+		ExtraArgs:       append([]string(nil), c.RouteClassifier.ExtraArgs...),
+	}
+}
+
 func (c *Config) resolvePaths(baseDir string) {
 	c.LlamaServer.Model = resolvePath(baseDir, c.LlamaServer.Model)
 	c.LlamaServer.LogFile = resolvePath(baseDir, c.LlamaServer.LogFile)
+	c.RouteClassifier.ServerModel = resolvePath(baseDir, c.RouteClassifier.ServerModel)
+	c.RouteClassifier.LogFile = resolvePath(baseDir, c.RouteClassifier.LogFile)
 	c.Chat.SaveDir = resolvePath(baseDir, c.Chat.SaveDir)
 	c.Chat.DebugLogDir = resolvePath(baseDir, c.Chat.DebugLogDir)
 	c.Chat.SystemPromptFiles = resolvePathSlice(baseDir, c.Chat.SystemPromptFiles)
@@ -309,7 +433,7 @@ func (c *Config) applyRuntimeDefaults() {
 		c.Chat.DefaultProfiles = []string{"coding"}
 	}
 	if c.Chat.Preset == "" {
-		c.Chat.Preset = "qwen3-coding"
+		c.Chat.Preset = "qwen3-coding-preserve"
 	}
 	if c.Chat.TopK == 0 {
 		c.Chat.TopK = 20

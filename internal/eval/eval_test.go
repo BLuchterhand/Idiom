@@ -27,7 +27,7 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"review","reason":"review_request","signals":["review","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected review"}`}},
 		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"confidence":"medium","commands":["go test ./internal/app"],"failed_commands":[],"learned_recommendation":"keep current verification plan"}`}},
 		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"review","tool":"read_file","confidence_impact":"degrade_until_alternate_evidence_covers_gap"}`}},
-		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","followup_lane":"implement","contract":"review_findings","task_family":"review","permission_profile":"analysis_read_only_then_guarded_writes","required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection","implementation_handoff"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","forbidden_tools_absent","target_packet_or_changed_files_present","verification_contract_resolved","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","blocked_by_missing_permission_or_information","budget_exhausted_with_uncertainty_declared","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","no_overconfident_claims","findings_first"],"failure_to_eval":false}`}},
+		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","followup_lane":"implement","contract":"review_findings","task_family":"review","permission_profile":"analysis_read_only_then_guarded_writes","target_refs":["internal/app/app.go"],"required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection","implementation_handoff"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","forbidden_tools_absent","target_packet_or_changed_files_present","verification_contract_resolved","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","blocked_by_missing_permission_or_information","budget_exhausted_with_uncertainty_declared","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","no_overconfident_claims","findings_first"],"failure_to_eval":false}`}},
 		{Type: "tool_request", Data: map[string]any{"tool": "edit_file", "broad": false}},
 		{Type: "tool_result", Data: map[string]any{"agent": "implement_verify", "summary": "Edited internal/app/app.go", "error": ""}},
 		{Type: "phase", Data: map[string]any{"lane": "implement", "phase": "verify", "state": "done", "detail": "Verification passed"}},
@@ -117,6 +117,9 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "review" || metrics.ControlRails[0].PermissionProfile != "analysis_read_only_then_guarded_writes" {
 		t.Fatalf("expected control rails metric, got %#v", metrics.ControlRails)
+	}
+	if !containsStringFold(metrics.ControlRails[0].TargetRefs, "internal/app/app.go") {
+		t.Fatalf("expected control rails target refs, got %#v", metrics.ControlRails[0].TargetRefs)
 	}
 }
 
@@ -252,6 +255,28 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("expected finding containing %q, got %q", expected, joined)
 		}
+	}
+}
+
+func TestEvaluateScenarioRequiresAssistantForEachUserTurn(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Can you identify opportunities for us to refactor our repo for long-term maintainability"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment thoroughness=medium"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Architecture summary: internal/workspace/manager.go is a hotspot."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Can you prepare a refactor plan for this file?"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment thoroughness=medium"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Focused refactor plan: Target: internal/workspace/manager.go."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                        "conversation coherence",
+		RequireAssistantForEachUser: true,
+	})
+	if report.Passed {
+		t.Fatalf("expected missing assistant-turn coverage to fail, got %#v", report)
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "assistant turns fewer than user turns") {
+		t.Fatalf("expected assistant-turn finding, got %#v", report.Findings)
 	}
 }
 

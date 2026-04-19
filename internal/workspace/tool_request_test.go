@@ -32,6 +32,50 @@ func TestParseToolRequestRejectsMalformedOrMissingTool(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestRepairsSafeMissingToolAliases(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "go outline path only",
+			text: "```tool\n{\"path\":\"internal/app/analysis_agents.go\"}\n```",
+			want: "go_file_outline",
+		},
+		{
+			name: "move declaration tag",
+			text: "```tool\n{\"path\":\"internal/app/app.go\",\"destination\":\"internal/app/rendering.go\",\"pattern\":\"tag:rendering\"}\n```",
+			want: "go_move_declarations",
+		},
+		{
+			name: "shell command",
+			text: "```tool\n{\"command\":\"go test ./internal/app\"}\n```",
+			want: "shell",
+		},
+		{
+			name: "line edit",
+			text: "```tool\n{\"path\":\"internal/app/app.go\",\"start_line\":10,\"end_line\":10,\"content\":\"replacement\"}\n```",
+			want: "edit_file",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _, ok, err := ParseToolRequest(tc.text)
+			if err != nil {
+				t.Fatalf("ParseToolRequest: %v", err)
+			}
+			if !ok {
+				t.Fatal("expected tool request")
+			}
+			if req.Tool != tc.want {
+				t.Fatalf("tool = %q, want %q", req.Tool, tc.want)
+			}
+		})
+	}
+}
+
 func TestExploreShellClassificationAndValidation(t *testing.T) {
 	if !IsBroadInspectionRequest(ToolRequest{Tool: "shell", Command: "find . -maxdepth 2"}) {
 		t.Fatal("expected find shell command to be broad inspection")

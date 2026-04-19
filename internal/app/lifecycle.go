@@ -61,6 +61,15 @@ func New(cfg config.Config) *Model {
 		panelVisible:   true,
 	}
 	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
+	if classifierURL := cfg.RouteClassifierBaseURL(); classifierURL != "" {
+		m.classifierClient = llama.NewClient(classifierURL, 0)
+	}
+	if cfg.RouteClassifier.AutoStartServer {
+		if m.classifierClient == nil {
+			m.classifierClient = llama.NewClient(cfg.RouteClassifierBaseURL(), 0)
+		}
+		m.classifierController = llama.NewServerController(cfg.RouteClassifierServerConfig(), m.classifierClient)
+	}
 	m.workspace = workspace.NewManager(cfg.Workspace)
 	m.runner = &agent.Runner{
 		Client:       m.client,
@@ -167,7 +176,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderMessages(false)
 	case assistantReplyMsg:
 		m.setPendingAssistantContent(msg.text)
-		m.logMessage("assistant", msg.text)
+		if !msg.logged {
+			m.logMessage("assistant", msg.text)
+		}
 		m.renderMessages(false)
 	case streamDoneMsg:
 		m.streaming = false
@@ -311,11 +322,19 @@ func (m *Model) runMainAgent(
 	rails deterministicControlRailsSnapshot,
 ) (string, error) {
 	mainGuard := newMainWriteGuard(m.workspace, prompt)
+	if instruction := controlRailRuntimeInstruction(rails); instruction != "" {
+		history = append(append([]llama.ChatMessage(nil), history...), llama.ChatMessage{Role: "system", Content: instruction})
+	}
 	runner := &agent.Runner{
-		Client:       m.client,
-		Workspace:    m.workspace,
-		MaxToolSteps: m.cfg.Chat.MaxToolSteps,
-		AgentName:    "main",
+		Client:           m.client,
+		Workspace:        m.workspace,
+		MaxToolSteps:     m.cfg.Chat.MaxToolSteps,
+		AgentName:        "main",
+		PermissionPolicy: controlRailPermissionPolicy(rails),
+		CompletionGate:   controlRailCompletionGate(rails),
+		OnEvent: func(event agent.RunEvent) {
+			m.logMessage(event.Role, event.Content)
+		},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
 			if blocked := controlRailPreExecute(rails, req); blocked != nil {
 				return blocked

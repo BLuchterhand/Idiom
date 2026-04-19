@@ -222,6 +222,9 @@ type implementationTargetPacket struct {
 	SourceLane       string
 	RefactorStage    int
 	PrimaryPaths     []string
+	EvidencePaths    []string
+	AllowedDestinations []string
+	ForbiddenPaths   []string
 	Anchors          []implementationTarget
 	AnalogyPaths     []string
 	LiteralFragments []string
@@ -272,7 +275,7 @@ func buildImplementationTargetPacket(prompt string, history []llama.ChatMessage)
 	for _, hint := range initialSymbolHints {
 		addSymbolHint(hint)
 	}
-	for _, path := range promptMentionedWorkspacePaths(prompt) {
+	for _, path := range implementationPromptPrimaryPaths(prompt) {
 		addPath(&packet.PrimaryPaths, primarySeen, path)
 	}
 	for _, path := range implementationAnalogyPaths(prompt) {
@@ -312,10 +315,56 @@ func buildImplementationTargetPacket(prompt string, history []llama.ChatMessage)
 	return packet
 }
 
+func applyTaskResumeContextToImplementationTargetPacket(packet implementationTargetPacket, resume taskResumeContext) implementationTargetPacket {
+	if !resume.Active {
+		return packet
+	}
+	if len(resume.ApprovedEditTargets) > 0 {
+		packet.PrimaryPaths = uniqueLimitedStrings(resume.ApprovedEditTargets, 8)
+	}
+	packet.EvidencePaths = uniqueLimitedStrings(append(packet.EvidencePaths, resume.ReadOnlyEvidencePaths...), 16)
+	packet.AllowedDestinations = uniqueLimitedStrings(append(packet.AllowedDestinations, resume.AllowedDestinations...), 8)
+	packet.ForbiddenPaths = uniqueLimitedStrings(append(packet.ForbiddenPaths, resume.ForbiddenPaths...), 16)
+	if len(resume.VerificationPlan) > 0 {
+		packet.StrategyHints = uniqueLimitedStrings(append(packet.StrategyHints, resume.VerificationPlan...), 8)
+	}
+	if resume.SourceLane != "" && strings.TrimSpace(packet.SourceLane) == "" {
+		packet.SourceLane = string(resume.SourceLane)
+	}
+	return packet
+}
+
+func implementationPromptPrimaryPaths(prompt string) []string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return nil
+	}
+	var explicit []string
+	for _, line := range strings.Split(prompt, "\n") {
+		trimmed := strings.TrimSpace(line)
+		normalized := strings.ToLower(trimmed)
+		for _, prefix := range []string{"previously validated targets:", "target:", "targets:"} {
+			if !strings.HasPrefix(normalized, prefix) {
+				continue
+			}
+			paths := promptMentionedWorkspacePaths(strings.TrimSpace(trimmed[len(prefix):]))
+			explicit = append(explicit, paths...)
+		}
+	}
+	if len(explicit) > 0 {
+		return uniqueLimitedStrings(explicit, 4)
+	}
+	return promptMentionedWorkspacePaths(prompt)
+}
+
 func enrichImplementationTargetPacket(mgr *workspace.Manager, packet implementationTargetPacket) implementationTargetPacket {
 	if mgr == nil || !mgr.Enabled() {
 		return packet
 	}
+	packet.PrimaryPaths = resolveImplementationPrimaryPaths(mgr.Root(), packet.PrimaryPaths)
+	packet.EvidencePaths = resolveImplementationPrimaryPaths(mgr.Root(), packet.EvidencePaths)
+	packet.ForbiddenPaths = resolveImplementationPrimaryPaths(mgr.Root(), packet.ForbiddenPaths)
+	packet.AnalogyPaths = resolveImplementationPrimaryPaths(mgr.Root(), packet.AnalogyPaths)
 	if len(packet.SymbolHints) == 0 && len(packet.Anchors) == 0 {
 		return packet
 	}
@@ -324,12 +373,82 @@ func enrichImplementationTargetPacket(mgr *workspace.Manager, packet implementat
 		return packet
 	}
 	packet.Symbols = resolveImplementationSymbolAnchors(idx, packet)
-	for _, symbol := range packet.Symbols {
-		if symbol.Path != "" {
-			packet.PrimaryPaths = uniqueLimitedStrings(append(packet.PrimaryPaths, normalizeGuardedPath(symbol.Path)), 6)
+	if len(packet.PrimaryPaths) == 0 {
+		for _, symbol := range packet.Symbols {
+			if symbol.Path != "" {
+				packet.PrimaryPaths = uniqueLimitedStrings(append(packet.PrimaryPaths, normalizeGuardedPath(symbol.Path)), 6)
+			}
 		}
 	}
 	return packet
+}
+
+func resolveImplementationPrimaryPaths(root string, paths []string) []string {
+	root = strings.TrimSpace(root)
+	if root == "" || len(paths) == 0 {
+		return paths
+	}
+	resolved := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = normalizeGuardedPath(path)
+		if path == "" {
+			continue
+		}
+		if workspaceRelativeFileExists(root, path) {
+			resolved = append(resolved, path)
+			continue
+		}
+		if strings.Contains(path, "/") {
+			resolved = append(resolved, path)
+			continue
+		}
+		matches := findWorkspaceFilesByBase(root, path, 2)
+		if len(matches) == 1 {
+			resolved = append(resolved, matches[0])
+			continue
+		}
+		resolved = append(resolved, path)
+	}
+	return uniqueLimitedStrings(resolved, 6)
+}
+
+func workspaceRelativeFileExists(root string, path string) bool {
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
+	return err == nil && !info.IsDir()
+}
+
+func findWorkspaceFilesByBase(root string, base string, limit int) []string {
+	base = strings.TrimSpace(base)
+	if root == "" || base == "" || limit <= 0 {
+		return nil
+	}
+	matches := make([]string, 0, limit)
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil {
+			return nil
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "logs", "transcripts", "node_modules", "vendor":
+				return filepath.SkipDir
+			default:
+				return nil
+			}
+		}
+		if entry.Name() != base {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		matches = append(matches, filepath.ToSlash(rel))
+		if len(matches) >= limit {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return matches
 }
 
 func implementationTargetPaths(prompt string, history []llama.ChatMessage) []string {
@@ -542,7 +661,7 @@ func implementationQualifiedSymbol(match semantic.SymbolMatch) string {
 }
 
 func renderImplementationTargetPacket(packet implementationTargetPacket) string {
-	if len(packet.PrimaryPaths) == 0 && len(packet.Anchors) == 0 && len(packet.AnalogyPaths) == 0 && len(packet.LiteralFragments) == 0 && len(packet.Symbols) == 0 && len(packet.SymbolHints) == 0 {
+	if len(packet.PrimaryPaths) == 0 && len(packet.EvidencePaths) == 0 && len(packet.AllowedDestinations) == 0 && len(packet.Anchors) == 0 && len(packet.AnalogyPaths) == 0 && len(packet.LiteralFragments) == 0 && len(packet.Symbols) == 0 && len(packet.SymbolHints) == 0 {
 		return ""
 	}
 	lines := []string{"[implementation target packet]", "Use these anchors before any broad repo discovery."}
@@ -554,6 +673,15 @@ func renderImplementationTargetPacket(packet implementationTargetPacket) string 
 	}
 	if len(packet.PrimaryPaths) > 0 {
 		lines = append(lines, "- primary files: "+strings.Join(packet.PrimaryPaths, ", "))
+	}
+	if len(packet.EvidencePaths) > 0 {
+		lines = append(lines, "- read-only evidence files: "+strings.Join(packet.EvidencePaths, ", "))
+	}
+	if len(packet.AllowedDestinations) > 0 {
+		lines = append(lines, "- plan-approved new destinations: "+strings.Join(packet.AllowedDestinations, ", "))
+	}
+	if len(packet.ForbiddenPaths) > 0 {
+		lines = append(lines, "- forbidden files: "+strings.Join(packet.ForbiddenPaths, ", "))
 	}
 	if len(packet.Anchors) > 0 {
 		anchors := make([]string, 0, len(packet.Anchors))
@@ -618,8 +746,9 @@ func (m *Model) runImplementAgent(
 	prompt string,
 	history []llama.ChatMessage,
 	opts llama.ChatOptions,
+	resumeContexts ...taskResumeContext,
 ) (string, error) {
-	return m.runImplementAgentWithGrant(ctx, prompt, history, opts, nil)
+	return m.runImplementAgentWithGrant(ctx, prompt, history, opts, nil, resumeContexts...)
 }
 
 func (m *Model) runImplementAgentWithGrant(
@@ -628,16 +757,22 @@ func (m *Model) runImplementAgentWithGrant(
 	history []llama.ChatMessage,
 	opts llama.ChatOptions,
 	grant *writeApprovalGrant,
+	resumeContexts ...taskResumeContext,
 ) (string, error) {
 	implementWorkspace := m.newWorkspaceManager()
 	journalRecorder := newExecutionJournalRecorder(implementWorkspace, prompt)
 	m.emitPhaseCard(analysisLaneImplement, "targeting", phaseStateActive, "Resolving anchored files, lines, and symbols before editing.")
+	var resumeContext taskResumeContext
+	if len(resumeContexts) > 0 {
+		resumeContext = resumeContexts[0]
+	}
 	targetPacket := buildImplementationTargetPacket(prompt, history)
+	targetPacket = applyTaskResumeContextToImplementationTargetPacket(targetPacket, resumeContext)
 	targetPacket = enrichImplementationTargetPacket(implementWorkspace, targetPacket)
 	writeGuard := newImplementWriteGuard(implementWorkspace, prompt)
 	writeGuard.grant = grant
 	targetPaths := append([]string(nil), targetPacket.PrimaryPaths...)
-	implementWorkspace.PrimeDiscoveredPaths(uniqueLimitedStrings(append(append([]string(nil), targetPaths...), targetPacket.AnalogyPaths...), 8))
+	implementWorkspace.PrimeDiscoveredPaths(uniqueLimitedStrings(append(append(append([]string(nil), targetPaths...), targetPacket.EvidencePaths...), targetPacket.AnalogyPaths...), 12))
 	bootstrap := m.bootstrapImplementationEvidence(ctx, implementWorkspace, prompt, targetPacket, history)
 	if len(bootstrap.messages) > 0 {
 		history = append(history, bootstrap.messages...)
@@ -910,6 +1045,13 @@ func (m *Model) runImplementAgentWithGrant(
 	targetGuard := newImplementTargetGuard(implementWorkspace, targetPacket, bootstrap.results)
 	targetGuard.allowFullTargetRead = promptRequestsWholeFileRefactor(prompt)
 	implementPolicy := implementRunPolicyForRequest(m.cfg.Chat.MaxToolSteps, prompt, targetPacket)
+	railsPlan := promptExecutionPlan{
+		lane:     analysisLaneImplement,
+		reason:   promptRouteReasonDirectImplementation,
+		contract: answerContractForLane(analysisLaneImplement),
+	}
+	railsPlan.intent = buildPromptIntentDecision(prompt, buildPromptRouteProfile(prompt), m.recentConversationText(6), railsPlan)
+	rails := buildDeterministicControlRails(prompt, railsPlan)
 	if implementPolicy.MaxToolSteps <= 0 {
 		m.logMessage("implement_tool_budget", fmt.Sprintf("using model-decided completion with no fixed step cap; no-progress fuse=%d", implementPolicy.MaxNoProgressTurns))
 	} else if baseBudget := implementToolBudget(m.cfg.Chat.MaxToolSteps); implementPolicy.MaxToolSteps != baseBudget {
@@ -923,7 +1065,17 @@ func (m *Model) runImplementAgentWithGrant(
 		AgentName:      "implement",
 		SeedResults:    append([]workspace.ToolResult(nil), bootstrap.results...),
 		CompletionGate: implementationCompletionGate(prompt, preChangedPaths, requestByStep, resultByStep),
+		TaskLedger: agent.TaskLedgerPolicy{
+			Required: requestNeedsExpandedImplementBudget(prompt, targetPacket),
+		},
+		PermissionPolicy: controlRailPermissionPolicy(rails),
+		OnEvent: func(event agent.RunEvent) {
+			m.logMessage(event.Role, event.Content)
+		},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if blocked := controlRailPreExecute(rails, req); blocked != nil {
+				return blocked
+			}
 			if blocked := targetGuard.PreExecute(req); blocked != nil {
 				return blocked
 			}
@@ -971,7 +1123,11 @@ func (m *Model) runImplementAgentWithGrant(
 
 	changedPaths := uniqueNonEmptyStrings(append(preChangedPaths, changedPathsFromImplementEvents(requestByStep, resultByStep)...))
 	if len(changedPaths) == 0 {
-		m.emitPhaseCard(analysisLaneImplement, "complete", phaseStateDone, "No workspace changes were needed after consuming the target packet.")
+		if implementationReplyReportsNoChangeBlocker(reply) {
+			m.emitPhaseCard(analysisLaneImplement, "complete", phaseStateFailed, "Implementation stopped with a blocker before applying workspace changes.")
+		} else {
+			m.emitPhaseCard(analysisLaneImplement, "complete", phaseStateDone, "No workspace changes were needed after consuming the target packet.")
+		}
 		return buildImplementationNoopSummary(reply, resultByStep), nil
 	}
 
@@ -1524,19 +1680,29 @@ func (g *implementTargetGuard) targeted(tool string, path string) bool {
 		return false
 	}
 	switch tool {
-	case "read_file", "search_content", "edit_file", "write_file", "append_file", "go_read_symbol", "go_extract_body", "go_file_outline", "go_move_declarations":
-		return g.pathAllowed(path)
+	case "edit_file", "write_file", "append_file", "go_move_declarations":
+		return g.pathEditableAllowed(path)
+	case "read_file", "search_content", "go_read_symbol", "go_extract_body", "go_file_outline":
+		return g.pathReadableAllowed(path)
 	default:
 		return false
 	}
 }
 
 func (g *implementTargetGuard) pathAllowed(path string) bool {
+	return g.pathReadableAllowed(path)
+}
+
+func (g *implementTargetGuard) pathReadableAllowed(path string) bool {
 	path = normalizeGuardedPath(path)
 	if path == "" {
 		return false
 	}
+	if g.pathForbidden(path) {
+		return false
+	}
 	candidates := append([]string(nil), g.packet.PrimaryPaths...)
+	candidates = append(candidates, g.packet.EvidencePaths...)
 	candidates = append(candidates, g.packet.AnalogyPaths...)
 	for _, candidate := range candidates {
 		candidate = normalizeGuardedPath(candidate)
@@ -1554,12 +1720,96 @@ func (g *implementTargetGuard) pathAllowed(path string) bool {
 	return false
 }
 
+func (g *implementTargetGuard) pathEditableAllowed(path string) bool {
+	path = normalizeGuardedPath(path)
+	if path == "" || g.pathForbidden(path) {
+		return false
+	}
+	if g.pathPrimaryAllowed(path) {
+		return true
+	}
+	for _, candidate := range g.packet.AllowedDestinations {
+		if path == normalizeGuardedPath(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *implementTargetGuard) pathPrimaryAllowed(path string) bool {
+	path = normalizeGuardedPath(path)
+	if path == "" || g.pathForbidden(path) {
+		return false
+	}
+	for _, candidate := range g.packet.PrimaryPaths {
+		if path == normalizeGuardedPath(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *implementTargetGuard) pathForbidden(path string) bool {
+	path = normalizeGuardedPath(path)
+	if path == "" {
+		return false
+	}
+	for _, candidate := range g.packet.ForbiddenPaths {
+		if path == normalizeGuardedPath(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *implementTargetGuard) blockWriteOutsideEditableTargets(req workspace.ToolRequest) *workspace.ToolResult {
+	if g == nil || len(g.packet.PrimaryPaths) == 0 {
+		return nil
+	}
+	tool := strings.TrimSpace(req.Tool)
+	block := func(path string, reason string) *workspace.ToolResult {
+		return &workspace.ToolResult{
+			Tool:    tool,
+			Summary: "Implementation target packet blocked write outside approved targets",
+			Error:   fmt.Sprintf("%s is not an approved editable target (%s). %s", normalizeGuardedPath(path), strings.Join(g.packet.PrimaryPaths, ", "), reason),
+		}
+	}
+	switch tool {
+	case "edit_file", "write_file", "append_file", "mkdir":
+		path := normalizeGuardedPath(req.Path)
+		if path == "" {
+			return nil
+		}
+		if !g.pathEditableAllowed(path) {
+			return block(path, "Read-only evidence and analogy paths may be inspected but not modified.")
+		}
+	case "go_move_declarations":
+		source := normalizeGuardedPath(req.Path)
+		if source != "" && !g.pathPrimaryAllowed(source) {
+			return block(source, "Declaration moves may only originate from approved editable targets.")
+		}
+		destinations := []string{normalizeGuardedPath(req.Destination)}
+		for _, move := range req.Moves {
+			destinations = append(destinations, normalizeGuardedPath(move.Destination))
+		}
+		for _, destination := range destinations {
+			if destination == "" {
+				continue
+			}
+			if g.pathForbidden(destination) || (g.pathReadableAllowed(destination) && !g.pathEditableAllowed(destination)) {
+				return block(destination, "Declaration moves may not overwrite read-only evidence, analogy, or forbidden paths.")
+			}
+		}
+	}
+	return nil
+}
+
 func (m *Model) bootstrapImplementationEvidence(ctx context.Context, mgr *workspace.Manager, prompt string, packet implementationTargetPacket, history []llama.ChatMessage) implementationBootstrap {
 	if mgr == nil {
 		return implementationBootstrap{}
 	}
 	paths := append([]string(nil), packet.PrimaryPaths...)
-	discovered := uniqueLimitedStrings(append(append([]string(nil), packet.PrimaryPaths...), packet.AnalogyPaths...), 8)
+	discovered := uniqueLimitedStrings(append(append(append([]string(nil), packet.PrimaryPaths...), packet.EvidencePaths...), packet.AnalogyPaths...), 12)
 	if len(discovered) > 0 {
 		mgr.PrimeDiscoveredPaths(discovered)
 	}
@@ -1608,6 +1858,11 @@ func (m *Model) bootstrapImplementationEvidence(ctx context.Context, mgr *worksp
 			req.Path = ""
 		}
 		result := mgr.Execute(ctx, req)
+		if result.Error == "start_line must be <= end_line" && startLine > 1 {
+			req.StartLine = 1
+			req.EndLine = 260
+			result = mgr.Execute(ctx, req)
+		}
 		appendResult(result)
 		return result
 	}
@@ -1676,6 +1931,12 @@ func (m *Model) bootstrapImplementationEvidence(ctx context.Context, mgr *worksp
 		}
 	}
 	for _, path := range packet.AnalogyPaths {
+		read := readDiscoveredTarget(path, 1, 180)
+		if read.Error == "" {
+			break
+		}
+	}
+	for _, path := range packet.EvidencePaths {
 		read := readDiscoveredTarget(path, 1, 180)
 		if read.Error == "" {
 			break
@@ -2150,6 +2411,20 @@ func buildImplementationNoopSummary(reply string, results map[int]agent.ToolResu
 		lastError = "no file edits were applied"
 	}
 	return "Implementation agent did not complete the requested edit.\n\nLast step:\n- " + lastSummary + "\n\nBlocker:\n- " + lastError
+}
+
+func implementationReplyReportsNoChangeBlocker(reply string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(reply))
+	return containsAny(
+		normalized,
+		"did not complete",
+		"could not complete",
+		"failed",
+		"blocker",
+		"blocked",
+		"not an approved",
+		"budget exhausted",
+	)
 }
 
 func (m *Model) tryDirectPromptEdit(
@@ -3434,6 +3709,7 @@ func buildImplementSystemPrompt(basePrompt string, workspaceInstructions string)
 		"You are in IMPLEMENT mode.",
 		"Make the smallest correct code change that satisfies the request.",
 		"The harness may already provide an implementation target packet with exact files, lines, @file anchors, analogous references, or edit context. Use that first instead of restarting discovery.",
+		"For complex multi-step implementation work, start with task_ledger and keep it current. Do not answer done while pending or in_progress ledger items remain.",
 		"Prefer edit_file for localized changes and use start_line/end_line/content when quotes or indentation make exact text replacement brittle.",
 		"For large Go-file refactors, inspect declaration boundaries with go_file_outline and move model-chosen declaration groups with go_move_declarations, preferably using pattern:\"tag:<responsibility>\" from the outline; if splitting one file into several cohesive files, prefer a single batch go_move_declarations call with moves instead of sequential partial moves.",
 		"Do not keep relisting directories once a target file or line is already known. Consume the target packet before any broader search.",
@@ -3447,6 +3723,7 @@ func buildImplementTaskPrompt(prompt string) string {
 		renderLaneContractPolicy(analysisLaneImplement) + "\n\n" +
 		"Implementation rules:\n" +
 		"- Make the smallest correct change.\n" +
+		"- For complex multi-step work, first call task_ledger with todos. Keep exactly one item in_progress, mark completed work, and do not finish while required items remain pending or in_progress.\n" +
 		"- Prefer edit_file over rewriting the whole file for localized edits.\n" +
 		"- For large Go refactors, use go_file_outline first, choose cohesive responsibility groups yourself, then use go_move_declarations with pattern:\"tag:<responsibility>\" or explicit declarations to move them mechanically into destination files.\n" +
 		"- When a large Go refactor splits one file into several cohesive files, prefer one batch go_move_declarations call with moves over partial sequential moves.\n" +
@@ -3544,11 +3821,17 @@ func implementRunPolicyForRequest(maxToolSteps int, prompt string, packet implem
 		return agent.RunPolicy{
 			MaxToolSteps:       0,
 			MaxNoProgressTurns: 8,
+			MaxContextMessages: 28,
+			MaxContextChars:    60000,
+			MaxModelCalls:      64,
 		}
 	}
 	return agent.RunPolicy{
 		MaxToolSteps:       implementToolBudget(maxToolSteps),
 		MaxNoProgressTurns: 6,
+		MaxContextMessages: 24,
+		MaxContextChars:    40000,
+		MaxModelCalls:      maxInt(implementToolBudget(maxToolSteps)+6, 12),
 	}
 }
 
@@ -3754,6 +4037,9 @@ func promptRequestsAnalysisBeforeImplementation(normalized string) bool {
 func promptRequestsImplementation(prompt string) bool {
 	normalized := strings.ToLower(prompt)
 	trimmed := strings.TrimSpace(normalized)
+	if looksLikePlanOnlyPrompt(trimmed) {
+		return false
+	}
 	if strings.HasPrefix(trimmed, "fix ") || strings.HasPrefix(trimmed, "patch ") || strings.HasPrefix(trimmed, "implement ") || strings.HasPrefix(trimmed, "refactor ") {
 		return true
 	}
@@ -3767,6 +4053,9 @@ func promptRequestsImplementation(prompt string) bool {
 		"in one shot",
 		"fix it now",
 		"fix this now",
+		"fix the issue",
+		"fix the failure",
+		"fix the bug",
 		"please fix",
 		"go fix",
 		"patch it",
@@ -3795,14 +4084,20 @@ func promptRequestsImplementation(prompt string) bool {
 		"then fix",
 		"then fix it",
 		"then update",
+		"then implement",
 		"then implement it",
+		"and fix",
 		"and fix it",
 		"and update",
+		"and implement",
 		"and implement it",
 	)
 }
 
 func looksLikeDirectImplementationPrompt(prompt string, normalized string) bool {
+	if looksLikePlanOnlyPrompt(normalized) {
+		return false
+	}
 	if promptRequestsImplementation(prompt) {
 		return true
 	}
@@ -3835,4 +4130,77 @@ func looksLikeDirectImplementationPrompt(prompt string, normalized string) bool 
 		containsAny(normalized, "line ", "function ", "method ", "text from", "text to") ||
 		hasUILocationHint(normalized)
 	return hasEditVerb && hasConcreteTarget && !looksLikeInvestigationPrompt(normalized)
+}
+
+func looksLikePlanOnlyPrompt(normalized string) bool {
+	normalized = strings.ToLower(strings.TrimSpace(normalized))
+	if normalized == "" {
+		return false
+	}
+	hasPlanRequest := containsAny(
+		normalized,
+		"prepare a plan",
+		"prepare an plan",
+		"prepare a refactor plan",
+		"prepare a refactoring plan",
+		"make a plan",
+		"create a plan",
+		"propose a plan",
+		"propose a work plan",
+		"write a plan",
+		"draft a plan",
+		"work plan",
+		"work out an approach",
+		"work out approach",
+		"outline an approach",
+		"approach to refactoring",
+		"approach to refactor",
+		"implementation plan",
+		"refactor plan",
+		"refactoring plan",
+		"plan to update",
+		"plan to refactor",
+		"plan for updating",
+		"plan for refactoring",
+	)
+	if !hasPlanRequest {
+		return false
+	}
+	return !containsAny(
+		normalized,
+		"then implement",
+		"and implement",
+		"then update",
+		"and update",
+		"then apply",
+		"and apply",
+		"apply the plan",
+		"execute the plan",
+		"do it now",
+		"make the changes",
+	)
+}
+
+func looksLikeReadOnlyBoundaryPrompt(normalized string) bool {
+	normalized = strings.ToLower(strings.TrimSpace(normalized))
+	if normalized == "" {
+		return false
+	}
+	return containsAny(
+		normalized,
+		"don't edit",
+		"do not edit",
+		"don't change",
+		"do not change",
+		"don't modify",
+		"do not modify",
+		"read only",
+		"read-only",
+		"plan only",
+		"no edits",
+		"without editing",
+		"without changing",
+		"before editing",
+		"before changing",
+	)
 }

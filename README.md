@@ -87,7 +87,7 @@ make eval LOG=logs/conversations/20260418-055543.504.jsonl
 
 The bundled defaults target coding work on Qwen3.6 with thinking enabled:
 
-- `preset: qwen3-coding`
+- `preset: qwen3-coding-preserve`
 - `temperature: 0.6`
 - `top_p: 0.95`
 - `top_k: 20`
@@ -95,7 +95,7 @@ The bundled defaults target coding work on Qwen3.6 with thinking enabled:
 - `presence_penalty: 0.0`
 - `repetition_penalty: 1.0`
 - `enable_thinking: true`
-- `preserve_thinking: false`
+- `preserve_thinking: true`
 
 Built-in presets:
 
@@ -110,9 +110,36 @@ Use `/preset list` to see the preset names and `/preset <name>` to switch live i
 Notes:
 
 - If you hand-tune the numeric sampling fields in `config.json`, set `preset: "custom"` so startup does not re-apply a built-in preset over your manual values.
-- `qwen3-coding-preserve` is useful for long coding sessions, but it consumes more context because historical thinking traces are retained.
+- `qwen3-coding-preserve` is the shipped coding default for long sessions; it consumes more context because historical thinking traces are retained. Use `qwen3-coding` when you want the same sampling settings without retained thinking.
 - The shipped config now uses `ctx_size: 65536`; preserved thinking becomes more useful as context grows, and Qwen officially recommends even larger windows for strongest long-horizon behavior.
 - The harness now starts `llama-server` with `flash_attention`, `reasoning: auto`, and `reasoning_format: deepseek` by default, so visible responses stay clean while reasoning content remains structured on the server side.
+
+## Route Classifier
+
+`route_classifier` runs a small structured classifier before execution so terse follow-ups and plan approvals can be reconciled against deterministic routing. It is enabled by default and returns JSON only; host-side control rails still own the final contract and tool permissions.
+
+The app can auto-start the installed local Qwen 9B helper classifier when `auto_start_server` is true. The checked-in local config serves `/Users/ben/models/qwen35-9b/Qwen3.5-9B-Q8_0.gguf` on `http://127.0.0.1:11437` and writes logs to `logs/route-classifier.log`.
+
+On first use, the harness checks that `server_model` is readable before spawning the helper. If the model path or binary is wrong, it reports a classifier-health error and falls back to host routing instead of blocking the conversation. The classifier prompt is intentionally schema-first and JSON-only, with examples for log inspection, log-fix requests, plan-only requests, durable-plan approvals, and user boundaries.
+
+You can also run the classifier manually with:
+
+```bash
+make classifier-server
+```
+
+Override any manual-server setting inline, for example `make classifier-server CLASSIFIER_PORT=11438 CLASSIFIER_MODEL=/path/to/model.gguf`.
+
+- `enabled`: turns classifier calls on or off.
+- `base_url`: optional OpenAI-compatible endpoint for a separate small model server. Empty uses the main chat endpoint.
+- `model`: optional model id for a smaller served model, such as a 7-9B instruct model. Empty uses the active chat model.
+- `always_on`: runs classification on every prompt instead of only ambiguous prompts.
+- `max_tokens`: output cap for the classifier JSON.
+- `timeout_seconds`: short timeout so routing does not block the main response path.
+- `auto_start_server`: starts a local classifier server on demand when `base_url` is unavailable.
+- `server_model`: local GGUF model path used only by auto-start.
+- `start_timeout_seconds`: startup fuse for the local classifier process.
+- `binary`, `host`, `port`, `ctx_size`, `threads`, `gpu_layers`, `log_file`, and `extra_args`: local classifier server launch settings.
 
 ## Baseline Behavior
 

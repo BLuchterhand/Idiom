@@ -39,6 +39,7 @@ Eval implementation:
 - Added human-readable `qwen-eval` output for the latest control-rails snapshot.
 - Added SWE-suite scenario assertion coverage for `control_rails`.
 - Added live control-rail enforcement for forbidden tool classes and final-answer readiness gaps.
+- Added target-reference rails so classifier-provided `target_refs` must be present in architecture evidence or final answers.
 - Added `control_rails_enforcement` debug-log records for accepted or repaired final answers.
 
 Test coverage:
@@ -47,7 +48,9 @@ Test coverage:
 - Runtime rail construction tests for debug-log and implementation task families.
 - Runtime rail construction tests for verification-only shell checks and failure-worded implementation prompts.
 - Final-answer enforcement tests for unresolved implementation verification contracts.
+- Final-answer enforcement tests for architecture target drift.
 - Eval parsing, matching, mismatch reporting, and suggested-scenario coverage.
+- Eval scenario coverage for missing assistant turns across multi-turn conversations.
 - CLI JSON and scenario-generation coverage for `control_rails`.
 
 ## Required Runtime Rails

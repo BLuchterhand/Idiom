@@ -68,6 +68,9 @@ type ToolRequest struct {
 	Glob         string              `json:"glob,omitempty"`
 	Workdir      string              `json:"workdir,omitempty"`
 	Command      string              `json:"command,omitempty"`
+	Prompt       string              `json:"prompt,omitempty"`
+	Agent        string              `json:"agent,omitempty"`
+	Mode         string              `json:"mode,omitempty"`
 	Content      string              `json:"content,omitempty"`
 	OldText      string              `json:"old_text,omitempty"`
 	NewText      string              `json:"new_text,omitempty"`
@@ -77,12 +80,21 @@ type ToolRequest struct {
 	Destination  string              `json:"destination,omitempty"`
 	Declarations []string            `json:"declarations,omitempty"`
 	Moves        []GoDeclarationMove `json:"moves,omitempty"`
+	Todos        []TaskLedgerItem    `json:"todos,omitempty"`
+	Items        []TaskLedgerItem    `json:"items,omitempty"`
 }
 
 type GoDeclarationMove struct {
 	Destination  string   `json:"destination,omitempty"`
 	Pattern      string   `json:"pattern,omitempty"`
 	Declarations []string `json:"declarations,omitempty"`
+}
+
+type TaskLedgerItem struct {
+	ID       string `json:"id,omitempty"`
+	Content  string `json:"content,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Evidence string `json:"evidence,omitempty"`
 }
 
 type ToolResult struct {
@@ -216,6 +228,8 @@ func (m *Manager) Instructions() string {
 			"{\"tool\":\"search_files\",\"pattern\":\"bubble\",\"path\":\".\"}\n"+
 			"```\n\n"+
 			"Available tools:\n"+
+			"- task_ledger {\"todos\":[{\"id\":\"inspect\",\"content\":\"Inspect target files\",\"status\":\"in_progress\"},{\"id\":\"verify\",\"content\":\"Run verification\",\"status\":\"pending\"}]}\n"+
+			"- task {\"agent\":\"explorer\",\"mode\":\"read_only\",\"prompt\":\"Inspect one focused question and summarize evidence.\"} (bounded read-only child task; skip for simple single-file work)\n"+
 			"- pwd\n"+
 			"- list_files {\"path\":\".\",\"recursive\":true,\"max_depth\":2}\n"+
 			"- search_files {\"pattern\":\"bubble\",\"path\":\".\"}\n"+
@@ -229,6 +243,7 @@ func (m *Manager) Instructions() string {
 			"- append_file {\"path\":\"relative/path\",\"content\":\"text to append\"}\n"+
 			"- shell {\"command\":\"awk 'NR<=80 {print}' README.md\",\"workdir\":\".\"}\n%s%s\n"+
 			"Rules:\n"+
+			"- For complex multi-step work, use task_ledger to track pending, in_progress, completed, blocked, or cancelled items. Keep at most one item in_progress.\n"+
 			"- Do not invent file paths from memory.\n"+
 			"- First use search_files, search_content, or list_files to discover real files.\n"+
 			"- After discovery, open files by handle with read_file {\"id\":\"fN\"} whenever possible.\n"+
@@ -275,6 +290,7 @@ func (m *Manager) exploreInstructions() string {
 			"{\"tool\":\"search_content\",\"pattern\":\"TODO\",\"path\":\".\",\"glob\":\"*.go\"}\n"+
 			"```\n\n"+
 			"Available tools in explore mode:\n"+
+			"- task {\"agent\":\"explorer\",\"mode\":\"read_only\",\"prompt\":\"Investigate one focused question.\"} (bounded read-only child task)\n"+
 			"- pwd\n"+
 			"- list_files {\"path\":\".\",\"recursive\":true,\"max_depth\":2}\n"+
 			"- search_files {\"pattern\":\"auth\",\"path\":\".\"}\n"+
@@ -528,9 +544,41 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 		return ToolRequest{}, payload, true, fmt.Errorf("decode tool request: %w", err)
 	}
 	if strings.TrimSpace(req.Tool) == "" {
+		if repaired, ok := inferMissingToolRequest(req); ok {
+			return repaired, payload, true, nil
+		}
 		return ToolRequest{}, payload, true, fmt.Errorf("tool request is missing tool")
 	}
 	return req, payload, true, nil
+}
+
+func inferMissingToolRequest(req ToolRequest) (ToolRequest, bool) {
+	if strings.TrimSpace(req.Tool) != "" {
+		return req, true
+	}
+
+	switch {
+	case len(req.Todos) > 0 || len(req.Items) > 0:
+		req.Tool = "task_ledger"
+	case strings.TrimSpace(req.Prompt) != "" || strings.TrimSpace(req.Agent) != "":
+		req.Tool = "task"
+	case strings.TrimSpace(req.Command) != "":
+		req.Tool = "shell"
+	case strings.TrimSpace(req.Destination) != "" || len(req.Declarations) > 0 || len(req.Moves) > 0 || strings.HasPrefix(strings.TrimSpace(req.Pattern), "tag:"):
+		req.Tool = "go_move_declarations"
+	case strings.TrimSpace(req.OldText) != "" || strings.TrimSpace(req.NewText) != "" || (strings.TrimSpace(req.Content) != "" && (req.StartLine != 0 || req.EndLine != 0)):
+		req.Tool = "edit_file"
+	case strings.TrimSpace(req.Glob) != "" && strings.TrimSpace(req.Pattern) != "":
+		req.Tool = "search_content"
+	case strings.TrimSpace(req.ID) != "" || req.StartLine != 0 || req.EndLine != 0:
+		req.Tool = "read_file"
+	case strings.HasSuffix(strings.TrimSpace(req.Path), ".go") && strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Content) == "":
+		req.Tool = "go_file_outline"
+	default:
+		return ToolRequest{}, false
+	}
+
+	return req, true
 }
 
 func FormatToolResultForModel(result ToolResult) string {

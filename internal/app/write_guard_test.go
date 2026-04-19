@@ -99,6 +99,24 @@ func TestClassifyPromptExecutionPlanRoutesArchitectureQuestionToArchitecture(t *
 	}
 }
 
+func TestClassifyPromptExecutionPlanRoutesMaintainabilityRefactorOpportunitiesToArchitecture(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+
+	plan := classifyPromptExecutionPlan(
+		"Can you identify opportunities for us to refactor our repo for long-term maintainability",
+		mgr,
+	)
+	if plan.lane != analysisLaneArchitecture {
+		t.Fatalf("expected architecture lane, got %q", plan.lane)
+	}
+	if plan.reason != promptRouteReasonArchitectureRequest {
+		t.Fatalf("expected architecture route reason, got %q", plan.reason)
+	}
+	if plan.contract != answerContractArchitecture {
+		t.Fatalf("expected architecture answer contract, got %q", plan.contract)
+	}
+}
+
 func TestClassifyPromptExecutionPlanRoutesLanguageSupportQuestionsToArchitecture(t *testing.T) {
 	mgr := workspace.NewManager(testWorkspaceConfig())
 	cases := []string{
@@ -278,6 +296,256 @@ func TestBuildAnalysisTaskMemoryCapturesEvidenceAndGaps(t *testing.T) {
 	}
 	if !testContainsFold(memory.OpenGaps, "no bounded actionable finding was confirmed") {
 		t.Fatalf("expected review open gap, got %#v", memory.OpenGaps)
+	}
+}
+
+func TestDurablePlanArtifactMemoryRequiresExplicitBuildHandoff(t *testing.T) {
+	memory := buildAnalysisTaskMemory(
+		"Prepare a refactor plan for internal/app/analysis_agents.go.",
+		analysisLaneArchitecture,
+		"Plan: split orchestration from rendering after validating internal/app/analysis_agents.go.",
+		[]string{"internal/app/analysis_agents.go"},
+		"implement the approved split one responsibility at a time",
+	)
+	memory = decorateDurablePlanArtifactMemory(
+		memory,
+		"Prepare a refactor plan for internal/app/analysis_agents.go.",
+		analysisLaneArchitecture,
+		memory.Summary,
+		[]string{"internal/app/analysis_agents.go"},
+		"implement the approved split one responsibility at a time",
+	)
+	if memory.Kind != "durable_plan" {
+		t.Fatalf("expected durable plan memory, got %#v", memory)
+	}
+	for _, want := range []string{
+		"Durable plan artifact",
+		"Explore-before-plan evidence:",
+		"Verification section:",
+		"Plan exit / build handoff:",
+		"build-switch reminder",
+		"internal/app/analysis_agents.go",
+	} {
+		if !strings.Contains(memory.Summary, want) {
+			t.Fatalf("expected durable plan summary to contain %q, got:\n%s", want, memory.Summary)
+		}
+	}
+	if !testContainsFold(memory.OpenGaps, "plan requires explicit user approval before build-mode execution") {
+		t.Fatalf("expected explicit approval open gap, got %#v", memory.OpenGaps)
+	}
+	if !testContainsFold(memory.NextActions, "wait for explicit approval or a clear plan-exit instruction before implementation") {
+		t.Fatalf("expected explicit approval next action, got %#v", memory.NextActions)
+	}
+	if !shouldPersistDurablePlanArtifact("Prepare a refactor plan for internal/app/analysis_agents.go.", analysisLaneArchitecture) {
+		t.Fatal("expected plan-only architecture prompts to persist durable plan artifacts")
+	}
+}
+
+func TestDurablePlanArtifactMemoryNarrowsChosenTargetsToExplicitTarget(t *testing.T) {
+	memory := buildAnalysisTaskMemory(
+		"Prepare a refactor plan for analysis_agents.go.",
+		analysisLaneArchitecture,
+		"Focused refactor plan:\n- Target: internal/app/analysis_agents.go\n- Evidence: internal/app/implementation.go and internal/app/prompt_routing.go.",
+		[]string{"internal/app/analysis_agents.go", "internal/app/implementation.go", "internal/app/prompt_routing.go"},
+		"implement the approved split one responsibility at a time",
+	)
+	memory = decorateDurablePlanArtifactMemory(
+		memory,
+		"Prepare a refactor plan for analysis_agents.go.",
+		analysisLaneArchitecture,
+		memory.Summary,
+		[]string{"internal/app/analysis_agents.go", "internal/app/implementation.go", "internal/app/prompt_routing.go"},
+		"implement the approved split one responsibility at a time",
+	)
+	if got := memory.ChosenTargets; len(got) != 1 || got[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected durable plan chosen targets to hold only the explicit implementation target, got %#v", got)
+	}
+	if !testContainsFold(memory.AttemptedSearches, "validated target internal/app/implementation.go") {
+		t.Fatalf("expected evidence attempts to preserve inspected support files, got %#v", memory.AttemptedSearches)
+	}
+}
+
+func TestDurablePlanApprovalSwitchesTaskMemoryToImplementation(t *testing.T) {
+	memory := &longHorizonTaskMemory{
+		Active:        true,
+		Kind:          "durable_plan",
+		Prompt:        "Prepare a refactor plan for internal/app/analysis_agents.go.",
+		Lane:          string(analysisLaneArchitecture),
+		Summary:       "Durable plan artifact",
+		ChosenTargets: []string{"internal/app/analysis_agents.go"},
+		NextActions:   []string{"wait for explicit approval or a clear plan-exit instruction before implementation"},
+	}
+	if got := laneForTaskMemoryWithPrompt(memory, "continue validating the plan"); got != analysisLaneArchitecture {
+		t.Fatalf("expected non-approved durable plan resume to stay architecture, got %q", got)
+	}
+	if got := laneForTaskMemoryWithPrompt(memory, "implement this plan"); got != analysisLaneImplement {
+		t.Fatalf("expected approved durable plan resume to switch to implementation, got %q", got)
+	}
+	prompt := buildTaskMemoryResumePrompt(memory, "implement this plan")
+	for _, want := range []string{
+		"Plan approval: explicit approval detected",
+		"Build-switch reminder:",
+		"Prior lane: architecture",
+		"internal/app/analysis_agents.go",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected approved plan resume prompt to contain %q, got:\n%s", want, prompt)
+		}
+	}
+	if !looksLikeDurablePlanApprovalPrompt("implement this plan") {
+		t.Fatal("expected plan approval phrase to be recognized")
+	}
+}
+
+func TestTerseDurablePlanApprovalSwitchesTaskMemoryToImplementation(t *testing.T) {
+	memory := &longHorizonTaskMemory{
+		Active:        true,
+		Kind:          "durable_plan",
+		Prompt:        "Prepare a refactor plan for analysis_agents.go.",
+		Lane:          string(analysisLaneArchitecture),
+		Summary:       "Durable plan artifact\n\nProposed plan:\n- Target: internal/app/analysis_agents.go\n- Evidence: internal/app/implementation.go",
+		ChosenTargets: []string{"internal/app/analysis_agents.go", "internal/app/implementation.go"},
+		NextActions:   []string{"wait for explicit approval or a clear plan-exit instruction before implementation"},
+	}
+	if !shouldResumeTaskMemoryPrompt("Please do it", memory) {
+		t.Fatal("terse approval should resume durable plan memory")
+	}
+	if !shouldResumeTaskMemoryPrompt("Let's do it. Please begin.", memory) {
+		t.Fatal("compound terse approval should resume durable plan memory")
+	}
+	if shouldResumeTaskMemoryPrompt("Let's not do it yet. Please wait.", memory) {
+		t.Fatal("negative compound approval should not resume durable plan memory")
+	}
+	if got := laneForTaskMemoryWithPrompt(memory, "Please do it"); got != analysisLaneImplement {
+		t.Fatalf("expected terse approved durable plan to switch to implementation, got %q", got)
+	}
+	if got := laneForTaskMemoryWithPrompt(memory, "Let's do it. Please begin."); got != analysisLaneImplement {
+		t.Fatalf("expected compound approved durable plan to switch to implementation, got %q", got)
+	}
+	prompt := buildTaskMemoryResumePrompt(memory, "Please do it")
+	if !strings.Contains(prompt, "Plan approval: explicit approval detected") {
+		t.Fatalf("expected approval handoff in resume prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Previously validated targets: internal/app/analysis_agents.go") {
+		t.Fatalf("expected resume prompt to keep the explicit implementation target, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Previously validated targets: internal/app/analysis_agents.go, internal/app/implementation.go") {
+		t.Fatalf("expected resume prompt to omit support evidence files from primary targets, got:\n%s", prompt)
+	}
+	packet := enrichImplementationTargetPacket(workspace.NewManager(testWorkspaceConfig()), buildImplementationTargetPacket(prompt, nil))
+	if got := packet.PrimaryPaths; len(got) != 1 || got[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected approved resume target packet to contain one primary target, got %#v", got)
+	}
+}
+
+func TestTaskMemoryResumePromptDoesNotNestGeneratedResumePrompt(t *testing.T) {
+	generated := strings.Join([]string{
+		"Resume the saved long-horizon task from persisted memory.",
+		"User resume request: Please begin",
+		"Original request: Can you prepare a refactor plan for internal/app/analysis_agents.go?",
+		"Prior lane: architecture",
+		"Plan approval: explicit approval detected; switch to build mode.",
+	}, "\n")
+	memory := &longHorizonTaskMemory{
+		Active:        true,
+		Kind:          "durable_plan",
+		Prompt:        generated,
+		Lane:          string(analysisLaneArchitecture),
+		Summary:       "Durable plan artifact\n\nProposed plan:\n- Target: internal/app/analysis_agents.go",
+		ChosenTargets: []string{"internal/app/analysis_agents.go"},
+		NextActions:   []string{"wait for explicit approval or a clear plan-exit instruction before implementation"},
+	}
+	prompt := buildTaskMemoryResumePrompt(memory, "please begin")
+	if strings.Contains(prompt, "Original request: Resume the saved long-horizon task") {
+		t.Fatalf("resume prompt must not nest prior generated resume prompt, got:\n%s", prompt)
+	}
+	if strings.Count(prompt, "Original request:") != 1 {
+		t.Fatalf("expected exactly one original request line, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Original request: Can you prepare a refactor plan for internal/app/analysis_agents.go?") {
+		t.Fatalf("expected canonical original request, got:\n%s", prompt)
+	}
+}
+
+func TestAnalysisTaskMemoryCanonicalizesGeneratedResumePrompt(t *testing.T) {
+	generated := strings.Join([]string{
+		"Resume the saved long-horizon task from persisted memory.",
+		"User resume request: Please begin",
+		"Original request: Can you prepare a refactor plan for internal/app/analysis_agents.go?",
+		"Prior lane: architecture",
+	}, "\n")
+	memory := buildAnalysisTaskMemory(
+		generated,
+		analysisLaneArchitecture,
+		"Focused refactor plan:\n- Target: internal/app/analysis_agents.go",
+		[]string{"internal/app/analysis_agents.go"},
+		"resume architecture validation",
+	)
+	memory = decorateDurablePlanArtifactMemory(memory, generated, analysisLaneArchitecture, memory.Summary, []string{"internal/app/analysis_agents.go"}, "resume architecture validation")
+	if memory.Prompt != "Can you prepare a refactor plan for internal/app/analysis_agents.go?" {
+		t.Fatalf("expected canonical prompt, got %q", memory.Prompt)
+	}
+	if strings.Contains(memory.Summary, "Objective:\n- Resume the saved long-horizon task") {
+		t.Fatalf("durable plan artifact should not use generated resume prompt as objective, got:\n%s", memory.Summary)
+	}
+}
+
+func TestTaskMemoryResumeDisplayPromptKeepsUserTextVisible(t *testing.T) {
+	if got := taskMemoryResumeDisplayPrompt(" please begin "); got != "please begin" {
+		t.Fatalf("expected raw user resume text, got %q", got)
+	}
+	if got := taskMemoryResumeDisplayPrompt(""); got != "/resume task" {
+		t.Fatalf("expected slash-command fallback, got %q", got)
+	}
+}
+
+func TestPlanApprovalOnlyResumesDurablePlanMemory(t *testing.T) {
+	investigation := &longHorizonTaskMemory{
+		Active:      true,
+		Kind:        "investigation",
+		Lane:        string(analysisLaneExplore),
+		NextActions: []string{"resume investigation"},
+	}
+	if shouldResumeTaskMemoryPrompt("implement this plan", investigation) {
+		t.Fatal("plan approval phrase must not resume unrelated investigation memory")
+	}
+	if shouldResumeTaskMemoryPrompt("Please do it", investigation) {
+		t.Fatal("terse approval phrase must not resume unrelated investigation memory")
+	}
+	if shouldResumeTaskMemoryPrompt("Let's do it. Please begin.", investigation) {
+		t.Fatal("compound terse approval phrase must not resume unrelated investigation memory")
+	}
+	durablePlan := &longHorizonTaskMemory{
+		Active:      true,
+		Kind:        "durable_plan",
+		Lane:        string(analysisLaneArchitecture),
+		NextActions: []string{"wait for explicit approval or a clear plan-exit instruction before implementation"},
+	}
+	if !shouldResumeTaskMemoryPrompt("implement this plan", durablePlan) {
+		t.Fatal("plan approval phrase should resume durable plan memory")
+	}
+	if !shouldResumeTaskMemoryPrompt("Please do it", durablePlan) {
+		t.Fatal("terse approval phrase should resume durable plan memory")
+	}
+	if !shouldResumeTaskMemoryPrompt("Let's do it. Please begin.", durablePlan) {
+		t.Fatal("compound terse approval phrase should resume durable plan memory")
+	}
+}
+
+func TestFinalizeTaskMemoryExecutionPlanCarriesCanonicalMetadata(t *testing.T) {
+	plan := finalizeTaskMemoryExecutionPlan("implement this plan", "Resume saved durable plan.", promptExecutionPlan{
+		lane:         analysisLaneImplement,
+		thoroughness: workspace.ThoroughnessMedium,
+		reason:       promptRouteReasonDirectImplementation,
+	})
+	if plan.contract != answerContractImplementation {
+		t.Fatalf("expected implementation contract, got %#v", plan)
+	}
+	if plan.taskFamily != "implementation" || plan.permissionProfile != "guarded_workspace_writes" {
+		t.Fatalf("expected canonical implementation metadata, got %#v", plan)
+	}
+	if !plan.intent.WantsEdits || plan.intent.SelectedLane != string(analysisLaneImplement) {
+		t.Fatalf("expected implementation intent to be synchronized, got %#v", plan.intent)
 	}
 }
 
@@ -506,6 +774,15 @@ func TestAnalysisFinalAnswerCriticCoversNonImplementationContracts(t *testing.T)
 	}
 }
 
+func TestImplementationReplyReportsNoChangeBlocker(t *testing.T) {
+	if !implementationReplyReportsNoChangeBlocker("Implementation agent did not complete the requested edit.\n\nBlocker:\n- target is not approved.") {
+		t.Fatal("expected explicit implementation blocker to be detected")
+	}
+	if implementationReplyReportsNoChangeBlocker("No changes were needed; the requested state is already present.") {
+		t.Fatal("expected valid no-op wording not to be treated as failure")
+	}
+}
+
 func TestAnalysisFinalAnswerCriticRejectsWeakLaneAnswers(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -534,6 +811,13 @@ func TestAnalysisFinalAnswerCriticRejectsWeakLaneAnswers(t *testing.T) {
 			lane:     analysisLaneArchitecture,
 			evidence: []string{"internal/app/app.go"},
 			finding:  "structural",
+		},
+		{
+			name:     "architecture budget failure without recommendations",
+			answer:   "Exploration did not complete cleanly.\n\nFinal blocker:\n- repeated dead-end action rejected.",
+			lane:     analysisLaneArchitecture,
+			evidence: []string{"internal/app/app.go"},
+			finding:  "recommendations",
 		},
 		{
 			name:     "low confidence without uncertainty framing",
@@ -723,6 +1007,37 @@ func TestAnalysisReplanRecommendationUsesEvidenceLedgerPaths(t *testing.T) {
 	}
 	if !strings.Contains(reason, "structural evidence") {
 		t.Fatalf("unexpected replan reason: %q", reason)
+	}
+}
+
+func TestExploreReplanPrefersArchitectureForStructuralEvidence(t *testing.T) {
+	summary := "Finding: internal/app/app.go is a structural hotspot. Recommended direction: split orchestration across clearer package boundaries."
+	target, reason, ok := analysisReplanRecommendationWithEvidence(analysisLaneExplore, summary, []string{"internal/app/app.go"})
+	if !ok {
+		t.Fatal("expected replan recommendation")
+	}
+	if target != analysisLaneArchitecture {
+		t.Fatalf("expected architecture replan target, got %q reason=%q", target, reason)
+	}
+	if !strings.Contains(reason, "architecture-shaped") {
+		t.Fatalf("unexpected replan reason: %q", reason)
+	}
+}
+
+func TestExploreQueryTermsDropsRecommendationStopwords(t *testing.T) {
+	terms := exploreQueryTerms("can you recommend some parts of the codebase we can architecturally optimize for long-term maintainability")
+	joined := strings.Join(terms, "|")
+	for _, bad := range []string{"you", "recommend", "some", "parts", "long", "term", "maintainability"} {
+		if strings.Contains(joined, bad) {
+			t.Fatalf("expected query terms to drop %q, got %#v", bad, terms)
+		}
+	}
+}
+
+func TestArchitectureSearchPatternHandlesMaintainabilityPrompt(t *testing.T) {
+	pattern := architectureSearchPattern("can you recommend some parts of the codebase we can architecturally optimize for long-term maintainability")
+	if !strings.Contains(pattern, "workspace") || !strings.Contains(pattern, "analysis") {
+		t.Fatalf("expected structural architecture search pattern, got %q", pattern)
 	}
 }
 
@@ -1282,6 +1597,43 @@ func TestBuildEvidenceLedgerCapturesToolsPathsAndGaps(t *testing.T) {
 	}
 }
 
+func TestDeterministicEvidenceLedgerPrioritizesSeedPaths(t *testing.T) {
+	results := make([]workspace.ToolResult, 0, 12)
+	for _, path := range []string{
+		"Makefile",
+		"README.md",
+		"config.example.json",
+		"config.json",
+		"go.mod",
+		"go.sum",
+		"cmd/qwen-bubbles/main.go",
+		"cmd/qwen-eval/main.go",
+		"internal/agent/runner.go",
+		"internal/workspace/manager.go",
+		"internal/app/prompt_routing.go",
+		"internal/app/implementation.go",
+	} {
+		results = append(results, workspace.ToolResult{
+			Tool:    "search_files",
+			Summary: "Found matching path",
+			Output:  "f1 " + path,
+		})
+	}
+	ledger := deterministicEvidenceLedger(
+		"work out an approach to refactoring analysis_agents.go",
+		results,
+		[]string{"internal/app/analysis_agents.go"},
+		"architecture_hotspot_ranker",
+	)
+	if len(ledger.VerifiedPaths) == 0 || ledger.VerifiedPaths[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected seed path to be first in verified paths, got %#v", ledger.VerifiedPaths)
+	}
+	rendered := renderEvidenceLedger(ledger)
+	if !strings.Contains(rendered, "verified paths: internal/app/analysis_agents.go") {
+		t.Fatalf("expected rendered ledger to include prioritized seed path, got:\n%s", rendered)
+	}
+}
+
 func TestDetectLanguageCapabilitiesFindsGoCppShellAndConfig(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
@@ -1553,7 +1905,7 @@ func TestRankArchitectureHotspotsPrefersLargeInternalFiles(t *testing.T) {
 		},
 	}
 
-	hotspots := rankArchitectureHotspots("Please identify structural opportunities in this codebase.", idx, 2)
+	hotspots := rankArchitectureHotspots("Please identify structural opportunities in this codebase.", idx, nil, 2)
 	if len(hotspots) == 0 {
 		t.Fatal("expected architecture hotspots")
 	}
@@ -1572,6 +1924,135 @@ func TestRankArchitectureHotspotsPrefersLargeInternalFiles(t *testing.T) {
 	}
 	if !strings.Contains(board, "responsibilities:") {
 		t.Fatalf("expected hotspot board to include responsibility metadata, got:\n%s", board)
+	}
+}
+
+func TestRankArchitectureHotspotsPrioritizesExplicitTarget(t *testing.T) {
+	idx := &semantic.GoIndex{
+		Module: "example.com/project",
+		Files: []semantic.GoFile{
+			{
+				Path:      "internal/workspace/manager.go",
+				Package:   "workspace",
+				Funcs:     80,
+				Types:     8,
+				Imports:   []string{"a", "b", "c", "d", "e", "f", "g", "h"},
+				SourceDir: "internal",
+			},
+			{
+				Path:      "internal/app/analysis_agents.go",
+				Package:   "app",
+				Funcs:     15,
+				Types:     3,
+				Imports:   []string{"example.com/project/internal/workspace", "example.com/project/internal/agent", "a", "b", "c", "d"},
+				SourceDir: "internal",
+				Symbols: []semantic.GoSymbol{
+					{Name: "runArchitectureSubagent"},
+					{Name: "analysisReadinessAssessmentForReply"},
+				},
+			},
+		},
+		Package: map[string]semantic.GoPackage{
+			"internal/workspace": {Name: "workspace", Files: 7},
+			"internal/app":       {Name: "app", Files: 16},
+		},
+	}
+	hotspots := rankArchitectureHotspots(
+		"work out an approach to refactoring analysis_agents.go",
+		idx,
+		[]string{"internal/app/analysis_agents.go"},
+		2,
+	)
+	if len(hotspots) == 0 || hotspots[0].Path != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected explicit target first, got %#v", hotspots)
+	}
+	if !testContainsFold(hotspots[0].Reasons, "explicitly requested target") {
+		t.Fatalf("expected explicit target reason, got %#v", hotspots[0].Reasons)
+	}
+}
+
+func TestArchitectureFallbackSummaryFocusesTargetedPlanWithoutRepeatingBoard(t *testing.T) {
+	summary := buildArchitectureFallbackSummary(
+		"can you prepare a refactoring plan for the analysis_agents.go recommendation?",
+		[]architectureHotspot{{
+			Path:             "internal/app/analysis_agents.go",
+			Package:          "app",
+			FuncsMethods:     35,
+			Types:            6,
+			Imports:          11,
+			BroadSurface:     true,
+			Responsibilities: []string{"routing", "workspace", "agent", "state"},
+			Reasons:          []string{"explicitly requested target", "35 funcs/methods"},
+		}},
+		"- internal/app/analysis_agents.go (score 1000, package app): explicitly requested target | responsibilities: routing, workspace, agent, state | direction: split orchestration/state handling from helper and rendering concerns",
+		"Indexed 12 Go files",
+		"",
+		deterministicEvidenceLedger("analysis_agents.go", nil, []string{"internal/app/analysis_agents.go"}, "architecture_hotspot_ranker"),
+	)
+	for _, want := range []string{"Focused architecture plan.", "Focused refactor plan:", "Target: internal/app/analysis_agents.go", "Current mixed responsibilities:", "Phase 1:", "Verification:"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected targeted fallback summary to include %q, got:\n%s", want, summary)
+		}
+	}
+	for _, notWant := range []string{"Structural baseline:", "Architecture hotspot board:", "Highest-value Go structural opportunities:"} {
+		if strings.Contains(summary, notWant) {
+			t.Fatalf("focused plan should not repeat generic section %q, got:\n%s", notWant, summary)
+		}
+	}
+}
+
+func TestArchitectureFallbackSummaryTreatsWorkPlanAsFocusedPlan(t *testing.T) {
+	summary := buildArchitectureFallbackSummary(
+		"can you propose a work plan for the analysis_agents.go refactor?",
+		[]architectureHotspot{{
+			Path:             "internal/app/analysis_agents.go",
+			Package:          "app",
+			FuncsMethods:     35,
+			Types:            6,
+			Imports:          11,
+			BroadSurface:     true,
+			Responsibilities: []string{"routing", "workspace", "agent", "state"},
+			Reasons:          []string{"explicitly requested target", "35 funcs/methods"},
+		}},
+		"- internal/app/analysis_agents.go (score 1000, package app): explicitly requested target | responsibilities: routing, workspace, agent, state | direction: split orchestration/state handling from helper and rendering concerns",
+		"Indexed 12 Go files",
+		"",
+		deterministicEvidenceLedger("analysis_agents.go", nil, []string{"internal/app/analysis_agents.go"}, "architecture_hotspot_ranker"),
+	)
+	for _, want := range []string{"Focused architecture plan.", "Focused refactor plan:", "Target: internal/app/analysis_agents.go", "Phase 1:", "Verification:"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected work-plan fallback summary to include %q, got:\n%s", want, summary)
+		}
+	}
+	for _, notWant := range []string{"Structural baseline:", "Architecture hotspot board:", "Highest-value Go structural opportunities:", "Targeted refactor approach:"} {
+		if strings.Contains(summary, notWant) {
+			t.Fatalf("work-plan response should not repeat generic section %q, got:\n%s", notWant, summary)
+		}
+	}
+}
+
+func TestArchitectureFallbackSummaryKeepsGenericTargetedApproachForNonPlan(t *testing.T) {
+	summary := buildArchitectureFallbackSummary(
+		"identify architecture opportunities in analysis_agents.go",
+		[]architectureHotspot{{
+			Path:             "internal/app/analysis_agents.go",
+			Package:          "app",
+			FuncsMethods:     35,
+			Types:            6,
+			Imports:          11,
+			BroadSurface:     true,
+			Responsibilities: []string{"routing", "workspace", "agent", "state"},
+			Reasons:          []string{"explicitly requested target", "35 funcs/methods"},
+		}},
+		"- internal/app/analysis_agents.go (score 1000, package app): explicitly requested target",
+		"Indexed 12 Go files",
+		"",
+		deterministicEvidenceLedger("analysis_agents.go", nil, []string{"internal/app/analysis_agents.go"}, "architecture_hotspot_ranker"),
+	)
+	for _, want := range []string{"Targeted refactor approach:", "Structural baseline:", "Architecture hotspot board:"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected generic architecture summary to include %q, got:\n%s", want, summary)
+		}
 	}
 }
 
@@ -2207,6 +2688,81 @@ func TestEnrichImplementationTargetPacketResolvesSymbolAnchors(t *testing.T) {
 	}
 }
 
+func TestEnrichImplementationTargetPacketDoesNotWidenExplicitPrimaryPaths(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	packet := enrichImplementationTargetPacket(mgr, buildImplementationTargetPacket(
+		"Resume approved plan. Previously validated targets: internal/app/analysis_agents.go. Original request: Prepare a refactor plan for analysis_agents.go.",
+		nil,
+	))
+	if got := packet.PrimaryPaths; len(got) != 1 || got[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected explicit primary target to stay focused, got %#v with symbols %#v", got, packet.Symbols)
+	}
+}
+
+func TestBuildImplementationTargetPacketIgnoresAttemptedSearchEvidenceWhenResumeTargetsExist(t *testing.T) {
+	prompt := strings.Join([]string{
+		"Resume the saved long-horizon task from persisted memory.",
+		"User resume request: please do it",
+		"Previously validated targets: internal/app/analysis_agents.go",
+		"Already attempted: validated target internal/app/implementation.go | validated target internal/app/prompt_routing.go | validated target internal/app/app.go",
+		"Rules:",
+		"- Do not repeat broad search that is already recorded above.",
+	}, "\n")
+	packet := buildImplementationTargetPacket(prompt, nil)
+	if got := packet.PrimaryPaths; len(got) != 1 || got[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected resume target line to be authoritative, got %#v", got)
+	}
+}
+
+func TestTaskResumeContextSeparatesApprovedTargetsFromEvidence(t *testing.T) {
+	memory := &longHorizonTaskMemory{
+		Active:            true,
+		Kind:              "durable_plan",
+		Prompt:            "Prepare a refactor plan for analysis_agents.go.",
+		Lane:              string(analysisLaneArchitecture),
+		Summary:           "Durable plan artifact\n\nFocused refactor plan:\n- Target: internal/app/analysis_agents.go",
+		ChosenTargets:     []string{"internal/app/analysis_agents.go"},
+		AttemptedSearches: []string{"validated target internal/app/analysis_agents.go", "validated target internal/app/implementation.go", "validated target internal/app/prompt_routing.go"},
+		NextActions:       []string{"on approval, verify with go test ./internal/app"},
+	}
+	resume := buildTaskResumeContext(memory, "please do it")
+	if got := resume.ApprovedEditTargets; len(got) != 1 || got[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected one approved edit target, got %#v", got)
+	}
+	if !containsString(resume.ReadOnlyEvidencePaths, "internal/app/implementation.go") || !containsString(resume.ReadOnlyEvidencePaths, "internal/app/prompt_routing.go") {
+		t.Fatalf("expected support files to be read-only evidence, got %#v", resume.ReadOnlyEvidencePaths)
+	}
+	if containsString(resume.ReadOnlyEvidencePaths, "internal/app/analysis_agents.go") {
+		t.Fatalf("approved edit target should not also be read-only evidence, got %#v", resume.ReadOnlyEvidencePaths)
+	}
+	if !strings.Contains(strings.Join(resume.VerificationPlan, "\n"), "go test ./internal/app") {
+		t.Fatalf("expected verification plan to carry test action, got %#v", resume.VerificationPlan)
+	}
+}
+
+func TestTaskResumeContextNarrowsImplementationTargetPacket(t *testing.T) {
+	resume := taskResumeContext{
+		Active:                true,
+		SourceLane:            analysisLaneArchitecture,
+		ApprovedEditTargets:   []string{"internal/app/analysis_agents.go"},
+		ReadOnlyEvidencePaths: []string{"internal/app/implementation.go"},
+		VerificationPlan:      []string{"verify with go test ./internal/app"},
+	}
+	packet := applyTaskResumeContextToImplementationTargetPacket(
+		buildImplementationTargetPacket("Already attempted: internal/app/implementation.go", nil),
+		resume,
+	)
+	if got := packet.PrimaryPaths; len(got) != 1 || got[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected typed resume context to own editable targets, got %#v", got)
+	}
+	if !containsString(packet.EvidencePaths, "internal/app/implementation.go") {
+		t.Fatalf("expected read-only evidence path, got %#v", packet.EvidencePaths)
+	}
+	if !strings.Contains(strings.Join(packet.StrategyHints, "\n"), "go test ./internal/app") {
+		t.Fatalf("expected verification plan in strategy hints, got %#v", packet.StrategyHints)
+	}
+}
+
 func TestBuildImplementationTargetPacketHarvestsArchitectureSummaryHints(t *testing.T) {
 	history := appendAnalysisSummary(nil, "architecture",
 		"Refactor stage: 2\n"+
@@ -2337,6 +2893,78 @@ func TestBootstrapImplementationEvidenceDiscoversExplicitPrimaryPathBeforeRead(t
 	}
 	if !foundRead {
 		t.Fatalf("expected explicit primary path bootstrap to read internal/app/app.go, got %#v", bootstrap.results)
+	}
+}
+
+func TestEnrichImplementationTargetPacketResolvesUniqueBasename(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	packet := enrichImplementationTargetPacket(mgr, implementationTargetPacket{
+		PrimaryPaths: []string{"analysis_agents.go"},
+	})
+	if !testContainsFold(packet.PrimaryPaths, "internal/app/analysis_agents.go") {
+		t.Fatalf("expected unique basename to resolve to internal/app/analysis_agents.go, got %#v", packet.PrimaryPaths)
+	}
+}
+
+func TestBootstrapImplementationEvidenceReadsResolvedBasenameTarget(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	m := &Model{}
+	packet := enrichImplementationTargetPacket(mgr, implementationTargetPacket{
+		PrimaryPaths: []string{"analysis_agents.go"},
+	})
+	bootstrap := m.bootstrapImplementationEvidence(
+		context.Background(),
+		mgr,
+		"Update analysis_agents.go.",
+		packet,
+		nil,
+	)
+	foundRead := false
+	for _, result := range bootstrap.results {
+		if result.Tool == "read_file" && strings.Contains(result.Summary, "internal/app/analysis_agents.go") {
+			foundRead = true
+			break
+		}
+	}
+	if !foundRead {
+		t.Fatalf("expected bootstrap to read resolved basename target, got %#v", bootstrap.results)
+	}
+}
+
+func TestBootstrapImplementationEvidenceRetriesStaleSymbolLineWindow(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	m := &Model{}
+	packet := implementationTargetPacket{
+		PrimaryPaths: []string{"internal/app/analysis_agents.go"},
+		Symbols: []semantic.SymbolMatch{{
+			Path:      "internal/app/analysis_agents.go",
+			Name:      "staleAnchor",
+			Line:      999999,
+			StartLine: 999999,
+			EndLine:   999999,
+		}},
+	}
+	bootstrap := m.bootstrapImplementationEvidence(
+		context.Background(),
+		mgr,
+		"Update analysis_agents.go.",
+		packet,
+		nil,
+	)
+	for _, result := range bootstrap.results {
+		if result.Tool == "read_file" && strings.Contains(result.Error, "start_line must be <= end_line") {
+			t.Fatalf("stale symbol window should retry with safe file window, got %#v", bootstrap.results)
+		}
+	}
+	foundRead := false
+	for _, result := range bootstrap.results {
+		if result.Tool == "read_file" && result.Error == "" && strings.Contains(result.Summary, "internal/app/analysis_agents.go") {
+			foundRead = true
+			break
+		}
+	}
+	if !foundRead {
+		t.Fatalf("expected fallback read for stale symbol window, got %#v", bootstrap.results)
 	}
 }
 
@@ -2502,6 +3130,33 @@ func TestImplementTargetGuardAllowsTargetReadAndThenBroadDiscovery(t *testing.T)
 	}
 	if result := guard.PreExecute(workspace.ToolRequest{Tool: "list_files", Path: "."}); result != nil {
 		t.Fatalf("expected broad discovery after consuming target, got %#v", result)
+	}
+}
+
+func TestImplementTargetGuardBlocksWritesToReadOnlyEvidence(t *testing.T) {
+	guard := newImplementTargetGuard(nil, implementationTargetPacket{
+		PrimaryPaths:  []string{"internal/app/analysis_agents.go"},
+		EvidencePaths: []string{"internal/app/implementation.go"},
+		AnalogyPaths:  []string{"internal/llama/client.go"},
+	}, nil)
+	if blocked := guard.PreExecute(workspace.ToolRequest{Tool: "edit_file", Path: "internal/app/implementation.go"}); blocked == nil {
+		t.Fatal("expected edit_file on read-only evidence path to be blocked")
+	}
+	if blocked := guard.PreExecute(workspace.ToolRequest{Tool: "edit_file", Path: "internal/llama/client.go"}); blocked == nil {
+		t.Fatal("expected edit_file on analogy path to be blocked")
+	}
+	if blocked := guard.PreExecute(workspace.ToolRequest{Tool: "edit_file", Path: "internal/app/analysis_agents.go"}); blocked != nil {
+		t.Fatalf("expected edit_file on approved primary path to pass, got %#v", blocked)
+	}
+}
+
+func TestImplementTargetGuardAllowsReadOnlyEvidenceInspection(t *testing.T) {
+	guard := newImplementTargetGuard(nil, implementationTargetPacket{
+		PrimaryPaths:  []string{"internal/app/analysis_agents.go"},
+		EvidencePaths: []string{"internal/app/implementation.go"},
+	}, nil)
+	if blocked := guard.PreExecute(workspace.ToolRequest{Tool: "read_file", Path: "internal/app/implementation.go", StartLine: 1, EndLine: 20}); blocked != nil {
+		t.Fatalf("expected read_file on read-only evidence path to pass, got %#v", blocked)
 	}
 }
 

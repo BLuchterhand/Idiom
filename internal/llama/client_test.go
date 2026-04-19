@@ -33,6 +33,7 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 		PresencePenalty:   1.2,
 		RepetitionPenalty: 1.1,
 		EnableThinking:    &enableThinking,
+		PreserveThinking:  true,
 		MaxTokens:         32,
 	})
 	if err != nil {
@@ -46,6 +47,9 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 	}
 	if got.ChatTemplateKwargs == nil || got.ChatTemplateKwargs.EnableThinking == nil || *got.ChatTemplateKwargs.EnableThinking {
 		t.Fatalf("expected enable_thinking=false in kwargs: %#v", got.ChatTemplateKwargs)
+	}
+	if !got.ChatTemplateKwargs.PreserveThinking {
+		t.Fatalf("expected preserve_thinking=true in kwargs: %#v", got.ChatTemplateKwargs)
 	}
 }
 

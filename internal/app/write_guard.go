@@ -232,7 +232,13 @@ func (p writeApprovalProposal) grant() *writeApprovalGrant {
 }
 
 func (g *implementTargetGuard) PreExecute(req workspace.ToolRequest) *workspace.ToolResult {
-	if g == nil || g.targetConsumed || len(g.packet.PrimaryPaths) == 0 {
+	if g == nil {
+		return nil
+	}
+	if blocked := g.blockWriteOutsideEditableTargets(req); blocked != nil {
+		return blocked
+	}
+	if g.targetConsumed || len(g.packet.PrimaryPaths) == 0 {
 		return nil
 	}
 	path := normalizeGuardedPath(req.Path)
@@ -270,7 +276,7 @@ func (g *implementTargetGuard) PreExecute(req workspace.ToolRequest) *workspace.
 				Error:   "implementation already has concrete target files. Scope this inspection to a target file before widening the search.",
 			}
 		}
-		if !g.pathAllowed(path) {
+		if !g.pathReadableAllowed(path) {
 			if redirected, ok := g.redirectedTargetInspection(req); ok {
 				return redirected
 			}

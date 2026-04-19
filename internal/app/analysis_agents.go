@@ -302,6 +302,15 @@ func critiqueAnalysisFinalAnswer(answer string, lane analysisLane, evidencePaths
 	if lane == analysisLaneArchitecture && !containsAny(normalized, "structure", "architecture", "boundary", "package", "ownership", "hotspot") {
 		addFinding("architecture answer lacks structural framing")
 	}
+	if lane == analysisLaneArchitecture {
+		if containsAny(normalized, "did not complete cleanly", "final blocker", "budget_exhausted", "budget exhausted") &&
+			!containsAny(normalized, "opportunity", "recommend", "suggested direction", "refactor", "split", "hotspot") {
+			addFinding("architecture answer reports a runner failure without architecture recommendations")
+		}
+		if !containsAny(normalized, "opportunity", "recommend", "suggested direction", "refactor", "split", "hotspot") {
+			addFinding("architecture answer lacks a concrete recommendation or hotspot")
+		}
+	}
 	if _, low := lowConfidenceReadinessReason(answer); low && !containsAny(normalized, "not enough evidence", "insufficient evidence", "unable to confirm", "not found", "no bounded") {
 		addFinding("low-confidence answer lacks explicit uncertainty framing")
 	}
@@ -322,16 +331,20 @@ func (m *Model) runExploreSubagent(
 		return exploreOutcome{}, err
 	}
 
+	rails := buildDeterministicControlRails(prompt, promptExecutionPlan{
+		lane:     analysisLaneExplore,
+		contract: answerContractForLane(analysisLaneExplore),
+	})
 	exploreRunner := &agent.Runner{
-		Client:       m.client,
-		Workspace:    exploreWorkspace,
-		MaxToolSteps: exploreToolBudget(m.cfg.Chat.MaxToolSteps),
-		AgentName:    "explore",
+		Client:           m.client,
+		Workspace:        exploreWorkspace,
+		MaxToolSteps:     exploreToolBudget(m.cfg.Chat.MaxToolSteps),
+		AgentName:        "explore",
+		PermissionPolicy: controlRailPermissionPolicy(rails),
+		OnEvent: func(event agent.RunEvent) {
+			m.logMessage(event.Role, event.Content)
+		},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
-			rails := buildDeterministicControlRails(prompt, promptExecutionPlan{
-				lane:     analysisLaneExplore,
-				contract: answerContractForLane(analysisLaneExplore),
-			})
 			return controlRailPreExecute(rails, req)
 		},
 	}
@@ -398,6 +411,7 @@ func (m *Model) runArchitectureSubagent(
 	prompt string,
 	opts llama.ChatOptions,
 	thoroughness workspace.ExploreThoroughness,
+	targetRefs []string,
 ) (architectureOutcome, error) {
 	architectureWorkspace := m.newWorkspaceManager()
 	if err := architectureWorkspace.SetExploreThoroughness(thoroughness); err != nil {
@@ -407,7 +421,7 @@ func (m *Model) runArchitectureSubagent(
 		return architectureOutcome{}, err
 	}
 
-	bootstrap, err := m.bootstrapArchitectureEvidence(ctx, architectureWorkspace, prompt)
+	bootstrap, err := m.bootstrapArchitectureEvidence(ctx, architectureWorkspace, prompt, targetRefs)
 	if err != nil {
 		return architectureOutcome{}, err
 	}
@@ -726,6 +740,7 @@ func (m *Model) bootstrapArchitectureEvidence(
 	ctx context.Context,
 	architectureWorkspace *workspace.Manager,
 	prompt string,
+	targetRefs []string,
 ) (architectureBootstrap, error) {
 	bootstrap := architectureBootstrap{
 		messages: []llama.ChatMessage{{
@@ -742,6 +757,8 @@ func (m *Model) bootstrapArchitectureEvidence(
 	repoProfile := ""
 	var goIndex *semantic.GoIndex
 	step := -1
+	explicitTargetCandidates := append(promptMentionedWorkspacePaths(prompt), targetRefs...)
+	explicitTargets := resolveImplementationPrimaryPaths(architectureWorkspace.Root(), uniqueNormalizedPaths(explicitTargetCandidates))
 
 	runTool := func(req workspace.ToolRequest) workspace.ToolResult {
 		raw := bootstrapRawToolRequest(req)
@@ -872,6 +889,16 @@ func (m *Model) bootstrapArchitectureEvidence(
 	}
 
 	searchPaths := prioritizedExploreSearchPaths(discoveredDirs, level)
+	for _, path := range explicitTargets {
+		architectureWorkspace.PrimeDiscoveredPaths([]string{path})
+		discoveredFiles[path] = struct{}{}
+		runTool(workspace.ToolRequest{
+			Tool:      "read_file",
+			Path:      path,
+			StartLine: 1,
+			EndLine:   260,
+		})
+	}
 	if pattern := architectureSearchPattern(prompt); strings.TrimSpace(pattern) != "" {
 		for _, path := range uniqueLimitedStrings(searchPaths, architectureSearchPathBudget(level)) {
 			req := workspace.ToolRequest{
@@ -896,9 +923,12 @@ func (m *Model) bootstrapArchitectureEvidence(
 		}
 	}
 
-	hotspots := rankArchitectureHotspots(prompt, goIndex, architectureHotspotBudget(level))
+	hotspots := rankArchitectureHotspots(prompt, goIndex, explicitTargets, architectureHotspotBudget(level))
 	bootstrap.hotspots = hotspots
-	for _, path := range uniqueLimitedStrings(append(architectureHotspotPaths(hotspots), architectureRelevantPaths(prompt, goIndex, architectureRelevantFileBudget(level))...), architectureReadBudget(level)) {
+	readPaths := append([]string{}, explicitTargets...)
+	readPaths = append(readPaths, architectureHotspotPaths(hotspots)...)
+	readPaths = append(readPaths, architectureRelevantPaths(prompt, goIndex, architectureRelevantFileBudget(level))...)
+	for _, path := range uniqueLimitedStrings(readPaths, architectureReadBudget(level)) {
 		architectureWorkspace.PrimeDiscoveredPaths([]string{path})
 		discoveredFiles[path] = struct{}{}
 		runTool(workspace.ToolRequest{
@@ -1107,13 +1137,20 @@ func architectureRelevantPaths(prompt string, goIndex *semantic.GoIndex, limit i
 	return goIndex.RelevantFiles(exploreQueryTerms(prompt), limit)
 }
 
-func rankArchitectureHotspots(prompt string, goIndex *semantic.GoIndex, limit int) []architectureHotspot {
+func rankArchitectureHotspots(prompt string, goIndex *semantic.GoIndex, explicitTargets []string, limit int) []architectureHotspot {
 	if goIndex == nil || limit == 0 {
 		return nil
 	}
 	relevance := make(map[string]int)
 	for rank, path := range architectureRelevantPaths(prompt, goIndex, limit*3) {
 		relevance[path] = limit*3 - rank
+	}
+	explicit := make(map[string]struct{})
+	for _, path := range explicitTargets {
+		path = normalizeGuardedPath(path)
+		if path != "" {
+			explicit[path] = struct{}{}
+		}
 	}
 
 	hotspots := make([]architectureHotspot, 0, len(goIndex.Files))
@@ -1178,6 +1215,10 @@ func rankArchitectureHotspots(prompt string, goIndex *semantic.GoIndex, limit in
 		if bonus := relevance[file.Path]; bonus > 0 {
 			score += bonus * 4
 			reasons = append(reasons, "matches the current architecture question")
+		}
+		if _, ok := explicit[file.Path]; ok {
+			score += 1000
+			reasons = append([]string{"explicitly requested target"}, reasons...)
 		}
 		if score == 0 {
 			continue
@@ -1915,7 +1956,9 @@ func buildEvidenceLedger(prompt string, results []workspace.ToolResult) evidence
 func deterministicEvidenceLedger(prompt string, results []workspace.ToolResult, seedPaths []string, toolNames ...string) evidenceLedger {
 	ledger := buildEvidenceLedger(prompt, results)
 	if len(seedPaths) > 0 {
-		ledger.VerifiedPaths = uniqueLimitedStrings(append(append([]string(nil), ledger.VerifiedPaths...), seedPaths...), 12)
+		priorityPaths := append([]string(nil), seedPaths...)
+		priorityPaths = append(priorityPaths, ledger.VerifiedPaths...)
+		ledger.VerifiedPaths = uniqueLimitedStrings(priorityPaths, 12)
 	}
 	if len(toolNames) > 0 {
 		ledger.Tools = uniqueLimitedStrings(append(append([]string(nil), ledger.Tools...), toolNames...), 8)
@@ -2205,7 +2248,13 @@ func confirmCandidateFinding(prompt string, goIndex *semantic.GoIndex, candidate
 
 func buildArchitectureFallbackSummary(prompt string, hotspots []architectureHotspot, hotspotBoard string, repoProfile string, note string, ledger evidenceLedger) string {
 	var b strings.Builder
-	b.WriteString("Deterministic architecture assessment.\n\n")
+	targetedHotspot, hasTargetedHotspot := explicitlyRequestedArchitectureHotspot(hotspots)
+	focusedPlan := hasTargetedHotspot && architecturePromptWantsFocusedTargetPlan(prompt)
+	if focusedPlan {
+		b.WriteString("Focused architecture plan.\n\n")
+	} else {
+		b.WriteString("Deterministic architecture assessment.\n\n")
+	}
 	if strings.TrimSpace(note) != "" {
 		b.WriteString(strings.TrimSpace(note))
 		b.WriteString("\n\n")
@@ -2222,6 +2271,12 @@ func buildArchitectureFallbackSummary(prompt string, hotspots []architectureHots
 		b.WriteString("- medium-high: hotspot scoring found concrete paths, but relationship evidence is still limited.\n\n")
 	default:
 		b.WriteString("- medium: repository structure was profiled, but no concrete hotspot dominated.\n\n")
+	}
+	if hasTargetedHotspot {
+		b.WriteString(renderTargetedArchitecturePlan(targetedHotspot, focusedPlan))
+		if focusedPlan {
+			return strings.TrimSpace(b.String())
+		}
 	}
 	if strings.TrimSpace(repoProfile) != "" {
 		b.WriteString("Structural baseline:\n")
@@ -2265,6 +2320,56 @@ func buildArchitectureFallbackSummary(prompt string, hotspots []architectureHots
 	return strings.TrimSpace(b.String())
 }
 
+func architecturePromptWantsFocusedTargetPlan(prompt string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	if normalized == "" {
+		return false
+	}
+	return looksLikePlanOnlyPrompt(normalized) ||
+		containsAny(normalized, "drill down", "deeper", "go deeper", "recommendation", "this one", "this file", "focused plan", "targeted plan")
+}
+
+func renderTargetedArchitecturePlan(hotspot architectureHotspot, focused bool) string {
+	var b strings.Builder
+	if focused {
+		b.WriteString("Focused refactor plan:\n")
+	} else {
+		b.WriteString("Targeted refactor approach:\n")
+	}
+	b.WriteString("- Target: ")
+	b.WriteString(hotspot.Path)
+	b.WriteString("\n")
+	if len(hotspot.Responsibilities) > 0 {
+		b.WriteString("- Current mixed responsibilities: ")
+		b.WriteString(strings.Join(hotspot.Responsibilities, ", "))
+		b.WriteString("\n")
+	}
+	b.WriteString("- First boundary: ")
+	b.WriteString(architectureHotspotDirection(hotspot))
+	b.WriteString("\n")
+	if focused {
+		b.WriteString("- Phase 1: inspect callers and helpers around ")
+		b.WriteString(hotspot.Path)
+		b.WriteString(" to choose one responsibility boundary before moving code.\n")
+		b.WriteString("- Phase 2: extract the smallest cohesive responsibility behind stable function/type names, leaving existing call sites intact.\n")
+		b.WriteString("- Phase 3: run focused tests after the move, then repeat only if the boundary is proven.\n")
+		b.WriteString("- Verification: run the narrow package tests first, then the full Go suite if the package boundary changed.\n\n")
+		return b.String()
+	}
+	b.WriteString("- Safe sequence: extract one responsibility at a time, keep existing callers stable, run focused tests after each move, then repeat only after the boundary is proven.\n\n")
+	return b.String()
+}
+
+func explicitlyRequestedArchitectureHotspot(hotspots []architectureHotspot) (architectureHotspot, bool) {
+	for _, hotspot := range hotspots {
+		for _, reason := range hotspot.Reasons {
+			if strings.EqualFold(strings.TrimSpace(reason), "explicitly requested target") {
+				return hotspot, true
+			}
+		}
+	}
+	return architectureHotspot{}, false
+}
 func architectureOpportunityHeading(repoProfile string) string {
 	capabilities := architectureCapabilityNames(repoProfile)
 	has := func(name string) bool {
@@ -2525,7 +2630,7 @@ func architectureSearchPattern(prompt string) string {
 	switch {
 	case containsAny(normalized, "language", "languages", "golang", "go", "extensible", "support", "supported"):
 		return "GoIndex|semantic|clangd|workspace|language|languages|cpp|C\\+\\+"
-	case containsAny(normalized, "structure", "architecture", "modular", "modularity", "boundary", "boundaries", "split", "decompose", "organize", "organization"):
+	case containsAny(normalized, "structure", "architecture", "architectural", "architecturally", "maintainability", "optimize", "optimization", "modular", "modularity", "boundary", "boundaries", "split", "decompose", "organize", "organization"):
 		return "router|lane|workspace|manager|analysis|review|explore|implement|semantic"
 	default:
 		return ""
@@ -2569,9 +2674,10 @@ func exploreQueryTerms(prompt string) []string {
 		"files": {}, "find": {}, "fix": {}, "for": {}, "from": {}, "harness": {}, "identify": {},
 		"implement": {}, "inspect": {}, "investigate": {}, "issue": {}, "look": {}, "make": {},
 		"optimization": {}, "optimize": {}, "performance": {}, "please": {}, "problem": {}, "project": {},
-		"quick": {}, "repo": {}, "repository": {}, "review": {}, "scan": {}, "search": {}, "single": {},
-		"test": {}, "the": {}, "this": {}, "that": {}, "through": {}, "thorough": {}, "topic": {}, "what": {}, "wrong": {},
-		"bug": {}, "error": {}, "cleanups": {}, "smell": {}, "should": {}, "fixed": {},
+		"quick": {}, "recommend": {}, "recommendation": {}, "recommendations": {}, "repo": {}, "repository": {},
+		"review": {}, "scan": {}, "search": {}, "single": {}, "some": {}, "part": {}, "parts": {},
+		"test": {}, "the": {}, "this": {}, "that": {}, "through": {}, "thorough": {}, "topic": {}, "what": {}, "wrong": {}, "you": {},
+		"bug": {}, "error": {}, "cleanups": {}, "smell": {}, "should": {}, "fixed": {}, "long": {}, "term": {}, "maintainability": {},
 	}
 
 	terms := make([]string, 0, 4)

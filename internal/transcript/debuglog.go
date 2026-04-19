@@ -26,11 +26,14 @@ type DebugLoggerOptions struct {
 }
 
 type DebugLogger struct {
-	mu            sync.Mutex
-	path          string
-	file          *os.File
-	mode          DebugLogMode
-	workspaceRoot string
+	mu                 sync.Mutex
+	path               string
+	file               *os.File
+	mode               DebugLogMode
+	workspaceRoot      string
+	lastMessageRole    string
+	lastMessageContent string
+	lastSummaryContent string
 }
 
 type SessionStart struct {
@@ -163,12 +166,14 @@ func (l *DebugLogger) LogToolResult(step int, agent string, tool string, summary
 }
 
 func (l *DebugLogger) LogMessage(role, content string) error {
-	return l.writeRecord(map[string]any{
+	content = l.sanitizeText(content)
+	record := map[string]any{
 		"ts":      time.Now().Format(time.RFC3339Nano),
 		"type":    "message",
 		"role":    role,
-		"content": l.sanitizeText(content),
-	})
+		"content": content,
+	}
+	return l.writeMessageRecord(role, content, record)
 }
 
 func (l *DebugLogger) LogError(kind, message string) error {
@@ -281,6 +286,51 @@ func (l *DebugLogger) writeRecord(record map[string]any) error {
 		return fmt.Errorf("write debug log: %w", err)
 	}
 	return nil
+}
+
+func (l *DebugLogger) writeMessageRecord(role, content string, record map[string]any) error {
+	if l == nil || l.file == nil {
+		return nil
+	}
+
+	line, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal debug log record: %w", err)
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if isDuplicateAssistantSummaryMessage(role, content, l.lastSummaryContent) {
+		l.lastSummaryContent = ""
+		return nil
+	}
+	if _, err := l.file.Write(append(line, '\n')); err != nil {
+		return fmt.Errorf("write debug log: %w", err)
+	}
+	l.lastMessageRole = role
+	l.lastMessageContent = content
+	if isLaneSummaryRole(role) {
+		l.lastSummaryContent = content
+	} else if role == "assistant" {
+		l.lastSummaryContent = ""
+	}
+	return nil
+}
+
+func isDuplicateAssistantSummaryMessage(role, content, previousSummaryContent string) bool {
+	return role == "assistant" &&
+		strings.TrimSpace(content) != "" &&
+		content == previousSummaryContent
+}
+
+func isLaneSummaryRole(role string) bool {
+	switch role {
+	case "locate_summary", "explore_summary", "review_summary", "architecture_summary":
+		return true
+	default:
+		return false
+	}
 }
 
 func digestText(text string) string {

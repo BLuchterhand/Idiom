@@ -1143,7 +1143,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 	assistantStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("31")).Padding(0, 1).Bold(true)
 	systemStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Padding(0, 1).Bold(true)
 	toolStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("94")).Padding(0, 1).Bold(true)
-	bodyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Padding(0, 1)
+	bodyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Padding(0, 1).Width(maxInt(1, m.viewport.Width))
 
 	var b strings.Builder
 	for _, msg := range m.messages {

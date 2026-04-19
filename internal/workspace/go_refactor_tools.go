@@ -126,6 +126,10 @@ func goOutlineMoveBatches(parsed *goParsedFile) []goOutlineMoveBatch {
 		if file == "" {
 			continue
 		}
+		destination := filepath.Join(sourceDir, file)
+		if filepath.Clean(destination) == filepath.Clean(parsed.display) {
+			continue
+		}
 		for _, name := range decl.names {
 			groups[file] = append(groups[file], name)
 		}

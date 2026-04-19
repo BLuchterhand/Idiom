@@ -132,6 +132,47 @@ func TestDebugLoggerLogsPhaseEvents(t *testing.T) {
 	}
 }
 
+func TestDebugLoggerSuppressesDuplicateAssistantSummaryMessages(t *testing.T) {
+	logger, err := NewDebugLogger(DebugLoggerOptions{
+		Dir:  t.TempDir(),
+		Mode: DebugLogModeFull,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	if err := logger.LogMessage("architecture_summary", "same grounded answer"); err != nil {
+		t.Fatalf("LogMessage architecture_summary: %v", err)
+	}
+	if err := logger.LogPhase("architecture", "complete", "done", "phase records must not break message dedupe"); err != nil {
+		t.Fatalf("LogPhase: %v", err)
+	}
+	if err := logger.LogMessage("control_rails_enforcement", `{"passed":true}`); err != nil {
+		t.Fatalf("LogMessage control_rails_enforcement: %v", err)
+	}
+	if err := logger.LogMessage("assistant", "same grounded answer"); err != nil {
+		t.Fatalf("LogMessage duplicate assistant: %v", err)
+	}
+	if err := logger.LogMessage("assistant", "different final answer"); err != nil {
+		t.Fatalf("LogMessage different assistant: %v", err)
+	}
+
+	records := readDebugLogRecords(t, logger.Path())
+	assistantMessages := 0
+	for _, record := range records {
+		if record["type"] == "message" && record["role"] == "assistant" {
+			assistantMessages++
+			if record["content"] != "different final answer" {
+				t.Fatalf("unexpected assistant message record: %#v", record)
+			}
+		}
+	}
+	if assistantMessages != 1 {
+		t.Fatalf("expected only the non-duplicate assistant message, got %d records: %#v", assistantMessages, records)
+	}
+}
+
 func readDebugLogRecords(t *testing.T, path string) []map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Clean(path))

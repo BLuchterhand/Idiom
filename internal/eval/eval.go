@@ -163,6 +163,7 @@ type ControlRailsExpectation struct {
 	Contract              string   `json:"contract,omitempty"`
 	TaskFamily            string   `json:"task_family,omitempty"`
 	PermissionProfile     string   `json:"permission_profile,omitempty"`
+	RequireTargetRefs     []string `json:"require_target_refs,omitempty"`
 	RequireEvidence       []string `json:"require_evidence,omitempty"`
 	RequireTools          []string `json:"require_tools,omitempty"`
 	RequireForbiddenTools []string `json:"require_forbidden_tools,omitempty"`
@@ -202,6 +203,7 @@ type Scenario struct {
 	RequireVerificationFeedback  *VerificationFeedbackExpectation  `json:"require_verification_feedback,omitempty"`
 	RequireToolFailureConfidence *ToolFailureConfidenceExpectation `json:"require_tool_failure_confidence,omitempty"`
 	RequireControlRails          *ControlRailsExpectation          `json:"require_control_rails,omitempty"`
+	RequireAssistantForEachUser  bool                              `json:"require_assistant_for_each_user,omitempty"`
 	RequireChangedFiles          []string                          `json:"require_changed_files,omitempty"`
 	RequireEvidencePaths         []string                          `json:"require_evidence_paths,omitempty"`
 	RequireLanguageCapabilities  []LanguageCapabilityExpectation   `json:"require_language_capabilities,omitempty"`
@@ -398,6 +400,7 @@ type ControlRailsSnapshot struct {
 	Contract             string   `json:"contract,omitempty"`
 	TaskFamily           string   `json:"task_family,omitempty"`
 	PermissionProfile    string   `json:"permission_profile,omitempty"`
+	TargetRefs           []string `json:"target_refs,omitempty"`
 	RequiredEvidence     []string `json:"required_evidence,omitempty"`
 	RequiredTools        []string `json:"required_tools,omitempty"`
 	ForbiddenTools       []string `json:"forbidden_tools,omitempty"`
@@ -711,6 +714,7 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			Contract:              latest.Contract,
 			TaskFamily:            latest.TaskFamily,
 			PermissionProfile:     latest.PermissionProfile,
+			RequireTargetRefs:     append([]string(nil), latest.TargetRefs...),
 			RequireEvidence:       append([]string(nil), latest.RequiredEvidence...),
 			RequireTools:          append([]string(nil), latest.RequiredTools...),
 			RequireForbiddenTools: append([]string(nil), latest.ForbiddenTools...),
@@ -1018,6 +1022,9 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			addFinding("final assistant response unexpectedly contains %q", forbidden)
 		}
 	}
+	if scenario.RequireAssistantForEachUser && metrics.AssistantTurns < metrics.UserTurns {
+		addFinding("assistant turns fewer than user turns: got %d assistant for %d user", metrics.AssistantTurns, metrics.UserTurns)
+	}
 	for _, tool := range scenario.RequireTools {
 		if metrics.Tools[strings.TrimSpace(tool)] == 0 {
 			addFinding("required tool %q was not used", tool)
@@ -1249,12 +1256,13 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			addFinding("required control rails were not observed")
 		} else if !controlRailsMatches(metrics.ControlRails[len(metrics.ControlRails)-1], *scenario.RequireControlRails) {
 			latest := metrics.ControlRails[len(metrics.ControlRails)-1]
-			addFinding("control rails mismatch: got lane=%q followup=%q contract=%q family=%q permission=%q evidence=%v tools=%v verification=%q failure_to_eval=%t",
+			addFinding("control rails mismatch: got lane=%q followup=%q contract=%q family=%q permission=%q targets=%v evidence=%v tools=%v verification=%q failure_to_eval=%t",
 				latest.Lane,
 				latest.FollowupLane,
 				latest.Contract,
 				latest.TaskFamily,
 				latest.PermissionProfile,
+				latest.TargetRefs,
 				latest.RequiredEvidence,
 				latest.RequiredTools,
 				latest.VerificationContract,
@@ -1992,6 +2000,11 @@ func controlRailsMatches(actual ControlRailsSnapshot, expected ControlRailsExpec
 	}
 	if expected.PermissionProfile != "" && !strings.EqualFold(actual.PermissionProfile, expected.PermissionProfile) {
 		return false
+	}
+	for _, required := range expected.RequireTargetRefs {
+		if !containsStringFold(actual.TargetRefs, required) {
+			return false
+		}
 	}
 	for _, required := range expected.RequireEvidence {
 		if !containsStringFold(actual.RequiredEvidence, required) {

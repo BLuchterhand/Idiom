@@ -19,16 +19,19 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Model struct {
-	cfg        config.Config
-	client     *llama.Client
-	controller *llama.ServerController
-	workspace  *workspace.Manager
-	runner     *agent.Runner
-	events     chan tea.Msg
+	cfg                  config.Config
+	client               *llama.Client
+	controller           *llama.ServerController
+	classifierClient     *llama.Client
+	classifierController *llama.ServerController
+	workspace            *workspace.Manager
+	runner               *agent.Runner
+	events               chan tea.Msg
 
 	width    int
 	height   int
@@ -57,15 +60,21 @@ type Model struct {
 	refactorStage  *structuralRefactorStage
 	taskMemory     *longHorizonTaskMemory
 	lastReplan     *analysisReplanRecommendationState
+	agentMode      agentDecisionMode
 	traceMode      traceDisplayMode
 	compactTrace   compactTraceState
 	phaseCard      phaseCardState
 	panelVisible   bool
 	executionPanel executionPanelState
+
+	routeClassifierOfflineNotified bool
+	routeClassifierStartMu         sync.Mutex
+	managedRouteClassifier         bool
 }
 
 type assistantReplyMsg struct {
-	text string
+	text   string
+	logged bool
 }
 
 type infoMsg struct {
@@ -105,6 +114,11 @@ const (
 func (m *Model) Close() {
 	if m.debugLogger != nil {
 		_ = m.debugLogger.Close()
+	}
+	if m.managedRouteClassifier && m.classifierController != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = m.classifierController.Stop(ctx)
 	}
 	if !m.managedServer {
 		return
@@ -180,7 +194,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 	case "/quit", "/exit":
 		return true
 	case "/help":
-		m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /panel [show|hide|toggle] /mode [normal|explore [quick|medium|thorough]] /writes [guarded|auto] /approve writes /deny writes /undo /resume [refactor|task] /replan /help | transcript: PgUp/PgDn or mouse wheel"
+		m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /panel [show|hide|toggle] /mode [normal|explore [quick|medium|thorough]] /agent [auto|plan|build|review|explore] /workflow [list|name] /writes [guarded|auto] /approve writes /deny writes /undo /resume [refactor|task] /replan /help | transcript: PgUp/PgDn or mouse wheel"
 	case "/clear":
 		m.messages = nil
 		m.status = "Cleared chat."
@@ -324,6 +338,40 @@ func (m *Model) handleSlashCommand(raw string) bool {
 			default:
 				m.status = "Usage: /mode [normal|explore [quick|medium|thorough]]"
 			}
+		}
+	case "/agent":
+		switch {
+		case len(fields) == 1:
+			m.status = "Current agent mode: " + string(m.currentAgentDecisionMode()) + "."
+		case len(fields) == 2:
+			mode, err := normalizeAgentDecisionMode(fields[1])
+			if err != nil {
+				m.status = "Usage: /agent [auto|plan|build|review|explore]"
+				return false
+			}
+			m.agentMode = mode
+			m.logPromptContext()
+			m.status = "Agent mode set to " + string(mode) + "."
+		default:
+			m.status = "Usage: /agent [auto|plan|build|review|explore]"
+		}
+	case "/workflow":
+		switch {
+		case len(fields) == 1 || (len(fields) == 2 && fields[1] == "list"):
+			m.status = "Workflow templates: latest-log, implement-plan, verify, frontier-audit, opencode-audit."
+		case len(fields) == 2:
+			prompt, ok := workflowCommandPrompt(fields[1])
+			if !ok {
+				m.status = "Unknown workflow. Use /workflow list."
+				return false
+			}
+			if m.streaming {
+				m.status = "Wait for the current response to finish before starting a workflow."
+				return false
+			}
+			m.sendPromptAsync(prompt)
+		default:
+			m.status = "Usage: /workflow [list|latest-log|implement-plan|verify|frontier-audit|opencode-audit]"
 		}
 	case "/writes":
 		switch {
@@ -1095,15 +1143,18 @@ func (m *Model) writeSummary() string {
 }
 
 func (m *Model) modeSummary() string {
+	agentMode := string(m.currentAgentDecisionMode())
 	if m.workspace == nil {
-		return "normal"
+		return "workspace=normal agent=" + agentMode
 	}
 
 	mode := m.workspace.Mode()
+	workspaceMode := string(mode)
 	if mode != workspace.ModeExplore {
-		return string(mode)
+		return "workspace=" + workspaceMode + " agent=" + agentMode
 	}
-	return fmt.Sprintf("%s(%s)", mode, m.workspace.ExploreThoroughness())
+	workspaceMode = fmt.Sprintf("%s(%s)", mode, m.workspace.ExploreThoroughness())
+	return "workspace=" + workspaceMode + " agent=" + agentMode
 }
 
 func (m *Model) traceSummary() string {
@@ -1289,6 +1340,11 @@ func (m *Model) logMessage(role, content string) {
 		return
 	}
 	_ = m.debugLogger.LogMessage(role, content)
+}
+
+func (m *Model) emitAssistantReply(reply string) {
+	m.logMessage("assistant", reply)
+	m.events <- assistantReplyMsg{text: reply, logged: true}
 }
 
 func (m *Model) logToolRequest(event agent.ToolRequestEvent) {

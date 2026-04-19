@@ -107,6 +107,32 @@ func helper() {}
 	}
 }
 
+func TestGoFileOutlineSkipsSameFileMoveRecommendations(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "analysis_agents.go"), `package app
+
+func analysisEvidence() {}
+
+func renderView() {}
+`)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_file_outline", Path: "analysis_agents.go"})
+	if result.Error != "" {
+		t.Fatalf("go_file_outline failed: %#v", result)
+	}
+	if strings.Contains(result.Output, "destination: analysis_agents.go") || strings.Contains(result.Summary, `destination:"analysis_agents.go"`) {
+		t.Fatalf("outline should not recommend moving declarations back into the source file:\nsummary: %s\noutput:\n%s", result.Summary, result.Output)
+	}
+	if !strings.Contains(result.Output, "destination: rendering.go") {
+		t.Fatalf("expected useful cross-file move recommendation to remain, got:\n%s", result.Output)
+	}
+}
+
 func TestGoMoveDeclarationsMovesSelectedBlocksAndRepairsImports(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "source.go"), `package sample

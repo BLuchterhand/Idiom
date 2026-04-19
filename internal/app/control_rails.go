@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"qwen-bubbles/internal/agent"
 	"qwen-bubbles/internal/workspace"
 	"strings"
 )
@@ -10,10 +11,17 @@ type deterministicControlRailsSnapshot struct {
 	Lane                 string   `json:"lane,omitempty"`
 	FollowupLane         string   `json:"followup_lane,omitempty"`
 	Contract             string   `json:"contract,omitempty"`
+	AgentMode            string   `json:"agent_mode,omitempty"`
+	Intent               string   `json:"intent,omitempty"`
+	IntentConfidence     string   `json:"intent_confidence,omitempty"`
+	Risk                 string   `json:"risk,omitempty"`
 	TaskFamily           string   `json:"task_family,omitempty"`
 	PermissionProfile    string   `json:"permission_profile,omitempty"`
+	UserBoundaries       []string `json:"user_boundaries,omitempty"`
+	TargetRefs           []string `json:"target_refs,omitempty"`
 	RequiredEvidence     []string `json:"required_evidence,omitempty"`
 	RequiredTools        []string `json:"required_tools,omitempty"`
+	AllowedTools         []string `json:"allowed_tools,omitempty"`
 	ForbiddenTools       []string `json:"forbidden_tools,omitempty"`
 	ReadinessGate        []string `json:"readiness_gate,omitempty"`
 	SearchPolicy         []string `json:"search_policy,omitempty"`
@@ -31,14 +39,47 @@ type controlRailsEnforcementSnapshot struct {
 	Violations []string `json:"violations,omitempty"`
 }
 
+type dynamicToolPolicySnapshot struct {
+	Lane           string   `json:"lane,omitempty"`
+	TaskFamily     string   `json:"task_family,omitempty"`
+	AgentMode      string   `json:"agent_mode,omitempty"`
+	AllowedTools   []string `json:"allowed_tools,omitempty"`
+	ForbiddenTools []string `json:"forbidden_tools,omitempty"`
+}
+
+func renderDynamicToolPolicySnapshot(rails deterministicControlRailsSnapshot) string {
+	payload := dynamicToolPolicySnapshot{
+		Lane:           rails.Lane,
+		TaskFamily:     rails.TaskFamily,
+		AgentMode:      rails.AgentMode,
+		AllowedTools:   append([]string(nil), rails.AllowedTools...),
+		ForbiddenTools: append([]string(nil), rails.ForbiddenTools...),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 func buildDeterministicControlRails(prompt string, plan promptExecutionPlan) deterministicControlRailsSnapshot {
 	family := controlRailTaskFamily(prompt, plan)
+	permissionProfile := plan.permissionProfile
+	if permissionProfile == "" {
+		permissionProfile = controlRailPermissionProfile(family, plan)
+	}
 	rails := deterministicControlRailsSnapshot{
 		Lane:                 string(plan.lane),
 		FollowupLane:         string(plan.followupLane),
 		Contract:             string(promptPlanAnswerContract(plan)),
+		AgentMode:            string(plan.agentMode),
+		Intent:               plan.intent.Intent,
+		IntentConfidence:     plan.intent.Confidence,
+		Risk:                 plan.intent.Risk,
 		TaskFamily:           family,
-		PermissionProfile:    controlRailPermissionProfile(family, plan),
+		PermissionProfile:    permissionProfile,
+		UserBoundaries:       append([]string(nil), plan.intent.UserBoundaries...),
+		TargetRefs:           append([]string(nil), plan.intent.TargetRefs...),
 		RequiredEvidence:     controlRailRequiredEvidence(family, plan),
 		RequiredTools:        controlRailRequiredTools(family, plan),
 		ForbiddenTools:       controlRailForbiddenTools(family, plan),
@@ -52,6 +93,9 @@ func buildDeterministicControlRails(prompt string, plan promptExecutionPlan) det
 	rails.RequiredEvidence = uniqueNonEmptyStrings(rails.RequiredEvidence)
 	rails.RequiredTools = uniqueNonEmptyStrings(rails.RequiredTools)
 	rails.ForbiddenTools = uniqueNonEmptyStrings(rails.ForbiddenTools)
+	rails.AllowedTools = controlRailAllowedTools(rails)
+	rails.UserBoundaries = uniqueNonEmptyStrings(rails.UserBoundaries)
+	rails.TargetRefs = uniqueNormalizedPaths(rails.TargetRefs)
 	rails.ReadinessGate = uniqueNonEmptyStrings(rails.ReadinessGate)
 	rails.SearchPolicy = uniqueNonEmptyStrings(rails.SearchPolicy)
 	rails.StopConditions = uniqueNonEmptyStrings(rails.StopConditions)
@@ -60,13 +104,20 @@ func buildDeterministicControlRails(prompt string, plan promptExecutionPlan) det
 }
 
 func controlRailTaskFamily(prompt string, plan promptExecutionPlan) string {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	if plan.taskFamily != "" {
+		return plan.taskFamily
+	}
+	return canonicalPromptTaskFamily(buildPromptRouteProfile(prompt), plan)
+}
+
+func canonicalPromptTaskFamily(profile promptRouteProfile, plan promptExecutionPlan) string {
+	normalized := strings.ToLower(strings.TrimSpace(profile.normalized))
 	switch {
 	case plan.lane == analysisLaneImplement:
 		return "implementation"
-	case plan.lane == analysisLaneMain && looksLikeVerificationOnlyPrompt(normalized):
+	case plan.lane == analysisLaneMain && profile.wantsVerificationOnly:
 		return "verification_only"
-	case plan.lane != analysisLaneImplement && looksLikeLogOrFailureInspectionPrompt(normalized):
+	case plan.lane != analysisLaneImplement && profile.wantsDebugLogs:
 		return "debug_logs"
 	case plan.lane == analysisLaneLocate:
 		return "locate"
@@ -151,6 +202,63 @@ func controlRailRequiredTools(family string, plan promptExecutionPlan) []string 
 	return tools
 }
 
+func controlRailAllowedTools(rails deterministicControlRailsSnapshot) []string {
+	all := []string{
+		"task_ledger",
+		"task",
+		"pwd",
+		"list_files",
+		"search_files",
+		"search_content",
+		"read_file",
+		"go_overview",
+		"go_find_symbol",
+		"go_find_function",
+		"go_find_type",
+		"go_references",
+		"go_definition",
+		"go_implementations",
+		"go_read_symbol",
+		"go_extract_body",
+		"go_file_outline",
+		"go_move_declarations",
+		"cpp_overview",
+		"cpp_find_symbol",
+		"cpp_references",
+		"cpp_definition",
+		"mkdir",
+		"edit_file",
+		"write_file",
+		"append_file",
+		"shell",
+	}
+	forbidden := make(map[string]struct{}, len(rails.ForbiddenTools))
+	for _, tool := range rails.ForbiddenTools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		forbidden[tool] = struct{}{}
+	}
+	if rails.PermissionProfile == "conversation_only" {
+		return nil
+	}
+	allowed := make([]string, 0, len(all))
+	for _, tool := range all {
+		if _, blocked := forbidden[tool]; blocked {
+			continue
+		}
+		if _, blocked := forbidden["workspace_edit"]; blocked {
+			switch tool {
+			case "mkdir", "edit_file", "write_file", "append_file", "go_move_declarations":
+				continue
+			}
+		}
+		allowed = append(allowed, tool)
+	}
+	return uniqueNonEmptyStrings(allowed)
+}
+
 func controlRailForbiddenTools(family string, plan promptExecutionPlan) []string {
 	switch plan.lane {
 	case analysisLaneLocate, analysisLaneExplore, analysisLaneReview, analysisLaneArchitecture:
@@ -180,6 +288,9 @@ func controlRailReadinessGate(family string, plan promptExecutionPlan) []string 
 	}
 	if analysisLaneUsesThoroughness(plan.lane) {
 		gates = append(gates, "low_confidence_triggers_deepening")
+	}
+	if plan.intent.Confidence == "low" || plan.intent.Risk == "high" {
+		gates = append(gates, "uncertainty_or_permission_boundary_declared")
 	}
 	return gates
 }
@@ -223,6 +334,9 @@ func controlRailStopConditions(family string, plan promptExecutionPlan) []string
 	if family == "debug_logs" {
 		conditions = append(conditions, "log_cause_identified_or_log_gap_declared")
 	}
+	if plan.intent.Risk == "high" || len(plan.intent.UserBoundaries) > 0 {
+		conditions = append(conditions, "high_risk_or_user_boundary_requires_explicit_permission")
+	}
 	return conditions
 }
 
@@ -257,6 +371,9 @@ func controlRailToolForbidden(rails deterministicControlRailsSnapshot, req works
 	if tool == "" {
 		return false
 	}
+	if controlRailBoundaryForbidsTool(rails, req) {
+		return true
+	}
 	for _, forbidden := range rails.ForbiddenTools {
 		switch forbidden {
 		case tool:
@@ -272,6 +389,141 @@ func controlRailToolForbidden(rails deterministicControlRailsSnapshot, req works
 		}
 	}
 	return false
+}
+
+func controlRailBoundaryForbidsTool(rails deterministicControlRailsSnapshot, req workspace.ToolRequest) bool {
+	command := strings.ToLower(strings.TrimSpace(req.Command))
+	if strings.TrimSpace(req.Tool) != "shell" || command == "" {
+		return false
+	}
+	for _, boundary := range rails.UserBoundaries {
+		switch boundary {
+		case "no_push":
+			if containsAny(command, "git push", "gh pr merge", "gh release", "npm publish") {
+				return true
+			}
+		case "no_deploy", "wait_for_review":
+			if containsAny(command, "deploy", "release", "publish", "git push", "gh pr merge") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func controlRailRuntimeInstruction(rails deterministicControlRailsSnapshot) string {
+	switch rails.TaskFamily {
+	case "verification_only":
+		return strings.TrimSpace(strings.Join([]string{
+			"Deterministic completion contract:",
+			"- This is a verification-only task.",
+			"- Before the final answer, run one read-only shell verification command that directly checks the requested state.",
+			"- The final answer must name the verification command and report pass/fail/skipped status.",
+			"- Include failure output if the command fails; if verification cannot run, state the concrete blocker.",
+			"- Do not edit files.",
+		}, "\n"))
+	default:
+		return ""
+	}
+}
+
+func controlRailCompletionGate(rails deterministicControlRailsSnapshot) agent.CompletionGate {
+	switch rails.TaskFamily {
+	case "verification_only":
+		return func(input agent.CompletionGateInput) agent.CompletionGateResult {
+			if !controlRailHasShellVerification(input.Results) {
+				return agent.CompletionGateResult{
+					Accept:  false,
+					Summary: "Verification completion gate rejected final answer",
+					Error:   "verification-only control rails require a read-only shell verification command before the final answer. Run the requested check now, then report the command and pass/fail/skipped status.",
+				}
+			}
+			if !controlRailAnswerReportsVerificationStatus(input.Reply) {
+				return agent.CompletionGateResult{
+					Accept:  false,
+					Summary: "Verification completion gate rejected final answer",
+					Error:   "a shell verification command has run, but the final answer must explicitly report pass/fail/skipped status and include failure output if any.",
+				}
+			}
+			return agent.CompletionGateResult{Accept: true}
+		}
+	default:
+		return nil
+	}
+}
+
+func controlRailHasShellVerification(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "shell" {
+			continue
+		}
+		output := strings.TrimSpace(result.Output)
+		if strings.Contains(output, "$ ") {
+			return true
+		}
+	}
+	return false
+}
+
+func controlRailAnswerReportsVerificationStatus(answer string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(answer))
+	return containsAny(normalized, "pass", "passed", "fail", "failed", "failure", "error", "success", "succeeded", "not run", "skipped")
+}
+
+func controlRailPermissionPolicy(rails deterministicControlRailsSnapshot) agent.ToolPermissionPolicy {
+	policy := agent.ToolPermissionPolicy{Default: agent.PermissionAllow}
+	if strings.TrimSpace(rails.PermissionProfile) == "conversation_only" {
+		policy.Default = agent.PermissionDeny
+	}
+	deny := func(tool string) {
+		policy.Rules = append(policy.Rules, agent.ToolPermissionRule{
+			Tool:     tool,
+			Decision: agent.PermissionDeny,
+		})
+	}
+	askShellPrefix := func(prefix string) {
+		policy.Rules = append(policy.Rules, agent.ToolPermissionRule{
+			Tool:          "shell",
+			CommandPrefix: prefix,
+			Decision:      agent.PermissionAsk,
+		})
+	}
+	denyShellPrefix := func(prefix string) {
+		policy.Rules = append(policy.Rules, agent.ToolPermissionRule{
+			Tool:          "shell",
+			CommandPrefix: prefix,
+			Decision:      agent.PermissionDeny,
+		})
+	}
+	for _, forbidden := range rails.ForbiddenTools {
+		switch forbidden {
+		case "edit_file", "write_file", "append_file", "mkdir", "shell":
+			deny(forbidden)
+		}
+	}
+	for _, boundary := range rails.UserBoundaries {
+		switch boundary {
+		case "no_push":
+			denyShellPrefix("git push")
+			denyShellPrefix("gh pr merge")
+			denyShellPrefix("gh release")
+			denyShellPrefix("npm publish")
+		case "no_deploy", "wait_for_review":
+			denyShellPrefix("git push")
+			denyShellPrefix("gh pr merge")
+			denyShellPrefix("deploy")
+			denyShellPrefix("release")
+			denyShellPrefix("publish")
+		}
+	}
+	if rails.Risk == "high" {
+		askShellPrefix("rm ")
+		askShellPrefix("rm -")
+		askShellPrefix("sudo ")
+		askShellPrefix("curl ")
+		askShellPrefix("wget ")
+	}
+	return policy
 }
 
 func controlRailsEnforcementForAnswer(rails deterministicControlRailsSnapshot, answer string, evidencePaths []string, changedPaths []string, verificationResolved bool) controlRailsEnforcementSnapshot {
@@ -293,8 +545,23 @@ func controlRailsEnforcementForAnswer(rails deterministicControlRailsSnapshot, a
 	if requiresEvidencePaths(rails) && len(evidencePaths) == 0 {
 		addViolation("required_evidence_paths_missing")
 	}
-	if rails.TaskFamily == "verification_only" && !containsAny(normalized, "passed", "failed", "failure", "error", "not run", "skipped") {
+	if rails.TaskFamily == "verification_only" && !controlRailAnswerReportsVerificationStatus(answer) {
 		addViolation("verification_status_missing")
+	}
+	if rails.TaskFamily == "architecture" {
+		for _, target := range controlRailMissingTargetRefs(rails.TargetRefs, answer, evidencePaths) {
+			addViolation("target_ref_missing_from_evidence_or_answer:" + target)
+		}
+		if containsAny(normalized, "did not complete cleanly", "final blocker", "budget_exhausted", "budget exhausted") &&
+			!containsAny(normalized, "opportunity", "recommend", "suggested direction", "refactor", "split", "hotspot") {
+			addViolation("architecture_recommendations_missing_after_budget_failure")
+		}
+		if !containsAny(normalized, "structure", "architecture", "boundary", "package", "ownership", "hotspot") {
+			addViolation("architecture_structural_framing_missing")
+		}
+		if !containsAny(normalized, "opportunity", "recommend", "suggested direction", "refactor", "split", "hotspot") {
+			addViolation("architecture_recommendation_or_hotspot_missing")
+		}
 	}
 	if rails.TaskFamily == "implementation" {
 		if len(changedPaths) == 0 && !containsAny(normalized, "no changes", "no workspace changes", "no file edits") {
@@ -306,6 +573,33 @@ func controlRailsEnforcementForAnswer(rails deterministicControlRailsSnapshot, a
 	}
 	result.Violations = uniqueNonEmptyStrings(result.Violations)
 	return result
+}
+
+func controlRailMissingTargetRefs(targetRefs []string, answer string, evidencePaths []string) []string {
+	targetRefs = uniqueNormalizedPaths(targetRefs)
+	if len(targetRefs) == 0 {
+		return nil
+	}
+	answerLower := strings.ToLower(answer)
+	evidenceSet := make(map[string]struct{}, len(evidencePaths))
+	for _, path := range uniqueNormalizedPaths(evidencePaths) {
+		evidenceSet[strings.ToLower(path)] = struct{}{}
+	}
+	missing := make([]string, 0, len(targetRefs))
+	for _, target := range targetRefs {
+		normalizedTarget := strings.ToLower(strings.TrimSpace(target))
+		if normalizedTarget == "" {
+			continue
+		}
+		if _, ok := evidenceSet[normalizedTarget]; ok {
+			continue
+		}
+		if strings.Contains(answerLower, normalizedTarget) {
+			continue
+		}
+		missing = append(missing, target)
+	}
+	return missing
 }
 
 func requiresEvidencePaths(rails deterministicControlRailsSnapshot) bool {
@@ -391,10 +685,16 @@ func looksLikeVerificationOnlyPrompt(normalized string) bool {
 	if normalized == "" {
 		return false
 	}
+	if looksLikeLogOrFailureInspectionPrompt(normalized) {
+		return false
+	}
 	if promptRequestsImplementation(normalized) {
 		return false
 	}
-	hasVerificationVerb := containsAny(normalized, "run ", "verify", "check", "test", "report")
+	if containsAny(normalized, "add ", "create ", "write ", "update ", "implement ", "fix ", "patch ", "edit ") {
+		return false
+	}
+	hasVerificationVerb := containsAny(normalized, "run ", "verify", "check", "test ", "report")
 	hasVerificationTarget := containsAny(normalized, "test", "tests", "suite", "build", "lint", "check", "verification")
 	return hasVerificationVerb && hasVerificationTarget
 }

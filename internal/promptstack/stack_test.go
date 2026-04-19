@@ -47,6 +47,30 @@ func TestBuildComposesPromptSourcesAndDeduplicatesFiles(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesOpenCodeStylePromptGuidance(t *testing.T) {
+	baseline := filepath.Join("..", "..", "prompts", "base.md")
+	profiles := filepath.Join("..", "..", "prompts", "profiles")
+
+	stack, err := Build(config.Chat{
+		SystemPromptFiles: []string{baseline},
+		ProfilesDir:       profiles,
+	}, []string{"coding"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, want := range []string{
+		"Keep a short working checklist",
+		"Separate read-only analysis from requested mutation",
+		"split it into focused passes and verify each pass",
+		"Keep a short task ledger",
+		"Return concise final answers",
+	} {
+		if !strings.Contains(stack.Text, want) {
+			t.Fatalf("expected prompt stack to include %q, got:\n%s", want, stack.Text)
+		}
+	}
+}
+
 func TestBuildRejectsMissingRequiredPrompt(t *testing.T) {
 	_, err := Build(config.Chat{SystemPromptFiles: []string{filepath.Join(t.TempDir(), "missing.md")}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "load baseline prompt") {
