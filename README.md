@@ -1,0 +1,316 @@
+# Qwen Bubbles
+
+A small Bubble Tea harness for running `Qwen3.6-35B-A3B` locally through `llama.cpp`.
+
+## What it does
+
+- launches or attaches to a local `llama-server`
+- streams chat responses into a terminal UI
+- saves transcripts to Markdown
+- loads baseline behavior from prompt files and profiles every session
+- gives Qwen scoped workspace access for reads, search, writes, and shell commands
+- keeps the model and cache out of the `Colony` repo
+
+## Layout
+
+- `config.json`: runtime config
+- `prompts/`: baseline prompts and behavior profiles
+- `models/`: local GGUF weights
+- `logs/llama-server.log`: server output
+- `logs/conversations/`: per-session JSONL debug logs
+- `transcripts/`: saved chats
+
+## Run
+
+```bash
+./scripts/run-harness.sh
+```
+
+If you want the server without the TUI:
+
+```bash
+./scripts/run-server.sh
+```
+
+Or use `make`:
+
+```bash
+make run
+make server
+make build
+make eval LOG=logs/conversations/20260418-055543.504.jsonl
+```
+
+## In-app controls
+
+- `Enter`: send prompt
+- `Ctrl+S`: save transcript
+- `Ctrl+L`: clear chat
+- `Ctrl+R`: restart `llama-server`
+- `Ctrl+C`: quit
+- `/help`: show slash commands
+
+## Slash commands
+
+- `/save`
+- `/clear`
+- `/system <prompt>`
+- `/temp <value>`
+- `/preset [list|name]`
+- `/trace [compact|detail]`
+- `/context`
+- `/workspace`
+- `/pwd`
+- `/debuglog [mode redacted|full]`
+- `/mode [normal|explore [quick|medium|thorough]]`
+- `/profile list`
+- `/profile add <name>`
+- `/profile remove <name>`
+- `/server start`
+- `/server stop`
+- `/server restart`
+- `/server status`
+- `/help`
+
+## Qwen 3.6 Tuning
+
+`qwen-bubbles` now exposes the full Qwen 3.6 sampling surface through both config and the OpenAI-compatible request body:
+
+- `temperature`
+- `top_p`
+- `top_k`
+- `min_p`
+- `presence_penalty`
+- `repetition_penalty`
+- `enable_thinking`
+- `preserve_thinking`
+
+The bundled defaults target coding work on Qwen3.6 with thinking enabled:
+
+- `preset: qwen3-coding`
+- `temperature: 0.6`
+- `top_p: 0.95`
+- `top_k: 20`
+- `min_p: 0.0`
+- `presence_penalty: 0.0`
+- `repetition_penalty: 1.0`
+- `enable_thinking: true`
+- `preserve_thinking: false`
+
+Built-in presets:
+
+- `qwen3-coding`
+- `qwen3-coding-preserve`
+- `qwen3-general`
+- `qwen3-direct`
+- `qwen3-direct-reasoning`
+
+Use `/preset list` to see the preset names and `/preset <name>` to switch live inside the TUI.
+
+Notes:
+
+- If you hand-tune the numeric sampling fields in `config.json`, set `preset: "custom"` so startup does not re-apply a built-in preset over your manual values.
+- `qwen3-coding-preserve` is useful for long coding sessions, but it consumes more context because historical thinking traces are retained.
+- The shipped config now uses `ctx_size: 65536`; preserved thinking becomes more useful as context grows, and Qwen officially recommends even larger windows for strongest long-horizon behavior.
+- The harness now starts `llama-server` with `flash_attention`, `reasoning: auto`, and `reasoning_format: deepseek` by default, so visible responses stay clean while reasoning content remains structured on the server side.
+
+## Baseline Behavior
+
+The harness builds a hidden `system` prompt on every request from four layers:
+
+1. `chat.system_prompt`
+2. `chat.system_prompt_files`
+3. `chat.default_profiles` loaded from `chat.profiles_dir`
+4. project prompt files from `chat.project_root`
+
+The current active prompt sources are shown in the TUI footer as `context: ...`.
+
+## Debug Logging
+
+Every TUI session now writes a timestamped JSONL debug log in `chat.debug_log_dir`, which defaults to `logs/conversations`.
+
+The logger has two modes:
+
+- `redacted`: default. Hides the full hidden prompt, rewrites workspace paths to workspace-relative form, and masks likely secrets plus large tool payload bodies.
+- `full`: keeps the complete hidden prompt and raw tool payloads for deep local debugging.
+
+Each record includes a timestamp and event type. The log captures:
+
+- the hidden prompt/context bundle active for the session
+- workspace mode and explore thoroughness changes
+- user, assistant, and tool messages
+- raw tool requests with step numbers, agent lane, and broad-vs-narrow classification
+- tool results with step numbers, agent lane, summaries, and errors
+- server state changes
+- chat/runtime/context errors
+- saved transcript paths
+
+Use `/debuglog` in the TUI to show the current session log path, and `/debuglog mode redacted` or `/debuglog mode full` to switch the active mode for the running session.
+
+The default TUI trace view is now compact. Use `/trace detail` when you want raw tool chatter in the visible transcript, or `/trace compact` to collapse it back into a short activity summary in the footer.
+
+## Replay And Eval
+
+`qwen-bubbles` now includes a scored log-evaluation CLI:
+
+```bash
+go run ./cmd/qwen-eval -log logs/conversations/20260418-055543.504.jsonl
+```
+
+That prints a quick summary of:
+
+- the last user prompt
+- tool counts and broad-search counts
+- repeated dead-end counts
+- verification status
+- changed files when they are present in the final assistant summary
+
+You can also derive a starter scenario file from a captured run:
+
+```bash
+go run ./cmd/qwen-eval \
+  -log logs/conversations/20260418-055543.504.jsonl \
+  -write-scenario /tmp/banner-padding.json
+```
+
+And score a later run against that scenario:
+
+```bash
+go run ./cmd/qwen-eval \
+  -log logs/conversations/20260418-071727.566.jsonl \
+  -scenario /tmp/banner-padding.json
+```
+
+Scenario files are JSON and can assert things like:
+
+- expected prompt matchers
+- required phases
+- maximum broad-search count
+- maximum repeated dead-end count
+- expected verification state
+- required changed files
+- whether guarded approval should have been required
+
+For a corpus-level SWE task gate, use `qwen-swe-eval`:
+
+```bash
+go run ./cmd/qwen-swe-eval \
+  -suite testdata/swe/representative-suite.json \
+  -logs /path/to/task-logs
+```
+
+The log directory should contain one `<task-id>.jsonl` debug log per task in the suite. See `docs/swe-eval-suite.md` for the default task families and oracle schema.
+
+## Explore Mode
+
+Use `/mode explore` to switch the main agent into a Claude-style read-only investigation mode.
+
+The harness also has a lightweight explore subagent:
+
+- for investigation-only prompts such as open-ended bug hunts, the harness now routes the turn into a separate read-only explore lane with its own workspace state and smaller tool budget
+- for prompts that ask Qwen to investigate before editing, the explore lane runs first, returns a compact summary, and only that summary is handed to the writable main agent
+- the explore lane's tool chatter stays out of the visible transcript, but it is still recorded in the debug log under the `explore` agent lane
+
+The harness also has a dedicated review lane for open-ended audit prompts:
+
+- prompts like `find one bug`, `identify a code smell`, `audit this repo`, or `review this codebase` now route into a deterministic read-only review path instead of the generic tool loop
+- the review lane gathers candidate files first, ranks them, reads bounded evidence, and asks the model for one concrete finding instead of letting it freestyle broad repo exploration
+- if the prompt explicitly asks to fix or apply the result, only the review summary is handed off to the writable main agent
+
+You can also set the investigation depth:
+
+- `/mode explore quick`
+- `/mode explore medium`
+- `/mode explore thorough`
+- `/mode normal`
+
+In explore mode:
+
+- Qwen is restricted to read-only workspace tools
+- `mkdir`, `edit_file`, `write_file`, and `append_file` are rejected
+- `shell` is limited to read-only inspection commands such as `ls`, `find`, `rg`, `grep`, `awk`, `sed`, `cat`, `head`, `tail`, `wc`, `file`, and read-only `git` commands
+- after one broad orientation step, the runner pushes Qwen to narrow with `search_files`, `search_content`, or `read_file` instead of continuing to survey the repo
+- the same “narrow after the first broad step” rule now applies in normal mode too, so repeated `list_files` / `ls` / `find` loops get rejected before they burn the whole tool budget
+- the explore subagent is bounded separately from the main agent, so exploratory dead-ends do not consume the full main tool budget
+- the harness now keeps a session-local repository profile cache, so later explore turns can reuse discovered files and repo shape instead of cold-starting from another top-level listing
+- bootstrap is deterministic and layered: source-first overview, key root-file reads, likely entrypoint reads, then prompt-directed content search before the model is allowed to improvise
+- for Go repos, the explore lane now builds a local AST-backed semantic index so bootstrap can reason from packages, entrypoints, functions, methods, and types instead of relying only on filename and grep heuristics
+- `quick`, `medium`, and `thorough` now change how many bootstrap reads, search paths, and follow-up file reads the explore lane performs
+- successful main-agent writes clear the cached repo profile automatically so later exploration does not rely on stale structure
+
+## Workspace Access
+
+The harness now gives Qwen a tool loop for workspace operations. When needed, the model can ask the harness to:
+
+- print the working directory with `pwd`
+- list files with `list_files`
+- read files with `read_file`
+- search with `rg`
+- inspect Go repos semantically with `go_overview`, `go_entrypoints`, `go_find_symbol`, `go_find_type`, `go_find_const`, `go_read_symbol`, `go_find_package`, `go_related_files`, `go_definition`, `go_references`, `go_implementations`, `go_calls_from`, `go_calls_into`, `go_extract_body`, `go_importers`, `go_diagnostics`, and `go_workspace_symbol`
+- inspect C/C++ repos semantically with `cpp_overview`, `cpp_entrypoints`, `cpp_find_symbol`, `cpp_read_symbol`, `cpp_related_files`, `cpp_definition`, `cpp_declaration`, `cpp_implementations`, `cpp_references`, `cpp_calls_from`, `cpp_calls_into`, `cpp_extract_body`, `cpp_includes`, `cpp_who_includes`, `cpp_blast_radius`, `cpp_dead_symbol`, `cpp_diagnostics`, and `cpp_workspace_symbol`
+- create directories with `mkdir`
+- make targeted in-place edits with `edit_file`
+- overwrite or append files with `write_file` and `append_file`
+- run shell commands with `shell`
+
+Shell access is intentionally powerful: it runs with the same OS permissions as the app process. The configured workspace is the default cwd, not a hard sandbox.
+
+For Go workspaces, the semantic tools are preferred over raw grep/listing for package and symbol discovery. The local AST index covers overview, symbols, entrypoints, related files, importer lookup, and fallback call analysis. `go_workspace_symbol`, `go_definition`, `go_references`, `go_implementations`, `go_calls_from`, `go_calls_into`, and `go_diagnostics` will use `gopls` when it is installed and fall back to the local Go index or `go build` where possible.
+
+For C/C++ workspaces, the semantic tools are deterministic and genericized from Colony's own discovery stack: local symbol indexing, include-graph resolution, caller/callee tracing, body extraction, reverse include lookup, and blast-radius analysis. When `clangd` is installed, `cpp_workspace_symbol`, `cpp_definition`, `cpp_declaration`, `cpp_implementations`, `cpp_references`, and the call-tracing tools will prefer real LSP queries and fall back to the local C++ index when clangd cannot resolve the request from the available anchor. `cpp_diagnostics` will use `clangd --check` when `compile_commands.json` is available in the workspace.
+
+### Workspace defaults
+
+- if `workspace.root` is empty, the app defaults it to the directory you launched the harness from
+- the bundled scripts preserve that launch directory even though they `cd` into the harness repo first
+- if `workspace.cwd` is empty, it defaults to `workspace.root`
+
+### Tool behavior
+
+- main-agent tool activity is shown in the transcript as `Tool` entries
+- explore-subagent tool activity stays off the visible transcript and is logged only to the debug JSONL
+- tool failures are fed back to the model and also surfaced in the UI error banner
+- the current workspace summary is shown in the footer as `workspace: ...`
+- file exploration is discovery-first and deterministic: `search_files`, `search_content`, and `list_files` return stable file handles like `f12`
+- `read_file` should use those handles; raw path reads are rejected until that exact path has already appeared in a prior tool result
+
+### Repo-local discovery tool parity
+
+If the workspace contains repo-local discovery scripts, Qwen is now explicitly told to use them through the `shell` tool with their full native CLI flags.
+
+For `Colony`, that means Qwen can use the same repo-local terminal commands Codex uses, including:
+
+- `./scripts/lookup.sh`
+- `./scripts/trace_code.sh`
+- `./scripts/gdscript_trace.sh`
+- `./scripts/boundary.sh`
+- `python3 scripts/validate_discovery_tools.py`
+- standard shell tools like `rg`, `awk`, `sed`, `git`, and `python3`
+
+These are available capabilities, not defaults. The harness now biases Qwen toward generic workspace tools first, and the repo-local discovery scripts are meant to be used only when the user asks for them or when the repo workflow clearly calls for them.
+
+This is parity for repo-local shell/discovery commands, not for Codex-only platform tools. Qwen still does not have native access to Codex features like web browsing, sub-agents, MCP connectors, or `apply_patch` semantics unless the harness implements equivalents itself.
+
+### Recommended setup
+
+- put stable global behavior in `prompts/base.md`
+- put reusable modes in `prompts/profiles/*.md`
+- point `project_root` at the repo you want the harness to reason about
+- add a short repo-specific file such as `.qwen.md` in that repo
+
+If `project_root` is set, the app auto-discovers these files in order:
+
+- `.qwen.md`
+- `QWEN.md`
+- `AGENTS.md`
+- `CLAUDE.md`
+
+You can also add explicit paths with `project_prompt_files`.
+
+## Notes
+
+- The TUI stops the server on exit only if it started that server itself.
+- The default config targets `models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf`.
+- If you want a different quantization later, change the `llama_server.model` path in `config.json`.
+- Keep project prompt files short. A distilled `.qwen.md` is usually better than sending a large architecture manual every turn.
+- `workspace.enable_writes` and `workspace.enable_shell` can be turned off if you want a read-only or no-exec mode.

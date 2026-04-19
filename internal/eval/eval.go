@@ -1,0 +1,2107 @@
+package eval
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+)
+
+type Record struct {
+	Type string
+	Data map[string]any
+}
+
+type PhaseExpectation struct {
+	Lane  string `json:"lane,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	State string `json:"state,omitempty"`
+}
+
+type RoutePlanExpectation struct {
+	InitialLane  string `json:"initial_lane,omitempty"`
+	FollowupLane string `json:"followup_lane,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Contract     string `json:"contract,omitempty"`
+	Thoroughness string `json:"thoroughness,omitempty"`
+}
+
+type ReplanExpectation struct {
+	FromLane string `json:"from_lane,omitempty"`
+	ToLane   string `json:"to_lane,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+type LanguageCapabilityExpectation struct {
+	Language string `json:"language,omitempty"`
+	Tool     string `json:"tool,omitempty"`
+	Signal   string `json:"signal,omitempty"`
+}
+
+type VerificationPlanExpectation struct {
+	Coverage                string   `json:"coverage,omitempty"`
+	Confidence              string   `json:"confidence,omitempty"`
+	RiskLevel               string   `json:"risk_level,omitempty"`
+	UsesFullSuite           *bool    `json:"uses_full_suite,omitempty"`
+	RequireCommands         []string `json:"require_commands,omitempty"`
+	RequireExpectedFailures []string `json:"require_expected_failures,omitempty"`
+}
+
+type ReadinessExpectation struct {
+	Lane             string   `json:"lane,omitempty"`
+	Ready            *bool    `json:"ready,omitempty"`
+	Confidence       string   `json:"confidence,omitempty"`
+	Action           string   `json:"action,omitempty"`
+	MinEvidencePaths *int     `json:"min_evidence_paths,omitempty"`
+	ReasonContains   []string `json:"reason_contains,omitempty"`
+}
+
+type DeepeningExpectation struct {
+	Lane             string   `json:"lane,omitempty"`
+	Attempted        *bool    `json:"attempted,omitempty"`
+	Exhausted        *bool    `json:"exhausted,omitempty"`
+	Action           string   `json:"action,omitempty"`
+	MinEvidencePaths *int     `json:"min_evidence_paths,omitempty"`
+	ReasonContains   []string `json:"reason_contains,omitempty"`
+}
+
+type FinalAnswerCriticExpectation struct {
+	Contract        string   `json:"contract,omitempty"`
+	Passed          *bool    `json:"passed,omitempty"`
+	Action          string   `json:"action,omitempty"`
+	Repaired        *bool    `json:"repaired,omitempty"`
+	RequireFindings []string `json:"require_findings,omitempty"`
+}
+
+type EffortPolicyExpectation struct {
+	Lane                   string `json:"lane,omitempty"`
+	Level                  string `json:"level,omitempty"`
+	MinAnalysisToolBudget  *int   `json:"min_analysis_tool_budget,omitempty"`
+	MinImplementToolBudget *int   `json:"min_implement_tool_budget,omitempty"`
+	MinDeepeningPasses     *int   `json:"min_deepening_passes,omitempty"`
+	MinMaxOutputTokens     *int   `json:"min_max_output_tokens,omitempty"`
+	ConfidenceFloor        string `json:"confidence_floor,omitempty"`
+	BudgetExhaustionMode   string `json:"budget_exhaustion_mode,omitempty"`
+}
+
+type LongHorizonStateExpectation struct {
+	Action                     string   `json:"action,omitempty"`
+	MemoryKind                 string   `json:"memory_kind,omitempty"`
+	SourceLane                 string   `json:"source_lane,omitempty"`
+	Stage                      *int     `json:"stage,omitempty"`
+	FocusPath                  string   `json:"focus_path,omitempty"`
+	RequireRemaining           []string `json:"require_remaining,omitempty"`
+	RequireOpenGaps            []string `json:"require_open_gaps,omitempty"`
+	RequireAttemptedSearches   []string `json:"require_attempted_searches,omitempty"`
+	RequireChosenTargets       []string `json:"require_chosen_targets,omitempty"`
+	RequireVerificationHistory []string `json:"require_verification_history,omitempty"`
+	RequireNextActions         []string `json:"require_next_actions,omitempty"`
+	NextContains               []string `json:"next_contains,omitempty"`
+	Resumable                  *bool    `json:"resumable,omitempty"`
+}
+
+type BudgetLedgerExpectation struct {
+	Lane              string `json:"lane,omitempty"`
+	StopReason        string `json:"stop_reason,omitempty"`
+	MinModelCalls     *int   `json:"min_model_calls,omitempty"`
+	MinEvidencePaths  *int   `json:"min_evidence_paths,omitempty"`
+	BudgetExhausted   *bool  `json:"budget_exhausted,omitempty"`
+	UncertaintyPolicy string `json:"uncertainty_policy,omitempty"`
+}
+
+type EvidenceDeltaExpectation struct {
+	Lane           string `json:"lane,omitempty"`
+	MinNewPaths    *int   `json:"min_new_paths,omitempty"`
+	MarginalValue  string `json:"marginal_value,omitempty"`
+	MinToolResults *int   `json:"min_tool_results,omitempty"`
+	MaxFailedTools *int   `json:"max_failed_tools,omitempty"`
+}
+
+type ClaimConfidenceExpectation struct {
+	Lane             string `json:"lane,omitempty"`
+	Confidence       string `json:"confidence,omitempty"`
+	MinEvidencePaths *int   `json:"min_evidence_paths,omitempty"`
+	MaxUnresolved    *int   `json:"max_unresolved,omitempty"`
+	CalibrationBasis string `json:"calibration_basis,omitempty"`
+}
+
+type RouteAmbiguityExpectation struct {
+	SelectedLane     string   `json:"selected_lane,omitempty"`
+	Ambiguous        *bool    `json:"ambiguous,omitempty"`
+	RequireSignals   []string `json:"require_signals,omitempty"`
+	TieBreakContains []string `json:"tie_break_contains,omitempty"`
+}
+
+type VerificationFeedbackExpectation struct {
+	Confidence             string   `json:"confidence,omitempty"`
+	RequireFailedCommands  []string `json:"require_failed_commands,omitempty"`
+	RecommendationContains []string `json:"recommendation_contains,omitempty"`
+}
+
+type ToolFailureConfidenceExpectation struct {
+	Lane             string `json:"lane,omitempty"`
+	Tool             string `json:"tool,omitempty"`
+	ConfidenceImpact string `json:"confidence_impact,omitempty"`
+}
+
+type Scenario struct {
+	Name                         string                            `json:"name"`
+	PromptContains               []string                          `json:"prompt_contains,omitempty"`
+	FinalAssistantContains       []string                          `json:"final_assistant_contains,omitempty"`
+	ForbidFinalAssistantContains []string                          `json:"forbid_final_assistant_contains,omitempty"`
+	RequireTools                 []string                          `json:"require_tools,omitempty"`
+	ForbidTools                  []string                          `json:"forbid_tools,omitempty"`
+	RequirePhases                []PhaseExpectation                `json:"require_phases,omitempty"`
+	RequireRoutePlan             *RoutePlanExpectation             `json:"require_route_plan,omitempty"`
+	RequireReplan                *ReplanExpectation                `json:"require_replan,omitempty"`
+	MaxBroadToolRequests         *int                              `json:"max_broad_tool_requests,omitempty"`
+	MaxRepeatedDeadEnds          *int                              `json:"max_repeated_dead_ends,omitempty"`
+	MaxSummaryRejections         *int                              `json:"max_summary_rejections,omitempty"`
+	RequireVerification          string                            `json:"require_verification,omitempty"`
+	RequireVerificationPlan      *VerificationPlanExpectation      `json:"require_verification_plan,omitempty"`
+	RequireReadiness             *ReadinessExpectation             `json:"require_readiness,omitempty"`
+	RequireDeepening             *DeepeningExpectation             `json:"require_deepening,omitempty"`
+	RequireFinalAnswerCritic     *FinalAnswerCriticExpectation     `json:"require_final_answer_critic,omitempty"`
+	RequireEffortPolicy          *EffortPolicyExpectation          `json:"require_effort_policy,omitempty"`
+	RequireLongHorizonState      *LongHorizonStateExpectation      `json:"require_long_horizon_state,omitempty"`
+	RequireBudgetLedger          *BudgetLedgerExpectation          `json:"require_budget_ledger,omitempty"`
+	RequireEvidenceDelta         *EvidenceDeltaExpectation         `json:"require_evidence_delta,omitempty"`
+	RequireClaimConfidence       *ClaimConfidenceExpectation       `json:"require_claim_confidence,omitempty"`
+	RequireRouteAmbiguity        *RouteAmbiguityExpectation        `json:"require_route_ambiguity,omitempty"`
+	RequireVerificationFeedback  *VerificationFeedbackExpectation  `json:"require_verification_feedback,omitempty"`
+	RequireToolFailureConfidence *ToolFailureConfidenceExpectation `json:"require_tool_failure_confidence,omitempty"`
+	RequireChangedFiles          []string                          `json:"require_changed_files,omitempty"`
+	RequireEvidencePaths         []string                          `json:"require_evidence_paths,omitempty"`
+	RequireLanguageCapabilities  []LanguageCapabilityExpectation   `json:"require_language_capabilities,omitempty"`
+	RequireApproval              *bool                             `json:"require_approval,omitempty"`
+}
+
+type PhaseSnapshot struct {
+	Lane   string `json:"lane"`
+	Phase  string `json:"phase"`
+	State  string `json:"state"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type RoutePlanSnapshot struct {
+	InitialLane  string `json:"initial_lane,omitempty"`
+	FollowupLane string `json:"followup_lane,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Contract     string `json:"contract,omitempty"`
+	Thoroughness string `json:"thoroughness,omitempty"`
+	Raw          string `json:"raw,omitempty"`
+}
+
+type ReplanSnapshot struct {
+	FromLane string `json:"from_lane,omitempty"`
+	ToLane   string `json:"to_lane,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	Raw      string `json:"raw,omitempty"`
+}
+
+type LanguageCapabilitySnapshot struct {
+	Language string   `json:"language,omitempty"`
+	Tools    []string `json:"tools,omitempty"`
+	Signals  []string `json:"signals,omitempty"`
+}
+
+type VerificationPlanSnapshot struct {
+	Commands         []string `json:"commands,omitempty"`
+	Reasons          []string `json:"reasons,omitempty"`
+	UsesFullSuite    bool     `json:"uses_full_suite,omitempty"`
+	Coverage         string   `json:"coverage,omitempty"`
+	Confidence       string   `json:"confidence,omitempty"`
+	RiskLevel        string   `json:"risk_level,omitempty"`
+	ExpectedFailures []string `json:"expected_failures,omitempty"`
+	RepairPolicy     string   `json:"repair_policy,omitempty"`
+	Raw              string   `json:"raw,omitempty"`
+}
+
+type ReadinessSnapshot struct {
+	Lane          string   `json:"lane,omitempty"`
+	Ready         bool     `json:"ready"`
+	Confidence    string   `json:"confidence,omitempty"`
+	Action        string   `json:"action,omitempty"`
+	Reason        string   `json:"reason,omitempty"`
+	EvidencePaths []string `json:"evidence_paths,omitempty"`
+	Raw           string   `json:"raw,omitempty"`
+}
+
+type DeepeningSnapshot struct {
+	Lane          string   `json:"lane,omitempty"`
+	Attempt       int      `json:"attempt,omitempty"`
+	Attempted     bool     `json:"attempted"`
+	Exhausted     bool     `json:"exhausted,omitempty"`
+	Action        string   `json:"action,omitempty"`
+	Reason        string   `json:"reason,omitempty"`
+	EvidencePaths []string `json:"evidence_paths,omitempty"`
+	Raw           string   `json:"raw,omitempty"`
+}
+
+type FinalAnswerCriticSnapshot struct {
+	Contract string   `json:"contract,omitempty"`
+	Passed   bool     `json:"passed"`
+	Action   string   `json:"action,omitempty"`
+	Repaired bool     `json:"repaired,omitempty"`
+	Findings []string `json:"findings,omitempty"`
+	Raw      string   `json:"raw,omitempty"`
+}
+
+type EffortPolicySnapshot struct {
+	Lane                 string `json:"lane,omitempty"`
+	Level                string `json:"level,omitempty"`
+	MaxToolSteps         int    `json:"max_tool_steps,omitempty"`
+	AnalysisToolBudget   int    `json:"analysis_tool_budget,omitempty"`
+	ImplementToolBudget  int    `json:"implement_tool_budget,omitempty"`
+	DeepeningPasses      int    `json:"deepening_passes,omitempty"`
+	TimeBudgetSeconds    int    `json:"time_budget_seconds,omitempty"`
+	MaxOutputTokens      int    `json:"max_output_tokens,omitempty"`
+	ReasoningBudget      int    `json:"reasoning_budget,omitempty"`
+	ConfidenceFloor      string `json:"confidence_floor,omitempty"`
+	BudgetExhaustionMode string `json:"budget_exhaustion_mode,omitempty"`
+	Raw                  string `json:"raw,omitempty"`
+}
+
+type LongHorizonStateSnapshot struct {
+	Action              string   `json:"action,omitempty"`
+	MemoryKind          string   `json:"memory_kind,omitempty"`
+	SourceLane          string   `json:"source_lane,omitempty"`
+	Stage               int      `json:"stage,omitempty"`
+	FocusPath           string   `json:"focus_path,omitempty"`
+	Changed             []string `json:"changed,omitempty"`
+	Remaining           []string `json:"remaining,omitempty"`
+	OpenGaps            []string `json:"open_gaps,omitempty"`
+	AttemptedSearches   []string `json:"attempted_searches,omitempty"`
+	ChosenTargets       []string `json:"chosen_targets,omitempty"`
+	VerificationHistory []string `json:"verification_history,omitempty"`
+	NextActions         []string `json:"next_actions,omitempty"`
+	NextStep            string   `json:"next_step,omitempty"`
+	Verification        string   `json:"verification,omitempty"`
+	Resumable           bool     `json:"resumable"`
+	Reason              string   `json:"reason,omitempty"`
+	Raw                 string   `json:"raw,omitempty"`
+}
+
+type BudgetLedgerSnapshot struct {
+	Lane                   string   `json:"lane,omitempty"`
+	Level                  string   `json:"level,omitempty"`
+	UsedModelCalls         int      `json:"used_model_calls,omitempty"`
+	UsedDeepeningPasses    int      `json:"used_deepening_passes,omitempty"`
+	MaxDeepeningPasses     int      `json:"max_deepening_passes,omitempty"`
+	UsedToolResults        int      `json:"used_tool_results,omitempty"`
+	NewEvidencePaths       int      `json:"new_evidence_paths,omitempty"`
+	TotalEvidencePaths     int      `json:"total_evidence_paths,omitempty"`
+	StopReason             string   `json:"stop_reason,omitempty"`
+	BudgetExhausted        bool     `json:"budget_exhausted,omitempty"`
+	NextAllowedActions     []string `json:"next_allowed_actions,omitempty"`
+	MarginalEvidencePolicy string   `json:"marginal_evidence_policy,omitempty"`
+	UserVisibleUncertainty string   `json:"user_visible_uncertainty,omitempty"`
+	Raw                    string   `json:"raw,omitempty"`
+}
+
+type EvidenceDeltaSnapshot struct {
+	Lane             string   `json:"lane,omitempty"`
+	Attempt          int      `json:"attempt,omitempty"`
+	NewEvidencePaths []string `json:"new_evidence_paths,omitempty"`
+	TotalPaths       int      `json:"total_paths,omitempty"`
+	ToolResults      int      `json:"tool_results,omitempty"`
+	SuccessfulTools  int      `json:"successful_tools,omitempty"`
+	FailedTools      int      `json:"failed_tools,omitempty"`
+	MarginalValue    string   `json:"marginal_value,omitempty"`
+	Raw              string   `json:"raw,omitempty"`
+}
+
+type ClaimConfidenceSnapshot struct {
+	Lane                  string   `json:"lane,omitempty"`
+	Confidence            string   `json:"confidence,omitempty"`
+	SupportedClaims       int      `json:"supported_claims,omitempty"`
+	EvidencePaths         []string `json:"evidence_paths,omitempty"`
+	UnresolvedUncertainty []string `json:"unresolved_uncertainty,omitempty"`
+	Contradictions        []string `json:"contradictions,omitempty"`
+	CalibrationBasis      string   `json:"calibration_basis,omitempty"`
+	Raw                   string   `json:"raw,omitempty"`
+}
+
+type RouteAmbiguitySnapshot struct {
+	SelectedLane string   `json:"selected_lane,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	Signals      []string `json:"signals,omitempty"`
+	Ambiguous    bool     `json:"ambiguous"`
+	TieBreak     string   `json:"tie_break,omitempty"`
+	Raw          string   `json:"raw,omitempty"`
+}
+
+type VerificationFeedbackSnapshot struct {
+	RiskLevel             string   `json:"risk_level,omitempty"`
+	Coverage              string   `json:"coverage,omitempty"`
+	Confidence            string   `json:"confidence,omitempty"`
+	Commands              []string `json:"commands,omitempty"`
+	FailedCommands        []string `json:"failed_commands,omitempty"`
+	LearnedRecommendation string   `json:"learned_recommendation,omitempty"`
+	Raw                   string   `json:"raw,omitempty"`
+}
+
+type ToolFailureConfidenceSnapshot struct {
+	Lane             string `json:"lane,omitempty"`
+	Tool             string `json:"tool,omitempty"`
+	Action           string `json:"action,omitempty"`
+	ConfidenceImpact string `json:"confidence_impact,omitempty"`
+	Reason           string `json:"reason,omitempty"`
+	Raw              string `json:"raw,omitempty"`
+}
+
+type Metrics struct {
+	LastUser                  string                          `json:"last_user"`
+	FinalAssistant            string                          `json:"final_assistant"`
+	UserTurns                 int                             `json:"user_turns"`
+	AssistantTurns            int                             `json:"assistant_turns"`
+	DurationMillis            int64                           `json:"duration_millis,omitempty"`
+	ToolRequests              int                             `json:"tool_requests"`
+	BroadToolRequests         int                             `json:"broad_tool_requests"`
+	RepeatedDeadEndRejections int                             `json:"repeated_dead_end_rejections"`
+	RepeatedToolRejections    int                             `json:"repeated_tool_rejections"`
+	SummaryRejections         int                             `json:"summary_rejections"`
+	SummaryRejectionLanes     []string                        `json:"summary_rejection_lanes,omitempty"`
+	Tools                     map[string]int                  `json:"tools"`
+	Phases                    []PhaseSnapshot                 `json:"phases,omitempty"`
+	RoutePlans                []RoutePlanSnapshot             `json:"route_plans,omitempty"`
+	Replans                   []ReplanSnapshot                `json:"replans,omitempty"`
+	VerificationPlans         []VerificationPlanSnapshot      `json:"verification_plans,omitempty"`
+	ReadinessChecks           []ReadinessSnapshot             `json:"readiness_checks,omitempty"`
+	DeepeningAttempts         []DeepeningSnapshot             `json:"deepening_attempts,omitempty"`
+	FinalAnswerCritics        []FinalAnswerCriticSnapshot     `json:"final_answer_critics,omitempty"`
+	EffortPolicies            []EffortPolicySnapshot          `json:"effort_policies,omitempty"`
+	LongHorizonStates         []LongHorizonStateSnapshot      `json:"long_horizon_states,omitempty"`
+	BudgetLedgers             []BudgetLedgerSnapshot          `json:"budget_ledgers,omitempty"`
+	EvidenceDeltas            []EvidenceDeltaSnapshot         `json:"evidence_deltas,omitempty"`
+	ClaimConfidences          []ClaimConfidenceSnapshot       `json:"claim_confidences,omitempty"`
+	RouteAmbiguities          []RouteAmbiguitySnapshot        `json:"route_ambiguities,omitempty"`
+	VerificationFeedback      []VerificationFeedbackSnapshot  `json:"verification_feedback,omitempty"`
+	ToolFailureConfidence     []ToolFailureConfidenceSnapshot `json:"tool_failure_confidence,omitempty"`
+	VerificationChecks        int                             `json:"verification_checks"`
+	VerificationPassed        bool                            `json:"verification_passed"`
+	VerificationFailed        bool                            `json:"verification_failed"`
+	ApprovalRequired          bool                            `json:"approval_required"`
+	ChangedFiles              []string                        `json:"changed_files,omitempty"`
+	EvidencePaths             []string                        `json:"evidence_paths,omitempty"`
+	LanguageCapabilities      []LanguageCapabilitySnapshot    `json:"language_capabilities,omitempty"`
+	Errors                    []string                        `json:"errors,omitempty"`
+}
+
+type Report struct {
+	Scenario string   `json:"scenario"`
+	LogPath  string   `json:"log_path"`
+	Passed   bool     `json:"passed"`
+	Findings []string `json:"findings,omitempty"`
+	Metrics  Metrics  `json:"metrics"`
+}
+
+func LoadRecords(path string) ([]Record, error) {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("open log: %w", err)
+	}
+	defer file.Close()
+
+	records := make([]Record, 0, 64)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		payload := make(map[string]any)
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			return nil, fmt.Errorf("decode log record: %w", err)
+		}
+		recType, _ := payload["type"].(string)
+		records = append(records, Record{Type: recType, Data: payload})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan log: %w", err)
+	}
+	return records, nil
+}
+
+func LoadScenario(path string) (Scenario, error) {
+	var scenario Scenario
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return scenario, fmt.Errorf("read scenario: %w", err)
+	}
+	if err := json.Unmarshal(data, &scenario); err != nil {
+		return scenario, fmt.Errorf("decode scenario: %w", err)
+	}
+	return scenario, nil
+}
+
+func WriteScenario(path string, scenario Scenario) error {
+	data, err := json.MarshalIndent(scenario, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode scenario: %w", err)
+	}
+	if err := os.WriteFile(filepath.Clean(path), append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write scenario: %w", err)
+	}
+	return nil
+}
+
+func BuildSuggestedScenario(name string, records []Record) Scenario {
+	metrics := Analyze(records)
+	scenario := Scenario{
+		Name:           strings.TrimSpace(name),
+		PromptContains: nil,
+		RequireTools:   suggestedTools(records),
+		RequirePhases:  compactPhaseExpectations(metrics.Phases),
+	}
+	if strings.TrimSpace(metrics.LastUser) != "" {
+		scenario.PromptContains = []string{metrics.LastUser}
+	}
+	switch {
+	case metrics.VerificationPassed:
+		scenario.RequireVerification = "passed"
+	case metrics.VerificationFailed:
+		scenario.RequireVerification = "failed"
+	default:
+		scenario.RequireVerification = "none"
+	}
+	if len(metrics.ChangedFiles) > 0 {
+		scenario.RequireChangedFiles = append([]string(nil), metrics.ChangedFiles...)
+	}
+	if len(metrics.EvidencePaths) > 0 {
+		scenario.RequireEvidencePaths = append([]string(nil), metrics.EvidencePaths...)
+	}
+	if len(metrics.LanguageCapabilities) > 0 {
+		scenario.RequireLanguageCapabilities = compactLanguageCapabilityExpectations(metrics.LanguageCapabilities)
+	}
+	if len(metrics.VerificationPlans) > 0 {
+		latest := metrics.VerificationPlans[len(metrics.VerificationPlans)-1]
+		usesFullSuite := latest.UsesFullSuite
+		scenario.RequireVerificationPlan = &VerificationPlanExpectation{
+			Coverage:                latest.Coverage,
+			Confidence:              latest.Confidence,
+			RiskLevel:               latest.RiskLevel,
+			UsesFullSuite:           &usesFullSuite,
+			RequireCommands:         append([]string(nil), latest.Commands...),
+			RequireExpectedFailures: append([]string(nil), latest.ExpectedFailures...),
+		}
+	}
+	if len(metrics.ReadinessChecks) > 0 {
+		latest := metrics.ReadinessChecks[len(metrics.ReadinessChecks)-1]
+		ready := latest.Ready
+		minEvidencePaths := len(latest.EvidencePaths)
+		scenario.RequireReadiness = &ReadinessExpectation{
+			Lane:             latest.Lane,
+			Ready:            &ready,
+			Confidence:       latest.Confidence,
+			Action:           latest.Action,
+			MinEvidencePaths: &minEvidencePaths,
+		}
+	}
+	if len(metrics.DeepeningAttempts) > 0 {
+		latest := metrics.DeepeningAttempts[len(metrics.DeepeningAttempts)-1]
+		attempted := latest.Attempted
+		exhausted := latest.Exhausted
+		minEvidencePaths := len(latest.EvidencePaths)
+		scenario.RequireDeepening = &DeepeningExpectation{
+			Lane:             latest.Lane,
+			Attempted:        &attempted,
+			Exhausted:        &exhausted,
+			Action:           latest.Action,
+			MinEvidencePaths: &minEvidencePaths,
+		}
+	}
+	if len(metrics.FinalAnswerCritics) > 0 {
+		latest := metrics.FinalAnswerCritics[len(metrics.FinalAnswerCritics)-1]
+		passed := latest.Passed
+		repaired := latest.Repaired
+		scenario.RequireFinalAnswerCritic = &FinalAnswerCriticExpectation{
+			Contract: latest.Contract,
+			Passed:   &passed,
+			Action:   latest.Action,
+			Repaired: &repaired,
+		}
+	}
+	if len(metrics.EffortPolicies) > 0 {
+		latest := metrics.EffortPolicies[len(metrics.EffortPolicies)-1]
+		minAnalysis := latest.AnalysisToolBudget
+		minImplement := latest.ImplementToolBudget
+		minDeepening := latest.DeepeningPasses
+		minMaxOutput := latest.MaxOutputTokens
+		scenario.RequireEffortPolicy = &EffortPolicyExpectation{
+			Lane:                   latest.Lane,
+			Level:                  latest.Level,
+			MinAnalysisToolBudget:  &minAnalysis,
+			MinImplementToolBudget: &minImplement,
+			MinDeepeningPasses:     &minDeepening,
+			MinMaxOutputTokens:     &minMaxOutput,
+			ConfidenceFloor:        latest.ConfidenceFloor,
+			BudgetExhaustionMode:   latest.BudgetExhaustionMode,
+		}
+	}
+	if len(metrics.LongHorizonStates) > 0 {
+		latest := metrics.LongHorizonStates[len(metrics.LongHorizonStates)-1]
+		stage := latest.Stage
+		resumable := latest.Resumable
+		scenario.RequireLongHorizonState = &LongHorizonStateExpectation{
+			Action:                     latest.Action,
+			MemoryKind:                 latest.MemoryKind,
+			SourceLane:                 latest.SourceLane,
+			Stage:                      &stage,
+			FocusPath:                  latest.FocusPath,
+			RequireRemaining:           append([]string(nil), latest.Remaining...),
+			RequireOpenGaps:            append([]string(nil), latest.OpenGaps...),
+			RequireAttemptedSearches:   append([]string(nil), latest.AttemptedSearches...),
+			RequireChosenTargets:       append([]string(nil), latest.ChosenTargets...),
+			RequireVerificationHistory: append([]string(nil), latest.VerificationHistory...),
+			RequireNextActions:         append([]string(nil), latest.NextActions...),
+			Resumable:                  &resumable,
+		}
+		if strings.TrimSpace(latest.NextStep) != "" {
+			scenario.RequireLongHorizonState.NextContains = []string{latest.NextStep}
+		}
+	}
+	if len(metrics.BudgetLedgers) > 0 {
+		latest := metrics.BudgetLedgers[len(metrics.BudgetLedgers)-1]
+		minModelCalls := latest.UsedModelCalls
+		minEvidencePaths := latest.TotalEvidencePaths
+		budgetExhausted := latest.BudgetExhausted
+		scenario.RequireBudgetLedger = &BudgetLedgerExpectation{
+			Lane:              latest.Lane,
+			StopReason:        latest.StopReason,
+			MinModelCalls:     &minModelCalls,
+			MinEvidencePaths:  &minEvidencePaths,
+			BudgetExhausted:   &budgetExhausted,
+			UncertaintyPolicy: latest.UserVisibleUncertainty,
+		}
+	}
+	if len(metrics.EvidenceDeltas) > 0 {
+		latest := metrics.EvidenceDeltas[len(metrics.EvidenceDeltas)-1]
+		minNewPaths := len(latest.NewEvidencePaths)
+		minToolResults := latest.ToolResults
+		maxFailedTools := latest.FailedTools
+		scenario.RequireEvidenceDelta = &EvidenceDeltaExpectation{
+			Lane:           latest.Lane,
+			MinNewPaths:    &minNewPaths,
+			MarginalValue:  latest.MarginalValue,
+			MinToolResults: &minToolResults,
+			MaxFailedTools: &maxFailedTools,
+		}
+	}
+	if len(metrics.ClaimConfidences) > 0 {
+		latest := metrics.ClaimConfidences[len(metrics.ClaimConfidences)-1]
+		minEvidencePaths := len(latest.EvidencePaths)
+		maxUnresolved := len(latest.UnresolvedUncertainty)
+		scenario.RequireClaimConfidence = &ClaimConfidenceExpectation{
+			Lane:             latest.Lane,
+			Confidence:       latest.Confidence,
+			MinEvidencePaths: &minEvidencePaths,
+			MaxUnresolved:    &maxUnresolved,
+			CalibrationBasis: latest.CalibrationBasis,
+		}
+	}
+	if len(metrics.RouteAmbiguities) > 0 {
+		latest := metrics.RouteAmbiguities[len(metrics.RouteAmbiguities)-1]
+		ambiguous := latest.Ambiguous
+		scenario.RequireRouteAmbiguity = &RouteAmbiguityExpectation{
+			SelectedLane:     latest.SelectedLane,
+			Ambiguous:        &ambiguous,
+			RequireSignals:   append([]string(nil), latest.Signals...),
+			TieBreakContains: nonEmptySingleton(latest.TieBreak),
+		}
+	}
+	if len(metrics.VerificationFeedback) > 0 {
+		latest := metrics.VerificationFeedback[len(metrics.VerificationFeedback)-1]
+		scenario.RequireVerificationFeedback = &VerificationFeedbackExpectation{
+			Confidence:             latest.Confidence,
+			RequireFailedCommands:  append([]string(nil), latest.FailedCommands...),
+			RecommendationContains: nonEmptySingleton(latest.LearnedRecommendation),
+		}
+	}
+	if len(metrics.ToolFailureConfidence) > 0 {
+		latest := metrics.ToolFailureConfidence[len(metrics.ToolFailureConfidence)-1]
+		scenario.RequireToolFailureConfidence = &ToolFailureConfidenceExpectation{
+			Lane:             latest.Lane,
+			Tool:             latest.Tool,
+			ConfidenceImpact: latest.ConfidenceImpact,
+		}
+	}
+	if len(metrics.RoutePlans) > 0 {
+		latest := metrics.RoutePlans[len(metrics.RoutePlans)-1]
+		scenario.RequireRoutePlan = &RoutePlanExpectation{
+			InitialLane:  latest.InitialLane,
+			FollowupLane: latest.FollowupLane,
+			Reason:       latest.Reason,
+			Contract:     latest.Contract,
+			Thoroughness: latest.Thoroughness,
+		}
+	}
+	if len(metrics.Replans) > 0 {
+		latest := metrics.Replans[len(metrics.Replans)-1]
+		scenario.RequireReplan = &ReplanExpectation{
+			FromLane: latest.FromLane,
+			ToLane:   latest.ToLane,
+			Reason:   latest.Reason,
+		}
+	}
+	if metrics.ApprovalRequired {
+		yes := true
+		scenario.RequireApproval = &yes
+	}
+	if metrics.BroadToolRequests > 0 {
+		max := metrics.BroadToolRequests
+		scenario.MaxBroadToolRequests = &max
+	}
+	deadEnds := metrics.RepeatedDeadEndRejections + metrics.RepeatedToolRejections
+	if deadEnds > 0 {
+		scenario.MaxRepeatedDeadEnds = &deadEnds
+	}
+	if metrics.SummaryRejections > 0 {
+		max := metrics.SummaryRejections
+		scenario.MaxSummaryRejections = &max
+	}
+	return scenario
+}
+
+func nonEmptySingleton(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return []string{value}
+}
+
+func suggestedTools(records []Record) []string {
+	type requestInfo struct {
+		Tool  string
+		Broad bool
+	}
+	requests := make(map[int]requestInfo)
+	tools := make([]string, 0, 4)
+	seen := make(map[string]struct{})
+	for _, record := range records {
+		switch record.Type {
+		case "tool_request":
+			step := intField(record.Data, "step")
+			if step <= 0 {
+				continue
+			}
+			requests[step] = requestInfo{
+				Tool:  stringField(record.Data, "tool"),
+				Broad: boolField(record.Data, "broad"),
+			}
+		case "tool_result":
+			step := intField(record.Data, "step")
+			req, ok := requests[step]
+			if !ok || req.Broad || strings.TrimSpace(stringField(record.Data, "error")) != "" {
+				continue
+			}
+			tool := strings.TrimSpace(req.Tool)
+			if !isSuggestedScenarioTool(tool) {
+				continue
+			}
+			if _, ok := seen[tool]; ok {
+				continue
+			}
+			seen[tool] = struct{}{}
+			tools = append(tools, tool)
+		}
+	}
+	slices.Sort(tools)
+	return tools
+}
+
+func isSuggestedScenarioTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "read_file", "search_content", "edit_file", "write_file", "append_file", "mkdir", "shell",
+		"go_overview", "go_entrypoints", "go_find_symbol", "go_read_symbol", "go_definition", "go_references",
+		"go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_importers",
+		"go_diagnostics", "go_workspace_symbol", "go_related_files", "go_find_package", "go_find_type", "go_find_const":
+		return true
+	default:
+		return false
+	}
+}
+
+func Analyze(records []Record) Metrics {
+	metrics := Metrics{
+		Tools: make(map[string]int),
+	}
+	verifyAgentSeen := false
+	verifyHasFailure := false
+	var firstTS time.Time
+	var lastTS time.Time
+	for _, record := range records {
+		if ts := timestampField(record.Data, "ts"); !ts.IsZero() {
+			if firstTS.IsZero() || ts.Before(firstTS) {
+				firstTS = ts
+			}
+			if lastTS.IsZero() || ts.After(lastTS) {
+				lastTS = ts
+			}
+		}
+		switch record.Type {
+		case "message":
+			role := stringField(record.Data, "role")
+			content := stringField(record.Data, "content")
+			if strings.Contains(strings.ToLower(content), "summary rejected") {
+				metrics.SummaryRejections++
+				if lane := summaryRejectionLane(role); lane != "" {
+					metrics.SummaryRejectionLanes = append(metrics.SummaryRejectionLanes, lane)
+				}
+			}
+			switch role {
+			case "user":
+				metrics.LastUser = content
+				metrics.UserTurns++
+			case "assistant":
+				metrics.FinalAssistant = content
+				metrics.AssistantTurns++
+			case "route_plan":
+				if plan := parseRoutePlan(content); plan.Raw != "" {
+					metrics.RoutePlans = append(metrics.RoutePlans, plan)
+				}
+			case "replan_recommendation":
+				if replan := parseReplanRecommendation(content); replan.Raw != "" {
+					metrics.Replans = append(metrics.Replans, replan)
+				}
+			case "verification_plan":
+				if plan := parseVerificationPlan(content); plan.Raw != "" {
+					metrics.VerificationPlans = append(metrics.VerificationPlans, plan)
+				}
+			case "readiness_check":
+				if readiness := parseReadinessCheck(content); readiness.Raw != "" {
+					metrics.ReadinessChecks = append(metrics.ReadinessChecks, readiness)
+				}
+			case "deepening_attempt":
+				if deepening := parseDeepeningAttempt(content); deepening.Raw != "" {
+					metrics.DeepeningAttempts = append(metrics.DeepeningAttempts, deepening)
+				}
+			case "final_answer_critic":
+				if critic := parseFinalAnswerCritic(content); critic.Raw != "" {
+					metrics.FinalAnswerCritics = append(metrics.FinalAnswerCritics, critic)
+				}
+			case "effort_policy":
+				if policy := parseEffortPolicy(content); policy.Raw != "" {
+					metrics.EffortPolicies = append(metrics.EffortPolicies, policy)
+				}
+			case "long_horizon_state":
+				if state := parseLongHorizonState(content); state.Raw != "" {
+					metrics.LongHorizonStates = append(metrics.LongHorizonStates, state)
+				}
+			case "budget_ledger":
+				if ledger := parseBudgetLedger(content); ledger.Raw != "" {
+					metrics.BudgetLedgers = append(metrics.BudgetLedgers, ledger)
+				}
+			case "evidence_delta":
+				if delta := parseEvidenceDelta(content); delta.Raw != "" {
+					metrics.EvidenceDeltas = append(metrics.EvidenceDeltas, delta)
+				}
+			case "claim_confidence":
+				if confidence := parseClaimConfidence(content); confidence.Raw != "" {
+					metrics.ClaimConfidences = append(metrics.ClaimConfidences, confidence)
+				}
+			case "route_ambiguity":
+				if ambiguity := parseRouteAmbiguity(content); ambiguity.Raw != "" {
+					metrics.RouteAmbiguities = append(metrics.RouteAmbiguities, ambiguity)
+				}
+			case "verification_feedback":
+				if feedback := parseVerificationFeedback(content); feedback.Raw != "" {
+					metrics.VerificationFeedback = append(metrics.VerificationFeedback, feedback)
+				}
+			case "tool_failure_confidence":
+				if failure := parseToolFailureConfidence(content); failure.Raw != "" {
+					metrics.ToolFailureConfidence = append(metrics.ToolFailureConfidence, failure)
+				}
+			}
+			if caps := parseLanguageCapabilities(content); len(caps) > 0 {
+				metrics.LanguageCapabilities = mergeLanguageCapabilities(metrics.LanguageCapabilities, caps)
+			}
+		case "tool_request":
+			metrics.ToolRequests++
+			tool := stringField(record.Data, "tool")
+			if tool != "" {
+				metrics.Tools[tool]++
+			}
+			if boolField(record.Data, "broad") {
+				metrics.BroadToolRequests++
+			}
+		case "tool_result":
+			summary := strings.ToLower(stringField(record.Data, "summary"))
+			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromText(stringField(record.Data, "summary"))...)
+			if strings.Contains(summary, "repeated dead-end action rejected") {
+				metrics.RepeatedDeadEndRejections++
+			}
+			if strings.Contains(summary, "repeated tool request rejected") {
+				metrics.RepeatedToolRejections++
+			}
+			if errText := strings.TrimSpace(stringField(record.Data, "error")); errText != "" {
+				metrics.Errors = append(metrics.Errors, errText)
+			}
+			if stringField(record.Data, "agent") == "implement_verify" {
+				verifyAgentSeen = true
+				metrics.VerificationChecks++
+				if strings.TrimSpace(stringField(record.Data, "error")) != "" {
+					verifyHasFailure = true
+				}
+			}
+		case "phase":
+			metrics.Phases = append(metrics.Phases, PhaseSnapshot{
+				Lane:   stringField(record.Data, "lane"),
+				Phase:  stringField(record.Data, "phase"),
+				State:  stringField(record.Data, "state"),
+				Detail: stringField(record.Data, "detail"),
+			})
+		case "error":
+			if message := strings.TrimSpace(stringField(record.Data, "message")); message != "" {
+				metrics.Errors = append(metrics.Errors, message)
+			}
+		}
+
+		if strings.Contains(strings.ToLower(stringField(record.Data, "summary")), "write approval required") ||
+			strings.Contains(strings.ToLower(stringField(record.Data, "error")), "write approval required") {
+			metrics.ApprovalRequired = true
+		}
+	}
+	if hasPhaseState(metrics.Phases, "implement", "verify", "done") {
+		metrics.VerificationPassed = true
+	}
+	if hasPhaseState(metrics.Phases, "implement", "verify", "failed") {
+		metrics.VerificationFailed = true
+	}
+	if !metrics.VerificationPassed && !metrics.VerificationFailed && verifyAgentSeen {
+		metrics.VerificationFailed = verifyHasFailure
+		metrics.VerificationPassed = !verifyHasFailure && metrics.VerificationChecks > 0
+	}
+	metrics.ChangedFiles = extractChangedFiles(metrics.FinalAssistant)
+	if !firstTS.IsZero() && !lastTS.IsZero() && !lastTS.Before(firstTS) {
+		metrics.DurationMillis = lastTS.Sub(firstTS).Milliseconds()
+	}
+	metrics.Errors = uniqueNonEmptyStrings(metrics.Errors)
+	metrics.EvidencePaths = uniqueNonEmptyStrings(metrics.EvidencePaths)
+	metrics.SummaryRejectionLanes = uniqueNonEmptyStrings(metrics.SummaryRejectionLanes)
+	metrics.LanguageCapabilities = mergeLanguageCapabilities(nil, metrics.LanguageCapabilities)
+	return metrics
+}
+
+func Evaluate(logPath string, records []Record, scenario Scenario) Report {
+	metrics := Analyze(records)
+	report := Report{
+		Scenario: scenario.Name,
+		LogPath:  logPath,
+		Passed:   true,
+		Metrics:  metrics,
+	}
+	addFinding := func(format string, args ...any) {
+		report.Passed = false
+		report.Findings = append(report.Findings, fmt.Sprintf(format, args...))
+	}
+
+	lastUserLower := strings.ToLower(metrics.LastUser)
+	for _, required := range scenario.PromptContains {
+		if !strings.Contains(lastUserLower, strings.ToLower(strings.TrimSpace(required))) {
+			addFinding("last user prompt does not contain %q", required)
+		}
+	}
+	finalAssistantLower := strings.ToLower(metrics.FinalAssistant)
+	for _, required := range scenario.FinalAssistantContains {
+		if !strings.Contains(finalAssistantLower, strings.ToLower(strings.TrimSpace(required))) {
+			addFinding("final assistant response does not contain %q", required)
+		}
+	}
+	for _, forbidden := range scenario.ForbidFinalAssistantContains {
+		if strings.Contains(finalAssistantLower, strings.ToLower(strings.TrimSpace(forbidden))) {
+			addFinding("final assistant response unexpectedly contains %q", forbidden)
+		}
+	}
+	for _, tool := range scenario.RequireTools {
+		if metrics.Tools[strings.TrimSpace(tool)] == 0 {
+			addFinding("required tool %q was not used", tool)
+		}
+	}
+	for _, tool := range scenario.ForbidTools {
+		if metrics.Tools[strings.TrimSpace(tool)] > 0 {
+			addFinding("forbidden tool %q was used", tool)
+		}
+	}
+	for _, phase := range scenario.RequirePhases {
+		if !containsPhase(metrics.Phases, phase) {
+			addFinding("required phase was not observed: lane=%q phase=%q state=%q", phase.Lane, phase.Phase, phase.State)
+		}
+	}
+	if scenario.RequireRoutePlan != nil {
+		if len(metrics.RoutePlans) == 0 {
+			addFinding("required route plan was not observed")
+		} else if !routePlanMatches(metrics.RoutePlans[len(metrics.RoutePlans)-1], *scenario.RequireRoutePlan) {
+			latest := metrics.RoutePlans[len(metrics.RoutePlans)-1]
+			addFinding("route plan mismatch: got initial=%q followup=%q reason=%q contract=%q thoroughness=%q",
+				latest.InitialLane,
+				latest.FollowupLane,
+				latest.Reason,
+				latest.Contract,
+				latest.Thoroughness,
+			)
+		}
+	}
+	if scenario.RequireReplan != nil {
+		if len(metrics.Replans) == 0 {
+			addFinding("required replan recommendation was not observed")
+		} else if !replanMatches(metrics.Replans[len(metrics.Replans)-1], *scenario.RequireReplan) {
+			latest := metrics.Replans[len(metrics.Replans)-1]
+			addFinding("replan recommendation mismatch: got from=%q to=%q reason=%q", latest.FromLane, latest.ToLane, latest.Reason)
+		}
+	}
+	if scenario.MaxBroadToolRequests != nil && metrics.BroadToolRequests > *scenario.MaxBroadToolRequests {
+		addFinding("broad tool requests exceeded limit: got %d want <= %d", metrics.BroadToolRequests, *scenario.MaxBroadToolRequests)
+	}
+	totalDeadEnds := metrics.RepeatedDeadEndRejections + metrics.RepeatedToolRejections
+	if scenario.MaxRepeatedDeadEnds != nil && totalDeadEnds > *scenario.MaxRepeatedDeadEnds {
+		addFinding("repeated dead-end requests exceeded limit: got %d want <= %d", totalDeadEnds, *scenario.MaxRepeatedDeadEnds)
+	}
+	if scenario.MaxSummaryRejections != nil && metrics.SummaryRejections > *scenario.MaxSummaryRejections {
+		addFinding("summary rejections exceeded limit: got %d want <= %d", metrics.SummaryRejections, *scenario.MaxSummaryRejections)
+	}
+	switch strings.ToLower(strings.TrimSpace(scenario.RequireVerification)) {
+	case "", "any":
+	case "passed":
+		if !metrics.VerificationPassed {
+			addFinding("verification did not pass")
+		}
+	case "failed":
+		if !metrics.VerificationFailed {
+			addFinding("verification did not fail")
+		}
+	case "none":
+		if metrics.VerificationPassed || metrics.VerificationFailed || metrics.VerificationChecks > 0 {
+			addFinding("verification unexpectedly ran")
+		}
+	default:
+		addFinding("unsupported require_verification value %q", scenario.RequireVerification)
+	}
+	if scenario.RequireVerificationPlan != nil {
+		if len(metrics.VerificationPlans) == 0 {
+			addFinding("required verification plan was not observed")
+		} else if !verificationPlanMatches(metrics.VerificationPlans[len(metrics.VerificationPlans)-1], *scenario.RequireVerificationPlan) {
+			latest := metrics.VerificationPlans[len(metrics.VerificationPlans)-1]
+			addFinding("verification plan mismatch: got coverage=%q confidence=%q risk=%q full_suite=%t commands=%v expected_failures=%v",
+				latest.Coverage,
+				latest.Confidence,
+				latest.RiskLevel,
+				latest.UsesFullSuite,
+				latest.Commands,
+				latest.ExpectedFailures,
+			)
+		}
+	}
+	if scenario.RequireReadiness != nil {
+		if len(metrics.ReadinessChecks) == 0 {
+			addFinding("required readiness check was not observed")
+		} else if !readinessMatches(metrics.ReadinessChecks[len(metrics.ReadinessChecks)-1], *scenario.RequireReadiness) {
+			latest := metrics.ReadinessChecks[len(metrics.ReadinessChecks)-1]
+			addFinding("readiness check mismatch: got lane=%q ready=%t confidence=%q action=%q evidence_paths=%d reason=%q",
+				latest.Lane,
+				latest.Ready,
+				latest.Confidence,
+				latest.Action,
+				len(latest.EvidencePaths),
+				latest.Reason,
+			)
+		}
+	}
+	if scenario.RequireDeepening != nil {
+		if len(metrics.DeepeningAttempts) == 0 {
+			addFinding("required deepening attempt was not observed")
+		} else if !deepeningMatches(metrics.DeepeningAttempts[len(metrics.DeepeningAttempts)-1], *scenario.RequireDeepening) {
+			latest := metrics.DeepeningAttempts[len(metrics.DeepeningAttempts)-1]
+			addFinding("deepening attempt mismatch: got lane=%q attempted=%t exhausted=%t action=%q evidence_paths=%d reason=%q",
+				latest.Lane,
+				latest.Attempted,
+				latest.Exhausted,
+				latest.Action,
+				len(latest.EvidencePaths),
+				latest.Reason,
+			)
+		}
+	}
+	if scenario.RequireFinalAnswerCritic != nil {
+		if len(metrics.FinalAnswerCritics) == 0 {
+			addFinding("required final answer critic was not observed")
+		} else if !finalAnswerCriticMatches(metrics.FinalAnswerCritics[len(metrics.FinalAnswerCritics)-1], *scenario.RequireFinalAnswerCritic) {
+			latest := metrics.FinalAnswerCritics[len(metrics.FinalAnswerCritics)-1]
+			addFinding("final answer critic mismatch: got contract=%q passed=%t action=%q repaired=%t findings=%v",
+				latest.Contract,
+				latest.Passed,
+				latest.Action,
+				latest.Repaired,
+				latest.Findings,
+			)
+		}
+	}
+	if scenario.RequireEffortPolicy != nil {
+		if len(metrics.EffortPolicies) == 0 {
+			addFinding("required effort policy was not observed")
+		} else if !effortPolicyMatches(metrics.EffortPolicies[len(metrics.EffortPolicies)-1], *scenario.RequireEffortPolicy) {
+			latest := metrics.EffortPolicies[len(metrics.EffortPolicies)-1]
+			addFinding("effort policy mismatch: got lane=%q level=%q analysis_budget=%d implement_budget=%d deepening=%d confidence_floor=%q exhaustion=%q",
+				latest.Lane,
+				latest.Level,
+				latest.AnalysisToolBudget,
+				latest.ImplementToolBudget,
+				latest.DeepeningPasses,
+				latest.ConfidenceFloor,
+				latest.BudgetExhaustionMode,
+			)
+		}
+	}
+	if scenario.RequireLongHorizonState != nil {
+		if len(metrics.LongHorizonStates) == 0 {
+			addFinding("required long-horizon state was not observed")
+		} else if !longHorizonStateMatches(metrics.LongHorizonStates[len(metrics.LongHorizonStates)-1], *scenario.RequireLongHorizonState) {
+			latest := metrics.LongHorizonStates[len(metrics.LongHorizonStates)-1]
+			addFinding("long-horizon state mismatch: got action=%q kind=%q source_lane=%q stage=%d focus=%q remaining=%v targets=%v resumable=%t next=%q",
+				latest.Action,
+				latest.MemoryKind,
+				latest.SourceLane,
+				latest.Stage,
+				latest.FocusPath,
+				latest.Remaining,
+				latest.ChosenTargets,
+				latest.Resumable,
+				latest.NextStep,
+			)
+		}
+	}
+	if scenario.RequireBudgetLedger != nil {
+		if len(metrics.BudgetLedgers) == 0 {
+			addFinding("required budget ledger was not observed")
+		} else if !budgetLedgerMatches(metrics.BudgetLedgers[len(metrics.BudgetLedgers)-1], *scenario.RequireBudgetLedger) {
+			latest := metrics.BudgetLedgers[len(metrics.BudgetLedgers)-1]
+			addFinding("budget ledger mismatch: got lane=%q stop=%q model_calls=%d evidence=%d exhausted=%t",
+				latest.Lane, latest.StopReason, latest.UsedModelCalls, latest.TotalEvidencePaths, latest.BudgetExhausted)
+		}
+	}
+	if scenario.RequireEvidenceDelta != nil {
+		if len(metrics.EvidenceDeltas) == 0 {
+			addFinding("required evidence delta was not observed")
+		} else if !evidenceDeltaMatches(metrics.EvidenceDeltas[len(metrics.EvidenceDeltas)-1], *scenario.RequireEvidenceDelta) {
+			latest := metrics.EvidenceDeltas[len(metrics.EvidenceDeltas)-1]
+			addFinding("evidence delta mismatch: got lane=%q new_paths=%d marginal=%q tools=%d failed=%d",
+				latest.Lane, len(latest.NewEvidencePaths), latest.MarginalValue, latest.ToolResults, latest.FailedTools)
+		}
+	}
+	if scenario.RequireClaimConfidence != nil {
+		if len(metrics.ClaimConfidences) == 0 {
+			addFinding("required claim confidence was not observed")
+		} else if !claimConfidenceMatches(metrics.ClaimConfidences[len(metrics.ClaimConfidences)-1], *scenario.RequireClaimConfidence) {
+			latest := metrics.ClaimConfidences[len(metrics.ClaimConfidences)-1]
+			addFinding("claim confidence mismatch: got lane=%q confidence=%q evidence=%d unresolved=%d basis=%q",
+				latest.Lane, latest.Confidence, len(latest.EvidencePaths), len(latest.UnresolvedUncertainty), latest.CalibrationBasis)
+		}
+	}
+	if scenario.RequireRouteAmbiguity != nil {
+		if len(metrics.RouteAmbiguities) == 0 {
+			addFinding("required route ambiguity was not observed")
+		} else if !routeAmbiguityMatches(metrics.RouteAmbiguities[len(metrics.RouteAmbiguities)-1], *scenario.RequireRouteAmbiguity) {
+			latest := metrics.RouteAmbiguities[len(metrics.RouteAmbiguities)-1]
+			addFinding("route ambiguity mismatch: got selected=%q ambiguous=%t signals=%v tie_break=%q",
+				latest.SelectedLane, latest.Ambiguous, latest.Signals, latest.TieBreak)
+		}
+	}
+	if scenario.RequireVerificationFeedback != nil {
+		if len(metrics.VerificationFeedback) == 0 {
+			addFinding("required verification feedback was not observed")
+		} else if !verificationFeedbackMatches(metrics.VerificationFeedback[len(metrics.VerificationFeedback)-1], *scenario.RequireVerificationFeedback) {
+			latest := metrics.VerificationFeedback[len(metrics.VerificationFeedback)-1]
+			addFinding("verification feedback mismatch: got confidence=%q failed=%v recommendation=%q",
+				latest.Confidence, latest.FailedCommands, latest.LearnedRecommendation)
+		}
+	}
+	if scenario.RequireToolFailureConfidence != nil {
+		if len(metrics.ToolFailureConfidence) == 0 {
+			addFinding("required tool-failure confidence was not observed")
+		} else if !toolFailureConfidenceMatches(metrics.ToolFailureConfidence[len(metrics.ToolFailureConfidence)-1], *scenario.RequireToolFailureConfidence) {
+			latest := metrics.ToolFailureConfidence[len(metrics.ToolFailureConfidence)-1]
+			addFinding("tool-failure confidence mismatch: got lane=%q tool=%q impact=%q",
+				latest.Lane, latest.Tool, latest.ConfidenceImpact)
+		}
+	}
+	for _, required := range scenario.RequireChangedFiles {
+		if !containsStringFold(metrics.ChangedFiles, required) {
+			addFinding("changed files do not include %q", required)
+		}
+	}
+	for _, required := range scenario.RequireEvidencePaths {
+		if !containsStringFold(metrics.EvidencePaths, required) {
+			addFinding("evidence paths do not include %q", required)
+		}
+	}
+	for _, required := range scenario.RequireLanguageCapabilities {
+		if !languageCapabilityMatches(metrics.LanguageCapabilities, required) {
+			addFinding("language capabilities do not include language=%q tool=%q signal=%q", required.Language, required.Tool, required.Signal)
+		}
+	}
+	if scenario.RequireApproval != nil && metrics.ApprovalRequired != *scenario.RequireApproval {
+		addFinding("approval requirement mismatch: got %t want %t", metrics.ApprovalRequired, *scenario.RequireApproval)
+	}
+	return report
+}
+
+func containsPhase(phases []PhaseSnapshot, expected PhaseExpectation) bool {
+	for _, phase := range phases {
+		if expected.Lane != "" && !strings.EqualFold(phase.Lane, expected.Lane) {
+			continue
+		}
+		if expected.Phase != "" && !strings.EqualFold(phase.Phase, expected.Phase) {
+			continue
+		}
+		if expected.State != "" && !strings.EqualFold(phase.State, expected.State) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func parseRoutePlan(content string) RoutePlanSnapshot {
+	content = strings.TrimSpace(content)
+	plan := RoutePlanSnapshot{Raw: content}
+	if content == "" {
+		return RoutePlanSnapshot{}
+	}
+	for _, field := range strings.Fields(content) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch strings.TrimSpace(key) {
+		case "initial":
+			plan.InitialLane = value
+		case "followup":
+			plan.FollowupLane = value
+		case "reason":
+			plan.Reason = value
+		case "contract":
+			plan.Contract = value
+		case "thoroughness":
+			plan.Thoroughness = value
+		}
+	}
+	return plan
+}
+
+func routePlanMatches(actual RoutePlanSnapshot, expected RoutePlanExpectation) bool {
+	if expected.InitialLane != "" && !strings.EqualFold(actual.InitialLane, expected.InitialLane) {
+		return false
+	}
+	if expected.FollowupLane != "" && !strings.EqualFold(actual.FollowupLane, expected.FollowupLane) {
+		return false
+	}
+	if expected.Reason != "" && !strings.EqualFold(actual.Reason, expected.Reason) {
+		return false
+	}
+	if expected.Contract != "" && !strings.EqualFold(actual.Contract, expected.Contract) {
+		return false
+	}
+	if expected.Thoroughness != "" && !strings.EqualFold(actual.Thoroughness, expected.Thoroughness) {
+		return false
+	}
+	return true
+}
+
+func parseReplanRecommendation(content string) ReplanSnapshot {
+	content = strings.TrimSpace(content)
+	replan := ReplanSnapshot{Raw: content}
+	if content == "" {
+		return ReplanSnapshot{}
+	}
+	head, reason, hasReason := strings.Cut(content, ":")
+	if hasReason {
+		replan.Reason = strings.TrimSpace(reason)
+	} else {
+		head = content
+	}
+	from, to, ok := strings.Cut(strings.TrimSpace(head), "->")
+	if ok {
+		replan.FromLane = strings.TrimSpace(from)
+		replan.ToLane = strings.TrimSpace(to)
+	}
+	return replan
+}
+
+func replanMatches(actual ReplanSnapshot, expected ReplanExpectation) bool {
+	if expected.FromLane != "" && !strings.EqualFold(actual.FromLane, expected.FromLane) {
+		return false
+	}
+	if expected.ToLane != "" && !strings.EqualFold(actual.ToLane, expected.ToLane) {
+		return false
+	}
+	if expected.Reason != "" && !strings.Contains(strings.ToLower(actual.Reason), strings.ToLower(strings.TrimSpace(expected.Reason))) {
+		return false
+	}
+	return true
+}
+
+func parseVerificationPlan(content string) VerificationPlanSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return VerificationPlanSnapshot{}
+	}
+	var plan VerificationPlanSnapshot
+	if err := json.Unmarshal([]byte(content), &plan); err != nil {
+		return VerificationPlanSnapshot{}
+	}
+	plan.Raw = content
+	plan.Commands = uniqueNonEmptyStrings(plan.Commands)
+	plan.Reasons = uniqueNonEmptyStrings(plan.Reasons)
+	plan.ExpectedFailures = uniqueNonEmptyStrings(plan.ExpectedFailures)
+	plan.Coverage = strings.TrimSpace(plan.Coverage)
+	plan.Confidence = strings.TrimSpace(plan.Confidence)
+	plan.RiskLevel = strings.TrimSpace(plan.RiskLevel)
+	plan.RepairPolicy = strings.TrimSpace(plan.RepairPolicy)
+	return plan
+}
+
+func verificationPlanMatches(actual VerificationPlanSnapshot, expected VerificationPlanExpectation) bool {
+	if expected.Coverage != "" && !strings.EqualFold(actual.Coverage, expected.Coverage) {
+		return false
+	}
+	if expected.Confidence != "" && !strings.EqualFold(actual.Confidence, expected.Confidence) {
+		return false
+	}
+	if expected.RiskLevel != "" && !strings.EqualFold(actual.RiskLevel, expected.RiskLevel) {
+		return false
+	}
+	if expected.UsesFullSuite != nil && actual.UsesFullSuite != *expected.UsesFullSuite {
+		return false
+	}
+	for _, command := range expected.RequireCommands {
+		if !containsStringFold(actual.Commands, command) {
+			return false
+		}
+	}
+	for _, failure := range expected.RequireExpectedFailures {
+		if !containsStringFold(actual.ExpectedFailures, failure) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseReadinessCheck(content string) ReadinessSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ReadinessSnapshot{}
+	}
+	var readiness ReadinessSnapshot
+	if err := json.Unmarshal([]byte(content), &readiness); err != nil {
+		return ReadinessSnapshot{}
+	}
+	readiness.Raw = content
+	readiness.Lane = strings.TrimSpace(readiness.Lane)
+	readiness.Confidence = strings.TrimSpace(readiness.Confidence)
+	readiness.Action = strings.TrimSpace(readiness.Action)
+	readiness.Reason = strings.TrimSpace(readiness.Reason)
+	readiness.EvidencePaths = uniqueNonEmptyStrings(readiness.EvidencePaths)
+	return readiness
+}
+
+func readinessMatches(actual ReadinessSnapshot, expected ReadinessExpectation) bool {
+	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
+		return false
+	}
+	if expected.Ready != nil && actual.Ready != *expected.Ready {
+		return false
+	}
+	if expected.Confidence != "" && !strings.EqualFold(actual.Confidence, expected.Confidence) {
+		return false
+	}
+	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
+		return false
+	}
+	if expected.MinEvidencePaths != nil && len(actual.EvidencePaths) < *expected.MinEvidencePaths {
+		return false
+	}
+	reason := strings.ToLower(actual.Reason)
+	for _, required := range expected.ReasonContains {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required != "" && !strings.Contains(reason, required) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseDeepeningAttempt(content string) DeepeningSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return DeepeningSnapshot{}
+	}
+	var deepening DeepeningSnapshot
+	if err := json.Unmarshal([]byte(content), &deepening); err != nil {
+		return DeepeningSnapshot{}
+	}
+	deepening.Raw = content
+	deepening.Lane = strings.TrimSpace(deepening.Lane)
+	deepening.Action = strings.TrimSpace(deepening.Action)
+	deepening.Reason = strings.TrimSpace(deepening.Reason)
+	deepening.EvidencePaths = uniqueNonEmptyStrings(deepening.EvidencePaths)
+	return deepening
+}
+
+func deepeningMatches(actual DeepeningSnapshot, expected DeepeningExpectation) bool {
+	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
+		return false
+	}
+	if expected.Attempted != nil && actual.Attempted != *expected.Attempted {
+		return false
+	}
+	if expected.Exhausted != nil && actual.Exhausted != *expected.Exhausted {
+		return false
+	}
+	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
+		return false
+	}
+	if expected.MinEvidencePaths != nil && len(actual.EvidencePaths) < *expected.MinEvidencePaths {
+		return false
+	}
+	reason := strings.ToLower(actual.Reason)
+	for _, required := range expected.ReasonContains {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required != "" && !strings.Contains(reason, required) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseFinalAnswerCritic(content string) FinalAnswerCriticSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return FinalAnswerCriticSnapshot{}
+	}
+	var critic FinalAnswerCriticSnapshot
+	if err := json.Unmarshal([]byte(content), &critic); err != nil {
+		return FinalAnswerCriticSnapshot{}
+	}
+	critic.Raw = content
+	critic.Contract = strings.TrimSpace(critic.Contract)
+	critic.Action = strings.TrimSpace(critic.Action)
+	critic.Findings = uniqueNonEmptyStrings(critic.Findings)
+	return critic
+}
+
+func finalAnswerCriticMatches(actual FinalAnswerCriticSnapshot, expected FinalAnswerCriticExpectation) bool {
+	if expected.Contract != "" && !strings.EqualFold(actual.Contract, expected.Contract) {
+		return false
+	}
+	if expected.Passed != nil && actual.Passed != *expected.Passed {
+		return false
+	}
+	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
+		return false
+	}
+	if expected.Repaired != nil && actual.Repaired != *expected.Repaired {
+		return false
+	}
+	findings := strings.ToLower(strings.Join(actual.Findings, "\n"))
+	for _, required := range expected.RequireFindings {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required != "" && !strings.Contains(findings, required) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseEffortPolicy(content string) EffortPolicySnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return EffortPolicySnapshot{}
+	}
+	var policy EffortPolicySnapshot
+	if err := json.Unmarshal([]byte(content), &policy); err != nil {
+		return EffortPolicySnapshot{}
+	}
+	policy.Raw = content
+	policy.Lane = strings.TrimSpace(policy.Lane)
+	policy.Level = strings.TrimSpace(policy.Level)
+	policy.ConfidenceFloor = strings.TrimSpace(policy.ConfidenceFloor)
+	policy.BudgetExhaustionMode = strings.TrimSpace(policy.BudgetExhaustionMode)
+	return policy
+}
+
+func effortPolicyMatches(actual EffortPolicySnapshot, expected EffortPolicyExpectation) bool {
+	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
+		return false
+	}
+	if expected.Level != "" && !strings.EqualFold(actual.Level, expected.Level) {
+		return false
+	}
+	if expected.MinAnalysisToolBudget != nil && actual.AnalysisToolBudget < *expected.MinAnalysisToolBudget {
+		return false
+	}
+	if expected.MinImplementToolBudget != nil && actual.ImplementToolBudget < *expected.MinImplementToolBudget {
+		return false
+	}
+	if expected.MinDeepeningPasses != nil && actual.DeepeningPasses < *expected.MinDeepeningPasses {
+		return false
+	}
+	if expected.MinMaxOutputTokens != nil && actual.MaxOutputTokens < *expected.MinMaxOutputTokens {
+		return false
+	}
+	if expected.ConfidenceFloor != "" && !strings.EqualFold(actual.ConfidenceFloor, expected.ConfidenceFloor) {
+		return false
+	}
+	if expected.BudgetExhaustionMode != "" && !strings.EqualFold(actual.BudgetExhaustionMode, expected.BudgetExhaustionMode) {
+		return false
+	}
+	return true
+}
+
+func parseLongHorizonState(content string) LongHorizonStateSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return LongHorizonStateSnapshot{}
+	}
+	var state LongHorizonStateSnapshot
+	if err := json.Unmarshal([]byte(content), &state); err != nil {
+		return LongHorizonStateSnapshot{}
+	}
+	state.Raw = content
+	state.Action = strings.TrimSpace(state.Action)
+	state.MemoryKind = strings.TrimSpace(state.MemoryKind)
+	state.SourceLane = strings.TrimSpace(state.SourceLane)
+	state.FocusPath = strings.TrimSpace(state.FocusPath)
+	state.Changed = uniqueNonEmptyStrings(state.Changed)
+	state.Remaining = uniqueNonEmptyStrings(state.Remaining)
+	state.OpenGaps = uniqueNonEmptyStrings(state.OpenGaps)
+	state.AttemptedSearches = uniqueNonEmptyStrings(state.AttemptedSearches)
+	state.ChosenTargets = uniqueNonEmptyStrings(state.ChosenTargets)
+	state.VerificationHistory = uniqueNonEmptyStrings(state.VerificationHistory)
+	state.NextActions = uniqueNonEmptyStrings(state.NextActions)
+	state.NextStep = strings.TrimSpace(state.NextStep)
+	state.Verification = strings.TrimSpace(state.Verification)
+	state.Reason = strings.TrimSpace(state.Reason)
+	return state
+}
+
+func longHorizonStateMatches(actual LongHorizonStateSnapshot, expected LongHorizonStateExpectation) bool {
+	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
+		return false
+	}
+	if expected.MemoryKind != "" && !strings.EqualFold(actual.MemoryKind, expected.MemoryKind) {
+		return false
+	}
+	if expected.SourceLane != "" && !strings.EqualFold(actual.SourceLane, expected.SourceLane) {
+		return false
+	}
+	if expected.Stage != nil && actual.Stage != *expected.Stage {
+		return false
+	}
+	if expected.FocusPath != "" && !strings.EqualFold(actual.FocusPath, expected.FocusPath) {
+		return false
+	}
+	for _, required := range expected.RequireRemaining {
+		if !containsStringFold(actual.Remaining, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireOpenGaps {
+		if !containsStringFold(actual.OpenGaps, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireAttemptedSearches {
+		if !containsStringFold(actual.AttemptedSearches, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireChosenTargets {
+		if !containsStringFold(actual.ChosenTargets, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireVerificationHistory {
+		if !containsStringFold(actual.VerificationHistory, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireNextActions {
+		if !containsStringFold(actual.NextActions, required) {
+			return false
+		}
+	}
+	next := strings.ToLower(actual.NextStep)
+	if next == "" {
+		next = strings.ToLower(strings.Join(actual.NextActions, "\n"))
+	}
+	for _, required := range expected.NextContains {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required != "" && !strings.Contains(next, required) {
+			return false
+		}
+	}
+	if expected.Resumable != nil && actual.Resumable != *expected.Resumable {
+		return false
+	}
+	return true
+}
+
+func parseBudgetLedger(content string) BudgetLedgerSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return BudgetLedgerSnapshot{}
+	}
+	var ledger BudgetLedgerSnapshot
+	if err := json.Unmarshal([]byte(content), &ledger); err != nil {
+		return BudgetLedgerSnapshot{}
+	}
+	ledger.Raw = content
+	ledger.Lane = strings.TrimSpace(ledger.Lane)
+	ledger.Level = strings.TrimSpace(ledger.Level)
+	ledger.StopReason = strings.TrimSpace(ledger.StopReason)
+	ledger.NextAllowedActions = uniqueNonEmptyStrings(ledger.NextAllowedActions)
+	ledger.MarginalEvidencePolicy = strings.TrimSpace(ledger.MarginalEvidencePolicy)
+	ledger.UserVisibleUncertainty = strings.TrimSpace(ledger.UserVisibleUncertainty)
+	return ledger
+}
+
+func budgetLedgerMatches(actual BudgetLedgerSnapshot, expected BudgetLedgerExpectation) bool {
+	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
+		return false
+	}
+	if expected.StopReason != "" && !strings.Contains(strings.ToLower(actual.StopReason), strings.ToLower(strings.TrimSpace(expected.StopReason))) {
+		return false
+	}
+	if expected.MinModelCalls != nil && actual.UsedModelCalls < *expected.MinModelCalls {
+		return false
+	}
+	if expected.MinEvidencePaths != nil && actual.TotalEvidencePaths < *expected.MinEvidencePaths {
+		return false
+	}
+	if expected.BudgetExhausted != nil && actual.BudgetExhausted != *expected.BudgetExhausted {
+		return false
+	}
+	if expected.UncertaintyPolicy != "" && !strings.Contains(strings.ToLower(actual.UserVisibleUncertainty), strings.ToLower(strings.TrimSpace(expected.UncertaintyPolicy))) {
+		return false
+	}
+	return true
+}
+
+func parseEvidenceDelta(content string) EvidenceDeltaSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return EvidenceDeltaSnapshot{}
+	}
+	var delta EvidenceDeltaSnapshot
+	if err := json.Unmarshal([]byte(content), &delta); err != nil {
+		return EvidenceDeltaSnapshot{}
+	}
+	delta.Raw = content
+	delta.Lane = strings.TrimSpace(delta.Lane)
+	delta.NewEvidencePaths = uniqueNonEmptyStrings(delta.NewEvidencePaths)
+	delta.MarginalValue = strings.TrimSpace(delta.MarginalValue)
+	return delta
+}
+
+func evidenceDeltaMatches(actual EvidenceDeltaSnapshot, expected EvidenceDeltaExpectation) bool {
+	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
+		return false
+	}
+	if expected.MinNewPaths != nil && len(actual.NewEvidencePaths) < *expected.MinNewPaths {
+		return false
+	}
+	if expected.MarginalValue != "" && !strings.EqualFold(actual.MarginalValue, expected.MarginalValue) {
+		return false
+	}
+	if expected.MinToolResults != nil && actual.ToolResults < *expected.MinToolResults {
+		return false
+	}
+	if expected.MaxFailedTools != nil && actual.FailedTools > *expected.MaxFailedTools {
+		return false
+	}
+	return true
+}
+
+func parseClaimConfidence(content string) ClaimConfidenceSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ClaimConfidenceSnapshot{}
+	}
+	var confidence ClaimConfidenceSnapshot
+	if err := json.Unmarshal([]byte(content), &confidence); err != nil {
+		return ClaimConfidenceSnapshot{}
+	}
+	confidence.Raw = content
+	confidence.Lane = strings.TrimSpace(confidence.Lane)
+	confidence.Confidence = strings.TrimSpace(confidence.Confidence)
+	confidence.EvidencePaths = uniqueNonEmptyStrings(confidence.EvidencePaths)
+	confidence.UnresolvedUncertainty = uniqueNonEmptyStrings(confidence.UnresolvedUncertainty)
+	confidence.Contradictions = uniqueNonEmptyStrings(confidence.Contradictions)
+	confidence.CalibrationBasis = strings.TrimSpace(confidence.CalibrationBasis)
+	return confidence
+}
+
+func claimConfidenceMatches(actual ClaimConfidenceSnapshot, expected ClaimConfidenceExpectation) bool {
+	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
+		return false
+	}
+	if expected.Confidence != "" && !strings.EqualFold(actual.Confidence, expected.Confidence) {
+		return false
+	}
+	if expected.MinEvidencePaths != nil && len(actual.EvidencePaths) < *expected.MinEvidencePaths {
+		return false
+	}
+	if expected.MaxUnresolved != nil && len(actual.UnresolvedUncertainty) > *expected.MaxUnresolved {
+		return false
+	}
+	if expected.CalibrationBasis != "" && !strings.Contains(strings.ToLower(actual.CalibrationBasis), strings.ToLower(strings.TrimSpace(expected.CalibrationBasis))) {
+		return false
+	}
+	return true
+}
+
+func parseRouteAmbiguity(content string) RouteAmbiguitySnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return RouteAmbiguitySnapshot{}
+	}
+	var ambiguity RouteAmbiguitySnapshot
+	if err := json.Unmarshal([]byte(content), &ambiguity); err != nil {
+		return RouteAmbiguitySnapshot{}
+	}
+	ambiguity.Raw = content
+	ambiguity.SelectedLane = strings.TrimSpace(ambiguity.SelectedLane)
+	ambiguity.Reason = strings.TrimSpace(ambiguity.Reason)
+	ambiguity.Signals = uniqueNonEmptyStrings(ambiguity.Signals)
+	ambiguity.TieBreak = strings.TrimSpace(ambiguity.TieBreak)
+	return ambiguity
+}
+
+func routeAmbiguityMatches(actual RouteAmbiguitySnapshot, expected RouteAmbiguityExpectation) bool {
+	if expected.SelectedLane != "" && !strings.EqualFold(actual.SelectedLane, expected.SelectedLane) {
+		return false
+	}
+	if expected.Ambiguous != nil && actual.Ambiguous != *expected.Ambiguous {
+		return false
+	}
+	for _, signal := range expected.RequireSignals {
+		if !containsStringFold(actual.Signals, signal) {
+			return false
+		}
+	}
+	tieBreak := strings.ToLower(actual.TieBreak)
+	for _, required := range expected.TieBreakContains {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required != "" && !strings.Contains(tieBreak, required) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseVerificationFeedback(content string) VerificationFeedbackSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return VerificationFeedbackSnapshot{}
+	}
+	var feedback VerificationFeedbackSnapshot
+	if err := json.Unmarshal([]byte(content), &feedback); err != nil {
+		return VerificationFeedbackSnapshot{}
+	}
+	feedback.Raw = content
+	feedback.RiskLevel = strings.TrimSpace(feedback.RiskLevel)
+	feedback.Coverage = strings.TrimSpace(feedback.Coverage)
+	feedback.Confidence = strings.TrimSpace(feedback.Confidence)
+	feedback.Commands = uniqueNonEmptyStrings(feedback.Commands)
+	feedback.FailedCommands = uniqueNonEmptyStrings(feedback.FailedCommands)
+	feedback.LearnedRecommendation = strings.TrimSpace(feedback.LearnedRecommendation)
+	return feedback
+}
+
+func verificationFeedbackMatches(actual VerificationFeedbackSnapshot, expected VerificationFeedbackExpectation) bool {
+	if expected.Confidence != "" && !strings.EqualFold(actual.Confidence, expected.Confidence) {
+		return false
+	}
+	for _, command := range expected.RequireFailedCommands {
+		if !containsStringFold(actual.FailedCommands, command) {
+			return false
+		}
+	}
+	recommendation := strings.ToLower(actual.LearnedRecommendation)
+	for _, required := range expected.RecommendationContains {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required != "" && !strings.Contains(recommendation, required) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseToolFailureConfidence(content string) ToolFailureConfidenceSnapshot {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ToolFailureConfidenceSnapshot{}
+	}
+	var failure ToolFailureConfidenceSnapshot
+	if err := json.Unmarshal([]byte(content), &failure); err != nil {
+		return ToolFailureConfidenceSnapshot{}
+	}
+	failure.Raw = content
+	failure.Lane = strings.TrimSpace(failure.Lane)
+	failure.Tool = strings.TrimSpace(failure.Tool)
+	failure.Action = strings.TrimSpace(failure.Action)
+	failure.ConfidenceImpact = strings.TrimSpace(failure.ConfidenceImpact)
+	failure.Reason = strings.TrimSpace(failure.Reason)
+	return failure
+}
+
+func toolFailureConfidenceMatches(actual ToolFailureConfidenceSnapshot, expected ToolFailureConfidenceExpectation) bool {
+	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
+		return false
+	}
+	if expected.Tool != "" && !strings.EqualFold(actual.Tool, expected.Tool) {
+		return false
+	}
+	if expected.ConfidenceImpact != "" && !strings.EqualFold(actual.ConfidenceImpact, expected.ConfidenceImpact) {
+		return false
+	}
+	return true
+}
+
+func summaryRejectionLane(role string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	switch {
+	case strings.Contains(role, "explore"):
+		return "explore"
+	case strings.Contains(role, "review"):
+		return "review"
+	case strings.Contains(role, "architecture"):
+		return "architecture"
+	case strings.Contains(role, "locate"):
+		return "locate"
+	default:
+		return ""
+	}
+}
+
+func parseLanguageCapabilities(content string) []LanguageCapabilitySnapshot {
+	_, tail, ok := strings.Cut(content, "Language capability registry:")
+	if !ok {
+		return nil
+	}
+	caps := make([]LanguageCapabilitySnapshot, 0, 4)
+	for _, line := range strings.Split(tail, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if line == "" {
+			continue
+		}
+		left := line
+		signalsPart := ""
+		if before, after, ok := strings.Cut(line, "|"); ok {
+			left = strings.TrimSpace(before)
+			signalsPart = strings.TrimSpace(after)
+		}
+		language := strings.TrimSpace(left)
+		tools := []string(nil)
+		if before, after, ok := strings.Cut(left, " tools:"); ok {
+			language = strings.TrimSpace(before)
+			tools = splitCommaList(after)
+		}
+		signals := []string(nil)
+		if _, after, ok := strings.Cut(signalsPart, "signals:"); ok {
+			signals = splitCommaList(after)
+		}
+		if language == "" {
+			continue
+		}
+		caps = append(caps, LanguageCapabilitySnapshot{
+			Language: language,
+			Tools:    uniqueNonEmptyStrings(tools),
+			Signals:  uniqueNonEmptyStrings(signals),
+		})
+	}
+	return caps
+}
+
+func splitCommaList(text string) []string {
+	parts := strings.Split(text, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
+func mergeLanguageCapabilities(existing []LanguageCapabilitySnapshot, incoming []LanguageCapabilitySnapshot) []LanguageCapabilitySnapshot {
+	byLanguage := make(map[string]*LanguageCapabilitySnapshot)
+	order := make([]string, 0, len(existing)+len(incoming))
+	add := func(cap LanguageCapabilitySnapshot) {
+		language := strings.TrimSpace(cap.Language)
+		if language == "" {
+			return
+		}
+		key := strings.ToLower(language)
+		current, ok := byLanguage[key]
+		if !ok {
+			order = append(order, key)
+			copy := LanguageCapabilitySnapshot{Language: language}
+			byLanguage[key] = &copy
+			current = &copy
+		}
+		current.Tools = uniqueNonEmptyStrings(append(current.Tools, cap.Tools...))
+		current.Signals = uniqueNonEmptyStrings(append(current.Signals, cap.Signals...))
+	}
+	for _, cap := range existing {
+		add(cap)
+	}
+	for _, cap := range incoming {
+		add(cap)
+	}
+	slices.Sort(order)
+	out := make([]LanguageCapabilitySnapshot, 0, len(order))
+	for _, key := range order {
+		cap := byLanguage[key]
+		slices.Sort(cap.Tools)
+		slices.Sort(cap.Signals)
+		out = append(out, *cap)
+	}
+	return out
+}
+
+func compactLanguageCapabilityExpectations(caps []LanguageCapabilitySnapshot) []LanguageCapabilityExpectation {
+	caps = mergeLanguageCapabilities(nil, caps)
+	out := make([]LanguageCapabilityExpectation, 0, len(caps))
+	for _, cap := range caps {
+		expectation := LanguageCapabilityExpectation{Language: cap.Language}
+		if len(cap.Tools) > 0 {
+			expectation.Tool = cap.Tools[0]
+		}
+		if len(cap.Signals) > 0 {
+			expectation.Signal = cap.Signals[0]
+		}
+		out = append(out, expectation)
+	}
+	return out
+}
+
+func languageCapabilityMatches(caps []LanguageCapabilitySnapshot, expected LanguageCapabilityExpectation) bool {
+	language := strings.TrimSpace(expected.Language)
+	tool := strings.TrimSpace(expected.Tool)
+	signal := strings.TrimSpace(expected.Signal)
+	for _, cap := range caps {
+		if language != "" && !strings.EqualFold(cap.Language, language) {
+			continue
+		}
+		if tool != "" && !containsStringFold(cap.Tools, tool) {
+			continue
+		}
+		if signal != "" && !containsStringFold(cap.Signals, signal) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func hasPhaseState(phases []PhaseSnapshot, lane string, phase string, state string) bool {
+	return containsPhase(phases, PhaseExpectation{Lane: lane, Phase: phase, State: state})
+}
+
+func extractChangedFiles(text string) []string {
+	lines := strings.Split(text, "\n")
+	var changed []string
+	inSection := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if inSection {
+				break
+			}
+			continue
+		}
+		if strings.EqualFold(trimmed, "Changed files:") {
+			inSection = true
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "- ") {
+			break
+		}
+		changed = append(changed, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+	}
+	return uniqueNonEmptyStrings(changed)
+}
+
+func evidencePathsFromText(text string) []string {
+	paths := make([]string, 0, 4)
+	seen := make(map[string]struct{})
+	for _, field := range strings.Fields(text) {
+		candidate := strings.Trim(field, "`'\"()[]{}<>,:;!?")
+		candidate = strings.TrimSuffix(candidate, ".")
+		if idx := strings.LastIndex(candidate, ":"); idx > 0 {
+			suffix := candidate[idx+1:]
+			allDigits := suffix != ""
+			for _, r := range suffix {
+				if r < '0' || r > '9' {
+					allDigits = false
+					break
+				}
+			}
+			if allDigits {
+				candidate = candidate[:idx]
+			}
+		}
+		if !looksLikeEvidencePath(candidate) {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		paths = append(paths, candidate)
+	}
+	return paths
+}
+
+func looksLikeEvidencePath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || strings.Contains(path, "://") {
+		return false
+	}
+	if strings.HasSuffix(path, "/") {
+		return false
+	}
+	if strings.Contains(path, "/") {
+		return true
+	}
+	return strings.Contains(path, ".")
+}
+
+func compactPhaseExpectations(phases []PhaseSnapshot) []PhaseExpectation {
+	seen := make(map[string]struct{})
+	out := make([]PhaseExpectation, 0, len(phases))
+	for _, phase := range phases {
+		key := strings.Join([]string{phase.Lane, phase.Phase, phase.State}, "|")
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, PhaseExpectation{Lane: phase.Lane, Phase: phase.Phase, State: phase.State})
+	}
+	return out
+}
+
+func sortedToolKeys(tools map[string]int) []string {
+	keys := make([]string, 0, len(tools))
+	for tool := range tools {
+		keys = append(keys, tool)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func uniqueNonEmptyStrings(items []string) []string {
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func containsStringFold(items []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringField(data map[string]any, key string) string {
+	if data == nil {
+		return ""
+	}
+	if value, ok := data[key].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func boolField(data map[string]any, key string) bool {
+	if data == nil {
+		return false
+	}
+	value, ok := data[key]
+	if !ok {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	default:
+		return false
+	}
+}
+
+func timestampField(data map[string]any, key string) time.Time {
+	if data == nil {
+		return time.Time{}
+	}
+	value, ok := data[key].(string)
+	if !ok {
+		return time.Time{}
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	ts, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return ts
+}
+
+func intField(data map[string]any, key string) int {
+	if data == nil {
+		return 0
+	}
+	value, ok := data[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	default:
+		return 0
+	}
+}
