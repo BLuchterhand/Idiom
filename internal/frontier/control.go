@@ -153,6 +153,18 @@ func BuildControlRails(input ControlRailInput) ControlRailsSnapshot {
 	return rails
 }
 
+func BuildControlRailsForPrompt(prompt string, plan ControlRailPlan) ControlRailsSnapshot {
+	return BuildControlRails(ControlRailInput{
+		Prompt:  prompt,
+		Profile: BuildRouteProfile(prompt),
+		Plan:    plan,
+	})
+}
+
+func ControlRailTaskFamilyForPrompt(prompt string, plan ControlRailPlan) string {
+	return ControlRailTaskFamily(prompt, BuildRouteProfile(prompt), plan)
+}
+
 func ControlRailTaskFamily(prompt string, profile PromptProfile, plan ControlRailPlan) string {
 	if plan.TaskFamily != "" {
 		return plan.TaskFamily

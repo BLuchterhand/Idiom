@@ -38,8 +38,14 @@ func TestExploreWorkflowAndWritePoliciesComeFromFrontier(t *testing.T) {
 	if !LooksLikeWorkflowApprovalPrompt("build it") {
 		t.Fatalf("expected terse build approval to be detected")
 	}
+	if !LooksLikeWorkflowApprovalPrompt("Begin the plan, but preserve the guardrails.") {
+		t.Fatalf("expected explicit begin-the-plan approval to be detected")
+	}
 	if LooksLikeWorkflowApprovalPrompt("do not build it yet") {
 		t.Fatalf("negative approval boundary should not be treated as approval")
+	}
+	if !LooksLikeConversationMemoryNotePrompt("remember that any later docs write must touch readme.md only") {
+		t.Fatalf("expected memory-note prompt to be detected")
 	}
 	if !ExplicitMultiFileRequested("do a multi-file refactor across files") {
 		t.Fatalf("expected explicit multi-file guarded-write request")

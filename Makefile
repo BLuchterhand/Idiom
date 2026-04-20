@@ -1,6 +1,7 @@
 APP_NAME ?= qwen-bubbles
 CONFIG ?= config.json
 SUITE ?= testdata/swe/representative-suite.json
+LIVE_LOGS ?= testdata/swe/generated-logs
 CLASSIFIER_BINARY ?= llama-server
 CLASSIFIER_MODEL ?= /Users/ben/models/qwen35-9b/Qwen3.5-9B-Q8_0.gguf
 CLASSIFIER_HOST ?= 127.0.0.1
@@ -11,7 +12,7 @@ CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
 
-.PHONY: run server classifier-server route-classifier build fmt tidy test coverage coverage-report eval swe-eval swe-suite
+.PHONY: run server classifier-server route-classifier build fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live
 
 run:
 	go run ./cmd/qwen-bubbles -config $(CONFIG)
@@ -52,3 +53,6 @@ swe-eval:
 
 swe-suite:
 	go run ./cmd/qwen-swe-eval -suite $(SUITE) -suite-only
+
+swe-live:
+	go run ./cmd/qwen-swe-eval -suite $(SUITE) -run-live -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"

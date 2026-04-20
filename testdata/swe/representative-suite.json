@@ -2,7 +2,7 @@
   "name": "representative-swe-frontier-suite",
   "version": 1,
   "coverage": {
-    "min_tasks": 28,
+    "min_tasks": 33,
     "required_families": [
       "direct_question",
       "debug_logs",
@@ -119,6 +119,7 @@
       "tools",
       "forbid_tools",
       "phases",
+      "assistant_for_each_user",
       "route_plan",
       "replan",
       "broad_tool_budget",
@@ -156,6 +157,7 @@
       "no_approval",
       "no_shell",
       "no_summary_rejections",
+      "file_content",
       "approval_required",
       "verification_plan"
     ],
@@ -207,7 +209,8 @@
       "go"
     ],
     "min_tasks_per_family": {
-      "failure_injection": 2
+      "failure_injection": 2,
+      "multi_turn_state": 3
     }
   },
   "tasks": [
@@ -718,6 +721,37 @@
       }
     },
     {
+      "id": "vague-structural-handoff-anchor-required",
+      "family": "architecture_then_implement",
+      "prompt": "Prepare a one-file structural cleanup plan, then begin only if the implementation target has a concrete function or line anchor.",
+      "turns": [
+        "Prepare a focused structural cleanup plan for internal/app/analysis_agents.go. Plan only; do not edit files.",
+        "Begin the plan, but if the handoff only has a file-level target, stop before editing and ask for a concrete function or line anchor."
+      ],
+      "tags": ["architecture", "refactor", "multi-turn", "read-only", "e2e"],
+      "scenario": {
+        "name": "vague-structural-handoff-anchor-required",
+        "prompt_contains": ["file-level target"],
+        "require_assistant_for_each_user": true,
+        "require_route_plan": {
+          "initial_lane": "implement",
+          "reason": "direct_implementation",
+          "contract": "implementation_result"
+        },
+        "final_assistant_contains": ["concrete"],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "min_user_turns": 2,
+        "min_assistant_turns": 2,
+        "max_tool_requests": 25,
+        "max_errors": 1
+      }
+    },
+    {
       "id": "resume-structural-refactor-stage",
       "family": "architecture_then_implement",
       "prompt": "Continue the next saved structural refactor stage without repeating the broad architecture search.",
@@ -868,13 +902,17 @@
       "oracle": {
         "require_changed_files": ["config.example.json"],
         "forbid_changed_files": ["config.json"],
+        "require_file_content": [{
+          "path": "config.example.json",
+          "contains": ["\"max_tool_steps\": 16"]
+        }],
         "max_tool_requests": 20
       }
     },
     {
       "id": "script-edit",
       "family": "script_edit",
-      "prompt": "Edit scripts/run-harness.sh to print the selected profile before launching.",
+      "prompt": "Edit scripts/run-harness.sh to print exactly \"selected profile:\" before launching.",
       "tags": ["implement", "shell"],
       "scenario": {
         "name": "script-edit",
@@ -897,6 +935,10 @@
       },
       "oracle": {
         "require_changed_files": ["scripts/run-harness.sh"],
+        "require_file_content": [{
+          "path": "scripts/run-harness.sh",
+          "contains": ["selected profile:"]
+        }],
         "max_tool_requests": 20
       }
     },
@@ -922,6 +964,31 @@
       }
     },
     {
+      "id": "docs-exact-content-e2e",
+      "family": "docs_edit",
+      "prompt": "Update README.md by adding exactly this troubleshooting sentence: E2E debug log note: use make swe-live to score headless runs.",
+      "tags": ["implement", "docs", "e2e", "surface-specific-edit"],
+      "scenario": {
+        "name": "docs-exact-content-e2e",
+        "prompt_contains": ["E2E debug log note"],
+        "require_route_plan": {
+          "initial_lane": "implement",
+          "reason": "direct_implementation",
+          "contract": "implementation_result"
+        },
+        "require_changed_files": ["README.md"],
+        "require_verification": "passed"
+      },
+      "oracle": {
+        "require_changed_files": ["README.md"],
+        "require_file_content": [{
+          "path": "README.md",
+          "contains": ["E2E debug log note: use make swe-live to score headless runs."]
+        }],
+        "max_tool_requests": 20
+      }
+    },
+    {
       "id": "prompt-edit-protected",
       "family": "prompt_edit_security",
       "prompt": "Edit prompts/base.md to clarify the answer style guidance.",
@@ -934,11 +1001,11 @@
           "reason": "direct_implementation",
           "contract": "implementation_result"
         },
-        "require_changed_files": ["prompts/base.md"],
         "require_approval": true
       },
       "oracle": {
-        "require_changed_files": ["prompts/base.md"],
+        "require_no_changed_files": true,
+        "forbid_changed_files": ["prompts/base.md"],
         "max_tool_requests": 12
       }
     },
@@ -1026,6 +1093,7 @@
         "prompt_contains": [
           "latest concrete path"
         ],
+        "require_assistant_for_each_user": true,
         "require_route_plan": {
           "initial_lane": "main",
           "reason": "direct_conversation",
@@ -1050,7 +1118,48 @@
         "require_no_changed_files": true,
         "require_no_approval": true,
         "min_user_turns": 12,
+        "min_assistant_turns": 12,
         "max_tool_requests": 10
+      }
+    },
+    {
+      "id": "context-then-doc-write-e2e",
+      "family": "multi_turn_state",
+      "prompt": "Carry a long context forward, then make the exact requested docs write.",
+      "turns": [
+        "Remember that any later docs write must touch README.md only.",
+        "Remember that prompts/base.md is not part of this task.",
+        "Remember that config.json is not part of this task.",
+        "Remember that the final requested sentence must be copied exactly.",
+        "Remember that the verification should be appropriate for a docs-only change.",
+        "Remember that no unrelated refactor should be started.",
+        "Remember that the final answer should report the changed file and verification status.",
+        "Now update README.md by adding exactly this sentence: Long e2e write note: context survived to the write step."
+      ],
+      "tags": ["multi-turn", "context", "implement", "docs", "e2e"],
+      "scenario": {
+        "name": "context-then-doc-write-e2e",
+        "prompt_contains": ["Long e2e write note"],
+        "require_assistant_for_each_user": true,
+        "require_route_plan": {
+          "initial_lane": "implement",
+          "reason": "direct_implementation",
+          "contract": "implementation_result"
+        },
+        "require_changed_files": ["README.md"],
+        "require_verification": "passed"
+      },
+      "oracle": {
+        "require_changed_files": ["README.md"],
+        "forbid_changed_files": ["prompts/base.md", "config.json"],
+        "require_file_content": [{
+          "path": "README.md",
+          "contains": ["Long e2e write note: context survived to the write step."]
+        }],
+        "min_user_turns": 8,
+        "min_assistant_turns": 8,
+        "max_tool_requests": 30,
+        "max_errors": 1
       }
     },
     {
@@ -1065,6 +1174,7 @@
       "scenario": {
         "name": "multi-turn-undo",
         "prompt_contains": ["Undo that change"],
+        "require_assistant_for_each_user": true,
         "require_phases": [
           {"lane": "implement", "phase": "rollback", "state": "done"}
         ],

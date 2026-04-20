@@ -133,6 +133,45 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 }
 
+func TestAnalyzeUsesLaneSummaryAsAssistantFallback(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "prepare a plan"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Plan needs a concrete function anchor before editing."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "begin the plan"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan_final", "content": "initial=implement reason=direct_implementation contract=implementation_result"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Need a concrete line anchor before editing."}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.AssistantTurns != 2 {
+		t.Fatalf("expected lane summaries to count as assistant fallback turns, got %d", metrics.AssistantTurns)
+	}
+	if !strings.Contains(metrics.FinalAssistant, "concrete line anchor") {
+		t.Fatalf("expected final assistant fallback from latest lane summary, got %q", metrics.FinalAssistant)
+	}
+	if len(metrics.RoutePlans) != 2 || metrics.RoutePlans[1].InitialLane != "implement" {
+		t.Fatalf("expected route_plan_final to be evaluated, got %#v", metrics.RoutePlans)
+	}
+}
+
+func TestAnalyzeCountsLaneSummaryWhenLaterTurnHasAssistant(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "prepare a plan"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Plan summary."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "begin the plan"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Need a concrete anchor."}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.AssistantTurns != 2 {
+		t.Fatalf("expected lane summary plus final assistant to cover both user turns, got %d", metrics.AssistantTurns)
+	}
+	if metrics.FinalAssistant != "Need a concrete anchor." {
+		t.Fatalf("expected real assistant to remain final assistant, got %q", metrics.FinalAssistant)
+	}
+}
+
 func TestEvaluateScenarioReportsFailures(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "please edit the banner"}},
@@ -283,7 +322,6 @@ func TestEvaluateScenarioRequiresAssistantForEachUserTurn(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Architecture summary: internal/workspace/manager.go is a hotspot."}},
 		{Type: "message", Data: map[string]any{"role": "user", "content": "Can you prepare a refactor plan for this file?"}},
 		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment thoroughness=medium"}},
-		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Focused refactor plan: Target: internal/workspace/manager.go."}},
 	}
 
 	report := Evaluate("log.jsonl", records, Scenario{

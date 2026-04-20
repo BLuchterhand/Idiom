@@ -76,6 +76,90 @@ func TestExecuteReadWriteAndExploreWriteRejection(t *testing.T) {
 	}
 }
 
+func TestEditFileRejectsInvalidGoBeforeWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "analysis_agents.go")
+	original := "package app\n\nfunc ok() {}\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "edit_file",
+		Path:      "analysis_agents.go",
+		StartLine: 1,
+		EndLine:   1,
+		Content:   "",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "preflight syntax validation failed") {
+		t.Fatalf("expected Go syntax preflight rejection, got %#v", result)
+	}
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("invalid edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestWriteFileAndAppendRejectInvalidStructuredContent(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "write_file",
+		Path:    "bad.go",
+		Content: "import \"fmt\"\n",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "preflight syntax validation failed") {
+		t.Fatalf("expected invalid Go write rejection, got %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bad.go")); !os.IsNotExist(err) {
+		t.Fatalf("invalid Go write should not create file, stat err=%v", err)
+	}
+
+	jsonPath := filepath.Join(dir, "config.json")
+	original := "{\"ok\":true}\n"
+	writeTestFile(t, jsonPath, original)
+	result = mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "append_file",
+		Path:    "config.json",
+		Content: "not json",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "preflight JSON validation failed") {
+		t.Fatalf("expected invalid JSON append rejection, got %#v", result)
+	}
+	if got := readTestFile(t, jsonPath); got != original {
+		t.Fatalf("invalid append should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestGoFindFunctionIsImplemented(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module sample\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(dir, "widget.go"), `package sample
+
+func helper() {}
+`)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_find_function", Pattern: "helper"})
+	if result.Error != "" {
+		t.Fatalf("go_find_function failed: %#v", result)
+	}
+	if !strings.Contains(result.Output, "func helper") && !strings.Contains(result.Output, "function helper") {
+		t.Fatalf("expected function match in output, got:\n%s", result.Output)
+	}
+}
+
 func TestGoFileOutlineReportsDeclarations(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "widget.go"), `package sample

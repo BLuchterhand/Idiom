@@ -16,6 +16,75 @@ type TargetResumePlanInput struct {
 	Base             TargetResumeContext
 }
 
+type TaskResumeContext struct {
+	Active                bool
+	Kind                  string
+	SourceLane            Lane
+	ApprovedEditTargets   []string
+	ReadOnlyEvidencePaths []string
+	AllowedDestinations   []string
+	ForbiddenPaths        []string
+	AttemptedSearches     []string
+	OpenGaps              []string
+	VerificationPlan      []string
+}
+
+func (resume TaskResumeContext) TargetResumeContext() TargetResumeContext {
+	return TargetResumeContext{
+		Active:                resume.Active,
+		SourceLane:            resume.SourceLane,
+		ApprovedEditTargets:   append([]string(nil), resume.ApprovedEditTargets...),
+		ReadOnlyEvidencePaths: append([]string(nil), resume.ReadOnlyEvidencePaths...),
+		AllowedDestinations:   append([]string(nil), resume.AllowedDestinations...),
+		ForbiddenPaths:        append([]string(nil), resume.ForbiddenPaths...),
+		VerificationPlan:      append([]string(nil), resume.VerificationPlan...),
+	}
+}
+
+type TaskMemoryResumeInput struct {
+	Active              bool
+	Kind                string
+	Prompt              string
+	ResumePrompt        string
+	Lane                string
+	Summary             string
+	UserPrompt          string
+	AttemptedSearches   []string
+	OpenGaps            []string
+	ChosenTargets       []string
+	VerificationHistory []string
+	NextActions         []string
+}
+
+type WorkflowResumeInput struct {
+	Resumable           bool
+	EditableTargets     []string
+	TargetRefs          []string
+	ReadOnlyEvidence    []string
+	EvidencePaths       []string
+	AllowedDestinations []string
+	ForbiddenPaths      []string
+	Verification        []string
+	NextActions         []string
+}
+
+type DurablePlanArtifact struct {
+	Version       int                      `json:"version"`
+	Objective     string                   `json:"objective,omitempty"`
+	SourceLane    string                   `json:"source_lane,omitempty"`
+	Summary       string                   `json:"summary,omitempty"`
+	ApprovalScope DurablePlanApprovalScope `json:"approval_scope"`
+	PlanExit      string                   `json:"plan_exit,omitempty"`
+}
+
+type DurablePlanApprovalScope struct {
+	EditableTargets     []string `json:"editable_targets,omitempty"`
+	ReadOnlyEvidence    []string `json:"read_only_evidence,omitempty"`
+	AllowedDestinations []string `json:"allowed_destinations,omitempty"`
+	ForbiddenPaths      []string `json:"forbidden_paths,omitempty"`
+	Verification        []string `json:"verification,omitempty"`
+}
+
 func BuildTargetResumeContextFromPlan(input TargetResumePlanInput) TargetResumeContext {
 	resume := input.Base
 	var approved []string
@@ -60,6 +129,257 @@ func BuildTargetResumeContextFromPlan(input TargetResumePlanInput) TargetResumeC
 	resume.AllowedDestinations = LimitStrings(append(resume.AllowedDestinations, destinations...), 8)
 	resume.VerificationPlan = LimitStrings(append(resume.VerificationPlan, RecentImplementationPlanConstraintHints(input.Prompt, input.History)...), 8)
 	return resume
+}
+
+func BuildTaskMemoryResumeContext(input TaskMemoryResumeInput) TaskResumeContext {
+	if !taskMemoryResumeInputHasState(input) {
+		return TaskResumeContext{}
+	}
+	approved := TaskMemoryTargetsForResume(input)
+	evidence := TaskMemoryEvidencePaths(input, approved)
+	return TaskResumeContext{
+		Active:                true,
+		Kind:                  strings.TrimSpace(input.Kind),
+		SourceLane:            Lane(strings.TrimSpace(input.Lane)),
+		ApprovedEditTargets:   LimitStrings(approved, 8),
+		ReadOnlyEvidencePaths: LimitStrings(evidence, 16),
+		AllowedDestinations:   DurablePlanAllowedDestinations(input.Summary),
+		AttemptedSearches:     append([]string(nil), input.AttemptedSearches...),
+		OpenGaps:              append([]string(nil), input.OpenGaps...),
+		VerificationPlan:      TaskMemoryVerificationPlan(input),
+	}
+}
+
+func BuildWorkflowResumeContext(input WorkflowResumeInput) TaskResumeContext {
+	if !input.Resumable {
+		return TaskResumeContext{}
+	}
+	approved := LimitStrings(firstNonEmptyStringSlice(input.EditableTargets, input.TargetRefs), 8)
+	evidence := LimitStrings(append(append([]string(nil), input.ReadOnlyEvidence...), input.EvidencePaths...), 16)
+	return TaskResumeContext{
+		Active:                true,
+		Kind:                  "workflow_plan",
+		SourceLane:            LaneArchitecture,
+		ApprovedEditTargets:   approved,
+		ReadOnlyEvidencePaths: DurablePlanReadOnlyEvidence(evidence, approved),
+		AllowedDestinations:   LimitStrings(input.AllowedDestinations, 8),
+		ForbiddenPaths:        LimitStrings(input.ForbiddenPaths, 16),
+		VerificationPlan:      LimitStrings(input.Verification, 8),
+		OpenGaps:              UniqueNonEmptyStrings(input.NextActions),
+	}
+}
+
+func TaskMemoryTargetsForResume(input TaskMemoryResumeInput) []string {
+	if !taskMemoryResumeInputHasState(input) {
+		return nil
+	}
+	if TaskMemoryDurablePlanApprovalDetected(input.Kind, input.UserPrompt) {
+		if primaryTargets := DurablePlanPrimaryTargets(input.Prompt, input.Summary, input.ChosenTargets); len(primaryTargets) > 0 {
+			return primaryTargets
+		}
+	}
+	return append([]string(nil), input.ChosenTargets...)
+}
+
+func TaskMemoryEvidencePaths(input TaskMemoryResumeInput, approved []string) []string {
+	if !taskMemoryResumeInputHasState(input) {
+		return nil
+	}
+	approvedSet := make(map[string]struct{}, len(approved))
+	for _, path := range approved {
+		path = NormalizePath(path)
+		if path != "" {
+			approvedSet[path] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(input.AttemptedSearches)+len(input.ChosenTargets))
+	add := func(path string) {
+		path = NormalizePath(path)
+		if path == "" {
+			return
+		}
+		if _, ok := approvedSet[path]; ok {
+			return
+		}
+		paths = append(paths, path)
+	}
+	for _, attempt := range input.AttemptedSearches {
+		for _, path := range PromptMentionedWorkspacePaths(attempt) {
+			add(path)
+		}
+	}
+	for _, path := range input.ChosenTargets {
+		add(path)
+	}
+	return LimitStrings(paths, 16)
+}
+
+func TaskMemoryVerificationPlan(input TaskMemoryResumeInput) []string {
+	if !taskMemoryResumeInputHasState(input) {
+		return nil
+	}
+	plan := make([]string, 0, len(input.VerificationHistory)+len(input.NextActions))
+	for _, entry := range input.VerificationHistory {
+		if strings.TrimSpace(entry) != "" {
+			plan = append(plan, entry)
+		}
+	}
+	for _, action := range input.NextActions {
+		if ContainsAny(strings.ToLower(action), "verify", "test", "check") {
+			plan = append(plan, action)
+		}
+	}
+	return LimitStrings(plan, 6)
+}
+
+func TaskMemoryDurablePlanApprovalDetected(kind string, prompt string) bool {
+	if strings.TrimSpace(kind) != "durable_plan" {
+		return false
+	}
+	return LooksLikeDurablePlanApprovalPrompt(prompt) || LooksLikeTerseDurablePlanApprovalPrompt(prompt)
+}
+
+func taskMemoryResumeInputHasState(input TaskMemoryResumeInput) bool {
+	return input.Active ||
+		strings.TrimSpace(input.Kind) != "" ||
+		strings.TrimSpace(input.Prompt) != "" ||
+		strings.TrimSpace(input.ResumePrompt) != "" ||
+		strings.TrimSpace(input.Summary) != "" ||
+		len(input.AttemptedSearches) > 0 ||
+		len(input.OpenGaps) > 0 ||
+		len(input.ChosenTargets) > 0 ||
+		len(input.VerificationHistory) > 0 ||
+		len(input.NextActions) > 0
+}
+
+func DurablePlanPrimaryTargets(prompt string, summary string, fallbackTargets []string) []string {
+	if targets := ExplicitDurablePlanTargets(summary); len(targets) > 0 {
+		return LimitStrings(targets, 4)
+	}
+	if targets := PromptMentionedWorkspacePaths(prompt); len(targets) > 0 {
+		return LimitStrings(targets, 4)
+	}
+	if len(fallbackTargets) == 1 {
+		return LimitStrings(fallbackTargets, 1)
+	}
+	return nil
+}
+
+func firstNonEmptyStringSlice(candidates ...[]string) []string {
+	for _, candidate := range candidates {
+		if values := UniqueNonEmptyStrings(candidate); len(values) > 0 {
+			return values
+		}
+	}
+	return nil
+}
+
+func RenderDurablePlanArtifact(prompt string, lane Lane, summary string, evidencePaths []string, nextAction string) string {
+	artifact := BuildDurablePlanArtifact(prompt, lane, summary, evidencePaths, nextAction)
+	var b strings.Builder
+	b.WriteString("Durable plan artifact\n\n")
+	b.WriteString("Objective:\n")
+	b.WriteString("- ")
+	b.WriteString(strings.TrimSpace(prompt))
+	b.WriteString("\n\n")
+	b.WriteString("Mode:\n")
+	b.WriteString("- read-only ")
+	if lane != "" {
+		b.WriteString(string(lane))
+		b.WriteString(" ")
+	}
+	b.WriteString("planning; no writes until explicit approval.\n\n")
+	b.WriteString("Approval scope:\n")
+	b.WriteString("- editable targets: ")
+	b.WriteString(joinOrNone(artifact.ApprovalScope.EditableTargets))
+	b.WriteString("\n")
+	b.WriteString("- read-only evidence: ")
+	b.WriteString(joinOrNone(artifact.ApprovalScope.ReadOnlyEvidence))
+	b.WriteString("\n")
+	b.WriteString("- allowed destinations: ")
+	b.WriteString(joinOrNone(artifact.ApprovalScope.AllowedDestinations))
+	b.WriteString("\n")
+	b.WriteString("- forbidden paths: ")
+	b.WriteString(joinOrNone(artifact.ApprovalScope.ForbiddenPaths))
+	b.WriteString("\n\n")
+	b.WriteString("Plan artifact schema:\n")
+	if data, err := json.MarshalIndent(artifact, "", "  "); err == nil {
+		b.WriteString("```json\n")
+		b.Write(data)
+		b.WriteString("\n```\n\n")
+	}
+	b.WriteString("Explore-before-plan evidence:\n")
+	if paths := UniqueNormalizedPaths(evidencePaths); len(paths) > 0 {
+		for _, path := range paths {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString("- no concrete evidence paths were captured; validate targets before build mode.\n")
+	}
+	b.WriteString("\nProposed plan:\n")
+	if strings.TrimSpace(summary) != "" {
+		b.WriteString(strings.TrimSpace(summary))
+		b.WriteString("\n")
+	} else {
+		b.WriteString("- no model plan summary was captured.\n")
+	}
+	b.WriteString("\nVerification section:\n")
+	b.WriteString("- identify focused tests or checks before implementation.\n")
+	b.WriteString("- after implementation, report pass/fail status and exact failure output if checks fail.\n")
+	b.WriteString("- do not mark the plan complete until changed files and verification evidence are named.\n\n")
+	b.WriteString("Plan exit / build handoff:\n")
+	b.WriteString("- wait for explicit user approval, such as \"implement this plan\", before writing.\n")
+	b.WriteString("- build-switch reminder: restate the objective, constraints, target files, and verification checks before the first write.\n")
+	if strings.TrimSpace(nextAction) != "" {
+		b.WriteString("- next action after approval: ")
+		b.WriteString(strings.TrimSpace(nextAction))
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func BuildDurablePlanArtifact(prompt string, lane Lane, summary string, evidencePaths []string, nextAction string) DurablePlanArtifact {
+	editable := DurablePlanPrimaryTargets(prompt, summary, nil)
+	evidence := DurablePlanReadOnlyEvidence(evidencePaths, editable)
+	destinations := DurablePlanCandidateDestinations(summary, editable, evidence)
+	verification := []string{
+		"identify focused tests or checks before implementation",
+		"run verification after implementation and report pass/fail status",
+	}
+	if strings.TrimSpace(nextAction) != "" && ContainsAny(strings.ToLower(nextAction), "verify", "test", "check") {
+		verification = append(verification, strings.TrimSpace(nextAction))
+	}
+	return DurablePlanArtifact{
+		Version:    1,
+		Objective:  strings.TrimSpace(prompt),
+		SourceLane: string(lane),
+		Summary:    strings.TrimSpace(summary),
+		ApprovalScope: DurablePlanApprovalScope{
+			EditableTargets:     LimitStrings(editable, 8),
+			ReadOnlyEvidence:    LimitStrings(evidence, 16),
+			AllowedDestinations: LimitStrings(destinations, 8),
+			ForbiddenPaths:      nil,
+			Verification:        UniqueNonEmptyStrings(verification),
+		},
+		PlanExit: DurablePlanExitInstruction(nextAction),
+	}
+}
+
+func DurablePlanExitInstruction(nextAction string) string {
+	if strings.TrimSpace(nextAction) == "" {
+		return "wait for explicit user approval before implementation"
+	}
+	return "after explicit user approval: " + strings.TrimSpace(nextAction)
+}
+
+func joinOrNone(values []string) string {
+	values = UniqueNonEmptyStrings(values)
+	if len(values) == 0 {
+		return "none"
+	}
+	return strings.Join(values, ", ")
 }
 
 func ResolveExistingImplementationRef(root string, ref string) (string, bool) {
@@ -336,6 +656,10 @@ func LooksLikeDurablePlanApprovalPrompt(prompt string) bool {
 		"approve this plan",
 		"approved, implement",
 		"build this plan",
+		"begin this plan",
+		"begin the plan",
+		"start this plan",
+		"start the plan",
 		"apply this plan",
 		"apply the plan",
 		"proceed with this plan",

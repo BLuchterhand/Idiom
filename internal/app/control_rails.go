@@ -43,19 +43,7 @@ func buildWorkerRuntimeBrief(prompt string, rails deterministicControlRailsSnaps
 }
 
 func buildDeterministicControlRails(prompt string, plan promptExecutionPlan) deterministicControlRailsSnapshot {
-	return frontier.BuildControlRails(frontier.ControlRailInput{
-		Prompt:  prompt,
-		Profile: buildPromptRouteProfile(prompt),
-		Plan:    toFrontierControlRailPlan(plan),
-	})
-}
-
-func controlRailTaskFamily(prompt string, plan promptExecutionPlan) string {
-	return frontier.ControlRailTaskFamily(prompt, buildPromptRouteProfile(prompt), toFrontierControlRailPlan(plan))
-}
-
-func canonicalPromptTaskFamily(profile promptRouteProfile, plan promptExecutionPlan) string {
-	return frontier.CanonicalTaskFamily(profile, toFrontierControlRailPlan(plan))
+	return frontier.BuildControlRailsForPrompt(prompt, toFrontierControlRailPlan(plan))
 }
 
 func controlRailPermissionProfile(family string, plan promptExecutionPlan) string {

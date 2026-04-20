@@ -29,35 +29,7 @@ type longHorizonTaskMemory struct {
 	UpdatedAt           time.Time                `json:"updated_at,omitempty"`
 }
 
-type taskResumeContext struct {
-	Active                bool
-	Kind                  string
-	SourceLane            analysisLane
-	ApprovedEditTargets   []string
-	ReadOnlyEvidencePaths []string
-	AllowedDestinations   []string
-	ForbiddenPaths        []string
-	AttemptedSearches     []string
-	OpenGaps              []string
-	VerificationPlan      []string
-}
-
-type durablePlanArtifact struct {
-	Version       int                      `json:"version"`
-	Objective     string                   `json:"objective,omitempty"`
-	SourceLane    string                   `json:"source_lane,omitempty"`
-	Summary       string                   `json:"summary,omitempty"`
-	ApprovalScope durablePlanApprovalScope `json:"approval_scope"`
-	PlanExit      string                   `json:"plan_exit,omitempty"`
-}
-
-type durablePlanApprovalScope struct {
-	EditableTargets     []string `json:"editable_targets,omitempty"`
-	ReadOnlyEvidence    []string `json:"read_only_evidence,omitempty"`
-	AllowedDestinations []string `json:"allowed_destinations,omitempty"`
-	ForbiddenPaths      []string `json:"forbidden_paths,omitempty"`
-	Verification        []string `json:"verification,omitempty"`
-}
+type taskResumeContext = frontier.TaskResumeContext
 
 type analysisReplanRecommendationState struct {
 	FromLane analysisLane
@@ -307,10 +279,7 @@ func shouldResumeTaskMemoryPrompt(prompt string, memory *longHorizonTaskMemory) 
 }
 
 func durablePlanApprovalDetected(prompt string, memory *longHorizonTaskMemory) bool {
-	if strings.TrimSpace(memoryKind(memory)) != "durable_plan" {
-		return false
-	}
-	return looksLikeDurablePlanApprovalPrompt(prompt) || looksLikeTerseDurablePlanApprovalPrompt(prompt)
+	return frontier.TaskMemoryDurablePlanApprovalDetected(memoryKind(memory), prompt)
 }
 
 func memoryKind(memory *longHorizonTaskMemory) string {
@@ -318,14 +287,6 @@ func memoryKind(memory *longHorizonTaskMemory) string {
 		return ""
 	}
 	return strings.TrimSpace(memory.Kind)
-}
-
-func looksLikeDurablePlanApprovalPrompt(prompt string) bool {
-	return frontier.LooksLikeDurablePlanApprovalPrompt(prompt)
-}
-
-func looksLikeTerseDurablePlanApprovalPrompt(prompt string) bool {
-	return frontier.LooksLikeTerseDurablePlanApprovalPrompt(prompt)
 }
 
 func (m *Model) resumeStructuralRefactorAsync(userPrompt string) {
@@ -349,12 +310,13 @@ func (m *Model) resumeStructuralRefactorAsync(userPrompt string) {
 
 	prompt := buildStructuralRefactorResumePrompt(stage, userPrompt)
 	analysisSummary := buildStructuralRefactorResumeAnalysisSummary(stage)
-	plan := promptExecutionPlan{
-		lane:         analysisLaneImplement,
-		thoroughness: workspace.ThoroughnessMedium,
-		reason:       promptRouteReasonDirectImplementation,
-	}
-	plan = finalizeTaskMemoryExecutionPlan(userPrompt, prompt, plan)
+	plan := fromFrontierPromptPlan(frontier.BuildResumePromptPlan(frontier.ResumePromptPlanInput{
+		UserPrompt:   userPrompt,
+		ResumePrompt: prompt,
+		Lane:         frontier.LaneImplement,
+		Thoroughness: string(workspace.ThoroughnessMedium),
+		Reason:       frontier.RouteReasonDirectImplementation,
+	}))
 	if m.workspace != nil {
 		m.workspace.PrimeDiscoveredPaths(promptMentionedWorkspacePaths(prompt))
 	}
@@ -413,14 +375,9 @@ func (m *Model) resumeTaskMemoryAsync(userPrompt string) {
 		return
 	}
 	prompt := buildTaskMemoryResumePrompt(memory, userPrompt)
-	lane := laneForTaskMemoryWithPrompt(memory, userPrompt)
-	plan := promptExecutionPlan{
-		lane:         lane,
-		thoroughness: workspace.ThoroughnessMedium,
-		reason:       routeReasonForLane(lane),
-		contract:     answerContractForLane(lane),
-	}
-	plan = finalizeTaskMemoryExecutionPlan(userPrompt, prompt, plan)
+	planInput := frontierTaskMemoryResumeInput(memory, userPrompt)
+	planInput.ResumePrompt = prompt
+	plan := fromFrontierPromptPlan(frontier.BuildTaskMemoryPromptPlan(planInput, string(workspace.ThoroughnessMedium)))
 	resumeContext := buildTaskResumeContext(memory, userPrompt)
 	if m.workspace != nil {
 		m.workspace.PrimeDiscoveredPaths(uniqueLimitedStrings(append(append([]string(nil), resumeContext.ApprovedEditTargets...), resumeContext.ReadOnlyEvidencePaths...), 12))
@@ -475,18 +432,25 @@ func buildTaskResumeContext(memory *longHorizonTaskMemory, userPrompt string) ta
 	if memory == nil {
 		return taskResumeContext{}
 	}
-	approved := taskMemoryTargetsForResume(memory, userPrompt)
-	evidence := taskMemoryEvidencePaths(memory, approved)
-	return taskResumeContext{
-		Active:                true,
-		Kind:                  strings.TrimSpace(memory.Kind),
-		SourceLane:            analysisLane(strings.TrimSpace(memory.Lane)),
-		ApprovedEditTargets:   uniqueLimitedStrings(approved, 8),
-		ReadOnlyEvidencePaths: uniqueLimitedStrings(evidence, 16),
-		AllowedDestinations:   durablePlanAllowedDestinations(memory.Summary),
-		AttemptedSearches:     append([]string(nil), memory.AttemptedSearches...),
-		OpenGaps:              append([]string(nil), memory.OpenGaps...),
-		VerificationPlan:      taskMemoryVerificationPlan(memory),
+	return frontier.BuildTaskMemoryResumeContext(frontierTaskMemoryResumeInput(memory, userPrompt))
+}
+
+func frontierTaskMemoryResumeInput(memory *longHorizonTaskMemory, userPrompt string) frontier.TaskMemoryResumeInput {
+	if memory == nil {
+		return frontier.TaskMemoryResumeInput{}
+	}
+	return frontier.TaskMemoryResumeInput{
+		Active:              memory.Active,
+		Kind:                strings.TrimSpace(memory.Kind),
+		Prompt:              memory.Prompt,
+		Lane:                memory.Lane,
+		Summary:             memory.Summary,
+		UserPrompt:          userPrompt,
+		AttemptedSearches:   append([]string(nil), memory.AttemptedSearches...),
+		OpenGaps:            append([]string(nil), memory.OpenGaps...),
+		ChosenTargets:       append([]string(nil), memory.ChosenTargets...),
+		VerificationHistory: append([]string(nil), memory.VerificationHistory...),
+		NextActions:         append([]string(nil), memory.NextActions...),
 	}
 }
 
@@ -494,51 +458,14 @@ func taskMemoryEvidencePaths(memory *longHorizonTaskMemory, approved []string) [
 	if memory == nil {
 		return nil
 	}
-	approvedSet := make(map[string]struct{}, len(approved))
-	for _, path := range approved {
-		path = normalizeGuardedPath(path)
-		if path != "" {
-			approvedSet[path] = struct{}{}
-		}
-	}
-	paths := make([]string, 0, len(memory.AttemptedSearches)+len(memory.ChosenTargets))
-	add := func(path string) {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			return
-		}
-		if _, ok := approvedSet[path]; ok {
-			return
-		}
-		paths = append(paths, path)
-	}
-	for _, attempt := range memory.AttemptedSearches {
-		for _, path := range promptMentionedWorkspacePaths(attempt) {
-			add(path)
-		}
-	}
-	for _, path := range memory.ChosenTargets {
-		add(path)
-	}
-	return uniqueLimitedStrings(paths, 16)
+	return frontier.TaskMemoryEvidencePaths(frontierTaskMemoryResumeInput(memory, ""), approved)
 }
 
 func taskMemoryVerificationPlan(memory *longHorizonTaskMemory) []string {
 	if memory == nil {
 		return nil
 	}
-	plan := make([]string, 0, len(memory.VerificationHistory)+len(memory.NextActions))
-	for _, entry := range memory.VerificationHistory {
-		if strings.TrimSpace(entry) != "" {
-			plan = append(plan, entry)
-		}
-	}
-	for _, action := range memory.NextActions {
-		if containsAny(strings.ToLower(action), "verify", "test", "check") {
-			plan = append(plan, action)
-		}
-	}
-	return uniqueLimitedStrings(plan, 6)
+	return frontier.TaskMemoryVerificationPlan(frontierTaskMemoryResumeInput(memory, ""))
 }
 
 func laneForTaskMemory(memory *longHorizonTaskMemory) analysisLane {
@@ -546,28 +473,17 @@ func laneForTaskMemory(memory *longHorizonTaskMemory) analysisLane {
 }
 
 func finalizeTaskMemoryExecutionPlan(userPrompt string, resumePrompt string, plan promptExecutionPlan) promptExecutionPlan {
-	profilePrompt := firstNonEmptyString(userPrompt, resumePrompt)
-	profile := buildPromptRouteProfile(profilePrompt)
-	plan.intent = buildPromptIntentDecision(profilePrompt, profile, "", plan)
-	if plan.lane == analysisLaneImplement && !plan.intent.WantsPlanOnly && !plan.intent.WantsVerify {
-		plan.intent.WantsEdits = true
-	}
-	return finalizePromptExecutionPlan(profilePrompt, profile, plan)
+	return fromFrontierPromptPlan(frontier.BuildResumePromptPlan(frontier.ResumePromptPlanInput{
+		UserPrompt:   userPrompt,
+		ResumePrompt: resumePrompt,
+		Lane:         plan.lane,
+		Thoroughness: string(plan.thoroughness),
+		Reason:       plan.reason,
+	}))
 }
 
 func laneForTaskMemoryWithPrompt(memory *longHorizonTaskMemory, userPrompt string) analysisLane {
-	if memory == nil {
-		return analysisLaneExplore
-	}
-	if durablePlanApprovalDetected(userPrompt, memory) {
-		return analysisLaneImplement
-	}
-	switch analysisLane(strings.TrimSpace(memory.Lane)) {
-	case analysisLaneLocate, analysisLaneExplore, analysisLaneReview, analysisLaneArchitecture, analysisLaneImplement:
-		return analysisLane(strings.TrimSpace(memory.Lane))
-	default:
-		return analysisLaneExplore
-	}
+	return frontier.LaneForTaskMemoryResume(frontierTaskMemoryResumeInput(memory, userPrompt))
 }
 
 func buildTaskMemoryResumePrompt(memory *longHorizonTaskMemory, userPrompt string) string {
@@ -603,7 +519,7 @@ func buildTaskMemoryResumePrompt(memory *longHorizonTaskMemory, userPrompt strin
 	if len(targets) > 0 {
 		lines = append(lines, "Previously validated targets: "+strings.Join(targets, ", "))
 	}
-	if allowed := durablePlanAllowedDestinations(memory.Summary); len(allowed) > 0 {
+	if allowed := frontier.DurablePlanAllowedDestinations(memory.Summary); len(allowed) > 0 {
 		lines = append(lines, "Plan-approved new destinations: "+strings.Join(allowed, ", "))
 	}
 	if len(memory.AttemptedSearches) > 0 {
@@ -686,8 +602,8 @@ func decorateDurablePlanArtifactMemory(memory *longHorizonTaskMemory, prompt str
 	prompt = canonicalTaskMemoryPrompt(prompt)
 	memory.Prompt = prompt
 	memory.Kind = "durable_plan"
-	memory.Summary = renderDurablePlanArtifact(prompt, lane, summary, evidencePaths, nextAction)
-	if primaryTargets := durablePlanPrimaryTargets(prompt, memory.Summary, memory.ChosenTargets); len(primaryTargets) > 0 {
+	memory.Summary = frontier.RenderDurablePlanArtifact(prompt, lane, summary, evidencePaths, nextAction)
+	if primaryTargets := frontier.DurablePlanPrimaryTargets(prompt, memory.Summary, memory.ChosenTargets); len(primaryTargets) > 0 {
 		memory.ChosenTargets = primaryTargets
 	}
 	memory.OpenGaps = uniqueNonEmptyStrings(append(memory.OpenGaps, "plan requires explicit user approval before build-mode execution"))
@@ -732,166 +648,7 @@ func taskMemoryTargetsForResume(memory *longHorizonTaskMemory, userPrompt string
 	if memory == nil {
 		return nil
 	}
-	if durablePlanApprovalDetected(userPrompt, memory) {
-		if primaryTargets := durablePlanPrimaryTargets(memory.Prompt, memory.Summary, memory.ChosenTargets); len(primaryTargets) > 0 {
-			return primaryTargets
-		}
-	}
-	return append([]string(nil), memory.ChosenTargets...)
-}
-
-func durablePlanPrimaryTargets(prompt string, summary string, fallbackTargets []string) []string {
-	if targets := explicitDurablePlanTargets(summary); len(targets) > 0 {
-		return uniqueLimitedStrings(targets, 4)
-	}
-	if targets := promptMentionedWorkspacePaths(prompt); len(targets) > 0 {
-		return uniqueLimitedStrings(targets, 4)
-	}
-	if len(fallbackTargets) == 1 {
-		return uniqueLimitedStrings(fallbackTargets, 1)
-	}
-	return nil
-}
-
-func explicitDurablePlanTargets(summary string) []string {
-	return frontier.ExplicitDurablePlanTargets(summary)
-}
-
-func shouldPersistDurablePlanArtifact(prompt string, lane analysisLane) bool {
-	if lane != analysisLaneArchitecture {
-		return false
-	}
-	profile := buildPromptRouteProfile(prompt)
-	return profile.WantsPlanOnly
-}
-
-func renderDurablePlanArtifact(prompt string, lane analysisLane, summary string, evidencePaths []string, nextAction string) string {
-	artifact := buildDurablePlanArtifact(prompt, lane, summary, evidencePaths, nextAction)
-	var b strings.Builder
-	b.WriteString("Durable plan artifact\n\n")
-	b.WriteString("Objective:\n")
-	b.WriteString("- ")
-	b.WriteString(strings.TrimSpace(prompt))
-	b.WriteString("\n\n")
-	b.WriteString("Mode:\n")
-	b.WriteString("- read-only ")
-	if lane != "" {
-		b.WriteString(string(lane))
-		b.WriteString(" ")
-	}
-	b.WriteString("planning; no writes until explicit approval.\n\n")
-	b.WriteString("Approval scope:\n")
-	b.WriteString("- editable targets: ")
-	b.WriteString(joinOrNone(artifact.ApprovalScope.EditableTargets))
-	b.WriteString("\n")
-	b.WriteString("- read-only evidence: ")
-	b.WriteString(joinOrNone(artifact.ApprovalScope.ReadOnlyEvidence))
-	b.WriteString("\n")
-	b.WriteString("- allowed destinations: ")
-	b.WriteString(joinOrNone(artifact.ApprovalScope.AllowedDestinations))
-	b.WriteString("\n")
-	b.WriteString("- forbidden paths: ")
-	b.WriteString(joinOrNone(artifact.ApprovalScope.ForbiddenPaths))
-	b.WriteString("\n\n")
-	b.WriteString("Plan artifact schema:\n")
-	if data, err := json.MarshalIndent(artifact, "", "  "); err == nil {
-		b.WriteString("```json\n")
-		b.Write(data)
-		b.WriteString("\n```\n\n")
-	}
-	b.WriteString("Explore-before-plan evidence:\n")
-	if paths := uniqueNormalizedPaths(evidencePaths); len(paths) > 0 {
-		for _, path := range paths {
-			b.WriteString("- ")
-			b.WriteString(path)
-			b.WriteString("\n")
-		}
-	} else {
-		b.WriteString("- no concrete evidence paths were captured; validate targets before build mode.\n")
-	}
-	b.WriteString("\nProposed plan:\n")
-	if strings.TrimSpace(summary) != "" {
-		b.WriteString(strings.TrimSpace(summary))
-		b.WriteString("\n")
-	} else {
-		b.WriteString("- no model plan summary was captured.\n")
-	}
-	b.WriteString("\nVerification section:\n")
-	b.WriteString("- identify focused tests or checks before implementation.\n")
-	b.WriteString("- after implementation, report pass/fail status and exact failure output if checks fail.\n")
-	b.WriteString("- do not mark the plan complete until changed files and verification evidence are named.\n\n")
-	b.WriteString("Plan exit / build handoff:\n")
-	b.WriteString("- wait for explicit user approval, such as \"implement this plan\", before writing.\n")
-	b.WriteString("- build-switch reminder: restate the objective, constraints, target files, and verification checks before the first write.\n")
-	if strings.TrimSpace(nextAction) != "" {
-		b.WriteString("- next action after approval: ")
-		b.WriteString(strings.TrimSpace(nextAction))
-		b.WriteString("\n")
-	}
-	return strings.TrimSpace(b.String())
-}
-
-func buildDurablePlanArtifact(prompt string, lane analysisLane, summary string, evidencePaths []string, nextAction string) durablePlanArtifact {
-	editable := durablePlanPrimaryTargets(prompt, summary, nil)
-	evidence := durablePlanReadOnlyEvidence(evidencePaths, editable)
-	destinations := durablePlanCandidateDestinations(summary, editable, evidence)
-	verification := []string{
-		"identify focused tests or checks before implementation",
-		"run verification after implementation and report pass/fail status",
-	}
-	if strings.TrimSpace(nextAction) != "" && containsAny(strings.ToLower(nextAction), "verify", "test", "check") {
-		verification = append(verification, strings.TrimSpace(nextAction))
-	}
-	return durablePlanArtifact{
-		Version:    1,
-		Objective:  strings.TrimSpace(prompt),
-		SourceLane: string(lane),
-		Summary:    strings.TrimSpace(summary),
-		ApprovalScope: durablePlanApprovalScope{
-			EditableTargets:     uniqueLimitedStrings(editable, 8),
-			ReadOnlyEvidence:    uniqueLimitedStrings(evidence, 16),
-			AllowedDestinations: uniqueLimitedStrings(destinations, 8),
-			ForbiddenPaths:      nil,
-			Verification:        uniqueNonEmptyStrings(verification),
-		},
-		PlanExit: durablePlanExitInstruction(nextAction),
-	}
-}
-
-func durablePlanReadOnlyEvidence(evidencePaths []string, editable []string) []string {
-	return frontier.DurablePlanReadOnlyEvidence(evidencePaths, editable)
-}
-
-func durablePlanCandidateDestinations(summary string, editable []string, evidence []string) []string {
-	return frontier.DurablePlanCandidateDestinations(summary, editable, evidence)
-}
-
-func durablePlanExitInstruction(nextAction string) string {
-	if strings.TrimSpace(nextAction) == "" {
-		return "wait for explicit user approval before implementation"
-	}
-	return "after explicit user approval: " + strings.TrimSpace(nextAction)
-}
-
-func durablePlanAllowedDestinations(summary string) []string {
-	return frontier.DurablePlanAllowedDestinations(summary)
-}
-
-func parseDurablePlanArtifact(summary string) (durablePlanArtifact, bool) {
-	start := strings.Index(summary, "```json")
-	if start < 0 {
-		return durablePlanArtifact{}, false
-	}
-	rest := summary[start+len("```json"):]
-	end := strings.Index(rest, "```")
-	if end < 0 {
-		return durablePlanArtifact{}, false
-	}
-	var artifact durablePlanArtifact
-	if err := json.Unmarshal([]byte(strings.TrimSpace(rest[:end])), &artifact); err != nil {
-		return durablePlanArtifact{}, false
-	}
-	return artifact, true
+	return frontier.TaskMemoryTargetsForResume(frontierTaskMemoryResumeInput(memory, userPrompt))
 }
 
 func taskMemoryAttemptsFromEvidence(paths []string) []string {
@@ -938,7 +695,7 @@ func taskMemoryNextActionForReplan(target analysisLane, reason string) string {
 func (m *Model) rememberAnalysisTaskMemory(prompt string, lane analysisLane, summary string, evidencePaths []string, nextAction string) {
 	memory := buildAnalysisTaskMemory(prompt, lane, summary, evidencePaths, nextAction)
 	reason := "analysis stopped with resumable evidence and next actions"
-	if shouldPersistDurablePlanArtifact(prompt, lane) {
+	if frontier.ShouldPersistDurablePlanArtifact(prompt, lane) {
 		memory = decorateDurablePlanArtifactMemory(memory, prompt, lane, summary, evidencePaths, nextAction)
 		reason = "plan-only analysis produced a durable plan artifact"
 	}

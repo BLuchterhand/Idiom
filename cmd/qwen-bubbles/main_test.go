@@ -13,6 +13,9 @@ import (
 )
 
 func nopList(config.Config, io.Writer) error { return nil }
+func nopPrompts(config.Config, []string, runOptions, io.Writer) ([]string, error) {
+	return nil, nil
+}
 
 func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
 	configPath := writeMainConfig(t)
@@ -28,6 +31,7 @@ func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
 			gotOpts = opts
 			return "answer text", nil
 		},
+		nopPrompts,
 		func(config.Config) error {
 			t.Fatal("TUI runner should not be called in prompt mode")
 			return nil
@@ -62,6 +66,7 @@ func TestRunPromptModeJSONSuppressesFinalPrint(t *testing.T) {
 			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"ok\"}\n"))
 			return "ok", nil
 		},
+		nopPrompts,
 		func(config.Config) error { return nil },
 		func(config.Config) error { return nil },
 		nopList,
@@ -92,6 +97,7 @@ func TestRunPromptModeForwardsResume(t *testing.T) {
 			gotOpts = opts
 			return "ok", nil
 		},
+		nopPrompts,
 		func(config.Config) error { return nil },
 		func(config.Config) error { return nil },
 		nopList,
@@ -101,6 +107,70 @@ func TestRunPromptModeForwardsResume(t *testing.T) {
 	}
 	if gotOpts.Resume != "20260101-000000.000" {
 		t.Fatalf("resume id not forwarded: %#v", gotOpts)
+	}
+}
+
+func TestRunTurnsFileUsesSingleSessionRunner(t *testing.T) {
+	configPath := writeMainConfig(t)
+	turnsPath := filepath.Join(t.TempDir(), "turns.json")
+	if err := os.WriteFile(turnsPath, []byte(`["first turn","second turn"]`), 0o644); err != nil {
+		t.Fatalf("write turns file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	var gotPrompts []string
+	var gotOpts runOptions
+	code := run(
+		[]string{"-config", configPath, "-turns-file", turnsPath, "-json", "-resume", "prior-session"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) {
+			t.Fatal("single prompt runner should not be called for --turns-file")
+			return "", nil
+		},
+		func(_ config.Config, prompts []string, opts runOptions, w io.Writer) ([]string, error) {
+			gotPrompts = append([]string(nil), prompts...)
+			gotOpts = opts
+			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"second answer\"}\n"))
+			return []string{"first answer", "second answer"}, nil
+		},
+		func(config.Config) error { return nil },
+		func(config.Config) error { return nil },
+		nopList,
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if strings.Join(gotPrompts, "|") != "first turn|second turn" {
+		t.Fatalf("unexpected prompts: %#v", gotPrompts)
+	}
+	if !gotOpts.JSONEvents || gotOpts.Resume != "prior-session" {
+		t.Fatalf("unexpected opts: %#v", gotOpts)
+	}
+	if !strings.Contains(stdout.String(), `"type":"final"`) || strings.Contains(stdout.String(), "second answer\n") && !strings.Contains(stdout.String(), `"content":"second answer"`) {
+		t.Fatalf("JSON turns mode should only emit runner JSONL, got %q", stdout.String())
+	}
+}
+
+func TestRunTurnsFileRejectsPromptConflict(t *testing.T) {
+	configPath := writeMainConfig(t)
+	turnsPath := filepath.Join(t.TempDir(), "turns.txt")
+	if err := os.WriteFile(turnsPath, []byte("first\n"), 0o644); err != nil {
+		t.Fatalf("write turns file: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"-config", configPath, "-prompt", "x", "-turns-file", turnsPath},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		nopPrompts,
+		func(config.Config) error { return nil },
+		func(config.Config) error { return nil },
+		nopList,
+	)
+	if code != 2 || !strings.Contains(stderr.String(), "mutually exclusive") {
+		t.Fatalf("expected prompt/turns conflict, code=%d stderr=%s", code, stderr.String())
 	}
 }
 
@@ -116,6 +186,7 @@ func TestRunListSessionsCallsListRunner(t *testing.T) {
 			t.Fatal("prompt runner should not be called")
 			return "", nil
 		},
+		nopPrompts,
 		func(config.Config) error {
 			t.Fatal("TUI runner should not be called")
 			return nil
@@ -147,6 +218,7 @@ func TestRunServerOnlyUsesInjectedRunner(t *testing.T) {
 			t.Fatal("prompt runner should not be called in server-only mode")
 			return "", nil
 		},
+		nopPrompts,
 		func(config.Config) error {
 			t.Fatal("TUI runner should not be called in server-only mode")
 			return nil
@@ -174,6 +246,7 @@ func TestRunDefaultUsesTUIRunner(t *testing.T) {
 			t.Fatal("prompt runner should not be called in default mode")
 			return "", nil
 		},
+		nopPrompts,
 		func(config.Config) error {
 			called = true
 			return nil
@@ -196,6 +269,7 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 		&stdout,
 		&stderr,
 		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		nopPrompts,
 		func(config.Config) error { return nil },
 		func(config.Config) error { return nil },
 		nopList,
@@ -214,6 +288,7 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 		func(config.Config, string, runOptions, io.Writer) (string, error) {
 			return "", errors.New("prompt failed")
 		},
+		nopPrompts,
 		func(config.Config) error { return nil },
 		func(config.Config) error { return nil },
 		nopList,
@@ -230,6 +305,7 @@ func TestRunRejectsInvalidFlags(t *testing.T) {
 		&stdout,
 		&stderr,
 		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		nopPrompts,
 		func(config.Config) error { return nil },
 		func(config.Config) error { return nil },
 		nopList,

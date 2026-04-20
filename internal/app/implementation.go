@@ -191,15 +191,7 @@ func buildImplementationTargetPacket(prompt string, history []llama.ChatMessage)
 }
 
 func applyTaskResumeContextToImplementationTargetPacket(packet implementationTargetPacket, resume taskResumeContext) implementationTargetPacket {
-	return frontier.ApplyResumeContextToTargetPacket(packet, frontier.TargetResumeContext{
-		Active:                resume.Active,
-		SourceLane:            resume.SourceLane,
-		ApprovedEditTargets:   append([]string(nil), resume.ApprovedEditTargets...),
-		ReadOnlyEvidencePaths: append([]string(nil), resume.ReadOnlyEvidencePaths...),
-		AllowedDestinations:   append([]string(nil), resume.AllowedDestinations...),
-		ForbiddenPaths:        append([]string(nil), resume.ForbiddenPaths...),
-		VerificationPlan:      append([]string(nil), resume.VerificationPlan...),
-	})
+	return frontier.ApplyResumeContextToTargetPacket(packet, resume.TargetResumeContext())
 }
 
 func implementationResumeContextFromPromptPlan(mgr *workspace.Manager, prompt string, history []llama.ChatMessage, plan promptExecutionPlan, base taskResumeContext) taskResumeContext {
@@ -387,7 +379,7 @@ func (m *Model) runImplementAgentWithGrant(
 			lane:     analysisLaneImplement,
 			contract: answerContractForLane(analysisLaneImplement),
 		})
-		reply = m.applyControlRailsFinalAnswer(rails, reply, nil, changedPaths, len(verify.results) > 0)
+		reply = m.applyControlRailsFinalAnswer(rails, reply, nil, changedPaths, len(verify.results) > 0 && !verify.failed)
 		m.rememberExecutionJournal(journalRecorder, changedPaths, reply, refactorStage, verify)
 		if verify.failed {
 			m.rememberTaskMemory(buildRepairTaskMemory(prompt, changedPaths, verify, targetPacket), "implementation verification failed with resumable repair context")
@@ -439,6 +431,34 @@ func (m *Model) runImplementAgentWithGrant(
 		m.events <- infoMsg{text: "Verification failed after the direct edit. Qwen is repairing the change."}
 	} else if summary, ok := handleTerminalShortcut(shortcut); ok {
 		return summary, nil
+	}
+	if len(preChangedPaths) == 0 {
+		if shortcut := m.tryExactSentenceAppend(ctx, implementWorkspace, prompt, targetPacket, len(bootstrap.results)+1, journalRecorder, writeGuard, guardBlocked); shortcut.applied {
+			verify := m.runImplementationVerification(ctx, implementWorkspace, shortcut.nextStep, shortcut.changedPaths...)
+			if !verify.failed {
+				return finalizeImplementation(shortcut.summary, shortcut.changedPaths, verify), nil
+			}
+			if repair := m.tryDeterministicVerificationRepair(ctx, implementWorkspace, verify, shortcut.nextStep+len(verify.results), journalRecorder, writeGuard, guardBlocked); repair.applied {
+				changedPaths := uniqueNonEmptyStrings(append(shortcut.changedPaths, repair.changedPaths...))
+				verify = m.runImplementationVerification(ctx, implementWorkspace, repair.nextStep, changedPaths...)
+				if !verify.failed {
+					return finalizeImplementation(shortcut.summary+" "+repair.summary, changedPaths, verify), nil
+				}
+				preChangedPaths = uniqueNonEmptyStrings(append(preChangedPaths, changedPaths...))
+				history = append(history, llama.ChatMessage{Role: "system", Content: "An exact sentence append already changed the workspace:\n" + shortcut.summary + "\n" + repair.summary})
+			} else {
+				preChangedPaths = uniqueNonEmptyStrings(append(preChangedPaths, shortcut.changedPaths...))
+				history = append(history, llama.ChatMessage{Role: "system", Content: "An exact sentence append already changed the workspace:\n" + shortcut.summary})
+			}
+			for _, result := range verify.results {
+				history = append(history, llama.ChatMessage{Role: "system", Content: workspace.FormatToolResultForModel(result)})
+			}
+			taskPrompt = buildImplementRepairPrompt(prompt)
+			m.emitPhaseCard(analysisLaneImplement, "repair", phaseStateActive, "Verification failed. Repairing the bounded change before continuing.")
+			m.events <- infoMsg{text: "Verification failed after the exact sentence append. Qwen is repairing the change."}
+		} else if summary, ok := handleTerminalShortcut(shortcut); ok {
+			return summary, nil
+		}
 	}
 	if len(preChangedPaths) == 0 {
 		if shortcut := m.tryDirectConfigFieldUpdate(ctx, implementWorkspace, prompt, targetPacket, len(bootstrap.results)+1, journalRecorder, writeGuard, guardBlocked); shortcut.applied {
@@ -618,19 +638,28 @@ func (m *Model) runImplementAgentWithGrant(
 	resultByStep := make(map[int]agent.ToolResultEvent)
 	targetGuard := newImplementTargetGuard(implementWorkspace, targetPacket, bootstrap.results)
 	targetGuard.allowFullTargetRead = promptRequestsWholeFileRefactor(prompt)
+	structuralAnchorGuard := frontier.NewStructuralAnchorGuard(targetPacket)
 	implementPolicy := implementRunPolicyForRequest(m.cfg.Chat.MaxToolSteps, prompt, targetPacket)
 	initialVerificationPlan := implementationVerificationPlan(implementWorkspace, uniqueNonEmptyStrings(append(targetPacket.PrimaryPaths, preChangedPaths...))).Commands
-	railsPlan := promptExecutionPlan{
-		lane:     analysisLaneImplement,
-		reason:   promptRouteReasonDirectImplementation,
-		contract: answerContractForLane(analysisLaneImplement),
-	}
-	railsPlan.intent = buildPromptIntentDecision(prompt, buildPromptRouteProfile(prompt), m.recentConversationText(6), railsPlan)
+	railsPlan := fromFrontierPromptPlan(frontier.BuildResumePromptPlan(frontier.ResumePromptPlanInput{
+		UserPrompt: prompt,
+		Recent:     m.recentConversationText(6),
+		Lane:       frontier.LaneImplement,
+		Reason:     frontier.RouteReasonDirectImplementation,
+	}))
 	rails := buildDeterministicControlRails(prompt, railsPlan)
 	if implementPolicy.MaxToolSteps <= 0 {
 		m.logMessage("implement_tool_budget", fmt.Sprintf("using model-decided completion with no fixed step cap; no-progress fuse=%d", implementPolicy.MaxNoProgressTurns))
 	} else if baseBudget := implementToolBudget(m.cfg.Chat.MaxToolSteps); implementPolicy.MaxToolSteps != baseBudget {
 		m.logMessage("implement_tool_budget", fmt.Sprintf("expanded implement tool budget from %d to %d for structural request", baseBudget, implementPolicy.MaxToolSteps))
+	}
+	extraConstraints := append([]string(nil), targetPacket.StrategyHints...)
+	requiredNext := []string{"consume target packet before broad discovery", "apply the smallest correct edit", "verify changed surface before final success"}
+	invalidActions := []string(nil)
+	if structuralAnchorGuard.Required() {
+		extraConstraints = append(extraConstraints, "structural implementation may not edit from a file-level plan alone; first inspect a concrete declaration, search hit, or narrow line window inside the approved target")
+		requiredNext = append([]string{"establish a concrete edit anchor before any write tool"}, requiredNext...)
+		invalidActions = append(invalidActions, "editing from the initial bootstrap read without a concrete symbol, outline, search hit, or narrow line window")
 	}
 	runner := &agent.Runner{
 		Client:         m.client,
@@ -651,9 +680,9 @@ func (m *Model) runImplementAgentWithGrant(
 			renderedTargetPacket,
 			initialVerificationPlan,
 			implementPolicy,
-			targetPacket.StrategyHints,
-			[]string{"consume target packet before broad discovery", "apply the smallest correct edit", "verify changed surface before final success"},
-			nil,
+			extraConstraints,
+			requiredNext,
+			invalidActions,
 		),
 		OnEvent: func(event agent.RunEvent) {
 			m.logMessage(event.Role, event.Content)
@@ -663,6 +692,9 @@ func (m *Model) runImplementAgentWithGrant(
 				return blocked
 			}
 			if blocked := targetGuard.PreExecute(req); blocked != nil {
+				return blocked
+			}
+			if blocked := structuralAnchorGuard.PreExecute(req); blocked != nil {
 				return blocked
 			}
 			blocked := writeGuard.PreExecute(req)
@@ -692,6 +724,9 @@ func (m *Model) runImplementAgentWithGrant(
 		func(event agent.ToolResultEvent) {
 			resultByStep[event.Step] = event
 			m.logToolResult(event)
+			if requestEvent, ok := requestByStep[event.Step]; ok {
+				structuralAnchorGuard.Observe(requestEvent.Request, event.Result)
+			}
 			if shouldInvalidateExploreCacheForTool(event.Result) {
 				m.events <- exploreCacheInvalidatedMsg{
 					reason: fmt.Sprintf("workspace changed via %s; clearing cached explore profile", event.Result.Tool),
@@ -792,12 +827,12 @@ func (m *Model) runImplementationVerificationRepair(
 
 	repairRequests := make(map[int]agent.ToolRequestEvent)
 	repairResults := make(map[int]agent.ToolResultEvent)
-	railsPlan := promptExecutionPlan{
-		lane:     analysisLaneImplement,
-		reason:   promptRouteReasonDirectImplementation,
-		contract: answerContractForLane(analysisLaneImplement),
-	}
-	railsPlan.intent = buildPromptIntentDecision(prompt, buildPromptRouteProfile(prompt), m.recentConversationText(6), railsPlan)
+	railsPlan := fromFrontierPromptPlan(frontier.BuildResumePromptPlan(frontier.ResumePromptPlanInput{
+		UserPrompt: prompt,
+		Recent:     m.recentConversationText(6),
+		Lane:       frontier.LaneImplement,
+		Reason:     frontier.RouteReasonDirectImplementation,
+	}))
 	rails := buildDeterministicControlRails(prompt, railsPlan)
 	repairPolicy := frontier.ImplementRepairRunPolicyForRequest(m.cfg.Chat.MaxToolSteps, prompt, targetPacket)
 	runner := &agent.Runner{
@@ -1580,6 +1615,9 @@ func critiqueImplementationFinalAnswer(answer string, changedPaths []string, ver
 		if verify.failed && containsAny(normalized, "verification passed", "all tests passed", "tests passed", "checks passed") {
 			addFinding("overconfident verification claim after failed verification")
 		}
+		if verify.failed {
+			addFinding("verification failed; implementation result must not be accepted as complete")
+		}
 		if !verify.failed && len(changedPaths) > 0 && containsAny(normalized, "did not complete cleanly", "did not complete the requested edit", "final blocker:", "blocker:") {
 			addFinding("stale blocker language after verified implementation")
 		}
@@ -1653,6 +1691,118 @@ func implementationSummaryReportsNoop(summary string) bool {
 		"already satisfied",
 		"already present",
 	)
+}
+
+func (m *Model) tryExactSentenceAppend(
+	ctx context.Context,
+	mgr *workspace.Manager,
+	prompt string,
+	packet implementationTargetPacket,
+	startStep int,
+	journal *executionJournalRecorder,
+	guard *implementWriteGuard,
+	onBlocked func(req workspace.ToolRequest, blocked workspace.ToolResult) workspace.ToolResult,
+) directImplementationShortcut {
+	if mgr == nil {
+		return directImplementationShortcut{}
+	}
+	sentence, ok := exactSentenceFromPrompt(prompt)
+	if !ok {
+		return directImplementationShortcut{}
+	}
+	if len(packet.PrimaryPaths) != 1 {
+		return directImplementationShortcut{}
+	}
+	path := normalizeGuardedPath(packet.PrimaryPaths[0])
+	if !strings.HasSuffix(strings.ToLower(path), ".md") {
+		return directImplementationShortcut{}
+	}
+	data, err := os.ReadFile(filepath.Join(mgr.Root(), path))
+	if err != nil {
+		return directImplementationShortcut{}
+	}
+	if strings.Contains(string(data), sentence) {
+		return directImplementationShortcut{
+			terminal: true,
+			summary:  fmt.Sprintf("No changes were needed; %s already contains the exact requested sentence.", path),
+			nextStep: startStep,
+		}
+	}
+	content := "\n" + sentence + "\n"
+	req := workspace.ToolRequest{
+		Tool:    "append_file",
+		Path:    path,
+		Content: content,
+	}
+	if guard != nil {
+		if blocked := guard.PreExecute(req); blocked != nil {
+			result := *blocked
+			if onBlocked != nil {
+				result = onBlocked(req, result)
+			}
+			m.logToolResult(agent.ToolResultEvent{Step: startStep, Agent: "implement", Result: result})
+			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(result)}
+			if isWriteApprovalRequiredResult(result) {
+				return directImplementationShortcut{terminal: true, nextStep: startStep + 1}
+			}
+			return directImplementationShortcut{}
+		}
+	}
+	m.logToolRequest(agent.ToolRequestEvent{
+		Step:      startStep,
+		Agent:     "implement",
+		Raw:       fmt.Sprintf("{\"tool\":\"append_file\",\"path\":%q,\"content\":%q}", path, content),
+		Request:   req,
+		Mode:      workspace.ModeNormal,
+		Broad:     false,
+		Narrowing: true,
+		Action:    "append_file:" + path,
+	})
+	if capture := captureExecutionJournalResult(journal, req); capture != nil {
+		m.logToolResult(agent.ToolResultEvent{Step: startStep, Agent: "implement", Result: *capture})
+		m.events <- toolTraceMsg{text: workspace.FormatToolTrace(*capture)}
+		return directImplementationShortcut{}
+	}
+	result := mgr.Execute(ctx, req)
+	m.logToolResult(agent.ToolResultEvent{Step: startStep, Agent: "implement", Result: result})
+	m.events <- toolTraceMsg{text: workspace.FormatToolTrace(result)}
+	if shouldInvalidateExploreCacheForTool(result) {
+		m.events <- exploreCacheInvalidatedMsg{
+			reason: fmt.Sprintf("workspace changed via %s; clearing cached explore profile", result.Tool),
+		}
+	}
+	if result.Error != "" {
+		return directImplementationShortcut{}
+	}
+	return directImplementationShortcut{
+		applied:      true,
+		changedPaths: []string{path},
+		summary:      fmt.Sprintf("Appended the exact requested sentence to %s.", path),
+		nextStep:     startStep + 1,
+	}
+}
+
+func exactSentenceFromPrompt(prompt string) (string, bool) {
+	trimmed := strings.TrimSpace(prompt)
+	lower := strings.ToLower(trimmed)
+	for _, marker := range []string{
+		"adding exactly this troubleshooting sentence:",
+		"add exactly this troubleshooting sentence:",
+		"adding exactly this sentence:",
+		"add exactly this sentence:",
+	} {
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			sentence := strings.TrimSpace(trimmed[idx+len(marker):])
+			if line, _, ok := strings.Cut(sentence, "\n"); ok {
+				sentence = strings.TrimSpace(line)
+			}
+			sentence = strings.Trim(sentence, " \t\r\n\"'`")
+			if sentence != "" {
+				return sentence, true
+			}
+		}
+	}
+	return "", false
 }
 
 func (m *Model) tryDirectPromptEdit(
@@ -1889,6 +2039,10 @@ func (m *Model) tryStructuredExecutionPlan(
 	onBlocked func(req workspace.ToolRequest, blocked workspace.ToolResult) workspace.ToolResult,
 ) directImplementationShortcut {
 	if mgr == nil || len(packet.PrimaryPaths) == 0 {
+		return directImplementationShortcut{}
+	}
+	if frontier.TargetPacketRequiresConcreteStructuralAnchor(packet) {
+		m.logMessage("implement_execution_plan", "structured plan shortcut skipped: structural target needs a concrete anchor before edits")
 		return directImplementationShortcut{}
 	}
 	feedback := ""
@@ -2630,6 +2784,9 @@ func parseStructuredExecutionPlan(reply string) (structuredExecutionPlan, error)
 }
 
 func focusedRewriteWindow(packet implementationTargetPacket, bootstrap implementationBootstrap) (string, int, int, string, bool) {
+	if frontier.TargetPacketRequiresConcreteStructuralAnchor(packet) {
+		return "", 0, 0, "", false
+	}
 	for _, result := range bootstrap.results {
 		if result.Tool != "read_file" || result.Error != "" {
 			continue

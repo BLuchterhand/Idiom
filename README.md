@@ -243,6 +243,14 @@ go run ./cmd/qwen-swe-eval \
 
 The log directory should contain one `<task-id>.jsonl` debug log per task in the suite. See `docs/swe-eval-suite.md` for the default task families and oracle schema.
 
+To generate and score those logs from real headless conversations, run:
+
+```bash
+make swe-live
+```
+
+The live runner executes each task's prompt or multi-turn sequence in an isolated temporary workspace, then scores the produced debug log with the same deterministic SWE oracles.
+
 ## Explore Mode
 
 Use `/mode explore` to switch the main agent into a Claude-style read-only investigation mode.

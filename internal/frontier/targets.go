@@ -296,7 +296,7 @@ func (g *TargetGuard) PreExecute(req workspace.ToolRequest) *workspace.ToolResul
 			Summary: "Implementation target packet blocked broad discovery",
 			Error:   "implementation already has concrete target files. Read or search those files first before broad repo discovery.",
 		}
-	case "search_content", "read_file", "go_find_symbol", "go_read_symbol", "go_find_type", "go_find_const", "go_definition", "go_references", "go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_importers", "go_related_files":
+	case "search_content", "read_file", "go_find_symbol", "go_find_function", "go_read_symbol", "go_find_type", "go_find_const", "go_definition", "go_references", "go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_importers", "go_related_files":
 		if path == "" {
 			if redirected, ok := g.redirectedTargetInspection(req); ok {
 				return redirected
@@ -487,7 +487,7 @@ func (g *TargetGuard) targeted(tool string, path string) bool {
 	switch tool {
 	case "edit_file", "write_file", "append_file", "go_move_declarations":
 		return g.PathEditableAllowed(path)
-	case "read_file", "search_content", "go_read_symbol", "go_extract_body", "go_file_outline":
+	case "read_file", "search_content", "go_find_symbol", "go_find_function", "go_read_symbol", "go_extract_body", "go_file_outline":
 		return g.PathReadableAllowed(path)
 	default:
 		return false
@@ -641,6 +641,106 @@ func ParseReadWindowSummary(summary string) (string, int, int, bool) {
 		return "", 0, 0, false
 	}
 	return NormalizePath(matches[1]), startLine, endLine, true
+}
+
+type StructuralAnchorGuard struct {
+	packet TargetPacket
+	needed bool
+	seen   bool
+}
+
+func NewStructuralAnchorGuard(packet TargetPacket) *StructuralAnchorGuard {
+	return &StructuralAnchorGuard{
+		packet: packet,
+		needed: TargetPacketRequiresConcreteStructuralAnchor(packet),
+	}
+}
+
+func (g *StructuralAnchorGuard) Required() bool {
+	return g != nil && g.needed && !g.seen
+}
+
+func (g *StructuralAnchorGuard) PreExecute(req workspace.ToolRequest) *workspace.ToolResult {
+	if !g.Required() || !workspace.IsWorkspaceWriteTool(req.Tool) {
+		return nil
+	}
+	return &workspace.ToolResult{
+		Tool:    req.Tool,
+		Summary: "Structural implementation target rejected",
+		Error:   "the approved structural plan names only a file-level target. Inspect a concrete declaration or line anchor first with go_file_outline, go_find_function/go_find_symbol, search_content scoped to the primary file, or a narrow read_file window before editing.",
+	}
+}
+
+func (g *StructuralAnchorGuard) Observe(req workspace.ToolRequest, result workspace.ToolResult) {
+	if !g.Required() || result.Error != "" {
+		return
+	}
+	if StructuralAnchorEvidenceResult(g.packet, req, result) {
+		g.seen = true
+	}
+}
+
+func TargetPacketRequiresConcreteStructuralAnchor(packet TargetPacket) bool {
+	if !TargetPacketNeedsStructuralPolicy(packet) {
+		return false
+	}
+	return !TargetPacketHasConcreteAnchor(packet)
+}
+
+func TargetPacketHasConcreteAnchor(packet TargetPacket) bool {
+	return len(packet.Anchors) > 0 ||
+		len(packet.Symbols) > 0 ||
+		len(packet.SymbolHints) > 0 ||
+		len(packet.LiteralFragments) > 0 ||
+		len(packet.LocationHints) > 0
+}
+
+func StructuralAnchorEvidenceResult(packet TargetPacket, req workspace.ToolRequest, result workspace.ToolResult) bool {
+	switch req.Tool {
+	case "go_file_outline":
+		return structuralAnchorPathAllowed(packet, req.Path)
+	case "go_find_symbol", "go_find_function", "go_find_type", "go_find_const", "go_definition", "go_references", "go_calls_from", "go_calls_into", "go_extract_body", "go_read_symbol":
+		if structuralAnchorPathAllowed(packet, req.Path) {
+			return true
+		}
+		return resultReferencesPrimaryPath(packet, result.Output)
+	case "search_content":
+		return structuralAnchorPathAllowed(packet, req.Path) && strings.TrimSpace(result.Output) != ""
+	case "read_file":
+		path, startLine, endLine, ok := ParseReadWindowSummary(result.Summary)
+		if !ok || !structuralAnchorPathAllowed(packet, path) {
+			return false
+		}
+		if startLine <= 0 || endLine < startLine {
+			return false
+		}
+		return endLine-startLine <= 80 && !(startLine == 1 && endLine >= 120)
+	default:
+		return false
+	}
+}
+
+func structuralAnchorPathAllowed(packet TargetPacket, path string) bool {
+	path = NormalizePath(path)
+	if path == "" {
+		return false
+	}
+	for _, candidate := range packet.PrimaryPaths {
+		if NormalizePath(candidate) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func resultReferencesPrimaryPath(packet TargetPacket, output string) bool {
+	for _, path := range packet.PrimaryPaths {
+		path = NormalizePath(path)
+		if path != "" && strings.Contains(output, path) {
+			return true
+		}
+	}
+	return false
 }
 
 func LimitStrings(values []string, limit int) []string {

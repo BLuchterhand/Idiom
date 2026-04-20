@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -328,6 +330,8 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
 		return m.goEntrypoints(req)
 	case "go_find_symbol":
 		return m.goFindSymbol(req)
+	case "go_find_function":
+		return m.goFindFunction(req)
 	case "go_find_type":
 		return m.goFindType(req)
 	case "go_find_const":
@@ -1134,6 +1138,10 @@ func (m *Manager) goFindSymbol(req ToolRequest) ToolResult {
 		Summary: fmt.Sprintf("Found %d matching Go symbol(s). Use read_file on a returned handle or go_read_symbol for a focused snippet.", len(lines)),
 		Output:  strings.Join(lines, "\n"),
 	}
+}
+
+func (m *Manager) goFindFunction(req ToolRequest) ToolResult {
+	return m.goFindSymbolsByKind(req, "func", "go_find_function", "function")
 }
 
 func (m *Manager) goFindType(req ToolRequest) ToolResult {
@@ -2278,10 +2286,22 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: toolName, Summary: "Failed to resolve path", Error: err.Error()}
 	}
+
+	updated := []byte(req.Content)
+	if appendMode {
+		current, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return ToolResult{Tool: toolName, Summary: "Failed to read existing file", Error: err.Error()}
+		}
+		updated = append(append([]byte(nil), current...), []byte(req.Content)...)
+	}
+	if rejected := m.rejectInvalidPlannedWrite(toolName, "Write request rejected", path, updated); rejected != nil {
+		return *rejected
+	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return ToolResult{Tool: toolName, Summary: "Failed to create parent directory", Error: err.Error()}
 	}
-
 	if appendMode {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
@@ -2292,7 +2312,7 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 			return ToolResult{Tool: toolName, Summary: "Failed to append file", Error: err.Error()}
 		}
 	} else {
-		if err := os.WriteFile(path, []byte(req.Content), 0o644); err != nil {
+		if err := os.WriteFile(path, updated, 0o644); err != nil {
 			return ToolResult{Tool: toolName, Summary: "Failed to write file", Error: err.Error()}
 		}
 	}
@@ -2361,6 +2381,9 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 			Output:  "replacement produced no content change",
 		}
 	}
+	if rejected := m.rejectInvalidPlannedWrite("edit_file", "Edit request rejected", path, []byte(updated)); rejected != nil {
+		return *rejected
+	}
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
 		return ToolResult{Tool: "edit_file", Summary: "Failed to write edited file", Error: err.Error()}
 	}
@@ -2409,6 +2432,9 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 			Output:  "replacement produced no content change",
 		}
 	}
+	if rejected := m.rejectInvalidPlannedWrite("edit_file", "Edit request rejected", path, []byte(updated)); rejected != nil {
+		return *rejected
+	}
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
 		return ToolResult{Tool: "edit_file", Summary: "Failed to write edited file", Error: err.Error()}
 	}
@@ -2419,6 +2445,32 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 		Summary: fmt.Sprintf("Edited %s lines %d-%d", m.displayPath(path), startLine, endLine),
 		Output:  fmt.Sprintf("replaced lines: %d-%d", startLine, endLine),
 	}
+}
+
+func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, path string, contents []byte) *ToolResult {
+	if m == nil {
+		return nil
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		fset := token.NewFileSet()
+		if _, err := parser.ParseFile(fset, path, contents, parser.AllErrors); err != nil {
+			return &ToolResult{
+				Tool:    toolName,
+				Summary: summary,
+				Error:   fmt.Sprintf("preflight syntax validation failed for %s: %v", m.displayPath(path), err),
+			}
+		}
+	case ".json":
+		if !json.Valid(contents) {
+			return &ToolResult{
+				Tool:    toolName,
+				Summary: summary,
+				Error:   fmt.Sprintf("preflight JSON validation failed for %s", m.displayPath(path)),
+			}
+		}
+	}
+	return nil
 }
 
 type lineSpan struct {

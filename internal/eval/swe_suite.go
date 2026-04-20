@@ -28,18 +28,25 @@ type SWETask struct {
 }
 
 type SWEOracle struct {
-	RequireNoChangedFiles       bool     `json:"require_no_changed_files,omitempty"`
-	RequireChangedFiles         []string `json:"require_changed_files,omitempty"`
-	ForbidChangedFiles          []string `json:"forbid_changed_files,omitempty"`
-	MaxToolRequests             *int     `json:"max_tool_requests,omitempty"`
-	MaxDurationMillis           *int64   `json:"max_duration_millis,omitempty"`
-	MaxErrors                   *int     `json:"max_errors,omitempty"`
-	MinUserTurns                *int     `json:"min_user_turns,omitempty"`
-	MinAssistantTurns           *int     `json:"min_assistant_turns,omitempty"`
-	RequireNoApproval           bool     `json:"require_no_approval,omitempty"`
-	RequireNoShell              bool     `json:"require_no_shell,omitempty"`
-	RequireNoSummaryRejections  bool     `json:"require_no_summary_rejections,omitempty"`
-	RequireSummaryRejectionLane []string `json:"require_summary_rejection_lane,omitempty"`
+	RequireNoChangedFiles       bool                        `json:"require_no_changed_files,omitempty"`
+	RequireChangedFiles         []string                    `json:"require_changed_files,omitempty"`
+	ForbidChangedFiles          []string                    `json:"forbid_changed_files,omitempty"`
+	RequireFileContent          []SWEFileContentExpectation `json:"require_file_content,omitempty"`
+	MaxToolRequests             *int                        `json:"max_tool_requests,omitempty"`
+	MaxDurationMillis           *int64                      `json:"max_duration_millis,omitempty"`
+	MaxErrors                   *int                        `json:"max_errors,omitempty"`
+	MinUserTurns                *int                        `json:"min_user_turns,omitempty"`
+	MinAssistantTurns           *int                        `json:"min_assistant_turns,omitempty"`
+	RequireNoApproval           bool                        `json:"require_no_approval,omitempty"`
+	RequireNoShell              bool                        `json:"require_no_shell,omitempty"`
+	RequireNoSummaryRejections  bool                        `json:"require_no_summary_rejections,omitempty"`
+	RequireSummaryRejectionLane []string                    `json:"require_summary_rejection_lane,omitempty"`
+}
+
+type SWEFileContentExpectation struct {
+	Path           string   `json:"path"`
+	Contains       []string `json:"contains,omitempty"`
+	ForbidContains []string `json:"forbid_contains,omitempty"`
 }
 
 type SWECoverageContract struct {
@@ -269,11 +276,22 @@ func LintSWESuite(suite SWESuite) []string {
 		if len(task.Turns) > 0 && (task.Oracle.MinUserTurns == nil || *task.Oracle.MinUserTurns < len(task.Turns)) {
 			addFinding(task, "multi-turn task must require at least %d user turns", len(task.Turns))
 		}
+		if len(task.Turns) > 0 && !task.Scenario.RequireAssistantForEachUser {
+			addFinding(task, "multi-turn task must require an assistant response for each user turn")
+		}
 		if taskHasTag(task, "failure-repair") && task.Scenario.RequireVerification == "" {
 			addFinding(task, "failure-repair task must assert verification outcome")
 		}
 		if taskHasTag(task, "tool-error") && task.Oracle.MaxErrors == nil {
 			addFinding(task, "tool-error task must bound errors")
+		}
+		for _, expected := range task.Oracle.RequireFileContent {
+			if err := validateFixturePathSyntax(expected.Path); err != nil {
+				addFinding(task, "file content oracle path is invalid: %v", err)
+			}
+			if len(expected.Contains) == 0 && len(expected.ForbidContains) == 0 {
+				addFinding(task, "file content oracle for %q must assert required or forbidden text", expected.Path)
+			}
 		}
 	}
 	return findings
@@ -715,6 +733,11 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 			addFinding("oracle changed files unexpectedly include %q", forbidden)
 		}
 	}
+	for _, expected := range oracle.RequireFileContent {
+		for _, finding := range evaluateFileContentOracle(report.Metrics.WorkspaceRoot, expected) {
+			addFinding("%s", finding)
+		}
+	}
 	if oracle.MaxToolRequests != nil && report.Metrics.ToolRequests > *oracle.MaxToolRequests {
 		addFinding("tool requests exceeded oracle limit: got %d want <= %d", report.Metrics.ToolRequests, *oracle.MaxToolRequests)
 	}
@@ -745,6 +768,44 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 		}
 	}
 	return report
+}
+
+func evaluateFileContentOracle(workspaceRoot string, expected SWEFileContentExpectation) []string {
+	findings := make([]string, 0)
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		return []string{fmt.Sprintf("file content oracle for %q has no workspace root in log", expected.Path)}
+	}
+	path := filepath.Clean(strings.TrimSpace(expected.Path))
+	if path == "" || path == "." {
+		return []string{"file content oracle has empty path"}
+	}
+	if filepath.IsAbs(path) {
+		return []string{fmt.Sprintf("file content oracle path %q must be relative", expected.Path)}
+	}
+	fullPath := filepath.Clean(filepath.Join(root, path))
+	rel, err := filepath.Rel(root, fullPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return []string{fmt.Sprintf("file content oracle path %q escapes workspace root", expected.Path)}
+	}
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return []string{fmt.Sprintf("file content oracle could not read %q: %v", path, err)}
+	}
+	content := string(data)
+	for _, required := range expected.Contains {
+		required = strings.TrimSpace(required)
+		if required != "" && !strings.Contains(content, required) {
+			findings = append(findings, fmt.Sprintf("file %q does not contain required text %q", path, required))
+		}
+	}
+	for _, forbidden := range expected.ForbidContains {
+		forbidden = strings.TrimSpace(forbidden)
+		if forbidden != "" && strings.Contains(content, forbidden) {
+			findings = append(findings, fmt.Sprintf("file %q unexpectedly contains %q", path, forbidden))
+		}
+	}
+	return findings
 }
 
 func EvaluateSWESuite(suite SWESuite, recordsByTask map[string][]Record, logPaths map[string]string) SWESuiteReport {
@@ -1016,6 +1077,9 @@ func taskScenarioAssertions(task SWETask) []string {
 	if len(scenario.RequirePhases) > 0 {
 		assertions = append(assertions, "phases")
 	}
+	if scenario.RequireAssistantForEachUser {
+		assertions = append(assertions, "assistant_for_each_user")
+	}
 	if scenario.RequireRoutePlan != nil {
 		assertions = append(assertions, "route_plan")
 	}
@@ -1051,6 +1115,9 @@ func taskScenarioAssertions(task SWETask) []string {
 	}
 	if scenario.RequireLongHorizonState != nil {
 		assertions = append(assertions, "long_horizon_state")
+	}
+	if scenario.RequireWorkflowState != nil {
+		assertions = append(assertions, "workflow_state")
 	}
 	if scenario.RequireBudgetLedger != nil {
 		assertions = append(assertions, "budget_ledger")
@@ -1192,6 +1259,9 @@ func taskFileSurfaces(task SWETask) []string {
 	paths = append(paths, task.Scenario.RequireChangedFiles...)
 	paths = append(paths, task.Oracle.RequireChangedFiles...)
 	paths = append(paths, task.Oracle.ForbidChangedFiles...)
+	for _, expected := range task.Oracle.RequireFileContent {
+		paths = append(paths, expected.Path)
+	}
 	return fileSurfaces(paths)
 }
 
@@ -1242,6 +1312,9 @@ func taskOracleAssertions(task SWETask) []string {
 	}
 	if len(oracle.ForbidChangedFiles) > 0 {
 		assertions = append(assertions, "forbid_changed_files")
+	}
+	if len(oracle.RequireFileContent) > 0 {
+		assertions = append(assertions, "file_content")
 	}
 	if oracle.MaxToolRequests != nil {
 		assertions = append(assertions, "max_tool_requests")

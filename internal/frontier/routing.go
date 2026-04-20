@@ -38,6 +38,8 @@ func BuildRouteProfile(prompt string) RouteProfile {
 	wantsVerificationOnly := LooksLikeVerificationOnlyPrompt(normalized)
 	wantsPlanOnly := LooksLikePlanOnlyPrompt(normalized)
 	hasReadOnlyBoundary := LooksLikeReadOnlyBoundaryPrompt(normalized)
+	conversationMemoryNote := LooksLikeConversationMemoryNotePrompt(normalized)
+	wantsReview := LooksLikeReviewPrompt(normalized)
 	if wantsDebugLogs {
 		wantsExploration = true
 		if thoroughness == "" {
@@ -45,13 +47,23 @@ func BuildRouteProfile(prompt string) RouteProfile {
 		}
 	}
 	wantsArchitecture := LooksLikeArchitecturePrompt(normalized) || LooksLikeArchitecturePlanRequest(normalized)
+	wantsDirectImplement := LooksLikeDirectImplementationPrompt(prompt, normalized)
+	wantsImplementation := PromptRequestsImplementation(prompt)
+	if conversationMemoryNote {
+		wantsDirectImplement = false
+		wantsImplementation = false
+		wantsExploration = false
+		wantsReview = false
+		wantsArchitecture = false
+		wantsVerificationOnly = false
+	}
 	return RouteProfile{
 		Normalized:                         normalized,
 		WantsLocate:                        LooksLikeLocatePrompt(prompt, normalized) || ShouldRouteUILiteralEditThroughLocate(prompt, normalized),
-		WantsDirectImplement:               LooksLikeDirectImplementationPrompt(prompt, normalized),
-		WantsImplementation:                PromptRequestsImplementation(prompt),
+		WantsDirectImplement:               wantsDirectImplement,
+		WantsImplementation:                wantsImplementation,
 		WantsExploration:                   wantsExploration,
-		WantsReview:                        LooksLikeReviewPrompt(normalized),
+		WantsReview:                        wantsReview,
 		WantsArchitecture:                  wantsArchitecture,
 		WantsPlanOnly:                      wantsPlanOnly,
 		WantsVerificationOnly:              wantsVerificationOnly,
@@ -61,6 +73,26 @@ func BuildRouteProfile(prompt string) RouteProfile {
 		Thoroughness:                       thoroughness,
 		RequestsAnalysisBeforeImplementing: PromptRequestsAnalysisBeforeImplementation(normalized),
 	}
+}
+
+func LooksLikeConversationMemoryNotePrompt(normalized string) bool {
+	trimmed := strings.TrimSpace(normalized)
+	if trimmed == "" {
+		return false
+	}
+	for _, prefix := range []string{
+		"remember that ",
+		"also remember that ",
+		"track that ",
+		"keep the current focus ",
+		"note that ",
+		"record that ",
+	} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return !ContainsAny(trimmed, " now ", " now.", " now,", " now:", " right now", " immediately")
+		}
+	}
+	return false
 }
 
 func InitialRoute(profile RouteProfile) (Lane, RouteReason) {

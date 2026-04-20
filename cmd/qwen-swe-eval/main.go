@@ -139,16 +139,25 @@ func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, 
 		}
 		fixture := taskFixturePath(suitePath, task)
 		prompt := taskPrompt(task)
+		turns := taskTurns(task)
+		turnsJSON, err := json.Marshal(turns)
+		if err != nil {
+			return nil, fmt.Errorf("encode turns for %s: %w", task.ID, err)
+		}
 		command := renderRunnerCommand(commandTemplate, map[string]string{
-			"prompt":   prompt,
-			"task_id":  strings.TrimSpace(task.ID),
-			"log_path": logPath,
-			"fixture":  fixture,
+			"prompt":     prompt,
+			"turns_json": string(turnsJSON),
+			"turn_count": fmt.Sprintf("%d", len(turns)),
+			"task_id":    strings.TrimSpace(task.ID),
+			"log_path":   logPath,
+			"fixture":    fixture,
 		})
 		cmd := exec.Command("/bin/sh", "-lc", command)
 		cmd.Dir = firstNonEmpty(fixture, filepath.Dir(suitePath))
 		cmd.Env = append(os.Environ(),
 			"QWEN_SWE_PROMPT="+prompt,
+			"QWEN_SWE_TURNS_JSON="+string(turnsJSON),
+			"QWEN_SWE_TURN_COUNT="+fmt.Sprintf("%d", len(turns)),
 			"QWEN_SWE_TASK_ID="+strings.TrimSpace(task.ID),
 			"QWEN_SWE_LOG="+logPath,
 			"QWEN_SWE_FIXTURE="+fixture,
@@ -169,7 +178,7 @@ func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, 
 
 func renderRunnerCommand(template string, values map[string]string) string {
 	pairs := make([]string, 0, 8)
-	for _, key := range []string{"prompt", "task_id", "log_path", "fixture"} {
+	for _, key := range []string{"prompt", "turns_json", "turn_count", "task_id", "log_path", "fixture"} {
 		if value, ok := values[key]; ok {
 			pairs = append(pairs, "{"+key+"}", shellQuote(value))
 		}
@@ -192,6 +201,24 @@ func taskPrompt(task eval.SWETask) string {
 		return ""
 	}
 	return strings.TrimSpace(task.Turns[len(task.Turns)-1])
+}
+
+func taskTurns(task eval.SWETask) []string {
+	if len(task.Turns) > 0 {
+		turns := make([]string, 0, len(task.Turns))
+		for _, turn := range task.Turns {
+			if turn = strings.TrimSpace(turn); turn != "" {
+				turns = append(turns, turn)
+			}
+		}
+		if len(turns) > 0 {
+			return turns
+		}
+	}
+	if prompt := taskPrompt(task); prompt != "" {
+		return []string{prompt}
+	}
+	return nil
 }
 
 func taskFixturePath(suitePath string, task eval.SWETask) string {

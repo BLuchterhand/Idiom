@@ -188,6 +188,31 @@ func TestApplyPatchAmbiguousHunkRejected(t *testing.T) {
 	}
 }
 
+func TestApplyPatchRejectsInvalidGoBeforeWrite(t *testing.T) {
+	mgr, dir := patchWorkspaceConfig(t)
+	path := filepath.Join(dir, "analysis_agents.go")
+	original := "package app\n\nfunc ok() {}\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	patch := "*** Begin Patch\n" +
+		"*** Update File: analysis_agents.go\n" +
+		"@@\n" +
+		"-package app\n" +
+		"+\n" +
+		" \n" +
+		" func ok() {}\n" +
+		"*** End Patch"
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "apply_patch", Content: patch})
+	if result.Error == "" || !strings.Contains(result.Error, "preflight syntax validation failed") {
+		t.Fatalf("expected invalid Go patch rejection, got %#v", result)
+	}
+	if data, _ := os.ReadFile(path); string(data) != original {
+		t.Fatalf("file should be untouched: %q", string(data))
+	}
+}
+
 func TestApplyPatchExploreModeRejected(t *testing.T) {
 	mgr, _ := patchWorkspaceConfig(t)
 	if err := mgr.SetMode(ModeExplore); err != nil {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"qwen-bubbles/internal/llama"
+	"qwen-bubbles/internal/workspace"
 )
 
 func TestPromptMentionedWorkspacePathsParsesAnchorsAndToolFields(t *testing.T) {
@@ -36,5 +37,47 @@ func TestBuildTargetPacketDerivesAnchorsAndArchitectureHints(t *testing.T) {
 	}
 	if len(packet.StrategyHints) == 0 || !strings.Contains(packet.StrategyHints[0], "Direction:") {
 		t.Fatalf("StrategyHints = %#v, want architecture direction", packet.StrategyHints)
+	}
+}
+
+func TestTargetGuardTreatsGoFindFunctionAsScopedInspection(t *testing.T) {
+	guard := NewTargetGuard(nil, TargetPacket{
+		PrimaryPaths: []string{"internal/app/app.go"},
+	}, nil)
+	blocked := guard.PreExecute(workspace.ToolRequest{
+		Tool:    "go_find_function",
+		Path:    "internal/app/app.go",
+		Pattern: "runImplementAgent",
+	})
+	if blocked != nil {
+		t.Fatalf("expected go_find_function scoped to a primary path to pass, got %#v", blocked)
+	}
+	if !guard.targetConsumed {
+		t.Fatal("expected go_find_function to consume the target packet")
+	}
+}
+
+func TestStructuralAnchorGuardRequiresConcreteEvidenceBeforeWrites(t *testing.T) {
+	packet := TargetPacket{
+		SourceLane:    string(LaneArchitecture),
+		PrimaryPaths:  []string{"internal/app/app.go"},
+		StrategyHints: []string{"extract routing responsibility"},
+	}
+	guard := NewStructuralAnchorGuard(packet)
+	if !guard.Required() {
+		t.Fatal("expected structural guard to require an anchor for file-level architecture target")
+	}
+	if blocked := guard.PreExecute(workspace.ToolRequest{Tool: "edit_file", Path: "internal/app/app.go"}); blocked == nil {
+		t.Fatal("expected write to be blocked before concrete anchor evidence")
+	}
+	guard.Observe(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go"},
+		workspace.ToolResult{Tool: "read_file", Summary: "Read internal/app/app.go lines 220-260", Output: "func run() {}"},
+	)
+	if guard.Required() {
+		t.Fatal("expected narrow read window to satisfy concrete anchor requirement")
+	}
+	if blocked := guard.PreExecute(workspace.ToolRequest{Tool: "edit_file", Path: "internal/app/app.go"}); blocked != nil {
+		t.Fatalf("expected write to pass after anchor evidence, got %#v", blocked)
 	}
 }

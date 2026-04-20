@@ -253,6 +253,15 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 
 	for _, write := range planned {
 		if write.remove {
+			continue
+		}
+		if rejected := m.rejectInvalidPlannedWrite("apply_patch", "Patch request rejected", write.path, write.contents); rejected != nil {
+			return *rejected
+		}
+	}
+
+	for _, write := range planned {
+		if write.remove {
 			if err := os.Remove(write.path); err != nil && !os.IsNotExist(err) {
 				return ToolResult{Tool: "apply_patch", Summary: "Patch apply failed mid-stream", Error: fmt.Sprintf("delete %s: %v", m.displayPath(write.path), err)}
 			}

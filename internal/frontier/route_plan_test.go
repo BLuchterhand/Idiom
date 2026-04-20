@@ -41,6 +41,19 @@ func TestClassifyPromptPlanUsesContextualRoute(t *testing.T) {
 	}
 }
 
+func TestClassifyPromptPlanKeepsMemoryNotesConversational(t *testing.T) {
+	plan := ClassifyPromptPlan(PromptPlanInput{
+		Prompt:              "Remember that any later docs write must touch README.md only.",
+		WorkspaceEnabled:    true,
+		WorkspaceNormal:     true,
+		DefaultThoroughness: "medium",
+	})
+
+	if plan.Lane != LaneMain || plan.Intent.WantsEdits {
+		t.Fatalf("plan = %#v, memory note should not trigger implementation", plan)
+	}
+}
+
 func TestClassifyPromptPlanAppliesAgentModeInFrontier(t *testing.T) {
 	plan := ClassifyPromptPlan(PromptPlanInput{
 		Prompt:              "Please implement a refactor in internal/app/app.go.",
@@ -118,6 +131,32 @@ func TestClassifyPromptPlanWorkflowApprovalRequiresScope(t *testing.T) {
 	}
 }
 
+func TestBuildTaskMemoryPromptPlanOwnsResumeRouting(t *testing.T) {
+	plan := BuildTaskMemoryPromptPlan(TaskMemoryResumeInput{
+		Active:     true,
+		Kind:       "durable_plan",
+		Lane:       string(LaneArchitecture),
+		UserPrompt: "implement this plan",
+	}, "medium")
+
+	if plan.Lane != LaneImplement || plan.Reason != RouteReasonDirectImplementation {
+		t.Fatalf("plan = %#v, want approved durable plan to route to implementation", plan)
+	}
+	if !plan.Intent.WantsEdits || plan.Intent.WantsPlanOnly {
+		t.Fatalf("intent = %#v, want edit intent after task-memory approval", plan.Intent)
+	}
+
+	plan = BuildTaskMemoryPromptPlan(TaskMemoryResumeInput{
+		Active:     true,
+		Kind:       "durable_plan",
+		Lane:       string(LaneArchitecture),
+		UserPrompt: "continue validating the plan",
+	}, "medium")
+	if plan.Lane != LaneArchitecture || plan.Intent.WantsEdits {
+		t.Fatalf("plan = %#v, want unapproved durable plan to stay read-only architecture", plan)
+	}
+}
+
 func TestReconcilePromptPlanWithVerifierOwnsSafetyPolicy(t *testing.T) {
 	plan := ClassifyPromptPlan(PromptPlanInput{
 		Prompt:              "Prepare a plan to update internal/app/analysis_agents.go. Do not edit files.",
@@ -141,6 +180,36 @@ func TestReconcilePromptPlanWithVerifierOwnsSafetyPolicy(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(result.Notes, "\n"), "ignored verifier implementation recommendation") {
 		t.Fatalf("notes = %#v, want safety note", result.Notes)
+	}
+}
+
+func TestReconcilePromptPlanPreservesBoundedCodeSmellReview(t *testing.T) {
+	prompt := "Can you identify an opportunity to clean up the code base? Any small code smells?"
+	plan := ClassifyPromptPlan(PromptPlanInput{
+		Prompt:              prompt,
+		WorkspaceEnabled:    true,
+		WorkspaceNormal:     true,
+		DefaultThoroughness: "medium",
+	})
+	if plan.Lane != LaneReview {
+		t.Fatalf("test setup expected host review route, got %#v", plan)
+	}
+	verifier := NormalizeIntentVerifierResult(IntentVerifierResult{
+		PrimaryIntent:       "plan_architecture",
+		WantsEdits:          false,
+		WantsPlanOnly:       false,
+		RecommendedLane:     string(LaneArchitecture),
+		RecommendedContract: string(AnswerContractArchitecture),
+		TaskFamily:          "architecture",
+		Confidence:          "high",
+	})
+
+	result := ReconcilePromptPlanWithVerifier(prompt, plan, verifier, "")
+	if result.Plan.Lane != LaneReview || result.Plan.Contract != AnswerContractReviewFindings {
+		t.Fatalf("reconciled plan = %#v notes=%#v, want bounded review preserved", result.Plan, result.Notes)
+	}
+	if !strings.Contains(strings.Join(result.Notes, "\n"), "preserved host review lane") {
+		t.Fatalf("notes = %#v, want bounded review preservation note", result.Notes)
 	}
 }
 

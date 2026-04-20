@@ -22,6 +22,7 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 	}
 	requiredFamilies := []string{
 		"direct_question",
+		"debug_logs",
 		"verification_only",
 		"locate",
 		"locate_then_implement",
@@ -49,6 +50,9 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 	for _, task := range suite.Tasks {
 		if task.Scenario.RequireRoutePlan == nil && len(task.Scenario.RequirePhases) == 0 {
 			t.Fatalf("task %q should assert route plan or phase behavior", task.ID)
+		}
+		if len(task.Turns) > 0 && !task.Scenario.RequireAssistantForEachUser {
+			t.Fatalf("multi-turn task %q should require an assistant response for each user turn", task.ID)
 		}
 		if strings.TrimSpace(task.Fixture) != "" {
 			fixturePath := filepath.Join(filepath.Dir(suitePath), task.Fixture)
@@ -266,11 +270,38 @@ func TestLintSWESuiteReportsWeakOracles(t *testing.T) {
 					RequireNoChangedFiles: true,
 				},
 			},
+			{
+				ID:     "multi-turn-no-assistant-contract",
+				Family: "multi_turn_state",
+				Prompt: "Continue.",
+				Turns:  []string{"first", "second"},
+				Scenario: Scenario{
+					Name:           "multi-turn-no-assistant-contract",
+					PromptContains: []string{"second"},
+				},
+				Oracle: SWEOracle{
+					RequireNoChangedFiles: true,
+				},
+			},
+			{
+				ID:     "file-content-escape",
+				Family: "docs_edit",
+				Prompt: "Update docs.",
+				Scenario: Scenario{
+					Name:           "file-content-escape",
+					PromptContains: []string{"Update"},
+				},
+				Oracle: SWEOracle{
+					RequireFileContent: []SWEFileContentExpectation{{
+						Path: "../README.md",
+					}},
+				},
+			},
 		},
 	}
 	findings := LintSWESuite(suite)
 	joined := strings.Join(findings, "\n")
-	for _, want := range []string{"read-only task must require no changed files", "direct implementation task must require changed files or approval", "tool-error task must bound errors", "negative-evidence task must require no changed files", "fixture path is invalid"} {
+	for _, want := range []string{"read-only task must require no changed files", "direct implementation task must require changed files or approval", "tool-error task must bound errors", "negative-evidence task must require no changed files", "fixture path is invalid", "multi-turn task must require at least 2 user turns", "multi-turn task must require an assistant response for each user turn", "file content oracle path is invalid", "file content oracle for \"../README.md\" must assert required or forbidden text"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected lint finding %q, got %q", want, joined)
 		}
@@ -343,6 +374,44 @@ func TestEvaluateSWETaskAppliesOracle(t *testing.T) {
 	report := EvaluateSWETask("direct.jsonl", records, task)
 	if !report.Passed {
 		t.Fatalf("expected SWE task to pass, got %#v", report.Findings)
+	}
+}
+
+func TestEvaluateSWETaskAppliesFileContentOracle(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("debug logs are searchable\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	task := SWETask{
+		ID:     "docs-edit",
+		Family: "docs_edit",
+		Prompt: "Update README.md.",
+		Scenario: Scenario{
+			Name:           "docs-edit",
+			PromptContains: []string{"Update README"},
+		},
+		Oracle: SWEOracle{
+			RequireFileContent: []SWEFileContentExpectation{{
+				Path:           "README.md",
+				Contains:       []string{"debug logs are searchable"},
+				ForbidContains: []string{"TODO"},
+			}},
+		},
+	}
+	records := []Record{
+		{Type: "session_start", Data: map[string]any{"workspace_root": root}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Update README.md."}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Changed files:\n- README.md"}},
+	}
+	report := EvaluateSWETask("docs.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("expected file content oracle to pass, got %#v", report.Findings)
+	}
+
+	task.Oracle.RequireFileContent[0].Contains = []string{"missing text"}
+	report = EvaluateSWETask("docs.jsonl", records, task)
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "does not contain required text") {
+		t.Fatalf("expected file content failure, got passed=%t findings=%#v", report.Passed, report.Findings)
 	}
 }
 

@@ -16,7 +16,6 @@ type dynamicToolPolicySnapshot = frontier.DynamicToolPolicySnapshot
 type implementationTarget = frontier.Target
 type implementationTargetPacket = frontier.TargetPacket
 type effortPolicySnapshot = frontier.EffortPolicySnapshot
-type promptRouteProfile = frontier.RouteProfile
 type verificationPlan = frontier.VerificationPlan
 type locateCandidate = frontier.LocateCandidate
 

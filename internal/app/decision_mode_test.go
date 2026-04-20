@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"qwen-bubbles/internal/config"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/workspace"
 )
 
@@ -63,9 +64,9 @@ func TestWorkflowCommandPromptTemplates(t *testing.T) {
 
 func TestDurablePlanArtifactCarriesApprovalScope(t *testing.T) {
 	summary := "Split internal/app/app.go into internal/app/routing.go and keep README.md as evidence."
-	rendered := renderDurablePlanArtifact(
+	rendered := frontier.RenderDurablePlanArtifact(
 		"Refactor internal/app/app.go.",
-		analysisLaneArchitecture,
+		frontier.LaneArchitecture,
 		summary,
 		[]string{"internal/app/app.go", "README.md"},
 		"run go test ./internal/app",
@@ -75,7 +76,7 @@ func TestDurablePlanArtifactCarriesApprovalScope(t *testing.T) {
 			t.Fatalf("rendered artifact missing %q:\n%s", want, rendered)
 		}
 	}
-	allowed := durablePlanAllowedDestinations(rendered)
+	allowed := frontier.DurablePlanAllowedDestinations(rendered)
 	if !containsString(allowed, "internal/app/routing.go") {
 		t.Fatalf("expected allowed destination from plan artifact, got %#v", allowed)
 	}
@@ -97,14 +98,14 @@ func TestDurablePlanArtifactDoesNotPromoteEvidenceLedgerToDestinations(t *testin
 		"- Target: internal/app/analysis_agents.go",
 		"- Stage 1 scope: edit only this existing Go file; do not create files or move declarations.",
 	}, "\n")
-	rendered := renderDurablePlanArtifact(
+	rendered := frontier.RenderDurablePlanArtifact(
 		"Prepare a refactor plan for internal/app/analysis_agents.go.",
-		analysisLaneArchitecture,
+		frontier.LaneArchitecture,
 		summary,
 		[]string{"internal/app/analysis_agents.go"},
 		"run go test ./internal/app",
 	)
-	allowed := durablePlanAllowedDestinations(rendered)
+	allowed := frontier.DurablePlanAllowedDestinations(rendered)
 	if len(allowed) != 0 {
 		t.Fatalf("evidence ledger paths must not become allowed destinations, got %#v", allowed)
 	}

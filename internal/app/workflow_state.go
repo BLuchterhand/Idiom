@@ -312,15 +312,15 @@ func (m *Model) rememberWorkflowFromTaskMemory(prompt string, lane analysisLane,
 	if m == nil || lane != analysisLaneArchitecture || memory == nil {
 		return
 	}
-	profile := buildPromptRouteProfile(prompt)
 	current := cloneWorkflowState(m.currentWorkflowState())
-	if current == nil && !looksLikeOptimizationWorkflowPrompt(prompt, profile) && strings.TrimSpace(memory.Kind) != "durable_plan" {
+	decision := frontier.ClassifyTaskMemoryWorkflow(prompt, memoryKind(memory), current != nil)
+	if current == nil && !decision.ShouldRemember {
 		return
 	}
 	if current == nil {
 		current = &agentWorkflowState{
 			Active:    true,
-			Kind:      inferWorkflowKind(prompt, memory, profile),
+			Kind:      agentWorkflowKind(decision.Kind),
 			Phase:     agentWorkflowPhaseDiscovered,
 			Objective: strings.TrimSpace(prompt),
 			CreatedAt: time.Now(),
@@ -328,7 +328,7 @@ func (m *Model) rememberWorkflowFromTaskMemory(prompt string, lane analysisLane,
 	}
 	current.Active = true
 	if current.Kind == "" {
-		current.Kind = inferWorkflowKind(prompt, memory, profile)
+		current.Kind = agentWorkflowKind(decision.Kind)
 	}
 	if strings.TrimSpace(current.Objective) == "" {
 		current.Objective = strings.TrimSpace(prompt)
@@ -343,33 +343,19 @@ func (m *Model) rememberWorkflowFromTaskMemory(prompt string, lane analysisLane,
 		current.PlanSummary = strings.TrimSpace(memory.Summary)
 		current.EditableTargets = uniqueLimitedStrings(taskMemoryTargetsForResume(memory, ""), 8)
 		current.ReadOnlyEvidence = uniqueLimitedStrings(taskMemoryEvidencePaths(memory, current.EditableTargets), 16)
-		current.AllowedDestinations = uniqueLimitedStrings(durablePlanAllowedDestinations(memory.Summary), 8)
+		current.AllowedDestinations = uniqueLimitedStrings(frontier.DurablePlanAllowedDestinations(memory.Summary), 8)
 		current.Verification = uniqueLimitedStrings(taskMemoryVerificationPlan(memory), 8)
 		current.NextActions = uniqueNonEmptyStrings(append([]string{
 			"wait for explicit approval before build-mode execution",
 			"on approval, resume from typed workflow state instead of reconstructing from prose",
 		}, current.NextActions...))
-	} else if profile.WantsPlanOnly {
+	} else if decision.WantsPlanOnly {
 		current.Phase = agentWorkflowPhasePlanning
 		current.PlanSummary = strings.TrimSpace(memory.Summary)
 	} else if current.Phase == "" || current.Phase == agentWorkflowPhaseComplete {
 		current.Phase = agentWorkflowPhaseDiscovered
 	}
 	m.rememberWorkflowState(current, "architecture workflow state updated from analysis lane")
-}
-
-func looksLikeOptimizationWorkflowPrompt(prompt string, profile promptRouteProfile) bool {
-	return frontier.LooksLikeOptimizationWorkflowPrompt(prompt, profile)
-}
-
-func inferWorkflowKind(prompt string, memory *longHorizonTaskMemory, profile promptRouteProfile) agentWorkflowKind {
-	if looksLikeOptimizationWorkflowPrompt(prompt, profile) {
-		return agentWorkflowKindOptimizationRefactor
-	}
-	if strings.TrimSpace(memoryKind(memory)) == "durable_plan" {
-		return agentWorkflowKindDurablePlan
-	}
-	return agentWorkflowKindOptimizationRefactor
 }
 
 func workflowApprovalDetected(prompt string, state *agentWorkflowState) bool {
@@ -385,6 +371,48 @@ func workflowApprovalDetected(prompt string, state *agentWorkflowState) bool {
 	return looksLikeWorkflowApprovalPrompt(prompt)
 }
 
+func workflowResumeShouldStopForConcreteAnchor(prompt string, state *agentWorkflowState) bool {
+	if !workflowStateHasOnlyFileLevelEditableTargets(state) {
+		return false
+	}
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	if normalized == "" {
+		return false
+	}
+	return containsAny(normalized, "file-level target", "file level target", "file-only target", "only has a file") &&
+		containsAny(normalized, "concrete function", "line anchor", "concrete declaration", "specific function", "line range") &&
+		containsAny(normalized, "stop before editing", "stop before edit", "ask for", "request")
+}
+
+func workflowStateHasOnlyFileLevelEditableTargets(state *agentWorkflowState) bool {
+	if state == nil || len(state.AllowedDestinations) > 0 {
+		return false
+	}
+	targets := uniqueNormalizedPaths(state.EditableTargets)
+	if len(targets) == 0 {
+		return false
+	}
+	for _, target := range targets {
+		trimmed := strings.TrimSpace(target)
+		if trimmed == "" || strings.Contains(trimmed, ":") || strings.Contains(trimmed, "#") || filepath.Ext(trimmed) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func workflowConcreteAnchorRequiredReply(state *agentWorkflowState) string {
+	targets := uniqueNormalizedPaths(nil)
+	if state != nil {
+		targets = uniqueNormalizedPaths(state.EditableTargets)
+	}
+	targetText := "the approved workflow target"
+	if len(targets) > 0 {
+		targetText = strings.Join(targets, ", ")
+	}
+	return "I only have a file-level implementation target: " + targetText + ". I am stopping before editing because the handoff does not include a concrete function, declaration, or line anchor. Please provide the specific function, type, or line range to change."
+}
+
 func workflowStateHasApprovalScope(state *agentWorkflowState) bool {
 	if state == nil {
 		return false
@@ -398,10 +426,6 @@ func looksLikeWorkflowApprovalPrompt(prompt string) bool {
 
 func shouldResumeWorkflowPrompt(prompt string, state *agentWorkflowState) bool {
 	return workflowApprovalDetected(prompt, state)
-}
-
-func (m *Model) applyWorkflowStateToPromptExecutionPlan(prompt string, plan promptExecutionPlan) promptExecutionPlan {
-	return fromFrontierPromptPlan(frontier.ApplyWorkflowStateToPromptPlan(prompt, toFrontierPromptPlan(plan), frontierWorkflowState(m.currentWorkflowState())))
 }
 
 func frontierWorkflowState(state *agentWorkflowState) frontier.PromptWorkflowState {
@@ -421,31 +445,20 @@ func workflowPlanningFollowupPrompt(prompt string, state *agentWorkflowState) bo
 }
 
 func buildWorkflowResumeContext(state *agentWorkflowState) taskResumeContext {
-	if !workflowStateResumable(state) {
+	if state == nil {
 		return taskResumeContext{}
 	}
-	approved := uniqueLimitedStrings(firstNonEmptyStringSlice(state.EditableTargets, state.TargetRefs), 8)
-	evidence := uniqueLimitedStrings(append(append([]string(nil), state.ReadOnlyEvidence...), state.EvidencePaths...), 16)
-	return taskResumeContext{
-		Active:                true,
-		Kind:                  "workflow_plan",
-		SourceLane:            analysisLaneArchitecture,
-		ApprovedEditTargets:   approved,
-		ReadOnlyEvidencePaths: durablePlanReadOnlyEvidence(evidence, approved),
-		AllowedDestinations:   uniqueLimitedStrings(state.AllowedDestinations, 8),
-		ForbiddenPaths:        uniqueLimitedStrings(state.ForbiddenPaths, 16),
-		VerificationPlan:      uniqueLimitedStrings(state.Verification, 8),
-		OpenGaps:              uniqueNonEmptyStrings(state.NextActions),
-	}
-}
-
-func firstNonEmptyStringSlice(candidates ...[]string) []string {
-	for _, candidate := range candidates {
-		if values := uniqueNonEmptyStrings(candidate); len(values) > 0 {
-			return values
-		}
-	}
-	return nil
+	return frontier.BuildWorkflowResumeContext(frontier.WorkflowResumeInput{
+		Resumable:           workflowStateResumable(state),
+		EditableTargets:     append([]string(nil), state.EditableTargets...),
+		TargetRefs:          append([]string(nil), state.TargetRefs...),
+		ReadOnlyEvidence:    append([]string(nil), state.ReadOnlyEvidence...),
+		EvidencePaths:       append([]string(nil), state.EvidencePaths...),
+		AllowedDestinations: append([]string(nil), state.AllowedDestinations...),
+		ForbiddenPaths:      append([]string(nil), state.ForbiddenPaths...),
+		Verification:        append([]string(nil), state.Verification...),
+		NextActions:         append([]string(nil), state.NextActions...),
+	})
 }
 
 func buildWorkflowResumePrompt(state *agentWorkflowState, userPrompt string) string {
@@ -562,11 +575,14 @@ func (m *Model) resumeWorkflowAsync(userPrompt string) {
 		Workflow:                   frontierWorkflowState(state),
 	}))
 	resumeContext := buildWorkflowResumeContext(state)
-	state.Phase = agentWorkflowPhaseBuilding
-	state.LastPrompt = strings.TrimSpace(userPrompt)
-	m.rememberWorkflowState(state, "workflow plan approved for build-mode execution")
-	if m.workspace != nil {
-		m.workspace.PrimeDiscoveredPaths(uniqueLimitedStrings(append(append([]string(nil), resumeContext.ApprovedEditTargets...), resumeContext.ReadOnlyEvidencePaths...), 12))
+	requiresConcreteAnchor := workflowResumeShouldStopForConcreteAnchor(userPrompt, state)
+	if !requiresConcreteAnchor {
+		state.Phase = agentWorkflowPhaseBuilding
+		state.LastPrompt = strings.TrimSpace(userPrompt)
+		m.rememberWorkflowState(state, "workflow plan approved for build-mode execution")
+		if m.workspace != nil {
+			m.workspace.PrimeDiscoveredPaths(uniqueLimitedStrings(append(append([]string(nil), resumeContext.ApprovedEditTargets...), resumeContext.ReadOnlyEvidencePaths...), 12))
+		}
 	}
 	m.resetCompactTrace()
 	m.resetExecutionPanel(prompt, plan)
@@ -576,12 +592,22 @@ func (m *Model) resumeWorkflowAsync(userPrompt string) {
 		displayPrompt = "/workflow implement-plan"
 	}
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: displayPrompt})
-	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: ""})
 	m.logMessage("user", displayPrompt)
 	m.logMessage("workflow_resume_prompt", prompt)
 	if summary := formatPromptExecutionPlan(plan); summary != "" {
 		m.logMessage("route_plan", summary)
 	}
+	if requiresConcreteAnchor {
+		reply := workflowConcreteAnchorRequiredReply(state)
+		m.logWorkflowState("resume", state, "workflow resume stopped before editing because only file-level targets are approved")
+		m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply})
+		m.logMessage("assistant", reply)
+		m.emitJSONFinal(reply)
+		m.status = "Workflow resume needs a concrete anchor."
+		m.renderMessages(true)
+		return
+	}
+	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: ""})
 	m.logWorkflowState("resume", state, "resuming typed workflow state")
 	m.streaming = true
 	m.workingFrame = 0

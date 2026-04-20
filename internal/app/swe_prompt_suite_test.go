@@ -702,6 +702,50 @@ func TestTypedWorkflowStateTracksDiscoveryPlanApproval(t *testing.T) {
 	}
 }
 
+func TestWorkflowResumeStopsOnFileLevelTargetWhenConcreteAnchorRequested(t *testing.T) {
+	model := &Model{workspace: workspace.NewManager(testWorkspaceConfig())}
+	model.rememberAnalysisTaskMemory(
+		"Plan a refactor for internal/app/analysis_agents.go.",
+		analysisLaneArchitecture,
+		"Focused refactor plan:\n- Target: internal/app/analysis_agents.go\n- Evidence: internal/app/implementation.go\n\nVerification:\n- go test ./internal/app",
+		[]string{"internal/app/analysis_agents.go", "internal/app/implementation.go"},
+		"run go test ./internal/app",
+	)
+	state := model.currentWorkflowState()
+	if state == nil || state.Phase != agentWorkflowPhaseAwaitingApproval {
+		t.Fatalf("expected awaiting approval workflow state, got %#v", state)
+	}
+
+	reply, err := model.runWorkflowResumeOnce(context.Background(), "Begin the plan, but if the handoff only has a file-level target, stop before editing and ask for a concrete function or line anchor.")
+	if err != nil {
+		t.Fatalf("workflow resume: %v", err)
+	}
+	for _, want := range []string{"file-level implementation target", "concrete function", "line anchor"} {
+		if !strings.Contains(reply, want) {
+			t.Fatalf("expected reply to include %q, got:\n%s", want, reply)
+		}
+	}
+	state = model.currentWorkflowState()
+	if state == nil || state.Phase != agentWorkflowPhaseAwaitingApproval {
+		t.Fatalf("anchor stop should keep workflow awaiting approval, got %#v", state)
+	}
+}
+
+func TestMemoryNotePromptUsesDeterministicAcknowledgement(t *testing.T) {
+	model := &Model{workspace: workspace.NewManager(testWorkspaceConfig())}
+
+	reply, err := model.runStandardPromptOnce(context.Background(), "Remember that any later docs write must touch README.md only.")
+	if err != nil {
+		t.Fatalf("memory note prompt: %v", err)
+	}
+	if strings.TrimSpace(reply) == "" || !strings.Contains(reply, "constraint") {
+		t.Fatalf("expected deterministic acknowledgement, got %q", reply)
+	}
+	if len(model.messages) != 2 || model.messages[1].Role != "assistant" || strings.TrimSpace(model.messages[1].Content) == "" {
+		t.Fatalf("expected user and assistant messages without model run, got %#v", model.messages)
+	}
+}
+
 func TestWorkflowStatePersistsAndReloads(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target.go")
@@ -1610,7 +1654,7 @@ func TestExploreLaneUsesArchitectureRailsForMaintainabilityOpportunityPrompts(t 
 			WantsPlanOnly: false,
 		},
 	}
-	rails := buildDeterministicControlRails(prompt, finalizePromptExecutionPlan(prompt, buildPromptRouteProfile(prompt), plan))
+	rails := buildDeterministicControlRails(prompt, plan)
 	if rails.TaskFamily != "architecture" {
 		t.Fatalf("architecture-shaped explore prompts should receive architecture rails, got %#v", rails)
 	}

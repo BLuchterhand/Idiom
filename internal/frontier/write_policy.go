@@ -35,7 +35,16 @@ func ExplicitRewriteRequested(normalizedPrompt string, path string, pathAuthoriz
 }
 
 func ExplicitAppendRequested(normalizedPrompt string, path string, pathAuthorized bool) bool {
-	if !ContainsAny(strings.ToLower(strings.TrimSpace(normalizedPrompt)), "append", "append to", "add to the end") {
+	normalized := strings.ToLower(strings.TrimSpace(normalizedPrompt))
+	if !ContainsAny(normalized,
+		"append",
+		"append to",
+		"add to the end",
+		"adding exactly this sentence",
+		"add exactly this sentence",
+		"adding exactly this troubleshooting sentence",
+		"add exactly this troubleshooting sentence",
+	) {
 		return false
 	}
 	return NormalizePath(path) == "" || pathAuthorized

@@ -30,11 +30,26 @@ type PromptPlanInput struct {
 	Workflow                   PromptWorkflowState
 }
 
+type ResumePromptPlanInput struct {
+	UserPrompt   string
+	ResumePrompt string
+	Recent       string
+	Lane         Lane
+	Thoroughness string
+	Reason       RouteReason
+}
+
 type PromptWorkflowState struct {
 	Active           bool
 	Kind             string
 	Phase            string
 	HasApprovalScope bool
+}
+
+type TaskMemoryWorkflowDecision struct {
+	ShouldRemember bool
+	Kind           string
+	WantsPlanOnly  bool
 }
 
 type RouteAmbiguitySnapshot struct {
@@ -101,6 +116,78 @@ func ClassifyPromptPlan(input PromptPlanInput) PromptPlan {
 	return plan
 }
 
+func BuildResumePromptPlan(input ResumePromptPlanInput) PromptPlan {
+	lane := input.Lane
+	if lane == "" {
+		lane = LaneMain
+	}
+	reason := input.Reason
+	if reason == "" {
+		reason = RouteReasonForLane(lane)
+	}
+	plan := PromptPlan{
+		Lane:         lane,
+		Thoroughness: strings.TrimSpace(input.Thoroughness),
+		Reason:       reason,
+		Contract:     AnswerContractForLane(lane),
+	}
+	profilePrompt := firstNonEmptyText(input.UserPrompt, input.ResumePrompt)
+	profile := BuildRouteProfile(profilePrompt)
+	plan.Intent = BuildIntentDecision(profilePrompt, profile, input.Recent, IntentPlanFromPromptPlan(plan))
+	return FinalizePromptPlan(profilePrompt, profile, plan)
+}
+
+func AttachPromptIntentDecision(prompt string, recent string, plan PromptPlan) PromptPlan {
+	profile := BuildRouteProfile(prompt)
+	plan.Intent = BuildIntentDecision(prompt, profile, recent, IntentPlanFromPromptPlan(plan))
+	return FinalizePromptPlan(prompt, profile, plan)
+}
+
+func BuildTaskMemoryPromptPlan(input TaskMemoryResumeInput, thoroughness string) PromptPlan {
+	return BuildResumePromptPlan(ResumePromptPlanInput{
+		UserPrompt:   input.UserPrompt,
+		ResumePrompt: firstNonEmptyText(input.ResumePrompt, input.Prompt),
+		Lane:         LaneForTaskMemoryResume(input),
+		Thoroughness: thoroughness,
+	})
+}
+
+func LaneForTaskMemoryResume(input TaskMemoryResumeInput) Lane {
+	if !taskMemoryResumeInputHasState(input) {
+		return LaneExplore
+	}
+	if TaskMemoryDurablePlanApprovalDetected(input.Kind, input.UserPrompt) {
+		return LaneImplement
+	}
+	switch Lane(strings.TrimSpace(input.Lane)) {
+	case LaneLocate, LaneExplore, LaneReview, LaneArchitecture, LaneImplement:
+		return Lane(strings.TrimSpace(input.Lane))
+	default:
+		return LaneExplore
+	}
+}
+
+func ClassifyTaskMemoryWorkflow(prompt string, memoryKind string, hasCurrent bool) TaskMemoryWorkflowDecision {
+	profile := BuildRouteProfile(prompt)
+	kind := "optimization_refactor"
+	if strings.TrimSpace(memoryKind) == "durable_plan" {
+		kind = "durable_plan"
+	}
+	shouldRemember := hasCurrent || LooksLikeOptimizationWorkflowPrompt(prompt, profile) || strings.TrimSpace(memoryKind) == "durable_plan"
+	return TaskMemoryWorkflowDecision{
+		ShouldRemember: shouldRemember,
+		Kind:           kind,
+		WantsPlanOnly:  profile.WantsPlanOnly,
+	}
+}
+
+func ShouldPersistDurablePlanArtifact(prompt string, lane Lane) bool {
+	if lane != LaneArchitecture {
+		return false
+	}
+	return BuildRouteProfile(prompt).WantsPlanOnly
+}
+
 func contextualPromptPlan(input PromptPlanInput) (PromptPlan, bool) {
 	decision, ok := ContextualRoute(ContextualRouteInput{
 		Prompt:                     input.Prompt,
@@ -120,6 +207,15 @@ func contextualPromptPlan(input PromptPlanInput) (PromptPlan, bool) {
 	}
 	plan.Intent = BuildIntentDecision(input.Prompt, BuildRouteProfile(input.Prompt), input.Recent, IntentPlanFromPromptPlan(plan))
 	return FinalizePromptPlan(input.Prompt, BuildRouteProfile(input.Prompt), plan), true
+}
+
+func firstNonEmptyText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func IntentPlanFromPromptPlan(plan PromptPlan) IntentPlan {
@@ -545,7 +641,7 @@ func ReconcilePromptPlanWithVerifier(prompt string, plan PromptPlan, verifier In
 		plan.Intent.Vetoes = RemovePromptIntentVetoes(plan.Intent.Vetoes, "plan_only_blocks_edits", "read_only_boundary_blocks_edits")
 		notes = append(notes, "accepted classifier durable-plan approval signal")
 	}
-	hostBlocksEdits := plan.Intent.WantsPlanOnly || hostProfile.HasReadOnlyBoundary || hostProfile.WantsVerificationOnly
+	hostBlocksEdits := plan.Intent.WantsPlanOnly || hostProfile.HasReadOnlyBoundary || hostProfile.WantsVerificationOnly || LooksLikeConversationMemoryNotePrompt(prompt)
 	if durablePlanApproval && !hostProfile.WantsVerificationOnly {
 		hostBlocksEdits = false
 	}
@@ -595,6 +691,9 @@ func ReconcilePromptPlanWithVerifier(prompt string, plan PromptPlan, verifier In
 		if hostBlocksEdits && recommended == LaneImplement {
 			safetyOverride = true
 			notes = append(notes, "ignored verifier implementation recommendation because host/verifier veto blocks edits")
+		} else if shouldPreserveHostReviewLane(original, verifier, recommended, hostProfile) {
+			plan.Intent.Intent = "review"
+			notes = append(notes, "preserved host review lane for bounded code-smell request")
 		} else if shouldPreserveHostArchitectureLane(original, verifier, recommended, hostProfile) {
 			if plan.Intent.Intent == "explore_codebase" || plan.Intent.Intent == string(LaneExplore) {
 				plan.Intent.Intent = "plan_architecture"
@@ -661,6 +760,24 @@ func ReconcilePromptPlanWithVerifier(prompt string, plan PromptPlan, verifier In
 		SafetyOverride: safetyOverride,
 		Notes:          UniqueNonEmptyStrings(notes),
 	}
+}
+
+func shouldPreserveHostReviewLane(plan PromptPlan, verifier IntentVerifierResult, recommended Lane, profile RouteProfile) bool {
+	if plan.Lane != LaneReview || !profile.WantsReview || recommended != LaneArchitecture {
+		return false
+	}
+	if verifier.WantsEdits {
+		return false
+	}
+	return LooksLikeBoundedCodeSmellReviewPrompt(profile.Normalized)
+}
+
+func LooksLikeBoundedCodeSmellReviewPrompt(normalized string) bool {
+	normalized = strings.ToLower(strings.TrimSpace(normalized))
+	if !ContainsAny(normalized, "code smell", "small smell", "cleanup", "clean up") {
+		return false
+	}
+	return ContainsAny(normalized, "small", "single", "one ", "one code smell", "any small", "small code smell", "small code smells", "bounded")
 }
 
 func shouldPreserveHostArchitectureLane(plan PromptPlan, verifier IntentVerifierResult, recommended Lane, profile RouteProfile) bool {

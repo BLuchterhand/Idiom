@@ -70,6 +70,33 @@ func TestRunLiveGeneratesLogsAndScoresThem(t *testing.T) {
 	}
 }
 
+func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
+	dir := t.TempDir()
+	suitePath := filepath.Join(dir, "suite.json")
+	logsDir := filepath.Join(dir, "generated")
+	writeSWEMultiTurnSmokeSuite(t, suitePath)
+
+	command := strings.Join([]string{
+		`test "$QWEN_SWE_TURN_COUNT" = "2"`,
+		`&& test "$QWEN_SWE_TURNS_JSON" = '["first turn","second turn"]'`,
+		`&& printf '%s\n'`,
+		`'{"type":"message","role":"user","content":"first turn"}'`,
+		`'{"type":"message","role":"assistant","content":"first answer"}'`,
+		`'{"type":"message","role":"user","content":"second turn"}'`,
+		`'{"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}'`,
+		`'{"type":"message","role":"assistant","content":"second answer"}'`,
+		`> {log_path}`,
+	}, " ")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "PASS cli-smoke-suite") {
+		t.Fatalf("expected passing suite, got stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+}
+
 func TestRunWritesFailingScenarioSuite(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
@@ -110,6 +137,13 @@ func TestRenderRunnerCommandDoesNotReplacePlaceholdersInsideValues(t *testing.T)
 	if !strings.Contains(rendered, `'/tmp/out.jsonl'`) {
 		t.Fatalf("expected log path replacement, got %s", rendered)
 	}
+
+	rendered = renderRunnerCommand(`printf '%s\n' {turns_json}`, map[string]string{
+		"turns_json": `["first turn","second turn"]`,
+	})
+	if !strings.Contains(rendered, `'["first turn","second turn"]'`) {
+		t.Fatalf("expected turns_json replacement, got %s", rendered)
+	}
 }
 
 func TestRunReportsMissingLogs(t *testing.T) {
@@ -139,6 +173,43 @@ func TestTaskLogPathUsesExplicitAndLogsDirPaths(t *testing.T) {
 	task.LogPath = filepath.Join(string(filepath.Separator), "var", "tmp", "direct.jsonl")
 	if got := taskLogPath("/tmp/suites/suite.json", "/tmp/logs", task); got != filepath.Clean(task.LogPath) {
 		t.Fatalf("unexpected absolute explicit path: %q", got)
+	}
+}
+
+func writeSWEMultiTurnSmokeSuite(t *testing.T, path string) {
+	t.Helper()
+	suite := `{
+  "name": "cli-smoke-suite",
+  "tasks": [{
+    "id": "direct",
+    "family": "direct_question",
+    "prompt": "Explain routing.",
+    "turns": ["first turn", "second turn"],
+    "tags": ["read-only"],
+    "scenario": {
+      "name": "direct",
+      "prompt_contains": ["second turn"],
+      "require_assistant_for_each_user": true,
+      "require_route_plan": {
+        "initial_lane": "main",
+        "reason": "direct_conversation",
+        "contract": "direct_answer"
+      },
+      "require_verification": "none",
+      "require_approval": false
+    },
+    "oracle": {
+      "require_no_changed_files": true,
+      "require_no_approval": true,
+      "min_user_turns": 2,
+      "min_assistant_turns": 2,
+      "max_tool_requests": 2
+    }
+  }]
+}
+`
+	if err := os.WriteFile(path, []byte(suite), 0o644); err != nil {
+		t.Fatalf("write multi-turn suite: %v", err)
 	}
 }
 

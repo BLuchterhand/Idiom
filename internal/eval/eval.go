@@ -470,6 +470,7 @@ type ControlRailsSnapshot struct {
 type Metrics struct {
 	LastUser                  string                          `json:"last_user"`
 	FinalAssistant            string                          `json:"final_assistant"`
+	WorkspaceRoot             string                          `json:"workspace_root,omitempty"`
 	UserTurns                 int                             `json:"user_turns"`
 	AssistantTurns            int                             `json:"assistant_turns"`
 	DurationMillis            int64                           `json:"duration_millis,omitempty"`
@@ -909,6 +910,8 @@ func Analyze(records []Record) Metrics {
 	}
 	verifyAgentSeen := false
 	verifyHasFailure := false
+	laneSummaryTurns := 0
+	lastLaneSummary := ""
 	var firstTS time.Time
 	var lastTS time.Time
 	for _, record := range records {
@@ -921,6 +924,10 @@ func Analyze(records []Record) Metrics {
 			}
 		}
 		switch record.Type {
+		case "session_start":
+			if root := strings.TrimSpace(stringField(record.Data, "workspace_root")); root != "" {
+				metrics.WorkspaceRoot = root
+			}
 		case "message":
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
@@ -937,7 +944,12 @@ func Analyze(records []Record) Metrics {
 			case "assistant":
 				metrics.FinalAssistant = content
 				metrics.AssistantTurns++
-			case "route_plan":
+			case "locate_summary", "explore_summary", "review_summary", "architecture_summary":
+				if strings.TrimSpace(content) != "" {
+					lastLaneSummary = content
+					laneSummaryTurns++
+				}
+			case "route_plan", "route_plan_final":
 				if plan := parseRoutePlan(content); plan.Raw != "" {
 					metrics.RoutePlans = append(metrics.RoutePlans, plan)
 				}
@@ -1054,6 +1066,12 @@ func Analyze(records []Record) Metrics {
 			strings.Contains(strings.ToLower(stringField(record.Data, "error")), "write approval required") {
 			metrics.ApprovalRequired = true
 		}
+	}
+	if metrics.AssistantTurns == 0 && lastLaneSummary != "" {
+		metrics.FinalAssistant = lastLaneSummary
+		metrics.AssistantTurns = laneSummaryTurns
+	} else if metrics.AssistantTurns < metrics.UserTurns && laneSummaryTurns > 0 {
+		metrics.AssistantTurns = min(metrics.UserTurns, metrics.AssistantTurns+laneSummaryTurns)
 	}
 	if hasPhaseState(metrics.Phases, "implement", "verify", "done") {
 		metrics.VerificationPassed = true

@@ -39,6 +39,19 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 		m.emitJSONError("server_not_ready", err.Error())
 		return "", err
 	}
+	if looksLikeResumeStructuralRefactorPrompt(prompt) && m.canResumeStructuralRefactor() {
+		return m.runStructuralRefactorResumeOnce(ctx, prompt)
+	}
+	if shouldResumeWorkflowPrompt(prompt, m.currentWorkflowState()) {
+		return m.runWorkflowResumeOnce(ctx, prompt)
+	}
+	if shouldResumeTaskMemoryPrompt(prompt, m.currentTaskMemory()) {
+		return m.runTaskMemoryResumeOnce(ctx, prompt)
+	}
+	return m.runStandardPromptOnce(ctx, prompt)
+}
+
+func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (string, error) {
 	m.lastAssistantReasoningContent = ""
 	plan := m.classifyPromptExecutionPlan(prompt)
 	if m.workspace != nil {
@@ -51,16 +64,164 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 	if summary := formatPromptExecutionPlan(plan); summary != "" {
 		m.logMessage("route_plan", summary)
 	}
+	if reply, ok := deterministicConversationMemoryNoteReply(prompt, plan); ok {
+		return m.finishPromptOnceReply(reply), nil
+	}
 	m.logMessage("thinking_config", m.samplingSummary())
 	reply, err := m.runPromptPlan(ctx, prompt, m.requestMessages(), m.chatOptions(), plan)
 	if err != nil {
 		m.emitJSONError("run_failed", err.Error())
 		return "", err
 	}
+	return m.finishPromptOnceReply(reply), nil
+}
+
+func (m *Model) finishPromptOnceReply(reply string) string {
 	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply, ReasoningContent: m.takeLastAssistantReasoningContent()})
 	m.logMessage("assistant", reply)
 	m.emitJSONFinal(reply)
-	return reply, nil
+	return reply
+}
+
+func (m *Model) runStructuralRefactorResumeOnce(ctx context.Context, userPrompt string) (string, error) {
+	stage := m.currentStructuralRefactorStage()
+	if !structuralRefactorStageResumable(stage) {
+		return "", fmt.Errorf("no resumable structural refactor stage is available")
+	}
+	prompt := buildStructuralRefactorResumePrompt(stage, userPrompt)
+	analysisSummary := buildStructuralRefactorResumeAnalysisSummary(stage)
+	plan := fromFrontierPromptPlan(frontier.BuildResumePromptPlan(frontier.ResumePromptPlanInput{
+		UserPrompt:   userPrompt,
+		ResumePrompt: prompt,
+		Lane:         frontier.LaneImplement,
+		Thoroughness: string(workspace.ThoroughnessMedium),
+		Reason:       frontier.RouteReasonDirectImplementation,
+	}))
+	if m.workspace != nil {
+		m.workspace.PrimeDiscoveredPaths(promptMentionedWorkspacePaths(prompt))
+	}
+	m.resetCompactTrace()
+	m.resetExecutionPanel(prompt, plan)
+	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
+	m.logMessage("user", prompt)
+	if summary := formatPromptExecutionPlan(plan); summary != "" {
+		m.logMessage("route_plan", summary)
+	}
+	m.logLongHorizonState("resume", stage, "resuming next bounded structural refactor stage")
+	history := m.requestMessages()
+	history = appendAnalysisSummary(history, "architecture", analysisSummary)
+	reply, err := m.runPromptPlan(ctx, prompt, history, m.chatOptions(), plan)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	return m.finishPromptOnceReply(reply), nil
+}
+
+func (m *Model) runTaskMemoryResumeOnce(ctx context.Context, userPrompt string) (string, error) {
+	memory := m.currentTaskMemory()
+	if !taskMemoryResumable(memory) {
+		return "", fmt.Errorf("no resumable investigation or repair task is available")
+	}
+	prompt := buildTaskMemoryResumePrompt(memory, userPrompt)
+	planInput := frontierTaskMemoryResumeInput(memory, userPrompt)
+	planInput.ResumePrompt = prompt
+	plan := fromFrontierPromptPlan(frontier.BuildTaskMemoryPromptPlan(planInput, string(workspace.ThoroughnessMedium)))
+	resumeContext := buildTaskResumeContext(memory, userPrompt)
+	if m.workspace != nil {
+		m.workspace.PrimeDiscoveredPaths(uniqueLimitedStrings(append(append([]string(nil), resumeContext.ApprovedEditTargets...), resumeContext.ReadOnlyEvidencePaths...), 12))
+	}
+	m.resetCompactTrace()
+	m.resetExecutionPanel(prompt, plan)
+	displayPrompt := taskMemoryResumeDisplayPrompt(userPrompt)
+	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: displayPrompt})
+	m.logMessage("user", displayPrompt)
+	m.logMessage("task_memory_resume_prompt", prompt)
+	if summary := formatPromptExecutionPlan(plan); summary != "" {
+		m.logMessage("route_plan", summary)
+	}
+	m.logTaskMemoryState("resume", memory, "resuming saved investigation or repair task")
+	history := m.requestMessages()
+	history = append(history,
+		llama.ChatMessage{Role: "system", Content: "Internal task-memory resume packet:\n" + prompt},
+		llama.ChatMessage{Role: "system", Content: renderTaskMemoryForModel(memory)},
+	)
+	reply, err := m.runPromptPlan(ctx, prompt, history, m.chatOptions(), plan, resumeContext)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	return m.finishPromptOnceReply(reply), nil
+}
+
+func (m *Model) runWorkflowResumeOnce(ctx context.Context, userPrompt string) (string, error) {
+	state := m.currentWorkflowState()
+	if !workflowStateResumable(state) {
+		return "", fmt.Errorf("no resumable workflow state is available")
+	}
+	prompt := buildWorkflowResumePrompt(state, userPrompt)
+	enabled := m.workspace != nil && m.workspace.Enabled()
+	normal := enabled && m.workspace.Mode() == workspace.ModeNormal
+	defaultThoroughness := ""
+	if m.workspace != nil {
+		defaultThoroughness = string(m.workspace.ExploreThoroughness())
+	}
+	plan := fromFrontierPromptPlan(frontier.ClassifyPromptPlan(frontier.PromptPlanInput{
+		Prompt:                     userPrompt,
+		WorkspaceEnabled:           enabled,
+		WorkspaceNormal:            normal,
+		DefaultThoroughness:        defaultThoroughness,
+		Recent:                     m.recentConversationText(6),
+		HasRecentReplanToImplement: m.lastReplan != nil && m.lastReplan.ToLane == analysisLaneImplement,
+		AgentMode:                  string(m.currentAgentDecisionMode()),
+		Workflow:                   frontierWorkflowState(state),
+	}))
+	resumeContext := buildWorkflowResumeContext(state)
+	requiresConcreteAnchor := workflowResumeShouldStopForConcreteAnchor(userPrompt, state)
+	if !requiresConcreteAnchor {
+		state.Phase = agentWorkflowPhaseBuilding
+		state.LastPrompt = strings.TrimSpace(userPrompt)
+		m.rememberWorkflowState(state, "workflow plan approved for build-mode execution")
+		if m.workspace != nil {
+			m.workspace.PrimeDiscoveredPaths(uniqueLimitedStrings(append(append([]string(nil), resumeContext.ApprovedEditTargets...), resumeContext.ReadOnlyEvidencePaths...), 12))
+		}
+	}
+	m.resetCompactTrace()
+	m.resetExecutionPanel(prompt, plan)
+	displayPrompt := strings.TrimSpace(userPrompt)
+	if displayPrompt == "" {
+		displayPrompt = "/workflow implement-plan"
+	}
+	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: displayPrompt})
+	m.logMessage("user", displayPrompt)
+	m.logMessage("workflow_resume_prompt", prompt)
+	if summary := formatPromptExecutionPlan(plan); summary != "" {
+		m.logMessage("route_plan", summary)
+	}
+	if requiresConcreteAnchor {
+		reply := workflowConcreteAnchorRequiredReply(state)
+		m.logWorkflowState("resume", state, "workflow resume stopped before editing because only file-level targets are approved")
+		return m.finishPromptOnceReply(reply), nil
+	}
+	m.logWorkflowState("resume", state, "resuming typed workflow state")
+	history := m.requestMessages()
+	history = append(history,
+		llama.ChatMessage{Role: "system", Content: "Internal workflow resume packet:\n" + prompt},
+		llama.ChatMessage{Role: "system", Content: renderWorkflowStateForModel(state)},
+	)
+	previousJournal := m.lastJournal
+	reply, err := m.runPromptPlan(ctx, prompt, history, m.chatOptions(), plan, resumeContext)
+	if err != nil {
+		m.markWorkflowIncomplete(state, "implementation resume failed: "+err.Error())
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	if m.workflowImplementationAccepted(state, previousJournal) {
+		m.markWorkflowComplete("implementation run verified and produced an accepted execution journal")
+	} else {
+		m.markWorkflowIncomplete(state, "implementation returned without a verified accepted execution journal")
+	}
+	return m.finishPromptOnceReply(reply), nil
 }
 
 func (m *Model) lastUserPrompt() string {
@@ -97,11 +258,19 @@ func (m *Model) sendPromptAsync(prompt string) {
 	m.resetExecutionPanel(prompt, plan)
 
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
-	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: ""})
 	m.logMessage("user", prompt)
 	if summary := formatPromptExecutionPlan(plan); summary != "" {
 		m.logMessage("route_plan", summary)
 	}
+	if reply, ok := deterministicConversationMemoryNoteReply(prompt, plan); ok {
+		m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply})
+		m.logMessage("assistant", reply)
+		m.emitJSONFinal(reply)
+		m.status = "Noted."
+		m.renderMessages(true)
+		return
+	}
+	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: ""})
 	m.logMessage("thinking_config", m.samplingSummary())
 	m.streaming = true
 	m.workingFrame = 0
@@ -148,6 +317,16 @@ func (m *Model) sendPromptAsync(prompt string) {
 
 func promptMentionedWorkspacePaths(prompt string) []string {
 	return frontier.PromptMentionedWorkspacePaths(prompt)
+}
+
+func deterministicConversationMemoryNoteReply(prompt string, plan promptExecutionPlan) (string, bool) {
+	if plan.lane != analysisLaneMain || plan.reason != promptRouteReasonDirectConversation {
+		return "", false
+	}
+	if !frontier.LooksLikeConversationMemoryNotePrompt(strings.ToLower(prompt)) {
+		return "", false
+	}
+	return "Understood. I will keep that constraint for the next requested step.", true
 }
 
 func formatPromptExecutionPlan(plan promptExecutionPlan) string {
@@ -805,26 +984,6 @@ func (m *Model) logPromptIntentReconciliation(snapshot promptIntentReconciliatio
 	m.logMessage("intent_reconciliation", string(data))
 }
 
-func buildPromptIntentDecision(prompt string, profile promptRouteProfile, recent string, plan promptExecutionPlan) promptIntentDecision {
-	return frontier.BuildIntentDecision(prompt, profile, recent, toFrontierIntentPlan(plan))
-}
-
-func promptIntentSignals(profile promptRouteProfile, normalized string) []string {
-	return frontier.IntentSignals(profile, normalized)
-}
-
-func promptUserBoundaries(normalized string, recent string) []string {
-	return frontier.UserBoundaries(normalized, recent)
-}
-
-func toFrontierIntentPlan(plan promptExecutionPlan) frontier.IntentPlan {
-	return frontier.IntentPlan{
-		Lane:         plan.lane,
-		FollowupLane: plan.followupLane,
-		Reason:       plan.reason,
-	}
-}
-
 func toFrontierPromptPlan(plan promptExecutionPlan) frontier.PromptPlan {
 	return frontier.PromptPlan{
 		Lane:              plan.lane,
@@ -910,20 +1069,6 @@ func (m *Model) classifyPromptExecutionPlan(prompt string) promptExecutionPlan {
 	return plan
 }
 
-func (m *Model) attachPromptIntentDecision(prompt string, plan promptExecutionPlan) promptExecutionPlan {
-	profile := buildPromptRouteProfile(prompt)
-	recent := ""
-	if m != nil {
-		recent = m.recentConversationText(6)
-	}
-	plan.intent = buildPromptIntentDecision(prompt, profile, recent, plan)
-	return finalizePromptExecutionPlan(prompt, profile, plan)
-}
-
-func finalizePromptExecutionPlan(prompt string, profile promptRouteProfile, plan promptExecutionPlan) promptExecutionPlan {
-	return fromFrontierPromptPlan(frontier.FinalizePromptPlan(prompt, profile, toFrontierPromptPlan(plan)))
-}
-
 func shouldIgnoreVerifierTargetRefsForPrompt(prompt string, targetRefs []string) bool {
 	return frontier.ShouldIgnoreVerifierTargetRefsForPrompt(prompt, targetRefs)
 }
@@ -962,10 +1107,6 @@ func (m *Model) normalizePromptPlanThoroughness(plan promptExecutionPlan) prompt
 
 func analysisLaneUsesThoroughness(lane analysisLane) bool {
 	return frontier.LaneUsesThoroughness(lane)
-}
-
-func buildPromptRouteProfile(prompt string) promptRouteProfile {
-	return frontier.BuildRouteProfile(prompt)
 }
 
 func promptRequestsRemoval(prompt string) bool {

@@ -43,6 +43,22 @@ go run ./cmd/qwen-swe-eval \
 
 The same gate is available through `make swe-suite`.
 
+Run the suite as live headless conversations with the bundled runner:
+
+```bash
+make swe-live
+```
+
+`scripts/swe-live-runner.sh` runs `qwen-bubbles -turns-file` for each suite task, writes the task's turns into one real debug log, and hands that log back to `qwen-swe-eval` for scoring. It uses the suite fixture as the workspace root when a task defines one, and writes logs/transcripts into a temporary directory before copying the produced JSONL to the requested task log path.
+
+For local model setups that already have a built binary, override the binary and output directory:
+
+```bash
+QWEN_BUBBLES_BIN=./bin/qwen-bubbles \
+LIVE_LOGS=/tmp/qwen-swe-live-logs \
+make swe-live
+```
+
 ### Task Schema
 
 Each task has:
@@ -182,4 +198,4 @@ The default suite covers:
 
 ### Current Limitation
 
-This scorer still evaluates logs through deterministic oracles, and it can now generate those logs first with `qwen-swe-eval -run-live -runner-command ...`. The live runner command is intentionally externalized so local model/TUI launch details stay configurable while the suite schema and oracle layer remain deterministic.
+This scorer still evaluates logs through deterministic oracles, and it can now generate those logs first with `qwen-swe-eval -run-live -runner-command ...`. The bundled runner covers the common headless path, while the live runner command remains externalized so local model launch details stay configurable and the suite schema/oracle layer remain deterministic.

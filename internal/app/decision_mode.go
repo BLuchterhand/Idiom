@@ -3,8 +3,6 @@ package app
 import (
 	"fmt"
 	"strings"
-
-	"qwen-bubbles/internal/frontier"
 )
 
 type agentDecisionMode string
@@ -34,13 +32,4 @@ func (m *Model) currentAgentDecisionMode() agentDecisionMode {
 		return agentDecisionModeAuto
 	}
 	return m.agentMode
-}
-
-func (m *Model) applyAgentDecisionMode(prompt string, plan promptExecutionPlan) promptExecutionPlan {
-	mode := m.currentAgentDecisionMode()
-	defaultThoroughness := ""
-	if m != nil && m.workspace != nil {
-		defaultThoroughness = string(m.workspace.ExploreThoroughness())
-	}
-	return fromFrontierPromptPlan(frontier.ApplyAgentModeToPromptPlan(prompt, toFrontierPromptPlan(plan), string(mode), defaultThoroughness))
 }

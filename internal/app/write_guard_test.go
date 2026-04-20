@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"qwen-bubbles/internal/agent"
 	"qwen-bubbles/internal/config"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/semantic"
 	"qwen-bubbles/internal/transcript"
@@ -74,6 +76,47 @@ func TestIsShortcutContextError(t *testing.T) {
 	}
 	if isShortcutContextError(os.ErrNotExist) {
 		t.Fatal("unexpected context classification for unrelated error")
+	}
+}
+
+func TestTryExactSentenceAppendAppliesLiteralDocsRequest(t *testing.T) {
+	root := t.TempDir()
+	readme := filepath.Join(root, "README.md")
+	if err := os.WriteFile(readme, []byte("# Project\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	mgr := workspace.NewManager(config.Workspace{
+		Root:           root,
+		CWD:            root,
+		MaxFileBytes:   65536,
+		MaxOutputBytes: 65536,
+		EnableWrites:   true,
+	})
+	model := &Model{events: make(chan tea.Msg, 8)}
+	prompt := "Update README.md by adding exactly this sentence: Literal e2e sentence."
+
+	shortcut := model.tryExactSentenceAppend(
+		context.Background(),
+		mgr,
+		prompt,
+		implementationTargetPacket{PrimaryPaths: []string{"README.md"}},
+		1,
+		nil,
+		newImplementWriteGuard(mgr, prompt),
+		nil,
+	)
+	if !shortcut.applied {
+		t.Fatalf("expected exact sentence shortcut to apply, got %#v", shortcut)
+	}
+	if got := shortcut.changedPaths; len(got) != 1 || got[0] != "README.md" {
+		t.Fatalf("unexpected changed paths: %#v", got)
+	}
+	data, err := os.ReadFile(readme)
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	if !strings.Contains(string(data), "Literal e2e sentence.") {
+		t.Fatalf("expected appended sentence, got:\n%s", data)
 	}
 }
 
@@ -378,10 +421,10 @@ func TestDurablePlanArtifactMemoryRequiresExplicitBuildHandoff(t *testing.T) {
 	if !testContainsFold(memory.NextActions, "wait for explicit approval or a clear plan-exit instruction before implementation") {
 		t.Fatalf("expected explicit approval next action, got %#v", memory.NextActions)
 	}
-	if !shouldPersistDurablePlanArtifact("Prepare a refactor plan for internal/app/analysis_agents.go.", analysisLaneArchitecture) {
+	if !frontier.ShouldPersistDurablePlanArtifact("Prepare a refactor plan for internal/app/analysis_agents.go.", frontier.LaneArchitecture) {
 		t.Fatal("expected plan-only architecture prompts to persist durable plan artifacts")
 	}
-	if !shouldPersistDurablePlanArtifact("please prepare a refactor cleanup plan for your recommendation of analysis_agents.go", analysisLaneArchitecture) {
+	if !frontier.ShouldPersistDurablePlanArtifact("please prepare a refactor cleanup plan for your recommendation of analysis_agents.go", frontier.LaneArchitecture) {
 		t.Fatal("expected refactor cleanup plan prompts to persist durable plan artifacts")
 	}
 }
@@ -437,7 +480,7 @@ func TestDurablePlanApprovalSwitchesTaskMemoryToImplementation(t *testing.T) {
 			t.Fatalf("expected approved plan resume prompt to contain %q, got:\n%s", want, prompt)
 		}
 	}
-	if !looksLikeDurablePlanApprovalPrompt("implement this plan") {
+	if !frontier.LooksLikeDurablePlanApprovalPrompt("implement this plan") {
 		t.Fatal("expected plan approval phrase to be recognized")
 	}
 }
@@ -3602,6 +3645,61 @@ func TestFocusedRewriteWindowAcceptsDefaultBootstrapWindow(t *testing.T) {
 	}
 }
 
+func TestFocusedRewriteWindowRejectsVagueStructuralTarget(t *testing.T) {
+	_, _, _, _, ok := focusedRewriteWindow(
+		implementationTargetPacket{
+			SourceLane:    "architecture",
+			PrimaryPaths:  []string{"internal/app/analysis_agents.go"},
+			StrategyHints: []string{"consolidate the smallest repeated normalization logic"},
+		},
+		implementationBootstrap{
+			results: []workspace.ToolResult{{
+				Tool:    "read_file",
+				Summary: "Read f1 internal/app/analysis_agents.go lines 1-180",
+				Output:  "1:package app\n2:\n3:import \"strings\"\n4:\n5:func helper() {}",
+			}},
+		},
+	)
+	if ok {
+		t.Fatal("vague structural targets should not allow a focused rewrite from the default bootstrap window")
+	}
+}
+
+func TestStructuralAnchorGuardBlocksWritesUntilConcreteInspection(t *testing.T) {
+	guard := frontier.NewStructuralAnchorGuard(implementationTargetPacket{
+		SourceLane:    "architecture",
+		PrimaryPaths:  []string{"internal/app/analysis_agents.go"},
+		StrategyHints: []string{"consolidate the smallest repeated normalization logic"},
+	})
+	blocked := guard.PreExecute(workspace.ToolRequest{
+		Tool:      "edit_file",
+		Path:      "internal/app/analysis_agents.go",
+		StartLine: 1,
+		EndLine:   1,
+		Content:   "package app",
+	})
+	if blocked == nil {
+		t.Fatal("expected write to be blocked before concrete inspection")
+	}
+	if !strings.Contains(blocked.Error, "concrete declaration or line anchor") {
+		t.Fatalf("unexpected block error: %#v", blocked)
+	}
+
+	guard.Observe(
+		workspace.ToolRequest{Tool: "go_file_outline", Path: "internal/app/analysis_agents.go"},
+		workspace.ToolResult{Tool: "go_file_outline", Summary: "Outlined Go file", Output: "func helper lines 10-20"},
+	)
+	if blocked := guard.PreExecute(workspace.ToolRequest{
+		Tool:      "edit_file",
+		Path:      "internal/app/analysis_agents.go",
+		StartLine: 10,
+		EndLine:   12,
+		Content:   "func helper() {}",
+	}); blocked != nil {
+		t.Fatalf("expected write after concrete inspection to pass, got %#v", blocked)
+	}
+}
+
 func TestParseStructuredExecutionPlanParsesFencedJSON(t *testing.T) {
 	reply := "```json\n{\"summary\":\"apply banner tweak\",\"operations\":[{\"tool\":\"edit_file\",\"path\":\"internal/app/app.go\",\"start_line\":475,\"end_line\":475,\"content\":\"header += \\\"x\\\"\",\"reason\":\"tweak banner\"}]}\n```"
 	plan, err := parseStructuredExecutionPlan(reply)
@@ -3839,8 +3937,12 @@ func TestFinalAnswerCriticRepairsUnsafeImplementationSummary(t *testing.T) {
 	if strings.Contains(repaired, "All tests passed") {
 		t.Fatalf("expected unsafe model claim to be removed, got:\n%s", repaired)
 	}
-	if !critiqueImplementationFinalAnswer(repaired, []string{"internal/app/app.go"}, verify).Passed {
-		t.Fatalf("expected repaired summary to pass critic, got:\n%s", repaired)
+	critic := critiqueImplementationFinalAnswer(repaired, []string{"internal/app/app.go"}, verify)
+	if critic.Passed {
+		t.Fatalf("expected failed verification to keep critic rejected, got pass for:\n%s", repaired)
+	}
+	if !strings.Contains(strings.Join(critic.Findings, "\n"), "verification failed") {
+		t.Fatalf("expected failed-verification finding, got %#v", critic.Findings)
 	}
 }
 
