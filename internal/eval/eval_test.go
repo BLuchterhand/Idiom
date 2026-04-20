@@ -425,7 +425,7 @@ func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "claim_confidence", "content": `{"lane":"locate","confidence":"low","supported_claims":0,"evidence_paths":["internal/app/app.go"],"unresolved_uncertainty":["response explicitly reports insufficient evidence"],"calibration_basis":"contract acceptance plus grounded evidence path coverage"}`}},
 		{Type: "message", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":3,"retained_messages":5,"max_history":5,"pinned_paths":["internal/app/app.go"],"pinned_memory_kind":"partial_repair","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`}},
 		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"locate","reason":"locate_request","signals":["locate","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected locate"}`}},
-		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"risk_level":"high","coverage":"full-suite escalation","confidence":"high","commands":["go test ./..."],"failed_commands":[],"learned_recommendation":"record full-suite success for similar high-risk surfaces"}`}},
+		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"risk_level":"high","coverage":"full-suite escalation","confidence":"high","commands":["go test ./..."],"failed_commands":["go test ./..."],"failure_classes":["go_unused_variable"],"learned_recommendation":"record full-suite success for similar high-risk surfaces"}`}},
 		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"locate","tool":"read_file","action":"alternate_evidence_required","confidence_impact":"degrade_until_alternate_evidence_covers_gap","reason":"read_file failed during deepening"}`}},
 		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"locate","followup_lane":"implement","contract":"locate_targets","task_family":"locate","permission_profile":"analysis_read_only_then_guarded_writes","required_evidence":["exact_workspace_path","line_or_snippet","target_match_reason"],"required_tools":["search_content","read_file","implementation_handoff"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","target_packet_or_changed_files_present","verification_contract_resolved"],"search_policy":["literal_search_first","fallback_pattern_search","read_best_candidate"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","exact_target_or_no_match"],"failure_to_eval":false}`}},
 		{Type: "message", Data: map[string]any{"role": "explore_summary", "content": "explore summary rejected: failed grounded explanation contract"}},
@@ -497,7 +497,7 @@ func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 	if scenario.RequireRouteAmbiguity == nil || scenario.RequireRouteAmbiguity.Ambiguous == nil || !*scenario.RequireRouteAmbiguity.Ambiguous || !containsStringFold(scenario.RequireRouteAmbiguity.RequireSignals, "implement") {
 		t.Fatalf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity)
 	}
-	if scenario.RequireVerificationFeedback == nil || scenario.RequireVerificationFeedback.Confidence != "high" || len(scenario.RequireVerificationFeedback.RecommendationContains) != 1 {
+	if scenario.RequireVerificationFeedback == nil || scenario.RequireVerificationFeedback.Confidence != "high" || len(scenario.RequireVerificationFeedback.RecommendationContains) != 1 || !containsStringFold(scenario.RequireVerificationFeedback.RequireFailureClasses, "go_unused_variable") {
 		t.Fatalf("expected suggested verification feedback, got %#v", scenario.RequireVerificationFeedback)
 	}
 	if scenario.RequireToolFailureConfidence == nil || scenario.RequireToolFailureConfidence.Tool != "read_file" || scenario.RequireToolFailureConfidence.ConfidenceImpact == "" {
@@ -677,6 +677,29 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 	}) {
 		t.Fatal("expected budget ledger mismatch to be rejected")
 	}
+	if !budgetLedgerMatches(BudgetLedgerSnapshot{
+		Lane:            "review",
+		UsedModelCalls:  2,
+		TotalTokens:     42,
+		StopReason:      "model_final",
+		BudgetExhausted: false,
+	}, BudgetLedgerExpectation{
+		Lane:           "review",
+		MinModelCalls:  intPtr(2),
+		MinTotalTokens: intPtr(40),
+		StopReason:     "model_final",
+	}) {
+		t.Fatal("expected budget ledger matcher to accept sufficient token usage")
+	}
+	if budgetLedgerMatches(BudgetLedgerSnapshot{
+		Lane:        "review",
+		TotalTokens: 10,
+	}, BudgetLedgerExpectation{
+		Lane:           "review",
+		MinTotalTokens: intPtr(40),
+	}) {
+		t.Fatal("expected budget ledger token mismatch to be rejected")
+	}
 	if evidenceDeltaMatches(EvidenceDeltaSnapshot{
 		Lane:             "review",
 		NewEvidencePaths: nil,
@@ -740,10 +763,12 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 	if verificationFeedbackMatches(VerificationFeedbackSnapshot{
 		Confidence:            "low",
 		FailedCommands:        []string{"go test ./internal/app"},
+		FailureClasses:        []string{"go_unused_variable"},
 		LearnedRecommendation: "repair failing checks before widening scope",
 	}, VerificationFeedbackExpectation{
 		Confidence:             "high",
 		RequireFailedCommands:  []string{"go test ./..."},
+		RequireFailureClasses:  []string{"go_import_cycle"},
 		RecommendationContains: []string{"full-suite success"},
 	}) {
 		t.Fatal("expected verification feedback mismatch to be rejected")

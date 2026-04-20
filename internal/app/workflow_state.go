@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
+	"qwen-bubbles/internal/workspace"
 	"strings"
 	"time"
 )
@@ -347,7 +349,7 @@ func (m *Model) rememberWorkflowFromTaskMemory(prompt string, lane analysisLane,
 			"wait for explicit approval before build-mode execution",
 			"on approval, resume from typed workflow state instead of reconstructing from prose",
 		}, current.NextActions...))
-	} else if profile.wantsPlanOnly {
+	} else if profile.WantsPlanOnly {
 		current.Phase = agentWorkflowPhasePlanning
 		current.PlanSummary = strings.TrimSpace(memory.Summary)
 	} else if current.Phase == "" || current.Phase == agentWorkflowPhaseComplete {
@@ -357,28 +359,7 @@ func (m *Model) rememberWorkflowFromTaskMemory(prompt string, lane analysisLane,
 }
 
 func looksLikeOptimizationWorkflowPrompt(prompt string, profile promptRouteProfile) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	if normalized == "" || !profile.wantsArchitecture {
-		return false
-	}
-	return containsAny(
-		normalized,
-		"optimization opportunity",
-		"optimization opportunities",
-		"optimize our architecture",
-		"optimize the architecture",
-		"refactor opportunity",
-		"refactor opportunities",
-		"refactoring opportunity",
-		"refactoring opportunities",
-		"plan a refactor",
-		"plan the refactor",
-		"refactor plan",
-		"refactoring plan",
-		"maintainability",
-		"package boundary",
-		"package boundaries",
-	)
+	return frontier.LooksLikeOptimizationWorkflowPrompt(prompt, profile)
 }
 
 func inferWorkflowKind(prompt string, memory *longHorizonTaskMemory, profile promptRouteProfile) agentWorkflowKind {
@@ -412,36 +393,7 @@ func workflowStateHasApprovalScope(state *agentWorkflowState) bool {
 }
 
 func looksLikeWorkflowApprovalPrompt(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	normalized = strings.ReplaceAll(normalized, "’", "'")
-	trimmed := strings.Trim(normalized, " \t\r\n.!?")
-	if trimmed == "" {
-		return false
-	}
-	if containsAny(trimmed, "don't", "do not", "not yet", "hold off", "wait", "without performing", "without applying", "without implementing") {
-		return false
-	}
-	if looksLikeDurablePlanApprovalPrompt(trimmed) || looksLikeTerseDurablePlanApprovalPrompt(trimmed) {
-		return true
-	}
-	switch trimmed {
-	case "commence",
-		"please commence",
-		"let's commence",
-		"lets commence",
-		"build it",
-		"please build it",
-		"build this",
-		"build that",
-		"execute it",
-		"please execute it",
-		"apply all of it",
-		"implement everything",
-		"perform it":
-		return true
-	default:
-		return containsAny(trimmed, "commence", "start building", "begin building", "perform the approved plan", "execute the approved plan")
-	}
+	return frontier.LooksLikeWorkflowApprovalPrompt(prompt)
 }
 
 func shouldResumeWorkflowPrompt(prompt string, state *agentWorkflowState) bool {
@@ -449,49 +401,23 @@ func shouldResumeWorkflowPrompt(prompt string, state *agentWorkflowState) bool {
 }
 
 func (m *Model) applyWorkflowStateToPromptExecutionPlan(prompt string, plan promptExecutionPlan) promptExecutionPlan {
-	state := m.currentWorkflowState()
+	return fromFrontierPromptPlan(frontier.ApplyWorkflowStateToPromptPlan(prompt, toFrontierPromptPlan(plan), frontierWorkflowState(m.currentWorkflowState())))
+}
+
+func frontierWorkflowState(state *agentWorkflowState) frontier.PromptWorkflowState {
 	if state == nil {
-		return plan
+		return frontier.PromptWorkflowState{}
 	}
-	if workflowApprovalDetected(prompt, state) {
-		plan.lane = analysisLaneImplement
-		plan.followupLane = ""
-		plan.reason = promptRouteReasonDirectImplementation
-		plan.contract = answerContractForLane(analysisLaneImplement)
-		plan.workflowKind = state.Kind
-		plan.workflowPhase = agentWorkflowPhaseBuilding
-		plan.intent.WantsEdits = true
-		plan.intent.WantsPlanOnly = false
-		plan.intent.Vetoes = removePromptIntentVetoes(plan.intent.Vetoes, "plan_only_blocks_edits", "read_only_boundary_blocks_edits")
-		return finalizePromptExecutionPlan(prompt, buildPromptRouteProfile(prompt), plan)
+	return frontier.PromptWorkflowState{
+		Active:           state.Active,
+		Kind:             string(state.Kind),
+		Phase:            string(state.Phase),
+		HasApprovalScope: workflowStateHasApprovalScope(state),
 	}
-	if workflowPlanningFollowupPrompt(prompt, state) {
-		plan.lane = analysisLaneArchitecture
-		plan.followupLane = ""
-		plan.reason = promptRouteReasonArchitectureRequest
-		plan.contract = answerContractForLane(analysisLaneArchitecture)
-		plan.workflowKind = state.Kind
-		plan.workflowPhase = agentWorkflowPhasePlanning
-		plan.intent.WantsEdits = false
-		plan.intent.WantsPlanOnly = true
-		plan.intent.Vetoes = uniqueNonEmptyStrings(append(plan.intent.Vetoes, "workflow_plan_phase_blocks_edits"))
-		return finalizePromptExecutionPlan(prompt, buildPromptRouteProfile(prompt), plan)
-	}
-	plan.workflowKind = state.Kind
-	plan.workflowPhase = state.Phase
-	return plan
 }
 
 func workflowPlanningFollowupPrompt(prompt string, state *agentWorkflowState) bool {
-	if !workflowStateResumable(state) {
-		return false
-	}
-	if state.Phase != agentWorkflowPhaseDiscovered && state.Phase != agentWorkflowPhasePlanning {
-		return false
-	}
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	return looksLikePlanOnlyPrompt(normalized) &&
-		containsAny(normalized, "refactor", "refactoring", "optimize", "optimization", "architecture", "architectural", "this file", "this one", "the chosen", "selected")
+	return frontier.WorkflowPlanningFollowupPrompt(prompt, frontierWorkflowState(state))
 }
 
 func buildWorkflowResumeContext(state *agentWorkflowState) taskResumeContext {
@@ -619,18 +545,22 @@ func (m *Model) resumeWorkflowAsync(userPrompt string) {
 		return
 	}
 	prompt := buildWorkflowResumePrompt(state, userPrompt)
-	plan := promptExecutionPlan{
-		lane:          analysisLaneImplement,
-		reason:        promptRouteReasonDirectImplementation,
-		contract:      answerContractForLane(analysisLaneImplement),
-		workflowKind:  state.Kind,
-		workflowPhase: agentWorkflowPhaseBuilding,
+	enabled := m.workspace != nil && m.workspace.Enabled()
+	normal := enabled && m.workspace.Mode() == workspace.ModeNormal
+	defaultThoroughness := ""
+	if m.workspace != nil {
+		defaultThoroughness = string(m.workspace.ExploreThoroughness())
 	}
-	plan.intent = buildPromptIntentDecision(userPrompt, buildPromptRouteProfile(userPrompt), m.recentConversationText(6), plan)
-	plan.intent.WantsEdits = true
-	plan.intent.WantsPlanOnly = false
-	plan.intent.Vetoes = removePromptIntentVetoes(plan.intent.Vetoes, "plan_only_blocks_edits", "read_only_boundary_blocks_edits")
-	plan = finalizePromptExecutionPlan(userPrompt, buildPromptRouteProfile(userPrompt), plan)
+	plan := fromFrontierPromptPlan(frontier.ClassifyPromptPlan(frontier.PromptPlanInput{
+		Prompt:                     userPrompt,
+		WorkspaceEnabled:           enabled,
+		WorkspaceNormal:            normal,
+		DefaultThoroughness:        defaultThoroughness,
+		Recent:                     m.recentConversationText(6),
+		HasRecentReplanToImplement: m.lastReplan != nil && m.lastReplan.ToLane == analysisLaneImplement,
+		AgentMode:                  string(m.currentAgentDecisionMode()),
+		Workflow:                   frontierWorkflowState(state),
+	}))
 	resumeContext := buildWorkflowResumeContext(state)
 	state.Phase = agentWorkflowPhaseBuilding
 	state.LastPrompt = strings.TrimSpace(userPrompt)

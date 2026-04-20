@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -26,6 +27,7 @@ type WorkbranchCheckout struct {
 type WorkbranchDiff struct {
 	ChangedPaths []string
 	Stat         string
+	Patch        string
 }
 
 func (m WorkbranchManager) Create(ctx context.Context, name string) (WorkbranchCheckout, error) {
@@ -49,8 +51,9 @@ func (m WorkbranchManager) Create(ctx context.Context, name string) (WorkbranchC
 	if err != nil {
 		return WorkbranchCheckout{}, err
 	}
-	branch := prefix + "/" + safeName
-	path := filepath.Join(scratch, "qwen-bubbles-"+safeName)
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	branch := prefix + "/" + safeName + "-" + suffix
+	path := filepath.Join(scratch, "qwen-bubbles-"+safeName+"-"+suffix)
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		return WorkbranchCheckout{}, err
 	}
@@ -70,11 +73,22 @@ func (m WorkbranchManager) Diff(ctx context.Context, checkout WorkbranchCheckout
 	if path == "" {
 		return WorkbranchDiff{}, fmt.Errorf("workbranch path is required")
 	}
-	stat, err := gitOutput(ctx, path, "diff", "--stat")
+	base := strings.TrimSpace(checkout.BaseSHA)
+	if base == "" {
+		base = "HEAD"
+	}
+	if _, err := gitOutput(ctx, path, "add", "-N", "."); err != nil {
+		return WorkbranchDiff{}, err
+	}
+	stat, err := gitOutput(ctx, path, "diff", "--stat", base, "--")
 	if err != nil {
 		return WorkbranchDiff{}, err
 	}
-	names, err := gitOutput(ctx, path, "diff", "--name-only")
+	names, err := gitOutput(ctx, path, "diff", "--name-only", base, "--")
+	if err != nil {
+		return WorkbranchDiff{}, err
+	}
+	patch, err := gitOutput(ctx, path, "diff", "--binary", base, "--")
 	if err != nil {
 		return WorkbranchDiff{}, err
 	}
@@ -84,7 +98,7 @@ func (m WorkbranchManager) Diff(ctx context.Context, checkout WorkbranchCheckout
 			changed = append(changed, trimmed)
 		}
 	}
-	return WorkbranchDiff{ChangedPaths: changed, Stat: strings.TrimSpace(stat)}, nil
+	return WorkbranchDiff{ChangedPaths: changed, Stat: strings.TrimSpace(stat), Patch: strings.TrimSpace(patch)}, nil
 }
 
 func (m WorkbranchManager) Remove(ctx context.Context, checkout WorkbranchCheckout) error {
@@ -96,8 +110,15 @@ func (m WorkbranchManager) Remove(ctx context.Context, checkout WorkbranchChecko
 	if path == "" {
 		return fmt.Errorf("workbranch path is required")
 	}
-	_, err := gitOutput(ctx, root, "worktree", "remove", "--force", path)
-	return err
+	if _, err := gitOutput(ctx, root, "worktree", "remove", "--force", path); err != nil {
+		return err
+	}
+	if branch := strings.TrimSpace(checkout.Branch); branch != "" {
+		if _, err := gitOutput(ctx, root, "branch", "-D", branch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func gitOutput(ctx context.Context, root string, args ...string) (string, error) {

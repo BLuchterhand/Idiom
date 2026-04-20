@@ -64,7 +64,7 @@ Detailed design for the remaining frontier capabilities lives in [frontier-agent
 - [x] Gate workflow completion on a new execution journal with changed paths and passing verification instead of any nil implementation error.
 - [x] Fingerprint workflow-state targets and clear stale or legacy un-fingerprinted workflows before resuming build-mode execution.
 - [x] Preserve generic durable-plan workflow kind so non-refactor durable plans do not inherit optimization-refactor approval behavior.
-- [ ] Add token/cost budget accounting once token usage is available from the local backend.
+- [x] Add token budget accounting when token usage is available from the local backend; budget ledgers now preserve prompt, completion, and total token counts. Cost accounting remains configuration-dependent because local backends do not expose pricing.
 - [x] Add UI/debug snapshots for progress, done-gate rejection, and stall fuse decisions.
 
 ## Plan Mode Parity

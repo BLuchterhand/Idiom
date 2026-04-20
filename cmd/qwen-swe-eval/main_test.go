@@ -40,10 +40,75 @@ func TestRunEvaluatesLogsDirectory(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	for _, want := range []string{"PASS cli-smoke-suite", "Results: passed=1 failed=0", "- PASS direct"} {
+	for _, want := range []string{"PASS cli-smoke-suite", "Results: passed=1 failed=0", "Control rails dashboard:", "- PASS direct"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("expected suite output to contain %q, got %s", want, stdout.String())
 		}
+	}
+}
+
+func TestRunLiveGeneratesLogsAndScoresThem(t *testing.T) {
+	dir := t.TempDir()
+	suitePath := filepath.Join(dir, "suite.json")
+	logsDir := filepath.Join(dir, "generated")
+	writeSWESmokeSuite(t, suitePath, "")
+
+	command := strings.Join([]string{
+		`printf '%s\n'`,
+		`'{"type":"message","role":"user","content":"Explain routing."}'`,
+		`'{"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}'`,
+		`'{"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}'`,
+		`> {log_path}`,
+	}, " ")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(logsDir, "direct.jsonl")); err != nil {
+		t.Fatalf("expected generated log: %v", err)
+	}
+}
+
+func TestRunWritesFailingScenarioSuite(t *testing.T) {
+	dir := t.TempDir()
+	suitePath := filepath.Join(dir, "suite.json")
+	logsDir := filepath.Join(dir, "logs")
+	outPath := filepath.Join(dir, "regressions.json")
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		t.Fatalf("mkdir logs: %v", err)
+	}
+	writeSWESmokeSuite(t, suitePath, "")
+	if err := os.WriteFile(filepath.Join(logsDir, "direct.jsonl"), []byte(`{"type":"message","role":"user","content":"Explain routing."}
+{"type":"message","role":"assistant","content":"No route plan here."}
+`), 0o644); err != nil {
+		t.Fatalf("write failing log: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-logs", logsDir, "-write-failing-scenarios", outPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected failing eval exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read generated suite: %v", err)
+	}
+	if !strings.Contains(string(data), "direct-regression") || !strings.Contains(string(data), "generated-regression") {
+		t.Fatalf("expected generated regression task, got %s", data)
+	}
+}
+
+func TestRenderRunnerCommandDoesNotReplacePlaceholdersInsideValues(t *testing.T) {
+	rendered := renderRunnerCommand(`printf '%s %s\n' {prompt} {log_path}`, map[string]string{
+		"prompt":   "literal {log_path} in prompt",
+		"log_path": "/tmp/out.jsonl",
+	})
+	if !strings.Contains(rendered, `'literal {log_path} in prompt'`) {
+		t.Fatalf("expected prompt placeholder text to remain literal, got %s", rendered)
+	}
+	if !strings.Contains(rendered, `'/tmp/out.jsonl'`) {
+		t.Fatalf("expected log path replacement, got %s", rendered)
 	}
 }
 
@@ -118,6 +183,7 @@ func writeSWESmokeLog(t *testing.T, path string) {
 	t.Helper()
 	const log = `{"type":"message","role":"user","content":"Explain routing."}
 {"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}
+{"type":"message","role":"control_rails","content":"{\"task_family\":\"conversation\",\"permission_profile\":\"conversation_only\"}"}
 {"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}
 `
 	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {

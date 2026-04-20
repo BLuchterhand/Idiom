@@ -250,6 +250,16 @@ func TestWriteToolResultChangedRejectsNoOpEdits(t *testing.T) {
 	if !writeToolResultChanged(req, workspace.ToolResult{Tool: "edit_file", Summary: "Edited internal/app/app.go"}) {
 		t.Fatal("expected successful edit to count as a changed path")
 	}
+	patchReq := workspace.ToolRequest{
+		Tool: "apply_patch",
+		Content: "*** Begin Patch\n" +
+			"*** Add File: docs/example.md\n" +
+			"+example\n" +
+			"*** End Patch",
+	}
+	if !writeToolResultChanged(patchReq, workspace.ToolResult{Tool: "apply_patch", Summary: "Applied patch with 1 op(s)"}) {
+		t.Fatal("expected successful patch to count as a changed path")
+	}
 	if writeToolResultChanged(workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go"}, workspace.ToolResult{Tool: "read_file", Summary: "Read file"}) {
 		t.Fatal("expected read-only tool to not count as a changed path")
 	}
@@ -370,6 +380,9 @@ func TestDurablePlanArtifactMemoryRequiresExplicitBuildHandoff(t *testing.T) {
 	}
 	if !shouldPersistDurablePlanArtifact("Prepare a refactor plan for internal/app/analysis_agents.go.", analysisLaneArchitecture) {
 		t.Fatal("expected plan-only architecture prompts to persist durable plan artifacts")
+	}
+	if !shouldPersistDurablePlanArtifact("please prepare a refactor cleanup plan for your recommendation of analysis_agents.go", analysisLaneArchitecture) {
+		t.Fatal("expected refactor cleanup plan prompts to persist durable plan artifacts")
 	}
 }
 
@@ -2769,6 +2782,21 @@ func TestPromptMentionedWorkspacePathsIgnoresMoveDestinations(t *testing.T) {
 	}
 }
 
+func TestPromptMentionedWorkspacePathsRejectsToolJSONFragments(t *testing.T) {
+	paths := promptMentionedWorkspacePaths(`{"tool":"go_move_declarations","path":"internal/app/analysis_agents.go:12:3","moves":[{"destination":"internal/app/orchestration.go"}]} internal/app/analysis_agents.go:12:3`)
+	if !containsString(paths, "internal/app/analysis_agents.go") {
+		t.Fatalf("expected source path to be extracted from path field and line reference, got %#v", paths)
+	}
+	if containsString(paths, "internal/app/orchestration.go") {
+		t.Fatalf("destination paths should not be extracted from tool JSON, got %#v", paths)
+	}
+	for _, path := range paths {
+		if strings.ContainsAny(path, "\"'\\{}[],:") {
+			t.Fatalf("workspace path should be normalized, got %#v in %#v", path, paths)
+		}
+	}
+}
+
 func TestPromptShouldSkipDirectQuotedEditForStructuralToolPrompts(t *testing.T) {
 	prompt := `Use go_file_outline once, then go_move_declarations with pattern:"tag:model_state" into "internal/app/model_state.go".`
 	if !promptShouldSkipDirectQuotedEdit(prompt) {
@@ -2852,6 +2880,58 @@ func TestImplementationResumeContextUsesVerifierTargetsAndRecentPhasePlan(t *tes
 	}
 	if !containsString(packet.AllowedDestinations, "internal/app/implementation_plan.go") {
 		t.Fatalf("expected target packet to carry plan-approved destination, got %#v", packet.AllowedDestinations)
+	}
+}
+
+func TestImplementationResumeContextUsesExplicitTargetAndCarriesNoMoveConstraint(t *testing.T) {
+	mgr := workspace.NewManager(testWorkspaceConfig())
+	history := []llama.ChatMessage{{
+		Role: "assistant",
+		Content: strings.Join([]string{
+			"Focused architecture plan.",
+			"",
+			"Evidence ledger:",
+			"- verified paths: internal/app/analysis_agents.go, internal/app/implementation.go, internal/app/prompt_routing.go",
+			"",
+			"Focused refactor plan:",
+			"- Target: internal/app/analysis_agents.go",
+			"- Current mixed responsibilities: ui, routing, workspace, agent, state, config",
+			"- Phase 1: stage 1 scope is to edit only this existing Go file; do not create files or move declarations.",
+			"- Phase 2: inspect the local helper/control-flow cluster in internal/app/analysis_agents.go and consolidate the smallest repeated normalization logic.",
+			"- Verification: Phase 3 runs go test ./internal/app.",
+		}, "\n"),
+	}}
+	plan := promptExecutionPlan{
+		intent: promptIntentDecision{
+			TargetRefs: []string{"internal/app/analysis_agents.go"},
+		},
+	}
+	resume := implementationResumeContextFromPromptPlan(mgr, "begin", history, plan, taskResumeContext{})
+	if !resume.Active {
+		t.Fatal("expected recent explicit plan target to activate resume context")
+	}
+	if got := resume.ApprovedEditTargets; len(got) != 1 || got[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("expected explicit Target line to be the only approved edit target, got %#v", got)
+	}
+	if containsString(resume.ApprovedEditTargets, "internal/app/implementation.go") ||
+		containsString(resume.ApprovedEditTargets, "internal/app/prompt_routing.go") {
+		t.Fatalf("read-only evidence from the plan must not become approved edit targets, got %#v", resume.ApprovedEditTargets)
+	}
+	joinedPlan := strings.Join(resume.VerificationPlan, "\n")
+	if !strings.Contains(joinedPlan, "do not create files or move declarations") {
+		t.Fatalf("expected no-move constraint in resume strategy hints, got %#v", resume.VerificationPlan)
+	}
+
+	packet := applyTaskResumeContextToImplementationTargetPacket(
+		buildImplementationTargetPacket("begin", history),
+		resume,
+	)
+	if got := packet.PrimaryPaths; len(got) != 1 || got[0] != "internal/app/analysis_agents.go" {
+		t.Fatalf("target packet should stay focused on the explicit plan target, got %#v", got)
+	}
+	rendered := renderImplementationTargetPacket(packet)
+	if !strings.Contains(rendered, "do not create files or move declarations") {
+		t.Fatalf("rendered target packet must carry no-move constraint for runner enforcement, got:\n%s", rendered)
 	}
 }
 
@@ -4201,6 +4281,34 @@ func TestLooksLikeSingleLineConditionalWrapper(t *testing.T) {
 	}
 	if looksLikeSingleLineConditionalWrapper("header := titleStyle.Render(...)", "header += workingStyle.Render(...)", "}") {
 		t.Fatal("did not expect non-conditional prefix to be recognized as wrapper")
+	}
+}
+
+func TestGuardedImplementShellAllowsNoopCdVerificationChain(t *testing.T) {
+	allowed := []string{
+		"cd . && go build ./...",
+		"cd . && go test -vet=off ./internal/app 2>&1",
+		"go build ./internal/app/",
+		`grep -n "^package" internal/app/*.go`,
+	}
+	for _, command := range allowed {
+		if !isGuardedImplementShellAllowed(command) {
+			t.Fatalf("expected guarded verification shell command to be allowed: %q", command)
+		}
+	}
+
+	blocked := []string{
+		"cd . && go mod tidy && go build ./...",
+		"go fmt ./...",
+		"go build -o qwen-bubbles ./cmd/qwen-bubbles",
+		"go build ./cmd/qwen-bubbles",
+		"go test ./... > out.txt",
+		"cd /tmp && go build ./...",
+	}
+	for _, command := range blocked {
+		if isGuardedImplementShellAllowed(command) {
+			t.Fatalf("expected mutating or unsafe shell command to be blocked: %q", command)
+		}
 	}
 }
 

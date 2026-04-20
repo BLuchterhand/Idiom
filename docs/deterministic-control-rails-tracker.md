@@ -152,7 +152,7 @@ Implemented as:
 
 Remaining future expansion:
 
-- Add an automated command that extracts failed captured-log evaluations into a named SWE-suite task skeleton.
+- Added `qwen-swe-eval -write-failing-scenarios` to extract failed captured-log evaluations into a named SWE-suite task skeleton.
 
 ### Permission And Write Rails
 
@@ -223,9 +223,9 @@ Examples:
 - Implementation: changed-files section and verification section.
 - Locate: exact target or no-match statement.
 
-## Remaining Frontier Follow-Ups
+## Recently Completed Frontier Follow-Ups
 
-- Add a `qwen-swe-eval -write-failing-scenarios` mode that converts failed captured-log reports into task skeletons.
-- Add a control-rails dashboard summary in `qwen-swe-eval` grouped by task family and permission profile.
+- Added a `qwen-swe-eval -write-failing-scenarios` mode that converts failed captured-log reports into task skeletons.
+- Added a control-rails dashboard summary in `qwen-swe-eval` grouped by task family and permission profile.
 - Add stricter lint rules requiring `require_control_rails` for all new representative tasks.
 - Add dedicated execution machinery for `debug_logs` if logs become a first-class workspace artifact rather than a task family under exploration.

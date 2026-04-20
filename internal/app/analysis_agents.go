@@ -7,11 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"qwen-bubbles/internal/agent"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/semantic"
 	"qwen-bubbles/internal/workspace"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -33,237 +33,31 @@ func analysisTransition(plan promptExecutionPlan, completedLane analysisLane) (a
 }
 
 func analysisSummaryTargets(history []llama.ChatMessage) []implementationTarget {
-	if len(history) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	targets := make([]implementationTarget, 0, 4)
-	add := func(path string, line int) {
-		path = normalizeGuardedPath(path)
-		if path == "" || line <= 0 {
-			return
-		}
-		key := fmt.Sprintf("%s:%d", path, line)
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		targets = append(targets, implementationTarget{Path: path, Line: line})
-	}
-	for i := len(history) - 1; i >= 0; i-- {
-		msg := history[i]
-		if msg.Role != "system" || !strings.Contains(msg.Content, "subagent summary") {
-			continue
-		}
-		for _, field := range strings.Fields(msg.Content) {
-			if path, line, ok := parseAnalysisSummaryTargetToken(field); ok {
-				add(path, line)
-			}
-		}
-		if len(targets) > 0 {
-			break
-		}
-	}
-	return targets
+	return frontier.AnalysisSummaryTargets(history)
 }
 
 func parseAnalysisSummaryTargetToken(field string) (string, int, bool) {
-	candidate := strings.Trim(field, "`'\"()[]{}<>,:;!?.")
-	idx := strings.LastIndex(candidate, ":")
-	if idx <= 0 || idx >= len(candidate)-1 {
-		return "", 0, false
-	}
-	path := candidate[:idx]
-	lineText := candidate[idx+1:]
-	line, err := strconv.Atoi(lineText)
-	if err != nil || !looksLikeWorkspacePathToken(path) {
-		return "", 0, false
-	}
-	return path, line, true
+	return frontier.ParseAnalysisSummaryTargetToken(field)
 }
 
 func latestAnalysisSummary(history []llama.ChatMessage) (string, string, bool) {
-	for i := len(history) - 1; i >= 0; i-- {
-		msg := history[i]
-		if msg.Role != "system" || !strings.Contains(msg.Content, "subagent summary]") {
-			continue
-		}
-		content := strings.TrimSpace(msg.Content)
-		if content == "" {
-			continue
-		}
-		firstLine := content
-		body := ""
-		if idx := strings.IndexByte(content, '\n'); idx >= 0 {
-			firstLine = strings.TrimSpace(content[:idx])
-			body = strings.TrimSpace(content[idx+1:])
-		}
-		lane := ""
-		if strings.HasPrefix(firstLine, "[") && strings.HasSuffix(firstLine, "]") {
-			label := strings.TrimSuffix(strings.TrimPrefix(firstLine, "["), "]")
-			label = strings.TrimSpace(strings.TrimSuffix(label, "subagent summary"))
-			lane = strings.TrimSpace(label)
-		}
-		if body == "" {
-			body = content
-		}
-		if idx := strings.Index(body, "\n\n"); idx >= 0 {
-			body = strings.TrimSpace(body[idx+2:])
-		}
-		return lane, body, true
-	}
-	return "", "", false
+	return frontier.LatestAnalysisSummary(history)
 }
 
 func analysisSummaryStrategyHints(summary string) []string {
-	if strings.TrimSpace(summary) == "" {
-		return nil
-	}
-	lines := strings.Split(summary, "\n")
-	hints := make([]string, 0, 4)
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(strings.TrimLeft(line, "-*0123456789. "))
-		lower := strings.ToLower(trimmed)
-		if trimmed == "" {
-			continue
-		}
-		if len(trimmed) > 180 {
-			trimmed = truncateText(trimmed, 180)
-		}
-		if strings.Contains(lower, "direction:") ||
-			strings.Contains(lower, "suggested") ||
-			strings.Contains(lower, "should ") ||
-			strings.Contains(lower, "split ") ||
-			strings.Contains(lower, "extract ") ||
-			strings.Contains(lower, "separate ") ||
-			strings.Contains(lower, "move ") {
-			hints = append(hints, trimmed)
-		}
-	}
-	return uniqueLimitedStrings(hints, 4)
-}
-
-type locateCandidate struct {
-	Path    string
-	Line    int
-	Match   string
-	Snippet string
-	Region  string
-	Score   int
+	return frontier.AnalysisSummaryStrategyHints(summary)
 }
 
 func parseLocateCandidates(output string) []locateCandidate {
-	candidates := make([]locateCandidate, 0, 8)
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "context:") || strings.HasPrefix(line, "targeted edit template:") {
-			continue
-		}
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 || !strings.HasPrefix(parts[0], "f") {
-			continue
-		}
-		location := strings.SplitN(parts[1], ":", 3)
-		if len(location) < 3 {
-			continue
-		}
-		path := strings.TrimSpace(location[0])
-		if looksLikeLocateMetaPath(path) {
-			continue
-		}
-		match := strings.TrimSpace(location[2])
-		if looksLikeLocateMetaMatch(match) {
-			continue
-		}
-		lineNumber, err := strconv.Atoi(strings.TrimSpace(location[1]))
-		if err != nil {
-			continue
-		}
-		candidates = append(candidates, locateCandidate{
-			Path:  path,
-			Line:  lineNumber,
-			Match: match,
-		})
-	}
-	return candidates
+	return frontier.ParseLocateCandidates(output)
 }
 
 func scoreLocateCandidate(prompt string, candidate locateCandidate) int {
-	normalized := strings.ToLower(prompt)
-	text := strings.ToLower(candidate.Path + "\n" + candidate.Match + "\n" + candidate.Snippet)
-	region := classifyLocateRegion(candidate)
-	score := 0
-
-	if strings.Contains(text, "qwen is working") {
-		score += 2
-	}
-	if containsAny(text, "workingframe", "func (m *model) workingdots", "strings.repeat") {
-		score -= 8
-	}
-	if strings.Contains(text, "workingstyle :=") {
-		score -= 3
-	}
-
-	switch region {
-	case "header":
-		score += 12
-	case "chat":
-		score += 4
-	case "footer":
-		score += 2
-	case "status":
-		score += 1
-	}
-
-	if containsAny(normalized, "top", "top of the window", "header", "banner", "window") {
-		switch region {
-		case "header":
-			score += 12
-		case "footer", "status", "chat":
-			score -= 6
-		}
-	}
-	if containsAny(normalized, "footer", "bottom") {
-		if region == "footer" {
-			score += 10
-		} else if region == "header" {
-			score -= 4
-		}
-	}
-	if containsAny(normalized, "badge", "chat", "menu") {
-		if region == "chat" {
-			score -= 10
-		}
-		if region == "header" {
-			score += 4
-		}
-	}
-	if strings.Contains(normalized, "not the one") && region == "chat" {
-		score -= 8
-	}
-	return score
+	return frontier.ScoreLocateCandidate(prompt, candidate)
 }
 
 func sortLocateCandidates(candidates []locateCandidate) {
-	slices.SortFunc(candidates, func(a, b locateCandidate) int {
-		if a.Score != b.Score {
-			if a.Score > b.Score {
-				return -1
-			}
-			return 1
-		}
-		if a.Path != b.Path {
-			return strings.Compare(a.Path, b.Path)
-		}
-		switch {
-		case a.Line < b.Line:
-			return -1
-		case a.Line > b.Line:
-			return 1
-		default:
-			return 0
-		}
-	})
+	frontier.SortLocateCandidates(candidates)
 }
 
 func (m *Model) applyAnalysisAnswerCritic(answer string, lane analysisLane, evidencePaths []string) {
@@ -342,6 +136,17 @@ func (m *Model) runExploreSubagent(
 		MaxToolSteps:     exploreToolBudget(m.cfg.Chat.MaxToolSteps),
 		AgentName:        "explore",
 		PermissionPolicy: controlRailPermissionPolicy(rails),
+		RuntimeBrief: buildWorkerRuntimeBrief(
+			prompt,
+			rails,
+			implementationTargetPacket{},
+			"",
+			nil,
+			agent.RunPolicy{MaxToolSteps: exploreToolBudget(m.cfg.Chat.MaxToolSteps)},
+			nil,
+			[]string{"use bootstrapped repository evidence before requesting new broad discovery"},
+			nil,
+		),
 		OnEvent: func(event agent.RunEvent) {
 			m.logMessage(event.Role, event.Content)
 		},
@@ -1776,15 +1581,7 @@ func claimConfidenceFromReadiness(readiness analysisReadinessAssessment) claimCo
 }
 
 func analysisBudgetNextActions(stopReason string) []string {
-	stopReason = strings.ToLower(strings.TrimSpace(stopReason))
-	switch {
-	case strings.Contains(stopReason, "ready"):
-		return []string{"answer"}
-	case strings.Contains(stopReason, "fallback"), strings.Contains(stopReason, "exhausted"):
-		return []string{"answer_with_explicit_uncertainty", "persist_task_memory_if_needed"}
-	default:
-		return []string{"retry_with_more_evidence", "fallback_if_budget_exhausted"}
-	}
+	return frontier.AnalysisBudgetNextActions(stopReason)
 }
 
 func shouldDeepenAfterReadiness(readiness analysisReadinessAssessment) bool {
@@ -2409,7 +2206,7 @@ func buildArchitectureFallbackSummary(prompt string, hotspots []architectureHots
 		b.WriteString(strings.TrimSpace(hotspotBoard))
 		b.WriteString("\n\n")
 	}
-	if looksLikeArchitecturePrompt(strings.ToLower(prompt)) {
+	if frontier.LooksLikeArchitecturePrompt(strings.ToLower(prompt)) {
 		b.WriteString("Recommended next step:\n")
 		b.WriteString("- validate the top hotspot boundaries and split one responsibility at a time instead of attempting a repo-wide refactor")
 	} else {
@@ -2420,18 +2217,11 @@ func buildArchitectureFallbackSummary(prompt string, hotspots []architectureHots
 }
 
 func architecturePromptWantsFocusedTargetPlan(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	if normalized == "" {
-		return false
-	}
-	return looksLikePlanOnlyPrompt(normalized) ||
-		containsAny(normalized, "drill down", "deeper", "go deeper", "recommendation", "this one", "this file", "focused plan", "targeted plan")
+	return frontier.ArchitecturePromptWantsFocusedTargetPlan(prompt)
 }
 
 func architecturePromptWantsBoundedOneFilePlan(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	return looksLikePlanOnlyPrompt(normalized) &&
-		containsAny(normalized, "one existing", "one-file", "single file", "editing only one", "only one existing")
+	return frontier.ArchitecturePromptWantsBoundedOneFilePlan(prompt)
 }
 
 func renderBoundedOneFileArchitecturePlan(hotspot architectureHotspot) string {
@@ -2566,276 +2356,87 @@ func architectureCapabilityNames(repoProfile string) []string {
 }
 
 func issueSearchPattern(prompt string) string {
-	normalized := strings.ToLower(prompt)
-	switch {
-	case containsAny(normalized, "performance", "optimize", "optimization"):
-		return "TODO|FIXME|panic\\(|slow|performance|alloc"
-	case containsAny(normalized, "cleanup", "clean up", "code smell", "refactor"):
-		return "TODO|FIXME|HACK|deprecated"
-	case containsAny(normalized, "error", "bug", "issue", "problem", "regression"):
-		return "TODO|FIXME|BUG|panic\\(|error|regression"
-	default:
-		return "TODO|FIXME|BUG|XXX|panic\\("
-	}
+	return frontier.IssueSearchPattern(prompt)
 }
 
 func exploreBootstrapReadBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 2
-	case workspace.ThoroughnessThorough:
-		return 4
-	default:
-		return 3
-	}
+	return frontier.ExploreBootstrapReadBudget(level)
 }
 
 func exploreKeywordSearchPathBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 1
-	case workspace.ThoroughnessThorough:
-		return 3
-	default:
-		return 2
-	}
+	return frontier.ExploreKeywordSearchPathBudget(level)
 }
 
 func exploreKeywordReadBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessThorough:
-		return 2
-	default:
-		return 1
-	}
+	return frontier.ExploreKeywordReadBudget(level)
 }
 
 func exploreIssueSearchPathBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 1
-	case workspace.ThoroughnessThorough:
-		return 4
-	default:
-		return 2
-	}
+	return frontier.ExploreIssueSearchPathBudget(level)
 }
 
 func exploreIssueReadBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessThorough:
-		return 2
-	default:
-		return 1
-	}
+	return frontier.ExploreIssueReadBudget(level)
 }
 
 func exploreSemanticDefaultFileBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 1
-	case workspace.ThoroughnessThorough:
-		return 3
-	default:
-		return 2
-	}
+	return frontier.ExploreSemanticDefaultFileBudget(level)
 }
 
 func exploreSemanticRelevantFileBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 1
-	case workspace.ThoroughnessThorough:
-		return 4
-	default:
-		return 2
-	}
+	return frontier.ExploreSemanticRelevantFileBudget(level)
 }
 
 func exploreSemanticIssueFileBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 1
-	case workspace.ThoroughnessThorough:
-		return 4
-	default:
-		return 2
-	}
+	return frontier.ExploreSemanticIssueFileBudget(level)
 }
 
 func exploreSemanticTotalReadBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 2
-	case workspace.ThoroughnessThorough:
-		return 5
-	default:
-		return 3
-	}
+	return frontier.ExploreSemanticTotalReadBudget(level)
 }
 
 func prioritizedExploreSearchPaths(dirs map[string]struct{}, level workspace.ExploreThoroughness) []string {
-	candidates := []string{"internal", "cmd", "pkg", "src", "scripts", "prompts", "tests", "test"}
-	paths := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		if hasDirectory(dirs, candidate) {
-			paths = append(paths, candidate)
-		}
-	}
-	return uniqueLimitedStrings(paths, exploreSearchPathLimit(level))
+	return frontier.PrioritizedExploreSearchPaths(dirs, level)
 }
 
 func exploreSearchGlob(path string) string {
-	switch path {
-	case "internal", "cmd", "pkg", "src", "test", "tests":
-		return "*.go"
-	case "prompts":
-		return "*.md"
-	default:
-		return ""
-	}
+	return frontier.ExploreSearchGlob(path)
 }
 
 func exploreSearchPathLimit(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 2
-	case workspace.ThoroughnessThorough:
-		return 6
-	default:
-		return 4
-	}
+	return frontier.ExploreSearchPathLimit(level)
 }
 
 func architectureHotspotBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 3
-	case workspace.ThoroughnessThorough:
-		return 6
-	default:
-		return 4
-	}
+	return frontier.ArchitectureHotspotBudget(level)
 }
 
 func architectureReadBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 3
-	case workspace.ThoroughnessThorough:
-		return 6
-	default:
-		return 4
-	}
+	return frontier.ArchitectureReadBudget(level)
 }
 
 func architectureRelevantFileBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 2
-	case workspace.ThoroughnessThorough:
-		return 5
-	default:
-		return 3
-	}
+	return frontier.ArchitectureRelevantFileBudget(level)
 }
 
 func architectureSearchPathBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 2
-	case workspace.ThoroughnessThorough:
-		return 5
-	default:
-		return 3
-	}
+	return frontier.ArchitectureSearchPathBudget(level)
 }
 
 func architectureSearchReadBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 1
-	case workspace.ThoroughnessThorough:
-		return 3
-	default:
-		return 2
-	}
+	return frontier.ArchitectureSearchReadBudget(level)
 }
 
 func architectureSearchPattern(prompt string) string {
-	normalized := strings.ToLower(prompt)
-	switch {
-	case containsAny(normalized, "language", "languages", "golang", "go", "extensible", "support", "supported"):
-		return "GoIndex|semantic|clangd|workspace|language|languages|cpp|C\\+\\+"
-	case containsAny(normalized, "structure", "architecture", "architectural", "architecturally", "maintainability", "optimize", "optimization", "modular", "modularity", "boundary", "boundaries", "split", "decompose", "organize", "organization"):
-		return "router|lane|workspace|manager|analysis|review|explore|implement|semantic"
-	default:
-		return ""
-	}
+	return frontier.ArchitectureSearchPattern(prompt)
 }
 
 func architectureSourceDirPriority(dir string) int {
-	switch dir {
-	case "internal":
-		return 35
-	case "cmd":
-		return 26
-	case "pkg":
-		return 24
-	case "src":
-		return 20
-	case ".":
-		return 10
-	default:
-		return 14
-	}
+	return frontier.ArchitectureSourceDirPriority(dir)
 }
 
 func exploreQueryTerms(prompt string) []string {
-	cleaned := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z':
-			return r
-		case r >= 'A' && r <= 'Z':
-			return r + ('a' - 'A')
-		case r >= '0' && r <= '9':
-			return r
-		default:
-			return ' '
-		}
-	}, prompt)
-
-	stopwords := map[string]struct{}{
-		"a": {}, "an": {}, "and": {}, "any": {}, "before": {}, "brief": {}, "can": {}, "cleanup": {},
-		"code": {}, "codebase": {}, "deep": {}, "diagnose": {}, "explore": {}, "fast": {}, "file": {},
-		"files": {}, "find": {}, "fix": {}, "for": {}, "from": {}, "harness": {}, "identify": {},
-		"implement": {}, "inspect": {}, "investigate": {}, "issue": {}, "look": {}, "make": {},
-		"optimization": {}, "optimize": {}, "performance": {}, "please": {}, "problem": {}, "project": {},
-		"quick": {}, "recommend": {}, "recommendation": {}, "recommendations": {}, "repo": {}, "repository": {},
-		"review": {}, "scan": {}, "search": {}, "single": {}, "some": {}, "part": {}, "parts": {},
-		"test": {}, "the": {}, "this": {}, "that": {}, "through": {}, "thorough": {}, "topic": {}, "what": {}, "wrong": {}, "you": {},
-		"bug": {}, "error": {}, "cleanups": {}, "smell": {}, "should": {}, "fixed": {}, "long": {}, "term": {}, "maintainability": {},
-	}
-
-	terms := make([]string, 0, 4)
-	seen := make(map[string]struct{})
-	for _, field := range strings.Fields(cleaned) {
-		if len(field) < 3 {
-			continue
-		}
-		if _, skip := stopwords[field]; skip {
-			continue
-		}
-		if _, ok := seen[field]; ok {
-			continue
-		}
-		seen[field] = struct{}{}
-		terms = append(terms, field)
-		if len(terms) >= 4 {
-			break
-		}
-	}
-	return terms
+	return frontier.ExploreQueryTerms(prompt)
 }
 
 func appendAnalysisSummary(history []llama.ChatMessage, lane string, summary string) []llama.ChatMessage {
@@ -2854,14 +2455,7 @@ func appendAnalysisSummary(history []llama.ChatMessage, lane string, summary str
 }
 
 func exploreToolBudget(maxToolSteps int) int {
-	switch {
-	case maxToolSteps <= 0:
-		return 12
-	case maxToolSteps < 6:
-		return maxToolSteps
-	default:
-		return minInt(maxToolSteps, 12)
-	}
+	return frontier.ExploreToolBudget(maxToolSteps)
 }
 
 type budgetLedgerSnapshot struct {
@@ -2920,12 +2514,10 @@ func shouldInvalidateExploreCacheForTool(result workspace.ToolResult) bool {
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(result.Summary)), "no-op") {
 		return false
 	}
-	switch result.Tool {
-	case "mkdir", "edit_file", "write_file", "append_file", "go_move_declarations", "shell":
+	if workspace.IsWorkspaceWriteTool(result.Tool) || result.Tool == "shell" {
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
 func (m *Model) invalidateExploreCache(reason string) {

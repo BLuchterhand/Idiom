@@ -126,6 +126,7 @@ type BudgetLedgerExpectation struct {
 	Lane              string `json:"lane,omitempty"`
 	StopReason        string `json:"stop_reason,omitempty"`
 	MinModelCalls     *int   `json:"min_model_calls,omitempty"`
+	MinTotalTokens    *int   `json:"min_total_tokens,omitempty"`
 	MinEvidencePaths  *int   `json:"min_evidence_paths,omitempty"`
 	BudgetExhausted   *bool  `json:"budget_exhausted,omitempty"`
 	UncertaintyPolicy string `json:"uncertainty_policy,omitempty"`
@@ -166,6 +167,7 @@ type RouteAmbiguityExpectation struct {
 type VerificationFeedbackExpectation struct {
 	Confidence             string   `json:"confidence,omitempty"`
 	RequireFailedCommands  []string `json:"require_failed_commands,omitempty"`
+	RequireFailureClasses  []string `json:"require_failure_classes,omitempty"`
 	RecommendationContains []string `json:"recommendation_contains,omitempty"`
 }
 
@@ -367,6 +369,9 @@ type BudgetLedgerSnapshot struct {
 	UsedDeepeningPasses    int      `json:"used_deepening_passes,omitempty"`
 	MaxDeepeningPasses     int      `json:"max_deepening_passes,omitempty"`
 	UsedToolResults        int      `json:"used_tool_results,omitempty"`
+	PromptTokens           int      `json:"prompt_tokens,omitempty"`
+	CompletionTokens       int      `json:"completion_tokens,omitempty"`
+	TotalTokens            int      `json:"total_tokens,omitempty"`
 	NewEvidencePaths       int      `json:"new_evidence_paths,omitempty"`
 	TotalEvidencePaths     int      `json:"total_evidence_paths,omitempty"`
 	StopReason             string   `json:"stop_reason,omitempty"`
@@ -425,6 +430,7 @@ type VerificationFeedbackSnapshot struct {
 	Confidence            string   `json:"confidence,omitempty"`
 	Commands              []string `json:"commands,omitempty"`
 	FailedCommands        []string `json:"failed_commands,omitempty"`
+	FailureClasses        []string `json:"failure_classes,omitempty"`
 	LearnedRecommendation string   `json:"learned_recommendation,omitempty"`
 	Raw                   string   `json:"raw,omitempty"`
 }
@@ -743,6 +749,7 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 		scenario.RequireVerificationFeedback = &VerificationFeedbackExpectation{
 			Confidence:             latest.Confidence,
 			RequireFailedCommands:  append([]string(nil), latest.FailedCommands...),
+			RequireFailureClasses:  append([]string(nil), latest.FailureClasses...),
 			RecommendationContains: nonEmptySingleton(latest.LearnedRecommendation),
 		}
 	}
@@ -1912,6 +1919,9 @@ func budgetLedgerMatches(actual BudgetLedgerSnapshot, expected BudgetLedgerExpec
 	if expected.MinModelCalls != nil && actual.UsedModelCalls < *expected.MinModelCalls {
 		return false
 	}
+	if expected.MinTotalTokens != nil && actual.TotalTokens < *expected.MinTotalTokens {
+		return false
+	}
 	if expected.MinEvidencePaths != nil && actual.TotalEvidencePaths < *expected.MinEvidencePaths {
 		return false
 	}
@@ -2095,6 +2105,7 @@ func parseVerificationFeedback(content string) VerificationFeedbackSnapshot {
 	feedback.Confidence = strings.TrimSpace(feedback.Confidence)
 	feedback.Commands = uniqueNonEmptyStrings(feedback.Commands)
 	feedback.FailedCommands = uniqueNonEmptyStrings(feedback.FailedCommands)
+	feedback.FailureClasses = uniqueNonEmptyStrings(feedback.FailureClasses)
 	feedback.LearnedRecommendation = strings.TrimSpace(feedback.LearnedRecommendation)
 	return feedback
 }
@@ -2105,6 +2116,11 @@ func verificationFeedbackMatches(actual VerificationFeedbackSnapshot, expected V
 	}
 	for _, command := range expected.RequireFailedCommands {
 		if !containsStringFold(actual.FailedCommands, command) {
+			return false
+		}
+	}
+	for _, class := range expected.RequireFailureClasses {
+		if !containsStringFold(actual.FailureClasses, class) {
 			return false
 		}
 	}

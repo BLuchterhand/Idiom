@@ -182,4 +182,4 @@ The default suite covers:
 
 ### Current Limitation
 
-This scorer evaluates captured logs. It does not yet launch the TUI/model and generate logs itself. That separation is intentional: it makes the oracle layer deterministic and lets live task runners be added later without changing the task schema.
+This scorer still evaluates logs through deterministic oracles, and it can now generate those logs first with `qwen-swe-eval -run-live -runner-command ...`. The live runner command is intentionally externalized so local model/TUI launch details stay configurable while the suite schema and oracle layer remain deterministic.

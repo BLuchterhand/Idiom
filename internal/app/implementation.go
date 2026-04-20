@@ -10,10 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"qwen-bubbles/internal/agent"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/semantic"
 	"qwen-bubbles/internal/workspace"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,34 +32,7 @@ type structuralRefactorStage struct {
 	Verification string
 }
 
-const (
-	analysisLaneMain         analysisLane = "main"
-	analysisLaneLocate       analysisLane = "locate"
-	analysisLaneExplore      analysisLane = "explore"
-	analysisLaneReview       analysisLane = "review"
-	analysisLaneArchitecture analysisLane = "architecture"
-	analysisLaneImplement    analysisLane = "implement"
-)
-
-const (
-	promptRouteReasonDirectConversation   promptRouteReason = "direct_conversation"
-	promptRouteReasonDirectImplementation promptRouteReason = "direct_implementation"
-	promptRouteReasonLocateRequest        promptRouteReason = "locate_request"
-	promptRouteReasonExploreRequest       promptRouteReason = "explore_request"
-	promptRouteReasonReviewRequest        promptRouteReason = "review_request"
-	promptRouteReasonArchitectureRequest  promptRouteReason = "architecture_request"
-)
-
 var implementationShortcutModelTimeout = 12 * time.Second
-
-const (
-	answerContractDirectConversation  answerContract = "direct_answer"
-	answerContractLocateTargets       answerContract = "locate_targets"
-	answerContractGroundedExplanation answerContract = "grounded_explanation"
-	answerContractReviewFindings      answerContract = "review_findings"
-	answerContractArchitecture        answerContract = "architecture_assessment"
-	answerContractImplementation      answerContract = "implementation_result"
-)
 
 func (m *Model) currentStructuralRefactorStage() *structuralRefactorStage {
 	if m == nil {
@@ -213,401 +186,95 @@ func verificationHistoryForMemory(verify implementationVerification) []string {
 	return uniqueNonEmptyStrings(history)
 }
 
-type implementationTarget struct {
-	Path string
-	Line int
-}
-
-type implementationTargetPacket struct {
-	SourceLane          string
-	RefactorStage       int
-	PrimaryPaths        []string
-	EvidencePaths       []string
-	AllowedDestinations []string
-	ForbiddenPaths      []string
-	Anchors             []implementationTarget
-	AnalogyPaths        []string
-	LiteralFragments    []string
-	LocationHints       []string
-	SymbolHints         []string
-	StrategyHints       []string
-	Symbols             []semantic.SymbolMatch
-}
-
 func buildImplementationTargetPacket(prompt string, history []llama.ChatMessage) implementationTargetPacket {
-	packet := implementationTargetPacket{
-		PrimaryPaths:     make([]string, 0, 4),
-		Anchors:          make([]implementationTarget, 0, 4),
-		AnalogyPaths:     make([]string, 0, 2),
-		LiteralFragments: uniqueLimitedStrings(quotedPromptFragments(prompt), 3),
-		LocationHints:    implementationLocationHints(prompt),
-		SymbolHints:      implementationSymbolHints(prompt),
-		StrategyHints:    make([]string, 0, 3),
-	}
-	initialSymbolHints := append([]string(nil), packet.SymbolHints...)
-	packet.SymbolHints = packet.SymbolHints[:0]
-	primarySeen := make(map[string]struct{})
-	analogySeen := make(map[string]struct{})
-	anchorSeen := make(map[string]struct{})
-	symbolSeen := make(map[string]struct{})
-	addPath := func(dst *[]string, seen map[string]struct{}, path string) {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			return
-		}
-		if _, ok := seen[path]; ok {
-			return
-		}
-		seen[path] = struct{}{}
-		*dst = append(*dst, path)
-	}
-	addSymbolHint := func(hint string) {
-		hint = strings.TrimSpace(hint)
-		if hint == "" {
-			return
-		}
-		if _, ok := symbolSeen[hint]; ok {
-			return
-		}
-		symbolSeen[hint] = struct{}{}
-		packet.SymbolHints = append(packet.SymbolHints, hint)
-	}
-	for _, hint := range initialSymbolHints {
-		addSymbolHint(hint)
-	}
-	for _, path := range implementationPromptPrimaryPaths(prompt) {
-		addPath(&packet.PrimaryPaths, primarySeen, path)
-	}
-	for _, path := range implementationAnalogyPaths(prompt) {
-		addPath(&packet.AnalogyPaths, analogySeen, path)
-	}
-	if implementationPromptForbidsDeclarationMoves(prompt) {
-		packet.StrategyHints = append(packet.StrategyHints, "declaration moves forbidden; make any refactor with edit_file inside the approved primary file")
-	}
-	for _, target := range analysisSummaryTargets(history) {
-		key := fmt.Sprintf("%s:%d", normalizeGuardedPath(target.Path), target.Line)
-		if _, ok := anchorSeen[key]; ok {
-			continue
-		}
-		anchorSeen[key] = struct{}{}
-		packet.Anchors = append(packet.Anchors, target)
-		addPath(&packet.PrimaryPaths, primarySeen, target.Path)
-	}
-	summaryLane, summaryBody, ok := latestAnalysisSummary(history)
-	if ok {
-		packet.SourceLane = strings.TrimSpace(summaryLane)
-		packet.RefactorStage = analysisSummaryRefactorStage(summaryBody)
-		for _, path := range promptMentionedWorkspacePaths(summaryBody) {
-			addPath(&packet.PrimaryPaths, primarySeen, path)
-		}
-		for _, hint := range implementationSymbolHints(summaryBody) {
-			addSymbolHint(hint)
-		}
-		if summaryLane == "architecture" {
-			packet.StrategyHints = append(packet.StrategyHints, analysisSummaryStrategyHints(summaryBody)...)
-		}
-	}
-	packet.PrimaryPaths = uniqueLimitedStrings(packet.PrimaryPaths, 6)
-	packet.AnalogyPaths = uniqueLimitedStrings(packet.AnalogyPaths, 4)
-	packet.LocationHints = uniqueLimitedStrings(packet.LocationHints, 4)
-	packet.SymbolHints = uniqueLimitedStrings(packet.SymbolHints, 6)
-	packet.StrategyHints = uniqueLimitedStrings(packet.StrategyHints, 4)
-	return packet
+	return frontier.BuildTargetPacket(prompt, history)
 }
 
 func applyTaskResumeContextToImplementationTargetPacket(packet implementationTargetPacket, resume taskResumeContext) implementationTargetPacket {
-	if !resume.Active {
-		return packet
-	}
-	if len(resume.ApprovedEditTargets) > 0 {
-		packet.PrimaryPaths = uniqueLimitedStrings(resume.ApprovedEditTargets, 8)
-	}
-	packet.EvidencePaths = uniqueLimitedStrings(append(packet.EvidencePaths, resume.ReadOnlyEvidencePaths...), 16)
-	packet.AllowedDestinations = uniqueLimitedStrings(append(packet.AllowedDestinations, resume.AllowedDestinations...), 8)
-	packet.ForbiddenPaths = uniqueLimitedStrings(append(packet.ForbiddenPaths, resume.ForbiddenPaths...), 16)
-	if len(resume.VerificationPlan) > 0 {
-		packet.StrategyHints = uniqueLimitedStrings(append(packet.StrategyHints, resume.VerificationPlan...), 8)
-	}
-	if resume.SourceLane != "" && strings.TrimSpace(packet.SourceLane) == "" {
-		packet.SourceLane = string(resume.SourceLane)
-	}
-	return packet
+	return frontier.ApplyResumeContextToTargetPacket(packet, frontier.TargetResumeContext{
+		Active:                resume.Active,
+		SourceLane:            resume.SourceLane,
+		ApprovedEditTargets:   append([]string(nil), resume.ApprovedEditTargets...),
+		ReadOnlyEvidencePaths: append([]string(nil), resume.ReadOnlyEvidencePaths...),
+		AllowedDestinations:   append([]string(nil), resume.AllowedDestinations...),
+		ForbiddenPaths:        append([]string(nil), resume.ForbiddenPaths...),
+		VerificationPlan:      append([]string(nil), resume.VerificationPlan...),
+	})
 }
 
 func implementationResumeContextFromPromptPlan(mgr *workspace.Manager, prompt string, history []llama.ChatMessage, plan promptExecutionPlan, base taskResumeContext) taskResumeContext {
-	resume := base
 	root := ""
 	if mgr != nil {
 		root = mgr.Root()
 	}
-	var approved []string
-	var destinations []string
-	addApproved := func(path string) {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			return
-		}
-		approved = append(approved, path)
-	}
-	addDestination := func(path string) {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			return
-		}
-		destinations = append(destinations, path)
-	}
-	for _, ref := range plan.intent.TargetRefs {
-		if path, ok := resolveExistingImplementationRef(root, ref); ok {
-			addApproved(path)
-		}
-	}
-	for _, ref := range recentImplementationPlanWorkspaceRefs(prompt, history) {
-		if path, ok := resolveExistingImplementationRef(root, ref); ok {
-			addApproved(path)
-			continue
-		}
-		if implementationRefLooksLikeNewDestination(ref) {
-			addDestination(ref)
-		}
-	}
-	if len(approved) == 0 && len(destinations) == 0 {
-		return resume
-	}
-	resume.Active = true
-	if len(resume.ApprovedEditTargets) == 0 {
-		resume.ApprovedEditTargets = uniqueLimitedStrings(approved, 8)
-	} else {
-		resume.ApprovedEditTargets = uniqueLimitedStrings(append(resume.ApprovedEditTargets, approved...), 8)
-	}
-	resume.AllowedDestinations = uniqueLimitedStrings(append(resume.AllowedDestinations, destinations...), 8)
+	frontierResume := frontier.BuildTargetResumeContextFromPlan(frontier.TargetResumePlanInput{
+		Root:             root,
+		Prompt:           prompt,
+		History:          history,
+		IntentTargetRefs: append([]string(nil), plan.intent.TargetRefs...),
+		Base: frontier.TargetResumeContext{
+			Active:                base.Active,
+			SourceLane:            base.SourceLane,
+			ApprovedEditTargets:   append([]string(nil), base.ApprovedEditTargets...),
+			ReadOnlyEvidencePaths: append([]string(nil), base.ReadOnlyEvidencePaths...),
+			AllowedDestinations:   append([]string(nil), base.AllowedDestinations...),
+			ForbiddenPaths:        append([]string(nil), base.ForbiddenPaths...),
+			VerificationPlan:      append([]string(nil), base.VerificationPlan...),
+		},
+	})
+	resume := base
+	resume.Active = frontierResume.Active
+	resume.SourceLane = frontierResume.SourceLane
+	resume.ApprovedEditTargets = append([]string(nil), frontierResume.ApprovedEditTargets...)
+	resume.ReadOnlyEvidencePaths = append([]string(nil), frontierResume.ReadOnlyEvidencePaths...)
+	resume.AllowedDestinations = append([]string(nil), frontierResume.AllowedDestinations...)
+	resume.ForbiddenPaths = append([]string(nil), frontierResume.ForbiddenPaths...)
+	resume.VerificationPlan = append([]string(nil), frontierResume.VerificationPlan...)
 	return resume
 }
 
 func resolveExistingImplementationRef(root string, ref string) (string, bool) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" || !looksLikeWorkspacePathToken(strings.TrimPrefix(ref, "@")) {
-		return "", false
-	}
-	if root == "" {
-		path := normalizeGuardedPath(ref)
-		if path == "" || !strings.Contains(path, "/") {
-			return "", false
-		}
-		return path, true
-	}
-	for _, path := range resolveImplementationPrimaryPaths(root, []string{ref}) {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			continue
-		}
-		if workspaceRelativeFileExists(root, path) {
-			return path, true
-		}
-	}
-	return "", false
+	return frontier.ResolveExistingImplementationRef(root, ref)
 }
 
 func implementationRefLooksLikeNewDestination(ref string) bool {
-	ref = normalizeGuardedPath(strings.TrimPrefix(strings.TrimSpace(ref), "@"))
-	return ref != "" && strings.Contains(ref, "/") && looksLikeWorkspacePathToken(ref)
+	return frontier.ImplementationRefLooksLikeNewDestination(ref)
 }
 
 func recentImplementationPlanWorkspaceRefs(prompt string, history []llama.ChatMessage) []string {
-	if !implementationApprovalShouldUseRecentPlan(prompt) || len(history) == 0 {
-		return nil
-	}
-	refs := make([]string, 0, 4)
-	for i := len(history) - 1; i >= 0 && len(history)-i <= 8; i-- {
-		msg := history[i]
-		if normalizeHistoryRole(msg.Role) != "assistant" {
-			continue
-		}
-		content := implementationPlanRelevantSection(prompt, msg.Content)
-		paths := promptMentionedWorkspacePaths(content)
-		if len(paths) == 0 {
-			continue
-		}
-		refs = append(refs, paths...)
-		break
-	}
-	return uniqueLimitedStrings(refs, 8)
+	return frontier.RecentImplementationPlanWorkspaceRefs(prompt, history)
+}
+
+func recentImplementationPlanConstraintHints(prompt string, history []llama.ChatMessage) []string {
+	return frontier.RecentImplementationPlanConstraintHints(prompt, history)
 }
 
 func implementationApprovalShouldUseRecentPlan(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	if normalized == "" {
-		return false
-	}
-	return looksLikeEllipticalImplementationFollowup(normalized) ||
-		looksLikeDurablePlanApprovalPrompt(normalized) ||
-		looksLikeTerseDurablePlanApprovalPrompt(normalized) ||
-		(containsAny(normalized, "go ahead", "proceed", "begin", "start", "do phase", "phase 1", "phase one") &&
-			containsAny(normalized, "phase", "do", "implement", "extract", "refactor"))
+	return frontier.ImplementationApprovalShouldUseRecentPlan(prompt)
 }
 
 func implementationPlanRelevantSection(prompt string, content string) string {
-	normalizedPrompt := strings.ToLower(strings.TrimSpace(prompt))
-	phase := ""
-	for _, match := range regexp.MustCompile(`(?i)\bphase\s+([0-9]+|one|two|three|four|five)\b`).FindAllStringSubmatch(normalizedPrompt, -1) {
-		if len(match) == 2 {
-			phase = strings.ToLower(match[1])
-			break
-		}
-	}
-	if phase == "" {
-		return content
-	}
-	normalizedContent := strings.ToLower(content)
-	candidates := []string{"phase " + phase}
-	switch phase {
-	case "1":
-		candidates = append(candidates, "phase one")
-	case "2":
-		candidates = append(candidates, "phase two")
-	case "3":
-		candidates = append(candidates, "phase three")
-	case "one":
-		candidates = append(candidates, "phase 1")
-	case "two":
-		candidates = append(candidates, "phase 2")
-	case "three":
-		candidates = append(candidates, "phase 3")
-	}
-	start := -1
-	for _, candidate := range candidates {
-		if idx := strings.Index(normalizedContent, candidate); idx >= 0 && (start < 0 || idx < start) {
-			start = idx
-		}
-	}
-	if start < 0 {
-		return content
-	}
-	rest := content[start:]
-	lowerRest := strings.ToLower(rest)
-	end := len(rest)
-	for _, marker := range []string{"\n**phase ", "\nphase "} {
-		if idx := strings.Index(lowerRest[1:], marker); idx >= 0 && idx+1 < end {
-			end = idx + 1
-		}
-	}
-	return rest[:end]
+	return frontier.ImplementationPlanRelevantSection(prompt, content)
 }
 
 func implementationPromptPrimaryPaths(prompt string) []string {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return nil
-	}
-	var explicit []string
-	for _, line := range strings.Split(prompt, "\n") {
-		trimmed := strings.TrimSpace(line)
-		normalized := strings.ToLower(trimmed)
-		for _, prefix := range []string{"previously validated targets:", "target:", "targets:"} {
-			if !strings.HasPrefix(normalized, prefix) {
-				continue
-			}
-			paths := promptMentionedWorkspacePaths(strings.TrimSpace(trimmed[len(prefix):]))
-			explicit = append(explicit, paths...)
-		}
-	}
-	if len(explicit) > 0 {
-		return uniqueLimitedStrings(explicit, 4)
-	}
-	return promptMentionedWorkspacePaths(prompt)
+	return frontier.PromptPrimaryPaths(prompt)
 }
 
 func enrichImplementationTargetPacket(mgr *workspace.Manager, packet implementationTargetPacket) implementationTargetPacket {
-	if mgr == nil || !mgr.Enabled() {
-		return packet
-	}
-	packet.PrimaryPaths = resolveImplementationPrimaryPaths(mgr.Root(), packet.PrimaryPaths)
-	packet.EvidencePaths = resolveImplementationPrimaryPaths(mgr.Root(), packet.EvidencePaths)
-	packet.ForbiddenPaths = resolveImplementationPrimaryPaths(mgr.Root(), packet.ForbiddenPaths)
-	packet.AnalogyPaths = resolveImplementationPrimaryPaths(mgr.Root(), packet.AnalogyPaths)
-	if len(packet.SymbolHints) == 0 && len(packet.Anchors) == 0 {
-		return packet
-	}
-	idx, err := semantic.BuildGoIndex(mgr.Root())
-	if err != nil || idx == nil {
-		return packet
-	}
-	packet.Symbols = resolveImplementationSymbolAnchors(idx, packet)
-	if len(packet.PrimaryPaths) == 0 {
-		for _, symbol := range packet.Symbols {
-			if symbol.Path != "" {
-				packet.PrimaryPaths = uniqueLimitedStrings(append(packet.PrimaryPaths, normalizeGuardedPath(symbol.Path)), 6)
-			}
-		}
-	}
-	return packet
+	return frontier.EnrichTargetPacket(mgr, packet)
 }
 
 func resolveImplementationPrimaryPaths(root string, paths []string) []string {
-	root = strings.TrimSpace(root)
-	if root == "" || len(paths) == 0 {
-		return paths
-	}
-	resolved := make([]string, 0, len(paths))
-	for _, path := range paths {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			continue
-		}
-		if workspaceRelativeFileExists(root, path) {
-			resolved = append(resolved, path)
-			continue
-		}
-		if strings.Contains(path, "/") {
-			resolved = append(resolved, path)
-			continue
-		}
-		matches := findWorkspaceFilesByBase(root, path, 2)
-		if len(matches) == 1 {
-			resolved = append(resolved, matches[0])
-			continue
-		}
-		resolved = append(resolved, path)
-	}
-	return uniqueLimitedStrings(resolved, 6)
+	return frontier.ResolvePrimaryPaths(root, paths)
 }
 
 func workspaceRelativeFileExists(root string, path string) bool {
-	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
-	return err == nil && !info.IsDir()
+	return frontier.WorkspaceRelativeFileExists(root, path)
 }
 
 func findWorkspaceFilesByBase(root string, base string, limit int) []string {
-	base = strings.TrimSpace(base)
-	if root == "" || base == "" || limit <= 0 {
-		return nil
-	}
-	matches := make([]string, 0, limit)
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry == nil {
-			return nil
-		}
-		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", "logs", "transcripts", "node_modules", "vendor":
-				return filepath.SkipDir
-			default:
-				return nil
-			}
-		}
-		if entry.Name() != base {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-		matches = append(matches, filepath.ToSlash(rel))
-		if len(matches) >= limit {
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	return matches
+	return frontier.FindWorkspaceFilesByBase(root, base, limit)
 }
 
 func implementationTargetPaths(prompt string, history []llama.ChatMessage) []string {
@@ -632,283 +299,35 @@ func implementationTargetPaths(prompt string, history []llama.ChatMessage) []str
 }
 
 func implementationAnalogyPaths(prompt string) []string {
-	normalized := strings.ToLower(prompt)
-	paths := promptMentionedWorkspacePaths(prompt)
-	analogies := make([]string, 0, 2)
-	for _, path := range paths {
-		lowerPath := strings.ToLower(path)
-		base := strings.ToLower(filepath.Base(path))
-		if containsAny(
-			normalized,
-			"like @"+lowerPath,
-			"like "+lowerPath,
-			"like @"+base,
-			"like "+base,
-			"similar to @"+lowerPath,
-			"similar to "+lowerPath,
-			"similar to @"+base,
-			"similar to "+base,
-			"same as @"+lowerPath,
-			"same as "+lowerPath,
-			"same as @"+base,
-			"same as "+base,
-			"based on @"+lowerPath,
-			"based on "+lowerPath,
-			"based on @"+base,
-			"based on "+base,
-			"follow @"+lowerPath,
-			"follow "+lowerPath,
-			"follow @"+base,
-			"follow "+base,
-		) {
-			analogies = append(analogies, path)
-		}
-	}
-	return uniqueLimitedStrings(analogies, 4)
+	return frontier.TargetAnalogyPaths(prompt)
 }
 
 func implementationLocationHints(prompt string) []string {
-	normalized := strings.ToLower(prompt)
-	hints := make([]string, 0, 4)
-	for _, hint := range []string{"top", "header", "footer", "badge", "window", "chat", "menu", "status", "banner"} {
-		if strings.Contains(normalized, hint) {
-			hints = append(hints, hint)
-		}
-	}
-	return hints
+	return frontier.TargetLocationHints(prompt)
 }
 
 func implementationSymbolHints(prompt string) []string {
-	tokenPattern := regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_./]*`)
-	stopwords := map[string]struct{}{
-		"add": {}, "and": {}, "apis": {}, "app": {}, "approved": {}, "banner": {}, "bit": {}, "build": {}, "can": {}, "change": {},
-		"code": {}, "edit": {}, "file": {}, "fix": {}, "for": {}, "from": {}, "header": {}, "implement": {},
-		"do": {}, "go": {}, "in": {}, "it": {}, "keep": {}, "like": {}, "make": {}, "match": {}, "padding": {}, "please": {}, "remove": {},
-		"render": {}, "same": {}, "small": {}, "status": {}, "text": {}, "the": {}, "this": {}, "to": {},
-		"execute": {}, "run": {}, "top": {}, "underneath": {}, "update": {}, "use": {}, "where": {}, "window": {}, "with": {}, "work": {},
-	}
-	seen := make(map[string]struct{})
-	hints := make([]string, 0, 4)
-	add := func(token string) {
-		token = strings.Trim(token, "`'\"()[]{}<>,:;!?")
-		token = strings.TrimPrefix(token, "@")
-		token = strings.TrimRight(token, ".")
-		if token == "" || looksLikeWorkspacePathToken(token) || strings.Contains(token, "/") {
-			return
-		}
-		lower := strings.ToLower(token)
-		if _, skip := stopwords[lower]; skip {
-			return
-		}
-		looksSymbolic := strings.Contains(token, ".") ||
-			token != lower ||
-			strings.Contains(token, "_")
-		if !looksSymbolic {
-			return
-		}
-		if _, ok := seen[token]; ok {
-			return
-		}
-		seen[token] = struct{}{}
-		hints = append(hints, token)
-	}
-	for _, fragment := range quotedPromptFragments(prompt) {
-		for _, token := range tokenPattern.FindAllString(fragment, -1) {
-			add(token)
-		}
-	}
-	for _, token := range tokenPattern.FindAllString(prompt, -1) {
-		add(token)
-	}
-	return uniqueLimitedStrings(hints, 6)
+	return frontier.TargetSymbolHints(prompt)
 }
 
 func resolveImplementationSymbolAnchors(idx *semantic.GoIndex, packet implementationTargetPacket) []semantic.SymbolMatch {
-	if idx == nil {
-		return nil
-	}
-	preferredPaths := make(map[string]int)
-	primaryPaths := make(map[string]struct{})
-	for _, path := range packet.PrimaryPaths {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			continue
-		}
-		preferredPaths[path] = 2
-		primaryPaths[path] = struct{}{}
-	}
-	for _, path := range packet.AnalogyPaths {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			continue
-		}
-		if preferredPaths[path] < 1 {
-			preferredPaths[path] = 1
-		}
-	}
-	anchorLines := make(map[string][]int)
-	for _, anchor := range packet.Anchors {
-		path := normalizeGuardedPath(anchor.Path)
-		if path == "" || anchor.Line <= 0 {
-			continue
-		}
-		anchorLines[path] = append(anchorLines[path], anchor.Line)
-	}
-	seen := make(map[string]struct{})
-	matches := make([]semantic.SymbolMatch, 0, 6)
-	add := func(match semantic.SymbolMatch) {
-		if match.Path == "" || match.Name == "" {
-			return
-		}
-		match.Path = normalizeGuardedPath(match.Path)
-		if match.Path == "" {
-			return
-		}
-		if len(primaryPaths) > 0 {
-			if _, ok := primaryPaths[match.Path]; !ok {
-				return
-			}
-		}
-		if boost := preferredPaths[match.Path]; boost > 0 {
-			match.Score += boost * 20
-		}
-		for _, line := range anchorLines[match.Path] {
-			if line >= match.StartLine && line <= match.EndLine {
-				match.Score += 24
-				break
-			}
-		}
-		key := fmt.Sprintf("%s:%s:%d", match.Path, implementationQualifiedSymbol(match), match.Line)
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		matches = append(matches, match)
-	}
-	for path, lines := range anchorLines {
-		file := idx.FileByPath(path)
-		if file == nil {
-			continue
-		}
-		for _, line := range lines {
-			if symbol, ok := enclosingSymbolAtLine(file, line); ok {
-				add(symbolMatchFromGoSymbol(file, symbol, 80))
-			}
-		}
-	}
-	for _, hint := range packet.SymbolHints {
-		for _, match := range idx.FindSymbols(hint, 6) {
-			add(match)
-		}
-	}
-	slices.SortFunc(matches, func(a, b semantic.SymbolMatch) int {
-		if a.Score != b.Score {
-			return b.Score - a.Score
-		}
-		if a.Path != b.Path {
-			return strings.Compare(a.Path, b.Path)
-		}
-		if a.StartLine != b.StartLine {
-			return a.StartLine - b.StartLine
-		}
-		return strings.Compare(implementationQualifiedSymbol(a), implementationQualifiedSymbol(b))
-	})
-	if len(matches) > 4 {
-		matches = matches[:4]
-	}
-	return matches
+	return frontier.ResolveSymbolAnchors(idx, packet)
 }
 
 func routeContinuesToImplement(plan promptExecutionPlan) bool {
-	return plan.followupLane == analysisLaneImplement
+	return frontier.RouteContinuesToImplement(plan.lane, plan.followupLane)
 }
 
 func implementationQualifiedSymbol(match semantic.SymbolMatch) string {
-	if strings.TrimSpace(match.Receiver) != "" {
-		return match.Receiver + "." + match.Name
-	}
-	return match.Name
+	return frontier.QualifiedSymbol(match)
 }
 
 func renderImplementationTargetPacket(packet implementationTargetPacket) string {
-	if len(packet.PrimaryPaths) == 0 && len(packet.EvidencePaths) == 0 && len(packet.AllowedDestinations) == 0 && len(packet.Anchors) == 0 && len(packet.AnalogyPaths) == 0 && len(packet.LiteralFragments) == 0 && len(packet.Symbols) == 0 && len(packet.SymbolHints) == 0 {
-		return ""
-	}
-	lines := []string{"[implementation target packet]", "Use these anchors before any broad repo discovery."}
-	if lane := strings.TrimSpace(packet.SourceLane); lane != "" {
-		lines = append(lines, "- derived from "+lane+" summary")
-	}
-	if packet.RefactorStage > 0 {
-		lines = append(lines, fmt.Sprintf("- refactor stage: %d", packet.RefactorStage))
-	}
-	if len(packet.PrimaryPaths) > 0 {
-		lines = append(lines, "- primary files: "+strings.Join(packet.PrimaryPaths, ", "))
-	}
-	if len(packet.EvidencePaths) > 0 {
-		lines = append(lines, "- read-only evidence files: "+strings.Join(packet.EvidencePaths, ", "))
-	}
-	if len(packet.AllowedDestinations) > 0 {
-		lines = append(lines, "- plan-approved new destinations: "+strings.Join(packet.AllowedDestinations, ", "))
-	}
-	if len(packet.ForbiddenPaths) > 0 {
-		lines = append(lines, "- forbidden files: "+strings.Join(packet.ForbiddenPaths, ", "))
-	}
-	if len(packet.Anchors) > 0 {
-		anchors := make([]string, 0, len(packet.Anchors))
-		for _, anchor := range packet.Anchors {
-			anchors = append(anchors, fmt.Sprintf("%s:%d", anchor.Path, anchor.Line))
-		}
-		lines = append(lines, "- anchored lines: "+strings.Join(uniqueLimitedStrings(anchors, 4), ", "))
-	}
-	if len(packet.AnalogyPaths) > 0 {
-		lines = append(lines, "- analogous references: "+strings.Join(packet.AnalogyPaths, ", "))
-	}
-	if len(packet.Symbols) > 0 {
-		symbols := make([]string, 0, len(packet.Symbols))
-		for _, match := range packet.Symbols {
-			symbols = append(symbols, fmt.Sprintf("%s (%s:%d-%d)", implementationQualifiedSymbol(match), match.Path, match.StartLine, match.EndLine))
-		}
-		lines = append(lines, "- symbol anchors: "+strings.Join(uniqueLimitedStrings(symbols, 4), ", "))
-	} else if len(packet.SymbolHints) > 0 {
-		lines = append(lines, "- symbol hints: "+strings.Join(packet.SymbolHints, ", "))
-	}
-	if len(packet.LiteralFragments) > 0 {
-		quoted := make([]string, 0, len(packet.LiteralFragments))
-		for _, fragment := range packet.LiteralFragments {
-			fragment = strings.TrimSpace(fragment)
-			if fragment == "" {
-				continue
-			}
-			quoted = append(quoted, strconv.Quote(fragment))
-		}
-		if len(quoted) > 0 {
-			lines = append(lines, "- quoted anchors: "+strings.Join(quoted, ", "))
-		}
-	}
-	if len(packet.LocationHints) > 0 {
-		lines = append(lines, "- location hints: "+strings.Join(packet.LocationHints, ", "))
-	}
-	if len(packet.StrategyHints) > 0 {
-		lines = append(lines, "- structural hints: "+strings.Join(packet.StrategyHints, " | "))
-	}
-	if stage := structuralRefactorStageHint(packet); stage != "" {
-		lines = append(lines, "- structural stage: "+stage)
-	}
-	lines = append(lines, "- do not call list_files/search_files until you have consumed these anchors or proved they are insufficient")
-	return strings.Join(lines, "\n")
+	return frontier.RenderTargetPacket(packet)
 }
 
 func analysisSummaryRefactorStage(summary string) int {
-	for _, match := range regexp.MustCompile(`(?i)\bstage\s*:?\s*(\d+)\b`).FindAllStringSubmatch(summary, -1) {
-		if len(match) != 2 {
-			continue
-		}
-		stage, err := strconv.Atoi(match[1])
-		if err == nil && stage > 0 {
-			return stage
-		}
-	}
-	return 0
+	return frontier.AnalysisSummaryRefactorStage(summary)
 }
 
 func (m *Model) runImplementAgent(
@@ -951,9 +370,10 @@ func (m *Model) runImplementAgentWithGrant(
 			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(result)}
 		}
 	}
-	if rendered := renderImplementationTargetPacket(targetPacket); rendered != "" {
-		history = append(history, llama.ChatMessage{Role: "system", Content: rendered})
-		m.logMessage("implement_targets", rendered)
+	renderedTargetPacket := renderImplementationTargetPacket(targetPacket)
+	if renderedTargetPacket != "" {
+		history = append(history, llama.ChatMessage{Role: "system", Content: renderedTargetPacket})
+		m.logMessage("implement_targets", renderedTargetPacket)
 	}
 	var pendingApproval *writeApprovalProposal
 	preChangedPaths := make([]string, 0, 2)
@@ -1199,6 +619,7 @@ func (m *Model) runImplementAgentWithGrant(
 	targetGuard := newImplementTargetGuard(implementWorkspace, targetPacket, bootstrap.results)
 	targetGuard.allowFullTargetRead = promptRequestsWholeFileRefactor(prompt)
 	implementPolicy := implementRunPolicyForRequest(m.cfg.Chat.MaxToolSteps, prompt, targetPacket)
+	initialVerificationPlan := implementationVerificationPlan(implementWorkspace, uniqueNonEmptyStrings(append(targetPacket.PrimaryPaths, preChangedPaths...))).Commands
 	railsPlan := promptExecutionPlan{
 		lane:     analysisLaneImplement,
 		reason:   promptRouteReasonDirectImplementation,
@@ -1223,6 +644,17 @@ func (m *Model) runImplementAgentWithGrant(
 			Required: requestNeedsExpandedImplementBudget(prompt, targetPacket),
 		},
 		PermissionPolicy: controlRailPermissionPolicy(rails),
+		RuntimeBrief: buildWorkerRuntimeBrief(
+			prompt,
+			rails,
+			targetPacket,
+			renderedTargetPacket,
+			initialVerificationPlan,
+			implementPolicy,
+			targetPacket.StrategyHints,
+			[]string{"consume target packet before broad discovery", "apply the smallest correct edit", "verify changed surface before final success"},
+			nil,
+		),
 		OnEvent: func(event agent.RunEvent) {
 			m.logMessage(event.Role, event.Content)
 		},
@@ -1286,7 +718,182 @@ func (m *Model) runImplementAgentWithGrant(
 	}
 
 	verify := m.runImplementationVerification(ctx, implementWorkspace, len(resultByStep)+1, changedPaths...)
+	if verify.failed {
+		repair, repairErr := m.runImplementationVerificationRepair(
+			ctx,
+			implementWorkspace,
+			prompt,
+			history,
+			opts,
+			targetPacket,
+			renderedTargetPacket,
+			verify,
+			len(resultByStep)+len(verify.results)+1,
+			journalRecorder,
+			targetGuard,
+			writeGuard,
+			guardBlocked,
+		)
+		if repairErr != nil {
+			m.logMessage("implementation_repair", "repair loop failed: "+repairErr.Error())
+		} else if repair.Attempted {
+			if strings.TrimSpace(repair.Summary) != "" {
+				reply = strings.TrimSpace(reply + "\n\nRepair attempt:\n" + repair.Summary)
+			}
+			if len(repair.ChangedPaths) > 0 {
+				changedPaths = uniqueNonEmptyStrings(append(changedPaths, repair.ChangedPaths...))
+			}
+			verify = repair.Verification
+		}
+	}
 	return finalizeImplementation(reply, changedPaths, verify), nil
+}
+
+type implementationRepairAttempt struct {
+	Attempted    bool
+	Summary      string
+	ChangedPaths []string
+	Verification implementationVerification
+}
+
+func (m *Model) runImplementationVerificationRepair(
+	ctx context.Context,
+	mgr *workspace.Manager,
+	prompt string,
+	history []llama.ChatMessage,
+	opts llama.ChatOptions,
+	targetPacket implementationTargetPacket,
+	renderedTargetPacket string,
+	failedVerify implementationVerification,
+	startStep int,
+	journal *executionJournalRecorder,
+	targetGuard *implementTargetGuard,
+	writeGuard *implementWriteGuard,
+	onBlocked func(req workspace.ToolRequest, blocked workspace.ToolResult) workspace.ToolResult,
+) (implementationRepairAttempt, error) {
+	if mgr == nil || !failedVerify.failed || len(failedVerify.results) == 0 {
+		return implementationRepairAttempt{}, nil
+	}
+	m.emitPhaseCard(analysisLaneImplement, "repair", phaseStateActive, "Verification failed. Feeding the failure back into a bounded repair worker.")
+	repairMessages := append([]llama.ChatMessage(nil), history...)
+	repairMessages = append(repairMessages, llama.ChatMessage{
+		Role: "system",
+		Content: strings.TrimSpace(strings.Join([]string{
+			"Post-edit verification failed. Repair the smallest surface necessary while preserving the requested behavior change.",
+			"Verification commands:",
+			"- " + strings.Join(uniqueNonEmptyStrings(failedVerify.commands), "\n- "),
+			"Repair policy: " + strings.TrimSpace(failedVerify.repairPolicy),
+		}, "\n")),
+	})
+	for _, result := range failedVerify.results {
+		repairMessages = append(repairMessages, llama.ChatMessage{Role: "system", Content: workspace.FormatToolResultForModel(result)})
+	}
+	repairMessages = append(repairMessages, llama.ChatMessage{Role: "user", Content: buildImplementRepairPrompt(prompt)})
+
+	repairRequests := make(map[int]agent.ToolRequestEvent)
+	repairResults := make(map[int]agent.ToolResultEvent)
+	railsPlan := promptExecutionPlan{
+		lane:     analysisLaneImplement,
+		reason:   promptRouteReasonDirectImplementation,
+		contract: answerContractForLane(analysisLaneImplement),
+	}
+	railsPlan.intent = buildPromptIntentDecision(prompt, buildPromptRouteProfile(prompt), m.recentConversationText(6), railsPlan)
+	rails := buildDeterministicControlRails(prompt, railsPlan)
+	repairPolicy := frontier.ImplementRepairRunPolicyForRequest(m.cfg.Chat.MaxToolSteps, prompt, targetPacket)
+	runner := &agent.Runner{
+		Client:       m.client,
+		Workspace:    mgr,
+		MaxToolSteps: repairPolicy.MaxToolSteps,
+		Policy:       repairPolicy,
+		AgentName:    "implement_repair",
+		SeedResults:  append([]workspace.ToolResult(nil), failedVerify.results...),
+		CompletionGate: frontier.ImplementationRepairCompletionGate(prompt, func() []string {
+			return changedPathsFromImplementEvents(repairRequests, repairResults)
+		}),
+		TaskLedger: agent.TaskLedgerPolicy{
+			Required: requestNeedsExpandedImplementBudget(prompt, targetPacket),
+		},
+		PermissionPolicy: controlRailPermissionPolicy(rails),
+		RuntimeBrief: buildWorkerRuntimeBrief(
+			buildImplementRepairPrompt(prompt),
+			rails,
+			targetPacket,
+			renderedTargetPacket,
+			failedVerify.commands,
+			repairPolicy,
+			uniqueNonEmptyStrings(append(targetPacket.StrategyHints, "preserve the requested behavior change", "repair failing verification before widening scope")),
+			[]string{"inspect failing verification output", "apply the smallest repair edit", "rerun verification before claiming success"},
+			nil,
+		),
+		OnEvent: func(event agent.RunEvent) {
+			m.logMessage(event.Role, event.Content)
+		},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if blocked := controlRailPreExecute(rails, req); blocked != nil {
+				return blocked
+			}
+			if targetGuard != nil {
+				if blocked := targetGuard.PreExecute(req); blocked != nil {
+					return blocked
+				}
+			}
+			if writeGuard != nil {
+				if blocked := writeGuard.PreExecute(req); blocked != nil {
+					result := *blocked
+					if onBlocked != nil {
+						result = onBlocked(req, result)
+					}
+					return &result
+				}
+			}
+			if result := captureExecutionJournalResult(journal, req); result != nil {
+				return result
+			}
+			return nil
+		},
+	}
+	m.events <- infoMsg{text: "Implementation repair agent is addressing the failing verification output."}
+	reply, err := runner.Run(
+		ctx,
+		repairMessages,
+		opts,
+		func(status string) {
+			m.events <- infoMsg{text: "Implementation repair agent: " + status}
+		},
+		func(event agent.ToolRequestEvent) {
+			repairRequests[event.Step] = event
+			m.logToolRequest(event)
+		},
+		func(event agent.ToolResultEvent) {
+			repairResults[event.Step] = event
+			m.logToolResult(event)
+			if shouldInvalidateExploreCacheForTool(event.Result) {
+				m.events <- exploreCacheInvalidatedMsg{
+					reason: fmt.Sprintf("workspace changed via %s; clearing cached explore profile", event.Result.Tool),
+				}
+			}
+			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(event.Result)}
+		},
+	)
+	if err != nil {
+		return implementationRepairAttempt{}, err
+	}
+	changedPaths := changedPathsFromImplementEvents(repairRequests, repairResults)
+	if len(changedPaths) == 0 {
+		m.emitPhaseCard(analysisLaneImplement, "repair", phaseStateFailed, "Repair worker stopped without applying a workspace change.")
+		return implementationRepairAttempt{
+			Attempted:    true,
+			Summary:      reply,
+			Verification: failedVerify,
+		}, nil
+	}
+	verify := m.runImplementationVerification(ctx, mgr, startStep+len(repairResults)+1, changedPaths...)
+	return implementationRepairAttempt{
+		Attempted:    true,
+		Summary:      reply,
+		ChangedPaths: changedPaths,
+		Verification: verify,
+	}, nil
 }
 
 type directImplementationShortcut struct {
@@ -1320,338 +927,56 @@ type implementationBootstrap struct {
 }
 
 type implementTargetGuard struct {
-	workspace           *workspace.Manager
-	packet              implementationTargetPacket
-	targetConsumed      bool
+	inner               *frontier.TargetGuard
 	allowFullTargetRead bool
-	bootstrappedReads   map[string]struct{}
-	bootstrapWindows    map[string][2]int
 }
 
 func newImplementTargetGuard(mgr *workspace.Manager, packet implementationTargetPacket, bootstrap []workspace.ToolResult) *implementTargetGuard {
-	g := &implementTargetGuard{
-		workspace:         mgr,
-		packet:            packet,
-		bootstrappedReads: make(map[string]struct{}),
-		bootstrapWindows:  make(map[string][2]int),
-	}
-	for _, result := range bootstrap {
-		if result.Tool != "read_file" || result.Error != "" {
-			continue
-		}
-		path, startLine, endLine, ok := parseReadWindowSummary(result.Summary)
-		if !ok {
-			continue
-		}
-		if g.pathAllowed(path) {
-			g.bootstrappedReads[path] = struct{}{}
-			g.bootstrapWindows[path] = [2]int{startLine, endLine}
-		}
-	}
-	return g
-}
-
-func (g *implementTargetGuard) redirectedTargetInspection(req workspace.ToolRequest) (*workspace.ToolResult, bool) {
-	if g == nil || g.workspace == nil || len(g.packet.PrimaryPaths) == 0 {
-		return nil, false
-	}
-	g.workspace.PrimeDiscoveredPaths(uniqueLimitedStrings(append([]string(nil), g.packet.PrimaryPaths...), 8))
-	for _, fallback := range g.redirectedTargetRequests(req) {
-		var result workspace.ToolResult
-		switch fallback.Tool {
-		case "read_file":
-			readResult, ok := g.redirectedReadFileResult(fallback)
-			if !ok {
-				continue
-			}
-			result = readResult
-		default:
-			result = g.workspace.Execute(context.Background(), fallback)
-			if result.Error != "" {
-				continue
-			}
-			if fallback.Tool == "search_content" && strings.TrimSpace(result.Output) == "" {
-				continue
-			}
-		}
-		g.targetConsumed = true
-		if fallback.Tool == "read_file" {
-			if path, startLine, endLine, ok := parseReadWindowSummary(result.Summary); ok && g.pathAllowed(path) {
-				g.bootstrappedReads[path] = struct{}{}
-				g.bootstrapWindows[path] = [2]int{startLine, endLine}
-			}
-		}
-		result.Summary = fmt.Sprintf(
-			"Implementation target packet redirected %s to %s on %s (%s)",
-			req.Tool,
-			fallback.Tool,
-			normalizeGuardedPath(fallback.Path),
-			strings.TrimSpace(result.Summary),
-		)
-		return &result, true
-	}
-	return nil, false
-}
-
-func (g *implementTargetGuard) redirectedReadFileResult(req workspace.ToolRequest) (workspace.ToolResult, bool) {
-	path := normalizeGuardedPath(req.Path)
-	if path == "" {
-		return workspace.ToolResult{}, false
-	}
-	candidates := []string{path}
-	for _, base := range []string{strings.TrimSpace(g.workspace.CWD()), strings.TrimSpace(g.workspace.Root())} {
-		if base == "" {
-			continue
-		}
-		candidates = append(candidates, filepath.Join(base, path))
-	}
-	seen := make(map[string]struct{})
-	for _, candidate := range candidates {
-		candidate = filepath.Clean(candidate)
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		data, err := os.ReadFile(candidate)
-		if err != nil {
-			continue
-		}
-		lines := strings.Split(string(data), "\n")
-		start := req.StartLine
-		end := req.EndLine
-		if start <= 0 {
-			start = 1
-		}
-		if end <= 0 || end > len(lines) {
-			end = len(lines)
-		}
-		if start > end {
-			continue
-		}
-		var b strings.Builder
-		for i := start - 1; i < end && i < len(lines); i++ {
-			fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
-		}
-		return workspace.ToolResult{
-			Tool:    "read_file",
-			Summary: fmt.Sprintf("Read %s lines %d-%d", path, start, end),
-			Output:  strings.TrimRight(b.String(), "\n"),
-		}, true
-	}
-	return workspace.ToolResult{}, false
-}
-
-func (g *implementTargetGuard) redirectedTargetRequests(req workspace.ToolRequest) []workspace.ToolRequest {
-	path := g.redirectTargetPath(req.Path)
-	if path == "" {
-		return nil
-	}
-	requests := make([]workspace.ToolRequest, 0, 3)
-	if pattern := strings.TrimSpace(req.Pattern); pattern != "" {
-		requests = append(requests, workspace.ToolRequest{
-			Tool:    "search_content",
-			Path:    path,
-			Pattern: pattern,
-			Glob:    req.Glob,
-		})
-	}
-	startLine, endLine := g.redirectReadWindow(path)
-	requests = append(requests, workspace.ToolRequest{
-		Tool:      "read_file",
-		Path:      path,
-		StartLine: startLine,
-		EndLine:   endLine,
-	})
-	return requests
-}
-
-func (g *implementTargetGuard) redirectTargetPath(requestedPath string) string {
-	requestedPath = normalizeGuardedPath(requestedPath)
-	if g.pathAllowed(requestedPath) {
-		for _, candidate := range g.packet.PrimaryPaths {
-			candidate = normalizeGuardedPath(candidate)
-			if candidate == requestedPath {
-				return candidate
-			}
-		}
-	}
-	for _, anchor := range g.packet.Anchors {
-		candidate := normalizeGuardedPath(anchor.Path)
-		if candidate != "" {
-			return candidate
-		}
-	}
-	for _, candidate := range g.packet.PrimaryPaths {
-		candidate = normalizeGuardedPath(candidate)
-		if candidate != "" {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func (g *implementTargetGuard) redirectReadWindow(path string) (int, int) {
-	path = normalizeGuardedPath(path)
-	if path == "" {
-		return 1, 180
-	}
-	if window, ok := g.bootstrapWindows[path]; ok && window[0] > 0 && window[1] >= window[0] {
-		return window[0], window[1]
-	}
-	for _, anchor := range g.packet.Anchors {
-		if normalizeGuardedPath(anchor.Path) != path || anchor.Line <= 0 {
-			continue
-		}
-		return maxInt(1, anchor.Line-2), anchor.Line + 18
-	}
-	return 1, 180
-}
-
-func (g *implementTargetGuard) targeted(tool string, path string) bool {
-	if path == "" {
-		return false
-	}
-	switch tool {
-	case "edit_file", "write_file", "append_file", "go_move_declarations":
-		return g.pathEditableAllowed(path)
-	case "read_file", "search_content", "go_read_symbol", "go_extract_body", "go_file_outline":
-		return g.pathReadableAllowed(path)
-	default:
-		return false
+	return &implementTargetGuard{
+		inner: frontier.NewTargetGuard(mgr, packet, bootstrap),
 	}
 }
 
 func (g *implementTargetGuard) pathAllowed(path string) bool {
-	return g.pathReadableAllowed(path)
+	if g == nil || g.inner == nil {
+		return false
+	}
+	return g.inner.PathAllowed(path)
 }
 
 func (g *implementTargetGuard) pathReadableAllowed(path string) bool {
-	path = normalizeGuardedPath(path)
-	if path == "" {
+	if g == nil || g.inner == nil {
 		return false
 	}
-	if g.pathForbidden(path) {
-		return false
-	}
-	candidates := append([]string(nil), g.packet.PrimaryPaths...)
-	candidates = append(candidates, g.packet.EvidencePaths...)
-	candidates = append(candidates, g.packet.AnalogyPaths...)
-	for _, candidate := range candidates {
-		candidate = normalizeGuardedPath(candidate)
-		if candidate == "" {
-			continue
-		}
-		if path == candidate {
-			return true
-		}
-		dir := filepath.Dir(candidate)
-		if dir != "." && strings.HasPrefix(path, dir+"/") {
-			return true
-		}
-	}
-	return false
+	return g.inner.PathReadableAllowed(path)
 }
 
 func (g *implementTargetGuard) pathEditableAllowed(path string) bool {
-	path = normalizeGuardedPath(path)
-	if path == "" || g.pathForbidden(path) {
+	if g == nil || g.inner == nil {
 		return false
 	}
-	if g.pathPrimaryAllowed(path) {
-		return true
-	}
-	for _, candidate := range g.packet.AllowedDestinations {
-		if path == normalizeGuardedPath(candidate) {
-			return true
-		}
-	}
-	return false
+	return g.inner.PathEditableAllowed(path)
 }
 
 func (g *implementTargetGuard) pathPrimaryAllowed(path string) bool {
-	path = normalizeGuardedPath(path)
-	if path == "" || g.pathForbidden(path) {
+	if g == nil || g.inner == nil {
 		return false
 	}
-	for _, candidate := range g.packet.PrimaryPaths {
-		if path == normalizeGuardedPath(candidate) {
-			return true
-		}
-	}
-	return false
+	return g.inner.PathPrimaryAllowed(path)
 }
 
 func (g *implementTargetGuard) pathForbidden(path string) bool {
-	path = normalizeGuardedPath(path)
-	if path == "" {
+	if g == nil || g.inner == nil {
 		return false
 	}
-	for _, candidate := range g.packet.ForbiddenPaths {
-		if path == normalizeGuardedPath(candidate) {
-			return true
-		}
-	}
-	return false
+	return g.inner.PathForbidden(path)
 }
 
 func (g *implementTargetGuard) blockWriteOutsideEditableTargets(req workspace.ToolRequest) *workspace.ToolResult {
-	if g == nil || len(g.packet.PrimaryPaths) == 0 {
+	if g == nil || g.inner == nil {
 		return nil
 	}
-	tool := strings.TrimSpace(req.Tool)
-	block := func(path string, reason string) *workspace.ToolResult {
-		return &workspace.ToolResult{
-			Tool:    tool,
-			Summary: "Implementation target packet blocked write outside approved targets",
-			Error:   fmt.Sprintf("%s is not an approved editable target (%s). %s", normalizeGuardedPath(path), strings.Join(g.packet.PrimaryPaths, ", "), reason),
-		}
-	}
-	switch tool {
-	case "edit_file", "write_file", "append_file", "mkdir":
-		path := normalizeGuardedPath(req.Path)
-		if path == "" {
-			return nil
-		}
-		if !g.pathEditableAllowed(path) {
-			return block(path, "Read-only evidence and analogy paths may be inspected but not modified.")
-		}
-	case "apply_patch":
-		ops, err := workspace.ParsePatch(req.Content)
-		if err != nil {
-			return &workspace.ToolResult{
-				Tool:    tool,
-				Summary: "Implementation target packet blocked unparseable patch",
-				Error:   err.Error(),
-			}
-		}
-		for _, opPath := range workspace.PatchOpPaths(ops) {
-			path := normalizeGuardedPath(opPath)
-			if path == "" {
-				continue
-			}
-			if !g.pathEditableAllowed(path) {
-				return block(path, "Read-only evidence and analogy paths may be inspected but not modified.")
-			}
-		}
-	case "go_move_declarations":
-		source := normalizeGuardedPath(req.Path)
-		if source != "" && !g.pathPrimaryAllowed(source) {
-			return block(source, "Declaration moves may only originate from approved editable targets.")
-		}
-		destinations := []string{normalizeGuardedPath(req.Destination)}
-		for _, move := range req.Moves {
-			destinations = append(destinations, normalizeGuardedPath(move.Destination))
-		}
-		for _, destination := range destinations {
-			if destination == "" {
-				continue
-			}
-			if g.pathForbidden(destination) || (g.pathReadableAllowed(destination) && !g.pathEditableAllowed(destination)) {
-				return block(destination, "Declaration moves may not overwrite read-only evidence, analogy, or forbidden paths.")
-			}
-		}
-	}
-	return nil
+	return g.inner.BlockWriteOutsideEditableTargets(req)
 }
 
 func (m *Model) bootstrapImplementationEvidence(ctx context.Context, mgr *workspace.Manager, prompt string, packet implementationTargetPacket, history []llama.ChatMessage) implementationBootstrap {
@@ -2049,7 +1374,12 @@ func verificationFeedbackFromResult(plan verificationPlan, verify implementation
 	}
 	recommendation := "keep current verification plan"
 	if verify.failed {
-		recommendation = "repair failing checks before widening scope"
+		classes := frontier.ClassifyVerificationFailures(verify.commands, verify.results)
+		if len(classes) > 0 {
+			recommendation = "repair " + strings.Join(classes, ", ") + " before widening scope"
+		} else {
+			recommendation = "repair failing checks before widening scope"
+		}
 	} else if plan.UsesFullSuite {
 		recommendation = "record full-suite success for similar high-risk surfaces"
 	} else if strings.EqualFold(plan.Confidence, "low") {
@@ -2061,6 +1391,7 @@ func verificationFeedbackFromResult(plan verificationPlan, verify implementation
 		Confidence:            strings.TrimSpace(plan.Confidence),
 		Commands:              append([]string(nil), verify.commands...),
 		FailedCommands:        uniqueNonEmptyStrings(failed),
+		FailureClasses:        frontier.ClassifyVerificationFailures(verify.commands, verify.results),
 		LearnedRecommendation: recommendation,
 	}
 }
@@ -2080,11 +1411,7 @@ func changedPathsFromImplementEvents(requests map[int]agent.ToolRequestEvent, re
 		if !writeToolResultChanged(req.Request, resultEvent.Result) {
 			continue
 		}
-		eventPaths := []string{strings.TrimSpace(req.Request.Path), strings.TrimSpace(req.Request.Destination)}
-		for _, move := range req.Request.Moves {
-			eventPaths = append(eventPaths, strings.TrimSpace(move.Destination))
-		}
-		for _, path := range eventPaths {
+		for _, path := range pathsFromWriteRequest(req.Request) {
 			if path == "" {
 				continue
 			}
@@ -3491,28 +2818,11 @@ func validateStructuredExecutionPlan(packet implementationTargetPacket, plan str
 }
 
 func implementationTargetPacketNeedsStructuralPolicy(packet implementationTargetPacket) bool {
-	if strings.TrimSpace(packet.SourceLane) == "architecture" {
-		return true
-	}
-	return len(packet.StrategyHints) > 0
+	return frontier.TargetPacketNeedsStructuralPolicy(packet)
 }
 
 func structuralRefactorStageHint(packet implementationTargetPacket) string {
-	if !implementationTargetPacketNeedsStructuralPolicy(packet) || len(packet.PrimaryPaths) == 0 {
-		return ""
-	}
-	first := normalizeGuardedPath(packet.PrimaryPaths[0])
-	if first == "" {
-		return ""
-	}
-	if len(packet.PrimaryPaths) == 1 {
-		return "stage 1 edits " + first + " only, then verifies before any follow-up widening"
-	}
-	rest := uniqueLimitedStrings(packet.PrimaryPaths[1:], 3)
-	if len(rest) == 0 {
-		return "stage 1 edits " + first + " only, then verifies before any follow-up widening"
-	}
-	return "stage 1 edits " + first + " first; verify before widening to " + strings.Join(rest, ", ")
+	return frontier.StructuralStageHint(packet)
 }
 
 func buildStructuralRefactorStage(packet implementationTargetPacket, changedPaths []string, verify implementationVerification) *structuralRefactorStage {
@@ -3654,262 +2964,61 @@ func applyStructuredExecutionEdit(current string, req workspace.ToolRequest) (st
 }
 
 func buildImplementSystemPrompt(basePrompt string, workspaceInstructions string) string {
-	sections := make([]string, 0, 3)
-	if prompt := strings.TrimSpace(basePrompt); prompt != "" {
-		sections = append(sections, prompt)
-	}
-	if prompt := strings.TrimSpace(workspaceInstructions); prompt != "" {
-		sections = append(sections, prompt)
-	}
-	sections = append(sections,
-		"You are in IMPLEMENT mode.",
-		"Make the smallest correct code change that satisfies the request.",
-		"The harness may already provide an implementation target packet with exact files, lines, @file anchors, analogous references, or edit context. Use that first instead of restarting discovery.",
-		"For complex multi-step implementation work, start with task_ledger and keep it current. Do not answer done while pending or in_progress ledger items remain.",
-		"Prefer edit_file for localized changes and use start_line/end_line/content when quotes or indentation make exact text replacement brittle.",
-		"For large Go-file refactors, inspect declaration boundaries with go_file_outline and move model-chosen declaration groups with go_move_declarations, preferably using pattern:\"tag:<responsibility>\" from the outline; if splitting one file into several cohesive files, prefer a single batch go_move_declarations call with moves instead of sequential partial moves.",
-		"Do not keep relisting directories once a target file or line is already known. Consume the target packet before any broader search.",
-		"Once the edit is complete, answer normally. The harness will run verification automatically after your changes.",
-	)
-	return strings.Join(sections, "\n\n")
+	return frontier.BuildImplementSystemPrompt(basePrompt, workspaceInstructions)
 }
 
 func buildImplementTaskPrompt(prompt string) string {
-	rules := []string{
-		"- Make the smallest correct change.",
-		"- For complex multi-step work, first call task_ledger with todos. Keep exactly one item in_progress, mark completed work, and do not finish while required items remain pending or in_progress.",
-		"- Prefer edit_file over rewriting the whole file for localized edits.",
-	}
-	if implementationPromptForbidsDeclarationMoves(prompt) {
-		rules = append(rules,
-			"- This request forbids declaration moves. Do not use go_move_declarations; prefer read_file and edit_file within the approved target file.",
-			"- Ignore any generic outline suggestion to split declarations into another file unless the user widens the approved target scope.",
-		)
-	} else {
-		rules = append(rules,
-			"- For large Go refactors, use go_file_outline first, choose cohesive responsibility groups yourself, then use go_move_declarations with pattern:\"tag:<responsibility>\" or explicit declarations to move them mechanically into destination files.",
-			"- When a large Go refactor splits one file into several cohesive files, prefer one batch go_move_declarations call with moves over partial sequential moves.",
-		)
-	}
-	rules = append(rules,
-		"- If the request names a file, uses @file anchors, or the harness already supplied target lines, do not restart discovery from the repo root.",
-		"- Treat analogous reference files as inspiration, not as the default write target.",
-		"- For structural refactors, stay within the target packet files unless verification requires a follow-up; use batch structural tools when the requested boundary change is explicitly multi-file.",
-		"- Once the required change is applied, answer briefly with what you changed.",
-	)
-	return "Implement this request with the available workspace tools.\n\n" +
-		renderLaneContractPolicy(analysisLaneImplement) + "\n\n" +
-		"Implementation rules:\n" +
-		strings.Join(rules, "\n") + "\n\n" +
-		"Request:\n" + strings.TrimSpace(prompt)
+	return frontier.BuildImplementTaskPrompt(prompt)
 }
 
 func implementationPromptForbidsDeclarationMoves(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	return containsAny(normalized,
-		"do not move declarations",
-		"do not move declaration",
-		"don't move declarations",
-		"no declaration moves",
-		"without moving declarations",
-		"do not create files or move declarations",
-	)
+	return frontier.PromptForbidsDeclarationMoves(prompt)
 }
 
 func structuredExecutionPlanRules(packet implementationTargetPacket) string {
-	lines := []string{
-		"- Prefer edit_file.",
-		"- Use only paths from the target packet primary files.",
-		"- At most 3 operations.",
-		"- Use anchored lines, symbol windows, and bootstrapped file excerpts before widening.",
-		"- If you cannot propose a safe bounded plan, return {\"summary\":\"\",\"operations\":[]}.",
-	}
-	if implementationTargetPacketNeedsStructuralPolicy(packet) {
-		lines[2] = "- At most 2 operations."
-		lines = append(lines,
-			"- This is a structural refactor request. Each operation reason must explain the boundary or responsibility change.",
-			"- Treat this as the first stage of a structural refactor. Prefer editing only the first primary file, then verify before widening.",
-			"- Multi-file operations are allowed only when the structural hints explicitly require a cross-file boundary move or interface extraction.",
-			"- Prefer one bounded file split/extraction step over repo-wide rewrites.",
-			"- Stay within the files and structural hints in the target packet unless the request explicitly demands a broader refactor.",
-		)
-	}
-	return strings.Join(lines, "\n")
+	return frontier.StructuredExecutionPlanRules(packet)
 }
 
 func focusedStructuredExecutionPlanRules(packet implementationTargetPacket, path string, windowStart int, windowEnd int) string {
-	lines := []string{
-		"- Use only edit_file operations.",
-		"- Use only path " + path + ".",
-		"- All line edits must stay within lines " + strconv.Itoa(windowStart) + "-" + strconv.Itoa(windowEnd) + ".",
-		"- Prefer the narrowest possible line-range edit.",
-		"- Use old_text/new_text only if that is safer than a line-range edit.",
-		"- At most 2 operations.",
-		"- If you cannot propose a safe bounded edit, return {\"summary\":\"\",\"operations\":[]}.",
-	}
-	if implementationTargetPacketNeedsStructuralPolicy(packet) {
-		lines = append(lines,
-			"- This focused edit is part of a structural refactor. Each operation reason must name the responsibility or boundary being tightened.",
-			"- Treat this as the first stage of the structural refactor, not the whole refactor.",
-			"- Preserve the rest of the file shape outside this focused boundary change.",
-		)
-	}
-	return strings.Join(lines, "\n")
+	return frontier.FocusedStructuredExecutionPlanRules(packet, path, windowStart, windowEnd)
 }
 
 func buildImplementRepairPrompt(prompt string) string {
-	return "Repair the already-applied change so verification passes while preserving the user's requested behavior change.\n\n" +
-		"Repair rules:\n" +
-		"- Do not undo the requested behavior change unless verification proves it is impossible.\n" +
-		"- Use the supplied verification errors and recent edit context first.\n" +
-		"- Prefer the smallest follow-up edit that restores a clean build/test result.\n\n" +
-		"Original request:\n" + strings.TrimSpace(prompt)
+	return frontier.BuildImplementRepairPrompt(prompt)
 }
 
 func implementToolBudget(maxToolSteps int) int {
-	switch {
-	case maxToolSteps <= 0:
-		return 14
-	case maxToolSteps < 6:
-		return maxToolSteps
-	default:
-		return minInt(maxToolSteps, 14)
-	}
+	return frontier.ImplementToolBudget(maxToolSteps)
 }
 
 func implementToolBudgetForRequest(maxToolSteps int, prompt string, packet implementationTargetPacket) int {
-	budget := implementToolBudget(maxToolSteps)
-	if !requestNeedsExpandedImplementBudget(prompt, packet) {
-		return budget
-	}
-	if maxToolSteps > budget {
-		budget = maxToolSteps
-	}
-	budget = maxInt(budget, 24)
-	if promptRequestsWholeFileRefactor(prompt) {
-		budget = maxInt(budget, 32)
-	}
-	if count := explicitGoMoveBatchHintCount(prompt); count > 0 {
-		budget = maxInt(budget, 8+count*3)
-	}
-	if len(packet.PrimaryPaths) > 1 {
-		budget = maxInt(budget, 16+len(packet.PrimaryPaths)*2)
-	}
-	return minInt(budget, 48)
+	return frontier.ImplementToolBudgetForRequest(maxToolSteps, prompt, packet)
 }
 
 func implementRunPolicyForRequest(maxToolSteps int, prompt string, packet implementationTargetPacket) agent.RunPolicy {
-	if requestNeedsExpandedImplementBudget(prompt, packet) {
-		return agent.RunPolicy{
-			MaxToolSteps:       0,
-			MaxNoProgressTurns: 8,
-			MaxContextMessages: 28,
-			MaxContextChars:    60000,
-			MaxModelCalls:      64,
-		}
-	}
-	return agent.RunPolicy{
-		MaxToolSteps:       implementToolBudget(maxToolSteps),
-		MaxNoProgressTurns: 6,
-		MaxContextMessages: 24,
-		MaxContextChars:    40000,
-		MaxModelCalls:      maxInt(implementToolBudget(maxToolSteps)+6, 12),
-	}
+	return frontier.ImplementRunPolicyForRequest(maxToolSteps, prompt, packet)
 }
 
 func implementationCompletionGate(prompt string, preChangedPaths []string, requests map[int]agent.ToolRequestEvent, results map[int]agent.ToolResultEvent) agent.CompletionGate {
-	return func(input agent.CompletionGateInput) agent.CompletionGateResult {
-		changedPaths := uniqueNonEmptyStrings(append(append([]string(nil), preChangedPaths...), changedPathsFromImplementEvents(requests, results)...))
-		if len(changedPaths) > 0 {
-			return agent.CompletionGateResult{Accept: true}
-		}
-		reply := strings.ToLower(strings.TrimSpace(input.Reply))
-		if implementationFinalReplyHasTerminalReason(reply) {
-			return agent.CompletionGateResult{Accept: true}
-		}
-		if promptRequestsWholeFileRefactor(prompt) && successfulToolResult(input.Results, "go_file_outline") && !successfulToolResult(input.Results, "go_move_declarations") {
-			return agent.CompletionGateResult{
-				Summary: "Implementation completion gate rejected final answer",
-				Error:   "the request is a whole-file refactor; go_file_outline succeeded, but no go_move_declarations call has succeeded yet. Continue with a move tool call or report the concrete failed move blocker.",
-			}
-		}
-		if promptRequestsImplementation(prompt) {
-			return agent.CompletionGateResult{
-				Summary: "Implementation completion gate rejected final answer",
-				Error:   "no workspace change has succeeded yet. Continue with the next edit/tool call, or answer with an explicit no-op reason, already-satisfied finding, permission blocker, or verification blocker.",
-			}
-		}
-		return agent.CompletionGateResult{Accept: true}
-	}
+	return frontier.ImplementationCompletionGate(prompt, func() []string {
+		return uniqueNonEmptyStrings(append(append([]string(nil), preChangedPaths...), changedPathsFromImplementEvents(requests, results)...))
+	})
 }
 
 func implementationFinalReplyHasTerminalReason(reply string) bool {
-	return containsAny(reply,
-		"no changes needed",
-		"no change needed",
-		"no file edits were applied",
-		"already satisfied",
-		"already implemented",
-		"already complete",
-		"blocked",
-		"permission",
-		"approval",
-		"unable to",
-		"cannot proceed",
-		"could not proceed",
-	)
+	return frontier.ImplementationFinalReplyHasTerminalReason(reply)
 }
 
 func successfulToolResult(results []workspace.ToolResult, tool string) bool {
-	for _, result := range results {
-		if result.Tool == tool && strings.TrimSpace(result.Error) == "" {
-			return true
-		}
-	}
-	return false
+	return frontier.SuccessfulToolResult(results, tool)
 }
 
 func requestNeedsExpandedImplementBudget(prompt string, packet implementationTargetPacket) bool {
-	normalized := strings.ToLower(prompt)
-	if promptRequestsWholeFileRefactor(prompt) || implementationTargetPacketNeedsStructuralPolicy(packet) {
-		return true
-	}
-	return containsAny(normalized,
-		"go_move_declarations",
-		"go_file_outline",
-		"large go refactor",
-		"giant file",
-		"monolithic file",
-		"split the file",
-		"split into",
-		"multi-file refactor",
-		"across multiple files",
-	)
+	return frontier.RequestNeedsExpandedImplementBudget(prompt, packet)
 }
 
 func explicitGoMoveBatchHintCount(prompt string) int {
-	normalized := strings.ToLower(prompt)
-	tags := []string{
-		"tag:model_state",
-		"tag:lifecycle",
-		"tag:prompt_routing",
-		"tag:rendering",
-		"tag:task_memory",
-		"tag:implementation",
-		"tag:write_guard",
-		"tag:analysis_agents",
-		"tag:control_rails",
-	}
-	count := 0
-	for _, tag := range tags {
-		if strings.Contains(normalized, tag) {
-			count++
-		}
-	}
-	if count > 0 {
-		return count
-	}
-	return strings.Count(normalized, "destination:")
+	return frontier.ExplicitGoMoveBatchHintCount(prompt)
 }
 
 type verificationFeedbackSnapshot struct {
@@ -3918,6 +3027,7 @@ type verificationFeedbackSnapshot struct {
 	Confidence            string   `json:"confidence,omitempty"`
 	Commands              []string `json:"commands,omitempty"`
 	FailedCommands        []string `json:"failed_commands,omitempty"`
+	FailureClasses        []string `json:"failure_classes,omitempty"`
 	LearnedRecommendation string   `json:"learned_recommendation,omitempty"`
 }
 
@@ -4001,196 +3111,21 @@ func (m *Model) logVerificationPlan(plan verificationPlan) {
 }
 
 func promptRequestsAnalysisBeforeImplementation(normalized string) bool {
-	normalized = strings.TrimSpace(normalized)
-	if normalized == "" {
-		return false
-	}
-	if containsAny(normalized, "identify it first", "show it first", "before changing", "before you change", "don't change it yet", "do not change it yet") {
-		return true
-	}
-	for _, prefix := range []string{"explore ", "investigate ", "analyze ", "identify ", "review ", "audit ", "look through ", "inspect "} {
-		if strings.HasPrefix(normalized, prefix) {
-			return true
-		}
-	}
-	return false
+	return frontier.PromptRequestsAnalysisBeforeImplementation(normalized)
 }
 
 func promptRequestsImplementation(prompt string) bool {
-	normalized := strings.ToLower(prompt)
-	trimmed := strings.TrimSpace(normalized)
-	if looksLikePlanOnlyPrompt(trimmed) {
-		return false
-	}
-	if strings.HasPrefix(trimmed, "fix ") || strings.HasPrefix(trimmed, "patch ") || strings.HasPrefix(trimmed, "implement ") || strings.HasPrefix(trimmed, "refactor ") {
-		return true
-	}
-	if primaryLocateLiteral(prompt) != "" && containsAny(normalized, "remove ", "delete ", "take it out") {
-		return true
-	}
-	return containsAny(normalized,
-		"refactor ",
-		"split existing code",
-		"produce the refactor",
-		"in one shot",
-		"fix it now",
-		"fix this now",
-		"fix the issue",
-		"fix the failure",
-		"fix the bug",
-		"please fix",
-		"go fix",
-		"patch it",
-		"patch this",
-		"apply the fix",
-		"apply that fix",
-		"apply this fix",
-		"apply changes now",
-		"write the fix",
-		"write the patch",
-		"edit the file",
-		"edit those files",
-		"update the code",
-		"change the code",
-		"implement the fix",
-		"make the fix",
-		"make the change",
-		"create the file",
-		"delete the file",
-		"remove it",
-		"remove this",
-		"remove the code",
-		"delete it",
-		"refactor it",
-		"refactor this",
-		"then fix",
-		"then fix it",
-		"then update",
-		"then implement",
-		"then implement it",
-		"and fix",
-		"and fix it",
-		"and update",
-		"and implement",
-		"and implement it",
-	)
+	return frontier.PromptRequestsImplementation(prompt)
 }
 
 func looksLikeDirectImplementationPrompt(prompt string, normalized string) bool {
-	if looksLikePlanOnlyPrompt(normalized) {
-		return false
-	}
-	if promptRequestsImplementation(prompt) {
-		return true
-	}
-	if requestsShellOnlyMutation(normalized) && (len(promptMentionedWorkspacePaths(prompt)) > 0 || containsAny(normalized, "file ", "directory ", "folder ")) {
-		return true
-	}
-	if containsAny(normalized, "use edit_file", "targeted edit", "code edit", "change the footer help text", "replace ", "rename ") {
-		return len(promptMentionedWorkspacePaths(prompt)) > 0
-	}
-	hasEditVerb := containsAny(
-		normalized,
-		"create",
-		"edit",
-		"change",
-		"replace",
-		"update",
-		"modify",
-		"rename",
-		"remove",
-		"delete",
-		"add",
-		"refactor",
-		"split",
-		"reorganize",
-		"write",
-		"append",
-		"mkdir",
-	)
-	hasConcreteTarget := len(promptMentionedWorkspacePaths(prompt)) > 0 ||
-		containsAny(normalized, "line ", "function ", "method ", "text from", "text to") ||
-		hasUILocationHint(normalized)
-	return hasEditVerb && hasConcreteTarget && !looksLikeInvestigationPrompt(normalized)
+	return frontier.LooksLikeDirectImplementationPrompt(prompt, normalized)
 }
 
 func looksLikePlanOnlyPrompt(normalized string) bool {
-	normalized = strings.ToLower(strings.TrimSpace(normalized))
-	if normalized == "" {
-		return false
-	}
-	hasPlanRequest := containsAny(
-		normalized,
-		"prepare a plan",
-		"prepare an plan",
-		"prepare a refactor plan",
-		"prepare a refactoring plan",
-		"plan a refactor",
-		"plan the refactor",
-		"plan this refactor",
-		"plan that refactor",
-		"plan a refactoring",
-		"plan the refactoring",
-		"plan this refactoring",
-		"plan that refactoring",
-		"make a plan",
-		"create a plan",
-		"propose a plan",
-		"propose a work plan",
-		"write a plan",
-		"draft a plan",
-		"work plan",
-		"work out an approach",
-		"work out approach",
-		"outline an approach",
-		"approach to refactoring",
-		"approach to refactor",
-		"implementation plan",
-		"refactor plan",
-		"refactoring plan",
-		"plan to update",
-		"plan to refactor",
-		"plan for updating",
-		"plan for refactoring",
-	)
-	if !hasPlanRequest {
-		return false
-	}
-	return !containsAny(
-		normalized,
-		"then implement",
-		"and implement",
-		"then update",
-		"and update",
-		"then apply",
-		"and apply",
-		"apply the plan",
-		"execute the plan",
-		"do it now",
-		"make the changes",
-	)
+	return frontier.LooksLikePlanOnlyPrompt(normalized)
 }
 
 func looksLikeReadOnlyBoundaryPrompt(normalized string) bool {
-	normalized = strings.ToLower(strings.TrimSpace(normalized))
-	if normalized == "" {
-		return false
-	}
-	return containsAny(
-		normalized,
-		"don't edit",
-		"do not edit",
-		"don't change",
-		"do not change",
-		"don't modify",
-		"do not modify",
-		"read only",
-		"read-only",
-		"plan only",
-		"no edits",
-		"without editing",
-		"without changing",
-		"before editing",
-		"before changing",
-	)
+	return frontier.LooksLikeReadOnlyBoundaryPrompt(normalized)
 }

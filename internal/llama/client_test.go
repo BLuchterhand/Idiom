@@ -19,7 +19,7 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","reasoning_content":"hidden chain","content":"hello"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","reasoning_content":"hidden chain","content":"hello"}}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`))
 	}))
 	defer server.Close()
 
@@ -41,6 +41,9 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 	}
 	if reply.Content != "hello" || reply.ReasoningContent != "hidden chain" {
 		t.Fatalf("expected reply with preserved reasoning, got %#v", reply)
+	}
+	if reply.Usage.PromptTokens != 7 || reply.Usage.CompletionTokens != 3 || reply.Usage.TotalTokens != 10 {
+		t.Fatalf("expected usage to be parsed, got %#v", reply.Usage)
 	}
 	if got.Model != "model" || got.Messages[0].Content != "hi" || got.Messages[0].ReasoningContent != "prior hidden" || got.Stream {
 		t.Fatalf("unexpected request payload: %#v", got)

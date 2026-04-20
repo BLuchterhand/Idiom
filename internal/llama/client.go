@@ -23,6 +23,7 @@ type ChatMessage struct {
 	Role             string `json:"role"`
 	Content          string `json:"content"`
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Usage            Usage  `json:"-"`
 }
 
 type ChatOptions struct {
@@ -36,6 +37,12 @@ type ChatOptions struct {
 	EnableThinking    *bool
 	PreserveThinking  bool
 	MaxTokens         int
+}
+
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 type ModelInfo struct {
@@ -77,6 +84,7 @@ type chatResponse struct {
 			ReasoningContent string `json:"reasoning_content,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage Usage `json:"usage,omitempty"`
 }
 
 type chatStreamChunk struct {
@@ -316,6 +324,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			Role:             role,
 			Content:          message.Content,
 			ReasoningContent: message.ReasoningContent,
+			Usage:            parsed.Usage,
 		}, nil
 	}
 }

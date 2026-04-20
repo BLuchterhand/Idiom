@@ -333,6 +333,17 @@ func (m *Model) runMainAgent(
 		AgentName:        "main",
 		PermissionPolicy: controlRailPermissionPolicy(rails),
 		CompletionGate:   controlRailCompletionGate(rails),
+		RuntimeBrief: buildWorkerRuntimeBrief(
+			prompt,
+			rails,
+			implementationTargetPacket{},
+			"",
+			nil,
+			agent.RunPolicy{MaxToolSteps: m.cfg.Chat.MaxToolSteps},
+			nil,
+			nil,
+			nil,
+		),
 		OnEvent: func(event agent.RunEvent) {
 			m.logMessage(event.Role, event.Content)
 		},

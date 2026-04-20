@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"qwen-bubbles/internal/agent"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/semantic"
 	"qwen-bubbles/internal/workspace"
@@ -1091,25 +1092,11 @@ func buildReviewFallbackSummary(prompt string, candidates []reviewCandidate, can
 }
 
 func reviewSearchPathBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 2
-	case workspace.ThoroughnessThorough:
-		return 6
-	default:
-		return 4
-	}
+	return frontier.ReviewSearchPathBudget(level)
 }
 
 func reviewCandidateBudget(level workspace.ExploreThoroughness) int {
-	switch level {
-	case workspace.ThoroughnessQuick:
-		return 2
-	case workspace.ThoroughnessThorough:
-		return 5
-	default:
-		return 3
-	}
+	return frontier.ReviewCandidateBudget(level)
 }
 
 func (m *Model) bodyView() string {

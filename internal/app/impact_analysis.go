@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/semantic"
 	"qwen-bubbles/internal/workspace"
 )
@@ -584,80 +585,27 @@ func (r writeApprovalRisk) rank() int {
 }
 
 func isCoreGoImpactPath(path string) bool {
-	return strings.HasPrefix(path, "internal/app/") ||
-		strings.HasPrefix(path, "internal/agent/") ||
-		strings.HasPrefix(path, "internal/workspace/") ||
-		strings.HasPrefix(path, "internal/llama/")
+	return frontier.IsCoreGoImpactPath(path)
 }
 
 func isEntrypointGoPath(path string, file *semantic.GoFile) bool {
-	if strings.HasPrefix(path, "cmd/") {
-		return true
-	}
-	if file == nil {
-		return false
-	}
-	return file.HasMain || strings.HasSuffix(path, "/main.go") || path == "main.go"
+	return frontier.IsEntrypointGoPath(path, file)
 }
 
 func approvalGoImportPath(pkgPath string, module string) string {
-	pkgPath = filepath.ToSlash(strings.TrimSpace(pkgPath))
-	module = strings.TrimSpace(module)
-	if module == "" {
-		return pkgPath
-	}
-	if pkgPath == "." {
-		return module
-	}
-	return module + "/" + pkgPath
+	return frontier.GoImportPath(pkgPath, module)
 }
 
 func goImporterFiles(idx *semantic.GoIndex, pkgDir string, limit int) []string {
-	if idx == nil || limit <= 0 {
-		return nil
-	}
-	target := approvalGoImportPath(pkgDir, idx.Module)
-	lines := make([]string, 0, limit)
-	for _, file := range idx.Files {
-		for _, imp := range file.Imports {
-			if imp != target {
-				continue
-			}
-			lines = append(lines, fmt.Sprintf("%s imports %s", file.Path, pkgDir))
-			break
-		}
-		if len(lines) >= limit {
-			break
-		}
-	}
-	sort.Strings(lines)
-	return lines
+	return frontier.GoImporterFiles(idx, pkgDir, limit)
 }
 
 func goTestFilesForDir(idx *semantic.GoIndex, dir string, limit int) []string {
-	if idx == nil || limit <= 0 {
-		return nil
-	}
-	tests := make([]string, 0, limit)
-	for _, file := range idx.Files {
-		if !file.IsTest || file.PathDir() != dir {
-			continue
-		}
-		tests = append(tests, file.Path)
-		if len(tests) >= limit {
-			break
-		}
-	}
-	sort.Strings(tests)
-	return tests
+	return frontier.GoTestFilesForDir(idx, dir, limit)
 }
 
 func goTestCommandForDir(dir string) string {
-	dir = filepath.ToSlash(strings.TrimSpace(dir))
-	if dir == "" || dir == "." {
-		return "go test -vet=off ./..."
-	}
-	return "go test -vet=off ./" + dir
+	return frontier.GoTestCommandForDir(dir)
 }
 
 func repoReferenceLines(root string, target string, limit int) []string {
@@ -725,25 +673,7 @@ func trimImpactSnippet(line string) string {
 }
 
 func uniqueTopLevelDirs(paths []string) []string {
-	seen := make(map[string]struct{}, len(paths))
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			continue
-		}
-		top := strings.Split(path, "/")[0]
-		if top == "" {
-			top = "."
-		}
-		if _, ok := seen[top]; ok {
-			continue
-		}
-		seen[top] = struct{}{}
-		out = append(out, top)
-	}
-	sort.Strings(out)
-	return out
+	return frontier.UniqueTopLevelDirs(paths)
 }
 
 func uniqueSortedStrings(values []string) []string {

@@ -227,24 +227,7 @@ func (m *Manager) Instructions() string {
 			"```tool\n"+
 			"{\"tool\":\"search_files\",\"pattern\":\"bubble\",\"path\":\".\"}\n"+
 			"```\n\n"+
-			"Available tools:\n"+
-			"- task_ledger {\"todos\":[{\"id\":\"inspect\",\"content\":\"Inspect target files\",\"status\":\"in_progress\"},{\"id\":\"verify\",\"content\":\"Run verification\",\"status\":\"pending\"}]}\n"+
-			"- task {\"agent\":\"explorer\",\"mode\":\"read_only\",\"prompt\":\"Inspect one focused question and summarize evidence.\"} (bounded read-only child task; skip for simple single-file work)\n"+
-			"- pwd\n"+
-			"- list_files {\"path\":\".\",\"recursive\":true,\"max_depth\":2}\n"+
-			"- search_files {\"pattern\":\"bubble\",\"path\":\".\"}\n"+
-			"- search_content {\"pattern\":\"Bubble Tea\",\"path\":\".\",\"glob\":\"*.go\"}\n"+
-			"- read_file {\"id\":\"f12\",\"start_line\":1,\"end_line\":120}\n"+
-			"- read_file {\"path\":\"README.md\",\"start_line\":1,\"end_line\":120} (allowed for an exact existing workspace file; handles are preferred)\n"+
-			"- mkdir {\"path\":\"relative/dir\"}\n"+
-			"- edit_file {\"path\":\"relative/path\",\"old_text\":\"exact text to replace\",\"new_text\":\"replacement text\"}\n"+
-			"- edit_file {\"path\":\"relative/path\",\"start_line\":299,\"end_line\":299,\"content\":\"replacement line(s)\"}\n"+
-			"- write_file {\"path\":\"relative/path\",\"content\":\"full file contents\"}\n"+
-			"- append_file {\"path\":\"relative/path\",\"content\":\"text to append\"}\n"+
-			"- apply_patch {\"content\":\"*** Begin Patch\\n*** Update File: relative/path\\n@@\\n context line\\n-old line\\n+new line\\n*** End Patch\"} (multi-file unified-diff envelope; supports Add File / Update File / Delete File and an optional `*** Move to: new/path` inside Update File)\n"+
-			"- git_status {\"workdir\":\".\"}\n"+
-			"- git_diff {\"workdir\":\".\",\"path\":\"optional/relative/path\"}\n"+
-			"- shell {\"command\":\"awk 'NR<=80 {print}' README.md\",\"workdir\":\".\"}\n%s%s\n"+
+			"Available tools:\n%s\n%s\n"+
 			"Rules:\n"+
 			"- For complex multi-step work, use task_ledger to track pending, in_progress, completed, blocked, or cancelled items. Keep at most one item in_progress.\n"+
 			"- Do not invent file paths from memory.\n"+
@@ -262,8 +245,8 @@ func (m *Manager) Instructions() string {
 			"- After you receive tool results, decide whether to use another tool or answer normally.%s",
 		m.cfg.Root,
 		m.cfg.CWD,
-		m.goDiscoveryInstructions(false),
-		m.cppDiscoveryInstructions(false),
+		RenderToolManifestInstructions(m.toolManifestTools(false)),
+		RenderSemanticToolRules(m.toolManifestTools(false), false),
 		m.writePolicyInstructions(),
 		m.discoveryInstructions(),
 	)
@@ -292,17 +275,7 @@ func (m *Manager) exploreInstructions() string {
 			"```tool\n"+
 			"{\"tool\":\"search_content\",\"pattern\":\"TODO\",\"path\":\".\",\"glob\":\"*.go\"}\n"+
 			"```\n\n"+
-			"Available tools in explore mode:\n"+
-			"- task {\"agent\":\"explorer\",\"mode\":\"read_only\",\"prompt\":\"Investigate one focused question.\"} (bounded read-only child task)\n"+
-			"- pwd\n"+
-			"- list_files {\"path\":\".\",\"recursive\":true,\"max_depth\":2}\n"+
-			"- search_files {\"pattern\":\"auth\",\"path\":\".\"}\n"+
-			"- search_content {\"pattern\":\"token refresh\",\"path\":\".\",\"glob\":\"*.go\"}\n"+
-			"- read_file {\"id\":\"f12\",\"start_line\":1,\"end_line\":160}\n"+
-			"- read_file {\"path\":\"README.md\",\"start_line\":1,\"end_line\":120} (allowed for an exact existing workspace file; handles are preferred)\n"+
-			"- git_status {\"workdir\":\".\"}\n"+
-			"- git_diff {\"workdir\":\".\",\"path\":\"optional/relative/path\"}\n"+
-			"- shell {\"command\":\"git diff --stat\",\"workdir\":\".\"}\n%s%s\n"+
+			"Available tools in explore mode:\n%s\n%s\n"+
 			"Explore mode rules:\n"+
 			"- Read-only only: do not use mkdir, edit_file, write_file, append_file, package installers, or any state-changing command.\n"+
 			"- Start broad once, then narrow quickly. After one broad orientation step, use search_files, search_content, or read_file on discovered handles.\n"+
@@ -315,101 +288,20 @@ func (m *Manager) exploreInstructions() string {
 		m.cfg.Root,
 		m.cfg.CWD,
 		thoroughness,
-		m.goDiscoveryInstructions(true),
-		m.cppDiscoveryInstructions(true),
+		RenderToolManifestInstructions(m.toolManifestTools(true)),
+		RenderSemanticToolRules(m.toolManifestTools(true), true),
 		m.discoveryInstructions(),
 	)
 }
 
-func (m *Manager) goDiscoveryInstructions(explore bool) string {
-	if !m.isGoWorkspace() {
-		return ""
-	}
-
-	lines := []string{
-		"Go-specific discovery tools:",
-		"- go_overview {}",
-		"- go_entrypoints {}",
-		"- go_find_symbol {\"pattern\":\"Run\"}",
-		"- go_find_type {\"pattern\":\"Runner\"}",
-		"- go_find_const {\"pattern\":\"ModeExplore\"}",
-		"- go_file_outline {\"path\":\"internal/app/app.go\"}",
-		"- go_read_symbol {\"pattern\":\"Run\",\"path\":\"internal/agent\"}",
-		"- go_find_package {\"pattern\":\"internal/app\"}",
-		"- go_related_files {\"pattern\":\"explore cache\"}",
-		"- go_definition {\"pattern\":\"Run\",\"path\":\"internal/app\"}",
-		"- go_references {\"pattern\":\"Run\",\"path\":\"internal/agent\"}",
-		"- go_implementations {\"pattern\":\"Run\",\"path\":\"internal/agent\"}",
-		"- go_calls_from {\"pattern\":\"Run\",\"path\":\"internal/agent\"}",
-		"- go_calls_into {\"pattern\":\"Run\",\"path\":\"internal/agent\"}",
-		"- go_extract_body {\"pattern\":\"Run\",\"path\":\"internal/agent\"}",
-		"- go_importers {\"pattern\":\"internal/app\"}",
-		"- go_diagnostics {\"path\":\"internal/workspace/manager.go\"}",
-		"- go_workspace_symbol {\"pattern\":\"Run\"} (uses gopls when available, otherwise falls back to the local semantic index)",
-	}
-	if explore {
-		lines = append(lines,
-			"Go-tool rules:",
-			"- Prefer go_overview or go_entrypoints before broad shell inspection in Go repos.",
-			"- Prefer go_find_symbol, go_file_outline, go_read_symbol, and go_find_package over raw grep when you already know the concept you are looking for.",
-			"- Use go_workspace_symbol when you need broader symbol lookup across the module.",
-		)
-	} else {
-		lines = append(lines,
-			"- go_move_declarations {\"path\":\"internal/app/app.go\",\"destination\":\"internal/app/rendering.go\",\"pattern\":\"tag:rendering\"}",
-			"- go_move_declarations {\"path\":\"internal/app/app.go\",\"moves\":[{\"destination\":\"internal/app/model_state.go\",\"pattern\":\"tag:model_state\"},{\"destination\":\"internal/app/rendering.go\",\"pattern\":\"tag:rendering\"}]}",
-			"- go_move_declarations {\"path\":\"internal/app/app.go\",\"destination\":\"internal/app/rendering.go\",\"declarations\":[\"Model.View\",\"bodyView\",\"renderMessages\"]}",
-		)
-		lines = append(lines,
-			"Go-tool rules:",
-			"- Prefer the Go-specific tools over raw shell/grep for package, symbol, and entrypoint discovery in Go repos.",
-			"- Use read_file on returned handles after go_find_symbol/go_entrypoints if you need surrounding source.",
-			"- For large Go refactors, use go_file_outline to identify declaration boundaries, then use go_move_declarations for model-chosen batches instead of rewriting giant files by hand. The pattern form pattern:\"tag:<responsibility>\" moves all declarations from the outline with that responsibility tag.",
-		)
-	}
-	return strings.Join(lines, "\n") + "\n"
-}
-
-func (m *Manager) cppDiscoveryInstructions(explore bool) string {
-	if !m.isCppWorkspace() {
-		return ""
-	}
-	lines := []string{
-		"C++-specific discovery tools:",
-		"- cpp_overview {}",
-		"- cpp_entrypoints {}",
-		"- cpp_find_symbol {\"pattern\":\"EntityManager\"}",
-		"- cpp_read_symbol {\"pattern\":\"EntityManager::tick\",\"path\":\"native/src\"}",
-		"- cpp_related_files {\"pattern\":\"inventory transfer\"}",
-		"- cpp_definition {\"pattern\":\"post_job\",\"path\":\"native/src\"}",
-		"- cpp_declaration {\"pattern\":\"post_job\",\"path\":\"native/src\"}",
-		"- cpp_implementations {\"pattern\":\"BaseSystem::tick\",\"path\":\"native/src\"}",
-		"- cpp_references {\"pattern\":\"INVALID_ENTITY\",\"path\":\"native/src\"}",
-		"- cpp_calls_from {\"pattern\":\"post_job\",\"path\":\"native/src\"}",
-		"- cpp_calls_into {\"pattern\":\"post_job\",\"path\":\"native/src\"}",
-		"- cpp_extract_body {\"pattern\":\"post_job\",\"path\":\"native/src\"}",
-		"- cpp_includes {\"pattern\":\"entity_manager.h\"}",
-		"- cpp_who_includes {\"pattern\":\"entity_manager.h\"}",
-		"- cpp_blast_radius {\"pattern\":\"entity_manager.h\"}",
-		"- cpp_dead_symbol {\"pattern\":\"unused_helper\"}",
-		"- cpp_workspace_symbol {\"pattern\":\"EntityManager\"}",
-		"- cpp_diagnostics {\"path\":\"native/src/simulation/entity_manager.cpp\"} (uses clangd --check when compile_commands.json is available)",
-	}
-	if explore {
-		lines = append(lines,
-			"C++-tool rules:",
-			"- Prefer cpp_overview or cpp_entrypoints before broad shell inspection in C/C++ repos.",
-			"- Prefer cpp_find_symbol, cpp_read_symbol, cpp_definition, cpp_declaration, cpp_implementations, cpp_includes, and cpp_blast_radius over raw grep once you know the concept you are tracing.",
-			"- Use cpp_references and cpp_dead_symbol for grep-style evidence without falling back to shell.",
-		)
-	} else {
-		lines = append(lines,
-			"C++-tool rules:",
-			"- Prefer the C++-specific tools over raw shell/grep for symbol, include-graph, and blast-radius discovery in C/C++ repos.",
-			"- Use read_file on returned handles after cpp_find_symbol or cpp_entrypoints if you need surrounding source.",
-		)
-	}
-	return strings.Join(lines, "\n") + "\n"
+func (m *Manager) toolManifestTools(readOnly bool) []string {
+	return ToolManifestTools(ToolManifestToolOptions{
+		IncludeTaskLedger: !readOnly,
+		IncludeTask:       true,
+		IncludeWriteTools: !readOnly,
+		IncludeGo:         m.isGoWorkspace(),
+		IncludeCpp:        m.isCppWorkspace(),
+	})
 }
 
 func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {

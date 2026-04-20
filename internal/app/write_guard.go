@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/semantic"
 	"qwen-bubbles/internal/workspace"
 	"slices"
@@ -235,62 +236,8 @@ func (g *implementTargetGuard) PreExecute(req workspace.ToolRequest) *workspace.
 	if g == nil {
 		return nil
 	}
-	if blocked := g.blockWriteOutsideEditableTargets(req); blocked != nil {
-		return blocked
-	}
-	if g.targetConsumed || len(g.packet.PrimaryPaths) == 0 {
-		return nil
-	}
-	path := normalizeGuardedPath(req.Path)
-	if req.Tool == "read_file" && path != "" && req.ID == "" && req.StartLine == 0 && req.EndLine == 0 {
-		if _, ok := g.bootstrappedReads[path]; ok && !g.allowFullTargetRead {
-			return &workspace.ToolResult{
-				Tool:    "read_file",
-				Summary: "Implementation bootstrap already inspected this target",
-				Error:   "the target packet already includes a focused read of this file. Use edit_file, a narrower read_file window, or search_content scoped to this path instead of rereading the whole file.",
-			}
-		}
-	}
-	if g.targeted(req.Tool, path) {
-		g.targetConsumed = true
-		return nil
-	}
-	switch req.Tool {
-	case "list_files", "search_files", "go_overview", "go_entrypoints", "go_workspace_symbol", "go_find_package":
-		if redirected, ok := g.redirectedTargetInspection(req); ok {
-			return redirected
-		}
-		return &workspace.ToolResult{
-			Tool:    req.Tool,
-			Summary: "Implementation target packet blocked broad discovery",
-			Error:   "implementation already has concrete target files. Read or search those files first before broad repo discovery.",
-		}
-	case "search_content", "read_file", "go_find_symbol", "go_read_symbol", "go_find_type", "go_find_const", "go_definition", "go_references", "go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_importers", "go_related_files":
-		if path == "" {
-			if redirected, ok := g.redirectedTargetInspection(req); ok {
-				return redirected
-			}
-			return &workspace.ToolResult{
-				Tool:    req.Tool,
-				Summary: "Implementation target packet requires scoped inspection",
-				Error:   "implementation already has concrete target files. Scope this inspection to a target file before widening the search.",
-			}
-		}
-		if !g.pathReadableAllowed(path) {
-			if redirected, ok := g.redirectedTargetInspection(req); ok {
-				return redirected
-			}
-			return &workspace.ToolResult{
-				Tool:    req.Tool,
-				Summary: "Implementation target packet blocked unrelated path",
-				Error:   fmt.Sprintf("implementation should start with the target packet files (%s) before inspecting %s.", strings.Join(g.packet.PrimaryPaths, ", "), path),
-			}
-		}
-		g.targetConsumed = true
-		return nil
-	default:
-		return nil
-	}
+	g.inner.AllowFullTargetRead = g.allowFullTargetRead
+	return g.inner.PreExecute(req)
 }
 
 type implementWriteGuard struct {
@@ -322,13 +269,14 @@ func (g *mainWriteGuard) PreExecute(req workspace.ToolRequest) *workspace.ToolRe
 	if g == nil || g.policy == workspace.WritePolicyAuto {
 		return nil
 	}
-	switch req.Tool {
-	case "edit_file", "write_file", "append_file", "mkdir", "go_move_declarations", "apply_patch":
+	if workspace.IsWorkspaceWriteTool(req.Tool) {
 		return &workspace.ToolResult{
 			Tool:    req.Tool,
 			Summary: "Guarded write policy blocked main-lane mutation",
 			Error:   "guarded writes keep the main lane read-first. Use an explicit implementation prompt so Qwen routes through the guarded implement lane, or switch to /writes auto for broader mutation.",
 		}
+	}
+	switch req.Tool {
 	case "shell":
 		if isGuardedImplementShellAllowed(req.Command) {
 			return nil
@@ -600,78 +548,43 @@ func (g *implementWriteGuard) fileExists(path string) bool {
 }
 
 func (g *implementWriteGuard) pathExplicitlyAuthorized(path string) bool {
-	path = normalizeGuardedPath(path)
-	if path == "" {
-		return false
-	}
-	if _, ok := g.explicitPaths[path]; ok {
-		return true
-	}
-	if _, ok := g.explicitPaths[filepath.Base(path)]; ok {
-		return true
-	}
-	return strings.Contains(g.normalized, strings.ToLower(path))
+	return frontier.PathExplicitlyAuthorized(path, g.normalized, g.explicitPaths)
 }
 
 func (g *implementWriteGuard) explicitCreateRequested(path string) bool {
 	if g == nil {
 		return false
 	}
-	if !containsAny(g.normalized, "create", "new file", "add file", "add a file", "make a file", "create directory", "new directory", "mkdir") {
-		return false
-	}
-	return path == "" || g.pathExplicitlyAuthorized(path) || !g.fileExists(path)
+	return frontier.ExplicitCreateRequested(g.normalized, path, g.pathExplicitlyAuthorized(path), g.fileExists(path))
 }
 
 func (g *implementWriteGuard) explicitRewriteRequested(path string) bool {
 	if g == nil {
 		return false
 	}
-	if !containsAny(g.normalized, "rewrite", "full rewrite", "rewrite the file", "replace the entire", "replace the whole file", "overwrite") {
-		return false
-	}
-	return path == "" || g.pathExplicitlyAuthorized(path)
+	return frontier.ExplicitRewriteRequested(g.normalized, path, g.pathExplicitlyAuthorized(path))
 }
 
 func (g *implementWriteGuard) explicitAppendRequested(path string) bool {
 	if g == nil {
 		return false
 	}
-	if !containsAny(g.normalized, "append", "append to", "add to the end") {
-		return false
-	}
-	return path == "" || g.pathExplicitlyAuthorized(path)
+	return frontier.ExplicitAppendRequested(g.normalized, path, g.pathExplicitlyAuthorized(path))
 }
 
 func (g *implementWriteGuard) explicitMultiFileRequested() bool {
 	if g == nil {
 		return false
 	}
-	return containsAny(g.normalized, "multiple files", "several files", "across files", "multi-file", "broad refactor", "whole repo", "codebase")
+	return frontier.ExplicitMultiFileRequested(g.normalized)
 }
 
 func (g *implementWriteGuard) isProtectedPath(path string) bool {
-	path = normalizeGuardedPath(path)
-	switch {
-	case path == "", path == ".":
-		return false
-	case path == "config.json", path == "config.example.json":
-		return true
-	case strings.HasPrefix(path, "prompts/"), strings.HasPrefix(path, "scripts/"):
-		return true
-	case strings.HasPrefix(path, ".git/"), strings.HasPrefix(path, "logs/"), strings.HasPrefix(path, "models/"), strings.HasPrefix(path, "bin/"):
-		return true
-	default:
-		return false
-	}
+	return frontier.IsProtectedWritePath(path)
 }
 
 func normalizeGuardedPath(path string) string {
-	path = strings.TrimSpace(strings.TrimPrefix(path, "./"))
-	if path == "" {
-		return ""
-	}
-	return filepath.Clean(path)
+	return frontier.NormalizePath(path)
 }
 
 func buildWriteApprovalProposal(ctx context.Context, mgr *workspace.Manager, prompt string, req workspace.ToolRequest, guard *implementWriteGuard, blocked workspace.ToolResult) *writeApprovalProposal {
@@ -916,27 +829,7 @@ func enrichWriteApprovalProposal(ctx context.Context, mgr *workspace.Manager, pr
 }
 
 func approvalPathRoleLines(paths []string) []string {
-	lines := make([]string, 0, len(paths)+2)
-	if len(paths) > 1 {
-		lines = append(lines, fmt.Sprintf("requested scope spans %d files", len(paths)))
-	}
-	for _, path := range paths {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			continue
-		}
-		switch {
-		case path == "config.json" || path == "config.example.json":
-			lines = append(lines, fmt.Sprintf("%s controls runtime defaults and launch behavior for future sessions", path))
-		case strings.HasPrefix(path, "prompts/"):
-			lines = append(lines, fmt.Sprintf("%s changes baseline assistant behavior and can affect every future session", path))
-		case strings.HasPrefix(path, "scripts/"):
-			lines = append(lines, fmt.Sprintf("%s affects launcher or developer workflow entrypoints", path))
-		case strings.HasPrefix(path, "internal/"):
-			lines = append(lines, fmt.Sprintf("%s is core application code under guarded scope", path))
-		}
-	}
-	return lines
+	return frontier.WriteApprovalPathRoleLines(paths)
 }
 
 func approvalVerificationCommands(mgr *workspace.Manager, paths []string) []string {
@@ -1066,70 +959,7 @@ func isWriteApprovalRequiredResult(result workspace.ToolResult) bool {
 }
 
 func isGuardedImplementShellAllowed(command string) bool {
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) == 0 {
-		return false
-	}
-	switch fields[0] {
-	case "rg", "grep", "awk", "sed", "cat", "head", "tail", "wc", "file", "pwd", "ls", "find":
-		return true
-	case "git":
-		if len(fields) < 2 {
-			return false
-		}
-		switch fields[1] {
-		case "status", "diff", "show", "grep", "log":
-			return true
-		default:
-			return false
-		}
-	case "go":
-		if len(fields) < 2 {
-			return false
-		}
-		switch fields[1] {
-		case "test", "build", "vet", "fmt", "list":
-			return true
-		default:
-			return false
-		}
-	case "cargo":
-		if len(fields) < 2 {
-			return false
-		}
-		switch fields[1] {
-		case "test", "check", "build", "fmt", "clippy":
-			return true
-		default:
-			return false
-		}
-	case "pytest":
-		return true
-	case "make":
-		if len(fields) < 2 {
-			return false
-		}
-		return containsAny(strings.ToLower(fields[1]), "test", "build", "lint", "check", "verify")
-	case "npm", "pnpm", "yarn":
-		if len(fields) < 2 {
-			return false
-		}
-		switch fields[1] {
-		case "test", "lint", "build", "check":
-			return true
-		case "run":
-			if len(fields) < 3 {
-				return false
-			}
-			return containsAny(strings.ToLower(fields[2]), "test", "lint", "build", "check", "verify")
-		default:
-			return false
-		}
-	case "uv":
-		return strings.Contains(strings.ToLower(command), "test") || strings.Contains(strings.ToLower(command), "pytest")
-	default:
-		return false
-	}
+	return frontier.IsGuardedImplementShellAllowed(command)
 }
 
 func (m *Model) writeApprovalBanner() string {

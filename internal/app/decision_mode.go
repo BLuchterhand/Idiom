@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"qwen-bubbles/internal/workspace"
+	"qwen-bubbles/internal/frontier"
 )
 
 type agentDecisionMode string
@@ -38,54 +38,9 @@ func (m *Model) currentAgentDecisionMode() agentDecisionMode {
 
 func (m *Model) applyAgentDecisionMode(prompt string, plan promptExecutionPlan) promptExecutionPlan {
 	mode := m.currentAgentDecisionMode()
-	plan.agentMode = mode
-	if mode == agentDecisionModeAuto || plan.lane == "" {
-		return plan
+	defaultThoroughness := ""
+	if m != nil && m.workspace != nil {
+		defaultThoroughness = string(m.workspace.ExploreThoroughness())
 	}
-	profile := buildPromptRouteProfile(prompt)
-	switch mode {
-	case agentDecisionModePlan:
-		plan.lane = analysisLaneArchitecture
-		plan.followupLane = ""
-		plan.reason = promptRouteReasonArchitectureRequest
-		plan.contract = answerContractForLane(plan.lane)
-		plan.intent.WantsPlanOnly = true
-		plan.intent.WantsEdits = false
-		plan.intent.Vetoes = uniqueNonEmptyStrings(append(plan.intent.Vetoes, "agent_plan_mode_blocks_edits"))
-	case agentDecisionModeBuild:
-		if profile.wantsVerificationOnly || profile.hasReadOnlyBoundary || plan.intent.WantsPlanOnly {
-			plan.intent.Vetoes = uniqueNonEmptyStrings(append(plan.intent.Vetoes, "agent_build_mode_preserved_user_read_only_boundary"))
-			break
-		}
-		plan.lane = analysisLaneImplement
-		plan.followupLane = ""
-		plan.reason = promptRouteReasonDirectImplementation
-		plan.contract = answerContractForLane(plan.lane)
-		plan.intent.WantsEdits = true
-		plan.intent.WantsPlanOnly = false
-	case agentDecisionModeReview:
-		plan.lane = analysisLaneReview
-		plan.followupLane = ""
-		plan.reason = promptRouteReasonReviewRequest
-		plan.contract = answerContractForLane(plan.lane)
-		plan.intent.WantsEdits = false
-	case agentDecisionModeExplore:
-		plan.lane = analysisLaneExplore
-		plan.followupLane = ""
-		plan.reason = promptRouteReasonExploreRequest
-		plan.contract = answerContractForLane(plan.lane)
-		plan.intent.WantsEdits = false
-	}
-	if analysisLaneUsesThoroughness(plan.lane) && plan.thoroughness == "" {
-		if m != nil && m.workspace != nil {
-			plan.thoroughness = m.workspace.ExploreThoroughness()
-		}
-		if plan.thoroughness == "" {
-			plan.thoroughness = workspace.ThoroughnessMedium
-		}
-	}
-	plan.intent.SelectedLane = string(plan.lane)
-	plan.intent.FollowupLane = string(plan.followupLane)
-	plan.intent.Source = firstNonEmptyString(plan.intent.Source, "host_structured_intent") + "+agent_mode"
-	return finalizePromptExecutionPlan(prompt, profile, plan)
+	return fromFrontierPromptPlan(frontier.ApplyAgentModeToPromptPlan(prompt, toFrontierPromptPlan(plan), string(mode), defaultThoroughness))
 }

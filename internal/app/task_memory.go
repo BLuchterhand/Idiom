@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/workspace"
 	"strings"
@@ -288,21 +289,11 @@ func (m *Model) taskMemoryStale(memory *longHorizonTaskMemory) (bool, string) {
 }
 
 func looksLikeResumeStructuralRefactorPrompt(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	if normalized == "" {
-		return false
-	}
-	return containsAny(normalized, "continue", "resume", "next stage", "next refactor") &&
-		containsAny(normalized, "refactor", "structural", "architecture", "stage")
+	return frontier.LooksLikeResumeStructuralRefactorPrompt(prompt)
 }
 
 func looksLikeResumeTaskMemoryPrompt(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	if normalized == "" {
-		return false
-	}
-	return containsAny(normalized, "continue", "resume", "follow up", "next step", "pick up") &&
-		containsAny(normalized, "task", "investigation", "search", "repair", "evidence", "debug", "issue", "failure")
+	return frontier.LooksLikeResumeTaskMemoryPrompt(prompt)
 }
 
 func shouldResumeTaskMemoryPrompt(prompt string, memory *longHorizonTaskMemory) bool {
@@ -330,86 +321,11 @@ func memoryKind(memory *longHorizonTaskMemory) string {
 }
 
 func looksLikeDurablePlanApprovalPrompt(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	if normalized == "" {
-		return false
-	}
-	if containsAny(normalized, "don't", "do not", "not yet", "hold off", "wait", "without performing", "without applying") {
-		return false
-	}
-	return containsAny(normalized,
-		"implement this plan",
-		"implement the plan",
-		"approve this plan",
-		"approved, implement",
-		"build this plan",
-		"apply this plan",
-		"apply the plan",
-		"proceed with this plan",
-		"go ahead with the plan",
-		"perform the refactor",
-		"perform this refactor",
-		"perform that refactor",
-		"execute the refactor",
-		"execute this refactor",
-		"execute that refactor",
-		"apply the refactor",
-		"apply this refactor",
-		"apply that refactor",
-		"do the refactor",
-		"start the refactor",
-		"begin the refactor",
-		"commence the refactor",
-		"perform the approved plan",
-		"execute the approved plan",
-		"build the approved plan",
-	)
+	return frontier.LooksLikeDurablePlanApprovalPrompt(prompt)
 }
 
 func looksLikeTerseDurablePlanApprovalPrompt(prompt string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(prompt))
-	normalized = strings.ReplaceAll(normalized, "’", "'")
-	normalized = strings.Trim(normalized, " \t\r\n.!?")
-	if normalized == "" {
-		return false
-	}
-	switch normalized {
-	case "do it",
-		"please do it",
-		"go ahead",
-		"please go ahead",
-		"proceed",
-		"please proceed",
-		"start",
-		"please start",
-		"begin",
-		"please begin",
-		"commence",
-		"please commence",
-		"let's commence",
-		"lets commence",
-		"build it",
-		"please build it",
-		"perform it",
-		"yes",
-		"yes please",
-		"approved",
-		"looks good",
-		"ship it":
-		return true
-	default:
-		return containsAny(normalized,
-			"let's do it",
-			"lets do it",
-			"let us do it",
-			"please begin",
-			"please start",
-			"please proceed",
-			"please go ahead",
-			"go ahead",
-			"ship it",
-		) && !containsAny(normalized, "don't", "do not", "not yet", "hold off", "wait")
-	}
+	return frontier.LooksLikeTerseDurablePlanApprovalPrompt(prompt)
 }
 
 func (m *Model) resumeStructuralRefactorAsync(userPrompt string) {
@@ -838,19 +754,7 @@ func durablePlanPrimaryTargets(prompt string, summary string, fallbackTargets []
 }
 
 func explicitDurablePlanTargets(summary string) []string {
-	if strings.TrimSpace(summary) == "" {
-		return nil
-	}
-	targets := make([]string, 0, 2)
-	for _, line := range strings.Split(summary, "\n") {
-		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
-		lower := strings.ToLower(trimmed)
-		if !strings.HasPrefix(lower, "target:") && !strings.HasPrefix(lower, "target file:") && !strings.HasPrefix(lower, "target files:") {
-			continue
-		}
-		targets = append(targets, promptMentionedWorkspacePaths(trimmed)...)
-	}
-	return uniqueLimitedStrings(targets, 4)
+	return frontier.ExplicitDurablePlanTargets(summary)
 }
 
 func shouldPersistDurablePlanArtifact(prompt string, lane analysisLane) bool {
@@ -858,7 +762,7 @@ func shouldPersistDurablePlanArtifact(prompt string, lane analysisLane) bool {
 		return false
 	}
 	profile := buildPromptRouteProfile(prompt)
-	return profile.wantsPlanOnly
+	return profile.WantsPlanOnly
 }
 
 func renderDurablePlanArtifact(prompt string, lane analysisLane, summary string, evidencePaths []string, nextAction string) string {
@@ -955,68 +859,11 @@ func buildDurablePlanArtifact(prompt string, lane analysisLane, summary string, 
 }
 
 func durablePlanReadOnlyEvidence(evidencePaths []string, editable []string) []string {
-	editableSet := make(map[string]struct{}, len(editable))
-	for _, path := range editable {
-		if normalized := normalizeGuardedPath(path); normalized != "" {
-			editableSet[normalized] = struct{}{}
-		}
-	}
-	var evidence []string
-	for _, path := range evidencePaths {
-		path = normalizeGuardedPath(path)
-		if path == "" {
-			continue
-		}
-		if _, ok := editableSet[path]; ok {
-			continue
-		}
-		evidence = append(evidence, path)
-	}
-	return uniqueLimitedStrings(evidence, 16)
+	return frontier.DurablePlanReadOnlyEvidence(evidencePaths, editable)
 }
 
 func durablePlanCandidateDestinations(summary string, editable []string, evidence []string) []string {
-	blocked := make(map[string]struct{}, len(editable)+len(evidence))
-	for _, path := range append(append([]string(nil), editable...), evidence...) {
-		if normalized := normalizeGuardedPath(path); normalized != "" {
-			blocked[normalized] = struct{}{}
-		}
-	}
-	destinations := make([]string, 0, 4)
-	addPaths := func(text string) {
-		for _, path := range promptMentionedWorkspacePaths(text) {
-			path = normalizeGuardedPath(path)
-			if path == "" {
-				continue
-			}
-			if _, ok := blocked[path]; ok {
-				continue
-			}
-			destinations = append(destinations, path)
-		}
-	}
-	for _, line := range strings.Split(summary, "\n") {
-		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
-		if trimmed == "" {
-			continue
-		}
-		lower := strings.ToLower(trimmed)
-		for _, prefix := range []string{"allowed destinations:", "plan-approved new destinations:", "new destinations:"} {
-			if strings.HasPrefix(lower, prefix) {
-				_, tail, _ := strings.Cut(trimmed, ":")
-				addPaths(tail)
-				continue
-			}
-		}
-		if idx := strings.Index(lower, " into "); idx >= 0 && containsAny(lower[:idx], "split", "extract", "move", "separate") {
-			addPaths(trimmed[idx+len(" into "):])
-			continue
-		}
-		if containsAny(lower, "create new file", "add new file", "new helper file", "new destination file") {
-			addPaths(trimmed)
-		}
-	}
-	return uniqueLimitedStrings(destinations, 8)
+	return frontier.DurablePlanCandidateDestinations(summary, editable, evidence)
 }
 
 func durablePlanExitInstruction(nextAction string) string {
@@ -1027,23 +874,7 @@ func durablePlanExitInstruction(nextAction string) string {
 }
 
 func durablePlanAllowedDestinations(summary string) []string {
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return nil
-	}
-	if artifact, ok := parseDurablePlanArtifact(summary); ok {
-		return uniqueLimitedStrings(artifact.ApprovalScope.AllowedDestinations, 8)
-	}
-	for _, line := range strings.Split(summary, "\n") {
-		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
-		lower := strings.ToLower(trimmed)
-		if !strings.HasPrefix(lower, "allowed destinations:") && !strings.HasPrefix(lower, "plan-approved new destinations:") {
-			continue
-		}
-		_, tail, _ := strings.Cut(trimmed, ":")
-		return uniqueLimitedStrings(promptMentionedWorkspacePaths(tail), 8)
-	}
-	return nil
+	return frontier.DurablePlanAllowedDestinations(summary)
 }
 
 func parseDurablePlanArtifact(summary string) (durablePlanArtifact, bool) {

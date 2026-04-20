@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -30,6 +31,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	var logsDir string
 	var jsonOut bool
 	var suiteOnly bool
+	var runLive bool
+	var runnerCommand string
+	var generatedLogsDir string
+	var writeFailingScenarios string
 
 	fs := flag.NewFlagSet("qwen-swe-eval", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -37,6 +42,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&logsDir, "logs", "", "directory containing one <task-id>.jsonl log per suite task")
 	fs.BoolVar(&jsonOut, "json", false, "emit JSON instead of human-readable text")
 	fs.BoolVar(&suiteOnly, "suite-only", false, "validate suite coverage and lint without loading task logs")
+	fs.BoolVar(&runLive, "run-live", false, "run each suite task through a live command before scoring")
+	fs.StringVar(&runnerCommand, "runner-command", "", "shell command used by -run-live; supports {prompt}, {task_id}, {log_path}, and {fixture}")
+	fs.StringVar(&generatedLogsDir, "generated-logs", "", "directory where -run-live should write generated task logs")
+	fs.StringVar(&writeFailingScenarios, "write-failing-scenarios", "", "write a SWE suite skeleton for failed task logs")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -62,11 +71,27 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	liveLogPaths := map[string]string(nil)
+	if runLive {
+		liveLogsDir := firstNonEmpty(generatedLogsDir, logsDir, filepath.Join(filepath.Dir(suitePath), "generated-logs"))
+		var err error
+		liveLogPaths, err = runLiveSuiteTasks(suite, suitePath, liveLogsDir, runnerCommand, stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		logsDir = liveLogsDir
+	}
 	recordsByTask := make(map[string][]eval.Record, len(suite.Tasks))
 	logPaths := make(map[string]string, len(suite.Tasks))
 	loadErrors := make(map[string]error)
 	for _, task := range suite.Tasks {
 		logPath := taskLogPath(suitePath, logsDir, task)
+		if liveLogPaths != nil {
+			if generated := strings.TrimSpace(liveLogPaths[task.ID]); generated != "" {
+				logPath = generated
+			}
+		}
 		logPaths[task.ID] = logPath
 		if strings.TrimSpace(logPath) == "" {
 			continue
@@ -80,11 +105,131 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	report := eval.EvaluateSWESuiteWithLoadErrors(suite, recordsByTask, logPaths, loadErrors)
+	if strings.TrimSpace(writeFailingScenarios) != "" {
+		generated := eval.BuildFailingScenarioSuite("generated regressions from "+suite.Name, suite, report, recordsByTask)
+		if err := writeSWESuite(writeFailingScenarios, generated); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	printOrEncodeReport(report, jsonOut, stdout)
 	if !report.Passed {
 		return 1
 	}
 	return 0
+}
+
+func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, commandTemplate string, stderr io.Writer) (map[string]string, error) {
+	commandTemplate = strings.TrimSpace(commandTemplate)
+	if commandTemplate == "" {
+		return nil, fmt.Errorf("-run-live requires -runner-command")
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create generated logs dir: %w", err)
+	}
+	logPaths := make(map[string]string, len(suite.Tasks))
+	for _, task := range suite.Tasks {
+		logPath := taskLogPath(suitePath, outputDir, task)
+		if strings.TrimSpace(task.LogPath) != "" {
+			logPath = filepath.Join(outputDir, strings.TrimSpace(task.ID)+".jsonl")
+		}
+		logPaths[task.ID] = logPath
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			return nil, fmt.Errorf("create log dir for %s: %w", task.ID, err)
+		}
+		fixture := taskFixturePath(suitePath, task)
+		prompt := taskPrompt(task)
+		command := renderRunnerCommand(commandTemplate, map[string]string{
+			"prompt":   prompt,
+			"task_id":  strings.TrimSpace(task.ID),
+			"log_path": logPath,
+			"fixture":  fixture,
+		})
+		cmd := exec.Command("/bin/sh", "-lc", command)
+		cmd.Dir = firstNonEmpty(fixture, filepath.Dir(suitePath))
+		cmd.Env = append(os.Environ(),
+			"QWEN_SWE_PROMPT="+prompt,
+			"QWEN_SWE_TASK_ID="+strings.TrimSpace(task.ID),
+			"QWEN_SWE_LOG="+logPath,
+			"QWEN_SWE_FIXTURE="+fixture,
+		)
+		output, err := cmd.CombinedOutput()
+		if len(output) > 0 && fileMissingOrEmpty(logPath) {
+			if writeErr := os.WriteFile(logPath, output, 0o644); writeErr != nil {
+				return nil, fmt.Errorf("write captured log for %s: %w", task.ID, writeErr)
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("run live task %s: %w: %s", task.ID, err, strings.TrimSpace(string(output)))
+		}
+		fmt.Fprintf(stderr, "generated %s\n", logPath)
+	}
+	return logPaths, nil
+}
+
+func renderRunnerCommand(template string, values map[string]string) string {
+	pairs := make([]string, 0, 8)
+	for _, key := range []string{"prompt", "task_id", "log_path", "fixture"} {
+		if value, ok := values[key]; ok {
+			pairs = append(pairs, "{"+key+"}", shellQuote(value))
+		}
+	}
+	if len(pairs) == 0 {
+		return template
+	}
+	return strings.NewReplacer(pairs...).Replace(template)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func taskPrompt(task eval.SWETask) string {
+	if strings.TrimSpace(task.Prompt) != "" {
+		return strings.TrimSpace(task.Prompt)
+	}
+	if len(task.Turns) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(task.Turns[len(task.Turns)-1])
+}
+
+func taskFixturePath(suitePath string, task eval.SWETask) string {
+	if strings.TrimSpace(task.Fixture) == "" {
+		return ""
+	}
+	if filepath.IsAbs(task.Fixture) {
+		return filepath.Clean(task.Fixture)
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(suitePath), task.Fixture))
+}
+
+func writeSWESuite(path string, suite eval.SWESuite) error {
+	data, err := json.MarshalIndent(suite, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode generated suite: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(filepath.Clean(path)), 0o755); err != nil {
+		return fmt.Errorf("create generated suite dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Clean(path), append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write generated suite: %w", err)
+	}
+	return nil
+}
+
+func fileMissingOrEmpty(path string) bool {
+	info, err := os.Stat(path)
+	return err != nil || info.Size() == 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func printOrEncodeReport(report eval.SWESuiteReport, jsonOut bool, stdout io.Writer) {
@@ -119,6 +264,7 @@ func printSuiteReport(report eval.SWESuiteReport) {
 	printCoverage(report.Coverage)
 	printLint(report.LintFindings)
 	printSummary(report.Summary)
+	printControlRailsDashboard(report.Tasks)
 	for _, task := range report.Tasks {
 		taskStatus := "PASS"
 		if !task.Passed {
@@ -170,6 +316,57 @@ func printSummary(summary eval.SWEResultSummary) {
 	printFailedBuckets("Failed negative-evidence outcomes", summary.ByNegative)
 	printFailedBuckets("Failed required tools", summary.ByTool)
 	printFailedBuckets("Failed file surfaces", summary.ByFileSurface)
+}
+
+type dashboardBucket struct {
+	total  int
+	failed int
+}
+
+func printControlRailsDashboard(tasks []eval.SWETaskReport) {
+	byFamily := make(map[string]dashboardBucket)
+	byPermission := make(map[string]dashboardBucket)
+	for _, task := range tasks {
+		if len(task.Metrics.ControlRails) == 0 {
+			continue
+		}
+		rails := task.Metrics.ControlRails[len(task.Metrics.ControlRails)-1]
+		failed := !task.Passed
+		addDashboardBucket(byFamily, firstNonEmpty(rails.TaskFamily, "<unknown>"), failed)
+		addDashboardBucket(byPermission, firstNonEmpty(rails.PermissionProfile, "<unknown>"), failed)
+	}
+	if len(byFamily) == 0 && len(byPermission) == 0 {
+		return
+	}
+	fmt.Fprintln(output, "Control rails dashboard:")
+	printDashboardBuckets("  task_family", byFamily)
+	printDashboardBuckets("  permission_profile", byPermission)
+}
+
+func addDashboardBucket(buckets map[string]dashboardBucket, key string, failed bool) {
+	bucket := buckets[key]
+	bucket.total++
+	if failed {
+		bucket.failed++
+	}
+	buckets[key] = bucket
+}
+
+func printDashboardBuckets(label string, buckets map[string]dashboardBucket) {
+	if len(buckets) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(buckets))
+	for key := range buckets {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		bucket := buckets[key]
+		parts = append(parts, fmt.Sprintf("%s=%d/%d failed", key, bucket.failed, bucket.total))
+	}
+	fmt.Fprintf(output, "%s: %s\n", label, strings.Join(parts, ", "))
 }
 
 func printFailedBuckets(label string, buckets map[string]eval.SWEResultBucket) {

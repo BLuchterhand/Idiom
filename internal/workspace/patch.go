@@ -17,11 +17,11 @@ const (
 )
 
 type PatchOp struct {
-	Kind     PatchOpKind
-	Path     string
-	MoveTo   string
-	NewBody  string
-	Hunks    []PatchHunk
+	Kind    PatchOpKind
+	Path    string
+	MoveTo  string
+	NewBody string
+	Hunks   []PatchHunk
 }
 
 type PatchHunk struct {

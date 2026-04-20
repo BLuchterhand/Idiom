@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"os"
 	"path/filepath"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/semantic"
 	"qwen-bubbles/internal/workspace"
 	"regexp"
@@ -20,52 +21,15 @@ type taskFileStamp struct {
 }
 
 func symbolMatchFromGoSymbol(file *semantic.GoFile, symbol semantic.GoSymbol, score int) semantic.SymbolMatch {
-	pkg := ""
-	path := symbol.SourceFile
-	if file != nil {
-		pkg = file.Package
-		if path == "" {
-			path = file.Path
-		}
-	}
-	return semantic.SymbolMatch{
-		Path:      path,
-		Package:   pkg,
-		Name:      symbol.Name,
-		Kind:      symbol.Kind,
-		Receiver:  symbol.Receiver,
-		Line:      symbol.Line,
-		Column:    symbol.Column,
-		StartLine: symbol.StartLine,
-		EndLine:   symbol.EndLine,
-		Score:     score,
-	}
+	return frontier.SymbolMatchFromGoSymbol(file, symbol, score)
 }
 
 func looksLikeWorkspacePathToken(candidate string) bool {
-	if candidate == "" || strings.Contains(candidate, "://") || strings.HasPrefix(candidate, "/") {
-		return false
-	}
-	if strings.ContainsAny(candidate, "*?") {
-		return false
-	}
-	if strings.Contains(candidate, "/") {
-		return strings.Contains(candidate, ".")
-	}
-	switch candidate {
-	case "README.md", "go.mod", "go.sum", "config.json", "Makefile":
-		return true
-	}
-	return hasWorkspaceFileExtension(candidate)
+	return frontier.LooksLikeWorkspacePathToken(candidate)
 }
 
 func hasWorkspaceFileExtension(candidate string) bool {
-	switch filepath.Ext(candidate) {
-	case ".go", ".md", ".json", ".yaml", ".yml", ".toml", ".txt":
-		return true
-	default:
-		return false
-	}
+	return frontier.HasWorkspaceFileExtension(candidate)
 }
 
 type locateOutcome struct {
@@ -83,26 +47,7 @@ func marshalToolRequest(req workspace.ToolRequest) string {
 }
 
 func primaryLocateLiteral(prompt string) string {
-	for _, fragment := range quotedPromptFragments(prompt) {
-		trimmed := strings.TrimSpace(fragment)
-		if trimmed == "" || looksLikeWorkspacePathToken(trimmed) {
-			continue
-		}
-		return trimmed
-	}
-
-	lower := strings.ToLower(prompt)
-	for _, marker := range []string{"shows ", "showing ", "says ", "text ", "label "} {
-		idx := strings.Index(lower, marker)
-		if idx < 0 {
-			continue
-		}
-		candidate := trimLocateLiteralTail(prompt[idx+len(marker):])
-		if candidate != "" {
-			return candidate
-		}
-	}
-	return ""
+	return frontier.PrimaryLocateLiteral(prompt)
 }
 
 func locateLiteralSearchPattern(literal string) string {
@@ -110,129 +55,27 @@ func locateLiteralSearchPattern(literal string) string {
 }
 
 func trimLocateLiteralTail(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	stopWords := map[string]struct{}{
-		"and":    {},
-		"but":    {},
-		"please": {},
-		"so":     {},
-		"that":   {},
-		"which":  {},
-	}
-	parts := make([]string, 0, 4)
-	for _, field := range strings.Fields(trimmed) {
-		word := strings.Trim(field, "`'\"()[]{}<>,:;!?")
-		if word == "" {
-			continue
-		}
-		if _, stop := stopWords[strings.ToLower(word)]; stop {
-			break
-		}
-		parts = append(parts, word)
-		if len(parts) >= 4 {
-			break
-		}
-	}
-	return strings.TrimSpace(strings.Join(parts, " "))
+	return frontier.TrimLocateLiteralTail(text)
 }
 
 func locateSearchScopes(prompt string) []string {
-	normalized := strings.ToLower(prompt)
-	scopes := make([]string, 0, 5)
-	seen := make(map[string]struct{})
-	add := func(scope string) {
-		scope = strings.TrimSpace(scope)
-		if scope == "" {
-			return
-		}
-		if _, ok := seen[scope]; ok {
-			return
-		}
-		seen[scope] = struct{}{}
-		scopes = append(scopes, scope)
-	}
-
-	if containsAny(normalized, "bubbletea", "window", "header", "footer", "badge", "chat", "menu", "status", "banner") {
-		add("internal/app")
-	}
-	for _, path := range promptMentionedWorkspacePaths(prompt) {
-		add(path)
-	}
-	add("internal")
-	add(".")
-	return scopes
+	return frontier.LocateSearchScopes(prompt)
 }
 
 func looksLikeLocateMetaPath(path string) bool {
-	path = strings.ToLower(strings.TrimSpace(path))
-	return strings.HasSuffix(path, "_test.go") ||
-		strings.Contains(path, "/logs/") ||
-		strings.Contains(path, "/transcripts/") ||
-		strings.Contains(path, "/.git/")
+	return frontier.LooksLikeLocateMetaPath(path)
 }
 
 func looksLikeLocateMetaMatch(match string) bool {
-	text := strings.ToLower(strings.TrimSpace(match))
-	if containsAny(text, "workingframe", "func (m *model) workingdots", "strings.repeat") {
-		return true
-	}
-	if strings.Contains(text, "workingstyle :=") && !strings.Contains(text, "qwen is working") {
-		return true
-	}
-	return containsAny(
-		text,
-		"containsany(text",
-		"strings.contains(text",
-		"classifylocateregion",
-		"scorelocatecandidate",
-		"renderlocatesummary",
-		"locatecandidate",
-		"score +=",
-		"separate similar match",
-		"the top-of-window",
-	)
+	return frontier.LooksLikeLocateMetaMatch(match)
 }
 
 func classifyLocateRegion(candidate locateCandidate) string {
-	text := strings.ToLower(candidate.Path + "\n" + candidate.Match + "\n" + candidate.Snippet)
-	switch {
-	case containsAny(text, "header +=", "header :=", "workingstyle.render", "titlestyle.render", "serverstate :="):
-		return "header"
-	case containsAny(text, "footer :=", "footer +=", "helpstyle.render", "context:", "workspace:"):
-		return "footer"
-	case containsAny(text, "case \"assistant\"", "assistantstyle.render", "msg.role", "label = assistantstyle.render(\"qwen\")", "content = m.spinner.view()"):
-		return "chat"
-	case containsAny(text, "m.status =", "response complete.", "saving transcript.", "server ready on"):
-		return "status"
-	default:
-		return ""
-	}
+	return frontier.ClassifyLocateRegion(candidate)
 }
 
 func selectLocateAlternates(candidates []locateCandidate) []locateCandidate {
-	if len(candidates) <= 1 {
-		return nil
-	}
-	alternates := make([]locateCandidate, 0, 2)
-	seenRegions := make(map[string]struct{})
-	bestRegion := candidates[0].Region
-	for _, candidate := range candidates[1:] {
-		if len(alternates) >= 2 {
-			break
-		}
-		if candidate.Region == "" || candidate.Region == bestRegion {
-			continue
-		}
-		if _, ok := seenRegions[candidate.Region]; ok {
-			continue
-		}
-		seenRegions[candidate.Region] = struct{}{}
-		alternates = append(alternates, candidate)
-	}
-	return alternates
+	return frontier.SelectLocateAlternates(candidates)
 }
 
 func firstSearchMatchLine(output string, path string) (int, bool) {
@@ -342,15 +185,31 @@ func writeToolResultChanged(req workspace.ToolRequest, result workspace.ToolResu
 	if result.Error != "" {
 		return false
 	}
-	switch req.Tool {
-	case "edit_file", "write_file", "append_file", "mkdir", "go_move_declarations":
-	default:
+	if !workspace.IsWorkspaceWriteTool(req.Tool) {
 		return false
 	}
-	if strings.TrimSpace(req.Path) == "" && strings.TrimSpace(req.Destination) == "" {
+	if len(pathsFromWriteRequest(req)) == 0 {
 		return false
 	}
 	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(result.Summary)), "no-op")
+}
+
+func pathsFromWriteRequest(req workspace.ToolRequest) []string {
+	var paths []string
+	switch strings.TrimSpace(req.Tool) {
+	case "apply_patch":
+		ops, err := workspace.ParsePatch(req.Content)
+		if err != nil {
+			return nil
+		}
+		paths = append(paths, workspace.PatchOpPaths(ops)...)
+	default:
+		paths = append(paths, strings.TrimSpace(req.Path), strings.TrimSpace(req.Destination))
+		for _, move := range req.Moves {
+			paths = append(paths, strings.TrimSpace(move.Destination))
+		}
+	}
+	return uniqueNonEmptyStrings(paths)
 }
 
 func prefixedCriticFindings(prefix string, findings []string) []string {
@@ -467,70 +326,23 @@ func cleanReadWindowSnippet(output string) string {
 }
 
 func structuredReasonLooksStructural(reason string, strategyHints []string) bool {
-	reason = strings.ToLower(strings.TrimSpace(reason))
-	if reason == "" {
-		return false
-	}
-	if containsAny(
-		reason,
-		"structur",
-		"boundary",
-		"boundaries",
-		"responsibilit",
-		"split",
-		"extract",
-		"separate",
-		"move",
-		"adapter",
-		"interface",
-		"ownership",
-		"coupling",
-		"orchestration",
-	) {
-		return true
-	}
-	for _, hint := range strategyHints {
-		for _, token := range strings.Fields(strings.ToLower(hint)) {
-			token = strings.Trim(token, "`'\"()[]{}<>,:;!?|")
-			if len(token) < 6 {
-				continue
-			}
-			if strings.Contains(reason, token) {
-				return true
-			}
-		}
-	}
-	return false
+	return frontier.StructuredReasonLooksStructural(reason, strategyHints)
 }
 
 func structuralPlanAllowsMultiFileStage(packet implementationTargetPacket, plan structuredExecutionPlan) bool {
-	if !implementationTargetPacketNeedsStructuralPolicy(packet) {
-		return true
-	}
-	if !structuralHintsAllowMultiFileStage(packet.StrategyHints) {
-		return false
-	}
+	reasons := make([]string, 0, len(plan.Operations))
 	for _, op := range plan.Operations {
-		if !structuredReasonAllowsMultiFileStage(op.Reason) {
-			return false
-		}
+		reasons = append(reasons, op.Reason)
 	}
-	return true
+	return frontier.StructuralPlanAllowsMultiFileStage(implementationTargetPacketNeedsStructuralPolicy(packet), packet.StrategyHints, reasons)
 }
 
 func structuralHintsAllowMultiFileStage(hints []string) bool {
-	for _, hint := range hints {
-		normalized := strings.ToLower(hint)
-		if containsAny(normalized, "interface", "adapter", "move ", "moving ", "extract ", "extraction", "cross-file", "across files", "between files") {
-			return true
-		}
-	}
-	return false
+	return frontier.StructuralHintsAllowMultiFileStage(hints)
 }
 
 func structuredReasonAllowsMultiFileStage(reason string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(reason))
-	return containsAny(normalized, "interface", "adapter", "move ", "moving ", "extract ", "extraction", "cross-file", "across files", "boundary")
+	return frontier.StructuredReasonAllowsMultiFileStage(reason)
 }
 
 func preflightResolvePath(mgr *workspace.Manager, path string, workdir string) (string, error) {
@@ -586,27 +398,7 @@ func toolActionForStructuredPlan(req workspace.ToolRequest) string {
 }
 
 func enclosingSymbolAtLine(file *semantic.GoFile, line int) (semantic.GoSymbol, bool) {
-	if file == nil || line <= 0 {
-		return semantic.GoSymbol{}, false
-	}
-	var best semantic.GoSymbol
-	bestSpan := 1 << 30
-	found := false
-	for _, symbol := range file.Symbols {
-		if symbol.StartLine <= 0 || symbol.EndLine <= 0 {
-			continue
-		}
-		if line < symbol.StartLine || line > symbol.EndLine {
-			continue
-		}
-		span := symbol.EndLine - symbol.StartLine
-		if !found || span < bestSpan {
-			best = symbol
-			bestSpan = span
-			found = true
-		}
-	}
-	return best, found
+	return frontier.EnclosingSymbolAtLine(file, line)
 }
 
 func limitedRelatedFiles(idx *semantic.GoIndex, path string, prompt string, limit int) []string {
@@ -660,31 +452,11 @@ func limitedResultLines(output string, limit int) []string {
 }
 
 func uniqueNonEmptyStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
+	return frontier.UniqueNonEmptyStrings(values)
 }
 
 func requestsShellOnlyMutation(normalized string) bool {
-	return containsAny(
-		normalized,
-		"shell commands only",
-		"using shell commands only",
-		"use shell commands only",
-		"via shell only",
-		"through shell only",
-	)
+	return frontier.RequestsShellOnlyMutation(normalized)
 }
 
 type searchMatch struct {
@@ -1016,40 +788,7 @@ func sortedStringMapKeys(values map[string]string) []string {
 }
 
 func uniqueLimitedStrings(values []string, limit int) []string {
-	if limit == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	unique := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		unique = append(unique, value)
-		if limit > 0 && len(unique) >= limit {
-			break
-		}
-	}
-	return unique
-}
-
-type effortPolicySnapshot struct {
-	Lane                 string `json:"lane,omitempty"`
-	Level                string `json:"level,omitempty"`
-	MaxToolSteps         int    `json:"max_tool_steps,omitempty"`
-	AnalysisToolBudget   int    `json:"analysis_tool_budget,omitempty"`
-	ImplementToolBudget  int    `json:"implement_tool_budget,omitempty"`
-	DeepeningPasses      int    `json:"deepening_passes,omitempty"`
-	TimeBudgetSeconds    int    `json:"time_budget_seconds,omitempty"`
-	MaxOutputTokens      int    `json:"max_output_tokens,omitempty"`
-	ReasoningBudget      int    `json:"reasoning_budget,omitempty"`
-	ConfidenceFloor      string `json:"confidence_floor,omitempty"`
-	BudgetExhaustionMode string `json:"budget_exhaustion_mode,omitempty"`
+	return frontier.LimitStrings(values, limit)
 }
 
 type claimConfidenceSnapshot struct {
@@ -1080,62 +819,23 @@ type toolFailureConfidenceSnapshot struct {
 }
 
 func buildEffortPolicySnapshot(plan promptExecutionPlan, maxToolSteps int, timeoutSeconds int, maxOutputTokens int, reasoningBudget int) effortPolicySnapshot {
-	level := effortLevelForPlan(plan)
-	policy := effortPolicySnapshot{
-		Lane:                 string(plan.lane),
-		Level:                level,
-		MaxToolSteps:         maxToolSteps,
-		TimeBudgetSeconds:    timeoutSeconds,
-		MaxOutputTokens:      maxOutputTokens,
-		ReasoningBudget:      reasoningBudget,
-		ConfidenceFloor:      confidenceFloorForEffort(level),
-		BudgetExhaustionMode: "answer_with_explicit_uncertainty_or_fallback",
+	return frontier.BuildEffortPolicySnapshot(toFrontierEffortPlan(plan), maxToolSteps, timeoutSeconds, maxOutputTokens, reasoningBudget)
+}
+
+func toFrontierEffortPlan(plan promptExecutionPlan) frontier.EffortPlan {
+	return frontier.EffortPlan{
+		Lane:         plan.lane,
+		FollowupLane: plan.followupLane,
+		Thoroughness: string(plan.thoroughness),
 	}
-	switch plan.lane {
-	case analysisLaneExplore, analysisLaneReview, analysisLaneArchitecture:
-		policy.AnalysisToolBudget = exploreToolBudget(maxToolSteps)
-		policy.DeepeningPasses = 2
-	case analysisLaneImplement:
-		policy.ImplementToolBudget = implementToolBudget(maxToolSteps)
-	case analysisLaneLocate:
-		policy.AnalysisToolBudget = exploreToolBudget(maxToolSteps)
-		if plan.followupLane == analysisLaneImplement {
-			policy.ImplementToolBudget = implementToolBudget(maxToolSteps)
-		}
-	default:
-		policy.AnalysisToolBudget = maxToolSteps
-	}
-	if plan.followupLane == analysisLaneImplement && policy.ImplementToolBudget == 0 {
-		policy.ImplementToolBudget = implementToolBudget(maxToolSteps)
-	}
-	return policy
 }
 
 func effortLevelForPlan(plan promptExecutionPlan) string {
-	if plan.thoroughness != "" {
-		return string(plan.thoroughness)
-	}
-	switch plan.lane {
-	case analysisLaneImplement:
-		return "bounded"
-	case analysisLaneMain:
-		return "standard"
-	default:
-		return "medium"
-	}
+	return frontier.EffortLevelForPlan(toFrontierEffortPlan(plan))
 }
 
 func confidenceFloorForEffort(level string) string {
-	switch strings.ToLower(strings.TrimSpace(level)) {
-	case "quick":
-		return "low_with_explicit_uncertainty"
-	case "thorough":
-		return "high_or_exhausted_budget"
-	case "bounded":
-		return "verified_or_failed"
-	default:
-		return "medium"
-	}
+	return frontier.ConfidenceFloorForEffort(level)
 }
 
 func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
@@ -1153,53 +853,15 @@ func cloneBoolPtr(v *bool) *bool {
 }
 
 func defaultExecutionPlanSummary(plan promptExecutionPlan) string {
-	switch plan.lane {
-	case analysisLaneReview:
-		if routeContinuesToImplement(plan) {
-			return "Reviewing bounded evidence before the implementation pass."
-		}
-		return "Reviewing bounded evidence and ranking likely findings."
-	case analysisLaneArchitecture:
-		if routeContinuesToImplement(plan) {
-			return "Mapping structural boundaries before the implementation pass."
-		}
-		return "Mapping structural boundaries and ranking architecture hotspots."
-	case analysisLaneExplore:
-		if routeContinuesToImplement(plan) {
-			return "Exploring the repository before the implementation pass."
-		}
-		return "Exploring the repository and gathering focused context."
-	case analysisLaneLocate:
-		return "Locating the exact code path before applying the requested edit."
-	case analysisLaneImplement:
-		return "Preparing a bounded implementation plan against the targeted files."
-	default:
-		return "Waiting for the response."
-	}
+	return frontier.DefaultExecutionPlanSummary(toFrontierEffortPlan(plan))
 }
 
 func hasUILocationHint(normalized string) bool {
-	return containsAny(
-		normalized,
-		"top",
-		"header",
-		"footer",
-		"badge",
-		"window",
-		"chat",
-		"menu",
-		"status",
-		"banner",
-	)
+	return frontier.HasUILocationHint(normalized)
 }
 
 func containsAny(text string, needles ...string) bool {
-	for _, needle := range needles {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
+	return frontier.ContainsAny(text, needles...)
 }
 
 func maxInt(a, b int) int {
