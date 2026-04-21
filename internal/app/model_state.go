@@ -2,25 +2,24 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"os/exec"
-	"path/filepath"
+
 	"qwen-bubbles/internal/agent"
 	"qwen-bubbles/internal/config"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/promptstack"
 	"qwen-bubbles/internal/transcript"
 	"qwen-bubbles/internal/workspace"
-	"slices"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
 type Model struct {
@@ -56,8 +55,6 @@ type Model struct {
 	lastAssistantReasoningContent string
 	agentModeName                 string
 	traceMode                     traceDisplayMode
-	compactTrace                  compactTraceState
-	panelVisible                  bool
 
 	workspaceOverviewInjected bool
 
@@ -89,11 +86,6 @@ type toolTraceMsg struct {
 	text string
 }
 
-type rollbackCompleteMsg struct {
-	summary string
-	err     error
-}
-
 type traceDisplayMode string
 
 const (
@@ -101,28 +93,9 @@ const (
 	traceDisplayDetail  traceDisplayMode = "detail"
 )
 
-type compactTraceState struct {
-	HiddenCount int
-	LastEvent   string
-}
-
-type phaseDisplayState string
-
-const (
-	phaseStateActive  phaseDisplayState = "active"
-	phaseStateDone    phaseDisplayState = "done"
-	phaseStateBlocked phaseDisplayState = "blocked"
-	phaseStateFailed  phaseDisplayState = "failed"
-)
-
 func (m *Model) Close() {
 	if m.debugLogger != nil {
 		_ = m.debugLogger.Close()
-	}
-	if m.managedRouteClassifier && m.classifierController != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = m.classifierController.Stop(ctx)
 	}
 	if !m.managedServer {
 		return
@@ -198,38 +171,12 @@ func (m *Model) handleSlashCommand(raw string) bool {
 	case "/quit", "/exit":
 		return true
 	case "/help":
-		m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /panel [show|hide|toggle] /mode [normal|explore [quick|medium|thorough]] /agent [auto|plan|build|review|explore] /workflow [list|name] /writes [guarded|auto] /approve writes /deny writes /undo /resume [refactor|task] /replan /help | transcript: PgUp/PgDn or mouse wheel"
+		m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /help | transcript: PgUp/PgDn or mouse wheel"
 	case "/clear":
 		m.messages = nil
 		m.status = "Cleared chat."
 	case "/save":
 		m.saveTranscriptAsync()
-	case "/undo", "/rollback":
-		if m.lastJournal == nil {
-			m.status = "No rollback journal is available for the last bounded change."
-			return false
-		}
-		m.rollbackLastJournalAsync()
-	case "/resume":
-		if len(fields) > 2 || (len(fields) == 2 && fields[1] != "refactor" && fields[1] != "task") {
-			m.status = "Usage: /resume [refactor|task]"
-			return false
-		}
-		if len(fields) == 2 && fields[1] == "task" {
-			m.resumeTaskMemoryAsync("")
-		} else if len(fields) == 2 && fields[1] == "refactor" {
-			m.resumeStructuralRefactorAsync("")
-		} else if m.canResumeStructuralRefactor() {
-			m.resumeStructuralRefactorAsync("")
-		} else {
-			m.resumeTaskMemoryAsync("")
-		}
-	case "/replan":
-		if len(fields) != 1 {
-			m.status = "Usage: /replan"
-			return false
-		}
-		m.runRecommendedReplanAsync()
 	case "/context":
 		m.status = "Active context: " + m.contextSummary()
 	case "/workspace":
@@ -274,139 +221,23 @@ func (m *Model) handleSlashCommand(raw string) bool {
 		default:
 			m.status = "Usage: /trace [compact|detail]"
 		}
-	case "/panel":
-		switch {
-		case len(fields) == 1:
-			m.status = "Execution panel is " + m.panelSummary() + "."
-		case len(fields) == 2:
-			switch fields[1] {
-			case "show":
-				m.panelVisible = true
-				m.status = "Execution panel expanded."
-				m.resize()
-			case "hide":
-				m.panelVisible = false
-				m.status = "Execution panel collapsed."
-				m.resize()
-			case "toggle":
-				m.panelVisible = !m.panelVisible
-				if m.panelVisible {
-					m.status = "Execution panel expanded."
-				} else {
-					m.status = "Execution panel collapsed."
-				}
-				m.resize()
-			default:
-				m.status = "Usage: /panel [show|hide|toggle]"
-			}
-		default:
-			m.status = "Usage: /panel [show|hide|toggle]"
-		}
 	case "/mode":
 		switch {
 		case len(fields) == 1:
 			m.status = "Current mode: " + m.modeSummary()
-		case len(fields) >= 2:
-			switch fields[1] {
-			case string(workspace.ModeNormal):
-				if len(fields) != 2 {
-					m.status = "Usage: /mode normal"
-					return false
-				}
-				if err := m.workspace.SetMode(workspace.ModeNormal); err != nil {
-					m.setRuntimeError("Mode change failed: " + err.Error())
-					return false
-				}
-				m.clearRuntimeError()
-				m.logPromptContext()
-				m.status = "Mode set to normal."
-			case string(workspace.ModeExplore):
-				level := m.workspace.ExploreThoroughness()
-				if len(fields) == 3 {
-					level = workspace.ExploreThoroughness(fields[2])
-				} else if len(fields) > 3 {
-					m.status = "Usage: /mode explore [quick|medium|thorough]"
-					return false
-				}
-				if err := m.workspace.SetExploreThoroughness(level); err != nil {
-					m.status = "Usage: /mode explore [quick|medium|thorough]"
-					return false
-				}
-				if err := m.workspace.SetMode(workspace.ModeExplore); err != nil {
-					m.setRuntimeError("Mode change failed: " + err.Error())
-					return false
-				}
-				m.clearRuntimeError()
-				m.logPromptContext()
-				m.status = "Mode set to " + m.modeSummary() + "."
-			default:
-				m.status = "Usage: /mode [normal|explore [quick|medium|thorough]]"
-			}
-		}
-	case "/agent":
-		switch {
-		case len(fields) == 1:
-			m.status = "Current agent mode: " + string(m.currentAgentDecisionMode()) + "."
 		case len(fields) == 2:
-			mode, err := normalizeAgentDecisionMode(fields[1])
-			if err != nil {
-				m.status = "Usage: /agent [auto|plan|build|review|explore]"
+			name := strings.ToLower(strings.TrimSpace(fields[1]))
+			mode, ok := agent.ModeByName(name)
+			if !ok {
+				m.status = "Usage: /mode [build|plan|general]"
 				return false
 			}
-			m.agentMode = mode
-			m.logPromptContext()
-			m.status = "Agent mode set to " + string(mode) + "."
+			m.agentModeName = mode.Name
+			m.applyModePermissions(mode)
+			m.status = "Agent mode set to " + mode.Name + "."
 		default:
-			m.status = "Usage: /agent [auto|plan|build|review|explore]"
+			m.status = "Usage: /mode [build|plan|general]"
 		}
-	case "/writes":
-		switch {
-		case len(fields) == 1:
-			m.status = "Current write policy: " + m.writeSummary()
-		case len(fields) == 2:
-			policy := workspace.WritePolicy(fields[1])
-			if err := m.workspace.SetWritePolicy(policy); err != nil {
-				m.status = "Usage: /writes [guarded|auto]"
-				return false
-			}
-			if policy == workspace.WritePolicyAuto {
-				m.pendingWrite = nil
-			}
-			m.logPromptContext()
-			m.status = "Write policy set to " + m.writeSummary() + "."
-		default:
-			m.status = "Usage: /writes [guarded|auto]"
-		}
-	case "/approve":
-		if len(fields) != 2 || fields[1] != "writes" {
-			m.status = "Usage: /approve writes"
-			return false
-		}
-		if m.pendingWrite == nil {
-			m.status = "There is no pending guarded write approval."
-			return false
-		}
-		if m.streaming {
-			m.status = "Wait for the current response to finish before approving writes."
-			return false
-		}
-		proposal := *m.pendingWrite
-		m.pendingWrite = nil
-		m.resumeApprovedWriteAsync(proposal)
-	case "/deny":
-		if len(fields) != 2 || fields[1] != "writes" {
-			m.status = "Usage: /deny writes"
-			return false
-		}
-		if m.pendingWrite == nil {
-			m.status = "There is no pending guarded write approval."
-			return false
-		}
-		denied := *m.pendingWrite
-		m.pendingWrite = nil
-		m.status = "Cleared the pending guarded write approval."
-		m.messages = append(m.messages, llama.ChatMessage{Role: "tool", Content: "Write approval denied for: " + strings.Join(denied.Paths, ", ")})
-		m.logMessage("tool", "Write approval denied for: "+strings.Join(denied.Paths, ", "))
 	case "/system":
 		prompt := strings.TrimSpace(strings.TrimPrefix(raw, "/system"))
 		switch {
@@ -603,184 +434,6 @@ func (m *Model) restartServerAsync() {
 	}()
 }
 
-func (m *Model) rollbackLastJournalAsync() {
-	journal := m.lastJournal
-	if journal == nil {
-		m.status = "No rollback journal is available for the last bounded change."
-		return
-	}
-	m.clearRuntimeError()
-	m.setPhaseCard(analysisLaneImplement, "rollback", phaseStateActive, "Restoring the last bounded change and rerunning verification.")
-	m.status = "Rolling back the last bounded change."
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.Chat.RequestTimeoutSeconds)*time.Second)
-		defer cancel()
-
-		rollbackWorkspace := m.newWorkspaceManager()
-		if err := applyExecutionRollback(rollbackWorkspace, journal); err != nil {
-			m.events <- rollbackCompleteMsg{err: err}
-			return
-		}
-		verify := m.runImplementationVerification(ctx, rollbackWorkspace, 1, journal.Paths...)
-		m.events <- rollbackCompleteMsg{summary: composeRollbackSummary(journal, verify)}
-	}()
-}
-
-func (m *Model) workspaceRootForState() string {
-	if m == nil || m.workspace == nil {
-		return ""
-	}
-	return filepath.Clean(m.workspace.Root())
-}
-
-func (m *Model) logLongHorizonState(action string, stage *structuralRefactorStage, reason string) {
-	if m == nil {
-		return
-	}
-	action = strings.TrimSpace(action)
-	if action == "" {
-		return
-	}
-	payload := struct {
-		Action       string   `json:"action"`
-		SourceLane   string   `json:"source_lane,omitempty"`
-		Stage        int      `json:"stage,omitempty"`
-		FocusPath    string   `json:"focus_path,omitempty"`
-		Changed      []string `json:"changed,omitempty"`
-		Remaining    []string `json:"remaining,omitempty"`
-		NextStep     string   `json:"next_step,omitempty"`
-		Verification string   `json:"verification,omitempty"`
-		Resumable    bool     `json:"resumable"`
-		Reason       string   `json:"reason,omitempty"`
-	}{
-		Action: action,
-		Reason: strings.TrimSpace(reason),
-	}
-	if stage != nil {
-		payload.SourceLane = strings.TrimSpace(stage.SourceLane)
-		payload.Stage = stage.Stage
-		payload.FocusPath = strings.TrimSpace(stage.FocusPath)
-		payload.Changed = uniqueNonEmptyStrings(stage.Changed)
-		payload.Remaining = uniqueNonEmptyStrings(stage.Remaining)
-		payload.NextStep = strings.TrimSpace(stage.NextStep)
-		payload.Verification = strings.TrimSpace(stage.Verification)
-		payload.Resumable = structuralRefactorStageResumable(stage)
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	m.logMessage("long_horizon_state", string(data))
-}
-
-func locateFallbackPatterns(prompt string, literal string) []string {
-	normalized := strings.ToLower(prompt)
-	patterns := make([]string, 0, 6)
-	add := func(pattern string) {
-		pattern = strings.TrimSpace(strings.ToLower(pattern))
-		if pattern == "" {
-			return
-		}
-		for _, existing := range patterns {
-			if existing == pattern {
-				return
-			}
-		}
-		patterns = append(patterns, pattern)
-	}
-
-	if hasUILocationHint(normalized) {
-		if containsAny(normalized, "top", "top of the window", "window", "header", "banner") {
-			add("header")
-			add("banner")
-		}
-		if containsAny(normalized, "footer", "bottom") {
-			add("footer")
-		}
-		if containsAny(normalized, "badge", "chat", "menu") {
-			add("chat")
-			add("badge")
-			add("menu")
-		}
-		if strings.Contains(normalized, "status") {
-			add("status")
-		}
-	}
-
-	for _, field := range strings.Fields(strings.ToLower(strings.Trim(literal, "\"'` "))) {
-		field = strings.Trim(field, ".,:;!?()[]{}")
-		if len(field) < 4 {
-			continue
-		}
-		add(field)
-		if len(patterns) >= 6 {
-			break
-		}
-	}
-	return patterns
-}
-
-func currentWorkspaceStateToken(root string) string {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return ""
-	}
-
-	head, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	status, err := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(head)) + "\n" + strings.TrimSpace(string(status))
-}
-
-func (m *Model) logEffortPolicy(policy effortPolicySnapshot) {
-	if m == nil || m.debugLogger == nil {
-		return
-	}
-	data, err := json.Marshal(policy)
-	if err != nil {
-		return
-	}
-	m.logMessage("effort_policy", string(data))
-}
-
-func (m *Model) logClaimConfidence(confidence claimConfidenceSnapshot) {
-	if m == nil || m.debugLogger == nil {
-		return
-	}
-	data, err := json.Marshal(confidence)
-	if err != nil {
-		return
-	}
-	m.logMessage("claim_confidence", string(data))
-}
-
-func (m *Model) logContextCompaction(compaction contextCompactionSnapshot) {
-	if m == nil || m.debugLogger == nil {
-		return
-	}
-	data, err := json.Marshal(compaction)
-	if err != nil {
-		return
-	}
-	m.logMessage("context_compaction", string(data))
-}
-
-func (m *Model) logToolFailureConfidence(snapshot toolFailureConfidenceSnapshot) {
-	if m == nil || m.debugLogger == nil {
-		return
-	}
-	data, err := json.Marshal(snapshot)
-	if err != nil {
-		return
-	}
-	m.logMessage("tool_failure_confidence", string(data))
-}
-
 func (m *Model) resize() {
 	headerHeight := 1
 	inputHeight := 5
@@ -789,10 +442,7 @@ func (m *Model) resize() {
 	if contentHeight < 5 {
 		contentHeight = 5
 	}
-	viewportWidth, _, _ := m.bodyLayout()
-	if viewportWidth < 24 {
-		viewportWidth = maxInt(24, m.width)
-	}
+	viewportWidth := maxInt(24, m.width)
 
 	if !m.ready {
 		m.viewport = viewport.New(viewportWidth, contentHeight)
@@ -803,40 +453,6 @@ func (m *Model) resize() {
 	m.viewport.Height = contentHeight
 	m.input.SetWidth(m.width)
 	m.renderMessages(false)
-}
-
-func (m *Model) bodyLayout() (int, int, bool) {
-	const (
-		panelMinWidth      = 28
-		transcriptMinWidth = 48
-		panelGap           = 1
-	)
-	if !m.panelVisible || m.width <= 0 {
-		return maxInt(1, m.width), 0, false
-	}
-	panelWidth := m.width / 3
-	if panelWidth < panelMinWidth {
-		panelWidth = panelMinWidth
-	}
-	maxPanelWidth := m.width - transcriptMinWidth - panelGap
-	if maxPanelWidth < panelMinWidth {
-		return maxInt(1, m.width), 0, false
-	}
-	if panelWidth > maxPanelWidth {
-		panelWidth = maxPanelWidth
-	}
-	transcriptWidth := m.width - panelWidth - panelGap
-	if transcriptWidth < transcriptMinWidth || panelWidth < panelMinWidth {
-		return maxInt(1, m.width), 0, false
-	}
-	return transcriptWidth, panelWidth, true
-}
-
-func fallback(value, fallbackValue string) string {
-	if value == "" {
-		return fallbackValue
-	}
-	return value
 }
 
 func (m *Model) workingDots() string {
@@ -898,151 +514,23 @@ func (m *Model) workspaceSummary() string {
 	return fmt.Sprintf("root=%s cwd=%s", m.displayPath(m.workspace.Root()), m.displayPath(m.workspace.CWD()))
 }
 
-func (m *Model) writeSummary() string {
-	if m.workspace == nil {
-		return string(workspace.WritePolicyGuarded)
-	}
-	return string(m.workspace.WritePolicy())
-}
-
 func (m *Model) modeSummary() string {
-	agentMode := string(m.currentAgentDecisionMode())
-	if m.workspace == nil {
-		return "workspace=normal agent=" + agentMode
-	}
-
-	mode := m.workspace.Mode()
-	workspaceMode := string(mode)
-	if mode != workspace.ModeExplore {
-		return "workspace=" + workspaceMode + " agent=" + agentMode
-	}
-	workspaceMode = fmt.Sprintf("%s(%s)", mode, m.workspace.ExploreThoroughness())
-	return "workspace=" + workspaceMode + " agent=" + agentMode
+	mode := m.currentMode()
+	return "agent=" + mode.Name
 }
 
 func (m *Model) traceSummary() string {
-	mode := string(m.traceMode)
-	if m.traceMode != traceDisplayCompact {
-		return mode
-	}
-	if m.compactTrace.HiddenCount == 0 {
-		return mode + " (quiet)"
-	}
-	if strings.TrimSpace(m.compactTrace.LastEvent) == "" {
-		return fmt.Sprintf("%s (%d hidden tool event(s))", mode, m.compactTrace.HiddenCount)
-	}
-	return fmt.Sprintf("%s (%d hidden; last: %s)", mode, m.compactTrace.HiddenCount, truncateText(m.compactTrace.LastEvent, 72))
+	return string(m.traceMode)
 }
 
-func (m *Model) setExecutionPlanSummary(lane analysisLane, summary string, steps []string) {
-	if lane != "" {
-		m.executionPanel.Lane = lane
-		m.executionPanel.Contract = answerContractForLane(lane)
-	}
-	m.executionPanel.Summary = strings.TrimSpace(summary)
-	m.executionPanel.Steps = uniqueNonEmptyStrings(steps)
-	m.executionPanel.UpdatedAt = time.Now()
-}
-
-func (m *Model) appendExecutionProgress(line string) {
-	line = strings.TrimSpace(line)
-	if line == "" {
+// applyModePermissions is a hook for /mode to refresh any workspace-level
+// policy tied to the active Mode. Runner step-cap is rebuilt from the
+// current Mode on every new turn via runAgentTurn.
+func (m *Model) applyModePermissions(mode agent.Mode) {
+	if m == nil || m.workspace == nil {
 		return
 	}
-	if len(m.executionPanel.Progress) > 0 && m.executionPanel.Progress[len(m.executionPanel.Progress)-1] == line {
-		return
-	}
-	const maxProgressEntries = 8
-	m.executionPanel.Progress = append(m.executionPanel.Progress, line)
-	if len(m.executionPanel.Progress) > maxProgressEntries {
-		m.executionPanel.Progress = append([]string(nil), m.executionPanel.Progress[len(m.executionPanel.Progress)-maxProgressEntries:]...)
-	}
-	m.executionPanel.UpdatedAt = time.Now()
-}
-
-func (m *Model) rememberExecutionJournal(recorder *executionJournalRecorder, changedPaths []string, summary string, refactorStage *structuralRefactorStage, verify implementationVerification) {
-	if recorder == nil {
-		return
-	}
-	m.lastJournal = recorder.Finalize(changedPaths, summary)
-	if m.lastJournal == nil && len(uniqueNormalizedPaths(changedPaths)) == 0 && implementationSummaryReportsNoop(summary) {
-		m.lastJournal = &executionJournal{
-			Prompt:      strings.TrimSpace(recorder.prompt),
-			Summary:     strings.TrimSpace(summary),
-			CreatedAt:   time.Now(),
-			CommittedAt: time.Now(),
-		}
-	}
-	if m.lastJournal != nil {
-		m.lastJournal.VerificationCommands = append([]string(nil), verify.commands...)
-		m.lastJournal.VerificationPassed = len(verify.results) > 0 && !verify.failed
-		m.lastJournal.VerificationFailed = verify.failed
-		m.lastJournal.VerificationConfidence = strings.TrimSpace(verify.confidence)
-	}
-	if m.lastJournal != nil && refactorStage != nil {
-		cloned := cloneStructuralRefactorStage(refactorStage)
-		m.lastJournal.Refactor = cloned
-		if structuralRefactorStageResumable(cloned) {
-			m.refactorStage = cloneStructuralRefactorStage(cloned)
-			m.persistStructuralRefactorStage(cloned)
-			m.logLongHorizonState("persist", cloned, "structural refactor has remaining bounded stages")
-		} else {
-			m.logLongHorizonState("clear", cloned, "structural refactor stage is no longer resumable")
-			m.clearPersistedStructuralRefactorStage()
-		}
-	}
-	if m.lastJournal != nil && strings.TrimSpace(summary) != "" {
-		m.setExecutionPlanSummary(analysisLaneImplement, strings.TrimSpace(summary), changedPaths)
-		if refactorStage != nil && strings.TrimSpace(refactorStage.NextStep) != "" {
-			m.appendExecutionProgress("refactor next stage: " + refactorStage.NextStep)
-		}
-	}
-}
-
-func captureExecutionJournalResult(recorder *executionJournalRecorder, req workspace.ToolRequest) *workspace.ToolResult {
-	if recorder == nil {
-		return nil
-	}
-	if err := recorder.CaptureRequest(req); err != nil {
-		return &workspace.ToolResult{
-			Tool:    req.Tool,
-			Summary: "Rollback journal capture failed",
-			Error:   err.Error(),
-		}
-	}
-	return nil
-}
-
-func formatPhaseElapsed(elapsed time.Duration) string {
-	if elapsed < time.Second {
-		return "<1s"
-	}
-	if elapsed < time.Minute {
-		return fmt.Sprintf("%ds", int(elapsed.Round(time.Second)/time.Second))
-	}
-	minutes := int(elapsed / time.Minute)
-	seconds := int((elapsed % time.Minute) / time.Second)
-	return fmt.Sprintf("%dm%02ds", minutes, seconds)
-}
-
-func (m *Model) resetCompactTrace() {
-	m.compactTrace = compactTraceState{}
-}
-
-func (m *Model) recordCompactTrace(text string) {
-	m.compactTrace.HiddenCount++
-	first := strings.TrimSpace(text)
-	if idx := strings.IndexByte(first, '\n'); idx >= 0 {
-		first = first[:idx]
-	}
-	m.compactTrace.LastEvent = first
-}
-
-func (m *Model) currentModeDetails() (string, string) {
-	if m.workspace == nil {
-		return string(workspace.ModeNormal), string(workspace.ThoroughnessMedium)
-	}
-	return string(m.workspace.Mode()), string(m.workspace.ExploreThoroughness())
+	m.workspace.SetPermissionRules(mode.PermissionRules)
 }
 
 func firstToolTraceLine(text string) string {
@@ -1072,10 +560,6 @@ func (m *Model) insertBeforePendingAssistant(message llama.ChatMessage) {
 		return
 	}
 	m.messages = append(m.messages[:idx], append([]llama.ChatMessage{message}, m.messages[idx:]...)...)
-}
-
-func (m *Model) setPendingAssistantContent(content string) {
-	m.setPendingAssistantMessage(llama.ChatMessage{Role: "assistant", Content: content})
 }
 
 func (m *Model) setPendingAssistantMessage(message llama.ChatMessage) {
@@ -1123,11 +607,6 @@ func (m *Model) logMessage(role, content string) {
 		return
 	}
 	_ = m.debugLogger.LogMessage(role, content)
-}
-
-func (m *Model) emitAssistantReply(reply string) {
-	m.logMessage("assistant", reply)
-	m.events <- assistantReplyMsg{text: reply, logged: true, reasoningContent: m.takeLastAssistantReasoningContent()}
 }
 
 func (m *Model) takeLastAssistantReasoningContent() string {

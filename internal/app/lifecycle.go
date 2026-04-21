@@ -3,18 +3,20 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
 	"qwen-bubbles/internal/agent"
 	"qwen-bubbles/internal/config"
-	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
+	"qwen-bubbles/internal/promptstack"
 	"qwen-bubbles/internal/transcript"
 	"qwen-bubbles/internal/workspace"
-	"regexp"
-	"strings"
 )
 
 type serverStatusMsg struct {
@@ -59,24 +61,32 @@ func New(cfg config.Config) *Model {
 		status:         "Booting up.",
 		bootingServer:  false,
 		traceMode:      traceDisplayCompact,
-		panelVisible:   true,
+		agentModeName:  strings.TrimSpace(cfg.Chat.AgentMode),
 	}
 	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
 	m.workspace = workspace.NewManager(cfg.Workspace)
+	mode := agent.ModeOrDefault(m.agentModeName)
+	m.workspace.SetPermissionRules(mode.PermissionRules)
 	m.runner = &agent.Runner{
 		Client:       m.client,
 		Workspace:    m.workspace,
-		MaxToolSteps: cfg.Chat.MaxToolSteps,
+		MaxToolSteps: modeStepCap(cfg.Chat.MaxToolSteps, mode),
 		AgentName:    "main",
 	}
 	if err := m.reloadPromptStack(); err != nil {
 		m.setContextError("Prompt context failed: " + err.Error())
 	}
 	m.initDebugLogger()
-	m.loadPersistedStructuralRefactorStage()
-	m.loadPersistedTaskMemory()
-	m.loadPersistedWorkflowState()
 	return m
+}
+
+// modeStepCap applies the Mode's StepCap on top of the config.MaxToolSteps
+// ceiling. Zero StepCap means "no per-mode cap".
+func modeStepCap(configured int, mode agent.Mode) int {
+	if mode.StepCap > 0 && (configured <= 0 || mode.StepCap < configured) {
+		return mode.StepCap
+	}
+	return configured
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -103,14 +113,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
-		case tea.KeyCtrlP:
-			m.panelVisible = !m.panelVisible
-			if m.panelVisible {
-				m.status = "Execution panel expanded."
-			} else {
-				m.status = "Execution panel collapsed."
-			}
-			m.resize()
 		case tea.KeyCtrlS:
 			m.saveTranscriptAsync()
 		case tea.KeyCtrlL:
@@ -178,18 +180,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.workingFrame = 0
 		if msg.err != nil {
 			m.setRuntimeError("Chat failed: " + msg.err.Error())
-			if m.phaseCard.State == phaseStateActive {
-				m.phaseCard.State = phaseStateFailed
-				if strings.TrimSpace(m.phaseCard.Detail) == "" {
-					m.phaseCard.Detail = msg.err.Error()
-				}
-			}
-			m.appendExecutionProgress("request failed: " + msg.err.Error())
 			m.removePendingAssistant()
 		} else {
 			m.clearRuntimeError()
 			m.status = "Response complete."
-			m.appendExecutionProgress("request complete")
 		}
 		m.renderMessages(false)
 	case transcriptSavedMsg:
@@ -202,53 +196,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case infoMsg:
 		m.status = msg.text
-	case rollbackCompleteMsg:
-		if msg.err != nil {
-			m.setRuntimeError("Rollback failed: " + msg.err.Error())
-			m.setPhaseCard(analysisLaneImplement, "rollback", phaseStateFailed, msg.err.Error())
-			m.appendExecutionProgress("rollback failed: " + msg.err.Error())
-		} else {
-			m.clearRuntimeError()
-			m.status = "Rollback complete."
-			m.messages = append(m.messages, llama.ChatMessage{Role: "tool", Content: msg.summary})
-			m.logMessage("tool", msg.summary)
-			m.setPhaseCard(analysisLaneImplement, "rollback", phaseStateDone, "Last bounded change was restored and re-verified.")
-			m.setExecutionPlanSummary(analysisLaneImplement, "Last bounded change was rolled back and re-verified.", nil)
-			if m.lastJournal != nil && m.lastJournal.Refactor != nil {
-				m.clearPersistedStructuralRefactorStage()
-			}
-			m.lastJournal = nil
-		}
-		m.renderMessages(false)
-	case exploreCacheInvalidatedMsg:
-		m.invalidateExploreCache(msg.reason)
 	case toolTraceMsg:
-		m.appendExecutionProgress(firstToolTraceLine(msg.text))
 		if m.traceMode == traceDisplayDetail {
 			m.insertBeforePendingAssistant(llama.ChatMessage{Role: "tool", Content: msg.text})
 			m.logMessage("tool", msg.text)
-		} else {
-			m.recordCompactTrace(msg.text)
 		}
-		m.renderMessages(false)
-	case phaseCardMsg:
-		m.applyPhaseCardUpdate(phaseCardState(msg))
-		m.renderMessages(false)
-	case writeApprovalProposalMsg:
-		proposal := msg.proposal
-		m.pendingWrite = &proposal
-		m.status = proposal.statusText()
-		m.applyPhaseCardUpdate(phaseCardState{
-			Lane:   analysisLaneImplement,
-			Phase:  "approval",
-			Detail: "Awaiting scoped write approval for " + strings.Join(proposal.Paths, ", "),
-			State:  phaseStateBlocked,
-		})
-		m.setExecutionPlanSummary(
-			analysisLaneImplement,
-			"Waiting for scoped write approval before applying the bounded plan.",
-			proposalPanelSteps(&proposal),
-		)
 		m.renderMessages(false)
 	case nil:
 	default:
@@ -307,107 +259,68 @@ func (m *Model) saveTranscriptAsync() {
 	}()
 }
 
-func (m *Model) runMainAgent(
-	ctx context.Context,
-	prompt string,
-	history []llama.ChatMessage,
-	opts llama.ChatOptions,
-	rails deterministicControlRailsSnapshot,
-) (string, error) {
-	// OpenCode alignment: unify write-permission UX across lanes. The main
-	// path now uses the same implementWriteGuard + approval flow as the
-	// implement lane, so a user whose model decides to make an edit gets the
-	// same interactive approval proposal instead of a terse "switch lanes"
-	// refusal. In auto-write mode the guard short-circuits to a nil block so
-	// writes pass through; in guarded mode the approval proposal fires.
-	writeGuard := newImplementWriteGuard(m.workspace, prompt)
-	var pendingApproval *writeApprovalProposal
-	guardBlocked := func(req workspace.ToolRequest, blocked workspace.ToolResult) workspace.ToolResult {
-		if proposal := buildWriteApprovalProposal(ctx, m.workspace, prompt, req, writeGuard, blocked); proposal != nil {
-			pendingApproval = proposal
-			m.events <- writeApprovalProposalMsg{proposal: *proposal}
-			return approvalRequiredToolResult(*proposal)
+// sendPromptAsync is the interactive-mode wrapper around RunPromptOnce.
+// Runs in a goroutine so the Bubble Tea loop keeps pumping events.
+func (m *Model) sendPromptAsync(prompt string) {
+	m.streaming = true
+	m.workingFrame = 0
+	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: ""})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), m.promptTimeout())
+		defer cancel()
+		reply, err := m.RunPromptOnce(ctx, prompt)
+		if err != nil {
+			m.events <- streamDoneMsg{err: err}
+			return
 		}
-		return blocked
+		m.events <- assistantReplyMsg{text: reply, logged: true, reasoningContent: m.takeLastAssistantReasoningContent()}
+		m.events <- streamDoneMsg{}
+	}()
+}
+
+func (m *Model) promptTimeout() time.Duration {
+	if secs := m.cfg.Chat.RequestTimeoutSeconds; secs > 0 {
+		return time.Duration(secs) * time.Second
 	}
-	if instruction := controlRailRuntimeInstruction(rails); instruction != "" {
-		history = append(append([]llama.ChatMessage(nil), history...), llama.ChatMessage{Role: "system", Content: instruction})
-	}
-	// OpenCode-adoption fix C+F: non-implement lanes get an explicit plan-mode
-	// posture reminder (mirrors OpenCode `plan.txt`) plus a nudge toward the
-	// `task` tool for open-ended exploratory prompts (mirrors `default.txt` /
-	// `anthropic.txt`). Kept separate from RuntimeInstruction so verification-
-	// only / other task-family reminders compose cleanly alongside it.
-	if reminder := controlRailPlanModeReminder(rails); reminder != "" {
-		history = append(history, llama.ChatMessage{Role: "system", Content: reminder})
-	}
+	return time.Hour
+}
+
+// runAgentTurn drives a single agent.Runner.Run invocation for the active
+// Mode. Uses the workspace.Manager's active ToolRules (populated from the
+// Mode in New() and /mode) to block/ask per-tool; the Mode's StepCap has
+// already been folded into m.runner.MaxToolSteps.
+func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama.ChatMessage, opts llama.ChatOptions, plan promptExecutionPlan) (string, error) {
+	_ = plan
+	_ = prompt
+	mode := m.currentMode()
+	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)
 	runner := &agent.Runner{
-		Client:           m.client,
-		Workspace:        m.workspace,
-		MaxToolSteps:     m.cfg.Chat.MaxToolSteps,
-		AgentName:        "main",
-		PermissionPolicy: controlRailPermissionPolicy(rails),
-		CompletionGate:   controlRailCompletionGate(rails),
-		RuntimeBrief: buildWorkerRuntimeBrief(
-			prompt,
-			rails,
-			implementationTargetPacket{},
-			"",
-			nil,
-			agent.RunPolicy{MaxToolSteps: m.cfg.Chat.MaxToolSteps},
-			nil,
-			nil,
-			nil,
-		),
+		Client:       m.client,
+		Workspace:    m.workspace,
+		MaxToolSteps: steps,
+		AgentName:    "main",
 		OnEvent: func(event agent.RunEvent) {
 			m.logMessage(event.Role, event.Content)
 		},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
-			if blocked := controlRailPreExecute(rails, req); blocked != nil {
-				return blocked
-			}
-			// Fix 6 (per-tool permission granularity) — glob rules in
-			// config.Workspace.ToolRules run BEFORE the write guard so the
-			// operator can grant or deny specific patterns ahead of the
-			// legacy binary gate. Allow short-circuits; Deny hard-blocks;
-			// Ask falls through to the approval flow below.
 			switch m.workspace.EvaluateToolRule(req) {
 			case workspace.ToolRuleAllow:
 				return nil
 			case workspace.ToolRuleDeny:
 				return &workspace.ToolResult{
 					Tool:    req.Tool,
-					Summary: "Tool request blocked by tool_rules",
-					Error:   "a workspace tool_rules policy denies this request. Edit your config or ask the user to approve a different approach.",
+					Summary: "Tool request blocked by Mode permission rules",
+					Error:   fmt.Sprintf("agent mode %q denies this request", mode.Name),
 				}
 			case workspace.ToolRuleAsk:
-				result := guardBlocked(req, workspace.ToolResult{
+				return &workspace.ToolResult{
 					Tool:    req.Tool,
-					Summary: "Guarded write policy blocked broad write scope",
-					Error:   "tool_rules policy requires explicit approval for this request",
-				})
-				return &result
-			}
-			if blocked := writeGuard.PreExecute(req); blocked != nil {
-				result := guardBlocked(req, *blocked)
-				return &result
+					Summary: "Tool request requires approval under Mode " + mode.Name,
+					Error:   fmt.Sprintf("agent mode %q requires explicit approval for this request; this headless loop does not prompt interactively", mode.Name),
+				}
 			}
 			return nil
 		},
-	}
-	// OpenCode-adoption fix E (grounding on non-implement lanes). Track
-	// every workspace path observed via a successful tool result so we can
-	// reconcile the final reply against real evidence, mirroring what Fix 3
-	// already does for the implement lane. Prevents plan / explore /
-	// architecture answers from citing paths the agent never actually read.
-	evidencePaths := make(map[string]struct{})
-	recordEvidencePath := func(result workspace.ToolResult) {
-		if strings.TrimSpace(result.Error) != "" {
-			return
-		}
-		if path := extractPinnablePathFromSummary(result.Summary); path != "" {
-			evidencePaths[path] = struct{}{}
-		}
 	}
 	answer, err := runner.Run(
 		ctx,
@@ -422,30 +335,18 @@ func (m *Model) runMainAgent(
 		func(event agent.ToolResultEvent) {
 			m.logToolResult(event)
 			m.pinPathsFromToolResult(event.Result)
-			recordEvidencePath(event.Result)
-			if shouldInvalidateExploreCacheForTool(event.Result) {
-				m.events <- exploreCacheInvalidatedMsg{
-					reason: fmt.Sprintf("workspace changed via %s; clearing cached explore profile", event.Result.Tool),
-				}
-			}
 			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(event.Result)}
 		},
 	)
 	if err != nil {
 		return "", err
 	}
-	if pendingApproval != nil {
-		return pendingApproval.renderSummary(), nil
-	}
 	m.lastAssistantReasoningContent = strings.TrimSpace(runner.LastAssistantMessage.ReasoningContent)
 	return answer, err
 }
 
 // pinPathsFromToolResult attaches any file a successful tool result touched
-// to the session pin set. Pinned files are re-injected as a reference
-// snapshot on every prompt so the model can consult live contents without
-// a fresh read_file call each turn. Errors and no-op results are skipped
-// so we don't pin hallucinated paths.
+// to the session pin set so it rides along in future turn payloads.
 func (m *Model) pinPathsFromToolResult(result workspace.ToolResult) {
 	if m == nil || strings.TrimSpace(result.Error) != "" {
 		return
@@ -486,7 +387,6 @@ func extractPinnablePathFromSummary(summary string) string {
 			if rest == "" {
 				return ""
 			}
-			// Strip a leading handle like "f5 " that the manager emits.
 			fields := strings.Fields(rest)
 			if len(fields) >= 2 && looksLikeFileHandle(fields[0]) {
 				return strings.TrimSpace(strings.Join(fields[1:], " "))
@@ -509,37 +409,6 @@ func looksLikeFileHandle(token string) bool {
 	return true
 }
 
-func configFieldUpdateTarget(prompt string) (string, string, bool) {
-	normalized := strings.ToLower(prompt)
-	if !containsAny(normalized, "config", ".json", "settings", "both files") {
-		return "", "", false
-	}
-	fieldMatches := regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\b`).FindAllString(prompt, -1)
-	field := ""
-	for _, match := range fieldMatches {
-		if strings.Contains(match, "_") {
-			field = match
-			break
-		}
-	}
-	if field == "" {
-		return "", "", false
-	}
-	valueMatch := regexp.MustCompile(`(?i)\b(?:is|to)\s+("([^"\\]|\\.)*"|-?\d+(?:\.\d+)?|true|false|null)\b`).FindStringSubmatch(prompt)
-	if len(valueMatch) < 2 {
-		return "", "", false
-	}
-	return field, strings.TrimSpace(valueMatch[1]), true
-}
-
-func (m *Model) newWorkspaceManager() *workspace.Manager {
-	mgr := workspace.NewManager(m.cfg.Workspace)
-	if m.workspace != nil {
-		_ = mgr.SetWritePolicy(m.workspace.WritePolicy())
-	}
-	return mgr
-}
-
 func (m *Model) initDebugLogger() {
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:           m.cfg.Chat.DebugLogDir,
@@ -554,15 +423,12 @@ func (m *Model) initDebugLogger() {
 
 	m.debugLogger = logger
 	m.debugLogPath = logger.Path()
-	workspaceMode, thoroughness := m.currentModeDetails()
 	_ = m.debugLogger.LogSessionStart(transcript.SessionStart{
-		AppName:             m.cfg.AppName,
-		ContextSources:      m.contextSourceNames(),
-		SystemPrompt:        m.systemPrompt(),
-		WorkspaceRoot:       m.workspace.Root(),
-		WorkspaceCWD:        m.workspace.CWD(),
-		WorkspaceMode:       workspaceMode,
-		ExploreThoroughness: thoroughness,
+		AppName:        m.cfg.AppName,
+		ContextSources: m.contextSourceNames(),
+		SystemPrompt:   m.systemPrompt(),
+		WorkspaceRoot:  m.workspace.Root(),
+		WorkspaceCWD:   m.workspace.CWD(),
 	})
 
 	if m.contextError != "" {
@@ -573,17 +439,46 @@ func (m *Model) initDebugLogger() {
 	}
 }
 
-func looksLikeMarkerPatternDefinition(text string) bool {
-	if !strings.Contains(text, "return \"") || !strings.Contains(text, "|") {
-		return false
+// systemPrompt returns the active composed system prompt for this session.
+// The prompt stack is maintained by reloadPromptStack; Mode-specific prompt
+// files are layered on top of the base stack.
+func (m *Model) systemPrompt() string {
+	if m == nil {
+		return ""
 	}
-	return containsAny(
-		text,
-		"todo|fixme",
-		"fixme|hack",
-		"bug|panic\\(",
-		"panic\\(|slow",
-		"error|regression",
-		"deprecated",
-	)
+	base := strings.TrimSpace(m.promptStack.Text)
+	mode := m.currentMode()
+	extras := loadModeSystemPrompts(mode)
+	parts := make([]string, 0, 2)
+	if base != "" {
+		parts = append(parts, base)
+	}
+	if extras != "" {
+		parts = append(parts, extras)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func loadModeSystemPrompts(mode agent.Mode) string {
+	// The files named in mode.SystemPromptFiles are loaded by the caller's
+	// promptstack. Here we only surface Mode-derived content when the stack
+	// hasn't; in practice mode files are consumed via reloadPromptStack, so
+	// this path is a defensive fallback and returns the empty string.
+	return ""
+}
+
+// reloadPromptStack rebuilds the prompt stack from the active config and
+// profiles. Delegates to promptstack; kept here so callers can trigger a
+// refresh after /system or /profile commands.
+func (m *Model) reloadPromptStack() error {
+	return m.reloadPromptStackWithProfiles(m.activeProfiles)
+}
+
+func (m *Model) reloadPromptStackWithProfiles(profiles []string) error {
+	stack, err := promptstack.Build(m.cfg.Chat, profiles)
+	if err != nil {
+		return err
+	}
+	m.promptStack = stack
+	return nil
 }

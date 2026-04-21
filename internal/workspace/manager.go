@@ -23,20 +23,21 @@ import (
 type Manager struct {
 	cfg config.Workspace
 
-	mode          Mode
-	thoroughness  ExploreThoroughness
-	writePolicy   WritePolicy
-	mu            sync.Mutex
-	nextHandle    int
-	pathToHandle  map[string]string
-	handleToPath  map[string]string
-	observedPaths map[string]struct{}
-	goIndex       *semantic.GoIndex
-	goIndexToken  string
-	cppIndex      *semantic.CppIndex
-	cppIndexToken string
-	goplsPath     string
-	goplsChecked  bool
+	mode            Mode
+	thoroughness    ExploreThoroughness
+	writePolicy     WritePolicy
+	mu              sync.Mutex
+	nextHandle      int
+	pathToHandle    map[string]string
+	handleToPath    map[string]string
+	observedPaths   map[string]struct{}
+	permissionRules map[string][]ToolRule
+	goIndex         *semantic.GoIndex
+	goIndexToken    string
+	cppIndex        *semantic.CppIndex
+	cppIndexToken   string
+	goplsPath       string
+	goplsChecked    bool
 }
 
 type Mode string

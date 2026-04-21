@@ -31,15 +31,50 @@ type ToolRule struct {
 	Decision ToolRuleDecision `json:"decision"`
 }
 
-// EvaluateToolRule applies Fix 6's glob-style rules for the Manager's
-// configured tools. Returns ToolRuleNone when the manager has no rules at
-// all or none apply to this request.
+// SetPermissionRules installs the active Mode's permission ruleset. Called
+// at session startup (from New) and when the user switches Mode via
+// /mode. Mode rules are consulted first; the Workspace config's ToolRules
+// block remains a fallback for tools the Mode doesn't cover.
+func (m *Manager) SetPermissionRules(rules map[string][]ToolRule) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(rules) == 0 {
+		m.permissionRules = nil
+		return
+	}
+	copied := make(map[string][]ToolRule, len(rules))
+	for tool, list := range rules {
+		next := make([]ToolRule, len(list))
+		copy(next, list)
+		copied[tool] = next
+	}
+	m.permissionRules = copied
+}
+
+// EvaluateToolRule applies the Mode's permission rules first, then falls
+// back to the static config.Workspace.ToolRules. Returns ToolRuleNone when
+// neither layer matches.
 func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
-	if m == nil || len(m.cfg.ToolRules) == 0 {
+	if m == nil {
 		return ToolRuleNone
 	}
-	rules := make(map[string][]ToolRule, len(m.cfg.ToolRules))
-	for tool, configRules := range m.cfg.ToolRules {
+	tool := strings.TrimSpace(req.Tool)
+	m.mu.Lock()
+	modeRules := m.permissionRules
+	m.mu.Unlock()
+	if len(modeRules) > 0 {
+		if decision := MatchToolRule(tool, req, modeRules); decision != ToolRuleNone {
+			return decision
+		}
+	}
+	if len(m.cfg.ToolRules) == 0 {
+		return ToolRuleNone
+	}
+	fallback := make(map[string][]ToolRule, len(m.cfg.ToolRules))
+	for name, configRules := range m.cfg.ToolRules {
 		converted := make([]ToolRule, 0, len(configRules))
 		for _, r := range configRules {
 			converted = append(converted, ToolRule{
@@ -47,9 +82,9 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 				Decision: ToolRuleDecision(strings.ToLower(strings.TrimSpace(r.Decision))),
 			})
 		}
-		rules[tool] = converted
+		fallback[name] = converted
 	}
-	return MatchToolRule(strings.TrimSpace(req.Tool), req, rules)
+	return MatchToolRule(tool, req, fallback)
 }
 
 // MatchToolRule evaluates the first rule whose pattern matches the request

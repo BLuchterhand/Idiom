@@ -39,8 +39,6 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	if m.workspace != nil {
 		m.workspace.PrimeDiscoveredPaths(promptMentionedWorkspacePaths(prompt))
 	}
-	m.resetCompactTrace()
-	m.resetExecutionPanel(prompt, plan)
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
 	m.logMessage("user", prompt)
 	m.logMessage("thinking_config", m.samplingSummary())
