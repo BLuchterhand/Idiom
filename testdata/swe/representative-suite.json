@@ -2,7 +2,7 @@
   "name": "representative-swe-frontier-suite",
   "version": 1,
   "coverage": {
-    "min_tasks": 33,
+    "min_tasks": 35,
     "required_families": [
       "direct_question",
       "debug_logs",
@@ -1159,6 +1159,68 @@
         "min_user_turns": 8,
         "min_assistant_turns": 8,
         "max_tool_requests": 30,
+        "max_errors": 1
+      }
+    },
+    {
+      "id": "focused-refactor-approval-begin-e2e",
+      "family": "architecture_then_implement",
+      "prompt": "Prepare a focused runner.go refactor plan, then begin only if the implementation target has a concrete function or line anchor.",
+      "turns": [
+        "let's go with your recommendation of runner.go, what is one small refactor we can make for long-term maintainability?",
+        "Please begin, but if the handoff only has a file-level target, stop before editing and ask for a concrete function or line anchor."
+      ],
+      "tags": ["architecture", "refactor", "multi-turn", "approval", "e2e"],
+      "scenario": {
+        "name": "focused-refactor-approval-begin-e2e",
+        "prompt_contains": ["file-level target"],
+        "require_assistant_for_each_user": true,
+        "require_route_plan": {
+          "initial_lane": "implement",
+          "reason": "direct_implementation",
+          "contract": "implementation_result"
+        },
+        "final_assistant_contains": ["concrete"],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "min_user_turns": 2,
+        "min_assistant_turns": 2,
+        "max_tool_requests": 35,
+        "max_errors": 1
+      }
+    },
+    {
+      "id": "workflow-pivot-unrelated-e2e",
+      "family": "multi_turn_state",
+      "prompt": "Prepare an approval-gated refactor plan, then pivot to an unrelated direct answer without consuming the workflow.",
+      "turns": [
+        "let's go with your recommendation of runner.go, what is one small refactor we can make for long-term maintainability?",
+        "Actually, ignore that for now. What is 2 + 2? Do not edit files."
+      ],
+      "tags": ["multi-turn", "pivot", "read-only", "e2e"],
+      "scenario": {
+        "name": "workflow-pivot-unrelated-e2e",
+        "prompt_contains": ["2 + 2"],
+        "require_assistant_for_each_user": true,
+        "require_route_plan": {
+          "initial_lane": "main",
+          "reason": "direct_conversation",
+          "contract": "direct_answer"
+        },
+        "final_assistant_contains": ["4"],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "min_user_turns": 2,
+        "min_assistant_turns": 2,
+        "max_tool_requests": 35,
         "max_errors": 1
       }
     },

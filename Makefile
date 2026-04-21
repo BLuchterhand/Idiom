@@ -12,13 +12,16 @@ CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
 
-.PHONY: run server classifier-server route-classifier build fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live
+.PHONY: run server opencode classifier-server route-classifier build fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live
 
 run:
 	go run ./cmd/qwen-bubbles -config $(CONFIG)
 
 server:
 	go run ./cmd/qwen-bubbles -config $(CONFIG) --server-only
+
+opencode:
+	./scripts/run-opencode.sh
 
 classifier-server:
 	mkdir -p "$(dir $(CLASSIFIER_LOG))"

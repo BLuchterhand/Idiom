@@ -372,6 +372,45 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	}
 }
 
+// MergeRuntimeBriefIntoStateDelta is a slimmed-down variant of
+// MergeRuntimeBriefIntoState that keeps only the fields that can change
+// turn-to-turn (evidence paths, changed paths, constraints, next/invalid
+// actions, budget). It DROPS the static scaffolding — tool_manifest,
+// allowed/forbidden tools, required tools, readiness gate, search policy,
+// stop conditions, final critic, target packet. Once a model has seen
+// those fields three times, repeating them burns tokens for no benefit.
+// The runner uses this variant after step 3 of a turn.
+func MergeRuntimeBriefIntoStateDelta(brief WorkerRuntimeBrief, state RunState) RunState {
+	brief = NormalizeRuntimeBrief(brief)
+	if state.Lane == "" {
+		state.Lane = brief.Lane
+	}
+	if state.TaskFamily == "" {
+		state.TaskFamily = brief.TaskFamily
+	}
+	if state.Contract == "" {
+		state.Contract = brief.Contract
+	}
+	if state.Objective == "" {
+		state.Objective = brief.Objective
+	}
+	if state.Permission == "" {
+		state.Permission = brief.PermissionProfile
+	}
+	if len(state.TargetRefs) == 0 {
+		state.TargetRefs = append([]string(nil), brief.TargetRefs...)
+	}
+	state.EvidencePaths = mergeStrings(state.EvidencePaths, brief.EvidencePaths)
+	state.ChangedPaths = mergeStrings(state.ChangedPaths, brief.ChangedPaths)
+	state.Constraints = mergeStrings(state.Constraints, brief.Constraints)
+	if state.Budget == (BudgetBrief{}) {
+		state.Budget = brief.Budget
+	}
+	state.NextActions = mergeStrings(state.NextActions, brief.RequiredNext)
+	state.InvalidActions = mergeStrings(state.InvalidActions, brief.InvalidActions)
+	return state
+}
+
 func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunState {
 	brief = NormalizeRuntimeBrief(brief)
 	if state.Lane == "" {

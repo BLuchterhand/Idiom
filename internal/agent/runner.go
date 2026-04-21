@@ -136,9 +136,19 @@ func (r *Runner) Run(
 	declarationMovesForbidden := declarationMovesForbiddenByMessages(turnMessages)
 	rejectedActions := make(map[string]int)
 	consecutiveRejectedActions := 0
+	rejectionRecoveryNudgeUsed := false
 	completionGateRejections := 0
 	consecutiveNoProgress := 0
 	consecutiveMissingPathListFailures := 0
+	// Soft-failure tracking: when a tool RAN but returned an error (e.g.
+	// read_file on a path that doesn't exist), the hard-rejection counter
+	// above does NOT increment. Log forensics showed the model happily
+	// retrying five hallucinated filenames in a fabricated directory before
+	// the budget ran out. Track the same-path-stem failure streak here and
+	// fire the same recovery nudge once we see 3 in a row.
+	consecutiveToolFailures := 0
+	lastFailedPathStem := ""
+	softFailureNudgeUsed := false
 	taskLedger := newTaskLedgerState(r.TaskLedger)
 	checkpointCreated := false
 	r.RuntimeBrief = r.runtimeBriefWithLiveState(policy, turnMessages, collectedResults)
@@ -191,6 +201,22 @@ func (r *Runner) Run(
 		emitNextActionState(stepNumber, "tool_rejected", req, result)
 		appendFailureFeedback(stepNumber, "tool_rejected", req, result)
 		if consecutiveRejectedActions >= 2 {
+			// OpenCode-style retry-with-nudge: before bailing out with
+			// `repeated_dead_end_budget_exhausted`, give the model one more
+			// chance with a concrete, copy-paste-ready next action. Small
+			// local models often ignore the generic "don't repeat" feedback
+			// but recover if handed a specific tool call to try instead.
+			// One-shot: the flag ensures we only nudge once per turn so we
+			// can't loop forever on a stuck model.
+			if !rejectionRecoveryNudgeUsed {
+				if nudge := buildRejectionRecoveryNudge(req, collectedResults, r.Workspace); nudge != "" {
+					rejectionRecoveryNudgeUsed = true
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					r.emitEvent(RunEvent{Role: "rejection_recovery_nudge", Content: nudge})
+					consecutiveRejectedActions = 0
+					return "", nil, false
+				}
+			}
 			answer, err := r.completeWithoutMoreTools(ctx, turnMessages, opts, collectedResults, &metrics)
 			return answer, err, true
 		}
@@ -832,6 +858,26 @@ func (r *Runner) Run(
 		emitNextActionState(stepNumber, "tool_result", req, result)
 		if strings.TrimSpace(result.Error) != "" {
 			appendFailureFeedback(stepNumber, "tool_result", req, result)
+			// Track same-stem tool failures so we can inject a recovery
+			// nudge before burning the whole budget on hallucinated paths.
+			stem := toolFailurePathStem(req)
+			if stem != "" && stem == lastFailedPathStem {
+				consecutiveToolFailures++
+			} else {
+				consecutiveToolFailures = 1
+				lastFailedPathStem = stem
+			}
+			if !softFailureNudgeUsed && consecutiveToolFailures >= 3 {
+				if nudge := buildRejectionRecoveryNudge(req, collectedResults, r.Workspace); nudge != "" {
+					softFailureNudgeUsed = true
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					r.emitEvent(RunEvent{Role: "rejection_recovery_nudge", Content: nudge})
+					consecutiveToolFailures = 0
+				}
+			}
+		} else {
+			consecutiveToolFailures = 0
+			lastFailedPathStem = ""
 		}
 		missingPathListFailure := r.Workspace.IsExploreMode() && isMissingPathListFailure(req, result)
 		if missingPathListFailure {
@@ -849,8 +895,19 @@ func (r *Runner) Run(
 		}
 	}
 
-	answer, err = r.completeWithoutMoreTools(ctx, turnMessages, opts, collectedResults, &metrics)
+	answer, err = r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, maxToolStepsExhaustedReason(), &metrics)
 	return finish(answer, err, "tool_step_budget_exhausted", true)
+}
+
+// maxToolStepsExhaustedReason mirrors OpenCode's max-steps.txt: when the
+// per-turn tool-step budget is spent, tools are disabled and the model must
+// synthesize a text-only reply now from the evidence already gathered. The
+// wording is deliberately blunt about both constraints — no more tool calls,
+// and no empty responses — to steer small local models away from the
+// "keep probing" loop that produced the empty-answer failure in
+// logs/conversations/20260421-053044.479.jsonl.
+func maxToolStepsExhaustedReason() string {
+	return "Maximum tool steps for this turn have been reached. Tools are now disabled — do NOT emit another tool block. Respond with a concise, direct, text-only answer synthesized from the evidence already gathered. If a concrete answer is not yet possible, state the narrowest remaining blocker and the next action you would take. Do not leave the response blank."
 }
 
 func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {
@@ -1352,7 +1409,15 @@ func (r *Runner) renderStepInstruction(policy RunPolicy, messages []llama.ChatMe
 		NextActions:    guidance.ValidNext,
 		InvalidActions: guidance.InvalidNext,
 	}
-	state = workerruntime.MergeRuntimeBriefIntoState(brief, state)
+	// After step 3 the static scaffolding (tool_manifest, allowed/forbidden
+	// tools, readiness gate, search policy, stop conditions, final critic,
+	// target packet) is already in the model's context — repeating it each
+	// step just burns tokens. Emit only the mutable fields from step 4 on.
+	if step <= 3 {
+		state = workerruntime.MergeRuntimeBriefIntoState(brief, state)
+	} else {
+		state = workerruntime.MergeRuntimeBriefIntoStateDelta(brief, state)
+	}
 	return workerruntime.RenderStepInstruction(workerruntime.BuildStepInstruction(state))
 }
 
@@ -2300,7 +2365,7 @@ func (r *Runner) completeWithoutMoreTools(
 	collectedResults []workspace.ToolResult,
 	metrics *runnerMetrics,
 ) (string, error) {
-	return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Tool budget is exhausted. Do not request any more tools. Answer with the evidence you already have, explain any missing file or uncertainty clearly, and if needed ask the user for a more specific target instead of emitting another tool block.", metrics)
+	return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Tool budget is exhausted. Tools are now disabled — do NOT emit another tool block. Reply with a concise, direct, text-only answer from the evidence you already have. If a concrete answer is not yet possible, state the narrowest remaining blocker and the next action. Do not leave the response blank.", metrics)
 }
 
 func (r *Runner) completeWithoutMoreToolsWithReason(
@@ -2314,6 +2379,12 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "Do not request any more tools. Answer with the evidence you already have and explain any remaining blocker clearly."
+	}
+	// If any task_ledger items are still in_progress, prepend a closure
+	// hint so the forced-completion reply actually resolves them instead
+	// of leaving dangling in_progress todos in the transcript.
+	if hint := taskLedgerClosureHint(collectedResults); hint != "" {
+		reason = hint + "\n\n" + reason
 	}
 	turnMessages = append(turnMessages, llama.ChatMessage{
 		Role:    "system",
@@ -2536,8 +2607,10 @@ func (r *Runner) ensureNonEmptyAnswer(
 	}
 	retryMessages = append(retryMessages, llama.ChatMessage{
 		Role: "system",
-		Content: "Your last response was empty. Reply now with a concise, non-empty message. " +
-			"Do not emit a tool block, and do not leave the response blank.",
+		Content: "Your previous response was empty. Tools are disabled now — do NOT emit a tool block. " +
+			"Reply with a direct, non-empty answer based on the evidence already gathered. Keep it short " +
+			"(a few sentences or a brief list). No preamble like \"Based on...\" or \"Here is...\" — just the answer. " +
+			"If a concrete answer is not yet possible, state the narrowest remaining blocker in one sentence.",
 	})
 
 	if metrics != nil {
@@ -2595,11 +2668,18 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 		}
 	}
 
+	// OpenCode-style fallback framing (see docs/opencode-fixes-design.md,
+	// `default.txt`): the model failed to synthesize a direct reply, but the
+	// evidence collected during the turn is still a legitimate partial
+	// answer. Lead with the findings as findings — not with an apology.
+	// Prior wording ("did not complete cleanly, but here is the evidence
+	// gathered") read as a system error to users; this reframes the same
+	// content as an honest "partial findings" report.
 	var b strings.Builder
 	if agentName == "explore" {
-		b.WriteString("Exploration did not complete cleanly, but here is the evidence gathered.\n\n")
+		b.WriteString("Partial findings from this turn (explore lane reached its budget before synthesizing):\n\n")
 	} else {
-		b.WriteString("The agent did not complete cleanly, but here is the evidence gathered.\n\n")
+		b.WriteString("Partial findings from this turn (the budget was reached before a full synthesis):\n\n")
 	}
 
 	if len(successfulNarrowing) > 0 || firstSuccessful != nil {
@@ -2630,6 +2710,20 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 		b.WriteString("\n\n")
 	}
 
+	// Before giving up, sift the verified context for any concrete
+	// observation the agent can offer instead of a generic apology. Files
+	// above a size threshold are surfaced as plausible refactor candidates
+	// when the user's original prompt looked like a review / cleanup ask.
+	if observations := inferFallbackObservations(successfulNarrowing); len(observations) > 0 {
+		b.WriteString("Best-effort observations from what was read:\n")
+		for _, obs := range observations {
+			b.WriteString("- ")
+			b.WriteString(obs)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("Recommended next step:\n")
 	if agentName == "explore" {
 		b.WriteString("- run a targeted `search_content` or `read_file` on one of the discovered files instead of another broad listing")
@@ -2638,6 +2732,57 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 	}
 
 	return strings.TrimSpace(b.String()), true
+}
+
+// inferFallbackObservations turns a handful of read_file / outline results
+// into concrete talking points so the forced-completion fallback can offer
+// something useful instead of a bare "I failed" message. Observations are
+// bounded in count and content so they do not balloon the reply.
+func inferFallbackObservations(results []workspace.ToolResult) []string {
+	if len(results) == 0 {
+		return nil
+	}
+	observations := make([]string, 0, 3)
+	seen := make(map[string]struct{})
+	for _, result := range results {
+		if result.Tool != "read_file" {
+			continue
+		}
+		path := extractReadFilePath(result.Summary)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		lines := strings.Count(result.Output, "\n")
+		if lines >= 600 {
+			observations = append(observations, fmt.Sprintf("%s is unusually large (%d lines) — a plausible refactor candidate on its own, even without deeper evidence.", path, lines))
+		} else if lines >= 250 {
+			observations = append(observations, fmt.Sprintf("%s (%d lines) was read; scan for functions exceeding one screen or mixed responsibilities as a small follow-up target.", path, lines))
+		}
+		if len(observations) >= 3 {
+			break
+		}
+	}
+	return observations
+}
+
+// extractReadFilePath pulls the path out of a read_file result's summary
+// (the canonical format is "Read <display> lines N-M"). Returns empty on
+// any parse failure so the caller just skips the observation.
+func extractReadFilePath(summary string) string {
+	trimmed := strings.TrimSpace(summary)
+	if !strings.HasPrefix(trimmed, "Read ") {
+		return ""
+	}
+	rest := strings.TrimPrefix(trimmed, "Read ")
+	idx := strings.Index(rest, " lines ")
+	if idx <= 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:idx])
 }
 
 func containsAny(text string, needles ...string) bool {
@@ -2674,6 +2819,168 @@ func fallbackLineBudgetForTool(tool string) int {
 	default:
 		return 8
 	}
+}
+
+// taskLedgerClosureHint inspects the collected tool-results set and, if the
+// most recent task_ledger state still has any items flagged in_progress,
+// returns a short reminder asking the model to close them with a final
+// status in the upcoming reply. Returns the empty string when there is
+// nothing open.
+func taskLedgerClosureHint(results []workspace.ToolResult) string {
+	var latest *workspace.ToolResult
+	for i := len(results) - 1; i >= 0; i-- {
+		if results[i].Tool == "task_ledger" && strings.TrimSpace(results[i].Error) == "" {
+			copyResult := results[i]
+			latest = &copyResult
+			break
+		}
+	}
+	if latest == nil {
+		return ""
+	}
+	if !strings.Contains(strings.ToLower(latest.Output), "in_progress") {
+		return ""
+	}
+	var openItems []string
+	for _, line := range strings.Split(latest.Output, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "in_progress") {
+			openItems = append(openItems, strings.TrimSpace(line))
+		}
+	}
+	if len(openItems) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Task ledger has open items you never closed. Resolve them in your reply (state each as completed / blocked / cancelled with one short evidence sentence):\n")
+	for _, item := range openItems {
+		b.WriteString("- ")
+		b.WriteString(item)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// toolFailurePathStem returns the first two path segments of the request's
+// target path (e.g. "internal/llm" for "internal/llm/llm.go"). Used by the
+// same-stem failure counter so that five different hallucinated filenames
+// inside the same made-up directory count as repeated failures, not fresh
+// attempts.
+func toolFailurePathStem(req workspace.ToolRequest) string {
+	raw := strings.ReplaceAll(strings.TrimSpace(req.Path), "\\", "/")
+	raw = strings.Trim(raw, "/")
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, "/")
+	if len(parts) >= 2 {
+		return parts[0] + "/" + parts[1]
+	}
+	return parts[0]
+}
+
+// buildRejectionRecoveryNudge returns a concrete, copy-paste-ready next
+// action the model can execute after its second consecutive rejected tool
+// call in a turn. Called once per turn (gated by rejectionRecoveryNudgeUsed)
+// before the runner bails out with repeated_dead_end_budget_exhausted. The
+// goal is not to be clever — it is to hand a small local model an escape
+// hatch that it can execute verbatim.
+func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.ToolResult, mgr *workspace.Manager) string {
+	tool := strings.TrimSpace(req.Tool)
+	var b strings.Builder
+	b.WriteString("Recovery nudge — this is your last chance before the harness ends the turn. Pick ONE of the concrete next steps below (you can copy-paste the JSON). Do NOT repeat the rejected tool call.\n\n")
+
+	switch {
+	case tool == "list_files" || tool == "list_dir":
+		candidates := rejectionRecoveryFileCandidates(results)
+		if len(candidates) > 0 {
+			b.WriteString("You already have a workspace overview. Narrow next. Try any of:\n")
+			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"TODO|FIXME|XXX|HACK\",\"path\":\".\"}\n")
+			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"panic\\\\(\",\"path\":\".\"}\n")
+			for _, path := range candidates {
+				b.WriteString("  {\"tool\":\"read_file\",\"path\":\"")
+				b.WriteString(path)
+				b.WriteString("\",\"start_line\":1,\"end_line\":200}\n")
+			}
+		} else {
+			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"TODO|FIXME|XXX|HACK\",\"path\":\".\"}\n")
+			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"panic\\\\(\",\"path\":\".\"}\n")
+		}
+	case tool == "read_file":
+		path := strings.TrimSpace(req.Path)
+		if path != "" {
+			b.WriteString("Narrow the read (request a smaller window) or switch to a structured tool:\n")
+			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"func \",\"path\":\"")
+			b.WriteString(path)
+			b.WriteString("\"}\n")
+			b.WriteString("  {\"tool\":\"read_file\",\"path\":\"")
+			b.WriteString(path)
+			b.WriteString("\",\"start_line\":1,\"end_line\":80}\n")
+		} else {
+			b.WriteString("  {\"tool\":\"search_files\",\"pattern\":\"*.go\"}\n")
+		}
+	case tool == "search_content":
+		b.WriteString("Change the pattern materially (new keyword) or scope to a specific path:\n")
+		b.WriteString("  {\"tool\":\"search_files\",\"pattern\":\"*.go\"}\n")
+		if strings.TrimSpace(req.Path) != "" {
+			b.WriteString("  {\"tool\":\"read_file\",\"path\":\"")
+			b.WriteString(req.Path)
+			b.WriteString("\",\"start_line\":1,\"end_line\":160}\n")
+		}
+	default:
+		b.WriteString("Pick a materially different move. Good general options:\n")
+		b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"TODO|FIXME\",\"path\":\".\"}\n")
+		b.WriteString("  {\"tool\":\"search_files\",\"pattern\":\"*.go\"}\n")
+	}
+	b.WriteString("\nOr, if you already have enough evidence, answer the user now with what you observed — do not call any more tools.\n")
+	return b.String()
+}
+
+// rejectionRecoveryFileCandidates pulls up to 3 plausible files the model
+// can read_file next, harvested from whatever listing results it already
+// collected this turn. Preference: .go files in internal/, then anything
+// .go, then any discovered path.
+func rejectionRecoveryFileCandidates(results []workspace.ToolResult) []string {
+	seen := make(map[string]struct{})
+	internalGo := make([]string, 0, 3)
+	anyGo := make([]string, 0, 3)
+	anything := make([]string, 0, 3)
+	for _, r := range results {
+		for _, line := range strings.Split(r.Output, "\n") {
+			path := strings.TrimSpace(line)
+			if path == "" || strings.HasPrefix(path, "/") {
+				continue
+			}
+			if strings.Contains(path, " ") {
+				continue
+			}
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			switch {
+			case strings.HasSuffix(path, ".go") && strings.HasPrefix(path, "internal/"):
+				if len(internalGo) < 3 {
+					internalGo = append(internalGo, path)
+				}
+			case strings.HasSuffix(path, ".go"):
+				if len(anyGo) < 3 {
+					anyGo = append(anyGo, path)
+				}
+			default:
+				if len(anything) < 3 {
+					anything = append(anything, path)
+				}
+			}
+		}
+	}
+	if len(internalGo) > 0 {
+		return internalGo
+	}
+	if len(anyGo) > 0 {
+		return anyGo
+	}
+	return anything
 }
 
 func compactOutput(output string, maxLines int) string {

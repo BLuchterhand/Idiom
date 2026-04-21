@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,6 +87,7 @@ func TestEditFileRejectsInvalidGoBeforeWrite(t *testing.T) {
 		CWD:          dir,
 		EnableWrites: true,
 	})
+	mgr.MarkPathObserved("analysis_agents.go")
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "edit_file",
@@ -428,5 +430,229 @@ func TestExecuteRejectsPathTraversalAndUnsupportedTools(t *testing.T) {
 	result = mgr.Execute(context.Background(), ToolRequest{Tool: "definitely_not_a_tool"})
 	if result.Error == "" || !strings.Contains(result.Error, "unsupported tool") {
 		t.Fatalf("expected unsupported tool error, got %#v", result)
+	}
+}
+
+// Fix 1 (read-before-edit) — exercises docs/opencode-fixes-design.md §1.
+func TestEditFileRequiresPriorObservationOfPath(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "bubble.go"), "package bubble\n")
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "bubble.go",
+		OldText: "package bubble",
+		NewText: "package bubble2",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "requires you to have read") {
+		t.Fatalf("expected read-before-edit rejection on first edit, got %#v", result)
+	}
+
+	// A successful read_file marks the path observed.
+	read := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "bubble.go"})
+	if read.Error != "" {
+		t.Fatalf("read_file unexpectedly failed: %#v", read)
+	}
+	if !mgr.HasObservedPath("bubble.go") {
+		t.Fatal("read_file should have marked bubble.go observed")
+	}
+
+	result = mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "bubble.go",
+		OldText: "package bubble",
+		NewText: "package bubble2",
+	})
+	if result.Error != "" {
+		t.Fatalf("edit_file should succeed after read_file, got %#v", result)
+	}
+}
+
+// Fix 2 (fuzzy path suggestions) — exercises docs/opencode-fixes-design.md §2.
+func TestEditFileSuggestsNearestPathsWhenFileMissing(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "internal/bubble/bubble.go"), "package bubble\n")
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		EnableWrites:        true,
+		MaxDirectoryEntries: 1024,
+	})
+	mgr.MarkPathObserved("bubble/bubble.go") // claim we "saw" the wrong path
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "bubble/bubble.go",
+		OldText: "package bubble",
+		NewText: "package bubble2",
+	})
+	if result.Error == "" {
+		t.Fatalf("expected edit_file to fail on missing path, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "internal/bubble/bubble.go") {
+		t.Fatalf("expected nearest-path suggestion in output, got %#v", result)
+	}
+}
+
+// Extended Fix 2 — fuzzy suggestions must find sibling directories when the
+// user fabricates an entire parent directory (the failure mode we saw in
+// logs/conversations/20260420-210101.488.jsonl where the model invented
+// internal/llm/ in a repo that has no such package).
+func TestFindPathSuggestionsSurfacesSiblingDirectoriesOfMissingAncestor(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/agent/runner.go"), "package agent\n")
+	mustWriteOverview(t, filepath.Join(dir, "internal/app/app.go"), "package app\n")
+	mustWriteOverview(t, filepath.Join(dir, "internal/workspace/manager.go"), "package workspace\n")
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 512,
+	})
+
+	suggestions := mgr.findPathSuggestions("internal/llm/llm.go", 5)
+	if len(suggestions) == 0 {
+		t.Fatal("expected at least one sibling directory hint when an entire parent is fabricated")
+	}
+	joined := strings.Join(suggestions, " ")
+	found := 0
+	for _, wanted := range []string{"internal/agent/", "internal/app/", "internal/workspace/"} {
+		if strings.Contains(joined, wanted) {
+			found++
+		}
+	}
+	if found < 2 {
+		t.Fatalf("expected real sibling directories to appear among suggestions, got:\n%v", suggestions)
+	}
+}
+
+// Adoption fix D — when list_files is called on a fabricated directory,
+// the error must explicitly tell the model the directory does not exist
+// and forbid probing children of that path. Guards against the failure
+// loop in logs/conversations/20260421-053044.479.jsonl where
+// list_files(internal/llm) failed and the model then probed
+// internal/llm/llm.go and internal/llm/llm_provider.go.
+func TestListFilesErrorNamesMissingDirectoryAndForbidsChildProbes(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/agent/runner.go"), "package agent\n")
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 512,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "list_files", Path: "internal/llm"})
+	if result.Error == "" {
+		t.Fatalf("expected list_files on fabricated dir to fail, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "does not exist in this workspace") {
+		t.Fatalf("expected clear 'does not exist' framing, got error:\n%s", result.Error)
+	}
+	if !strings.Contains(result.Error, "Do NOT retry with children") {
+		t.Fatalf("expected explicit 'do not retry children' instruction, got error:\n%s", result.Error)
+	}
+}
+
+// Adoption fix D — read_file on a fabricated path whose PARENT directory is
+// also missing must call that out explicitly so the model stops probing
+// siblings of the phantom directory.
+func TestReadFileErrorNamesMissingParentDirectoryWhenFabricated(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/agent/runner.go"), "package agent\n")
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 512,
+		MaxFileBytes:        1 << 20,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "internal/llm/llm.go"})
+	if result.Error == "" {
+		t.Fatalf("expected read_file on fabricated path to fail, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "parent directory") || !strings.Contains(result.Error, "does not exist") {
+		t.Fatalf("expected 'parent directory ... does not exist' framing, got error:\n%s", result.Error)
+	}
+	if !strings.Contains(result.Error, "Do NOT retry sibling files") {
+		t.Fatalf("expected explicit 'do not retry siblings' instruction, got error:\n%s", result.Error)
+	}
+}
+
+// Extended Fix 2 — list_files and edit_file error paths also surface
+// "Did you mean" when a path is missing. Previously only read_file did.
+func TestListFilesEmitsPathSuggestionsOnMissingPath(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/agent/runner.go"), "package agent\n")
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 512,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "list_files", Path: "internal/llm"})
+	if result.Error == "" {
+		t.Fatalf("expected list_files on fabricated dir to fail, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "Did you mean") || !strings.Contains(result.Output, "internal/agent") {
+		t.Fatalf("expected Did-you-mean output with real siblings, got %#v", result)
+	}
+}
+
+func mustWriteOverview(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}
+
+// Review-lane read cap: when no explicit line range is given, large files
+// must be truncated and the summary must tell the model how to continue.
+// Prevents the "read full 1720-line runner.go into context" failure mode
+// documented in the review of logs/conversations/20260420-210101.488.jsonl.
+func TestReadFileCapsLargeFilesWhenNoRangeGiven(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, 700)
+	for i := 0; i < 700; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i+1))
+	}
+	mustWriteOverview(t, filepath.Join(dir, "big.txt"), strings.Join(lines, "\n"))
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, MaxFileBytes: 1 << 20})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "big.txt"})
+	if result.Error != "" {
+		t.Fatalf("read_file failed: %#v", result)
+	}
+	if !strings.Contains(result.Summary, fmt.Sprintf("lines 1-%d", defaultLargeReadLineCap)) {
+		t.Fatalf("expected soft cap to truncate to lines 1-%d, summary=%q", defaultLargeReadLineCap, result.Summary)
+	}
+	if !strings.Contains(result.Summary, "file has 700 lines total") {
+		t.Fatalf("expected hint to state full file size; summary=%q", result.Summary)
+	}
+}
+
+// The cap must NOT apply when the caller explicitly asked for a larger
+// range — users can still opt in to full-file reads.
+func TestReadFileHonorsExplicitRangeOverSoftCap(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, 700)
+	for i := 0; i < 700; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i+1))
+	}
+	mustWriteOverview(t, filepath.Join(dir, "big.txt"), strings.Join(lines, "\n"))
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, MaxFileBytes: 1 << 20})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "big.txt", StartLine: 1, EndLine: 700})
+	if result.Error != "" {
+		t.Fatalf("read_file failed: %#v", result)
+	}
+	if !strings.Contains(result.Summary, "lines 1-700") {
+		t.Fatalf("explicit range must override soft cap; summary=%q", result.Summary)
+	}
+	if strings.Contains(result.Summary, "file has ") && strings.Contains(result.Summary, "lines total") {
+		t.Fatalf("explicit range should not trigger truncation hint; summary=%q", result.Summary)
 	}
 }

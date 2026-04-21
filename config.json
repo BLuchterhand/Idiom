@@ -63,7 +63,12 @@
     "threads": 0,
     "gpu_layers": 0,
     "log_file": "logs/route-classifier.log",
-    "extra_args": []
+    "extra_args": [
+      "-md", "/Users/ben/models/qwen3-1.7b/Qwen3-1.7B-Q8_0.gguf",
+      "--draft-max", "8",
+      "--draft-min", "2",
+      "--draft-p-min", "0.75"
+    ]
   },
   "workspace": {
     "root": "",

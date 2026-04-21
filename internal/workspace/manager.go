@@ -30,6 +30,7 @@ type Manager struct {
 	nextHandle    int
 	pathToHandle  map[string]string
 	handleToPath  map[string]string
+	observedPaths map[string]struct{}
 	goIndex       *semantic.GoIndex
 	goIndexToken  string
 	cppIndex      *semantic.CppIndex
@@ -128,14 +129,53 @@ var exploreSkippedDirNames = map[string]struct{}{
 
 func NewManager(cfg config.Workspace) *Manager {
 	return &Manager{
-		cfg:          cfg,
-		mode:         ModeNormal,
-		thoroughness: ThoroughnessMedium,
-		writePolicy:  WritePolicyGuarded,
-		nextHandle:   1,
-		pathToHandle: make(map[string]string),
-		handleToPath: make(map[string]string),
+		cfg:           cfg,
+		mode:          ModeNormal,
+		thoroughness:  ThoroughnessMedium,
+		writePolicy:   WritePolicyGuarded,
+		nextHandle:    1,
+		pathToHandle:  make(map[string]string),
+		handleToPath:  make(map[string]string),
+		observedPaths: make(map[string]struct{}),
 	}
+}
+
+// MarkPathObserved records that a caller has successfully read or enumerated
+// the given path during this session. edit_file consults this set to enforce
+// the read-before-edit invariant (Fix 1 in docs/opencode-fixes-design.md).
+// Passing an empty path is a no-op.
+func (m *Manager) MarkPathObserved(path string) {
+	normalized := strings.TrimSpace(path)
+	if normalized == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.observedPaths == nil {
+		m.observedPaths = make(map[string]struct{})
+	}
+	m.observedPaths[normalizePathKey(normalized)] = struct{}{}
+}
+
+// HasObservedPath reports whether MarkPathObserved has been called with the
+// given path (or any case/separator variation of it) during this session.
+func (m *Manager) HasObservedPath(path string) bool {
+	normalized := strings.TrimSpace(path)
+	if normalized == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.observedPaths == nil {
+		return false
+	}
+	_, ok := m.observedPaths[normalizePathKey(normalized)]
+	return ok
+}
+
+func normalizePathKey(path string) string {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	return strings.ToLower(cleaned)
 }
 
 func (m *Manager) Root() string {
@@ -788,12 +828,33 @@ func splitShellSegments(command string) []string {
 func (m *Manager) listFiles(req ToolRequest) ToolResult {
 	base, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "list_files", Summary: "Failed to resolve path", Error: err.Error()}
+		result := ToolResult{Tool: "list_files", Summary: "Failed to resolve path", Error: err.Error()}
+		if strings.TrimSpace(req.Path) != "" {
+			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
+		}
+		return result
 	}
 
 	info, err := os.Stat(base)
 	if err != nil {
-		return ToolResult{Tool: "list_files", Summary: "Failed to stat path", Error: err.Error()}
+		// OpenCode-adoption fix D (list_files directory-missing clarity). The
+		// recent failure in logs/conversations/20260421-053044.479.jsonl was a
+		// loop where list_files on `internal/llm` returned a bare
+		// OS-level error and the model then probed `read_file
+		// internal/llm/llm.go`, `read_file internal/llm/llm_provider.go`,
+		// etc. A clearer "this directory does not exist — stop probing
+		// children of it" framing (alongside the existing Did-you-mean
+		// suggestions) steers the model toward a sibling directory or
+		// answering from the evidence it already has.
+		errMsg := err.Error()
+		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
+			errMsg = fmt.Sprintf("directory %q does not exist in this workspace. Do NOT retry with children of this path (e.g. %q/foo.go) — they cannot exist either. Check the Did-you-mean suggestions below or ask the user for the real location. (os: %s)", req.Path, strings.TrimRight(req.Path, "/"), err.Error())
+		}
+		result := ToolResult{Tool: "list_files", Summary: "Failed to stat path", Error: errMsg}
+		if strings.TrimSpace(req.Path) != "" {
+			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
+		}
+		return result
 	}
 
 	maxDepth := req.MaxDepth
@@ -1011,22 +1072,54 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 func (m *Manager) readFile(req ToolRequest) ToolResult {
 	path, description, err := m.resolveReadTarget(req)
 	if err != nil {
-		result := ToolResult{Tool: "read_file", Summary: "Failed to resolve file target", Error: err.Error()}
+		errMsg := err.Error()
+		// OpenCode-adoption fix D — when the requested path's parent
+		// directory does not exist, say so explicitly instead of letting
+		// the generic "path not found" repeat across sibling probes.
+		// The Did-you-mean block already lists real siblings; this
+		// additional framing tells the model it's probing under a
+		// phantom directory.
 		if strings.TrimSpace(req.Path) != "" {
-			result.Output = strings.Join(m.findPathSuggestions(req.Path, 5), "\n")
+			parent := filepath.Dir(strings.ReplaceAll(strings.TrimSpace(req.Path), "\\", "/"))
+			if parent != "." && parent != "/" && parent != "" {
+				if parentAbs, parentErr := m.resolvePath(parent, req.Workdir); parentErr == nil {
+					if _, statErr := os.Stat(parentAbs); os.IsNotExist(statErr) {
+						errMsg = fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. Do NOT retry sibling files under %q. Check the Did-you-mean suggestions below or ask the user for the real location. (inner: %s)", parent, req.Path, parent, err.Error())
+					}
+				}
+			}
+		}
+		result := ToolResult{Tool: "read_file", Summary: "Failed to resolve file target", Error: errMsg}
+		if strings.TrimSpace(req.Path) != "" {
+			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
 		return result
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
+		// OpenCode-adoption fix D — when the parent directory doesn't exist,
+		// say so explicitly instead of letting the bare "no such file"
+		// repeat across sibling probes. The Did-you-mean output already
+		// surfaces real siblings of the closest-existing ancestor.
+		errMsg := err.Error() + ". Verify the path with search_files or search_content before retrying read_file."
+		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
+			parent := filepath.Dir(strings.ReplaceAll(strings.TrimSpace(req.Path), "\\", "/"))
+			if parent != "." && parent != "/" && parent != "" {
+				if parentAbs, parentErr := m.resolvePath(parent, req.Workdir); parentErr == nil {
+					if _, statErr := os.Stat(parentAbs); os.IsNotExist(statErr) {
+						errMsg = fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. Do NOT retry sibling files under %q. Check the Did-you-mean suggestions below or ask the user for the real location. (os: %s)", parent, req.Path, parent, err.Error())
+					}
+				}
+			}
+		}
 		result := ToolResult{
 			Tool:    "read_file",
 			Summary: "Failed to read file",
-			Error:   err.Error() + ". Verify the path with search_files or search_content before retrying read_file.",
+			Error:   errMsg,
 		}
 		if strings.TrimSpace(req.Path) != "" {
-			result.Output = strings.Join(m.findPathSuggestions(req.Path, 5), "\n")
+			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
 		return result
 	}
@@ -1037,6 +1130,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	lines := strings.Split(string(data), "\n")
 	start := req.StartLine
 	end := req.EndLine
+	userRequestedRange := start > 0 || end > 0
 	if start <= 0 {
 		start = 1
 	}
@@ -1047,14 +1141,33 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "read_file", Summary: "Invalid line range", Error: "start_line must be <= end_line"}
 	}
 
+	// Soft cap: when the caller did NOT specify a range and the file is
+	// large, truncate to the first 400 lines and tell the model how to
+	// continue. Prevents a read_file on runner.go (1720 lines) from
+	// blowing most of the turn's context budget when an outline-first
+	// approach would have been cheaper.
+	truncated := false
+	if !userRequestedRange && end > defaultLargeReadLineCap && end-start+1 > defaultLargeReadLineCap {
+		end = start + defaultLargeReadLineCap - 1
+		if end > len(lines) {
+			end = len(lines)
+		}
+		truncated = true
+	}
+
 	var b strings.Builder
 	for i := start - 1; i < end && i < len(lines); i++ {
 		fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
 	}
 
+	m.MarkPathObserved(m.displayPath(path))
+	summary := fmt.Sprintf("Read %s lines %d-%d", description, start, end)
+	if truncated {
+		summary += fmt.Sprintf(" (file has %d lines total; pass start_line/end_line for a different range or call go_file_outline first)", len(lines))
+	}
 	return ToolResult{
 		Tool:    "read_file",
-		Summary: fmt.Sprintf("Read %s lines %d-%d", description, start, end),
+		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
 	}
 }
@@ -2336,12 +2449,32 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 	}
 	path, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "edit_file", Summary: "Failed to resolve path", Error: err.Error()}
+		result := ToolResult{Tool: "edit_file", Summary: "Failed to resolve path", Error: err.Error()}
+		if strings.TrimSpace(req.Path) != "" {
+			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
+		}
+		return result
+	}
+	// Fix 1 — read-before-edit invariant. The agent must have observed this
+	// path during the session (via a successful read_file, search hit, or
+	// listing) before edit_file will touch it. Prevents the hallucinated-path
+	// retry loops documented in docs/opencode-fixes-design.md §1.
+	if !m.HasObservedPath(m.displayPath(path)) && !m.HasObservedPath(req.Path) {
+		return ToolResult{
+			Tool:    "edit_file",
+			Summary: "Edit request rejected",
+			Error: fmt.Sprintf("edit_file requires you to have read %s first in this session. Call read_file on this path (or use search_content / search_files / list_files to confirm it exists), then retry the edit.",
+				m.displayPath(path)),
+		}
 	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return ToolResult{Tool: "edit_file", Summary: "Failed to read file", Error: err.Error()}
+		result := ToolResult{Tool: "edit_file", Summary: "Failed to read file", Error: err.Error()}
+		if strings.TrimSpace(req.Path) != "" {
+			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
+		}
+		return result
 	}
 
 	current := string(content)
@@ -2720,9 +2853,8 @@ func (m *Manager) rememberPath(path string) string {
 	path = filepath.Clean(path)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if handle, ok := m.pathToHandle[path]; ok {
+		m.mu.Unlock()
 		return handle
 	}
 
@@ -2730,6 +2862,11 @@ func (m *Manager) rememberPath(path string) string {
 	m.nextHandle++
 	m.pathToHandle[path] = handle
 	m.handleToPath[handle] = path
+	m.mu.Unlock()
+	// Fix 1: any path that passes through rememberPath has been confirmed by a
+	// workspace tool (listing, search hit, outline, etc.). Mark it observed so
+	// edit_file accepts it without a prior read_file.
+	m.MarkPathObserved(m.displayPath(path))
 	return handle
 }
 
@@ -2744,6 +2881,11 @@ func (m *Manager) PrimeDiscoveredPaths(paths []string) {
 			continue
 		}
 		m.rememberPath(resolved)
+		// Fix 1: paths confirmed to exist via list_files / search_files /
+		// search_content / bootstrap priming count as "observed" for the
+		// read-before-edit invariant. Reading the contents is not required
+		// when the path's existence has been verified through another channel.
+		m.MarkPathObserved(m.displayPath(resolved))
 	}
 }
 
@@ -2785,8 +2927,21 @@ func (m *Manager) findPathSuggestions(query string, limit int) []string {
 		terms = append(terms, stem)
 	}
 
+	// Phase 1 — substring match on base name / relative path. This catches
+	// the common "user typed a typo in the filename" case.
 	var suggestions []string
+	// Track everything we considered so phase 2 can compute edit distance
+	// without re-walking the tree.
+	type candidate struct {
+		rel  string
+		base string
+	}
+	var candidates []candidate
 	scanned := 0
+	scanCap := m.cfg.MaxDirectoryEntries * 10
+	if scanCap <= 0 {
+		scanCap = 4096
+	}
 	_ = filepath.WalkDir(m.cfg.Root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -2799,12 +2954,13 @@ func (m *Manager) findPathSuggestions(query string, limit int) []string {
 		}
 
 		scanned++
-		if scanned > m.cfg.MaxDirectoryEntries*10 {
+		if scanned > scanCap {
 			return filepath.SkipAll
 		}
 
 		rel := strings.ToLower(m.displayPath(path))
 		base := strings.ToLower(filepath.Base(path))
+		candidates = append(candidates, candidate{rel: rel, base: base})
 		match := false
 		for _, term := range terms {
 			if term == "" {
@@ -2826,8 +2982,206 @@ func (m *Manager) findPathSuggestions(query string, limit int) []string {
 		return nil
 	})
 
-	sort.Strings(suggestions)
+	if len(suggestions) > 0 {
+		sort.Strings(suggestions)
+		return suggestions
+	}
+
+	// Phase 2 — Fix 2 (extended). Base-name substring found nothing, which
+	// happens when the model fabricates both the directory AND the file name
+	// (e.g. "internal/llm/llm.go" in a repo that has no "llm" anywhere).
+	// Fall back to full-path edit distance against what we saw during the
+	// walk. We prefer paths whose parent dir shares a prefix with the
+	// query's parent dir so siblings of the missing package rise to the top.
+	queryLower := strings.ToLower(strings.ReplaceAll(filepath.Clean(query), "\\", "/"))
+	queryParent := strings.ToLower(filepath.Dir(queryLower))
+	type scored struct {
+		path     string
+		distance int
+		priority int
+	}
+	scoredList := make([]scored, 0, len(candidates))
+	for _, c := range candidates {
+		parent := filepath.Dir(c.rel)
+		priority := 0
+		if queryParent != "" && strings.HasPrefix(parent, firstPathSegment(queryParent)+"/") {
+			priority = -2
+		} else if queryParent != "" && strings.HasPrefix(parent, firstPathSegment(queryParent)) {
+			priority = -1
+		}
+		distance := levenshtein(queryLower, c.rel)
+		scoredList = append(scoredList, scored{path: c.rel, distance: distance, priority: priority})
+	}
+	sort.Slice(scoredList, func(i, j int) bool {
+		if scoredList[i].priority != scoredList[j].priority {
+			return scoredList[i].priority < scoredList[j].priority
+		}
+		if scoredList[i].distance != scoredList[j].distance {
+			return scoredList[i].distance < scoredList[j].distance
+		}
+		return scoredList[i].path < scoredList[j].path
+	})
+	// Guard against runaway noise: only return candidates whose distance is
+	// small relative to the query length. Keeps "ls -la" suggestions from
+	// polluting a request for "internal/llm/llm.go".
+	maxDistance := len(queryLower) * 2 / 3
+	if maxDistance < 6 {
+		maxDistance = 6
+	}
+	for _, s := range scoredList {
+		if len(suggestions) >= limit {
+			break
+		}
+		if s.distance > maxDistance {
+			break
+		}
+		suggestions = append(suggestions, s.path)
+	}
+	// Phase 3 — if the query's *parent* directory does not exist, also list
+	// sibling directories of the closest real ancestor so the model sees
+	// the real neighborhood rather than a totally empty "not found" error.
+	if len(suggestions) < limit {
+		for _, sibling := range m.siblingDirectoriesOfMissingAncestor(queryLower) {
+			suggestions = append(suggestions, sibling)
+			if len(suggestions) >= limit {
+				break
+			}
+		}
+	}
 	return suggestions
+}
+
+// defaultLargeReadLineCap bounds read_file when the caller did not ask for
+// a specific line range. A small local model burns context quickly on
+// full-file reads; 400 lines is roughly a screen or two and still large
+// enough to see most real functions end-to-end. The cap is easily bypassed
+// by passing explicit start_line/end_line in the request.
+const defaultLargeReadLineCap = 400
+
+// formatPathSuggestions wraps a suggestion list into a consistent
+// "Did you mean:" block the model can parse at a glance. Returns the empty
+// string when there are no suggestions so the tool's Output stays blank
+// rather than advertising an empty block.
+func formatPathSuggestions(suggestions []string) string {
+	if len(suggestions) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Did you mean one of these (nearest matches from the workspace):\n")
+	for _, s := range suggestions {
+		b.WriteString("- ")
+		b.WriteString(s)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// firstPathSegment returns the portion of path up to (but not including) the
+// first "/". Used to rank sibling directories higher than random files.
+func firstPathSegment(path string) string {
+	if idx := strings.IndexByte(path, '/'); idx > 0 {
+		return path[:idx]
+	}
+	return path
+}
+
+// siblingDirectoriesOfMissingAncestor returns human-readable directory hints
+// ("internal/agent/ (5 files)") for the real directories that share the
+// closest-existing ancestor with a missing path. Helps redirect a model that
+// fabricated an entire directory (e.g. "internal/llm/") back toward the
+// packages that actually exist.
+func (m *Manager) siblingDirectoriesOfMissingAncestor(queryLower string) []string {
+	if queryLower == "" {
+		return nil
+	}
+	segments := strings.Split(strings.Trim(queryLower, "/"), "/")
+	for i := len(segments) - 1; i >= 0; i-- {
+		ancestor := strings.Join(segments[:i], "/")
+		ancestorAbs := m.cfg.Root
+		if ancestor != "" {
+			ancestorAbs = filepath.Join(m.cfg.Root, ancestor)
+		}
+		info, err := os.Stat(ancestorAbs)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		entries, err := os.ReadDir(ancestorAbs)
+		if err != nil {
+			continue
+		}
+		hints := make([]string, 0, 6)
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			child := filepath.Join(ancestorAbs, e.Name())
+			if m.shouldSkipListEntry(m.cfg.Root, child, true) {
+				continue
+			}
+			rel := e.Name()
+			if ancestor != "" {
+				rel = ancestor + "/" + e.Name()
+			}
+			hints = append(hints, rel+"/")
+			if len(hints) >= 6 {
+				break
+			}
+		}
+		return hints
+	}
+	return nil
+}
+
+// levenshtein computes the case-sensitive edit distance between a and b.
+// Small stand-alone implementation — avoids adding a dependency.
+func levenshtein(a, b string) int {
+	if a == b {
+		return 0
+	}
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	if la > lb {
+		a, b = b, a
+		la, lb = lb, la
+	}
+	prev := make([]int, la+1)
+	curr := make([]int, la+1)
+	for i := 0; i <= la; i++ {
+		prev[i] = i
+	}
+	for j := 1; j <= lb; j++ {
+		curr[0] = j
+		for i := 1; i <= la; i++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			del := prev[i] + 1
+			ins := curr[i-1] + 1
+			sub := prev[i-1] + cost
+			curr[i] = minInt3(del, ins, sub)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[la]
+}
+
+func minInt3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
 }
 
 func defaultString(value, fallback string) string {

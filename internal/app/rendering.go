@@ -5,7 +5,6 @@ import (
 	"fmt"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"qwen-bubbles/internal/agent"
 	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/semantic"
@@ -94,12 +93,46 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 	if prompt := strings.TrimSpace(m.systemPrompt()); prompt != "" {
 		messages = append(messages, llama.ChatMessage{Role: "system", Content: prompt})
 	}
+	// Fix 4 (workspace overview) — inject a cheap top-level layout snapshot
+	// exactly once per session so the model doesn't guess at paths. See
+	// docs/opencode-fixes-design.md §4. A telemetry event fires on every
+	// call so a log grep can confirm whether the injection happened: if the
+	// overview never shows up in transcripts after the first prompt, the
+	// wiring has regressed.
+	if m.workspace != nil {
+		if !m.workspaceOverviewInjected {
+			if overview := strings.TrimSpace(workspace.OverviewSystemPrompt(m.workspace.Root())); overview != "" {
+				messages = append(messages, llama.ChatMessage{Role: "system", Content: overview})
+				m.workspaceOverviewInjected = true
+				m.logMessage("workspace_overview", fmt.Sprintf("injected %d chars (root=%s)", len(overview), m.workspace.Root()))
+			} else {
+				m.logMessage("workspace_overview", fmt.Sprintf("skipped_empty (root=%s)", m.workspace.Root()))
+				m.workspaceOverviewInjected = true
+			}
+		}
+	}
 
 	history := m.messages
 	if len(history) > 0 {
 		last := history[len(history)-1]
 		if last.Role == "assistant" && last.Content == "" {
 			history = history[:len(history)-1]
+		}
+	}
+	// Fix 5 (context compaction) — fold the oldest messages into a session
+	// digest before the hard-truncation below kicks in, so long-horizon
+	// intent survives. See docs/opencode-fixes-design.md §5.
+	history = m.MaybeCompactHistory(context.Background(), history)
+
+	// Pinned-file reference snapshot. Every file the session has observed
+	// via read_file/edit_file appears here with its live on-disk content
+	// so the model never loses sight of the code it's working on, even
+	// after older tool results are compacted out. Bounded by
+	// pinnedFileSnapshotMaxBytes.
+	if m.workspace != nil && m.pinnedFiles != nil {
+		if snapshot := m.pinnedFiles.BuildSnapshot(m.workspace.Root()); snapshot != "" {
+			messages = append(messages, llama.ChatMessage{Role: "system", Content: snapshot})
+			m.logMessage("pinned_files_snapshot", fmt.Sprintf("injected %d chars across %d files", len(snapshot), len(m.pinnedFiles.Pins())))
 		}
 	}
 
@@ -290,61 +323,6 @@ func previewReadOutput(content string, startLine int, endLine int) string {
 	return b.String()
 }
 
-func (m *Model) runReviewSubagent(
-	ctx context.Context,
-	prompt string,
-	opts llama.ChatOptions,
-	thoroughness workspace.ExploreThoroughness,
-) (reviewOutcome, error) {
-	reviewWorkspace := m.newWorkspaceManager()
-	if err := reviewWorkspace.SetExploreThoroughness(thoroughness); err != nil {
-		return reviewOutcome{}, err
-	}
-	if err := reviewWorkspace.SetMode(workspace.ModeExplore); err != nil {
-		return reviewOutcome{}, err
-	}
-
-	bootstrap, err := m.bootstrapReviewEvidence(ctx, reviewWorkspace, prompt)
-	if err != nil {
-		return reviewOutcome{}, err
-	}
-
-	reviewMessages := []llama.ChatMessage{
-		{Role: "system", Content: buildReviewSystemPrompt(m.promptStack.Text)},
-		{Role: "user", Content: buildReviewTaskPrompt(prompt)},
-	}
-	reviewMessages = append(reviewMessages, bootstrap.messages...)
-
-	m.events <- infoMsg{text: fmt.Sprintf("Review agent is triaging the codebase (%s).", thoroughness)}
-	if bootstrap.usedCache {
-		m.events <- infoMsg{text: "Review agent is reusing cached repo understanding for this session."}
-	}
-	if bootstrap.confirmed != nil {
-		summary := formatReviewFinding(*bootstrap.confirmed)
-		m.logMessage("review_confirmed", summary)
-		return reviewOutcome{Summary: summary, Finding: bootstrap.confirmed, EvidencePaths: reviewCandidatePaths(bootstrap.candidates)}, nil
-	}
-	if bootstrap.councilBlocked && strings.TrimSpace(bootstrap.fallbackSummary) != "" {
-		return reviewOutcome{Summary: strings.TrimSpace(bootstrap.fallbackSummary), EvidencePaths: reviewCandidatePaths(bootstrap.candidates)}, nil
-	}
-	summary, err := m.completeAnalysisSummary(
-		ctx,
-		reviewMessages,
-		opts,
-		bootstrap.fallbackSummary,
-		reviewCandidatePaths(bootstrap.candidates),
-		bootstrap.ledger,
-		analysisLaneReview,
-		func(ctx context.Context, req analysisDeepeningRequest) (analysisDeepeningResult, error) {
-			return m.deepenReviewEvidence(ctx, reviewWorkspace, prompt, bootstrap.candidates, req)
-		},
-	)
-	if err != nil {
-		return reviewOutcome{}, err
-	}
-	return reviewOutcome{Summary: summary, EvidencePaths: reviewCandidatePaths(bootstrap.candidates)}, nil
-}
-
 type reviewBootstrap struct {
 	messages        []llama.ChatMessage
 	results         []workspace.ToolResult
@@ -381,294 +359,6 @@ type reviewOutcome struct {
 	Summary       string
 	Finding       *reviewFinding
 	EvidencePaths []string
-}
-
-func (m *Model) bootstrapReviewEvidence(
-	ctx context.Context,
-	reviewWorkspace *workspace.Manager,
-	prompt string,
-) (reviewBootstrap, error) {
-	bootstrap := reviewBootstrap{
-		messages: []llama.ChatMessage{{
-			Role: "system",
-			Content: "The harness already collected deterministic review evidence below. " +
-				"Do not request tools in this review lane. Pick the single best issue supported by the evidence, " +
-				"or say that the evidence is inconclusive.",
-		}},
-	}
-
-	discoveredFiles := make(map[string]struct{})
-	discoveredDirs := make(map[string]struct{})
-	level := reviewWorkspace.ExploreThoroughness()
-	repoProfile := ""
-	var goIndex *semantic.GoIndex
-	step := -1
-
-	runTool := func(req workspace.ToolRequest) workspace.ToolResult {
-		raw := bootstrapRawToolRequest(req)
-		m.logToolRequest(agent.ToolRequestEvent{
-			Step:      step,
-			Agent:     "review",
-			Raw:       raw,
-			Request:   req,
-			Mode:      reviewWorkspace.Mode(),
-			Broad:     workspace.IsBroadInspectionRequest(req),
-			Narrowing: workspace.IsNarrowingRequest(req),
-			Action:    agentToolActionClass(req),
-		})
-		result := reviewWorkspace.Execute(ctx, req)
-		m.logToolResult(agent.ToolResultEvent{
-			Step:   step,
-			Agent:  "review",
-			Result: result,
-		})
-		bootstrap.results = append(bootstrap.results, result)
-		bootstrap.messages = append(bootstrap.messages, llama.ChatMessage{
-			Role:    "system",
-			Content: workspace.FormatToolResultForModel(result),
-		})
-		step--
-		return result
-	}
-
-	if cache, ok := m.currentExploreCache(reviewWorkspace); ok {
-		reviewWorkspace.PrimeDiscoveredPaths(cache.discovered)
-		bootstrap.usedCache = true
-		repoProfile = cache.repoProfile
-		goIndex = cache.goIndex
-		bootstrap.messages = append(bootstrap.messages, llama.ChatMessage{
-			Role:    "system",
-			Content: "Cached repository profile for this session:\n" + strings.TrimSpace(cache.repoProfile),
-		})
-		for _, path := range cache.discovered {
-			discoveredFiles[path] = struct{}{}
-		}
-		for _, dir := range cache.directories {
-			discoveredDirs[dir] = struct{}{}
-		}
-		m.logMessage("review_cache", cache.repoProfile)
-	} else {
-		overview := runTool(workspace.ToolRequest{
-			Tool:      "list_files",
-			Path:      ".",
-			Recursive: false,
-			MaxDepth:  1,
-		})
-		if overview.Error != "" {
-			bootstrap.fallbackSummary = "Review bootstrap failed during the initial repository overview."
-			return bootstrap, nil
-		}
-
-		overviewFiles, overviewDirs := parseDiscoveredPaths(overview.Output)
-		for path := range overviewFiles {
-			discoveredFiles[path] = struct{}{}
-		}
-		for dir := range overviewDirs {
-			discoveredDirs[dir] = struct{}{}
-		}
-
-		readLimit := exploreBootstrapReadBudget(level)
-		readCount := 0
-		for _, path := range []string{"README.md", "go.mod", "config.json"} {
-			if _, ok := overviewFiles[path]; !ok {
-				continue
-			}
-			endLine := 120
-			if path == "config.json" {
-				endLine = 160
-			}
-			runTool(workspace.ToolRequest{
-				Tool:      "read_file",
-				Path:      path,
-				StartLine: 1,
-				EndLine:   endLine,
-			})
-			discoveredFiles[path] = struct{}{}
-			readCount++
-			if readCount >= readLimit {
-				break
-			}
-		}
-
-		if _, ok := overviewDirs["cmd"]; ok {
-			mainSearch := runTool(workspace.ToolRequest{
-				Tool:    "search_files",
-				Pattern: "main.go",
-				Path:    "cmd",
-			})
-			mainPaths := parseDiscoveredFileList(mainSearch.Output)
-			if len(mainPaths) > 0 {
-				runTool(workspace.ToolRequest{
-					Tool:      "read_file",
-					Path:      mainPaths[0],
-					StartLine: 1,
-					EndLine:   160,
-				})
-				discoveredFiles[mainPaths[0]] = struct{}{}
-			}
-			for _, path := range mainPaths {
-				discoveredFiles[path] = struct{}{}
-			}
-		}
-
-		builtIndex, buildErr := semantic.BuildGoIndex(reviewWorkspace.Root())
-		goIndex = builtIndex
-		if buildErr != nil {
-			m.logMessage("review_semantic_error", buildErr.Error())
-		}
-		repoProfile = buildExploreRepoProfile(overview.Output, nil)
-		if goIndex != nil {
-			semanticSummary := goIndex.Summary()
-			if semanticSummary != "" {
-				repoProfile += "\n\nGo semantic map:\n" + semanticSummary
-				m.logMessage("review_semantic", semanticSummary)
-			}
-		}
-		repoProfile = appendLanguageCapabilityRegistry(repoProfile, reviewWorkspace.Root())
-		bootstrap.messages = append(bootstrap.messages, llama.ChatMessage{
-			Role:    "system",
-			Content: "Repository profile:\n" + repoProfile,
-		})
-		m.logMessage("review_bootstrap", repoProfile)
-	}
-
-	searchPaths := prioritizedExploreSearchPaths(discoveredDirs, level)
-	pattern := issueSearchPattern(prompt)
-	matches := make([]searchMatch, 0, 24)
-	if strings.TrimSpace(pattern) != "" {
-		for _, path := range uniqueLimitedStrings(searchPaths, reviewSearchPathBudget(level)) {
-			req := workspace.ToolRequest{
-				Tool:    "search_content",
-				Pattern: pattern,
-				Path:    path,
-			}
-			if glob := exploreSearchGlob(path); glob != "" {
-				req.Glob = glob
-			}
-			search := runTool(req)
-			for _, match := range parseSearchMatches(search.Output) {
-				discoveredFiles[match.Path] = struct{}{}
-				matches = append(matches, match)
-			}
-		}
-	}
-
-	rankedCandidates := rankReviewCandidates(prompt, goIndex, matches, reviewCandidateBudget(level))
-	if len(rankedCandidates) == 0 {
-		rankedCandidates = fallbackReviewCandidates(goIndex, reviewCandidateBudget(level))
-	}
-	candidates := reviewCouncilCandidates(prompt, goIndex, rankedCandidates, reviewCandidateBudget(level))
-	bootstrap.candidates = candidates
-
-	if len(candidates) == 0 {
-		candidateBoard := buildReviewCandidateBoard(rankedCandidates)
-		note := "Review council did not reach a 2-of-3 agreement on a candidate, so the review lane stopped before additional file reads."
-		if candidateBoard != "" {
-			bootstrap.messages = append(bootstrap.messages, llama.ChatMessage{
-				Role:    "system",
-				Content: note + "\n\nCandidate board:\n" + candidateBoard,
-			})
-			m.logMessage("review_council", note+"\n"+candidateBoard)
-		} else {
-			bootstrap.messages = append(bootstrap.messages, llama.ChatMessage{
-				Role:    "system",
-				Content: note,
-			})
-			m.logMessage("review_council", note)
-		}
-		if strings.TrimSpace(repoProfile) != "" {
-			m.setExploreCache(reviewWorkspace, repoProfile, discoveredFiles, discoveredDirs, goIndex)
-		}
-		bootstrap.councilBlocked = true
-		bootstrap.ledger = deterministicEvidenceLedger(prompt, bootstrap.results, reviewCandidatePaths(rankedCandidates), "review_candidate_ranker")
-		bootstrap.fallbackSummary = buildReviewFallbackSummary(prompt, rankedCandidates, candidateBoard, repoProfile, note, bootstrap.ledger)
-		return bootstrap, nil
-	}
-
-	for _, candidate := range candidates {
-		reviewWorkspace.PrimeDiscoveredPaths([]string{candidate.Path})
-		discoveredFiles[candidate.Path] = struct{}{}
-		start, end := reviewReadWindow(candidate)
-		runTool(workspace.ToolRequest{
-			Tool:      "read_file",
-			Path:      candidate.Path,
-			StartLine: start,
-			EndLine:   end,
-		})
-	}
-
-	candidateBoard := buildReviewCandidateBoard(candidates)
-	if candidateBoard != "" {
-		bootstrap.messages = append(bootstrap.messages, llama.ChatMessage{
-			Role:    "system",
-			Content: "Review candidate ranking:\n" + candidateBoard,
-		})
-		m.logMessage("review_candidates", candidateBoard)
-	}
-
-	if finding := confirmReviewFinding(prompt, goIndex, candidates); finding != nil {
-		bootstrap.confirmed = finding
-		bootstrap.messages = append(bootstrap.messages, llama.ChatMessage{
-			Role:    "system",
-			Content: "Deterministically confirmed review finding:\n" + formatReviewFinding(*finding),
-		})
-	}
-
-	if strings.TrimSpace(repoProfile) != "" {
-		m.setExploreCache(reviewWorkspace, repoProfile, discoveredFiles, discoveredDirs, goIndex)
-	}
-	bootstrap.ledger = deterministicEvidenceLedger(prompt, bootstrap.results, reviewCandidatePaths(candidates), "review_candidate_ranker")
-	bootstrap.fallbackSummary = buildReviewFallbackSummary(prompt, candidates, candidateBoard, repoProfile, "", bootstrap.ledger)
-	return bootstrap, nil
-}
-
-func (m *Model) deepenReviewEvidence(
-	ctx context.Context,
-	reviewWorkspace *workspace.Manager,
-	prompt string,
-	candidates []reviewCandidate,
-	req analysisDeepeningRequest,
-) (analysisDeepeningResult, error) {
-	paths := reviewCandidatePaths(candidates)
-	if len(paths) == 0 {
-		paths = req.RequiredPaths
-	}
-	pathLimit := 2
-	readEndLine := 420
-	if req.Attempt >= 2 {
-		pathLimit = 4
-		readEndLine = 720
-	}
-	paths = uniqueLimitedStrings(paths, pathLimit)
-	if len(paths) == 0 {
-		return analysisDeepeningResult{
-			Lane:      string(analysisLaneReview),
-			Attempted: false,
-			Exhausted: true,
-			Action:    "skip",
-			Reason:    "review deepening had no candidate paths to inspect",
-		}, nil
-	}
-
-	results := make([]workspace.ToolResult, 0, len(paths)*2)
-	for i, path := range paths {
-		reviewWorkspace.PrimeDiscoveredPaths([]string{path})
-		results = append(results, m.executeAnalysisDeepeningTool(ctx, reviewWorkspace, analysisLaneReview, i+1, workspace.ToolRequest{
-			Tool:      "read_file",
-			Path:      path,
-			StartLine: 1,
-			EndLine:   readEndLine,
-		}))
-		if pattern := issueSearchPattern(prompt); strings.TrimSpace(pattern) != "" {
-			results = append(results, m.executeAnalysisDeepeningTool(ctx, reviewWorkspace, analysisLaneReview, i+101, workspace.ToolRequest{
-				Tool:    "search_content",
-				Pattern: pattern,
-				Path:    path,
-			}))
-		}
-	}
-	attempt := maxInt(req.Attempt, 1)
-	return buildAnalysisDeepeningResult(prompt, analysisLaneReview, attempt, results, paths, fmt.Sprintf("readiness gate failed; retry with wider candidate reads (attempt %d)", attempt)), nil
 }
 
 func renderLanguageCapabilityRegistry(capabilities []languageCapability) string {
@@ -1036,59 +726,6 @@ func buildReviewCandidateBoard(candidates []reviewCandidate) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
-}
-
-func buildReviewFallbackSummary(prompt string, candidates []reviewCandidate, candidateBoard string, repoProfile string, note string, ledger evidenceLedger) string {
-	var b strings.Builder
-	b.WriteString("Deterministic review assessment.\n\n")
-	if strings.TrimSpace(note) != "" {
-		b.WriteString(strings.TrimSpace(note))
-		b.WriteString("\n\n")
-	}
-	if evidenceLedgerHasContent(ledger) {
-		b.WriteString(renderEvidenceLedger(ledger))
-		b.WriteString("\n\n")
-	}
-	b.WriteString("Confidence:\n")
-	if len(candidates) > 0 {
-		b.WriteString("- medium-high: ranked semantic evidence identifies concrete candidate files; validate the top candidate before making changes.\n\n")
-	} else {
-		b.WriteString("- medium: repository evidence was gathered, but no single review candidate dominated.\n\n")
-	}
-	if len(candidates) > 0 {
-		top := candidates[0]
-		label := "Most likely finding"
-		if looksLikeCodeSmellPrompt(prompt) {
-			label = "Most likely cleanup target"
-		}
-		b.WriteString(label)
-		b.WriteString(":\n")
-		b.WriteString("- ")
-		b.WriteString(top.Path)
-		if len(top.Reasons) > 0 {
-			b.WriteString(" because ")
-			b.WriteString(strings.Join(uniqueLimitedStrings(top.Reasons, 3), ", "))
-		}
-		b.WriteString("\n")
-		if hit := firstNonMetaHit(top.Hits); hit != nil {
-			b.WriteString(fmt.Sprintf("- first concrete evidence at line %d: %s\n\n", hit.Line, truncateText(hit.Text, 120)))
-		} else {
-			b.WriteString("- selected from semantic review signals rather than explicit marker hits\n\n")
-		}
-	}
-	if strings.TrimSpace(candidateBoard) != "" {
-		b.WriteString("Top ranked candidates:\n")
-		b.WriteString(strings.TrimSpace(candidateBoard))
-		b.WriteString("\n\n")
-	}
-	if strings.TrimSpace(repoProfile) != "" {
-		b.WriteString("Repository profile:\n")
-		b.WriteString(compactOutput(repoProfile, 14))
-		b.WriteString("\n\n")
-	}
-	b.WriteString("Recommended next step:\n")
-	b.WriteString("- inspect the top ranked candidate and either confirm one concrete finding or ask for a narrower review target")
-	return strings.TrimSpace(b.String())
 }
 
 func reviewSearchPathBudget(level workspace.ExploreThoroughness) int {

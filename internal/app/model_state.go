@@ -24,14 +24,12 @@ import (
 )
 
 type Model struct {
-	cfg                  config.Config
-	client               *llama.Client
-	controller           *llama.ServerController
-	classifierClient     *llama.Client
-	classifierController *llama.ServerController
-	workspace            *workspace.Manager
-	runner               *agent.Runner
-	events               chan tea.Msg
+	cfg        config.Config
+	client     *llama.Client
+	controller *llama.ServerController
+	workspace  *workspace.Manager
+	runner     *agent.Runner
+	events     chan tea.Msg
 
 	width    int
 	height   int
@@ -55,24 +53,26 @@ type Model struct {
 	debugLogger                   *transcript.DebugLogger
 	debugLogPath                  string
 	eventStream                   *jsonEventStream
-	exploreCache                  *exploreSessionCache
-	pendingWrite                  *writeApprovalProposal
-	lastJournal                   *executionJournal
 	lastAssistantReasoningContent string
-	refactorStage                 *structuralRefactorStage
-	taskMemory                    *longHorizonTaskMemory
-	workflowState                 *agentWorkflowState
-	lastReplan                    *analysisReplanRecommendationState
-	agentMode                     agentDecisionMode
+	agentModeName                 string
 	traceMode                     traceDisplayMode
 	compactTrace                  compactTraceState
-	phaseCard                     phaseCardState
 	panelVisible                  bool
-	executionPanel                executionPanelState
 
-	routeClassifierOfflineNotified bool
-	routeClassifierStartMu         sync.Mutex
-	managedRouteClassifier         bool
+	workspaceOverviewInjected bool
+
+	pinnedFiles *pinnedFileRegistry
+}
+
+// pinnedFilesRegistry returns the lazy-initialized per-session pin set.
+func (m *Model) pinnedFilesRegistry() *pinnedFileRegistry {
+	if m == nil {
+		return nil
+	}
+	if m.pinnedFiles == nil {
+		m.pinnedFiles = newPinnedFileRegistry()
+	}
+	return m.pinnedFiles
 }
 
 type assistantReplyMsg struct {
@@ -358,24 +358,6 @@ func (m *Model) handleSlashCommand(raw string) bool {
 			m.status = "Agent mode set to " + string(mode) + "."
 		default:
 			m.status = "Usage: /agent [auto|plan|build|review|explore]"
-		}
-	case "/workflow":
-		switch {
-		case len(fields) == 1 || (len(fields) == 2 && fields[1] == "list"):
-			m.status = "Workflow templates: latest-log, implement-plan, verify, frontier-audit, opencode-audit."
-		case len(fields) == 2:
-			prompt, ok := workflowCommandPrompt(fields[1])
-			if !ok {
-				m.status = "Unknown workflow. Use /workflow list."
-				return false
-			}
-			if m.streaming {
-				m.status = "Wait for the current response to finish before starting a workflow."
-				return false
-			}
-			m.sendPromptAsync(prompt)
-		default:
-			m.status = "Usage: /workflow [list|latest-log|implement-plan|verify|frontier-audit|opencode-audit]"
 		}
 	case "/writes":
 		switch {
@@ -691,27 +673,6 @@ func (m *Model) logLongHorizonState(action string, stage *structuralRefactorStag
 	m.logMessage("long_horizon_state", string(data))
 }
 
-func (m *Model) runLocateAgent(ctx context.Context, prompt string) (string, error) {
-	locateWorkspace := m.newWorkspaceManager()
-	locateWorkspace.PrimeDiscoveredPaths(promptMentionedWorkspacePaths(prompt))
-
-	literal := primaryLocateLiteral(prompt)
-	if literal == "" {
-		return "", fmt.Errorf("locate request needs a quoted UI string or clearer target text")
-	}
-
-	m.events <- infoMsg{text: fmt.Sprintf("Locate agent is identifying where %q is rendered.", literal)}
-	outcome, err := m.locatePromptTarget(ctx, locateWorkspace, prompt, literal)
-	if err != nil {
-		return "", err
-	}
-	summary := renderLocateSummary(prompt, outcome)
-	if !analysisReplyAccepted(summary, []string{outcome.Best.Path}, analysisLaneLocate) {
-		return "", fmt.Errorf("locate summary failed locate target contract")
-	}
-	return summary, nil
-}
-
 func locateFallbackPatterns(prompt string, literal string) []string {
 	normalized := strings.ToLower(prompt)
 	patterns := make([]string, 0, 6)
@@ -757,208 +718,6 @@ func locateFallbackPatterns(prompt string, literal string) []string {
 		}
 	}
 	return patterns
-}
-
-func (m *Model) tryDirectLocateRemoval(
-	ctx context.Context,
-	mgr *workspace.Manager,
-	prompt string,
-	history []llama.ChatMessage,
-	startStep int,
-	journal *executionJournalRecorder,
-	guard *implementWriteGuard,
-	onBlocked func(req workspace.ToolRequest, blocked workspace.ToolResult) workspace.ToolResult,
-) directImplementationShortcut {
-	if mgr == nil || !promptRequestsRemoval(prompt) {
-		return directImplementationShortcut{}
-	}
-	step := startStep
-	for _, target := range analysisSummaryTargets(history) {
-		readReq := workspace.ToolRequest{
-			Tool:      "read_file",
-			Path:      target.Path,
-			StartLine: maxInt(1, target.Line-1),
-			EndLine:   target.Line + 1,
-		}
-		m.logToolRequest(agent.ToolRequestEvent{
-			Step:      step,
-			Agent:     "implement",
-			Raw:       fmt.Sprintf("{\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}", target.Path, maxInt(1, target.Line-1), target.Line+1),
-			Request:   readReq,
-			Mode:      workspace.ModeNormal,
-			Broad:     false,
-			Narrowing: true,
-			Action:    fmt.Sprintf("read_file:%s:%d", target.Path, target.Line),
-		})
-		readResult := mgr.Execute(ctx, readReq)
-		m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: readResult})
-		m.events <- toolTraceMsg{text: workspace.FormatToolTrace(readResult)}
-		step++
-		startLine := target.Line
-		endLine := target.Line
-		if readResult.Error == "" {
-			prevLine, _ := extractReadFileLine(readResult.Output, target.Line-1)
-			currentLine, _ := extractReadFileLine(readResult.Output, target.Line)
-			nextLine, _ := extractReadFileLine(readResult.Output, target.Line+1)
-			if looksLikeSingleLineConditionalWrapper(prevLine, currentLine, nextLine) {
-				startLine = target.Line - 1
-				endLine = target.Line + 1
-			}
-		}
-		req := workspace.ToolRequest{
-			Tool:      "edit_file",
-			Path:      target.Path,
-			StartLine: startLine,
-			EndLine:   endLine,
-			Content:   "",
-		}
-		if guard != nil {
-			if blocked := guard.PreExecute(req); blocked != nil {
-				result := *blocked
-				if onBlocked != nil {
-					result = onBlocked(req, result)
-				}
-				m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: result})
-				m.events <- toolTraceMsg{text: workspace.FormatToolTrace(result)}
-				step++
-				if isWriteApprovalRequiredResult(result) {
-					return directImplementationShortcut{terminal: true, nextStep: step}
-				}
-				continue
-			}
-		}
-		m.logToolRequest(agent.ToolRequestEvent{
-			Step:      step,
-			Agent:     "implement",
-			Raw:       fmt.Sprintf("{\"tool\":\"edit_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d,\"content\":\"\"}", target.Path, startLine, endLine),
-			Request:   req,
-			Mode:      workspace.ModeNormal,
-			Broad:     false,
-			Narrowing: true,
-			Action:    fmt.Sprintf("edit_file:%s:%d-%d-remove", target.Path, startLine, endLine),
-		})
-		if capture := captureExecutionJournalResult(journal, req); capture != nil {
-			m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: *capture})
-			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(*capture)}
-			step++
-			continue
-		}
-		result := mgr.Execute(ctx, req)
-		m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: result})
-		m.events <- toolTraceMsg{text: workspace.FormatToolTrace(result)}
-		if shouldInvalidateExploreCacheForTool(result) {
-			m.events <- exploreCacheInvalidatedMsg{
-				reason: fmt.Sprintf("workspace changed via %s; clearing cached explore profile", result.Tool),
-			}
-		}
-		step++
-		if result.Error != "" {
-			continue
-		}
-		return directImplementationShortcut{
-			applied:      true,
-			changedPaths: []string{target.Path},
-			summary:      fmt.Sprintf("Removed the located UI logic in %s lines %d-%d.", target.Path, startLine, endLine),
-			nextStep:     step,
-		}
-	}
-	return directImplementationShortcut{}
-}
-
-func (m *Model) tryDirectUISpacingEdit(
-	ctx context.Context,
-	mgr *workspace.Manager,
-	prompt string,
-	packet implementationTargetPacket,
-	bootstrap implementationBootstrap,
-	startStep int,
-	journal *executionJournalRecorder,
-	guard *implementWriteGuard,
-	onBlocked func(req workspace.ToolRequest, blocked workspace.ToolResult) workspace.ToolResult,
-) directImplementationShortcut {
-	if mgr == nil || !looksLikeUISpacingPrompt(prompt) {
-		return directImplementationShortcut{}
-	}
-	path, startLine, endLine, _, ok := focusedRewriteWindow(packet, bootstrap)
-	if !ok {
-		return directImplementationShortcut{}
-	}
-	for _, result := range bootstrap.results {
-		if result.Tool != "read_file" || result.Error != "" {
-			continue
-		}
-		readPath, _, _, readOK := parseReadWindowSummary(result.Summary)
-		if !readOK || readPath != path {
-			continue
-		}
-		lineNumber, replacement, found := directUISpacingReplacement(result.Output, startLine, endLine)
-		if !found {
-			continue
-		}
-		req := workspace.ToolRequest{
-			Tool:      "edit_file",
-			Path:      path,
-			StartLine: lineNumber,
-			EndLine:   lineNumber,
-			Content:   replacement,
-		}
-		if err := preflightStructuredExecutionRequest(mgr, req); err != nil {
-			m.logMessage("implement_ui_spacing", "direct UI spacing edit rejected by preflight: "+err.Error())
-			return directImplementationShortcut{}
-		}
-		step := startStep
-		if guard != nil {
-			if blocked := guard.PreExecute(req); blocked != nil {
-				result := *blocked
-				if onBlocked != nil {
-					result = onBlocked(req, result)
-				}
-				m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: result})
-				m.events <- toolTraceMsg{text: workspace.FormatToolTrace(result)}
-				step++
-				if isWriteApprovalRequiredResult(result) {
-					return directImplementationShortcut{terminal: true, nextStep: step}
-				}
-				return directImplementationShortcut{}
-			}
-		}
-		m.logMessage("implement_ui_spacing", fmt.Sprintf("direct UI spacing edit proposed for %s line %d", path, lineNumber))
-		m.logToolRequest(agent.ToolRequestEvent{
-			Step:      step,
-			Agent:     "implement",
-			Raw:       marshalStructuredExecutionRequest(req),
-			Request:   req,
-			Mode:      workspace.ModeNormal,
-			Broad:     false,
-			Narrowing: true,
-			Action:    fmt.Sprintf("edit_file:%s:%d-ui-spacing", path, lineNumber),
-		})
-		if capture := captureExecutionJournalResult(journal, req); capture != nil {
-			m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: *capture})
-			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(*capture)}
-			step++
-			return directImplementationShortcut{}
-		}
-		editResult := mgr.Execute(ctx, req)
-		m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: editResult})
-		m.events <- toolTraceMsg{text: workspace.FormatToolTrace(editResult)}
-		if shouldInvalidateExploreCacheForTool(editResult) {
-			m.events <- exploreCacheInvalidatedMsg{
-				reason: fmt.Sprintf("workspace changed via %s; clearing cached explore profile", editResult.Tool),
-			}
-		}
-		step++
-		if editResult.Error != "" {
-			return directImplementationShortcut{}
-		}
-		return directImplementationShortcut{
-			applied:      true,
-			changedPaths: []string{path},
-			summary:      fmt.Sprintf("Applied a direct UI spacing edit in %s line %d.", path, lineNumber),
-			nextStep:     step,
-		}
-	}
-	return directImplementationShortcut{}
 }
 
 func currentWorkspaceStateToken(root string) string {

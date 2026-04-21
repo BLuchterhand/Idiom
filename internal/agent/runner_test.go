@@ -401,14 +401,16 @@ func TestRunnerRejectsBroadDiscoveryAfterWorkspaceEdit(t *testing.T) {
 	defer server.Close()
 
 	var broadRejected bool
+	mgr := workspace.NewManager(config.Workspace{
+		Root:         root,
+		CWD:          root,
+		EnableWrites: true,
+	})
+	mgr.MarkPathObserved("README.md")
 	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root:         root,
-			CWD:          root,
-			EnableWrites: true,
-		}),
-		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
 	}
 	answer, err := runner.Run(
 		context.Background(),
@@ -465,14 +467,16 @@ func TestRunnerAllowsChangedFileReadAfterRejectingUnrelatedPostEditRead(t *testi
 
 	var unrelatedReadRejected bool
 	var changedReadSucceeded bool
+	mgr := workspace.NewManager(config.Workspace{
+		Root:         root,
+		CWD:          root,
+		EnableWrites: true,
+	})
+	mgr.MarkPathObserved("README.md")
 	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root:         root,
-			CWD:          root,
-			EnableWrites: true,
-		}),
-		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
 	}
 	answer, err := runner.Run(
 		context.Background(),
@@ -1293,6 +1297,7 @@ func TestRunnerExecutesWorkbranchWriteChildTaskWithoutMutatingParent(t *testing.
 	replies := []string{
 		"```tool\n{\"tool\":\"task\",\"agent\":\"patch-readme\",\"mode\":\"workbranch_write\",\"prompt\":\"change README greeting\"}\n```",
 		"```tool\n{\"tool\":\"task_ledger\",\"todos\":[{\"id\":\"edit\",\"content\":\"Edit README\",\"status\":\"completed\"},{\"id\":\"verify\",\"content\":\"Check diff\",\"status\":\"completed\"}]}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
 		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":1,\"content\":\"hello from child\\n\"}\n```",
 		"Changed files:\n- README.md\nVerification: inspected diff\nConfidence: medium",
 		"Parent inspected child patch.",
@@ -1582,6 +1587,78 @@ func TestRunnerRepeatedBroadInspectionStillHitsExploreGuard(t *testing.T) {
 	}
 	if replayed {
 		t.Fatal("repeated broad inspection must not bypass explore guard through replay")
+	}
+}
+
+func TestRunnerEmitsRecoveryNudgeBeforeGivingUpOnRepeatedBroadInspection(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/app/app.go", "package app\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"list_files","path":".","recursive":true}`,
+		`{"tool":"list_files","path":".","recursive":true}`,
+		`{"tool":"list_files","path":".","recursive":true}`,
+		"Answered from prior evidence after nudge.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	if err := mgr.SetMode(workspace.ModeExplore); err != nil {
+		t.Fatalf("set explore mode: %v", err)
+	}
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy: RunPolicy{
+			MaxToolSteps:       0,
+			MaxNoProgressTurns: 6,
+		},
+	}
+
+	var nudgeEmitted bool
+	runner.OnEvent = func(event RunEvent) {
+		if event.Role == "rejection_recovery_nudge" {
+			nudgeEmitted = true
+			if !strings.Contains(event.Content, "search_content") {
+				t.Fatalf("nudge should suggest search_content, got:\n%s", event.Content)
+			}
+		}
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "identify small refactor opportunities"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !nudgeEmitted {
+		t.Fatal("expected rejection_recovery_nudge event before runner bails")
+	}
+	if answer != "Answered from prior evidence after nudge." {
+		t.Fatalf("expected post-nudge model answer to be returned, got %q", answer)
+	}
+	if requests < 4 {
+		t.Fatalf("expected model to be invoked after nudge (at least 4 calls), got %d", requests)
 	}
 }
 
@@ -2309,13 +2386,37 @@ func TestSynthesizeFallbackAnswerUsesNarrowEvidenceAndFinalBlocker(t *testing.T)
 	if !ok {
 		t.Fatal("expected fallback answer")
 	}
-	for _, want := range []string{"Exploration did not complete cleanly", "Verified context:", "found route", "Final blocker:", "bad shell: not allowed", "Recommended next step:"} {
+	for _, want := range []string{"Partial findings from this turn", "Verified context:", "found route", "Final blocker:", "bad shell: not allowed", "Recommended next step:"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected fallback to include %q, got:\n%s", want, answer)
 		}
 	}
 	if strings.Contains(answer, "listed files") {
 		t.Fatalf("broad list_files result should not be preferred as narrowing evidence:\n%s", answer)
+	}
+}
+
+// Adoption fix B (OpenCode alignment) — the forced-completion fallback must
+// NOT prefix the reply with apologetic "did not complete cleanly" wording.
+// Users read that as a system error; the same content reframed as
+// "Partial findings from this turn" presents the evidence honestly.
+// Guards against the failure surfaced in
+// logs/conversations/20260421-053044.479.jsonl where the fallback answer
+// was an apology instead of a useful partial report.
+func TestSynthesizeFallbackAnswerOmitsApologeticPrefix(t *testing.T) {
+	for _, agent := range []string{"explore", "main"} {
+		answer, ok := synthesizeFallbackAnswer(agent, []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read internal/app/app.go lines 1-50", Output: "package app\n"},
+		})
+		if !ok {
+			t.Fatalf("expected fallback answer for agent %q", agent)
+		}
+		if !strings.Contains(answer, "Partial findings from this turn") {
+			t.Fatalf("expected %q fallback to lead with partial-findings framing, got:\n%s", agent, answer)
+		}
+		if strings.Contains(answer, "did not complete cleanly") {
+			t.Fatalf("expected %q fallback to drop apologetic wording, got:\n%s", agent, answer)
+		}
 	}
 }
 
@@ -2326,5 +2427,142 @@ func TestCompactOutputRespectsLineBudget(t *testing.T) {
 	}
 	if got := compactOutput("a\nb", 0); got != "a\nb" {
 		t.Fatalf("expected zero budget to preserve output, got %q", got)
+	}
+}
+
+// Fix 7 (real subagent spawning via the task tool) — exercises
+// docs/opencode-fixes-design.md §7. Verifies that the parent's `task` call
+// launches an isolated child Runner, that the child actually drives the
+// model loop (tool call plus answer), and that the child's intermediate
+// messages do not pollute the parent's conversation.
+func TestRunnerTaskToolSpawnsIsolatedReadOnlyChild(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "src/widget.go", "package widget\n"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"task","agent":"scout","mode":"read_only","prompt":"list .go files under src/"}`,
+		`{"tool":"list_files","path":"src"}`,
+		"Found src/widget.go.",
+		"Parent inspected scout's report and concluded.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request #%d", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	mgr := workspace.NewManager(config.Workspace{
+		Root:                root,
+		CWD:                 root,
+		MaxDirectoryEntries: 64,
+	})
+	var childRequests, childResults int
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, 2*time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "child_tool_request":
+				childRequests++
+			case "child_tool_result":
+				childResults++
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "delegate a read-only probe then report"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Parent inspected scout's report and concluded." {
+		t.Fatalf("unexpected parent answer: %q", answer)
+	}
+	if childRequests == 0 || childResults == 0 {
+		t.Fatalf("expected isolated child tool events to fire (requests=%d results=%d)", childRequests, childResults)
+	}
+	if requests != 4 {
+		t.Fatalf("expected 4 chat requests (1 parent spawn + 2 child steps + 1 parent final), got %d", requests)
+	}
+}
+
+// Soft-failure nudge — runner must fire rejection_recovery_nudge when three
+// tool calls in a row return errors against the same path stem, even though
+// none of them are "hard rejections." Mirrors the failure mode we saw in
+// logs/conversations/20260420-210101.488.jsonl where the model called
+// read_file on five fabricated files inside a non-existent directory.
+func TestRunnerEmitsRecoveryNudgeOnRepeatedSameStemSoftFailures(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/agent/runner.go", "package agent\n"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"internal/llm/llm.go"}`,
+		`{"tool":"read_file","path":"internal/llm/openai.go"}`,
+		`{"tool":"read_file","path":"internal/llm/qwen.go"}`,
+		"Stopped after recovery nudge.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	mgr := workspace.NewManager(config.Workspace{
+		Root:                root,
+		CWD:                 root,
+		MaxDirectoryEntries: 128,
+	})
+	var nudgeEmitted bool
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, 2*time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 6},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "rejection_recovery_nudge" {
+				nudgeEmitted = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "find the llm package"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !nudgeEmitted {
+		t.Fatal("expected rejection_recovery_nudge after 3 same-stem soft failures")
+	}
+	if answer != "Stopped after recovery nudge." {
+		t.Fatalf("unexpected answer: %q", answer)
 	}
 }

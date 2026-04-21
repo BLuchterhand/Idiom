@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"qwen-bubbles/internal/agent"
 	"qwen-bubbles/internal/config"
+	"qwen-bubbles/internal/frontier"
 	"qwen-bubbles/internal/llama"
 	"qwen-bubbles/internal/transcript"
 	"qwen-bubbles/internal/workspace"
@@ -61,15 +62,6 @@ func New(cfg config.Config) *Model {
 		panelVisible:   true,
 	}
 	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
-	if classifierURL := cfg.RouteClassifierBaseURL(); classifierURL != "" {
-		m.classifierClient = llama.NewClient(classifierURL, 0)
-	}
-	if cfg.RouteClassifier.AutoStartServer {
-		if m.classifierClient == nil {
-			m.classifierClient = llama.NewClient(cfg.RouteClassifierBaseURL(), 0)
-		}
-		m.classifierController = llama.NewServerController(cfg.RouteClassifierServerConfig(), m.classifierClient)
-	}
 	m.workspace = workspace.NewManager(cfg.Workspace)
 	m.runner = &agent.Runner{
 		Client:       m.client,
@@ -322,9 +314,32 @@ func (m *Model) runMainAgent(
 	opts llama.ChatOptions,
 	rails deterministicControlRailsSnapshot,
 ) (string, error) {
-	mainGuard := newMainWriteGuard(m.workspace, prompt)
+	// OpenCode alignment: unify write-permission UX across lanes. The main
+	// path now uses the same implementWriteGuard + approval flow as the
+	// implement lane, so a user whose model decides to make an edit gets the
+	// same interactive approval proposal instead of a terse "switch lanes"
+	// refusal. In auto-write mode the guard short-circuits to a nil block so
+	// writes pass through; in guarded mode the approval proposal fires.
+	writeGuard := newImplementWriteGuard(m.workspace, prompt)
+	var pendingApproval *writeApprovalProposal
+	guardBlocked := func(req workspace.ToolRequest, blocked workspace.ToolResult) workspace.ToolResult {
+		if proposal := buildWriteApprovalProposal(ctx, m.workspace, prompt, req, writeGuard, blocked); proposal != nil {
+			pendingApproval = proposal
+			m.events <- writeApprovalProposalMsg{proposal: *proposal}
+			return approvalRequiredToolResult(*proposal)
+		}
+		return blocked
+	}
 	if instruction := controlRailRuntimeInstruction(rails); instruction != "" {
 		history = append(append([]llama.ChatMessage(nil), history...), llama.ChatMessage{Role: "system", Content: instruction})
+	}
+	// OpenCode-adoption fix C+F: non-implement lanes get an explicit plan-mode
+	// posture reminder (mirrors OpenCode `plan.txt`) plus a nudge toward the
+	// `task` tool for open-ended exploratory prompts (mirrors `default.txt` /
+	// `anthropic.txt`). Kept separate from RuntimeInstruction so verification-
+	// only / other task-family reminders compose cleanly alongside it.
+	if reminder := controlRailPlanModeReminder(rails); reminder != "" {
+		history = append(history, llama.ChatMessage{Role: "system", Content: reminder})
 	}
 	runner := &agent.Runner{
 		Client:           m.client,
@@ -351,8 +366,48 @@ func (m *Model) runMainAgent(
 			if blocked := controlRailPreExecute(rails, req); blocked != nil {
 				return blocked
 			}
-			return mainGuard.PreExecute(req)
+			// Fix 6 (per-tool permission granularity) — glob rules in
+			// config.Workspace.ToolRules run BEFORE the write guard so the
+			// operator can grant or deny specific patterns ahead of the
+			// legacy binary gate. Allow short-circuits; Deny hard-blocks;
+			// Ask falls through to the approval flow below.
+			switch m.workspace.EvaluateToolRule(req) {
+			case workspace.ToolRuleAllow:
+				return nil
+			case workspace.ToolRuleDeny:
+				return &workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Tool request blocked by tool_rules",
+					Error:   "a workspace tool_rules policy denies this request. Edit your config or ask the user to approve a different approach.",
+				}
+			case workspace.ToolRuleAsk:
+				result := guardBlocked(req, workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Guarded write policy blocked broad write scope",
+					Error:   "tool_rules policy requires explicit approval for this request",
+				})
+				return &result
+			}
+			if blocked := writeGuard.PreExecute(req); blocked != nil {
+				result := guardBlocked(req, *blocked)
+				return &result
+			}
+			return nil
 		},
+	}
+	// OpenCode-adoption fix E (grounding on non-implement lanes). Track
+	// every workspace path observed via a successful tool result so we can
+	// reconcile the final reply against real evidence, mirroring what Fix 3
+	// already does for the implement lane. Prevents plan / explore /
+	// architecture answers from citing paths the agent never actually read.
+	evidencePaths := make(map[string]struct{})
+	recordEvidencePath := func(result workspace.ToolResult) {
+		if strings.TrimSpace(result.Error) != "" {
+			return
+		}
+		if path := extractPinnablePathFromSummary(result.Summary); path != "" {
+			evidencePaths[path] = struct{}{}
+		}
 	}
 	answer, err := runner.Run(
 		ctx,
@@ -366,6 +421,8 @@ func (m *Model) runMainAgent(
 		},
 		func(event agent.ToolResultEvent) {
 			m.logToolResult(event)
+			m.pinPathsFromToolResult(event.Result)
+			recordEvidencePath(event.Result)
 			if shouldInvalidateExploreCacheForTool(event.Result) {
 				m.events <- exploreCacheInvalidatedMsg{
 					reason: fmt.Sprintf("workspace changed via %s; clearing cached explore profile", event.Result.Tool),
@@ -374,178 +431,82 @@ func (m *Model) runMainAgent(
 			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(event.Result)}
 		},
 	)
-	if err == nil {
-		m.lastAssistantReasoningContent = strings.TrimSpace(runner.LastAssistantMessage.ReasoningContent)
+	if err != nil {
+		return "", err
 	}
+	if pendingApproval != nil {
+		return pendingApproval.renderSummary(), nil
+	}
+	m.lastAssistantReasoningContent = strings.TrimSpace(runner.LastAssistantMessage.ReasoningContent)
 	return answer, err
 }
 
-func (m *Model) tryDirectConfigFieldUpdate(
-	ctx context.Context,
-	mgr *workspace.Manager,
-	prompt string,
-	packet implementationTargetPacket,
-	startStep int,
-	journal *executionJournalRecorder,
-	guard *implementWriteGuard,
-	onBlocked func(req workspace.ToolRequest, blocked workspace.ToolResult) workspace.ToolResult,
-) directImplementationShortcut {
-	if mgr == nil {
-		return directImplementationShortcut{}
+// pinPathsFromToolResult attaches any file a successful tool result touched
+// to the session pin set. Pinned files are re-injected as a reference
+// snapshot on every prompt so the model can consult live contents without
+// a fresh read_file call each turn. Errors and no-op results are skipped
+// so we don't pin hallucinated paths.
+func (m *Model) pinPathsFromToolResult(result workspace.ToolResult) {
+	if m == nil || strings.TrimSpace(result.Error) != "" {
+		return
 	}
-	field, desiredValue, ok := configFieldUpdateTarget(prompt)
-	if !ok {
-		return directImplementationShortcut{}
+	registry := m.pinnedFilesRegistry()
+	if registry == nil {
+		return
 	}
-	targets := make([]string, 0, len(packet.PrimaryPaths))
-	for _, path := range packet.PrimaryPaths {
-		path = normalizeGuardedPath(path)
-		if !strings.HasSuffix(strings.ToLower(path), ".json") {
-			continue
-		}
-		targets = append(targets, path)
-	}
-	if len(targets) == 0 {
-		return directImplementationShortcut{}
-	}
-	step := startStep
-	plannedReqs := make([]workspace.ToolRequest, 0, len(targets))
-	changedPaths := make([]string, 0, len(targets))
-	for _, path := range targets {
-		searchReq := workspace.ToolRequest{
-			Tool:    "search_content",
-			Pattern: `"` + regexp.QuoteMeta(field) + `"\s*:`,
-			Path:    path,
-		}
-		m.logToolRequest(agent.ToolRequestEvent{
-			Step:      step,
-			Agent:     "implement",
-			Raw:       marshalStructuredExecutionRequest(searchReq),
-			Request:   searchReq,
-			Mode:      workspace.ModeNormal,
-			Broad:     false,
-			Narrowing: true,
-			Action:    fmt.Sprintf("search_content:%s:%s", path, field),
-		})
-		searchResult := mgr.Execute(ctx, searchReq)
-		m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: searchResult})
-		m.events <- toolTraceMsg{text: workspace.FormatToolTrace(searchResult)}
-		step++
-		if searchResult.Error != "" {
-			return directImplementationShortcut{}
-		}
-		line, ok := firstSearchMatchLine(searchResult.Output, path)
-		if !ok {
-			return directImplementationShortcut{}
-		}
-		readReq := workspace.ToolRequest{
-			Tool:      "read_file",
-			Path:      path,
-			StartLine: line,
-			EndLine:   line,
-		}
-		m.logToolRequest(agent.ToolRequestEvent{
-			Step:      step,
-			Agent:     "implement",
-			Raw:       marshalStructuredExecutionRequest(readReq),
-			Request:   readReq,
-			Mode:      workspace.ModeNormal,
-			Broad:     false,
-			Narrowing: true,
-			Action:    fmt.Sprintf("read_file:%s:%d", path, line),
-		})
-		readResult := mgr.Execute(ctx, readReq)
-		m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: readResult})
-		m.events <- toolTraceMsg{text: workspace.FormatToolTrace(readResult)}
-		step++
-		if readResult.Error != "" {
-			return directImplementationShortcut{}
-		}
-		lineText, ok := extractReadFileLine(readResult.Output, line)
-		if !ok {
-			return directImplementationShortcut{}
-		}
-		replacement, ok := replaceJSONFieldLine(lineText, field, desiredValue)
-		if !ok {
-			return directImplementationShortcut{}
-		}
-		plannedReqs = append(plannedReqs, workspace.ToolRequest{
-			Tool:      "edit_file",
-			Path:      path,
-			StartLine: line,
-			EndLine:   line,
-			Content:   replacement,
-		})
-		if err := preflightStructuredExecutionRequest(mgr, plannedReqs[len(plannedReqs)-1]); err != nil {
-			m.logMessage("implement_config_update", "direct config field update rejected by preflight: "+err.Error())
-			return directImplementationShortcut{}
+	switch strings.TrimSpace(result.Tool) {
+	case "read_file", "edit_file", "write_file", "append_file",
+		"go_read_symbol", "go_extract_body", "go_file_outline":
+		if path := extractPinnablePathFromSummary(result.Summary); path != "" {
+			registry.Pin(path)
 		}
 	}
-	if proposal := buildWriteApprovalProposalForRequests(ctx, mgr, prompt, guard, plannedReqs); proposal != nil {
-		m.logMessage("implement_config_update", "staged guarded write approval for exact scope: "+strings.Join(proposal.Paths, ", "))
-		return directImplementationShortcut{
-			terminal: true,
-			proposal: proposal,
-		}
+}
+
+// extractPinnablePathFromSummary pulls the workspace-relative path out of a
+// tool result summary. Supports the common "Read <display> lines N-M" and
+// "Edited <display>" formats. Returns empty when nothing parseable.
+func extractPinnablePathFromSummary(summary string) string {
+	trimmed := strings.TrimSpace(summary)
+	if trimmed == "" {
+		return ""
 	}
-	for _, req := range plannedReqs {
-		if guard != nil {
-			if blocked := guard.PreExecute(req); blocked != nil {
-				result := *blocked
-				if onBlocked != nil {
-					result = onBlocked(req, result)
+	lower := strings.ToLower(trimmed)
+	prefixes := []string{"read ", "edited ", "wrote ", "appended ", "outlined ", "extracted "}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			rest := trimmed[len(prefix):]
+			for _, boundary := range []string{" lines ", " between ", " at ", " ("} {
+				if idx := strings.Index(rest, boundary); idx > 0 {
+					rest = rest[:idx]
+					break
 				}
-				m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: result})
-				m.events <- toolTraceMsg{text: workspace.FormatToolTrace(result)}
-				step++
-				if isWriteApprovalRequiredResult(result) {
-					return directImplementationShortcut{terminal: true, nextStep: step}
-				}
-				return directImplementationShortcut{}
 			}
-		}
-		m.logMessage("implement_config_update", fmt.Sprintf("direct config field update proposed for %s line %d", req.Path, req.StartLine))
-		m.logToolRequest(agent.ToolRequestEvent{
-			Step:      step,
-			Agent:     "implement",
-			Raw:       marshalStructuredExecutionRequest(req),
-			Request:   req,
-			Mode:      workspace.ModeNormal,
-			Broad:     false,
-			Narrowing: true,
-			Action:    fmt.Sprintf("edit_file:%s:%d-config-field", req.Path, req.StartLine),
-		})
-		if capture := captureExecutionJournalResult(journal, req); capture != nil {
-			m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: *capture})
-			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(*capture)}
-			step++
-			return directImplementationShortcut{}
-		}
-		editResult := mgr.Execute(ctx, req)
-		m.logToolResult(agent.ToolResultEvent{Step: step, Agent: "implement", Result: editResult})
-		m.events <- toolTraceMsg{text: workspace.FormatToolTrace(editResult)}
-		if writeToolResultChanged(req, editResult) && shouldInvalidateExploreCacheForTool(editResult) {
-			m.events <- exploreCacheInvalidatedMsg{
-				reason: fmt.Sprintf("workspace changed via %s; clearing cached explore profile", editResult.Tool),
+			rest = strings.TrimSpace(rest)
+			if rest == "" {
+				return ""
 			}
-		}
-		step++
-		if editResult.Error != "" {
-			return directImplementationShortcut{}
-		}
-		if writeToolResultChanged(req, editResult) {
-			changedPaths = append(changedPaths, req.Path)
+			// Strip a leading handle like "f5 " that the manager emits.
+			fields := strings.Fields(rest)
+			if len(fields) >= 2 && looksLikeFileHandle(fields[0]) {
+				return strings.TrimSpace(strings.Join(fields[1:], " "))
+			}
+			return rest
 		}
 	}
-	if len(changedPaths) == 0 {
-		return directImplementationShortcut{}
+	return ""
+}
+
+func looksLikeFileHandle(token string) bool {
+	if len(token) < 2 || token[0] != 'f' {
+		return false
 	}
-	return directImplementationShortcut{
-		applied:      true,
-		changedPaths: uniqueNonEmptyStrings(changedPaths),
-		summary:      fmt.Sprintf("Updated %s to %s in %s.", field, desiredValue, strings.Join(uniqueNonEmptyStrings(changedPaths), ", ")),
-		nextStep:     step,
+	for _, r := range token[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
 	}
+	return true
 }
 
 func configFieldUpdateTarget(prompt string) (string, string, bool) {

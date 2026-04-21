@@ -6,7 +6,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 
+	"qwen-bubbles/internal/config"
 	"qwen-bubbles/internal/llama"
+	"qwen-bubbles/internal/workspace"
 )
 
 func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
@@ -27,4 +29,36 @@ func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
 	if view := m.viewport.View(); !strings.Contains(view, "edge.") {
 		t.Fatalf("expected wrapped viewport to preserve text near the right edge, got:\n%s", view)
 	}
+}
+
+// Fix 4 (workspace overview) — integration check that requestMessages
+// injects the overview exactly once per session. See
+// docs/opencode-fixes-design.md §4.
+func TestRequestMessagesInjectsWorkspaceOverviewExactlyOnce(t *testing.T) {
+	dir := t.TempDir()
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir})
+	m := &Model{
+		workspace: mgr,
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "first prompt"},
+		},
+	}
+	first := m.requestMessages()
+	if !containsSystemContent(first, "Workspace overview") {
+		t.Fatalf("first call should include the workspace overview, got:\n%#v", first)
+	}
+	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: "ok"}, llama.ChatMessage{Role: "user", Content: "second"})
+	second := m.requestMessages()
+	if containsSystemContent(second, "Workspace overview") {
+		t.Fatalf("second call must not re-inject the overview, got:\n%#v", second)
+	}
+}
+
+func containsSystemContent(messages []llama.ChatMessage, needle string) bool {
+	for _, msg := range messages {
+		if msg.Role == "system" && strings.Contains(msg.Content, needle) {
+			return true
+		}
+	}
+	return false
 }
