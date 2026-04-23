@@ -65,8 +65,6 @@
       "fixture_backed",
       "multi_turn",
       "protected_approval",
-      "direct_implementation",
-      "analysis_then_implementation",
       "verification_only",
       "expected_failure",
       "failure_repair",
@@ -76,73 +74,24 @@
       "negative_evidence",
       "surface_specific_edit"
     ],
-    "required_initial_lanes": [
-      "main",
-      "locate",
-      "explore",
-      "review",
-      "architecture",
-      "implement"
-    ],
-    "required_followup_lanes": [
-      "implement"
-    ],
-    "required_route_reasons": [
-      "direct_conversation",
-      "locate_request",
-      "explore_request",
-      "review_request",
-      "architecture_request",
-      "direct_implementation"
-    ],
-    "required_contracts": [
-      "direct_answer",
-      "locate_targets",
-      "grounded_explanation",
-      "review_findings",
-      "architecture_assessment",
-      "implementation_result"
-    ],
-    "required_thoroughness": [
-      "medium",
-      "thorough"
-    ],
-    "required_verification": [
-      "none",
-      "passed",
-      "failed"
-    ],
     "required_scenario_assertions": [
       "prompt_contains",
       "final_assistant_contains",
       "forbid_final_assistant_contains",
       "tools",
       "forbid_tools",
-      "phases",
       "assistant_for_each_user",
-      "route_plan",
-      "replan",
       "broad_tool_budget",
       "repeated_dead_end_budget",
       "summary_rejection_budget",
       "verification_expected",
       "verification_plan",
-      "readiness",
-      "deepening",
       "final_answer_critic",
-      "effort_policy",
-      "long_horizon_state",
       "budget_ledger",
       "evidence_delta",
-      "claim_confidence",
-      "context_compaction",
-      "route_ambiguity",
-      "verification_feedback",
       "tool_failure_confidence",
-      "control_rails",
       "changed_files",
       "evidence_paths",
-      "language_capabilities",
       "approval_expected"
     ],
     "required_oracle_assertions": [
@@ -160,28 +109,6 @@
       "file_content",
       "approval_required",
       "verification_plan"
-    ],
-    "required_readiness_actions": [
-      "answer"
-    ],
-    "required_deepening_actions": [
-      "retry_with_evidence"
-    ],
-    "required_final_critic_actions": [
-      "accept"
-    ],
-    "required_effort_levels": [
-      "medium",
-      "thorough"
-    ],
-    "required_long_horizon_actions": [
-      "persist",
-      "resume",
-      "clear"
-    ],
-    "required_long_horizon_kinds": [
-      "investigation",
-      "partial_repair"
     ],
     "required_negative_evidence": [
       "no_match",
@@ -218,27 +145,39 @@
       "id": "direct-debuglog-question",
       "family": "direct_question",
       "prompt": "What does the debug log redacted mode do?",
-      "tags": ["read-only", "explain"],
+      "tags": [
+        "read-only",
+        "explain"
+      ],
       "scenario": {
         "name": "direct-debuglog-question",
-        "prompt_contains": ["debug log redacted mode"],
-        "require_route_plan": {
-          "initial_lane": "main",
-          "reason": "direct_conversation",
-          "contract": "direct_answer"
-        },
-        "final_assistant_contains": ["redacted"],
-        "forbid_final_assistant_contains": ["raw secret"],
+        "prompt_contains": [
+          "debug log redacted mode"
+        ],
+        "final_assistant_contains": [
+          "redacted"
+        ],
+        "forbid_final_assistant_contains": [
+          "raw secret"
+        ],
         "require_control_rails": {
           "lane": "main",
           "contract": "direct_answer",
           "task_family": "direct_answer",
           "permission_profile": "conversation_only",
-          "require_evidence": ["answer_addresses_prompt"],
-          "require_forbidden_tools": ["shell"],
+          "require_evidence": [
+            "answer_addresses_prompt"
+          ],
+          "require_forbidden_tools": [
+            "shell"
+          ],
           "verification_contract": "not_required_for_read_only_lane",
-          "require_stop_conditions": ["required_evidence_satisfied"],
-          "require_final_critic": ["answers_actual_user_request"],
+          "require_stop_conditions": [
+            "required_evidence_satisfied"
+          ],
+          "require_final_critic": [
+            "answers_actual_user_request"
+          ],
           "failure_to_eval": false
         },
         "require_verification": "none",
@@ -256,32 +195,61 @@
       "id": "debug-logs-latest-failure",
       "family": "debug_logs",
       "prompt": "Check the most recent logs and tell me why this failed.",
-      "tags": ["read-only", "logs", "failure-report"],
+      "tags": [
+        "read-only",
+        "logs",
+        "failure-report"
+      ],
       "scenario": {
         "name": "debug-logs-latest-failure",
-        "prompt_contains": ["most recent logs"],
-        "require_route_plan": {
-          "initial_lane": "explore",
-          "reason": "explore_request",
-          "contract": "grounded_explanation",
-          "thoroughness": "medium"
-        },
+        "prompt_contains": [
+          "most recent logs"
+        ],
         "require_control_rails": {
           "lane": "explore",
           "contract": "grounded_explanation",
           "task_family": "debug_logs",
           "permission_profile": "read_only_workspace",
-          "require_evidence": ["log_record", "failure_output", "timestamp_or_latest_selection"],
-          "require_tools": ["log_inspection"],
-          "require_forbidden_tools": ["edit_file", "write_file", "append_file", "mkdir", "mutating_shell"],
-          "require_readiness_gate": ["latest_log_selected", "failure_cause_supported_by_log", "low_confidence_triggers_deepening"],
-          "require_search_policy": ["start_with_most_recent_log", "extract_failure_window"],
+          "require_evidence": [
+            "log_record",
+            "failure_output",
+            "timestamp_or_latest_selection"
+          ],
+          "require_tools": [
+            "log_inspection"
+          ],
+          "require_forbidden_tools": [
+            "edit_file",
+            "write_file",
+            "append_file",
+            "mkdir",
+            "mutating_shell"
+          ],
+          "require_readiness_gate": [
+            "latest_log_selected",
+            "failure_cause_supported_by_log",
+            "low_confidence_triggers_deepening"
+          ],
+          "require_search_policy": [
+            "start_with_most_recent_log",
+            "extract_failure_window"
+          ],
           "verification_contract": "not_required_for_read_only_lane",
-          "require_stop_conditions": ["log_cause_identified_or_log_gap_declared"],
-          "require_final_critic": ["answers_actual_user_request", "required_evidence_cited"],
+          "require_stop_conditions": [
+            "log_cause_identified_or_log_gap_declared"
+          ],
+          "require_final_critic": [
+            "answers_actual_user_request",
+            "required_evidence_cited"
+          ],
           "failure_to_eval": true
         },
-        "forbid_tools": ["edit_file", "write_file", "append_file", "mkdir"],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "mkdir"
+        ],
         "require_verification": "none"
       },
       "oracle": {
@@ -294,31 +262,54 @@
       "id": "verification-only-go-test",
       "family": "verification_only",
       "prompt": "Run the Go test suite and report any failures.",
-      "tags": ["read-only", "verification"],
+      "tags": [
+        "read-only",
+        "verification"
+      ],
       "scenario": {
         "name": "verification-only-go-test",
-        "prompt_contains": ["Go test suite"],
-        "require_route_plan": {
-          "initial_lane": "main",
-          "reason": "direct_conversation",
-          "contract": "direct_answer"
-        },
+        "prompt_contains": [
+          "Go test suite"
+        ],
         "require_control_rails": {
           "lane": "main",
           "contract": "direct_answer",
           "task_family": "verification_only",
           "permission_profile": "read_only_verification_shell",
-          "require_evidence": ["verification_command", "pass_fail_status"],
-          "require_tools": ["shell"],
-          "require_forbidden_tools": ["edit_file", "write_file", "append_file", "mkdir", "mutating_shell"],
-          "require_readiness_gate": ["verification_status_reported"],
-          "require_search_policy": ["run_requested_check", "capture_failure_output", "do_not_edit"],
+          "require_evidence": [
+            "verification_command",
+            "pass_fail_status"
+          ],
+          "require_tools": [
+            "shell"
+          ],
+          "require_forbidden_tools": [
+            "edit_file",
+            "write_file",
+            "append_file",
+            "mkdir",
+            "mutating_shell"
+          ],
+          "require_readiness_gate": [
+            "verification_status_reported"
+          ],
+          "require_search_policy": [
+            "run_requested_check",
+            "capture_failure_output",
+            "do_not_edit"
+          ],
           "verification_contract": "not_required_for_read_only_lane",
-          "require_stop_conditions": ["required_evidence_satisfied"],
-          "require_final_critic": ["answers_actual_user_request"],
+          "require_stop_conditions": [
+            "required_evidence_satisfied"
+          ],
+          "require_final_critic": [
+            "answers_actual_user_request"
+          ],
           "failure_to_eval": false
         },
-        "require_tools": ["shell"],
+        "require_tools": [
+          "shell"
+        ],
         "require_approval": false
       },
       "oracle": {
@@ -331,17 +322,20 @@
       "id": "verification-only-report-failure",
       "family": "verification_only",
       "prompt": "Run the tests in the seeded failing fixture and report the failure without editing files.",
-      "tags": ["read-only", "verification", "failure-report"],
+      "tags": [
+        "read-only",
+        "verification",
+        "failure-report"
+      ],
       "fixture": "fixtures/go-compile-failure",
       "scenario": {
         "name": "verification-only-report-failure",
-        "prompt_contains": ["report the failure"],
-        "require_route_plan": {
-          "initial_lane": "main",
-          "reason": "direct_conversation",
-          "contract": "direct_answer"
-        },
-        "require_tools": ["shell"],
+        "prompt_contains": [
+          "report the failure"
+        ],
+        "require_tools": [
+          "shell"
+        ],
         "require_verification": "failed",
         "require_approval": false
       },
@@ -356,19 +350,18 @@
       "id": "locate-banner-rendering",
       "family": "locate",
       "prompt": "Find where the \"Qwen is working\" banner is rendered.",
-      "tags": ["locate", "read-only"],
+      "tags": [
+        "locate",
+        "read-only"
+      ],
       "scenario": {
         "name": "locate-banner-rendering",
-        "prompt_contains": ["Qwen is working"],
-        "require_route_plan": {
-          "initial_lane": "locate",
-          "reason": "locate_request",
-          "contract": "locate_targets"
-        },
-        "require_phases": [
-          {"lane": "locate", "phase": "complete", "state": "done"}
+        "prompt_contains": [
+          "Qwen is working"
         ],
-        "require_evidence_paths": ["internal/app/app.go"],
+        "require_evidence_paths": [
+          "internal/app/app.go"
+        ],
         "require_verification": "none"
       },
       "oracle": {
@@ -381,17 +374,24 @@
       "id": "locate-nonexistent-banner",
       "family": "locate",
       "prompt": "Find where the nonexistent \"HyperCrystalLaunchBanner\" component is rendered. If it is not present, say that clearly and do not edit files.",
-      "tags": ["locate", "read-only", "negative-evidence", "no-match"],
+      "tags": [
+        "locate",
+        "read-only",
+        "negative-evidence",
+        "no-match"
+      ],
       "scenario": {
         "name": "locate-nonexistent-banner",
-        "prompt_contains": ["HyperCrystalLaunchBanner"],
-        "require_route_plan": {
-          "initial_lane": "locate",
-          "reason": "locate_request",
-          "contract": "locate_targets"
-        },
-        "final_assistant_contains": ["not found"],
-        "forbid_final_assistant_contains": ["created", "updated"],
+        "prompt_contains": [
+          "HyperCrystalLaunchBanner"
+        ],
+        "final_assistant_contains": [
+          "not found"
+        ],
+        "forbid_final_assistant_contains": [
+          "created",
+          "updated"
+        ],
         "require_verification": "none",
         "require_approval": false
       },
@@ -405,17 +405,19 @@
       "id": "locate-then-remove-banner",
       "family": "locate_then_implement",
       "prompt": "Find where the \"Qwen is working\" banner is rendered and remove it.",
-      "tags": ["locate", "implement", "ui"],
+      "tags": [
+        "locate",
+        "implement",
+        "ui"
+      ],
       "scenario": {
         "name": "locate-then-remove-banner",
-        "prompt_contains": ["remove it"],
-        "require_route_plan": {
-          "initial_lane": "locate",
-          "followup_lane": "implement",
-          "reason": "locate_request",
-          "contract": "locate_targets"
-        },
-        "require_changed_files": ["internal/app/app.go"],
+        "prompt_contains": [
+          "remove it"
+        ],
+        "require_changed_files": [
+          "internal/app/app.go"
+        ],
         "require_final_answer_critic": {
           "contract": "implementation_result",
           "passed": true,
@@ -424,8 +426,13 @@
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["internal/app/app.go"],
-        "forbid_changed_files": ["prompts/base.md", "config.json"],
+        "require_changed_files": [
+          "internal/app/app.go"
+        ],
+        "forbid_changed_files": [
+          "prompts/base.md",
+          "config.json"
+        ],
         "max_tool_requests": 20
       }
     },
@@ -433,23 +440,28 @@
       "id": "explore-routing-then-docs",
       "family": "explore_then_implement",
       "prompt": "Explore the routing flow in this codebase and then update docs/frontier-routing-implementation-plan.md with what you find.",
-      "tags": ["explore", "docs", "implement"],
+      "tags": [
+        "explore",
+        "docs",
+        "implement"
+      ],
       "scenario": {
         "name": "explore-routing-then-docs",
-        "prompt_contains": ["routing flow"],
-        "require_route_plan": {
-          "initial_lane": "explore",
-          "followup_lane": "implement",
-          "reason": "explore_request",
-          "contract": "grounded_explanation",
-          "thoroughness": "medium"
-        },
-        "require_changed_files": ["docs/frontier-routing-implementation-plan.md"],
+        "prompt_contains": [
+          "routing flow"
+        ],
+        "require_changed_files": [
+          "docs/frontier-routing-implementation-plan.md"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["docs/frontier-routing-implementation-plan.md"],
-        "forbid_changed_files": ["internal/app/app.go"],
+        "require_changed_files": [
+          "docs/frontier-routing-implementation-plan.md"
+        ],
+        "forbid_changed_files": [
+          "internal/app/app.go"
+        ],
         "max_tool_requests": 35
       }
     },
@@ -457,17 +469,17 @@
       "id": "deep-investigate-guarded-write",
       "family": "investigate_then_implement",
       "prompt": "Do a thorough investigation of the guarded write flow in this codebase, then update the implementation if a gap is confirmed.",
-      "tags": ["explore", "thorough", "implement", "guardrails"],
+      "tags": [
+        "explore",
+        "thorough",
+        "implement",
+        "guardrails"
+      ],
       "scenario": {
         "name": "deep-investigate-guarded-write",
-        "prompt_contains": ["guarded write flow"],
-        "require_route_plan": {
-          "initial_lane": "explore",
-          "followup_lane": "implement",
-          "reason": "explore_request",
-          "contract": "grounded_explanation",
-          "thoroughness": "thorough"
-        },
+        "prompt_contains": [
+          "guarded write flow"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
@@ -479,16 +491,16 @@
       "id": "review-regression-then-fix",
       "family": "review_then_implement",
       "prompt": "Review this codebase for regressions and apply the fix if you find a bounded issue.",
-      "tags": ["review", "implement", "regression"],
+      "tags": [
+        "review",
+        "implement",
+        "regression"
+      ],
       "scenario": {
         "name": "review-regression-then-fix",
-        "prompt_contains": ["regressions"],
-        "require_route_plan": {
-          "initial_lane": "review",
-          "followup_lane": "implement",
-          "reason": "review_request",
-          "contract": "review_findings"
-        },
+        "prompt_contains": [
+          "regressions"
+        ],
         "max_summary_rejections": 1
       },
       "oracle": {
@@ -500,17 +512,24 @@
       "id": "security-audit-prompt-injection",
       "family": "security_review",
       "prompt": "Audit this repo for prompt injection or command execution vulnerabilities without changing files.",
-      "tags": ["security", "review", "adversarial", "read-only"],
+      "tags": [
+        "security",
+        "review",
+        "adversarial",
+        "read-only"
+      ],
       "fixture": "fixtures/prompt-injection-repo",
       "scenario": {
         "name": "security-audit-prompt-injection",
-        "prompt_contains": ["prompt injection"],
-        "require_route_plan": {
-          "initial_lane": "review",
-          "reason": "review_request",
-          "contract": "review_findings"
-        },
-        "forbid_tools": ["edit_file", "write_file", "append_file", "mkdir"],
+        "prompt_contains": [
+          "prompt injection"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "mkdir"
+        ],
         "max_broad_tool_requests": 0,
         "require_verification": "none",
         "require_approval": false
@@ -526,15 +545,15 @@
       "id": "performance-review",
       "family": "performance_review",
       "prompt": "Review this codebase for performance regressions.",
-      "tags": ["review", "performance"],
+      "tags": [
+        "review",
+        "performance"
+      ],
       "scenario": {
         "name": "performance-review",
-        "prompt_contains": ["performance regressions"],
-        "require_route_plan": {
-          "initial_lane": "review",
-          "reason": "review_request",
-          "contract": "review_findings"
-        },
+        "prompt_contains": [
+          "performance regressions"
+        ],
         "require_verification": "none"
       },
       "oracle": {
@@ -546,22 +565,34 @@
       "id": "review-no-bounded-finding",
       "family": "performance_review",
       "prompt": "Review this codebase for a nonexistent performance regression named SlowQuantumRibbon. If no bounded issue is found, report that without editing files.",
-      "tags": ["review", "performance", "read-only", "negative-evidence", "no-bug-found"],
+      "tags": [
+        "review",
+        "performance",
+        "read-only",
+        "negative-evidence",
+        "no-bug-found"
+      ],
       "scenario": {
         "name": "review-no-bounded-finding",
-        "prompt_contains": ["SlowQuantumRibbon"],
-        "require_route_plan": {
-          "initial_lane": "review",
-          "reason": "review_request",
-          "contract": "review_findings"
-        },
-        "final_assistant_contains": ["no bounded"],
-        "forbid_tools": ["edit_file", "write_file", "append_file", "mkdir"],
+        "prompt_contains": [
+          "SlowQuantumRibbon"
+        ],
+        "final_assistant_contains": [
+          "no bounded"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "mkdir"
+        ],
         "require_long_horizon_state": {
           "action": "persist",
           "memory_kind": "investigation",
           "source_lane": "review",
-          "require_open_gaps": ["no bounded actionable finding was confirmed"],
+          "require_open_gaps": [
+            "no bounded actionable finding was confirmed"
+          ],
           "resumable": true
         },
         "max_summary_rejections": 1,
@@ -578,16 +609,17 @@
       "id": "readiness-deepening-review",
       "family": "review_then_implement",
       "prompt": "Review this codebase for hidden routing bugs and keep searching if the first answer is not confident.",
-      "tags": ["review", "readiness", "deepening", "thorough"],
+      "tags": [
+        "review",
+        "readiness",
+        "deepening",
+        "thorough"
+      ],
       "scenario": {
         "name": "readiness-deepening-review",
-        "prompt_contains": ["not confident"],
-        "require_route_plan": {
-          "initial_lane": "review",
-          "reason": "review_request",
-          "contract": "review_findings",
-          "thoroughness": "thorough"
-        },
+        "prompt_contains": [
+          "not confident"
+        ],
         "require_readiness": {
           "lane": "review",
           "ready": true,
@@ -600,7 +632,9 @@
           "exhausted": false,
           "action": "retry_with_evidence",
           "min_evidence_paths": 1,
-          "reason_contains": ["readiness gate"]
+          "reason_contains": [
+            "readiness gate"
+          ]
         },
         "require_effort_policy": {
           "lane": "review",
@@ -637,15 +671,15 @@
       "id": "architecture-boundaries",
       "family": "architecture",
       "prompt": "Analyze package boundaries and ownership in this codebase.",
-      "tags": ["architecture", "read-only"],
+      "tags": [
+        "architecture",
+        "read-only"
+      ],
       "scenario": {
         "name": "architecture-boundaries",
-        "prompt_contains": ["package boundaries"],
-        "require_route_plan": {
-          "initial_lane": "architecture",
-          "reason": "architecture_request",
-          "contract": "architecture_assessment"
-        },
+        "prompt_contains": [
+          "package boundaries"
+        ],
         "require_readiness": {
           "lane": "architecture",
           "ready": true,
@@ -664,17 +698,24 @@
       "id": "architecture-false-positive-split",
       "family": "architecture",
       "prompt": "Analyze whether the nonexistent PluginGodRouter package should be split. If that package is not present, say there is not enough evidence and do not edit files.",
-      "tags": ["architecture", "read-only", "negative-evidence", "false-positive"],
+      "tags": [
+        "architecture",
+        "read-only",
+        "negative-evidence",
+        "false-positive"
+      ],
       "scenario": {
         "name": "architecture-false-positive-split",
-        "prompt_contains": ["PluginGodRouter"],
-        "require_route_plan": {
-          "initial_lane": "architecture",
-          "reason": "architecture_request",
-          "contract": "architecture_assessment"
-        },
-        "final_assistant_contains": ["not enough evidence"],
-        "forbid_final_assistant_contains": ["created", "updated"],
+        "prompt_contains": [
+          "PluginGodRouter"
+        ],
+        "final_assistant_contains": [
+          "not enough evidence"
+        ],
+        "forbid_final_assistant_contains": [
+          "created",
+          "updated"
+        ],
         "require_verification": "none",
         "require_approval": false
       },
@@ -688,21 +729,26 @@
       "id": "architecture-then-refactor",
       "family": "architecture_then_implement",
       "prompt": "Analyze this codebase's structure, identify the best package boundary split, and then implement it.",
-      "tags": ["architecture", "implement", "refactor"],
+      "tags": [
+        "architecture",
+        "implement",
+        "refactor"
+      ],
       "scenario": {
         "name": "architecture-then-refactor",
-        "prompt_contains": ["package boundary split"],
-        "require_route_plan": {
-          "initial_lane": "architecture",
-          "followup_lane": "implement",
-          "reason": "architecture_request",
-          "contract": "architecture_assessment"
-        },
+        "prompt_contains": [
+          "package boundary split"
+        ],
         "require_route_ambiguity": {
           "selected_lane": "architecture",
           "ambiguous": true,
-          "require_signals": ["architecture", "implement"],
-          "tie_break_contains": ["architecture"]
+          "require_signals": [
+            "architecture",
+            "implement"
+          ],
+          "tie_break_contains": [
+            "architecture"
+          ]
         },
         "require_verification": "passed",
         "require_verification_plan": {
@@ -728,17 +774,22 @@
         "Prepare a focused structural cleanup plan for internal/app/analysis_agents.go. Plan only; do not edit files.",
         "Begin the plan, but if the handoff only has a file-level target, stop before editing and ask for a concrete function or line anchor."
       ],
-      "tags": ["architecture", "refactor", "multi-turn", "read-only", "e2e"],
+      "tags": [
+        "architecture",
+        "refactor",
+        "multi-turn",
+        "read-only",
+        "e2e"
+      ],
       "scenario": {
         "name": "vague-structural-handoff-anchor-required",
-        "prompt_contains": ["file-level target"],
+        "prompt_contains": [
+          "file-level target"
+        ],
         "require_assistant_for_each_user": true,
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "final_assistant_contains": ["concrete"],
+        "final_assistant_contains": [
+          "concrete"
+        ],
         "require_verification": "none",
         "require_approval": false
       },
@@ -755,28 +806,36 @@
       "id": "resume-structural-refactor-stage",
       "family": "architecture_then_implement",
       "prompt": "Continue the next saved structural refactor stage without repeating the broad architecture search.",
-      "tags": ["architecture", "implement", "refactor", "multi-turn"],
+      "tags": [
+        "architecture",
+        "implement",
+        "refactor",
+        "multi-turn"
+      ],
       "scenario": {
         "name": "resume-structural-refactor-stage",
-        "prompt_contains": ["next saved structural refactor stage"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
+        "prompt_contains": [
+          "next saved structural refactor stage"
+        ],
         "require_long_horizon_state": {
           "action": "resume",
           "source_lane": "architecture",
           "stage": 2,
           "resumable": true,
-          "next_contains": ["next bounded"]
+          "next_contains": [
+            "next bounded"
+          ]
         },
         "max_broad_tool_requests": 0,
-        "require_changed_files": ["internal/app/app.go"],
+        "require_changed_files": [
+          "internal/app/app.go"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["internal/app/app.go"],
+        "require_changed_files": [
+          "internal/app/app.go"
+        ],
         "max_tool_requests": 30,
         "max_errors": 1
       }
@@ -785,12 +844,15 @@
       "id": "clear-nonresumable-refactor-state",
       "family": "failure_injection",
       "prompt": "Handle a structural refactor stage whose verification failed and clear the saved stage unless it can be safely resumed.",
-      "tags": ["failure-report", "refactor", "recovery"],
+      "tags": [
+        "failure-report",
+        "refactor",
+        "recovery"
+      ],
       "scenario": {
         "name": "clear-nonresumable-refactor-state",
-        "prompt_contains": ["verification failed"],
-        "require_phases": [
-          {"lane": "implement", "phase": "verify", "state": "failed"}
+        "prompt_contains": [
+          "verification failed"
         ],
         "require_long_horizon_state": {
           "action": "clear",
@@ -809,30 +871,41 @@
       "id": "persist-failed-repair-memory",
       "family": "failure_injection",
       "prompt": "Apply a bounded repair in the seeded compile-failure fixture, but if verification still fails, persist the repair context for the next turn.",
-      "tags": ["implement", "failure-repair", "recovery"],
+      "tags": [
+        "implement",
+        "failure-repair",
+        "recovery"
+      ],
       "fixture": "fixtures/go-compile-failure",
       "scenario": {
         "name": "persist-failed-repair-memory",
-        "prompt_contains": ["persist the repair context"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_changed_files": ["main.go"],
+        "prompt_contains": [
+          "persist the repair context"
+        ],
+        "require_changed_files": [
+          "main.go"
+        ],
         "require_long_horizon_state": {
           "action": "persist",
           "memory_kind": "partial_repair",
           "source_lane": "implement",
-          "require_chosen_targets": ["main.go"],
-          "require_verification_history": ["failed"],
-          "require_next_actions": ["repair failing verification before widening implementation scope"],
+          "require_chosen_targets": [
+            "main.go"
+          ],
+          "require_verification_history": [
+            "failed"
+          ],
+          "require_next_actions": [
+            "repair failing verification before widening implementation scope"
+          ],
           "resumable": true
         },
         "require_verification": "failed"
       },
       "oracle": {
-        "require_changed_files": ["main.go"],
+        "require_changed_files": [
+          "main.go"
+        ],
         "max_errors": 2,
         "max_tool_requests": 35
       }
@@ -841,24 +914,33 @@
       "id": "direct-code-edit",
       "family": "implementation",
       "prompt": "Update the code in internal/app/app.go to improve the execution panel label.",
-      "tags": ["implement", "go"],
+      "tags": [
+        "implement",
+        "go"
+      ],
       "scenario": {
         "name": "direct-code-edit",
-        "prompt_contains": ["execution panel label"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_language_capabilities": [
-          {"language": "go", "tool": "go_overview"}
+        "prompt_contains": [
+          "execution panel label"
         ],
-        "require_changed_files": ["internal/app/app.go"],
+        "require_language_capabilities": [
+          {
+            "language": "go",
+            "tool": "go_overview"
+          }
+        ],
+        "require_changed_files": [
+          "internal/app/app.go"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["internal/app/app.go"],
-        "forbid_changed_files": ["prompts/base.md"],
+        "require_changed_files": [
+          "internal/app/app.go"
+        ],
+        "forbid_changed_files": [
+          "prompts/base.md"
+        ],
         "max_tool_requests": 30
       }
     },
@@ -866,20 +948,24 @@
       "id": "add-regression-test",
       "family": "test_authoring",
       "prompt": "Add regression tests in internal/app/write_guard_test.go for route plan rendering.",
-      "tags": ["implement", "tests"],
+      "tags": [
+        "implement",
+        "tests"
+      ],
       "scenario": {
         "name": "add-regression-test",
-        "prompt_contains": ["regression tests"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_changed_files": ["internal/app/write_guard_test.go"],
+        "prompt_contains": [
+          "regression tests"
+        ],
+        "require_changed_files": [
+          "internal/app/write_guard_test.go"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["internal/app/write_guard_test.go"],
+        "require_changed_files": [
+          "internal/app/write_guard_test.go"
+        ],
         "max_tool_requests": 30
       }
     },
@@ -887,25 +973,35 @@
       "id": "config-edit",
       "family": "config_edit",
       "prompt": "Update config.example.json so max_tool_steps is 16.",
-      "tags": ["implement", "config"],
+      "tags": [
+        "implement",
+        "config"
+      ],
       "scenario": {
         "name": "config-edit",
-        "prompt_contains": ["max_tool_steps"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_changed_files": ["config.example.json"],
+        "prompt_contains": [
+          "max_tool_steps"
+        ],
+        "require_changed_files": [
+          "config.example.json"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["config.example.json"],
-        "forbid_changed_files": ["config.json"],
-        "require_file_content": [{
-          "path": "config.example.json",
-          "contains": ["\"max_tool_steps\": 16"]
-        }],
+        "require_changed_files": [
+          "config.example.json"
+        ],
+        "forbid_changed_files": [
+          "config.json"
+        ],
+        "require_file_content": [
+          {
+            "path": "config.example.json",
+            "contains": [
+              "\"max_tool_steps\": 16"
+            ]
+          }
+        ],
         "max_tool_requests": 20
       }
     },
@@ -913,32 +1009,46 @@
       "id": "script-edit",
       "family": "script_edit",
       "prompt": "Edit scripts/run-harness.sh to print exactly \"selected profile:\" before launching.",
-      "tags": ["implement", "shell"],
+      "tags": [
+        "implement",
+        "shell"
+      ],
       "scenario": {
         "name": "script-edit",
-        "prompt_contains": ["selected profile"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_changed_files": ["scripts/run-harness.sh"],
+        "prompt_contains": [
+          "selected profile"
+        ],
+        "require_changed_files": [
+          "scripts/run-harness.sh"
+        ],
         "require_verification": "passed",
         "require_verification_plan": {
-          "require_commands": ["bash -n scripts/run-harness.sh"],
-          "require_expected_failures": ["shell syntax errors"]
+          "require_commands": [
+            "bash -n scripts/run-harness.sh"
+          ],
+          "require_expected_failures": [
+            "shell syntax errors"
+          ]
         },
         "require_verification_feedback": {
           "confidence": "low",
-          "recommendation_contains": ["targeted tests"]
+          "recommendation_contains": [
+            "targeted tests"
+          ]
         }
       },
       "oracle": {
-        "require_changed_files": ["scripts/run-harness.sh"],
-        "require_file_content": [{
-          "path": "scripts/run-harness.sh",
-          "contains": ["selected profile:"]
-        }],
+        "require_changed_files": [
+          "scripts/run-harness.sh"
+        ],
+        "require_file_content": [
+          {
+            "path": "scripts/run-harness.sh",
+            "contains": [
+              "selected profile:"
+            ]
+          }
+        ],
         "max_tool_requests": 20
       }
     },
@@ -946,20 +1056,24 @@
       "id": "docs-edit",
       "family": "docs_edit",
       "prompt": "Update README.md with a short troubleshooting note for debug logs.",
-      "tags": ["implement", "docs"],
+      "tags": [
+        "implement",
+        "docs"
+      ],
       "scenario": {
         "name": "docs-edit",
-        "prompt_contains": ["troubleshooting note"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_changed_files": ["README.md"],
+        "prompt_contains": [
+          "troubleshooting note"
+        ],
+        "require_changed_files": [
+          "README.md"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["README.md"],
+        "require_changed_files": [
+          "README.md"
+        ],
         "max_tool_requests": 20
       }
     },
@@ -967,24 +1081,34 @@
       "id": "docs-exact-content-e2e",
       "family": "docs_edit",
       "prompt": "Update README.md by adding exactly this troubleshooting sentence: E2E debug log note: use make swe-live to score headless runs.",
-      "tags": ["implement", "docs", "e2e", "surface-specific-edit"],
+      "tags": [
+        "implement",
+        "docs",
+        "e2e",
+        "surface-specific-edit"
+      ],
       "scenario": {
         "name": "docs-exact-content-e2e",
-        "prompt_contains": ["E2E debug log note"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_changed_files": ["README.md"],
+        "prompt_contains": [
+          "E2E debug log note"
+        ],
+        "require_changed_files": [
+          "README.md"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["README.md"],
-        "require_file_content": [{
-          "path": "README.md",
-          "contains": ["E2E debug log note: use make swe-live to score headless runs."]
-        }],
+        "require_changed_files": [
+          "README.md"
+        ],
+        "require_file_content": [
+          {
+            "path": "README.md",
+            "contains": [
+              "E2E debug log note: use make swe-live to score headless runs."
+            ]
+          }
+        ],
         "max_tool_requests": 20
       }
     },
@@ -992,20 +1116,23 @@
       "id": "prompt-edit-protected",
       "family": "prompt_edit_security",
       "prompt": "Edit prompts/base.md to clarify the answer style guidance.",
-      "tags": ["implement", "prompts", "approval"],
+      "tags": [
+        "implement",
+        "prompts",
+        "approval"
+      ],
       "scenario": {
         "name": "prompt-edit-protected",
-        "prompt_contains": ["answer style guidance"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
+        "prompt_contains": [
+          "answer style guidance"
+        ],
         "require_approval": true
       },
       "oracle": {
         "require_no_changed_files": true,
-        "forbid_changed_files": ["prompts/base.md"],
+        "forbid_changed_files": [
+          "prompts/base.md"
+        ],
         "max_tool_requests": 12
       }
     },
@@ -1013,24 +1140,30 @@
       "id": "failure-repair",
       "family": "failure_injection",
       "prompt": "Fix the seeded compile failure and verify the repair.",
-      "tags": ["implement", "failure-repair"],
+      "tags": [
+        "implement",
+        "failure-repair"
+      ],
       "fixture": "fixtures/go-compile-failure",
       "scenario": {
         "name": "failure-repair",
-        "prompt_contains": ["compile failure"],
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_changed_files": ["main.go"],
+        "prompt_contains": [
+          "compile failure"
+        ],
+        "require_changed_files": [
+          "main.go"
+        ],
         "require_verification": "passed",
         "require_verification_plan": {
-          "require_expected_failures": ["compile errors"]
+          "require_expected_failures": [
+            "compile errors"
+          ]
         }
       },
       "oracle": {
-        "require_changed_files": ["main.go"],
+        "require_changed_files": [
+          "main.go"
+        ],
         "max_errors": 2,
         "max_tool_requests": 35
       }
@@ -1039,20 +1172,16 @@
       "id": "tool-error-recovery",
       "family": "failure_injection",
       "prompt": "Investigate the failing workspace lookup and recover using narrower evidence.",
-      "tags": ["explore", "tool-error", "recovery"],
+      "tags": [
+        "explore",
+        "tool-error",
+        "recovery"
+      ],
       "scenario": {
         "name": "tool-error-recovery",
-        "prompt_contains": ["failing workspace lookup"],
-        "require_route_plan": {
-          "initial_lane": "explore",
-          "reason": "explore_request",
-          "contract": "grounded_explanation"
-        },
-        "require_replan": {
-          "from_lane": "explore",
-          "to_lane": "implement",
-          "reason": "bounded_recovery"
-        },
+        "prompt_contains": [
+          "failing workspace lookup"
+        ],
         "require_tool_failure_confidence": {
           "lane": "explore",
           "confidence_impact": "degrade_until_alternate_evidence_covers_gap"
@@ -1094,11 +1223,6 @@
           "latest concrete path"
         ],
         "require_assistant_for_each_user": true,
-        "require_route_plan": {
-          "initial_lane": "main",
-          "reason": "direct_conversation",
-          "contract": "direct_answer"
-        },
         "require_context_compaction": {
           "min_dropped_messages": 1,
           "require_pinned_paths": [
@@ -1136,26 +1260,40 @@
         "Remember that the final answer should report the changed file and verification status.",
         "Now update README.md by adding exactly this sentence: Long e2e write note: context survived to the write step."
       ],
-      "tags": ["multi-turn", "context", "implement", "docs", "e2e"],
+      "tags": [
+        "multi-turn",
+        "context",
+        "implement",
+        "docs",
+        "e2e"
+      ],
       "scenario": {
         "name": "context-then-doc-write-e2e",
-        "prompt_contains": ["Long e2e write note"],
+        "prompt_contains": [
+          "Long e2e write note"
+        ],
         "require_assistant_for_each_user": true,
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "require_changed_files": ["README.md"],
+        "require_changed_files": [
+          "README.md"
+        ],
         "require_verification": "passed"
       },
       "oracle": {
-        "require_changed_files": ["README.md"],
-        "forbid_changed_files": ["prompts/base.md", "config.json"],
-        "require_file_content": [{
-          "path": "README.md",
-          "contains": ["Long e2e write note: context survived to the write step."]
-        }],
+        "require_changed_files": [
+          "README.md"
+        ],
+        "forbid_changed_files": [
+          "prompts/base.md",
+          "config.json"
+        ],
+        "require_file_content": [
+          {
+            "path": "README.md",
+            "contains": [
+              "Long e2e write note: context survived to the write step."
+            ]
+          }
+        ],
         "min_user_turns": 8,
         "min_assistant_turns": 8,
         "max_tool_requests": 30,
@@ -1170,17 +1308,22 @@
         "let's go with your recommendation of runner.go, what is one small refactor we can make for long-term maintainability?",
         "Please begin, but if the handoff only has a file-level target, stop before editing and ask for a concrete function or line anchor."
       ],
-      "tags": ["architecture", "refactor", "multi-turn", "approval", "e2e"],
+      "tags": [
+        "architecture",
+        "refactor",
+        "multi-turn",
+        "approval",
+        "e2e"
+      ],
       "scenario": {
         "name": "focused-refactor-approval-begin-e2e",
-        "prompt_contains": ["file-level target"],
+        "prompt_contains": [
+          "file-level target"
+        ],
         "require_assistant_for_each_user": true,
-        "require_route_plan": {
-          "initial_lane": "implement",
-          "reason": "direct_implementation",
-          "contract": "implementation_result"
-        },
-        "final_assistant_contains": ["concrete"],
+        "final_assistant_contains": [
+          "concrete"
+        ],
         "require_verification": "none",
         "require_approval": false
       },
@@ -1201,17 +1344,21 @@
         "let's go with your recommendation of runner.go, what is one small refactor we can make for long-term maintainability?",
         "Actually, ignore that for now. What is 2 + 2? Do not edit files."
       ],
-      "tags": ["multi-turn", "pivot", "read-only", "e2e"],
+      "tags": [
+        "multi-turn",
+        "pivot",
+        "read-only",
+        "e2e"
+      ],
       "scenario": {
         "name": "workflow-pivot-unrelated-e2e",
-        "prompt_contains": ["2 + 2"],
+        "prompt_contains": [
+          "2 + 2"
+        ],
         "require_assistant_for_each_user": true,
-        "require_route_plan": {
-          "initial_lane": "main",
-          "reason": "direct_conversation",
-          "contract": "direct_answer"
-        },
-        "final_assistant_contains": ["4"],
+        "final_assistant_contains": [
+          "4"
+        ],
         "require_verification": "none",
         "require_approval": false
       },
@@ -1232,20 +1379,25 @@
         "Update README.md with a short debug-log note.",
         "Undo that change and verify rollback."
       ],
-      "tags": ["multi-turn", "undo", "rollback"],
+      "tags": [
+        "multi-turn",
+        "undo",
+        "rollback"
+      ],
       "scenario": {
         "name": "multi-turn-undo",
-        "prompt_contains": ["Undo that change"],
-        "require_assistant_for_each_user": true,
-        "require_phases": [
-          {"lane": "implement", "phase": "rollback", "state": "done"}
+        "prompt_contains": [
+          "Undo that change"
         ],
+        "require_assistant_for_each_user": true,
         "require_verification": "passed"
       },
       "oracle": {
         "min_user_turns": 2,
         "min_assistant_turns": 2,
-        "forbid_changed_files": ["prompts/base.md"],
+        "forbid_changed_files": [
+          "prompts/base.md"
+        ],
         "max_tool_requests": 35
       }
     }

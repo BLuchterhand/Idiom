@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 func nopList(config.Config, io.Writer) error { return nil }
@@ -32,11 +32,11 @@ func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
 			return "answer text", nil
 		},
 		nopPrompts,
-		func(config.Config) error {
+		func(config.Config, runOptions) error {
 			t.Fatal("TUI runner should not be called in prompt mode")
 			return nil
 		},
-		func(config.Config) error {
+		func(config.Config, runOptions) error {
 			t.Fatal("server runner should not be called in prompt mode")
 			return nil
 		},
@@ -67,8 +67,8 @@ func TestRunPromptModeJSONSuppressesFinalPrint(t *testing.T) {
 			return "ok", nil
 		},
 		nopPrompts,
-		func(config.Config) error { return nil },
-		func(config.Config) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
 		nopList,
 	)
 	if code != 0 {
@@ -98,8 +98,8 @@ func TestRunPromptModeForwardsResume(t *testing.T) {
 			return "ok", nil
 		},
 		nopPrompts,
-		func(config.Config) error { return nil },
-		func(config.Config) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
 		nopList,
 	)
 	if code != 0 {
@@ -134,8 +134,8 @@ func TestRunTurnsFileUsesSingleSessionRunner(t *testing.T) {
 			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"second answer\"}\n"))
 			return []string{"first answer", "second answer"}, nil
 		},
-		func(config.Config) error { return nil },
-		func(config.Config) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
 		nopList,
 	)
 	if code != 0 {
@@ -165,8 +165,8 @@ func TestRunTurnsFileRejectsPromptConflict(t *testing.T) {
 		&stderr,
 		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 		nopPrompts,
-		func(config.Config) error { return nil },
-		func(config.Config) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
 		nopList,
 	)
 	if code != 2 || !strings.Contains(stderr.String(), "mutually exclusive") {
@@ -187,11 +187,11 @@ func TestRunListSessionsCallsListRunner(t *testing.T) {
 			return "", nil
 		},
 		nopPrompts,
-		func(config.Config) error {
+		func(config.Config, runOptions) error {
 			t.Fatal("TUI runner should not be called")
 			return nil
 		},
-		func(config.Config) error {
+		func(config.Config, runOptions) error {
 			t.Fatal("server runner should not be called")
 			return nil
 		},
@@ -219,11 +219,11 @@ func TestRunServerOnlyUsesInjectedRunner(t *testing.T) {
 			return "", nil
 		},
 		nopPrompts,
-		func(config.Config) error {
+		func(config.Config, runOptions) error {
 			t.Fatal("TUI runner should not be called in server-only mode")
 			return nil
 		},
-		func(config.Config) error {
+		func(config.Config, runOptions) error {
 			called = true
 			return nil
 		},
@@ -247,11 +247,11 @@ func TestRunDefaultUsesTUIRunner(t *testing.T) {
 			return "", nil
 		},
 		nopPrompts,
-		func(config.Config) error {
+		func(config.Config, runOptions) error {
 			called = true
 			return nil
 		},
-		func(config.Config) error {
+		func(config.Config, runOptions) error {
 			t.Fatal("server runner should not be called in default mode")
 			return nil
 		},
@@ -270,8 +270,8 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 		&stderr,
 		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 		nopPrompts,
-		func(config.Config) error { return nil },
-		func(config.Config) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
 		nopList,
 	)
 	if code != 1 || !strings.Contains(stderr.String(), "read config") {
@@ -289,8 +289,8 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 			return "", errors.New("prompt failed")
 		},
 		nopPrompts,
-		func(config.Config) error { return nil },
-		func(config.Config) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
 		nopList,
 	)
 	if code != 1 || !strings.Contains(stderr.String(), "prompt failed") {
@@ -306,8 +306,8 @@ func TestRunRejectsInvalidFlags(t *testing.T) {
 		&stderr,
 		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 		nopPrompts,
-		func(config.Config) error { return nil },
-		func(config.Config) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
 		nopList,
 	)
 	if code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {

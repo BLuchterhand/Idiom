@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/workspace"
 )
 
 type ToolResultSummary struct {
@@ -57,6 +57,13 @@ type ActionGuidanceInput struct {
 	Result                     workspace.ToolResult
 	DeclarationMovesForbidden  bool
 	ApprovedTargetScopePresent bool
+	// Objective is the current user ask for this turn, pulled verbatim
+	// from the latest user message. When it contains relational verbs
+	// like "calls"/"uses"/"references"/"delegates", BuildActionGuidance
+	// promotes the language symbol/reference tools ahead of the generic
+	// read-file suggestion — those are the right answer for "how does X
+	// hand off to Y" questions, which the generic nudges don't surface.
+	Objective string
 }
 
 type ActionGuidance struct {
@@ -111,6 +118,7 @@ type RecoveryInput struct {
 	Result                    workspace.ToolResult
 	EvidencePaths             []string
 	DeclarationMovesForbidden bool
+	Objective                 string
 }
 
 type RecoveryPlan struct {
@@ -208,6 +216,24 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "run verification or report the concrete blocker")
 	}
 	switch tool {
+	case "go_file_outline", "cpp_overview":
+		if strings.TrimSpace(input.Result.Error) == "" {
+			if objectiveImpliesRefactor(input.Objective) {
+				// Refactoring objective — outline's built-in
+				// go_move_declarations hint is the right next step.
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "go_move_declarations to relocate a tagged group of declarations")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "go_read_symbol if you still need to inspect one declaration before moving")
+			} else {
+				// Default (explanatory/relational/unknown): reading a
+				// specific declaration is the high-value next step.
+				// The outline summary itself may suggest
+				// go_move_declarations — that advice only lands for
+				// refactor objectives, so we override here.
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "go_read_symbol with one of the outlined declaration names to inspect its body")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "go_references or go_calls_into on a named declaration to trace how it's used")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "ignore the outline's go_move_declarations suggestion unless the objective is actually a refactor")
+			}
+		}
 	case "read_file", "go_extract_body", "go_read_symbol":
 		if strings.TrimSpace(input.Result.Error) == "" {
 			guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file using the inspected evidence")
@@ -215,8 +241,21 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		}
 	case "search_files", "search_content", "rg", "go_find_symbol", "go_find_type", "go_find_const", "go_references", "go_definition":
 		if strings.TrimSpace(input.Result.Error) == "" {
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "read_file or symbol-read the highest-confidence hit")
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file if the target is already clear")
+			if IsZeroHitSearchResult(input.Result) {
+				// The default "read the highest-confidence hit" nudge is
+				// meaningless when there are no hits. Point the model at
+				// a different search shape instead — its common failure
+				// after a zero-hit search_files is to invent more
+				// filenames to search for.
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "switch to search_content with keywords from the user's question")
+				if strings.EqualFold(tool, "search_files") {
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "use a language-specific symbol tool (go_workspace_symbol, cpp_workspace_symbol) instead of guessing filenames")
+				}
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the evidence you already have if the target may not exist")
+			} else {
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "read_file or symbol-read the highest-confidence hit")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file if the target is already clear")
+			}
 		}
 	case "edit_file", "write_file", "append_file", "go_move_declarations":
 		if strings.TrimSpace(input.Result.Error) == "" {
@@ -231,7 +270,88 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "continue from the latest evidence with a targeted tool")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer only if the task is complete or concretely blocked")
 	}
+	if objectiveImpliesRelation(input.Objective) && isDiscoveryTool(tool) {
+		// Promote the semantic symbol tools ahead of the generic
+		// "read a hit" advice. The generic nudges are tuned for "find a
+		// file and read it"; a relational question ("how does X call Y")
+		// is better answered by go_workspace_symbol and go_references
+		// jumping straight to definitions and call sites.
+		relational := []string{
+			"go_workspace_symbol to locate the symbol by name, then go_references to list call sites",
+			"go_calls_into / go_calls_from to trace handoff direction from a known symbol",
+			"cpp_workspace_symbol + cpp_references for the C++ equivalent when the symbol is in C++ code",
+		}
+		rebuilt := make([]string, 0, len(relational)+len(guidance.ValidNext))
+		for _, hint := range relational {
+			rebuilt = appendUnique(rebuilt, hint)
+		}
+		for _, existing := range guidance.ValidNext {
+			rebuilt = appendUnique(rebuilt, existing)
+		}
+		guidance.ValidNext = rebuilt
+	}
 	return guidance
+}
+
+// relationalObjectiveVerbs enumerates the words that signal "find how X
+// reaches Y" queries. Deliberately small and lowercase — false
+// positives here downgrade a single next_valid_actions row, not safety.
+var relationalObjectiveVerbs = []string{
+	"calls", "call site", "called by", "uses", "used by",
+	"invokes", "invoked", "references", "referenced",
+	"delegates", "delegate to", "hands off", "handoff", "hand off",
+	"dispatches", "dispatched", "subclasses", "implements",
+	"who calls", "who uses",
+}
+
+func objectiveImpliesRelation(objective string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(objective))
+	if lowered == "" {
+		return false
+	}
+	for _, needle := range relationalObjectiveVerbs {
+		if strings.Contains(lowered, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// refactorObjectiveVerbs signals "move/reshape code" intent, which is
+// when the outline tool's built-in go_move_declarations next-action
+// hint is actually the right follow-up. Kept narrow on purpose —
+// over-matching here suppresses the go_read_symbol nudge that almost
+// every explanatory question actually wants.
+var refactorObjectiveVerbs = []string{
+	"move ", "relocate", "extract to", "split ", "split-up", "split out",
+	"refactor", "rename ", "reshape", "reorganize",
+	"pull out", "pull up", "push down", "hoist",
+}
+
+func objectiveImpliesRefactor(objective string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(objective))
+	if lowered == "" {
+		return false
+	}
+	for _, needle := range refactorObjectiveVerbs {
+		if strings.Contains(lowered, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDiscoveryTool reports whether the just-finished tool was an
+// orientation/search step — the only moment it's worth re-ranking the
+// suggested next actions. We deliberately exclude edit/write tools
+// (post-edit guidance has its own shape) and structured symbol tools
+// (already returned what relational queries want).
+func isDiscoveryTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "list_files", "search_content", "search_files", "read_file", "rg", "grep":
+		return true
+	}
+	return false
 }
 
 func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
@@ -240,6 +360,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		Request:                   input.Request,
 		Result:                    input.Result,
 		DeclarationMovesForbidden: input.DeclarationMovesForbidden,
+		Objective:                 input.Objective,
 	})
 	tool := strings.TrimSpace(input.Request.Tool)
 	if tool == "" {
@@ -368,7 +489,7 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	state := MergeRuntimeBriefIntoState(brief, RunState{Phase: "start", Step: 1})
 	return StepInstruction{
 		CurrentState: state,
-		Directive:    "Use this initial frontier runtime packet before choosing the first action. Consume target packet, policy, evidence, and verification requirements before broad discovery.",
+		Directive:    "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them.",
 	}
 }
 
@@ -638,6 +759,28 @@ func ToolRequestTarget(req workspace.ToolRequest) string {
 
 func combinedLower(parts ...string) string {
 	return strings.ToLower(strings.Join(parts, "\n"))
+}
+
+// IsZeroHitSearchResult detects the "search found nothing" shape from a
+// tool result's summary. Used to swap the next-action nudge from
+// "read the highest-confidence hit" (useless when the hit list is empty)
+// to "switch to a broader search or answer with what you have", and by
+// the runner to block retries of the exact same zero-hit fingerprint.
+// Summaries are produced by the workspace layer and are stable strings.
+func IsZeroHitSearchResult(result workspace.ToolResult) bool {
+	summary := strings.ToLower(strings.TrimSpace(result.Summary))
+	if summary == "" {
+		return false
+	}
+	return containsAny(summary,
+		"no file matches",
+		"no matches",
+		"no matching",
+		"no go symbols matched",
+		"no c++ symbols matched",
+		"no symbols matched",
+		"found 0 ",
+	)
 }
 
 func containsAny(value string, needles ...string) bool {

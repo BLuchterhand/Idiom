@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Launches OpenCode pointed at the same llama-server that qwen-bubbles uses.
+# Launches OpenCode pointed at the same llama-server that Idiom uses.
 #
 # If llama-server is already reachable (e.g. you ran `make server` separately),
 # this script leaves it alone and just execs opencode. Otherwise it spawns
-# llama-server in the background via qwen-bubbles' --server-only mode, waits
+# llama-server in the background via idiom's --server-only mode, waits
 # for it to become healthy, and tears it down when opencode exits.
 set -euo pipefail
 

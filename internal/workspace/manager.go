@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"qwen-bubbles/internal/config"
-	"qwen-bubbles/internal/semantic"
+	"idiom/internal/config"
+	"idiom/internal/semantic"
 )
 
 type Manager struct {
@@ -86,6 +86,17 @@ type ToolRequest struct {
 	Moves        []GoDeclarationMove `json:"moves,omitempty"`
 	Todos        []TaskLedgerItem    `json:"todos,omitempty"`
 	Items        []TaskLedgerItem    `json:"items,omitempty"`
+	// Description is the tactical intent for a write-tool call — why this
+	// edit, in one short sentence. Required for edit_file, write_file,
+	// append_file, and apply_patch. Used by the plan-panel autodoc to
+	// label each write with its purpose.
+	Description string `json:"description,omitempty"`
+	// TaskID, when set on a write-tool call, declares "this write
+	// fulfills planned task <id>". The plan-panel autodoc uses it to
+	// attach the write to that ledger item even when the original
+	// task_ledger entry didn't list `paths`. Optional; falls back to
+	// path-matching and a single-pending heuristic when empty.
+	TaskID string `json:"task_id,omitempty"`
 }
 
 type GoDeclarationMove struct {
@@ -99,6 +110,12 @@ type TaskLedgerItem struct {
 	Content  string `json:"content,omitempty"`
 	Status   string `json:"status,omitempty"`
 	Evidence string `json:"evidence,omitempty"`
+	// Paths lists the workspace-relative files this item plans to
+	// touch. The plan autodoc uses it to attach a completed write to
+	// the planned item (checking its box in place) instead of adding a
+	// duplicate entry under "Unplanned". Empty when the item is a
+	// non-write task or the paths are not yet known.
+	Paths []string `json:"paths,omitempty"`
 }
 
 type ToolResult struct {
@@ -127,6 +144,8 @@ var exploreSkippedDirNames = map[string]struct{}{
 	"tmp":          {},
 	"transcripts":  {},
 }
+
+const searchContentLineCap = 240
 
 func NewManager(cfg config.Workspace) *Manager {
 	return &Manager{
@@ -256,40 +275,25 @@ func (m *Manager) Instructions() string {
 	if !m.Enabled() {
 		return "Workspace tools are disabled because no workspace root is configured."
 	}
-
-	mode := m.Mode()
-	if mode == ModeExplore {
+	if m.Mode() == ModeExplore {
 		return m.exploreInstructions()
 	}
-
+	// OpenCode-aligned: tools are delivered via the OpenAI function-calling
+	// channel (request body `tools` + assistant `tool_calls`), not via
+	// prose instructions in the system prompt. We keep only a terse scope
+	// note plus a few rules that *aren't* expressible in tool descriptions.
 	return fmt.Sprintf(
-		"Workspace access is enabled.\n\n"+
-			"Workspace root: %s\n"+
-			"Current working directory: %s\n\n"+
-			"When you need a tool, respond with ONLY a fenced block in this exact format:\n\n"+
-			"```tool\n"+
-			"{\"tool\":\"search_files\",\"pattern\":\"bubble\",\"path\":\".\"}\n"+
-			"```\n\n"+
-			"Available tools:\n%s\n%s\n"+
+		"Workspace root: %s\nWorking directory: %s\n\n"+
 			"Rules:\n"+
-			"- For complex multi-step work, use task_ledger to track pending, in_progress, completed, blocked, or cancelled items. Keep at most one item in_progress.\n"+
-			"- Do not invent file paths from memory.\n"+
-			"- First use search_files, search_content, or list_files to discover real files.\n"+
-			"- After discovery, open files by handle with read_file {\"id\":\"fN\"} whenever possible.\n"+
-			"- Raw read_file by path is allowed for an exact existing workspace file; if it fails, use the suggestions or search tools before retrying.\n"+
-			"- Use list_files once to orient yourself, then narrow quickly with search_files, search_content, or read_file instead of repeatedly listing directories.\n"+
-			"- Paths are relative to the current working directory unless absolute.\n"+
-			"- Prefer edit_file for small localized changes to an existing file.\n"+
-			"- When the target text contains quotes or tricky indentation, prefer edit_file with start_line/end_line/content after reading the file.\n"+
-			"- write_file overwrites the file with the exact provided content.\n"+
+			"- Do not invent file paths from memory. Use search_files, search_content, or list_files to discover real files first.\n"+
+			"- After an orientation call, narrow with search_files / search_content / read_file instead of repeating broad listings.\n"+
+			"- Paths are relative to the working directory unless absolute.\n"+
+			"- Prefer edit_file for small localized changes; write_file overwrites.\n"+
 			"%s"+
-			"- shell runs in the workspace with the same OS permissions as this app process; it is a default cwd, not a sandbox.\n"+
-			"- shell can run standard terminal utilities such as rg, awk, sed, git, and python3 when they are installed.\n"+
-			"- After you receive tool results, decide whether to use another tool or answer normally.%s",
+			"- shell runs with the same OS permissions as this process. Prefer the dedicated tools where one exists.\n"+
+			"- After tool results, either call another tool or answer directly.%s",
 		m.cfg.Root,
 		m.cfg.CWD,
-		RenderToolManifestInstructions(m.toolManifestTools(false)),
-		RenderSemanticToolRules(m.toolManifestTools(false), false),
 		m.writePolicyInstructions(),
 		m.discoveryInstructions(),
 	)
@@ -305,34 +309,17 @@ func (m *Manager) writePolicyInstructions() string {
 }
 
 func (m *Manager) exploreInstructions() string {
-	thoroughness := m.ExploreThoroughness()
-
 	return fmt.Sprintf(
-		"You are in EXPLORE mode.\n\n"+
-			"This is a READ-ONLY investigation session. You are STRICTLY PROHIBITED from changing files or system state.\n"+
-			"Your job is to inspect the codebase, identify relevant evidence, and report findings clearly.\n\n"+
-			"Workspace root: %s\n"+
-			"Current working directory: %s\n"+
-			"Explore thoroughness: %s\n\n"+
-			"When you need a tool, respond with ONLY a fenced block in this exact format:\n\n"+
-			"```tool\n"+
-			"{\"tool\":\"search_content\",\"pattern\":\"TODO\",\"path\":\".\",\"glob\":\"*.go\"}\n"+
-			"```\n\n"+
-			"Available tools in explore mode:\n%s\n%s\n"+
-			"Explore mode rules:\n"+
-			"- Read-only only: do not use mkdir, edit_file, write_file, append_file, package installers, or any state-changing command.\n"+
-			"- Start broad once, then narrow quickly. After one broad orientation step, use search_files, search_content, or read_file on discovered handles.\n"+
-			"- Do not invent file paths from memory.\n"+
-			"- Prefer search_files and search_content over shell. Use read_file once you know what to inspect.\n"+
-			"- In explore mode, shell is limited to read-only inspection commands such as ls, find, rg, grep, awk, sed, cat, head, tail, wc, file, pwd, and git status/log/diff/show/grep.\n"+
-			"- Use shell only when the native search/read tools are insufficient.\n"+
-			"- Adapt depth to the requested thoroughness: quick = minimal confirmation, medium = check a few likely paths, thorough = exhaust reasonable related paths before concluding.\n"+
-			"- When you have enough evidence, answer normally with what you found instead of continuing to inspect.\n%s",
+		"You are in EXPLORE mode — a READ-ONLY investigation session. Do not change files or system state.\n\n"+
+			"Workspace root: %s\nWorking directory: %s\nThoroughness: %s\n\n"+
+			"Rules:\n"+
+			"- Start broad once, then narrow with search_files / search_content / read_file on discovered handles.\n"+
+			"- Do not invent file paths. Use search tools first.\n"+
+			"- shell is limited to read-only utilities (ls, find, rg, grep, awk, sed, cat, head, tail, wc, file, pwd, git status/log/diff/show/grep).\n"+
+			"- When you have enough evidence, answer directly.%s",
 		m.cfg.Root,
 		m.cfg.CWD,
-		thoroughness,
-		RenderToolManifestInstructions(m.toolManifestTools(true)),
-		RenderSemanticToolRules(m.toolManifestTools(true), true),
+		m.ExploreThoroughness(),
 		m.discoveryInstructions(),
 	)
 }
@@ -344,7 +331,21 @@ func (m *Manager) toolManifestTools(readOnly bool) []string {
 		IncludeWriteTools: !readOnly,
 		IncludeGo:         m.isGoWorkspace(),
 		IncludeCpp:        m.isCppWorkspace(),
+		IncludePython:     m.isPythonWorkspace(),
+		IncludeTypescript: m.isTsWorkspace(),
+		IncludeRust:       m.isRustWorkspace(),
+		IncludeJava:       m.isJavaWorkspace(),
 	})
+}
+
+// AllowedTools returns the list of tool names this session is permitted
+// to call. Used by the agent package to build OpenAI function-calling
+// schemas for the request. Read-only is keyed off the workspace Mode
+// (ModeExplore) so the model doesn't see write tools when the session
+// can't use them.
+func (m *Manager) AllowedTools() []string {
+	readOnly := m.Mode() == ModeExplore
+	return m.toolManifestTools(readOnly)
 }
 
 func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
@@ -417,6 +418,100 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
 		return m.cppWorkspaceSymbol(ctx, req)
 	case "cpp_diagnostics":
 		return m.cppDiagnostics(ctx, req)
+	case "cpp_file_outline":
+		return m.cppFileOutline(req)
+	case "python_overview":
+		return m.pythonOverview()
+	case "python_entrypoints":
+		return m.pythonEntrypoints(req)
+	case "python_find_symbol":
+		return m.pythonFindSymbol(req)
+	case "python_read_symbol":
+		return m.pythonReadSymbol(req)
+	case "python_related_files":
+		return m.pythonRelatedFiles(req)
+	case "python_definition":
+		return m.pythonDefinition(ctx, req)
+	case "python_implementations":
+		return m.pythonImplementations(ctx, req)
+	case "python_references":
+		return m.pythonReferences(ctx, req)
+	case "python_calls_from":
+		return m.pythonCallsFrom(ctx, req)
+	case "python_calls_into":
+		return m.pythonCallsInto(ctx, req)
+	case "python_workspace_symbol":
+		return m.pythonWorkspaceSymbol(ctx, req)
+	case "python_diagnostics":
+		return m.pythonDiagnostics(ctx, req)
+	case "python_file_outline":
+		return m.pythonFileOutline(req)
+	case "ts_overview":
+		return m.tsOverview()
+	case "ts_entrypoints":
+		return m.tsEntrypoints(req)
+	case "ts_find_symbol":
+		return m.tsFindSymbol(req)
+	case "ts_read_symbol":
+		return m.tsReadSymbol(req)
+	case "ts_related_files":
+		return m.tsRelatedFiles(req)
+	case "ts_definition":
+		return m.tsDefinition(ctx, req)
+	case "ts_implementations":
+		return m.tsImplementations(ctx, req)
+	case "ts_references":
+		return m.tsReferences(ctx, req)
+	case "ts_calls_from":
+		return m.tsCallsFrom(ctx, req)
+	case "ts_calls_into":
+		return m.tsCallsInto(ctx, req)
+	case "ts_workspace_symbol":
+		return m.tsWorkspaceSymbol(ctx, req)
+	case "ts_diagnostics":
+		return m.tsDiagnostics(ctx, req)
+	case "ts_file_outline":
+		return m.tsFileOutline(req)
+	case "rust_overview",
+		"rust_entrypoints",
+		"rust_find_symbol",
+		"rust_workspace_symbol",
+		"rust_read_symbol",
+		"rust_related_files",
+		"rust_file_outline",
+		"rust_definition",
+		"rust_references",
+		"rust_calls_from",
+		"rust_calls_into",
+		"rust_implementations",
+		"rust_diagnostics":
+		return m.ExecuteRustTool(ctx, req)
+	case "java_overview":
+		return m.javaOverview()
+	case "java_entrypoints":
+		return m.javaEntrypoints(req)
+	case "java_find_symbol":
+		return m.javaFindSymbol(req)
+	case "java_read_symbol":
+		return m.javaReadSymbol(req)
+	case "java_related_files":
+		return m.javaRelatedFiles(req)
+	case "java_workspace_symbol":
+		return m.javaWorkspaceSymbol(ctx, req)
+	case "java_definition":
+		return m.javaDefinition(ctx, req)
+	case "java_references":
+		return m.javaReferences(ctx, req)
+	case "java_implementations":
+		return m.javaImplementations(ctx, req)
+	case "java_calls_from":
+		return m.javaCallsFrom(ctx, req)
+	case "java_calls_into":
+		return m.javaCallsInto(ctx, req)
+	case "java_diagnostics":
+		return m.javaDiagnostics(ctx, req)
+	case "java_file_outline":
+		return m.javaFileOutline(req)
 	case "go_find_package":
 		return m.goFindPackage(req)
 	case "go_related_files":
@@ -710,7 +805,19 @@ func IsNarrowingRequest(req ToolRequest) bool {
 		"go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
 		"cpp_overview", "cpp_entrypoints", "cpp_find_symbol", "cpp_read_symbol", "cpp_related_files",
 		"cpp_definition", "cpp_declaration", "cpp_implementations", "cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body",
-		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol", "cpp_workspace_symbol", "cpp_diagnostics":
+		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol", "cpp_workspace_symbol", "cpp_diagnostics",
+		"python_overview", "python_entrypoints", "python_find_symbol", "python_read_symbol", "python_related_files",
+		"python_definition", "python_references", "python_implementations", "python_calls_from", "python_calls_into",
+		"python_workspace_symbol", "python_diagnostics", "python_file_outline",
+		"ts_overview", "ts_entrypoints", "ts_find_symbol", "ts_read_symbol", "ts_related_files",
+		"ts_definition", "ts_implementations", "ts_references", "ts_calls_from", "ts_calls_into",
+		"ts_workspace_symbol", "ts_diagnostics", "ts_file_outline",
+		"rust_overview", "rust_entrypoints", "rust_find_symbol", "rust_read_symbol", "rust_related_files",
+		"rust_definition", "rust_implementations", "rust_references", "rust_calls_from", "rust_calls_into",
+		"rust_workspace_symbol", "rust_diagnostics", "rust_file_outline",
+		"java_overview", "java_entrypoints", "java_find_symbol", "java_read_symbol", "java_related_files",
+		"java_definition", "java_references", "java_implementations", "java_calls_from", "java_calls_into",
+		"java_workspace_symbol", "java_diagnostics", "java_file_outline":
 		return true
 	case "shell":
 		return isNarrowingShell(req.Command)
@@ -733,7 +840,19 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 		"go_definition", "go_references", "go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
 		"cpp_overview", "cpp_entrypoints", "cpp_find_symbol", "cpp_read_symbol", "cpp_related_files",
 		"cpp_definition", "cpp_declaration", "cpp_implementations", "cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body",
-		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol", "cpp_workspace_symbol", "cpp_diagnostics":
+		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol", "cpp_workspace_symbol", "cpp_diagnostics",
+		"python_overview", "python_entrypoints", "python_find_symbol", "python_read_symbol", "python_related_files",
+		"python_definition", "python_references", "python_implementations", "python_calls_from", "python_calls_into",
+		"python_workspace_symbol", "python_diagnostics", "python_file_outline",
+		"ts_overview", "ts_entrypoints", "ts_find_symbol", "ts_read_symbol", "ts_related_files",
+		"ts_definition", "ts_implementations", "ts_references", "ts_calls_from", "ts_calls_into",
+		"ts_workspace_symbol", "ts_diagnostics", "ts_file_outline",
+		"rust_overview", "rust_entrypoints", "rust_find_symbol", "rust_read_symbol", "rust_related_files",
+		"rust_definition", "rust_implementations", "rust_references", "rust_calls_from", "rust_calls_into",
+		"rust_workspace_symbol", "rust_diagnostics", "rust_file_outline",
+		"java_overview", "java_entrypoints", "java_find_symbol", "java_read_symbol", "java_related_files",
+		"java_definition", "java_references", "java_implementations", "java_calls_from", "java_calls_into",
+		"java_workspace_symbol", "java_diagnostics", "java_file_outline":
 		return true
 	case "read_file":
 		path, _, err := m.resolveReadTarget(req)
@@ -1055,10 +1174,57 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 	})
 
 	if len(matches) == 0 {
+		// Zero-hit enrichment: the pattern didn't match any path, but
+		// the model often invents filenames from concepts (e.g.
+		// "task_tool.go" when the code lives in tools.go). Try three
+		// shapes of suggestion in order: whole-pattern fuzzy match,
+		// token-substring match on base names (so "task_tool" finds
+		// tools.go via the "tool" token), and finally the generic
+		// sibling-directory fallback inside findPathSuggestions. Cap
+		// the final list at 5. Phrasing steers the model out of search
+		// mode — these are paths to read, not patterns to re-search.
+		suggestions := m.findPathSuggestions(pattern, 5)
+		tokenHits := m.tokenMatchedPaths(pattern, 5)
+		for _, p := range tokenHits {
+			if len(suggestions) >= 5 {
+				break
+			}
+			dup := false
+			for _, existing := range suggestions {
+				if existing == p {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				suggestions = append(suggestions, p)
+			}
+		}
+		output := ""
+		summary := fmt.Sprintf("No file matches for %q", pattern)
+		if len(suggestions) > 0 {
+			summary = fmt.Sprintf("No file matches for %q. Closest paths in this workspace: %s.", pattern, strings.Join(suggestions, ", "))
+			output = "Closest real paths (use read_file, do not re-run search_files on these):\n" + strings.Join(suggestions, "\n")
+		}
+		// When the pattern looks like a symbol (bare identifier) and
+		// the workspace has a language index, the model was likely
+		// looking for a symbol, not a filename — search_files only
+		// matches path text, so nothing was ever going to hit. Point
+		// at the right tool. Mentioned alongside paths when both apply.
+		if looksLikeBareIdentifier(pattern) {
+			if symHint := m.symbolSearchSuggestion(pattern); symHint != "" {
+				if output == "" {
+					output = symHint
+				} else {
+					output = output + "\n\n" + symHint
+				}
+				summary += " If you're looking for a symbol (not a filename), use the language's workspace_symbol tool."
+			}
+		}
 		return ToolResult{
 			Tool:    "search_files",
-			Summary: fmt.Sprintf("No file matches for %q", pattern),
-			Output:  "",
+			Summary: summary,
+			Output:  output,
 		}
 	}
 
@@ -1735,7 +1901,7 @@ func (m *Manager) runGoPLSCommand(ctx context.Context, args ...string) (string, 
 	if gopls == "" {
 		return "", fmt.Errorf("gopls is not installed")
 	}
-	cacheRoot := filepath.Join(os.TempDir(), "qwen-bubbles-gopls")
+	cacheRoot := filepath.Join(os.TempDir(), "idiom-gopls")
 	_ = os.MkdirAll(filepath.Join(cacheRoot, "xdg"), 0o755)
 	_ = os.MkdirAll(filepath.Join(cacheRoot, "gocache"), 0o755)
 	_ = os.MkdirAll(filepath.Join(cacheRoot, "home"), 0o755)
@@ -1785,6 +1951,9 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	if req.Glob != "" {
 		args = append(args, "-g", req.Glob)
 	}
+	for _, glob := range m.defaultSearchExcludeGlobs(req.Path) {
+		args = append(args, "-g", glob)
+	}
 	args = append(args, pattern, defaultString(req.Path, "."))
 
 	stdout, stderr, err := m.runCommandDetailed(parent, workdir, "rg", args...)
@@ -1798,39 +1967,81 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		}
 	}
 	if isNoMatchExit(err) || strings.TrimSpace(stdout) == "" {
+		// Zero-hit enrichment. Common confused-mode: model pastes a
+		// symbol name as a search_content pattern but the actual
+		// definition lives in a file whose *name* contains that term
+		// (e.g. searching content for "prompt_routing" in a repo whose
+		// file is literally internal/app/prompt_routing.go). Offer
+		// path suggestions that match the pattern as a name so the
+		// model switches to a targeted read_file. Intentionally
+		// conservative: we only surface name-match suggestions for
+		// identifier-shaped patterns (letters/digits/_), avoiding
+		// noise on full regexes where the pattern is not a name.
+		summary := fmt.Sprintf("No content matches for %q", pattern)
+		output := ""
+		if looksLikeBareIdentifier(pattern) {
+			suggestions := m.findPathSuggestions(pattern, 5)
+			if len(suggestions) > 0 {
+				summary = fmt.Sprintf("No content matches for %q, but these paths contain it as part of their name — the symbol may be defined there: %s.", pattern, strings.Join(suggestions, ", "))
+				output = "Paths whose name contains the pattern (try read_file or a language-specific symbol tool on these instead of re-searching content):\n" + strings.Join(suggestions, "\n")
+			}
+		}
 		return ToolResult{
 			Tool:    toolName,
-			Summary: fmt.Sprintf("No content matches for %q", pattern),
+			Summary: summary,
+			Output:  output,
 		}
 	}
 
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	// Hard display cap. Logs show 100+ hits routinely in monorepos, and
+	// the model re-ingests the full result on every subsequent turn.
+	// Capping the rendered view at 50 lets the model scan the top hits,
+	// see the total, and narrow on demand.
+	const searchContentDisplayCap = 50
 	formatted := make([]string, 0, len(lines))
 	singlePath := ""
 	singleLine := 0
+	totalMatches := 0
+	capped := false
 	for _, line := range lines {
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) < 3 {
-			formatted = append(formatted, line)
+			if !capped {
+				formatted = append(formatted, truncateSearchContentLine(line, searchContentLineCap))
+			}
+			continue
+		}
+
+		totalMatches++
+		if len(formatted) >= searchContentDisplayCap {
+			capped = true
 			continue
 		}
 
 		absPath := filepath.Clean(filepath.Join(workdir, parts[0]))
 		handle := m.rememberPath(absPath)
 		display := m.displayPath(absPath)
-		formatted = append(formatted, fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], parts[2]))
+		formatted = append(formatted, fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], truncateSearchContentLine(parts[2], searchContentLineCap)))
 		if len(lines) == 1 {
 			if lineNumber, convErr := strconv.Atoi(parts[1]); convErr == nil {
 				singlePath = display
 				singleLine = lineNumber
 			}
 		}
-		if len(formatted) >= m.cfg.MaxDirectoryEntries {
+		if totalMatches >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
+	if capped {
+		remaining := totalMatches - searchContentDisplayCap
+		formatted = append(formatted, fmt.Sprintf("... and %d more; narrow the pattern (add a more specific term, restrict with path or glob) to see them", remaining))
+	}
 
-	summary := fmt.Sprintf("Found %d matching line(s). Use read_file on a returned handle to inspect a file.", len(formatted))
+	summary := fmt.Sprintf("Found %d matching line(s). Use read_file on a returned handle to inspect a file.", totalMatches)
+	if capped {
+		summary = fmt.Sprintf("Found %d matching line(s) (showing first %d). Use read_file on a returned handle, or narrow the pattern to see more.", totalMatches, searchContentDisplayCap)
+	}
 	if len(formatted) == 1 && singlePath != "" && singleLine > 0 {
 		summary = fmt.Sprintf("Found 1 matching line at %s:%d. For a targeted change, prefer edit_file with start_line/end_line/content.", singlePath, singleLine)
 		if snippet := m.searchContextSnippet(filepath.Join(m.cfg.Root, singlePath), singleLine, 2); snippet != "" {
@@ -1844,6 +2055,51 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		Summary: summary,
 		Output:  strings.Join(formatted, "\n"),
 	}
+}
+
+func (m *Manager) defaultSearchExcludeGlobs(path string) []string {
+	if searchPathTargetsSkippedDir(path) {
+		return nil
+	}
+	return []string{
+		"!**/.cache/**",
+		"!**/.git/**",
+		"!**/.hg/**",
+		"!**/.svn/**",
+		"!**/bin/**",
+		"!**/build/**",
+		"!**/dist/**",
+		"!**/logs/**",
+		"!**/models/**",
+		"!**/node_modules/**",
+		"!**/tmp/**",
+		"!**/transcripts/**",
+		"!**/.claude/worktrees/**",
+	}
+}
+
+func searchPathTargetsSkippedDir(path string) bool {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	if cleaned == "" || cleaned == "." {
+		return false
+	}
+	first := strings.Trim(strings.Split(cleaned, "/")[0], "/")
+	if first == "" || first == "." {
+		return false
+	}
+	if first == ".claude" && strings.Contains(cleaned, "/worktrees") {
+		return true
+	}
+	_, skip := exploreSkippedDirNames[first]
+	return skip
+}
+
+func truncateSearchContentLine(line string, max int) string {
+	line = strings.TrimRight(line, "\r\n")
+	if max <= 0 || len(line) <= max {
+		return line
+	}
+	return line[:max] + "...[line truncated]"
 }
 
 func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) string {
@@ -1868,6 +2124,7 @@ func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) 
 	for i := startLine; i <= endLine; i++ {
 		segment := string(content[spans[i-1].start:spans[i-1].end])
 		segment = strings.TrimRight(segment, "\n")
+		segment = truncateSearchContentLine(segment, searchContentLineCap)
 		b.WriteString(fmt.Sprintf("%d:%s\n", i, segment))
 	}
 	return strings.TrimSpace(b.String())
@@ -1988,6 +2245,35 @@ func (m *Manager) goHandleDisplay(rel string) (string, error) {
 		return "", err
 	}
 	return m.handleDisplay(abs), nil
+}
+
+// FileLineCount returns the number of lines in the file at the given
+// path and true on success. Returns (0, false) if the path can't be
+// resolved, stat'd, or read. Cheap enough to call from redirect
+// decisions — used to skip the outline detour for tiny files where
+// reading the whole range costs less than outline+read_symbol.
+func (m *Manager) FileLineCount(path string) (int, bool) {
+	if m == nil {
+		return 0, false
+	}
+	resolved, err := m.resolvePath(strings.TrimSpace(path), "")
+	if err != nil {
+		return 0, false
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return 0, false
+	}
+	// Count newlines; add 1 unless the file is empty or ends with a
+	// newline (the trailing newline doesn't introduce another line).
+	if len(data) == 0 {
+		return 0, true
+	}
+	count := bytes.Count(data, []byte{'\n'})
+	if data[len(data)-1] != '\n' {
+		count++
+	}
+	return count, true
 }
 
 func (m *Manager) readFileLines(path string, start, end int) (string, error) {
@@ -2483,7 +2769,40 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 		return m.editFileByLineRange(path, current, req)
 	}
 	if strings.TrimSpace(req.OldText) == "" {
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "old_text is required unless you provide start_line/end_line/content"}
+		// The model's malformed shape is almost always one of three:
+		//   (1) it passed `content` thinking edit_file replaces the
+		//       whole file — that's what write_file does.
+		//   (2) it forgot to include old_text with the match form.
+		//   (3) it meant the range form but dropped start_line/end_line.
+		// Give a targeted hint based on which fields were actually
+		// provided, and name write_file explicitly for case (1) so
+		// the model stops trying to coax edit_file into whole-file
+		// replacement.
+		display := m.displayPath(path)
+		hasContent := strings.TrimSpace(req.Content) != ""
+		var example string
+		if hasContent {
+			example = fmt.Sprintf(
+				"edit_file needs either old_text (for an exact-match replace) or start_line+end_line (for a range replace). "+
+					"You provided `content` with neither.\n"+
+					"If you want to REPLACE THE WHOLE FILE, use write_file instead:\n"+
+					"  {\"tool\":\"write_file\",\"path\":%q,\"content\":\"<full file contents>\"}\n"+
+					"If you want a PARTIAL edit, pick one of these two edit_file shapes:\n"+
+					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\"}\n"+
+					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\"}\n"+
+					"Do not re-submit the same call shape.",
+				display, display, display,
+			)
+		} else {
+			example = fmt.Sprintf(
+				"edit_file requires old_text (and new_text) OR start_line/end_line (and content). You provided neither.\n"+
+					"Valid shapes:\n"+
+					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\"}\n"+
+					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\"}",
+				display, display,
+			)
+		}
+		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: example}
 	}
 
 	matchCount := strings.Count(current, req.OldText)
@@ -2491,14 +2810,14 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 		return ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
-			Error:   fmt.Sprintf("old_text did not appear in %s", m.displayPath(path)),
+			Error:   fmt.Sprintf("old_text did not appear in %s. Copy the exact substring from the file (including whitespace) or switch to the start_line/end_line+content form.", m.displayPath(path)),
 		}
 	}
 	if matchCount > 1 && !req.ReplaceAll {
 		return ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
-			Error:   fmt.Sprintf("old_text matched %d locations in %s; provide a more specific old_text or set replace_all=true", matchCount, m.displayPath(path)),
+			Error:   fmt.Sprintf("old_text matched %d locations in %s. Either extend old_text with surrounding context so it matches exactly one place, or set replace_all=true.", matchCount, m.displayPath(path)),
 		}
 	}
 
@@ -2535,13 +2854,13 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 	startLine := req.StartLine
 	endLine := req.EndLine
 	if startLine <= 0 {
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "start_line must be greater than 0"}
+		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "start_line must be >= 1 (line numbers are 1-indexed). If you don't know the line number, read the file first or use old_text/new_text instead."}
 	}
 	if endLine == 0 {
 		endLine = startLine
 	}
 	if endLine < startLine {
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "end_line must be greater than or equal to start_line"}
+		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: fmt.Sprintf("end_line (%d) must be >= start_line (%d). Swap them if you meant the other direction, or set end_line=start_line for a single-line edit.", endLine, startLine)}
 	}
 
 	spans := lineSpans(current)
@@ -3050,6 +3369,145 @@ func (m *Manager) findPathSuggestions(query string, limit int) []string {
 		}
 	}
 	return suggestions
+}
+
+// symbolSearchSuggestion returns a copy-paste-ready symbol search hint
+// for each active language whose workspace-symbol capability is
+// available. Empty string when no language index would help (e.g. no
+// active languages). Used by search_files zero-hit enrichment so the
+// model switches to the right tool when its query was a symbol.
+func (m *Manager) symbolSearchSuggestion(pattern string) string {
+	if m == nil {
+		return ""
+	}
+	active := m.ActiveLanguages()
+	if len(active) == 0 {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, "If you're looking for a symbol definition (not a filename), try a language symbol tool:")
+	for _, lang := range active {
+		tool := lang.Tool(CapWorkspaceSymbol)
+		if tool == "" {
+			tool = lang.Tool(CapFindSymbol)
+		}
+		if tool == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("  %s: {\"tool\":%q,\"pattern\":%q}", lang.Name, tool, pattern))
+	}
+	if len(lines) == 1 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}
+
+// tokenMatchedPaths splits a compound pattern like "task_tool" on
+// common separators and returns up to `limit` workspace paths whose
+// base name contains any of the tokens. Filters out trivial tokens
+// (< 3 chars) to keep noise down. Used by the search_files zero-hit
+// enrichment so a pattern like "task_tool" surfaces tools.go (via the
+// "tool" token) when the whole-pattern fuzzy match comes up empty.
+func (m *Manager) tokenMatchedPaths(pattern string, limit int) []string {
+	if !m.Enabled() || limit <= 0 {
+		return nil
+	}
+	tokens := splitIdentifierTokens(pattern)
+	if len(tokens) == 0 {
+		return nil
+	}
+	var out []string
+	scanned := 0
+	scanCap := m.cfg.MaxDirectoryEntries * 10
+	if scanCap <= 0 {
+		scanCap = 4096
+	}
+	_ = filepath.WalkDir(m.cfg.Root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if m.shouldSkipListEntry(m.cfg.Root, path, true) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		scanned++
+		if scanned > scanCap {
+			return filepath.SkipAll
+		}
+		base := strings.ToLower(filepath.Base(path))
+		for _, tok := range tokens {
+			if strings.Contains(base, tok) {
+				out = append(out, m.handleDisplay(path))
+				if len(out) >= limit {
+					return filepath.SkipAll
+				}
+				return nil
+			}
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
+}
+
+// splitIdentifierTokens breaks "task_tool.go", "TaskTool", "task-tool",
+// and similar compounds into their constituent tokens, lower-cased,
+// skipping tokens under 3 chars.
+func splitIdentifierTokens(pattern string) []string {
+	p := strings.TrimSpace(pattern)
+	if p == "" {
+		return nil
+	}
+	// Normalize separators first, then insert breaks before capitals
+	// so CamelCase also splits.
+	norm := make([]rune, 0, len(p)*2)
+	for i, r := range p {
+		switch r {
+		case '_', '-', '.', '/', ':':
+			norm = append(norm, ' ')
+		default:
+			if i > 0 && r >= 'A' && r <= 'Z' {
+				norm = append(norm, ' ')
+			}
+			norm = append(norm, r)
+		}
+	}
+	raw := strings.Fields(strings.ToLower(string(norm)))
+	var out []string
+	seen := make(map[string]bool)
+	for _, t := range raw {
+		if len(t) < 3 || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// looksLikeBareIdentifier reports whether a pattern is a single
+// identifier-shaped token (letters, digits, underscore, dot, slash,
+// colon). Used by the content-search zero-hit path so we only surface
+// filename suggestions for queries the model likely intends as a
+// symbol — full regex queries would produce misleading suggestions.
+func looksLikeBareIdentifier(pattern string) bool {
+	p := strings.TrimSpace(pattern)
+	if p == "" || len(p) < 2 {
+		return false
+	}
+	for _, r := range p {
+		switch {
+		case r == '_' || r == '.' || r == '/' || r == ':' || r == '-':
+		case r >= '0' && r <= '9':
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // defaultLargeReadLineCap bounds read_file when the caller did not ask for

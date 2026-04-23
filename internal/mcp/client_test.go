@@ -147,7 +147,7 @@ func TestClientInitializeListCallRoundTrip(t *testing.T) {
 	if err := client.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := client.Initialize(ctx, "qwen-bubbles-test"); err != nil {
+	if err := client.Initialize(ctx, "idiom-test"); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 	tools, err := client.ListTools(ctx)

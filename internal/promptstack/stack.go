@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 var autoProjectPromptCandidates = []string{

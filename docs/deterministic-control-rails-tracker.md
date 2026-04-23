@@ -36,7 +36,7 @@ Eval implementation:
 - Added `require_control_rails` scenario assertions.
 - Added `control_rails` parsing to captured-log metrics.
 - Added suggested-scenario generation from observed `control_rails` records.
-- Added human-readable `qwen-eval` output for the latest control-rails snapshot.
+- Added human-readable `idiom-eval` output for the latest control-rails snapshot.
 - Added SWE-suite scenario assertion coverage for `control_rails`.
 - Added live control-rail enforcement for forbidden tool classes and final-answer readiness gaps.
 - Added target-reference rails so classifier-provided `target_refs` must be present in architecture evidence or final answers.
@@ -152,7 +152,7 @@ Implemented as:
 
 Remaining future expansion:
 
-- Added `qwen-swe-eval -write-failing-scenarios` to extract failed captured-log evaluations into a named SWE-suite task skeleton.
+- Added `idiom-swe-eval -write-failing-scenarios` to extract failed captured-log evaluations into a named SWE-suite task skeleton.
 
 ### Permission And Write Rails
 
@@ -225,7 +225,7 @@ Examples:
 
 ## Recently Completed Frontier Follow-Ups
 
-- Added a `qwen-swe-eval -write-failing-scenarios` mode that converts failed captured-log reports into task skeletons.
-- Added a control-rails dashboard summary in `qwen-swe-eval` grouped by task family and permission profile.
+- Added a `idiom-swe-eval -write-failing-scenarios` mode that converts failed captured-log reports into task skeletons.
+- Added a control-rails dashboard summary in `idiom-swe-eval` grouped by task family and permission profile.
 - Add stricter lint rules requiring `require_control_rails` for all new representative tasks.
 - Add dedicated execution machinery for `debug_logs` if logs become a first-class workspace artifact rather than a task family under exploration.

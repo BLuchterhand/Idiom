@@ -1384,3 +1384,14 @@ func taskStartsInLane(task SWETask, lane string) bool {
 	}
 	return strings.EqualFold(strings.TrimSpace(task.Scenario.RequireRoutePlan.InitialLane), strings.TrimSpace(lane))
 }
+// VerificationStatus returns a short string describing the verification outcome.
+func VerificationStatus(m Metrics) string {
+	switch {
+	case m.VerificationPassed:
+		return "passed"
+	case m.VerificationFailed:
+		return "failed"
+	default:
+		return "not-run"
+	}
+}

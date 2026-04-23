@@ -1,6 +1,6 @@
 # Frontier Worker Runtime Follow-Up Design
 
-This document defines the validation surface for qwen-bubbles as a frontier-style coding-agent harness. The goal is to make each worker call informed by a compact, typed view of the current run instead of relying on static prompt text and scattered session memories.
+This document defines the validation surface for idiom as a frontier-style coding-agent harness. The goal is to make each worker call informed by a compact, typed view of the current run instead of relying on static prompt text and scattered session memories.
 
 ## Scope
 

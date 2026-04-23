@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 func TestCppWorkspaceTools(t *testing.T) {
@@ -101,6 +101,22 @@ void WorkerSystem::process_cycle() {}
 	refs := mgr.cppReferences(context.Background(), ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
 	if refs.Error != "" || !strings.Contains(refs.Output, "entity_manager.cpp") || !strings.Contains(refs.Output, "helper();") {
 		t.Fatalf("unexpected cppReferences result: %#v", refs)
+	}
+	outline := mgr.cppFileOutline(ToolRequest{Tool: "cpp_file_outline", Path: filepath.Join("src", "entity_manager.cpp")})
+	if outline.Error != "" {
+		t.Fatalf("unexpected cppFileOutline error: %#v", outline)
+	}
+	if !strings.Contains(outline.Output, "file: src/entity_manager.cpp") {
+		t.Fatalf("cppFileOutline missing file header: %#v", outline)
+	}
+	if !strings.Contains(outline.Output, `entity_manager.h`) {
+		t.Fatalf("cppFileOutline missing include: %#v", outline)
+	}
+	if !strings.Contains(outline.Output, "helper") || !strings.Contains(outline.Output, "tick") {
+		t.Fatalf("cppFileOutline missing symbols: %#v", outline)
+	}
+	if !strings.Contains(outline.Summary, "Outlined") {
+		t.Fatalf("cppFileOutline summary: %#v", outline)
 	}
 }
 

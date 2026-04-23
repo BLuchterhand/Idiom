@@ -1,4 +1,4 @@
-APP_NAME ?= qwen-bubbles
+APP_NAME ?= idiom
 CONFIG ?= config.json
 SUITE ?= testdata/swe/representative-suite.json
 LIVE_LOGS ?= testdata/swe/generated-logs
@@ -15,10 +15,10 @@ CLASSIFIER_EXTRA_ARGS ?=
 .PHONY: run server opencode classifier-server route-classifier build fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live
 
 run:
-	go run ./cmd/qwen-bubbles -config $(CONFIG)
+	go run ./cmd/idiom -config $(CONFIG)
 
 server:
-	go run ./cmd/qwen-bubbles -config $(CONFIG) --server-only
+	go run ./cmd/idiom -config $(CONFIG) --server-only
 
 opencode:
 	./scripts/run-opencode.sh
@@ -30,7 +30,7 @@ classifier-server:
 route-classifier: classifier-server
 
 build:
-	go build -o bin/$(APP_NAME) ./cmd/qwen-bubbles
+	go build -o bin/$(APP_NAME) ./cmd/idiom
 
 fmt:
 	go fmt ./...
@@ -49,13 +49,13 @@ coverage-report:
 	go tool cover -func=coverage.out
 
 eval:
-	go run ./cmd/qwen-eval -log $(LOG)
+	go run ./cmd/idiom-eval -log $(LOG)
 
 swe-eval:
-	go run ./cmd/qwen-swe-eval -suite $(SUITE) -logs $(LOGS)
+	go run ./cmd/idiom-swe-eval -suite $(SUITE) -logs $(LOGS)
 
 swe-suite:
-	go run ./cmd/qwen-swe-eval -suite $(SUITE) -suite-only
+	go run ./cmd/idiom-swe-eval -suite $(SUITE) -suite-only
 
 swe-live:
-	go run ./cmd/qwen-swe-eval -suite $(SUITE) -run-live -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"
+	go run ./cmd/idiom-swe-eval -suite $(SUITE) -run-live -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"

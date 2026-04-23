@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/workspace"
 )
 
 // Mode is a user-selectable agent profile, OpenCode-shaped. Each Mode
@@ -64,7 +64,7 @@ func PlanMode() Mode {
 				{Pattern: "*", Decision: workspace.ToolRuleDeny},
 			},
 		},
-		StepCap: 0,
+		StepCap: 64,
 	}
 }
 
@@ -128,6 +128,29 @@ func ModeNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ModePolicy returns tool-economy nudge defaults for the given Mode. These
+// are soft budgets — they inject a one-shot system message when crossed,
+// never hard-stop a turn. Callers layer this with their own MaxContextChars
+// etc. by copying the returned value and overriding fields.
+//
+// Defaults:
+//   - FingerprintNudgeAt: 3 — mirrors the DoomLoopGate threshold but
+//     catches non-consecutive repeats.
+//   - SynthesisNudgeAt: 10 — fires on chatty turns; typical happy paths
+//     finish in 3–6 calls, so 10 indicates plateau risk.
+//   - ReadBudgetSoft: 8 in plan mode, 0 elsewhere. Plan mode output should
+//     be a plan, not another round of reads.
+func ModePolicy(mode Mode) RunPolicy {
+	policy := RunPolicy{
+		FingerprintNudgeAt: 3,
+		SynthesisNudgeAt:   10,
+	}
+	if strings.EqualFold(mode.Name, "plan") {
+		policy.ReadBudgetSoft = 8
+	}
+	return policy
 }
 
 // Validate checks a Mode for obvious construction errors. Called at

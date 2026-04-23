@@ -1,0 +1,240 @@
+package semantic
+
+import (
+	"sort"
+	"strings"
+)
+
+type TsSymbolMatch struct {
+	Path      string
+	Name      string
+	Qualified string
+	Kind      string
+	Scope     string
+	Line      int
+	Column    int
+	StartLine int
+	EndLine   int
+	Exported  bool
+	Score     int
+}
+
+type TsCallMatch struct {
+	Caller     TsSymbolMatch
+	CalleeName string
+	Line       int
+	Score      int
+}
+
+func (idx *TsIndex) FindSymbols(pattern string, limit int) []TsSymbolMatch {
+	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	if idx == nil || pattern == "" {
+		return nil
+	}
+	matches := make([]TsSymbolMatch, 0)
+	for _, file := range idx.Files {
+		for _, symbol := range file.Symbols {
+			score := scoreTsSymbolMatch(pattern, file, symbol)
+			if score <= 0 {
+				continue
+			}
+			matches = append(matches, TsSymbolMatch{
+				Path:      file.Path,
+				Name:      symbol.Name,
+				Qualified: firstTsQualified(symbol),
+				Kind:      symbol.Kind,
+				Scope:     symbol.Scope,
+				Line:      symbol.Line,
+				Column:    symbol.Column,
+				StartLine: symbol.StartLine,
+				EndLine:   symbol.EndLine,
+				Exported:  symbol.Exported,
+				Score:     score,
+			})
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].Score != matches[j].Score {
+			return matches[i].Score > matches[j].Score
+		}
+		if matches[i].Path != matches[j].Path {
+			return matches[i].Path < matches[j].Path
+		}
+		return matches[i].Line < matches[j].Line
+	})
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+	return matches
+}
+
+func (idx *TsIndex) FindCallsFrom(pattern string, limit int) []TsCallMatch {
+	symbols := idx.FindSymbols(pattern, 4)
+	if len(symbols) == 0 {
+		return nil
+	}
+	out := make([]TsCallMatch, 0, 16)
+	for _, match := range symbols {
+		file := idx.FileByPath(match.Path)
+		if file == nil {
+			continue
+		}
+		for _, symbol := range file.Symbols {
+			if symbol.Line != match.Line || symbol.Name != match.Name || firstTsQualified(symbol) != firstTsQualified(TsSymbol{Qualified: match.Qualified, Scope: match.Scope, Name: match.Name}) {
+				continue
+			}
+			for _, call := range symbol.Calls {
+				out = append(out, TsCallMatch{
+					Caller:     match,
+					CalleeName: call.Name,
+					Line:       call.Line,
+					Score:      match.Score,
+				})
+			}
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func (idx *TsIndex) FindCallsInto(pattern string, limit int) []TsCallMatch {
+	targets := idx.FindSymbols(pattern, 8)
+	if len(targets) == 0 {
+		return nil
+	}
+	names := make(map[string]TsSymbolMatch, len(targets)*2)
+	for _, target := range targets {
+		names[strings.ToLower(target.Name)] = target
+		if target.Qualified != "" {
+			names[strings.ToLower(target.Qualified)] = target
+		}
+	}
+	out := make([]TsCallMatch, 0, 16)
+	for _, file := range idx.Files {
+		for _, symbol := range file.Symbols {
+			for _, call := range symbol.Calls {
+				target, ok := names[strings.ToLower(call.Name)]
+				if !ok {
+					continue
+				}
+				out = append(out, TsCallMatch{
+					Caller: TsSymbolMatch{
+						Path:      file.Path,
+						Name:      symbol.Name,
+						Qualified: firstTsQualified(symbol),
+						Kind:      symbol.Kind,
+						Scope:     symbol.Scope,
+						Line:      symbol.Line,
+						Column:    symbol.Column,
+						StartLine: symbol.StartLine,
+						EndLine:   symbol.EndLine,
+					},
+					CalleeName: firstNonEmptyTs(target.Qualified, target.Name),
+					Line:       call.Line,
+					Score:      target.Score,
+				})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Caller.Path != out[j].Caller.Path {
+			return out[i].Caller.Path < out[j].Caller.Path
+		}
+		return out[i].Line < out[j].Line
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// Dependencies returns the transitive closure of imports starting from the
+// files whose path matches the given pattern.
+func (idx *TsIndex) Dependencies(pattern string) []string {
+	targets := idx.findFiles(pattern)
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, target := range targets {
+		for _, dep := range transitiveStringClosure(idx.Forward, target) {
+			if _, ok := seen[dep]; ok {
+				continue
+			}
+			seen[dep] = struct{}{}
+			out = append(out, dep)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// WhoImports returns the transitive closure of files that import the
+// pattern (directly or indirectly).
+func (idx *TsIndex) WhoImports(pattern string) []string {
+	targets := idx.findFiles(pattern)
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, target := range targets {
+		for _, dep := range transitiveStringClosure(idx.Reverse, target) {
+			if _, ok := seen[dep]; ok {
+				continue
+			}
+			seen[dep] = struct{}{}
+			out = append(out, dep)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func scoreTsSymbolMatch(pattern string, file TsFile, symbol TsSymbol) int {
+	nameLower := strings.ToLower(symbol.Name)
+	qualifiedLower := strings.ToLower(firstTsQualified(symbol))
+	pathLower := strings.ToLower(file.Path)
+	score := 0
+	switch {
+	case nameLower == pattern || qualifiedLower == pattern:
+		score += 48
+	case strings.Contains(qualifiedLower, pattern):
+		score += 24
+	case strings.Contains(nameLower, pattern):
+		score += 20
+	}
+	if strings.Contains(pathLower, pattern) {
+		score += 8
+	}
+	if symbol.Exported {
+		score += 4
+	}
+	if symbol.Kind == "method" {
+		score += 2
+	}
+	return score
+}
+
+func firstTsQualified(symbol TsSymbol) string {
+	if strings.TrimSpace(symbol.Qualified) != "" {
+		return symbol.Qualified
+	}
+	if strings.TrimSpace(symbol.Scope) != "" {
+		return symbol.Scope + "." + symbol.Name
+	}
+	return symbol.Name
+}
+
+func firstNonEmptyTs(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}

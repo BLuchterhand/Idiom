@@ -53,7 +53,7 @@ func (m WorkbranchManager) Create(ctx context.Context, name string) (WorkbranchC
 	}
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	branch := prefix + "/" + safeName + "-" + suffix
-	path := filepath.Join(scratch, "qwen-bubbles-"+safeName+"-"+suffix)
+	path := filepath.Join(scratch, "idiom-"+safeName+"-"+suffix)
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		return WorkbranchCheckout{}, err
 	}

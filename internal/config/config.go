@@ -11,11 +11,59 @@ import (
 )
 
 type Config struct {
-	AppName     string      `json:"app_name"`
-	LlamaServer LlamaServer `json:"llama_server"`
-	Chat        Chat        `json:"chat"`
-	Workspace   Workspace   `json:"workspace"`
-	MCP         []MCPServer `json:"mcp,omitempty"`
+	AppName         string          `json:"app_name"`
+	LlamaServer     LlamaServer     `json:"llama_server"`
+	Implementer     *LlamaServer    `json:"implementer,omitempty"`
+	Chat            Chat            `json:"chat"`
+	Workspace       Workspace       `json:"workspace"`
+	MCP             []MCPServer     `json:"mcp,omitempty"`
+	RouteClassifier RouteClassifier `json:"route_classifier"`
+}
+
+// RouteClassifier describes the secondary (small) model used for lightweight
+// tasks such as history summarization. Maps to the existing route_classifier
+// block in config.json. When AutoStartServer is true, the harness will spawn
+// llama-server with these settings on demand the first time a summary is
+// requested and the endpoint is unreachable.
+type RouteClassifier struct {
+	Enabled             bool     `json:"enabled"`
+	BaseURL             string   `json:"base_url"`
+	Model               string   `json:"model"`
+	MaxTokens           int      `json:"max_tokens"`
+	TimeoutSeconds      int      `json:"timeout_seconds"`
+	StartTimeoutSeconds int      `json:"start_timeout_seconds"`
+	AutoStartServer     bool     `json:"auto_start_server"`
+	Binary              string   `json:"binary"`
+	Host                string   `json:"host"`
+	Port                int      `json:"port"`
+	ServerModel         string   `json:"server_model"`
+	CtxSize             int      `json:"ctx_size"`
+	Threads             int      `json:"threads"`
+	GPULayers           int      `json:"gpu_layers"`
+	LogFile             string   `json:"log_file"`
+	ExtraArgs           []string `json:"extra_args"`
+}
+
+// LlamaServerSpec returns a LlamaServer struct derived from the
+// RouteClassifier's server fields. Used to hand the classifier off to
+// llama.NewServerController for on-demand launch.
+func (r RouteClassifier) LlamaServerSpec() LlamaServer {
+	return LlamaServer{
+		Binary:          r.Binary,
+		Host:            r.Host,
+		Port:            r.Port,
+		Model:           r.ServerModel,
+		CtxSize:         r.CtxSize,
+		Threads:         r.Threads,
+		GPULayers:       r.GPULayers,
+		Jinja:           true,
+		FlashAttention:  true,
+		Reasoning:       "off",
+		ReasoningFormat: "none",
+		ReasoningBudget: 0,
+		LogFile:         r.LogFile,
+		ExtraArgs:       append([]string(nil), r.ExtraArgs...),
+	}
 }
 
 // MCPServer describes one stdio MCP server.
@@ -66,6 +114,10 @@ type Chat struct {
 	MaxTokens              int      `json:"max_tokens"`
 	MaxHistory             int      `json:"max_history"`
 	MaxToolSteps           int      `json:"max_tool_steps"`
+	MaxContextMessages     int      `json:"max_context_messages"`
+	MaxContextChars        int      `json:"max_context_chars"`
+	MaxModelCalls          int      `json:"max_model_calls"`
+	MaxDurationSeconds     int      `json:"max_duration_seconds"`
 	RequestTimeoutSeconds  int      `json:"request_timeout_seconds"`
 	ServerStartTimeoutSecs int      `json:"server_start_timeout_seconds"`
 	// AgentMode selects which built-in agent profile drives the session.
@@ -76,15 +128,15 @@ type Chat struct {
 }
 
 type Workspace struct {
-	Root                  string                `json:"root"`
-	CWD                   string                `json:"cwd"`
-	Shell                 string                `json:"shell"`
-	CommandTimeoutSeconds int                   `json:"command_timeout_seconds"`
-	MaxOutputBytes        int                   `json:"max_output_bytes"`
-	MaxFileBytes          int                   `json:"max_file_bytes"`
-	MaxDirectoryEntries   int                   `json:"max_directory_entries"`
-	EnableShell           bool                  `json:"enable_shell"`
-	EnableWrites          bool                  `json:"enable_writes"`
+	Root                  string `json:"root"`
+	CWD                   string `json:"cwd"`
+	Shell                 string `json:"shell"`
+	CommandTimeoutSeconds int    `json:"command_timeout_seconds"`
+	MaxOutputBytes        int    `json:"max_output_bytes"`
+	MaxFileBytes          int    `json:"max_file_bytes"`
+	MaxDirectoryEntries   int    `json:"max_directory_entries"`
+	EnableShell           bool   `json:"enable_shell"`
+	EnableWrites          bool   `json:"enable_writes"`
 	// ToolRules implements Fix 6 (per-tool permission granularity). Map key
 	// is the tool name; each value is an ordered list of
 	// {pattern, decision} rules evaluated first-match-wins. Omitting a tool
@@ -115,7 +167,7 @@ type ChatPreset struct {
 
 func Default() Config {
 	return Config{
-		AppName: "Qwen Bubbles",
+		AppName: "Idiom",
 		LlamaServer: LlamaServer{
 			Binary:          "llama-server",
 			Host:            "127.0.0.1",
@@ -155,6 +207,10 @@ func Default() Config {
 			MaxTokens:              8192,
 			MaxHistory:             20,
 			MaxToolSteps:           16,
+			MaxContextMessages:     40,
+			MaxContextChars:        200000,
+			MaxModelCalls:          40,
+			MaxDurationSeconds:     780,
 			RequestTimeoutSeconds:  900,
 			ServerStartTimeoutSecs: 240,
 			AgentMode:              "build",
@@ -219,6 +275,32 @@ func (c Config) Validate() error {
 	if c.LlamaServer.ReasoningFormat != "" && !containsString([]string{"auto", "none", "deepseek", "deepseek-legacy"}, c.LlamaServer.ReasoningFormat) {
 		return fmt.Errorf("llama_server.reasoning_format must be one of auto, none, deepseek, deepseek-legacy")
 	}
+	if c.Implementer != nil {
+		if c.Implementer.Binary == "" {
+			return fmt.Errorf("implementer.binary is required")
+		}
+		if c.Implementer.Host == "" {
+			return fmt.Errorf("implementer.host is required")
+		}
+		if c.Implementer.Port <= 0 {
+			return fmt.Errorf("implementer.port must be positive")
+		}
+		if c.Implementer.Port == c.LlamaServer.Port && c.Implementer.Host == c.LlamaServer.Host {
+			return fmt.Errorf("implementer.port must differ from llama_server.port on the same host")
+		}
+		if c.Implementer.Model == "" {
+			return fmt.Errorf("implementer.model is required")
+		}
+		if c.Implementer.CtxSize <= 0 {
+			return fmt.Errorf("implementer.ctx_size must be positive")
+		}
+		if c.Implementer.Reasoning != "" && !containsString([]string{"on", "off", "auto"}, c.Implementer.Reasoning) {
+			return fmt.Errorf("implementer.reasoning must be one of on, off, auto")
+		}
+		if c.Implementer.ReasoningFormat != "" && !containsString([]string{"auto", "none", "deepseek", "deepseek-legacy"}, c.Implementer.ReasoningFormat) {
+			return fmt.Errorf("implementer.reasoning_format must be one of auto, none, deepseek, deepseek-legacy")
+		}
+	}
 	if c.Chat.SaveDir == "" {
 		return fmt.Errorf("chat.save_dir is required")
 	}
@@ -236,8 +318,20 @@ func (c Config) Validate() error {
 	if c.Chat.TopK < 0 {
 		return fmt.Errorf("chat.top_k must be non-negative")
 	}
-	if c.Chat.MaxToolSteps <= 0 {
-		return fmt.Errorf("chat.max_tool_steps must be positive")
+	if c.Chat.MaxToolSteps < 0 {
+		return fmt.Errorf("chat.max_tool_steps must be non-negative (0 means unbounded)")
+	}
+	if c.Chat.MaxContextChars < 0 {
+		return fmt.Errorf("chat.max_context_chars must be non-negative (0 disables compaction)")
+	}
+	if c.Chat.MaxContextMessages < 0 {
+		return fmt.Errorf("chat.max_context_messages must be non-negative (0 disables compaction)")
+	}
+	if c.Chat.MaxModelCalls < 0 {
+		return fmt.Errorf("chat.max_model_calls must be non-negative (0 disables the soft budget)")
+	}
+	if c.Chat.MaxDurationSeconds < 0 {
+		return fmt.Errorf("chat.max_duration_seconds must be non-negative (0 disables the soft budget)")
 	}
 	if c.Chat.RequestTimeoutSeconds <= 0 {
 		return fmt.Errorf("chat.request_timeout_seconds must be positive")
@@ -279,9 +373,24 @@ func (c Config) BaseURL() string {
 	return fmt.Sprintf("http://%s:%d", c.LlamaServer.Host, c.LlamaServer.Port)
 }
 
+// ImplementerBaseURL returns the HTTP URL for the implementer llama-server,
+// or an empty string when no implementer is configured. The app uses an
+// empty return to mean "no secondary server — child tasks run on the
+// primary server like they always have".
+func (c Config) ImplementerBaseURL() string {
+	if c.Implementer == nil {
+		return ""
+	}
+	return fmt.Sprintf("http://%s:%d", c.Implementer.Host, c.Implementer.Port)
+}
+
 func (c *Config) resolvePaths(baseDir string) {
 	c.LlamaServer.Model = resolvePath(baseDir, c.LlamaServer.Model)
 	c.LlamaServer.LogFile = resolvePath(baseDir, c.LlamaServer.LogFile)
+	if c.Implementer != nil {
+		c.Implementer.Model = resolvePath(baseDir, c.Implementer.Model)
+		c.Implementer.LogFile = resolvePath(baseDir, c.Implementer.LogFile)
+	}
 	c.Chat.SaveDir = resolvePath(baseDir, c.Chat.SaveDir)
 	c.Chat.DebugLogDir = resolvePath(baseDir, c.Chat.DebugLogDir)
 	c.Chat.SystemPromptFiles = resolvePathSlice(baseDir, c.Chat.SystemPromptFiles)
@@ -304,7 +413,7 @@ func (c *Config) resolvePaths(baseDir string) {
 
 func (c *Config) applyRuntimeDefaults() {
 	if c.AppName == "" {
-		c.AppName = "Qwen Bubbles"
+		c.AppName = "Idiom"
 	}
 	if c.LlamaServer.Threads <= 0 {
 		c.LlamaServer.Threads = defaultThreads()
@@ -323,6 +432,32 @@ func (c *Config) applyRuntimeDefaults() {
 	}
 	if c.LlamaServer.LogFile == "" {
 		c.LlamaServer.LogFile = "logs/llama-server.log"
+	}
+	if c.Implementer != nil {
+		if c.Implementer.Binary == "" {
+			c.Implementer.Binary = c.LlamaServer.Binary
+		}
+		if c.Implementer.Host == "" {
+			c.Implementer.Host = c.LlamaServer.Host
+		}
+		if c.Implementer.Threads <= 0 {
+			c.Implementer.Threads = defaultThreads()
+		}
+		if c.Implementer.CtxSize <= 0 {
+			c.Implementer.CtxSize = 65536
+		}
+		if c.Implementer.Reasoning == "" {
+			c.Implementer.Reasoning = c.LlamaServer.Reasoning
+		}
+		if c.Implementer.ReasoningFormat == "" {
+			c.Implementer.ReasoningFormat = c.LlamaServer.ReasoningFormat
+		}
+		if c.Implementer.ReasoningBudget == 0 {
+			c.Implementer.ReasoningBudget = c.LlamaServer.ReasoningBudget
+		}
+		if c.Implementer.LogFile == "" {
+			c.Implementer.LogFile = "logs/implementer-server.log"
+		}
 	}
 	if c.Chat.SaveDir == "" {
 		c.Chat.SaveDir = "transcripts"
@@ -354,8 +489,18 @@ func (c *Config) applyRuntimeDefaults() {
 	if c.Chat.MaxHistory <= 0 {
 		c.Chat.MaxHistory = 20
 	}
-	if c.Chat.MaxToolSteps <= 0 {
-		c.Chat.MaxToolSteps = 16
+	// MaxToolSteps: 0 means unbounded (OpenCode-aligned). Don't auto-bump.
+	if c.Chat.MaxContextMessages < 0 {
+		c.Chat.MaxContextMessages = 0
+	}
+	if c.Chat.MaxContextChars < 0 {
+		c.Chat.MaxContextChars = 0
+	}
+	if c.Chat.MaxModelCalls < 0 {
+		c.Chat.MaxModelCalls = 0
+	}
+	if c.Chat.MaxDurationSeconds < 0 {
+		c.Chat.MaxDurationSeconds = 0
 	}
 	if c.Chat.RequestTimeoutSeconds <= 0 {
 		c.Chat.RequestTimeoutSeconds = 900
@@ -389,7 +534,7 @@ func (c *Config) applyRuntimeDefaults() {
 }
 
 func (c *Config) applyWorkspaceDefaults() {
-	launchDir := strings.TrimSpace(os.Getenv("QWEN_BUBBLES_SPAWN_DIR"))
+	launchDir := strings.TrimSpace(os.Getenv("IDIOM_SPAWN_DIR"))
 	if launchDir == "" {
 		if wd, err := os.Getwd(); err == nil {
 			launchDir = wd

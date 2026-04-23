@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"qwen-bubbles/internal/semantic"
+	"idiom/internal/semantic"
 )
 
 type clangdLSPClient struct {

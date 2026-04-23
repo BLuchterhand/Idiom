@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 type ServerController struct {

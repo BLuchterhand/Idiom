@@ -1,5 +1,5 @@
 // Package mcp implements the smallest viable subset of the Model Context
-// Protocol client surface that qwen-bubbles needs: stdio transport, tool
+// Protocol client surface that idiom needs: stdio transport, tool
 // discovery via tools/list, and tool execution via tools/call. No SSE/HTTP
 // transport, no resources, no prompts, no sampling, no notifications. This
 // lands Fix 8 from docs/opencode-fixes-design.md §8.

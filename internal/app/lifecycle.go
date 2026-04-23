@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,12 +13,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"qwen-bubbles/internal/agent"
-	"qwen-bubbles/internal/config"
-	"qwen-bubbles/internal/llama"
-	"qwen-bubbles/internal/promptstack"
-	"qwen-bubbles/internal/transcript"
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/agent"
+	"idiom/internal/config"
+	"idiom/internal/llama"
+	"idiom/internal/promptstack"
+	"idiom/internal/transcript"
+	"idiom/internal/workspace"
 )
 
 type serverStatusMsg struct {
@@ -24,10 +26,6 @@ type serverStatusMsg struct {
 	modelID string
 	err     error
 	owned   bool
-}
-
-type streamDeltaMsg struct {
-	text string
 }
 
 type streamDoneMsg struct {
@@ -46,32 +44,64 @@ func New(cfg config.Config) *Model {
 	in.ShowLineNumbers = false
 	in.SetHeight(3)
 	in.KeyMap.InsertNewline.SetEnabled(false)
+	in.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colorAccent)
+	in.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(colorDim)
 
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
-	spin.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	spin.Style = lipgloss.NewStyle().Foreground(colorSpinner)
+
+	var summaryClient *llama.Client
+	var summaryController *llama.ServerController
+	if url := cfg.RouteClassifier.BaseURL; url != "" {
+		timeout := time.Duration(cfg.RouteClassifier.TimeoutSeconds) * time.Second
+		summaryClient = llama.NewClient(url, timeout)
+		if cfg.RouteClassifier.AutoStartServer && cfg.RouteClassifier.Binary != "" {
+			summaryController = llama.NewServerController(cfg.RouteClassifier.LlamaServerSpec(), summaryClient)
+		}
+	}
+
+	// Per-HTTP-call timeout on the primary and implementer llama clients.
+	// Bounds a single stuck chat request so it can't hang forever. This is
+	// decoupled from the turn-wide soft budget (Chat.MaxDurationSeconds)
+	// that the runner enforces by emitting a graceful "wrap up" message
+	// before cancelling the turn.
+	callTimeout := time.Duration(cfg.Chat.RequestTimeoutSeconds) * time.Second
+
+	var implementerClient *llama.Client
+	var implementerController *llama.ServerController
+	if url := cfg.ImplementerBaseURL(); url != "" {
+		implementerClient = llama.NewClient(url, callTimeout)
+		implementerController = llama.NewServerController(*cfg.Implementer, implementerClient)
+	}
 
 	m := &Model{
-		cfg:            cfg,
-		client:         llama.NewClient(cfg.BaseURL(), 0),
-		events:         make(chan tea.Msg, 256),
-		input:          in,
-		spinner:        spin,
-		activeProfiles: append([]string(nil), cfg.Chat.DefaultProfiles...),
-		status:         "Booting up.",
-		bootingServer:  false,
-		traceMode:      traceDisplayCompact,
-		agentModeName:  strings.TrimSpace(cfg.Chat.AgentMode),
+		cfg:                   cfg,
+		client:                llama.NewClient(cfg.BaseURL(), callTimeout),
+		implementerClient:     implementerClient,
+		implementerController: implementerController,
+		summaryClient:         summaryClient,
+		summaryController:     summaryController,
+		events:                make(chan tea.Msg, 256),
+		input:                 in,
+		spinner:               spin,
+		activeProfiles:        append([]string(nil), cfg.Chat.DefaultProfiles...),
+		status:                "Booting up.",
+		bootingServer:         false,
+		traceMode:             traceDisplayCompact,
+		agentModeName:         strings.TrimSpace(cfg.Chat.AgentMode),
 	}
 	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
 	m.workspace = workspace.NewManager(cfg.Workspace)
+	m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
 	mode := agent.ModeOrDefault(m.agentModeName)
 	m.workspace.SetPermissionRules(mode.PermissionRules)
 	m.runner = &agent.Runner{
-		Client:       m.client,
-		Workspace:    m.workspace,
-		MaxToolSteps: modeStepCap(cfg.Chat.MaxToolSteps, mode),
-		AgentName:    "main",
+		Client:            m.client,
+		ImplementerClient: m.implementerClient,
+		Workspace:         m.workspace,
+		MaxToolSteps:      modeStepCap(cfg.Chat.MaxToolSteps, mode),
+		AgentName:         "main",
 	}
 	if err := m.reloadPromptStack(); err != nil {
 		m.setContextError("Prompt context failed: " + err.Error())
@@ -87,6 +117,23 @@ func modeStepCap(configured int, mode agent.Mode) int {
 		return mode.StepCap
 	}
 	return configured
+}
+
+func modeRunPolicy(mode agent.Mode, cfg config.Chat) agent.RunPolicy {
+	policy := agent.ModePolicy(mode)
+	if cfg.MaxContextChars > 0 {
+		policy.MaxContextChars = cfg.MaxContextChars
+	}
+	if cfg.MaxContextMessages > 0 {
+		policy.MaxContextMessages = cfg.MaxContextMessages
+	}
+	if cfg.MaxModelCalls > 0 {
+		policy.MaxModelCalls = cfg.MaxModelCalls
+	}
+	if cfg.MaxDurationSeconds > 0 {
+		policy.MaxDuration = time.Duration(cfg.MaxDurationSeconds) * time.Second
+	}
+	return policy
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -110,6 +157,59 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.resize()
 	case tea.KeyMsg:
+		// ── Plan panel navigation (consumes key, returns early) ──────────────
+		if m.historyPanelOpen && m.historyFocused && m.panelTab == panelTabPlan {
+			if handled, cmd := m.handlePlanPanelKey(msg); handled {
+				return m, cmd
+			}
+		}
+		// ── Sessions panel navigation (consumes key, returns early) ──────────
+		if m.historyPanelOpen && m.historyFocused && m.panelTab == panelTabSessions {
+			if handled, cmd := m.handleSessionsPanelKey(msg); handled {
+				return m, cmd
+			}
+		}
+		// ── History panel navigation (consumes key, returns early) ────────────
+		if m.historyPanelOpen && m.historyFocused {
+			switch msg.Type {
+			case tea.KeyUp:
+				if m.historySelected > 0 {
+					m.historySelected--
+					m.historyExpanded = false
+					m.renderHistoryPanelContent()
+				}
+				return m, waitForEvent(m.events)
+			case tea.KeyDown:
+				if m.historySelected < len(m.historyEntries)-1 {
+					m.historySelected++
+					m.historyExpanded = false
+					m.renderHistoryPanelContent()
+				}
+				return m, waitForEvent(m.events)
+			case tea.KeyEnter:
+				m.historyExpanded = !m.historyExpanded
+				m.renderHistoryPanelContent()
+				return m, waitForEvent(m.events)
+			case tea.KeyEsc:
+				m.historyFocused = false
+				m.renderHistoryPanelContent()
+				return m, waitForEvent(m.events)
+			case tea.KeyPgUp, tea.KeyPgDown:
+				m.historyViewport, _ = m.historyViewport.Update(msg)
+				return m, waitForEvent(m.events)
+			case tea.KeyRunes:
+				// j / k line-scroll the panel when focused (vim-style).
+				switch string(msg.Runes) {
+				case "j":
+					m.historyViewport.LineDown(1)
+					return m, waitForEvent(m.events)
+				case "k":
+					m.historyViewport.LineUp(1)
+					return m, waitForEvent(m.events)
+				}
+			}
+		}
+		// ── Global key bindings ───────────────────────────────────────────────
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
@@ -121,6 +221,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.renderMessages(true)
 		case tea.KeyCtrlR:
 			m.restartServerAsync()
+		case tea.KeyCtrlB:
+			// Ctrl+B toggles the history panel open/closed.
+			// Panel opens unfocused — Tab moves focus in, Esc moves focus back.
+			m.historyPanelOpen = !m.historyPanelOpen
+			m.historyFocused = false
+			if m.historyPanelOpen && len(m.historyEntries) > 0 {
+				m.historySelected = len(m.historyEntries) - 1
+			}
+			m.resize()
+			return m, waitForEvent(m.events)
+		case tea.KeyCtrlT:
+			// Ctrl+T cycles the side-panel tabs. Opens the panel if closed.
+			if !m.historyPanelOpen {
+				m.historyPanelOpen = true
+				m.resize()
+			}
+			m.panelTab = (m.panelTab + 1) % panelTabCount
+			m.rerenderActivePanel()
+			return m, waitForEvent(m.events)
+		case tea.KeyTab:
+			// Tab toggles keyboard focus between input and side panel.
+			// Re-render the active tab so its focus hint / cursor
+			// highlight updates — not just the history viewport.
+			if m.historyPanelOpen {
+				m.historyFocused = !m.historyFocused
+				m.rerenderActivePanel()
+			}
+			return m, waitForEvent(m.events)
 		case tea.KeyEnter:
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
@@ -131,13 +259,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if quit := m.handleSlashCommand(text); quit {
 					return m, tea.Quit
 				}
+				if m.pendingExec != nil {
+					cmd := m.pendingExec
+					m.pendingExec = nil
+					m.renderMessages(true)
+					return m, cmd
+				}
 			} else if !m.streaming {
+				m.appendHistoryMessage("user", text, nil)
 				m.sendPromptAsync(text)
 			}
 			m.renderMessages(true)
 		}
 	case tea.MouseMsg:
-		m.updateViewport(msg)
+		// Route mouse events to whichever viewport is under the cursor.
+		// When the panel is open, anything past the main viewport's width
+		// (plus the 1-col divider) belongs to the history panel.
+		if m.historyPanelOpen && msg.X >= m.viewport.Width+1 {
+			m.historyViewport, _ = m.historyViewport.Update(msg)
+		} else {
+			m.updateViewport(msg)
+		}
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -166,24 +308,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Server stopped."
 			}
 		}
-	case streamDeltaMsg:
-		m.appendPendingAssistantContent(msg.text)
-		m.renderMessages(false)
-	case assistantReplyMsg:
-		m.setPendingAssistantMessage(llama.ChatMessage{Role: "assistant", Content: msg.text, ReasoningContent: msg.reasoningContent})
-		if !msg.logged {
-			m.logMessage("assistant", msg.text)
-		}
-		m.renderMessages(false)
 	case streamDoneMsg:
 		m.streaming = false
 		m.workingFrame = 0
 		if msg.err != nil {
+			m.failAgentHistoryTurn(msg.err)
 			m.setRuntimeError("Chat failed: " + msg.err.Error())
-			m.removePendingAssistant()
 		} else {
 			m.clearRuntimeError()
 			m.status = "Response complete."
+			m.recordAgentTurn()
 		}
 		m.renderMessages(false)
 	case transcriptSavedMsg:
@@ -197,11 +331,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case infoMsg:
 		m.status = msg.text
 	case toolTraceMsg:
-		if m.traceMode == traceDisplayDetail {
+		if m.traceMode == traceDisplayDetail && !msg.running {
 			m.insertBeforePendingAssistant(llama.ChatMessage{Role: "tool", Content: msg.text})
 			m.logMessage("tool", msg.text)
 		}
+		// Always reflect tool activity in the history panel regardless of trace mode.
+		m.recordToolTraceInHistory(msg.step, msg.text, msg.intent, msg.running)
 		m.renderMessages(false)
+	case historySummaryMsg:
+		if msg.index >= 0 && msg.index < len(m.historyEntries) {
+			m.historyEntries[msg.index].summary = msg.summary
+			m.renderHistoryPanelContent()
+		}
+	case planEditorDoneMsg:
+		if msg.err != nil {
+			m.status = "Editor exited with error: " + msg.err.Error()
+		} else {
+			m.status = "Plan updated: " + m.displayPath(m.planPath)
+		}
+		m.renderPlanPanelContent()
+	case planRefreshMsg:
+		// Re-render is self-gating: renderPlanPanelContent no-ops when
+		// the panel is closed, so firing this on every write/ledger
+		// event is cheap in the common case.
+		m.renderPlanPanelContent()
 	case nil:
 	default:
 	}
@@ -261,28 +414,154 @@ func (m *Model) saveTranscriptAsync() {
 
 // sendPromptAsync is the interactive-mode wrapper around RunPromptOnce.
 // Runs in a goroutine so the Bubble Tea loop keeps pumping events.
+//
+// RunPromptOnce is the single owner of m.messages bookkeeping: it appends
+// the user message before the agent loop and the assistant reply after.
+// This function therefore must NOT append a chat placeholder or re-emit the
+// reply — doing so causes the assistant content to appear twice, once
+// before the user message (from the filled placeholder) and once after
+// (from finishPromptOnceReply). The streaming spinner is rendered inline
+// based on m.streaming; the side-panel uses its own non-chat placeholder.
 func (m *Model) sendPromptAsync(prompt string) {
 	m.streaming = true
 	m.workingFrame = 0
-	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: ""})
+	m.beginAgentHistoryTurn()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), m.promptTimeout())
+		// The outer ctx intentionally has no deadline. Per-call HTTP timeouts
+		// live on the llama client (Chat.RequestTimeoutSeconds), and the
+		// turn-wide soft budget lives on the runner (Chat.MaxDurationSeconds).
+		// Binding both with a single WithTimeout caused a hung call to
+		// consume the entire turn budget and produced "context deadline
+		// exceeded" mid-generation; see logs/conversations/20260423-163650.
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		reply, err := m.RunPromptOnce(ctx, prompt)
-		if err != nil {
-			m.events <- streamDoneMsg{err: err}
-			return
-		}
-		m.events <- assistantReplyMsg{text: reply, logged: true, reasoningContent: m.takeLastAssistantReasoningContent()}
-		m.events <- streamDoneMsg{}
+		_, err := m.RunPromptOnce(ctx, prompt)
+		m.events <- streamDoneMsg{err: err}
 	}()
 }
 
-func (m *Model) promptTimeout() time.Duration {
-	if secs := m.cfg.Chat.RequestTimeoutSeconds; secs > 0 {
-		return time.Duration(secs) * time.Second
+func formatToolRequestTrace(event agent.ToolRequestEvent) string {
+	tool := strings.TrimSpace(event.Request.Tool)
+	if tool == "" {
+		tool = "tool"
 	}
-	return time.Hour
+	target := toolRequestTraceTarget(event.Request)
+	if target == "" {
+		target = strings.TrimSpace(event.Action)
+	}
+	if target == "" {
+		return tool + " | running"
+	}
+	return tool + " | running " + truncateRunes(collapseWhitespace(target), 120)
+}
+
+func toolRequestIntent(event agent.ToolRequestEvent) string {
+	req := event.Request
+	if desc := strings.TrimSpace(req.Description); desc != "" {
+		return truncateRunes(collapseWhitespace(desc), 160)
+	}
+
+	target := truncateRunes(collapseWhitespace(toolRequestTraceTarget(req)), 96)
+	switch strings.TrimSpace(req.Tool) {
+	case "list_files":
+		if target == "" {
+			target = "the current workspace"
+		}
+		return "map " + target + " before choosing what to inspect"
+	case "search_files":
+		if target == "" {
+			return "find candidate files for the next inspection step"
+		}
+		return "find candidate files matching " + target
+	case "search_content":
+		if target == "" {
+			return "locate references before opening files"
+		}
+		return "locate references to " + target
+	case "read_file":
+		if target == "" {
+			return "inspect source context before deciding the next step"
+		}
+		return "inspect " + target + " for the relevant context"
+	case "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
+		if target == "" {
+			return "scan the file structure before reading details"
+		}
+		return "scan " + target + " to find the right symbol or section"
+	case "go_read_symbol", "rust_read_symbol", "ts_read_symbol", "python_read_symbol", "java_read_symbol", "cpp_read_symbol":
+		if target == "" {
+			return "read the exact declaration instead of a broad file slice"
+		}
+		return "read the exact declaration around " + target
+	case "edit_file", "write_file", "append_file", "apply_patch":
+		if target == "" {
+			return "apply the planned code change"
+		}
+		return "apply the planned change in " + target
+	case "task_ledger":
+		return "keep the visible plan synchronized with the work"
+	case "shell":
+		if target == "" {
+			return "inspect or verify state with a command"
+		}
+		return "inspect or verify state by running " + target
+	case "child_task":
+		if target == "" {
+			return "delegate a bounded subtask while continuing the main task"
+		}
+		return "delegate a bounded subtask about " + target
+	}
+
+	if action := strings.TrimSpace(event.Action); action != "" {
+		return "take the next " + action + " step"
+	}
+	if target != "" {
+		return "gather context from " + target
+	}
+	return "gather context for the next step"
+}
+
+func toolRequestTraceTarget(req workspace.ToolRequest) string {
+	switch {
+	case strings.TrimSpace(req.Path) != "":
+		target := strings.TrimSpace(req.Path)
+		if req.StartLine > 0 && req.EndLine > 0 {
+			target += fmt.Sprintf(":%d-%d", req.StartLine, req.EndLine)
+		} else if req.StartLine > 0 {
+			target += fmt.Sprintf(":%d", req.StartLine)
+		} else if req.EndLine > 0 {
+			target += fmt.Sprintf(":1-%d", req.EndLine)
+		}
+		return target
+	case strings.TrimSpace(req.Pattern) != "":
+		target := strings.TrimSpace(req.Pattern)
+		if strings.TrimSpace(req.Glob) != "" {
+			target += " in " + strings.TrimSpace(req.Glob)
+		}
+		return target
+	case strings.TrimSpace(req.Glob) != "":
+		return strings.TrimSpace(req.Glob)
+	case strings.TrimSpace(req.Command) != "":
+		return strings.TrimSpace(req.Command)
+	case strings.TrimSpace(req.Workdir) != "":
+		return strings.TrimSpace(req.Workdir)
+	case strings.TrimSpace(req.Destination) != "":
+		return strings.TrimSpace(req.Destination)
+	case len(req.Declarations) > 0:
+		return strings.Join(req.Declarations, ", ")
+	case len(req.Moves) > 0:
+		return fmt.Sprintf("%d declaration move(s)", len(req.Moves))
+	case len(req.Items) > 0:
+		return fmt.Sprintf("%d task item(s)", len(req.Items))
+	case len(req.Todos) > 0:
+		return fmt.Sprintf("%d todo item(s)", len(req.Todos))
+	case strings.TrimSpace(req.Agent) != "":
+		return strings.TrimSpace(req.Agent)
+	case strings.TrimSpace(req.Prompt) != "":
+		return strings.TrimSpace(req.Prompt)
+	default:
+		return ""
+	}
 }
 
 // runAgentTurn drives a single agent.Runner.Run invocation for the active
@@ -295,16 +574,22 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	mode := m.currentMode()
 	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)
 	runner := &agent.Runner{
-		Client:       m.client,
-		Workspace:    m.workspace,
-		MaxToolSteps: steps,
-		AgentName:    "main",
+		Client:              m.client,
+		ImplementerClient:   m.implementerClient,
+		Workspace:           m.workspace,
+		MaxToolSteps:        steps,
+		Policy:              modeRunPolicy(mode, m.cfg.Chat),
+		AgentName:           "main",
+		InstructionAttacher: m.instructionAttacher,
+		ContextSize:         m.cfg.LlamaServer.CtxSize,
 		OnEvent: func(event agent.RunEvent) {
-			m.logMessage(event.Role, event.Content)
+			m.logRunEvent(event)
 		},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
 			switch m.workspace.EvaluateToolRule(req) {
 			case workspace.ToolRuleAllow:
+				m.recordRollbackSnapshot(req)
+				m.capturePlanSnapshot(step, req)
 				return nil
 			case workspace.ToolRuleDeny:
 				return &workspace.ToolResult{
@@ -313,13 +598,21 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 					Error:   fmt.Sprintf("agent mode %q denies this request", mode.Name),
 				}
 			case workspace.ToolRuleAsk:
+				if m.requestApproval(req, mode.Name) {
+					m.recordRollbackSnapshot(req)
+					m.capturePlanSnapshot(step, req)
+					return nil
+				}
 				return &workspace.ToolResult{
 					Tool:    req.Tool,
-					Summary: "Tool request requires approval under Mode " + mode.Name,
-					Error:   fmt.Sprintf("agent mode %q requires explicit approval for this request; this headless loop does not prompt interactively", mode.Name),
+					Summary: "Tool request denied by user",
+					Error:   fmt.Sprintf("user denied %s under agent mode %q", req.Tool, mode.Name),
 				}
 			}
 			return nil
+		},
+		DoomLoopGate: func(req workspace.ToolRequest, count int) bool {
+			return m.requestApproval(req, mode.Name)
 		},
 	}
 	answer, err := runner.Run(
@@ -331,11 +624,22 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		},
 		func(event agent.ToolRequestEvent) {
 			m.logToolRequest(event)
+			m.events <- toolTraceMsg{step: event.Step, text: formatToolRequestTrace(event), intent: toolRequestIntent(event), running: true}
 		},
 		func(event agent.ToolResultEvent) {
 			m.logToolResult(event)
 			m.pinPathsFromToolResult(event.Result)
-			m.events <- toolTraceMsg{text: workspace.FormatToolTrace(event.Result)}
+			m.recordWriteFailure(event.Step, event.Request, event.Result)
+			m.recordWriteSuccess(event.Step, event.Request, event.Result)
+			m.recordTaskLedger(event.Request, event.Result)
+			m.events <- toolTraceMsg{step: event.Step, text: workspace.FormatToolTrace(event.Result)}
+			// Poke the UI only when this tool could have mutated the
+			// plan (write tools + task_ledger). Other tool results
+			// don't change the plan file, so re-rendering would be
+			// wasted work.
+			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == "task_ledger" {
+				m.events <- planRefreshMsg{}
+			}
 		},
 	)
 	if err != nil {
@@ -429,7 +733,9 @@ func (m *Model) initDebugLogger() {
 		SystemPrompt:   m.systemPrompt(),
 		WorkspaceRoot:  m.workspace.Root(),
 		WorkspaceCWD:   m.workspace.CWD(),
+		CtxSize:        m.cfg.LlamaServer.CtxSize,
 	})
+	m.sessionStartedAt = time.Now()
 
 	if m.contextError != "" {
 		m.logError("context", m.contextError)
@@ -446,25 +752,65 @@ func (m *Model) systemPrompt() string {
 	if m == nil {
 		return ""
 	}
-	base := strings.TrimSpace(m.promptStack.Text)
 	mode := m.currentMode()
-	extras := loadModeSystemPrompts(mode)
-	parts := make([]string, 0, 2)
-	if base != "" {
+	parts := make([]string, 0, 4)
+	if base := strings.TrimSpace(m.promptStack.Text); base != "" {
 		parts = append(parts, base)
 	}
-	if extras != "" {
+	if extras := strings.TrimSpace(loadModeSystemPrompts(mode, m.projectRoot())); extras != "" {
 		parts = append(parts, extras)
 	}
 	return strings.Join(parts, "\n\n")
 }
 
-func loadModeSystemPrompts(mode agent.Mode) string {
-	// The files named in mode.SystemPromptFiles are loaded by the caller's
-	// promptstack. Here we only surface Mode-derived content when the stack
-	// hasn't; in practice mode files are consumed via reloadPromptStack, so
-	// this path is a defensive fallback and returns the empty string.
+// projectRoot returns the directory that Mode.SystemPromptFiles paths
+// resolve against. Falls back to the workspace root so a Mode that names
+// "prompts/plan-mode.md" finds the repo-level prompts/ directory.
+func (m *Model) projectRoot() string {
+	if m == nil {
+		return ""
+	}
+	if root := strings.TrimSpace(m.cfg.Chat.ProjectRoot); root != "" {
+		return root
+	}
+	if m.workspace != nil {
+		return m.workspace.Root()
+	}
 	return ""
+}
+
+// loadModeSystemPrompts reads each file named in Mode.SystemPromptFiles
+// and joins their contents into a single trailing system-prompt section.
+// Unknown or unreadable files are skipped silently so a Mode can list
+// optional fragments without breaking when they're absent.
+func loadModeSystemPrompts(mode agent.Mode, projectRoot string) string {
+	if len(mode.SystemPromptFiles) == 0 {
+		return ""
+	}
+	sections := make([]string, 0, len(mode.SystemPromptFiles))
+	seen := make(map[string]struct{}, len(mode.SystemPromptFiles))
+	for _, relOrAbs := range mode.SystemPromptFiles {
+		path := strings.TrimSpace(relOrAbs)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) && projectRoot != "" {
+			path = filepath.Join(projectRoot, path)
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(data))
+		if trimmed != "" {
+			sections = append(sections, trimmed)
+		}
+	}
+	return strings.Join(sections, "\n\n")
 }
 
 // reloadPromptStack rebuilds the prompt stack from the active config and

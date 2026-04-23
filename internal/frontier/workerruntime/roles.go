@@ -1,6 +1,6 @@
 package workerruntime
 
-import "qwen-bubbles/internal/workspace"
+import "idiom/internal/workspace"
 
 type RoleSpec struct {
 	Name                 string

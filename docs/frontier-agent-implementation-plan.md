@@ -2,7 +2,7 @@
 
 ## Objective
 
-Bring qwen-bubbles closer to frontier coding-agent harness behavior: the model decides how to work and when it is done, while the harness verifies readiness, preserves state across long runs, enforces safety, and produces auditable logs.
+Bring idiom closer to frontier coding-agent harness behavior: the model decides how to work and when it is done, while the harness verifies readiness, preserves state across long runs, enforces safety, and produces auditable logs.
 
 This plan is grounded in the current repo state and the public behavior patterns documented by OpenCode and Claude Code:
 
@@ -127,7 +127,7 @@ Acceptance:
 
 ### 4. Isolated Child Work And Workbranches
 
-Problem: OpenCode and Claude Code can delegate isolated work. qwen-bubbles has analysis lanes, but implementation is still mostly a single runner. Large tasks need child work that can explore, validate, or patch in isolation without corrupting the main workspace.
+Problem: OpenCode and Claude Code can delegate isolated work. idiom has analysis lanes, but implementation is still mostly a single runner. Large tasks need child work that can explore, validate, or patch in isolation without corrupting the main workspace.
 
 Implementation:
 

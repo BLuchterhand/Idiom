@@ -5,8 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"qwen-bubbles/internal/frontier"
-	"qwen-bubbles/internal/frontier/pathparse"
+	"idiom/internal/frontier"
+	"idiom/internal/frontier/pathparse"
 )
 
 func containsAny(text string, needles ...string) bool {

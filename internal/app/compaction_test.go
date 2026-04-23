@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"qwen-bubbles/internal/llama"
+	"idiom/internal/llama"
 )
 
 // Fix 5 (context compaction) — exercises docs/opencode-fixes-design.md §5.

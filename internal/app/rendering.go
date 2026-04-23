@@ -8,8 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"qwen-bubbles/internal/llama"
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/llama"
 )
 
 func (m *Model) View() string {
@@ -17,11 +16,9 @@ func (m *Model) View() string {
 		return "Loading UI..."
 	}
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Padding(0, 1)
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 1)
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("109")).Padding(0, 1)
-	errorStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("160")).Padding(0, 1)
+	w := maxInt(0, m.width)
 
+	// ── Header ────────────────────────────────────────────────────────────────
 	serverState := "down"
 	if m.serverUp {
 		serverState = "up"
@@ -29,22 +26,69 @@ func (m *Model) View() string {
 	if m.bootingServer {
 		serverState = m.spinner.View() + " booting"
 	}
+	leftTitle := titleStyle.Render("◆ " + m.cfg.AppName)
+	rightInfo := statusStyle.Render(serverState + "  " + fallback(m.modelID, "unknown"))
+	headerGap := w - lipgloss.Width(leftTitle) - lipgloss.Width(rightInfo)
+	if headerGap < 0 {
+		headerGap = 0
+	}
+	header := leftTitle + strings.Repeat(" ", headerGap) + rightInfo
 
-	header := titleStyle.Render(m.cfg.AppName) +
-		statusStyle.Render(fmt.Sprintf("server:%s model:%s", serverState, fallback(m.modelID, "unknown")))
-	body := m.viewport.View()
-	contextStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Padding(0, 1)
-	footer := helpStyle.Render("Enter send | PgUp/PgDn scroll | Mouse wheel scroll | Ctrl+S save | Ctrl+L clear | Ctrl+R restart | Ctrl+C quit | /help") + "\n" +
-		contextStyle.Render("context: "+m.contextSummary()) + "\n" +
-		contextStyle.Render("mode: "+m.modeSummary()) + "\n" +
-		contextStyle.Render("trace: "+m.traceSummary()) + "\n" +
-		contextStyle.Render("workspace: "+m.workspaceSummary()) + "\n" +
-		statusStyle.Render(m.status)
-	if banner := m.errorBanner(); banner != "" {
-		footer += "\n" + errorStyle.Render(banner)
+	divider := dividerStyle.Render(strings.Repeat("─", w))
+
+	// ── Footer ────────────────────────────────────────────────────────────────
+	var footerLines []string
+
+	if pending := m.currentApproval(); pending != nil {
+		footerLines = append(footerLines,
+			approvalStyle.Width(w).Render("▲  APPROVAL REQUIRED ("+pending.mode+"):  "+pending.summary()+"  →  /approve or /deny"))
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, m.input.View(), footer)
+	if banner := m.errorBanner(); banner != "" {
+		footerLines = append(footerLines, errorStyle.Render(banner))
+	}
+
+	// Compact status bar: context info left, status + char count right.
+	infoLeft := contextStyle.Render(
+		"mode: " + m.modeSummary() + "  ·  trace: " + m.traceSummary() +
+			"  ·  ctx: " + m.contextSummary() + "  ·  " + m.workspaceSummary())
+	var rightParts []string
+	if m.status != "" {
+		rightParts = append(rightParts, m.status)
+	}
+	if n := len([]rune(m.input.Value())); n > 0 {
+		rightParts = append(rightParts, fmt.Sprintf("%d", n))
+	}
+	infoRight := statusStyle.Render(strings.Join(rightParts, "  ·  "))
+	barGap := w - lipgloss.Width(infoLeft) - lipgloss.Width(infoRight)
+	if barGap < 1 {
+		barGap = 1
+	}
+	footerLines = append(footerLines, infoLeft+strings.Repeat(" ", barGap)+infoRight)
+
+	footer := strings.Join(footerLines, "\n")
+
+	// ── Content row: main viewport + optional side panel (tabbed) ────────────
+	var contentRow string
+	if m.historyPanelOpen {
+		h := m.viewport.Height
+		vertBar := dividerStyle.Render(strings.Repeat("│\n", h-1) + "│")
+		panelWidth := m.historyViewport.Width
+		activeVP := m.activePanelViewport()
+		panel := lipgloss.JoinVertical(lipgloss.Left,
+			m.renderPanelTabs(panelWidth),
+			activeVP.View(),
+		)
+		contentRow = lipgloss.JoinHorizontal(lipgloss.Top,
+			m.viewport.View(),
+			vertBar,
+			panel,
+		)
+	} else {
+		contentRow = m.viewport.View()
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, divider, contentRow, divider, m.input.View(), footer)
 }
 
 func (m *Model) requestMessages() []llama.ChatMessage {
@@ -52,21 +96,12 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 	if prompt := strings.TrimSpace(m.systemPrompt()); prompt != "" {
 		messages = append(messages, llama.ChatMessage{Role: "system", Content: prompt})
 	}
-	// Fix 4 (workspace overview) — inject a cheap top-level layout snapshot
-	// exactly once per session so the model doesn't guess at paths.
-	if m.workspace != nil {
-		if !m.workspaceOverviewInjected {
-			if overview := strings.TrimSpace(workspace.OverviewSystemPrompt(m.workspace.Root())); overview != "" {
-				messages = append(messages, llama.ChatMessage{Role: "system", Content: overview})
-				m.workspaceOverviewInjected = true
-				m.logMessage("workspace_overview", fmt.Sprintf("injected %d chars (root=%s)", len(overview), m.workspace.Root()))
-			} else {
-				m.logMessage("workspace_overview", fmt.Sprintf("skipped_empty (root=%s)", m.workspace.Root()))
-				m.workspaceOverviewInjected = true
-			}
-		}
-	}
-
+	// OpenCode-aligned: no static workspace-overview injection. The model
+	// discovers the layout by calling list_files / glob / search tools on
+	// demand, exactly like it does in OpenCode. Injecting a static tree
+	// every turn inflated prompt tokens and taught the model that the
+	// harness always pre-answers orientation questions — which trained it
+	// to skip real discovery.
 	history := m.messages
 	if len(history) > 0 {
 		last := history[len(history)-1]
@@ -108,37 +143,63 @@ func (m *Model) renderMessages(forceBottom bool) {
 
 	stickBottom := forceBottom || m.viewport.AtBottom()
 
-	userStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("63")).Padding(0, 1).Bold(true)
-	assistantStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("31")).Padding(0, 1).Bold(true)
-	systemStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Padding(0, 1).Bold(true)
-	toolStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("94")).Padding(0, 1).Bold(true)
-	bodyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Padding(0, 1).Width(maxInt(1, m.viewport.Width))
+	msgBodyStyle := bodyStyle.Width(maxInt(1, m.viewport.Width))
 
 	var b strings.Builder
 	for _, msg := range m.messages {
 		var label string
+		useGlamour := false
 		content := strings.TrimSpace(msg.Content)
 		switch msg.Role {
 		case "user":
-			label = userStyle.Render("You")
+			label = userLabelStyle.Render("You")
 		case "assistant":
-			label = assistantStyle.Render("Qwen")
-			if m.streaming && content == "" {
-				content = m.spinner.View() + " Qwen is working on your request" + m.workingDots()
+			label = assistantLabelStyle.Render("Qwen")
+			if content != "" {
+				useGlamour = true
 			}
 		case "tool":
-			label = toolStyle.Render("Tool")
+			// Surface the tool name from the first line: "tool_name | summary..."
+			toolName := "tool"
+			if idx := strings.Index(content, " | "); idx > 0 {
+				toolName = content[:idx]
+			} else if fields := strings.Fields(content); len(fields) > 0 {
+				toolName = fields[0]
+			}
+			label = toolLabelStyle.Render("▶ " + toolName)
 		default:
-			label = systemStyle.Render(strings.Title(msg.Role))
+			label = systemLabelStyle.Render(strings.Title(msg.Role))
 		}
 		b.WriteString(label)
 		b.WriteString("\n")
-		b.WriteString(bodyStyle.Render(content))
+		if useGlamour && m.mdRenderer != nil {
+			rendered, err := m.mdRenderer.Render(content)
+			if err == nil {
+				b.WriteString(strings.TrimRight(rendered, "\n"))
+			} else {
+				b.WriteString(msgBodyStyle.Render(content))
+			}
+		} else {
+			b.WriteString(msgBodyStyle.Render(content))
+		}
 		b.WriteString("\n\n")
 	}
 
-	if len(m.messages) == 0 {
-		b.WriteString(bodyStyle.Render("No messages yet. Type a prompt below or use /help."))
+	// While a turn is in flight, render a live "Qwen is working" affordance
+	// after the last message. The in-flight reply is NOT kept in m.messages
+	// as an empty placeholder (that caused double-rendering via the reply
+	// bookkeeping path); we draw the spinner inline instead.
+	if m.streaming {
+		label := assistantLabelStyle.Render("Qwen")
+		content := m.spinner.View() + " Qwen is working on your request" + m.workingDots()
+		b.WriteString(label)
+		b.WriteString("\n")
+		b.WriteString(msgBodyStyle.Render(content))
+		b.WriteString("\n\n")
+	}
+
+	if len(m.messages) == 0 && !m.streaming {
+		b.WriteString(msgBodyStyle.Render("No messages yet. Type a prompt below or use /help."))
 	}
 
 	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))

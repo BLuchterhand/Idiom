@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"qwen-bubbles/internal/agent"
+	"idiom/internal/agent"
 )
 
 type jsonEventStream struct {
@@ -42,7 +42,7 @@ func (s *jsonEventStream) emit(record map[string]any) {
 }
 
 // SetJSONEventStream wires a JSONL event sink onto the Model. Callers (typically
-// headless `qwen-bubbles --prompt --json`) should pass os.Stdout. Pass nil to
+// headless `idiom --prompt --json`) should pass os.Stdout. Pass nil to
 // disable. The sessionID is included in every emitted record so consumers can
 // correlate events with the matching debug log file.
 func (m *Model) SetJSONEventStream(w io.Writer, sessionID string) {
@@ -137,5 +137,6 @@ func (m *Model) emitJSONStart(prompt string) {
 		record["workspace_root"] = m.workspace.Root()
 		record["workspace_mode"] = string(m.workspace.Mode())
 	}
+	record["agent_mode"] = m.currentMode().Name
 	m.emitJSONEvent(record)
 }

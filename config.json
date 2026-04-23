@@ -1,20 +1,46 @@
 {
-  "app_name": "Qwen Bubbles",
+  "app_name": "Idiom",
   "llama_server": {
     "binary": "llama-server",
     "host": "127.0.0.1",
-    "port": 8080,
-    "model": "models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
-    "ctx_size": 65536,
+    "port": 47680,
+    "model": "/Users/ben/models/qwen3.6-27b/Qwen3.6-27B-Q6_K.gguf",
+    "ctx_size": 196608,
     "threads": 0,
-    "gpu_layers": 0,
+    "gpu_layers": 999,
     "jinja": true,
     "flash_attention": true,
     "reasoning": "auto",
     "reasoning_format": "deepseek",
     "reasoning_budget": -1,
     "log_file": "logs/llama-server.log",
-    "extra_args": []
+    "extra_args": [
+      "--cache-type-k", "q8_0",
+      "--cache-type-v", "q8_0",
+      "--mlock",
+      "--no-mmap"
+    ]
+  },
+  "implementer": {
+    "binary": "llama-server",
+    "host": "127.0.0.1",
+    "port": 47681,
+    "model": "models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    "ctx_size": 131072,
+    "threads": 0,
+    "gpu_layers": 999,
+    "jinja": true,
+    "flash_attention": true,
+    "reasoning": "auto",
+    "reasoning_format": "deepseek",
+    "reasoning_budget": -1,
+    "log_file": "logs/implementer-server.log",
+    "extra_args": [
+      "--cache-type-k", "q8_0",
+      "--cache-type-v", "q8_0",
+      "--mlock",
+      "--no-mmap"
+    ]
   },
   "chat": {
     "auto_start_server": true,
@@ -42,7 +68,11 @@
     "preserve_thinking": true,
     "max_tokens": 8192,
     "max_history": 20,
-    "max_tool_steps": 16,
+    "max_tool_steps": 0,
+    "max_context_messages": 40,
+    "max_context_chars": 200000,
+    "max_model_calls": 40,
+    "max_duration_seconds": 780,
     "request_timeout_seconds": 900,
     "server_start_timeout_seconds": 240
   },

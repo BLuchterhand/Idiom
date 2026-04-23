@@ -16,9 +16,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"qwen-bubbles/internal/app"
-	"qwen-bubbles/internal/config"
-	"qwen-bubbles/internal/llama"
+	"idiom/internal/app"
+	"idiom/internal/config"
+	"idiom/internal/llama"
 )
 
 type runOptions struct {
@@ -28,7 +28,7 @@ type runOptions struct {
 
 type promptRunner func(config.Config, string, runOptions, io.Writer) (string, error)
 type promptsRunner func(config.Config, []string, runOptions, io.Writer) ([]string, error)
-type modeRunner func(config.Config) error
+type modeRunner func(config.Config, runOptions) error
 type listSessionsRunner func(config.Config, io.Writer) error
 
 func main() {
@@ -44,7 +44,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	var resume string
 	var listSessionsFlag bool
 
-	fs := flag.NewFlagSet("qwen-bubbles", flag.ContinueOnError)
+	fs := flag.NewFlagSet("idiom", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&configPath, "config", "config.json", "path to config file")
 	fs.BoolVar(&serverOnly, "server-only", false, "run only llama-server and block")
@@ -72,7 +72,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	}
 
 	if serverOnly {
-		if err := serverRun(cfg); err != nil {
+		if err := serverRun(cfg, runOptions{}); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -116,7 +116,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 		return 0
 	}
 
-	if err := tuiRun(cfg); err != nil {
+	if err := tuiRun(cfg, runOptions{Resume: resume}); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -160,9 +160,15 @@ func cleanPromptTurns(prompts []string) ([]string, error) {
 	return cleaned, nil
 }
 
-func runTUI(cfg config.Config) error {
+func runTUI(cfg config.Config, opts runOptions) error {
 	model := app.New(cfg)
 	defer model.Close()
+
+	if opts.Resume != "" {
+		if err := model.ResumeSession(opts.Resume); err != nil {
+			return fmt.Errorf("resume %q: %w", opts.Resume, err)
+		}
+	}
 
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := program.Run(); err != nil {
@@ -254,7 +260,7 @@ func runListSessions(cfg config.Config, stdout io.Writer) error {
 	return nil
 }
 
-func runServerOnly(cfg config.Config) error {
+func runServerOnly(cfg config.Config, _ runOptions) error {
 	client := llama.NewClient(cfg.BaseURL(), 0)
 	controller := llama.NewServerController(cfg.LlamaServer, client)
 

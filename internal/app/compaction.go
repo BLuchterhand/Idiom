@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"qwen-bubbles/internal/llama"
+	"idiom/internal/llama"
 )
 
 // Fix 5 (context compaction) — when session history exceeds a threshold,
@@ -74,11 +74,11 @@ func (m *Model) compactionThreshold() int {
 }
 
 func (m *Model) buildSessionDigest(ctx context.Context, oldest []llama.ChatMessage) string {
-	if m == nil || m.client == nil {
+	if m == nil {
 		return fallbackSessionDigest(oldest)
 	}
 	prompt := renderCompactionPrompt(oldest)
-	reply, err := m.client.CompleteChat(ctx, []llama.ChatMessage{
+	reply, err := m.completeChatWithFallback(ctx, []llama.ChatMessage{
 		{Role: "system", Content: compactionSystemPromptPreamble},
 		{Role: "user", Content: prompt},
 	}, m.chatOptions())
@@ -110,6 +110,22 @@ func renderCompactionPrompt(oldest []llama.ChatMessage) string {
 		fmt.Fprintf(&b, "[%s] %s\n", role, content)
 	}
 	return b.String()
+}
+
+// completeChatWithFallback sends messages to m.summaryClient first; on nil or
+// error it falls back to m.client. Server auto-start is not triggered here —
+// callers that want lazy startup should call ensureSummaryServer first.
+// Returns an error only when both clients fail or neither is configured.
+func (m *Model) completeChatWithFallback(ctx context.Context, messages []llama.ChatMessage, opts llama.ChatOptions) (string, error) {
+	if m.summaryClient != nil {
+		if text, err := m.summaryClient.CompleteChat(ctx, messages, opts); err == nil {
+			return text, nil
+		}
+	}
+	if m.client == nil {
+		return "", fmt.Errorf("completeChatWithFallback: no model client available")
+	}
+	return m.client.CompleteChat(ctx, messages, opts)
 }
 
 // fallbackSessionDigest produces a deterministic digest when the model call

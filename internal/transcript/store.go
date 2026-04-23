@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"qwen-bubbles/internal/llama"
+	"idiom/internal/llama"
 )
 
 func SaveMarkdown(dir string, messages []llama.ChatMessage) (string, error) {
@@ -17,7 +17,7 @@ func SaveMarkdown(dir string, messages []llama.ChatMessage) (string, error) {
 
 	filename := filepath.Join(dir, time.Now().Format("20060102-150405")+".md")
 	var b strings.Builder
-	b.WriteString("# Qwen Bubbles Transcript\n\n")
+	b.WriteString("# Idiom Transcript\n\n")
 	b.WriteString("Saved: " + time.Now().Format(time.RFC3339) + "\n\n")
 
 	for _, msg := range messages {

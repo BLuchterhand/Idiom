@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/workspace"
 )
 
 func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
@@ -149,7 +149,6 @@ func TestRenderInitialRuntimeBriefIncludesPolicyManifestAndTargets(t *testing.T)
 
 	for _, needle := range []string{
 		"[frontier step instruction]",
-		"initial frontier runtime packet",
 		`"objective":"Update routing"`,
 		`"allowed_tools":["read_file","edit_file","shell"]`,
 		`"tool":"edit_file"`,

@@ -22,14 +22,14 @@ func TestOverviewSystemPromptListsTopLevelLayout(t *testing.T) {
 	dir := t.TempDir()
 	mustMkdir(t, filepath.Join(dir, "internal", "bubble"))
 	mustMkdir(t, filepath.Join(dir, "internal", "workspace"))
-	mustMkdir(t, filepath.Join(dir, "cmd", "qwen-bubbles"))
+	mustMkdir(t, filepath.Join(dir, "cmd", "idiom"))
 	mustWrite(t, filepath.Join(dir, "go.mod"), "module sample\n")
 	mustWrite(t, filepath.Join(dir, "README.md"), "hi\n")
 	mustWrite(t, filepath.Join(dir, ".gitignore"), "/tmp\n")
 	mustWrite(t, filepath.Join(dir, "internal/bubble/bubble.go"), "package bubble\n")
 	mustWrite(t, filepath.Join(dir, "internal/bubble/bubble_test.go"), "package bubble\n")
 	mustWrite(t, filepath.Join(dir, "internal/workspace/manager.go"), "package workspace\n")
-	mustWrite(t, filepath.Join(dir, "cmd/qwen-bubbles/main.go"), "package main\n")
+	mustWrite(t, filepath.Join(dir, "cmd/idiom/main.go"), "package main\n")
 	mustMkdir(t, filepath.Join(dir, "node_modules")) // should be skipped
 	mustWrite(t, filepath.Join(dir, "node_modules/leftpad.js"), "module.exports={}\n")
 

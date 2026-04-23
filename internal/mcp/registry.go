@@ -60,7 +60,7 @@ func (r *Registry) Spawn(ctx context.Context, cfg ServerConfig) error {
 		_ = transport.Close()
 		return fmt.Errorf("mcp %s reader: %w", name, err)
 	}
-	if err := client.Initialize(ctx, "qwen-bubbles"); err != nil {
+	if err := client.Initialize(ctx, "idiom"); err != nil {
 		_ = client.Close()
 		return fmt.Errorf("mcp %s initialize: %w", name, err)
 	}
@@ -82,7 +82,7 @@ func (r *Registry) RegisterExisting(ctx context.Context, name string, client *Cl
 	if err := client.Start(ctx); err != nil {
 		return err
 	}
-	if err := client.Initialize(ctx, "qwen-bubbles"); err != nil {
+	if err := client.Initialize(ctx, "idiom"); err != nil {
 		return err
 	}
 	tools, err := client.ListTools(ctx)

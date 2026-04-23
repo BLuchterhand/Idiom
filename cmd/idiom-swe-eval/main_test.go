@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/eval"
+	"idiom/internal/eval"
 )
 
 func TestRunSuiteOnlyPassesValidSuite(t *testing.T) {
@@ -77,8 +77,8 @@ func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 	writeSWEMultiTurnSmokeSuite(t, suitePath)
 
 	command := strings.Join([]string{
-		`test "$QWEN_SWE_TURN_COUNT" = "2"`,
-		`&& test "$QWEN_SWE_TURNS_JSON" = '["first turn","second turn"]'`,
+		`test "$IDIOM_SWE_TURN_COUNT" = "2"`,
+		`&& test "$IDIOM_SWE_TURNS_JSON" = '["first turn","second turn"]'`,
 		`&& printf '%s\n'`,
 		`'{"type":"message","role":"user","content":"first turn"}'`,
 		`'{"type":"message","role":"assistant","content":"first answer"}'`,

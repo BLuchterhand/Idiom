@@ -6,9 +6,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 
-	"qwen-bubbles/internal/config"
-	"qwen-bubbles/internal/llama"
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/config"
+	"idiom/internal/llama"
+	"idiom/internal/workspace"
 )
 
 func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
@@ -31,10 +31,11 @@ func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
 	}
 }
 
-// Fix 4 (workspace overview) — integration check that requestMessages
-// injects the overview exactly once per session. See
-// docs/opencode-fixes-design.md §4.
-func TestRequestMessagesInjectsWorkspaceOverviewExactlyOnce(t *testing.T) {
+// OpenCode-aligned: requestMessages no longer injects a static workspace
+// overview. The model discovers the workspace on demand through tool
+// calls (list_files, search_*, glob). We assert the absence so a future
+// regression that re-introduces the static dump gets caught.
+func TestRequestMessagesOmitsStaticWorkspaceOverview(t *testing.T) {
 	dir := t.TempDir()
 	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir})
 	m := &Model{
@@ -43,14 +44,9 @@ func TestRequestMessagesInjectsWorkspaceOverviewExactlyOnce(t *testing.T) {
 			{Role: "user", Content: "first prompt"},
 		},
 	}
-	first := m.requestMessages()
-	if !containsSystemContent(first, "Workspace overview") {
-		t.Fatalf("first call should include the workspace overview, got:\n%#v", first)
-	}
-	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: "ok"}, llama.ChatMessage{Role: "user", Content: "second"})
-	second := m.requestMessages()
-	if containsSystemContent(second, "Workspace overview") {
-		t.Fatalf("second call must not re-inject the overview, got:\n%#v", second)
+	msgs := m.requestMessages()
+	if containsSystemContent(msgs, "Workspace overview") {
+		t.Fatalf("static workspace overview must not be injected; got:\n%#v", msgs)
 	}
 }
 

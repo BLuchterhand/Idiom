@@ -7,28 +7,104 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 
-	"qwen-bubbles/internal/agent"
-	"qwen-bubbles/internal/config"
-	"qwen-bubbles/internal/llama"
-	"qwen-bubbles/internal/promptstack"
-	"qwen-bubbles/internal/transcript"
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/agent"
+	"idiom/internal/config"
+	"idiom/internal/llama"
+	"idiom/internal/promptstack"
+	"idiom/internal/transcript"
+	"idiom/internal/workspace"
+
+	"encoding/json"
+	"sort"
 )
+
+// sessionAggregate is rolled forward each turn from runner telemetry so
+// the end-of-session summary record can report totals/peaks without
+// re-parsing the JSONL log. Updated on the UI goroutine via logRunEvent
+// and logToolResult, both of which run sequentially per turn.
+type sessionAggregate struct {
+	turns            int
+	modelCalls       int
+	toolCalls        int
+	promptTokens     int
+	completionTokens int
+	totalTokens      int
+	peakPromptTokens int
+	compactions      int
+	toolOutputBytes  map[string]int
+	toolCallCounts   map[string]int
+}
+
+func (a *sessionAggregate) recordModelCall(promptTokens, completionTokens, totalTokens int) {
+	a.modelCalls++
+	a.promptTokens += promptTokens
+	a.completionTokens += completionTokens
+	a.totalTokens += totalTokens
+	if promptTokens > a.peakPromptTokens {
+		a.peakPromptTokens = promptTokens
+	}
+}
+
+func (a *sessionAggregate) recordToolResult(tool string, outputChars int) {
+	a.toolCalls++
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		tool = "<unknown>"
+	}
+	if a.toolOutputBytes == nil {
+		a.toolOutputBytes = make(map[string]int)
+	}
+	if a.toolCallCounts == nil {
+		a.toolCallCounts = make(map[string]int)
+	}
+	a.toolCallCounts[tool]++
+	a.toolOutputBytes[tool] += outputChars
+}
+
+func (a *sessionAggregate) topToolsByOutput(n int) []transcript.ToolOutputAggregate {
+	if len(a.toolOutputBytes) == 0 {
+		return nil
+	}
+	out := make([]transcript.ToolOutputAggregate, 0, len(a.toolOutputBytes))
+	for tool, bytes := range a.toolOutputBytes {
+		out = append(out, transcript.ToolOutputAggregate{
+			Tool:        tool,
+			Calls:       a.toolCallCounts[tool],
+			OutputChars: bytes,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].OutputChars > out[j].OutputChars
+	})
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out
+}
 
 type Model struct {
 	cfg        config.Config
 	client     *llama.Client
 	controller *llama.ServerController
-	workspace  *workspace.Manager
-	runner     *agent.Runner
-	events     chan tea.Msg
+	// implementerClient + implementerController are set only when the
+	// config has a separate Implementer llama-server. Nil when the app
+	// runs in single-model mode. Used by runChildTask to route write-
+	// enabled child work onto the implementation model.
+	implementerClient     *llama.Client
+	implementerController *llama.ServerController
+	workspace             *workspace.Manager
+	runner                *agent.Runner
+	events                chan tea.Msg
 
 	width    int
 	height   int
@@ -51,6 +127,8 @@ type Model struct {
 	workingFrame                  int
 	debugLogger                   *transcript.DebugLogger
 	debugLogPath                  string
+	sessionStartedAt              time.Time
+	sessionAgg                    sessionAggregate
 	eventStream                   *jsonEventStream
 	lastAssistantReasoningContent string
 	agentModeName                 string
@@ -59,6 +137,94 @@ type Model struct {
 	workspaceOverviewInjected bool
 
 	pinnedFiles *pinnedFileRegistry
+
+	approvalMu          sync.Mutex
+	approvalSerial      sync.Mutex
+	approvalPending     *pendingApproval
+	detailPanelVisible  bool
+	rollbackHistory     []rollbackEntry
+	instructionAttacher *agent.InstructionAttacher
+	mdRenderer          *glamour.TermRenderer
+
+	// History panel
+	historyEntries    []historyEntry
+	historySelected   int
+	historyExpanded   bool
+	historyPanelOpen  bool
+	historyFocused    bool
+	historyViewport   viewport.Model
+	summaryClient     *llama.Client
+	summaryController *llama.ServerController
+
+	// Side-panel tabs
+	panelTab      int // panelTabHistory | panelTabPlan
+	planViewport  viewport.Model
+	planPath      string
+	planMTime     time.Time
+	planLoadError string
+
+	// planWriteSnapshots holds the pre-edit file contents captured during
+	// PreExecute for write-class tools. Keyed by step number (one key
+	// per tool call) with a slice of snapshots because apply_patch may
+	// touch multiple files in one call. Entries are consumed and cleared
+	// after the matching ToolResult event records its diff.
+	planWriteSnapshots map[int][]planWriteSnapshot
+	// planSessionHeadingWritten is set once per live session after the
+	// `## Session …` heading has been appended to the plan file. Keeping
+	// it in-memory avoids repeated disk scans on every successful write.
+	planSessionHeadingWritten bool
+	// planLedgerItems mirrors the most recent task_ledger submission,
+	// keyed by item id. recordWriteSuccess consults it to find a
+	// planned item that mentions the written path and check it off in
+	// place instead of adding a fresh "Unplanned" line.
+	planLedgerItems map[string]workspace.TaskLedgerItem
+	// planLedgerRenderedIDs tracks which ledger item ids have already
+	// been rendered into the plan file, so repeated task_ledger calls
+	// only append newly-introduced items rather than duplicating the
+	// whole list on each update.
+	planLedgerRenderedIDs map[string]bool
+	// planLedgerHits records which paths of each ledger item have
+	// already been attached to a successful write. Keyed by item id,
+	// inner map keyed by path. Used so multi-path items only flip to
+	// `[x]` after every listed path is accounted for, and so a second
+	// write to the same path doesn't double-attach.
+	planLedgerHits map[string]map[string]bool
+	// planCursor is the index into the parsed plan-item list that the
+	// selection highlight points at. Reset when the plan reloads or a
+	// new session starts. Only meaningful when the plan panel is
+	// focused and no diff overlay is visible.
+	planCursor int
+	// planOverlayID holds the diff id currently displayed in the
+	// overlay, or empty when no overlay is visible. Acts as the mode
+	// switch between "plan list" and "diff overlay" navigation.
+	planOverlayID string
+	// planOverlayBody caches the rendered overlay body so redraws
+	// don't re-read and re-colorize the diff on every tick.
+	planOverlayBody string
+
+	// sessionsViewport renders the third side-panel tab: a selectable
+	// list of prior sessions (id + one-line summary). Enter resumes
+	// the highlighted session.
+	sessionsViewport viewport.Model
+	// sessionsList caches the last ListRecordedSessions snapshot so
+	// ↑/↓ navigation doesn't re-scan the debug-log dir on every key.
+	// Refreshed on Ctrl+T into the Sessions tab and on /resume.
+	sessionsList []SessionInfo
+	// sessionsCursor is the index into sessionsList that Enter would
+	// resume. Clamped during render when the list shrinks under it.
+	sessionsCursor int
+
+	// pendingExec carries a tea.Cmd (typically tea.ExecProcess) that a slash
+	// command wants to run, but can't dispatch itself because handleSlashCommand
+	// doesn't return tea.Cmd. The Update loop consumes and clears this after
+	// the slash handler returns.
+	pendingExec tea.Cmd
+
+	// Tool-call names collected during the current agent turn; consumed when
+	// streamDoneMsg fires and cleared before the next turn begins.
+	currentTurnTools         []string
+	currentTurnHistoryIndex  int
+	currentTurnHistoryActive bool
 }
 
 // pinnedFilesRegistry returns the lazy-initialized per-session pin set.
@@ -72,19 +238,22 @@ func (m *Model) pinnedFilesRegistry() *pinnedFileRegistry {
 	return m.pinnedFiles
 }
 
-type assistantReplyMsg struct {
-	text             string
-	logged           bool
-	reasoningContent string
-}
-
 type infoMsg struct {
 	text string
 }
 
 type toolTraceMsg struct {
-	text string
+	step    int
+	text    string
+	intent  string
+	running bool
 }
+
+// planRefreshMsg requests a re-render of the plan panel. Emitted after
+// any plan-mutating tool result (write success, task_ledger update,
+// write failure) so the user sees the updated plan without having to
+// toggle the tab or focus the panel.
+type planRefreshMsg struct{}
 
 type traceDisplayMode string
 
@@ -94,14 +263,21 @@ const (
 )
 
 func (m *Model) Close() {
+	m.writeSessionSummary()
 	if m.debugLogger != nil {
 		_ = m.debugLogger.Close()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if m.summaryController != nil {
+		_ = m.summaryController.Stop(ctx)
+	}
+	if m.implementerController != nil {
+		_ = m.implementerController.Stop(ctx)
 	}
 	if !m.managedServer {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	_ = m.controller.Stop(ctx)
 }
 
@@ -147,6 +323,14 @@ func (m *Model) bootstrap() {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
+	// Kick off the implementer server in parallel when configured; its
+	// readiness is independent of the planner and failures here must not
+	// block main-server bootstrap. Child tasks silently fall back to the
+	// planner client when the implementer isn't ready yet.
+	if m.implementerController != nil {
+		go m.startImplementerAsync()
+	}
+
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
 		m.events <- serverStatusMsg{running: true, modelID: models[0].ID}
@@ -161,6 +345,37 @@ func (m *Model) bootstrap() {
 	m.events <- infoMsg{text: "No server detected. Use /server start or Ctrl+R."}
 }
 
+// startImplementerAsync brings up the secondary (implementer) llama-server
+// when configured. Runs detached from main bootstrap: on failure we just
+// log, child tasks fall back to the planner client. Assumes the caller
+// already checked m.implementerController != nil.
+func (m *Model) startImplementerAsync() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.cfg.Chat.ServerStartTimeoutSecs)*time.Second)
+	defer cancel()
+
+	if models, err := m.implementerClient.ListModels(ctx); err == nil && len(models) > 0 {
+		m.events <- infoMsg{text: "Implementer ready: " + models[0].ID}
+		return
+	}
+	if !m.cfg.Chat.AutoStartServer {
+		return
+	}
+	if err := m.implementerController.Start(ctx); err != nil {
+		m.logError("implementer", "start failed: "+err.Error())
+		return
+	}
+	if err := m.implementerController.WaitUntilReady(ctx); err != nil {
+		m.logError("implementer", "ready wait failed: "+err.Error())
+		return
+	}
+	models, err := m.implementerClient.ListModels(context.Background())
+	id := "local-model"
+	if err == nil && len(models) > 0 {
+		id = models[0].ID
+	}
+	m.events <- infoMsg{text: "Implementer ready: " + id}
+}
+
 func (m *Model) handleSlashCommand(raw string) bool {
 	fields := strings.Fields(raw)
 	if len(fields) == 0 {
@@ -171,7 +386,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 	case "/quit", "/exit":
 		return true
 	case "/help":
-		m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /help | transcript: PgUp/PgDn or mouse wheel"
+		m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
 	case "/clear":
 		m.messages = nil
 		m.status = "Cleared chat."
@@ -237,6 +452,82 @@ func (m *Model) handleSlashCommand(raw string) bool {
 			m.status = "Agent mode set to " + mode.Name + "."
 		default:
 			m.status = "Usage: /mode [build|plan|general]"
+		}
+	case "/approve":
+		if summary, ok := m.resolveApproval(true); ok {
+			m.status = "Approved: " + summary
+		} else {
+			m.status = "No pending tool approval."
+		}
+	case "/deny":
+		if summary, ok := m.resolveApproval(false); ok {
+			m.status = "Denied: " + summary
+		} else {
+			m.status = "No pending tool approval."
+		}
+	case "/undo":
+		summary, err := m.undoLast()
+		if err != nil {
+			m.status = "Undo failed: " + err.Error()
+		} else {
+			m.status = summary
+		}
+	case "/panel":
+		m.historyPanelOpen = !m.historyPanelOpen
+		if m.historyPanelOpen {
+			m.historyFocused = false // open but unfocused; Tab to focus
+			if len(m.historyEntries) > 0 {
+				m.historySelected = len(m.historyEntries) - 1
+			}
+		} else {
+			m.historyFocused = false
+		}
+		m.resize()
+		if m.historyPanelOpen {
+			m.status = "Panel open. Ctrl+T cycles tabs · Tab focuses · ↑↓ select · Enter expand · PgUp/PgDn or j/k scroll"
+		} else {
+			m.status = "Panel closed."
+		}
+	case "/resume":
+		// /resume with no arg opens the Sessions tab and focuses it
+		// so ↑/↓/Enter pick from the list. With an arg it's a direct
+		// shortcut that swaps into the named session immediately.
+		if len(fields) < 2 {
+			if !m.historyPanelOpen {
+				m.historyPanelOpen = true
+				m.resize()
+			}
+			m.panelTab = panelTabSessions
+			m.refreshSessionsList()
+			m.historyFocused = true
+			m.renderSessionsPanelContent()
+			if len(m.sessionsList) == 0 {
+				m.status = "No prior sessions found."
+			} else {
+				m.status = "Pick a session: ↑/↓ select · Enter resume · Esc cancel."
+			}
+			break
+		}
+		id := fields[1]
+		if err := m.ResumeSession(id); err != nil {
+			m.status = "Resume failed: " + err.Error()
+		} else {
+			m.status = "Resumed session " + id + "."
+			m.rerenderActivePanel()
+		}
+	case "/plan":
+		if !m.historyPanelOpen {
+			m.historyPanelOpen = true
+			m.resize()
+		}
+		m.panelTab = panelTabPlan
+		cmd, status, err := m.prepareEditPlanCmd()
+		m.rerenderActivePanel()
+		if err != nil {
+			m.status = "Plan editor failed: " + err.Error()
+		} else {
+			m.status = status
+			m.pendingExec = cmd
 		}
 	case "/system":
 		prompt := strings.TrimSpace(strings.TrimPrefix(raw, "/system"))
@@ -434,25 +725,140 @@ func (m *Model) restartServerAsync() {
 	}()
 }
 
+// renderHistoryPanelContent rebuilds the history viewport content from
+// m.historyEntries. Call whenever entry data or selection changes.
+func (m *Model) renderHistoryPanelContent() {
+	if !m.historyPanelOpen {
+		return
+	}
+	w := maxInt(8, m.historyViewport.Width)
+
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Width(w).Render("◈ History"))
+	b.WriteString("\n")
+
+	for i, entry := range m.historyEntries {
+		selected := i == m.historySelected
+		expanded := selected && (m.historyExpanded || entry.inProgress)
+
+		prefix := "  "
+		if selected && expanded {
+			prefix = "▾ "
+		} else if selected {
+			prefix = "▸ "
+		}
+
+		who := "You"
+		if entry.sender == "agent" {
+			who = "Agent"
+		}
+		head := fmt.Sprintf("%s%d %s · ", prefix, i+1, who)
+		indent := strings.Repeat(" ", len([]rune(head)))
+
+		var style lipgloss.Style
+		switch {
+		case selected && m.historyFocused:
+			style = panelFocusedStyle
+		case selected:
+			style = panelUnfocusedStyle
+		default:
+			style = panelEntryStyle
+		}
+		for j, wl := range wrapLines(entry.summary, maxInt(1, w-len([]rune(head)))) {
+			row := indent + wl
+			if j == 0 {
+				row = head + wl
+			}
+			b.WriteString(style.Width(w).Render(row))
+			b.WriteString("\n")
+		}
+
+		if expanded {
+			for _, c := range entry.contents {
+				for _, wl := range wrapLines(c, maxInt(1, w-2)) {
+					b.WriteString(panelDetailStyle.Width(w).Render(wl))
+					b.WriteString("\n")
+				}
+			}
+			for _, tc := range entry.toolCalls {
+				for j, wl := range wrapLines(tc.line, maxInt(1, w-4)) {
+					prefix := "▶ "
+					if tc.running {
+						prefix = "… "
+					}
+					if j > 0 {
+						prefix = "  "
+					}
+					b.WriteString(panelDetailStyle.Width(w).Render(prefix + wl))
+					b.WriteString("\n")
+				}
+				if strings.TrimSpace(tc.intent) != "" {
+					for _, wl := range wrapLines("why: "+tc.intent, maxInt(1, w-4)) {
+						b.WriteString(panelDetailStyle.Width(w).Render("  " + wl))
+						b.WriteString("\n")
+					}
+				}
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	if len(m.historyEntries) == 0 {
+		b.WriteString(panelDetailStyle.Width(w).Render("No history yet."))
+		b.WriteString("\n")
+		b.WriteString(panelDetailStyle.Width(w).Render("Entries appear as"))
+		b.WriteString("\n")
+		b.WriteString(panelDetailStyle.Width(w).Render("messages are sent."))
+	}
+
+	m.historyViewport.SetContent(strings.TrimRight(b.String(), "\n"))
+}
+
 func (m *Model) resize() {
 	headerHeight := 1
+	dividerCount := 2 // one after header, one before input
 	inputHeight := 5
-	footerHeight := 6
-	contentHeight := m.height - headerHeight - inputHeight - footerHeight
+	footerHeight := 4 // compact bar + up to 3 conditional lines
+	contentHeight := m.height - headerHeight - dividerCount - inputHeight - footerHeight
 	if contentHeight < 5 {
 		contentHeight = 5
 	}
-	viewportWidth := maxInt(24, m.width)
 
-	if !m.ready {
-		m.viewport = viewport.New(viewportWidth, contentHeight)
-		m.ready = true
+	var mainWidth, panelWidth int
+	if m.historyPanelOpen {
+		panelWidth = m.width / 3
+		mainWidth = maxInt(24, m.width-panelWidth-1) // 1 for the │ divider
+	} else {
+		mainWidth = maxInt(24, m.width)
 	}
 
-	m.viewport.Width = viewportWidth
+	if !m.ready {
+		m.viewport = viewport.New(mainWidth, contentHeight)
+		m.ready = true
+	}
+	m.viewport.Width = mainWidth
 	m.viewport.Height = contentHeight
+
+	if m.historyPanelOpen {
+		// Reserve 1 row for the tab header strip above the active viewport.
+		panelContentHeight := maxInt(3, contentHeight-1)
+		m.historyViewport.Width = panelWidth
+		m.historyViewport.Height = panelContentHeight
+		m.planViewport.Width = panelWidth
+		m.planViewport.Height = panelContentHeight
+		m.sessionsViewport.Width = panelWidth
+		m.sessionsViewport.Height = panelContentHeight
+	}
+
 	m.input.SetWidth(m.width)
+	m.mdRenderer, _ = glamour.NewTermRenderer(
+		glamour.WithStyles(mochaStyleConfig),
+		glamour.WithWordWrap(maxInt(20, mainWidth-2)),
+	)
 	m.renderMessages(false)
+	m.renderHistoryPanelContent()
+	m.renderPlanPanelContent()
+	m.renderSessionsPanelContent()
 }
 
 func (m *Model) workingDots() string {
@@ -634,10 +1040,144 @@ func (m *Model) logToolRequest(event agent.ToolRequestEvent) {
 
 func (m *Model) logToolResult(event agent.ToolResultEvent) {
 	m.emitJSONToolResult(event)
+	output := event.Result.Output
+	chars := len(output)
+	lines := 0
+	if chars > 0 {
+		lines = strings.Count(output, "\n")
+		if !strings.HasSuffix(output, "\n") {
+			lines++
+		}
+	}
+	m.sessionAgg.recordToolResult(event.Result.Tool, chars)
 	if m.debugLogger == nil {
 		return
 	}
-	_ = m.debugLogger.LogToolResult(event.Step, event.Agent, event.Result.Tool, event.Result.Summary, event.Result.Error)
+	_ = m.debugLogger.LogToolResultDetail(transcript.ToolResultDetail{
+		Step:        event.Step,
+		Agent:       event.Agent,
+		Tool:        event.Result.Tool,
+		Summary:     event.Result.Summary,
+		Error:       event.Result.Error,
+		OutputChars: chars,
+		OutputLines: lines,
+		Path:        strings.TrimSpace(event.Request.Path),
+		StartLine:   event.Request.StartLine,
+		EndLine:     event.Request.EndLine,
+	})
+}
+
+func (m *Model) logRunEvent(event agent.RunEvent) {
+	switch event.Role {
+	case "model_call":
+		var payload struct {
+			Step             int            `json:"step"`
+			Label            string         `json:"label"`
+			Agent            string         `json:"agent"`
+			PromptTokens     int            `json:"prompt_tokens"`
+			CompletionTokens int            `json:"completion_tokens"`
+			TotalTokens      int            `json:"total_tokens"`
+			CtxSize          int            `json:"ctx_size"`
+			MessageCount     int            `json:"message_count"`
+			RoleChars        map[string]int `json:"role_chars"`
+			ChosenTool       string         `json:"chosen_tool"`
+			DurationMillis   int64          `json:"duration_ms"`
+		}
+		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
+			m.sessionAgg.recordModelCall(payload.PromptTokens, payload.CompletionTokens, payload.TotalTokens)
+			if m.debugLogger != nil {
+				_ = m.debugLogger.LogModelCall(transcript.ModelCall{
+					Step:             payload.Step,
+					Agent:            firstNonEmptyString(payload.Agent, payload.Label),
+					PromptTokens:     payload.PromptTokens,
+					CompletionTokens: payload.CompletionTokens,
+					TotalTokens:      payload.TotalTokens,
+					CtxSize:          payload.CtxSize,
+					MessageCount:     payload.MessageCount,
+					RoleChars:        payload.RoleChars,
+					ChosenTool:       payload.ChosenTool,
+					DurationMillis:   payload.DurationMillis,
+				})
+			}
+		}
+		// Skip the legacy LogMessage path; the typed record replaces it.
+		return
+	case "budget_ledger":
+		var payload struct {
+			Lane                     string `json:"lane"`
+			UsedModelCalls           int    `json:"used_model_calls"`
+			MaxModelCalls            int    `json:"max_model_calls"`
+			UsedToolResults          int    `json:"used_tool_results"`
+			MaxToolSteps             int    `json:"max_tool_steps"`
+			PromptTokens             int    `json:"prompt_tokens"`
+			CompletionTokens         int    `json:"completion_tokens"`
+			TotalTokens              int    `json:"total_tokens"`
+			ProgressTurns            int    `json:"progress_turns"`
+			RejectedActions          int    `json:"rejected_actions"`
+			CompletionGateRejections int    `json:"completion_gate_rejections"`
+			ContextCompactions       int    `json:"context_compactions"`
+			DurationMillis           int64  `json:"duration_millis"`
+			StopReason               string `json:"stop_reason"`
+			BudgetExhausted          bool   `json:"budget_exhausted"`
+		}
+		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
+			m.sessionAgg.turns++
+			m.sessionAgg.compactions += payload.ContextCompactions
+			if m.debugLogger != nil {
+				_ = m.debugLogger.LogTurnSummary(transcript.TurnSummary{
+					Lane:                     payload.Lane,
+					UsedModelCalls:           payload.UsedModelCalls,
+					MaxModelCalls:            payload.MaxModelCalls,
+					UsedToolResults:          payload.UsedToolResults,
+					MaxToolSteps:             payload.MaxToolSteps,
+					PromptTokens:             payload.PromptTokens,
+					CompletionTokens:         payload.CompletionTokens,
+					TotalTokens:              payload.TotalTokens,
+					ProgressTurns:            payload.ProgressTurns,
+					RejectedActions:          payload.RejectedActions,
+					CompletionGateRejections: payload.CompletionGateRejections,
+					ContextCompactions:       payload.ContextCompactions,
+					DurationMillis:           payload.DurationMillis,
+					StopReason:               payload.StopReason,
+					BudgetExhausted:          payload.BudgetExhausted,
+				})
+			}
+		}
+		return
+	}
+	m.logMessage(event.Role, event.Content)
+}
+
+func (m *Model) writeSessionSummary() {
+	if m.debugLogger == nil {
+		return
+	}
+	if m.sessionAgg.turns == 0 && m.sessionAgg.modelCalls == 0 && m.sessionAgg.toolCalls == 0 {
+		return
+	}
+	ctxSize := m.cfg.LlamaServer.CtxSize
+	peakPct := 0.0
+	if ctxSize > 0 && m.sessionAgg.peakPromptTokens > 0 {
+		peakPct = float64(m.sessionAgg.peakPromptTokens) / float64(ctxSize)
+	}
+	duration := int64(0)
+	if !m.sessionStartedAt.IsZero() {
+		duration = time.Since(m.sessionStartedAt).Milliseconds()
+	}
+	_ = m.debugLogger.LogSessionSummary(transcript.SessionSummary{
+		Turns:            m.sessionAgg.turns,
+		ModelCalls:       m.sessionAgg.modelCalls,
+		ToolCalls:        m.sessionAgg.toolCalls,
+		PromptTokens:     m.sessionAgg.promptTokens,
+		CompletionTokens: m.sessionAgg.completionTokens,
+		TotalTokens:      m.sessionAgg.totalTokens,
+		PeakPromptTokens: m.sessionAgg.peakPromptTokens,
+		CtxSize:          ctxSize,
+		PeakCtxPct:       peakPct,
+		Compactions:      m.sessionAgg.compactions,
+		TopToolsByOutput: m.sessionAgg.topToolsByOutput(10),
+		DurationMillis:   duration,
+	})
 }
 
 func (m *Model) logError(kind, message string) {

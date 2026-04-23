@@ -3,4 +3,5 @@ bin/
 logs/
 models/
 transcripts/
-/qwen-bubbles
+.planning/
+/idiom

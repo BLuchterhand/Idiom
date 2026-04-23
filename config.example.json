@@ -43,6 +43,10 @@
     "max_tokens": 8192,
     "max_history": 20,
     "max_tool_steps": 16,
+    "max_context_messages": 40,
+    "max_context_chars": 200000,
+    "max_model_calls": 40,
+    "max_duration_seconds": 780,
     "request_timeout_seconds": 900,
     "server_start_timeout_seconds": 240
   },

@@ -48,8 +48,18 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 		}
 	}
 	for _, task := range suite.Tasks {
-		if task.Scenario.RequireRoutePlan == nil && len(task.Scenario.RequirePhases) == 0 {
-			t.Fatalf("task %q should assert route plan or phase behavior", task.ID)
+		// RequireRoutePlan / RequirePhases used to be mandatory, but
+		// the codebase deliberately removed the route_plan architecture
+		// in favor of mode-based routing. Scenarios that still assert
+		// those fields would never match, so the suite no longer
+		// requires them — check for any meaningful assertion instead.
+		hasAssertion := task.Scenario.RequireRoutePlan != nil ||
+			len(task.Scenario.RequirePhases) > 0 ||
+			len(task.Scenario.PromptContains) > 0 ||
+			len(task.Scenario.FinalAssistantContains) > 0 ||
+			len(task.Scenario.RequireTools) > 0
+		if !hasAssertion {
+			t.Fatalf("task %q scenario has no observable assertion; add one", task.ID)
 		}
 		if len(task.Turns) > 0 && !task.Scenario.RequireAssistantForEachUser {
 			t.Fatalf("multi-turn task %q should require an assistant response for each user turn", task.ID)

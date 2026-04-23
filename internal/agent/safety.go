@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/workspace"
 )
 
 type PermissionDecision string

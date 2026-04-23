@@ -21,7 +21,7 @@ func TestDebugLoggerRedactedModeMasksPromptAndToolPayloads(t *testing.T) {
 	defer logger.Close()
 
 	if err := logger.LogSessionStart(SessionStart{
-		AppName:       "Qwen Bubbles",
+		AppName:       "Idiom",
 		SystemPrompt:  "hidden system prompt body",
 		WorkspaceRoot: "/tmp/workspace",
 		WorkspaceCWD:  "/tmp/workspace/internal/app",
@@ -75,7 +75,7 @@ func TestDebugLoggerFullModePreservesPromptAndToolPayloads(t *testing.T) {
 	defer logger.Close()
 
 	if err := logger.LogSessionStart(SessionStart{
-		AppName:       "Qwen Bubbles",
+		AppName:       "Idiom",
 		SystemPrompt:  "hidden system prompt body",
 		WorkspaceRoot: "/tmp/workspace",
 		WorkspaceCWD:  "/tmp/workspace/internal/app",
@@ -170,6 +170,126 @@ func TestDebugLoggerSuppressesDuplicateAssistantSummaryMessages(t *testing.T) {
 	}
 	if assistantMessages != 1 {
 		t.Fatalf("expected only the non-duplicate assistant message, got %d records: %#v", assistantMessages, records)
+	}
+}
+
+func TestDebugLoggerLogsContextFillTelemetry(t *testing.T) {
+	dir := t.TempDir()
+	logger, err := NewDebugLogger(DebugLoggerOptions{
+		Dir:           dir,
+		Mode:          DebugLogModeRedacted,
+		WorkspaceRoot: "/tmp/workspace",
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	if err := logger.LogSessionStart(SessionStart{
+		AppName:       "Idiom",
+		WorkspaceRoot: "/tmp/workspace",
+		CtxSize:       65536,
+	}); err != nil {
+		t.Fatalf("LogSessionStart: %v", err)
+	}
+	if err := logger.LogToolResultDetail(ToolResultDetail{
+		Step:        2,
+		Agent:       "main",
+		Tool:        "read_file",
+		Summary:     "Read file",
+		OutputChars: 8400,
+		OutputLines: 200,
+		Path:        "/tmp/workspace/internal/app/app.go",
+		StartLine:   1,
+		EndLine:     200,
+	}); err != nil {
+		t.Fatalf("LogToolResultDetail: %v", err)
+	}
+	if err := logger.LogModelCall(ModelCall{
+		Step:             3,
+		Agent:            "main",
+		PromptTokens:     12000,
+		CompletionTokens: 350,
+		TotalTokens:      12350,
+		CtxSize:          65536,
+		MessageCount:     14,
+		RoleChars:        map[string]int{"system": 4500, "user": 800, "assistant": 1200, "tool": 9000},
+		ChosenTool:       "edit_file",
+		DurationMillis:   2400,
+	}); err != nil {
+		t.Fatalf("LogModelCall: %v", err)
+	}
+	if err := logger.LogTurnSummary(TurnSummary{
+		Lane:             "main",
+		UsedModelCalls:   3,
+		UsedToolResults:  6,
+		PromptTokens:     20000,
+		CompletionTokens: 600,
+		TotalTokens:      20600,
+		DurationMillis:   8000,
+		StopReason:       "completed",
+	}); err != nil {
+		t.Fatalf("LogTurnSummary: %v", err)
+	}
+	if err := logger.LogSessionSummary(SessionSummary{
+		Turns:            2,
+		ModelCalls:       6,
+		ToolCalls:        12,
+		PromptTokens:     40000,
+		CompletionTokens: 1200,
+		TotalTokens:      41200,
+		PeakPromptTokens: 22000,
+		CtxSize:          65536,
+		PeakCtxPct:       float64(22000) / float64(65536),
+		Compactions:      1,
+		TopToolsByOutput: []ToolOutputAggregate{{Tool: "read_file", Calls: 8, OutputChars: 60000}},
+		DurationMillis:   30000,
+	}); err != nil {
+		t.Fatalf("LogSessionSummary: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	records := readDebugLogRecords(t, logger.Path())
+	byType := map[string]map[string]any{}
+	for _, rec := range records {
+		t, _ := rec["type"].(string)
+		byType[t] = rec
+	}
+	if got, _ := byType["session_start"]["ctx_size"].(float64); got != 65536 {
+		t.Fatalf("session_start.ctx_size = %v, want 65536", byType["session_start"]["ctx_size"])
+	}
+	tr := byType["tool_result"]
+	if tr["output_chars"] == nil || tr["output_lines"] == nil || tr["path"] == nil || tr["start_line"] == nil {
+		t.Fatalf("tool_result missing detail fields: %#v", tr)
+	}
+	path, _ := tr["path"].(string)
+	if strings.Contains(path, "/tmp/workspace") {
+		t.Fatalf("tool_result.path not redacted: %q", path)
+	}
+	mc := byType["model_call"]
+	if mc["ctx_pct"] == nil {
+		t.Fatalf("model_call missing ctx_pct: %#v", mc)
+	}
+	pct, _ := mc["ctx_pct"].(float64)
+	if pct <= 0 || pct >= 1 {
+		t.Fatalf("model_call.ctx_pct out of range: %v", pct)
+	}
+	rc, ok := mc["role_chars"].(map[string]any)
+	if !ok || rc["tool"] == nil {
+		t.Fatalf("model_call missing role_chars: %#v", mc)
+	}
+	if mc["chosen_tool"] != "edit_file" {
+		t.Fatalf("model_call.chosen_tool = %v", mc["chosen_tool"])
+	}
+	ts := byType["turn_summary"]
+	if ts == nil || ts["used_model_calls"] == nil {
+		t.Fatalf("turn_summary missing: %#v", ts)
+	}
+	ss := byType["session_summary"]
+	if ss == nil || ss["peak_ctx_pct"] == nil || ss["top_tools_by_output"] == nil {
+		t.Fatalf("session_summary missing fields: %#v", ss)
 	}
 }
 

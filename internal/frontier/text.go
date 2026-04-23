@@ -1,6 +1,6 @@
 package frontier
 
-import "qwen-bubbles/internal/frontier/pathparse"
+import "idiom/internal/frontier/pathparse"
 
 func LooksLikeWorkspacePathToken(candidate string) bool {
 	return pathparse.LooksLikeWorkspacePathToken(candidate)

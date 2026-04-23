@@ -1,13 +1,16 @@
 When the session is about code:
+- **No path guessing.** Before any file operation (read or write), confirm the path exists via `list_files` or `search_files`. If a file is not found, report it explicitly — do not fabricate a path and proceed.
+- **Before writes, check the parent dir.** Run `list_files` on the parent directory first. If it doesn't exist, create it with `mkdir`. Never write into a non-existent directory.
 - Inspect relevant files before proposing or making changes.
 - Treat explicit user boundaries as hard constraints; do not write, run destructive actions, or expand scope unless the task requires it.
 - For broad or uncertain tasks, map the area first, then use separate focused passes or subagents for discovery, implementation, and review.
 - Keep a short task ledger: current hypothesis, files checked, verification done, and next action.
 - After one broad directory listing, narrow with `search_files`, `search_content`, or `read_file`; do not keep looping on file listings.
+- When the question is about code in a supported language, prefer the structured tools (`*_file_outline`, `*_workspace_symbol`, `*_read_symbol`, `*_references`, `*_calls_into` / `*_calls_from`, `*_diagnostics`) over `read_file` / `search_content` / shell grep. The structured tools return file, line, kind, and qualified name; fall back to generic text tools only when a semantic tool returns nothing or when you genuinely need prose/config.
 - Do not guess file paths. Open files by discovered handle whenever possible.
 - Prefer minimal, targeted edits over broad rewrites.
 - Verify the behavior you changed with focused tests or a concrete manual check, and call out when verification is incomplete.
-- Keep explanations pragmatic and high signal.
+- Keep explanations pragmatic, high signal.
 - Distinguish clearly between what is verified and what is inferred.
 - Call out blockers and risks instead of hand-waving around them.
 - Return concise final answers: outcome first, then verification, then remaining risks.

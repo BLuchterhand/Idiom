@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"qwen-bubbles/internal/semantic"
+	"idiom/internal/semantic"
 )
 
 func (m *Manager) isCppWorkspace() bool {
@@ -497,6 +497,86 @@ func (m *Manager) cppDeadSymbol(ctx context.Context, req ToolRequest) ToolResult
 		return ToolResult{Tool: "cpp_dead_symbol", Summary: fmt.Sprintf("Only one C++ reference matched %q; inspect the definition before removing it.", pattern), Output: strings.Join(lines, "\n")}
 	default:
 		return ToolResult{Tool: "cpp_dead_symbol", Summary: fmt.Sprintf("Found %d C++ references to %q; the symbol is not dead.", len(lines), pattern), Output: strings.Join(lines, "\n")}
+	}
+}
+
+func (m *Manager) cppFileOutline(req ToolRequest) ToolResult {
+	path, err := m.resolvePath(req.Path, req.Workdir)
+	if err != nil {
+		return ToolResult{Tool: "cpp_file_outline", Summary: "C++ file outline rejected", Error: err.Error()}
+	}
+	index, err := m.getCppIndex()
+	if err != nil {
+		return ToolResult{Tool: "cpp_file_outline", Summary: "C++ file outline unavailable", Error: err.Error()}
+	}
+	rel := filepath.ToSlash(m.displayPath(path))
+	file := index.FileByPath(rel)
+	if file == nil {
+		return ToolResult{Tool: "cpp_file_outline", Summary: "C++ file outline unavailable", Error: fmt.Sprintf("no C/C++ file indexed at %s", rel)}
+	}
+	m.rememberPath(path)
+
+	var b strings.Builder
+	header := rel
+	tags := make([]string, 0, 3)
+	if file.IsHeader {
+		tags = append(tags, "header")
+	}
+	if file.HasMain {
+		tags = append(tags, "has-main")
+	}
+	if file.IsTest {
+		tags = append(tags, "test")
+	}
+	if len(tags) > 0 {
+		header += " (" + strings.Join(tags, ", ") + ")"
+	}
+	fmt.Fprintf(&b, "file: %s\n", header)
+	fmt.Fprintf(&b, "counts: funcs=%d methods=%d types=%d\n", file.Funcs, file.Methods, file.Types)
+
+	if len(file.Includes) > 0 {
+		b.WriteString("includes:\n")
+		includes := append([]string(nil), file.Includes...)
+		sort.Strings(includes)
+		for _, inc := range includes {
+			fmt.Fprintf(&b, "- %s\n", inc)
+		}
+	}
+
+	if len(file.Symbols) == 0 {
+		b.WriteString("declarations: (none indexed)\n")
+	} else if len(file.Symbols) > 200 {
+		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols); query a specific symbol with cpp_read_symbol or cpp_find_symbol.\n", len(file.Symbols))
+	} else {
+		symbols := append([]semantic.CppSymbol(nil), file.Symbols...)
+		sort.SliceStable(symbols, func(i, j int) bool {
+			return symbols[i].Line < symbols[j].Line
+		})
+		b.WriteString("declarations:\n")
+		for _, sym := range symbols {
+			name := cppDisplayName(sym.Qualified, sym.Name)
+			start := sym.StartLine
+			if start <= 0 {
+				start = sym.Line
+			}
+			end := sym.EndLine
+			if end < start {
+				end = start
+			}
+			scope := strings.TrimSpace(sym.Scope)
+			line := fmt.Sprintf("- %s (%s) lines %d-%d", name, sym.Kind, start, end)
+			if scope != "" && scope != name {
+				line += " scope:" + scope
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+
+	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use cpp_read_symbol for a specific body.", len(file.Symbols), rel)
+	return ToolResult{
+		Tool:    "cpp_file_outline",
+		Summary: summary,
+		Output:  strings.TrimSpace(b.String()),
 	}
 }
 

@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"qwen-bubbles/internal/eval"
+	"idiom/internal/cmdutil"
+	"idiom/internal/eval"
 )
 
 var output io.Writer = os.Stdout
@@ -30,9 +31,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	var writeScenarioPath string
 	var jsonOut bool
 
-	fs := flag.NewFlagSet("qwen-eval", flag.ContinueOnError)
+	fs := flag.NewFlagSet("idiom-eval", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&logPath, "log", "", "path to a qwen-bubbles JSONL conversation log")
+	fs.StringVar(&logPath, "log", "", "path to an idiom JSONL conversation log")
 	fs.StringVar(&scenarioPath, "scenario", "", "path to a scenario JSON file")
 	fs.StringVar(&writeScenarioPath, "write-scenario", "", "write a suggested scenario JSON file derived from the log")
 	fs.BoolVar(&jsonOut, "json", false, "emit JSON instead of human-readable text")
@@ -90,7 +91,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func printMetrics(metrics eval.Metrics) {
-	fmt.Fprintf(output, "Last user prompt: %s\n", fallback(metrics.LastUser, "<none>"))
+	fmt.Fprintf(output, "Last user prompt: %s\n", cmdutil.Fallback(metrics.LastUser, "<none>"))
 	if metrics.DurationMillis > 0 {
 		fmt.Fprintf(output, "Duration: %dms\n", metrics.DurationMillis)
 	}
@@ -103,10 +104,10 @@ func printMetrics(metrics eval.Metrics) {
 		}
 		fmt.Fprintln(output)
 	}
-	fmt.Fprintf(output, "Verification: %s (%d checks)\n", verificationStatus(metrics), metrics.VerificationChecks)
+	fmt.Fprintf(output, "Verification: %s (%d checks)\n", eval.VerificationStatus(metrics), metrics.VerificationChecks)
 	if len(metrics.VerificationPlans) > 0 {
 		plan := metrics.VerificationPlans[len(metrics.VerificationPlans)-1]
-		fmt.Fprintf(output, "Verification plan: confidence=%s", fallback(plan.Confidence, "unknown"))
+		fmt.Fprintf(output, "Verification plan: confidence=%s", cmdutil.Fallback(plan.Confidence, "unknown"))
 		if strings.TrimSpace(plan.Coverage) != "" {
 			fmt.Fprintf(output, " coverage=%s", plan.Coverage)
 		}
@@ -183,7 +184,7 @@ func printMetrics(metrics eval.Metrics) {
 	}
 	if len(metrics.EffortPolicies) > 0 {
 		policy := metrics.EffortPolicies[len(metrics.EffortPolicies)-1]
-		fmt.Fprintf(output, "Effort policy: lane=%s level=%s", fallback(policy.Lane, "unknown"), fallback(policy.Level, "unknown"))
+		fmt.Fprintf(output, "Effort policy: lane=%s level=%s", cmdutil.Fallback(policy.Lane, "unknown"), cmdutil.Fallback(policy.Level, "unknown"))
 		if policy.AnalysisToolBudget > 0 {
 			fmt.Fprintf(output, " analysis_budget=%d", policy.AnalysisToolBudget)
 		}
@@ -207,8 +208,8 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.BudgetLedgers) > 0 {
 		ledger := metrics.BudgetLedgers[len(metrics.BudgetLedgers)-1]
 		fmt.Fprintf(output, "Budget ledger: lane=%s stop=%s model_calls=%d deepening=%d/%d evidence=%d",
-			fallback(ledger.Lane, "unknown"),
-			fallback(ledger.StopReason, "unknown"),
+			cmdutil.Fallback(ledger.Lane, "unknown"),
+			cmdutil.Fallback(ledger.StopReason, "unknown"),
 			ledger.UsedModelCalls,
 			ledger.UsedDeepeningPasses,
 			ledger.MaxDeepeningPasses,
@@ -222,9 +223,9 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.ControlRails) > 0 {
 		rails := metrics.ControlRails[len(metrics.ControlRails)-1]
 		fmt.Fprintf(output, "Control rails: lane=%s family=%s permission=%s",
-			fallback(rails.Lane, "unknown"),
-			fallback(rails.TaskFamily, "unknown"),
-			fallback(rails.PermissionProfile, "unknown"),
+			cmdutil.Fallback(rails.Lane, "unknown"),
+			cmdutil.Fallback(rails.TaskFamily, "unknown"),
+			cmdutil.Fallback(rails.PermissionProfile, "unknown"),
 		)
 		if strings.TrimSpace(rails.Contract) != "" {
 			fmt.Fprintf(output, " contract=%s", rails.Contract)
@@ -243,8 +244,8 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.ClaimConfidences) > 0 {
 		confidence := metrics.ClaimConfidences[len(metrics.ClaimConfidences)-1]
 		fmt.Fprintf(output, "Claim confidence: lane=%s confidence=%s evidence_paths=%d unresolved=%d\n",
-			fallback(confidence.Lane, "unknown"),
-			fallback(confidence.Confidence, "unknown"),
+			cmdutil.Fallback(confidence.Lane, "unknown"),
+			cmdutil.Fallback(confidence.Confidence, "unknown"),
 			len(confidence.EvidencePaths),
 			len(confidence.UnresolvedUncertainty),
 		)
@@ -265,14 +266,14 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.RouteAmbiguities) > 0 {
 		ambiguity := metrics.RouteAmbiguities[len(metrics.RouteAmbiguities)-1]
 		fmt.Fprintf(output, "Route ambiguity: selected=%s ambiguous=%t signals=%s\n",
-			fallback(ambiguity.SelectedLane, "unknown"),
+			cmdutil.Fallback(ambiguity.SelectedLane, "unknown"),
 			ambiguity.Ambiguous,
 			strings.Join(ambiguity.Signals, ","),
 		)
 	}
 	if len(metrics.LongHorizonStates) > 0 {
 		state := metrics.LongHorizonStates[len(metrics.LongHorizonStates)-1]
-		fmt.Fprintf(output, "Long-horizon state: action=%s", fallback(state.Action, "unknown"))
+		fmt.Fprintf(output, "Long-horizon state: action=%s", cmdutil.Fallback(state.Action, "unknown"))
 		if strings.TrimSpace(state.MemoryKind) != "" {
 			fmt.Fprintf(output, " kind=%s", state.MemoryKind)
 		}
@@ -308,7 +309,7 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.LanguageCapabilities) > 0 {
 		fmt.Fprintln(output, "Language capabilities:")
 		for _, capability := range metrics.LanguageCapabilities {
-			line := fmt.Sprintf("- %s", fallback(capability.Language, "unknown"))
+			line := fmt.Sprintf("- %s", cmdutil.Fallback(capability.Language, "unknown"))
 			if len(capability.Tools) > 0 {
 				line += " tools=" + strings.Join(capability.Tools, ",")
 			}
@@ -321,12 +322,12 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.Phases) > 0 {
 		fmt.Fprintln(output, "Phases:")
 		for _, phase := range metrics.Phases {
-			fmt.Fprintf(output, "- %s / %s [%s]\n", fallback(phase.Lane, "unknown"), fallback(phase.Phase, "unknown"), fallback(phase.State, "unknown"))
+			fmt.Fprintf(output, "- %s / %s [%s]\n", cmdutil.Fallback(phase.Lane, "unknown"), cmdutil.Fallback(phase.Phase, "unknown"), cmdutil.Fallback(phase.State, "unknown"))
 		}
 	}
 	if len(metrics.RoutePlans) > 0 {
 		plan := metrics.RoutePlans[len(metrics.RoutePlans)-1]
-		fmt.Fprintf(output, "Route plan: initial=%s", fallback(plan.InitialLane, "unknown"))
+		fmt.Fprintf(output, "Route plan: initial=%s", cmdutil.Fallback(plan.InitialLane, "unknown"))
 		if strings.TrimSpace(plan.FollowupLane) != "" {
 			fmt.Fprintf(output, " followup=%s", plan.FollowupLane)
 		}
@@ -343,7 +344,7 @@ func printMetrics(metrics eval.Metrics) {
 	}
 	if len(metrics.Replans) > 0 {
 		replan := metrics.Replans[len(metrics.Replans)-1]
-		fmt.Fprintf(output, "Replan recommendation: %s -> %s", fallback(replan.FromLane, "unknown"), fallback(replan.ToLane, "unknown"))
+		fmt.Fprintf(output, "Replan recommendation: %s -> %s", cmdutil.Fallback(replan.FromLane, "unknown"), cmdutil.Fallback(replan.ToLane, "unknown"))
 		if strings.TrimSpace(replan.Reason) != "" {
 			fmt.Fprintf(output, " reason=%s", replan.Reason)
 		}
@@ -356,7 +357,7 @@ func printReport(report eval.Report) {
 	if !report.Passed {
 		status = "FAIL"
 	}
-	fmt.Fprintf(output, "%s %s\n", status, fallback(report.Scenario, "<unnamed scenario>"))
+	fmt.Fprintf(output, "%s %s\n", status, cmdutil.Fallback(report.Scenario, "<unnamed scenario>"))
 	fmt.Fprintf(output, "Log: %s\n", report.LogPath)
 	printMetrics(report.Metrics)
 	if len(report.Findings) > 0 {
@@ -365,22 +366,4 @@ func printReport(report eval.Report) {
 			fmt.Fprintf(output, "- %s\n", finding)
 		}
 	}
-}
-
-func verificationStatus(metrics eval.Metrics) string {
-	switch {
-	case metrics.VerificationPassed:
-		return "passed"
-	case metrics.VerificationFailed:
-		return "failed"
-	default:
-		return "not-run"
-	}
-}
-
-func fallback(value string, alt string) string {
-	if strings.TrimSpace(value) == "" {
-		return alt
-	}
-	return value
 }

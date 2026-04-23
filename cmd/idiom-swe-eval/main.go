@@ -11,7 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"qwen-bubbles/internal/eval"
+	"idiom/internal/cmdutil"
+	"idiom/internal/eval"
 )
 
 var output io.Writer = os.Stdout
@@ -36,7 +37,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	var generatedLogsDir string
 	var writeFailingScenarios string
 
-	fs := flag.NewFlagSet("qwen-swe-eval", flag.ContinueOnError)
+	fs := flag.NewFlagSet("idiom-swe-eval", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&suitePath, "suite", "testdata/swe/representative-suite.json", "path to a SWE task suite JSON file")
 	fs.StringVar(&logsDir, "logs", "", "directory containing one <task-id>.jsonl log per suite task")
@@ -124,6 +125,16 @@ func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, 
 	if commandTemplate == "" {
 		return nil, fmt.Errorf("-run-live requires -runner-command")
 	}
+	// The runner script sets its own cmd.Dir per task based on the
+	// fixture path. If that fixture or the log path stays relative,
+	// they get re-resolved against cmd.Dir and blow up on the second
+	// `cd` inside the script. Absolute-ize everything up front so the
+	// env vars passed through to the script are unambiguous.
+	absOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve generated logs dir: %w", err)
+	}
+	outputDir = absOutputDir
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create generated logs dir: %w", err)
 	}
@@ -138,6 +149,11 @@ func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, 
 			return nil, fmt.Errorf("create log dir for %s: %w", task.ID, err)
 		}
 		fixture := taskFixturePath(suitePath, task)
+		if fixture != "" {
+			if abs, err := filepath.Abs(fixture); err == nil {
+				fixture = abs
+			}
+		}
 		prompt := taskPrompt(task)
 		turns := taskTurns(task)
 		turnsJSON, err := json.Marshal(turns)
@@ -155,12 +171,12 @@ func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, 
 		cmd := exec.Command("/bin/sh", "-lc", command)
 		cmd.Dir = firstNonEmpty(fixture, filepath.Dir(suitePath))
 		cmd.Env = append(os.Environ(),
-			"QWEN_SWE_PROMPT="+prompt,
-			"QWEN_SWE_TURNS_JSON="+string(turnsJSON),
-			"QWEN_SWE_TURN_COUNT="+fmt.Sprintf("%d", len(turns)),
-			"QWEN_SWE_TASK_ID="+strings.TrimSpace(task.ID),
-			"QWEN_SWE_LOG="+logPath,
-			"QWEN_SWE_FIXTURE="+fixture,
+			"IDIOM_SWE_PROMPT="+prompt,
+			"IDIOM_SWE_TURNS_JSON="+string(turnsJSON),
+			"IDIOM_SWE_TURN_COUNT="+fmt.Sprintf("%d", len(turns)),
+			"IDIOM_SWE_TASK_ID="+strings.TrimSpace(task.ID),
+			"IDIOM_SWE_LOG="+logPath,
+			"IDIOM_SWE_FIXTURE="+fixture,
 		)
 		output, err := cmd.CombinedOutput()
 		if len(output) > 0 && fileMissingOrEmpty(logPath) {
@@ -287,7 +303,7 @@ func printSuiteReport(report eval.SWESuiteReport) {
 	if !report.Passed {
 		status = "FAIL"
 	}
-	fmt.Fprintf(output, "%s %s (%d tasks)\n", status, fallback(report.Suite, "<unnamed suite>"), reportTaskCount(report))
+	fmt.Fprintf(output, "%s %s (%d tasks)\n", status, cmdutil.Fallback(report.Suite, "<unnamed suite>"), reportTaskCount(report))
 	printCoverage(report.Coverage)
 	printLint(report.LintFindings)
 	printSummary(report.Summary)
@@ -297,11 +313,11 @@ func printSuiteReport(report eval.SWESuiteReport) {
 		if !task.Passed {
 			taskStatus = "FAIL"
 		}
-		fmt.Fprintf(output, "- %s %s", taskStatus, fallback(task.TaskID, "<unnamed task>"))
+		fmt.Fprintf(output, "- %s %s", taskStatus, cmdutil.Fallback(task.TaskID, "<unnamed task>"))
 		if strings.TrimSpace(task.Family) != "" {
 			fmt.Fprintf(output, " [%s]", task.Family)
 		}
-		fmt.Fprintf(output, ": tools=%d broad=%d verification=%s", task.Metrics.ToolRequests, task.Metrics.BroadToolRequests, verificationStatus(task.Metrics))
+		fmt.Fprintf(output, ": tools=%d broad=%d verification=%s", task.Metrics.ToolRequests, task.Metrics.BroadToolRequests, eval.VerificationStatus(task.Metrics))
 		if task.Metrics.DurationMillis > 0 {
 			fmt.Fprintf(output, " duration=%dms", task.Metrics.DurationMillis)
 		}
@@ -469,22 +485,4 @@ func printCoverage(coverage eval.SWECoverageReport) {
 	for _, finding := range coverage.Findings {
 		fmt.Fprintf(output, "  - %s\n", finding)
 	}
-}
-
-func verificationStatus(metrics eval.Metrics) string {
-	switch {
-	case metrics.VerificationPassed:
-		return "passed"
-	case metrics.VerificationFailed:
-		return "failed"
-	default:
-		return "not-run"
-	}
-}
-
-func fallback(value string, alt string) string {
-	if strings.TrimSpace(value) == "" {
-		return alt
-	}
-	return value
 }

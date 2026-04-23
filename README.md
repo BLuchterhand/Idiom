@@ -35,14 +35,14 @@ If you want the server without the TUI:
 Headless one-shot prompt with structured JSONL events on stdout:
 
 ```bash
-./qwen-bubbles --prompt "summarize internal/agent/runner.go" --json
+./idiom --prompt "summarize internal/agent/runner.go" --json
 ```
 
 List or resume prior sessions (sessions are the JSONL files in `chat.debug_log_dir`):
 
 ```bash
-./qwen-bubbles --list-sessions
-./qwen-bubbles --prompt "what did we conclude?" --resume 20260418-055543.504
+./idiom --list-sessions
+./idiom --prompt "what did we conclude?" --resume 20260418-055543.504
 ```
 
 `--resume` only replays the prior conversation's user/assistant messages into the new run's history. Per-workspace plan/workflow/task-memory state still auto-resumes from its own persisted store on Model construction.
@@ -89,7 +89,7 @@ make eval LOG=logs/conversations/20260418-055543.504.jsonl
 
 ## Qwen 3.6 Tuning
 
-`qwen-bubbles` now exposes the full Qwen 3.6 sampling surface through both config and the OpenAI-compatible request body:
+`idiom` now exposes the full Qwen 3.6 sampling surface through both config and the OpenAI-compatible request body:
 
 - `temperature`
 - `top_p`
@@ -193,10 +193,10 @@ The default TUI trace view is now compact. Use `/trace detail` when you want raw
 
 ## Replay And Eval
 
-`qwen-bubbles` now includes a scored log-evaluation CLI:
+`idiom` now includes a scored log-evaluation CLI:
 
 ```bash
-go run ./cmd/qwen-eval -log logs/conversations/20260418-055543.504.jsonl
+go run ./cmd/idiom-eval -log logs/conversations/20260418-055543.504.jsonl
 ```
 
 That prints a quick summary of:
@@ -210,7 +210,7 @@ That prints a quick summary of:
 You can also derive a starter scenario file from a captured run:
 
 ```bash
-go run ./cmd/qwen-eval \
+go run ./cmd/idiom-eval \
   -log logs/conversations/20260418-055543.504.jsonl \
   -write-scenario /tmp/banner-padding.json
 ```
@@ -218,7 +218,7 @@ go run ./cmd/qwen-eval \
 And score a later run against that scenario:
 
 ```bash
-go run ./cmd/qwen-eval \
+go run ./cmd/idiom-eval \
   -log logs/conversations/20260418-071727.566.jsonl \
   -scenario /tmp/banner-padding.json
 ```
@@ -233,10 +233,10 @@ Scenario files are JSON and can assert things like:
 - required changed files
 - whether guarded approval should have been required
 
-For a corpus-level SWE task gate, use `qwen-swe-eval`:
+For a corpus-level SWE task gate, use `idiom-swe-eval`:
 
 ```bash
-go run ./cmd/qwen-swe-eval \
+go run ./cmd/idiom-swe-eval \
   -suite testdata/swe/representative-suite.json \
   -logs /path/to/task-logs
 ```

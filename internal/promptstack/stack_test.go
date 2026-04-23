@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 func TestBuildComposesPromptSourcesAndDeduplicatesFiles(t *testing.T) {

@@ -3,7 +3,7 @@ package llama
 import (
 	"testing"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 func TestBuildArgsUsesExplicitFlashAttentionMode(t *testing.T) {

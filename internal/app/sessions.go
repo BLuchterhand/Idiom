@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"qwen-bubbles/internal/config"
-	"qwen-bubbles/internal/llama"
+	"idiom/internal/config"
+	"idiom/internal/llama"
 )
 
 // SessionInfo describes a recorded session under the chat debug-log directory.

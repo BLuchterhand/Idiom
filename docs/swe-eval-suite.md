@@ -1,17 +1,17 @@
 ## Executable SWE Eval Suite
 
-`qwen-swe-eval` scores a corpus of captured `qwen-bubbles` debug logs against task-specific SWE oracles.
+`idiom-swe-eval` scores a corpus of captured `idiom` debug logs against task-specific SWE oracles.
 
 This is the executable layer above the route-only representative prompt suite:
 
 - `docs/representative-swe-prompt-suite.md` defines the routing taxonomy.
 - `testdata/swe/representative-suite.json` defines task-level oracles.
-- `cmd/qwen-swe-eval` scores one log per task.
+- `cmd/idiom-swe-eval` scores one log per task.
 
 ### Run
 
 ```bash
-go run ./cmd/qwen-swe-eval \
+go run ./cmd/idiom-swe-eval \
   -suite testdata/swe/representative-suite.json \
   -logs /path/to/task-logs
 ```
@@ -27,7 +27,7 @@ The log directory must contain one JSONL log per task:
 JSON output is available with:
 
 ```bash
-go run ./cmd/qwen-swe-eval \
+go run ./cmd/idiom-swe-eval \
   -suite testdata/swe/representative-suite.json \
   -logs /path/to/task-logs \
   -json
@@ -36,7 +36,7 @@ go run ./cmd/qwen-swe-eval \
 Validate only the suite definition, coverage contract, and lint rules with:
 
 ```bash
-go run ./cmd/qwen-swe-eval \
+go run ./cmd/idiom-swe-eval \
   -suite testdata/swe/representative-suite.json \
   -suite-only
 ```
@@ -49,13 +49,13 @@ Run the suite as live headless conversations with the bundled runner:
 make swe-live
 ```
 
-`scripts/swe-live-runner.sh` runs `qwen-bubbles -turns-file` for each suite task, writes the task's turns into one real debug log, and hands that log back to `qwen-swe-eval` for scoring. It uses the suite fixture as the workspace root when a task defines one, and writes logs/transcripts into a temporary directory before copying the produced JSONL to the requested task log path.
+`scripts/swe-live-runner.sh` runs `idiom -turns-file` for each suite task, writes the task's turns into one real debug log, and hands that log back to `idiom-swe-eval` for scoring. It uses the suite fixture as the workspace root when a task defines one, and writes logs/transcripts into a temporary directory before copying the produced JSONL to the requested task log path.
 
 For local model setups that already have a built binary, override the binary and output directory:
 
 ```bash
-QWEN_BUBBLES_BIN=./bin/qwen-bubbles \
-LIVE_LOGS=/tmp/qwen-swe-live-logs \
+IDIOM_BIN=./bin/idiom \
+LIVE_LOGS=/tmp/idiom-swe-live-logs \
 make swe-live
 ```
 
@@ -69,7 +69,7 @@ Each task has:
 - `turns`: optional multi-turn conversation prompts.
 - `tags`: searchable labels for filtering and coverage review.
 - `fixture`: optional fixture workspace path for future live runners.
-- `scenario`: standard `qwen-eval` scenario assertions.
+- `scenario`: standard `idiom-eval` scenario assertions.
 - `oracle`: additional SWE-specific quality gates.
 
 The suite can also define a `coverage` contract:
@@ -105,7 +105,7 @@ Coverage failures make the suite fail even before individual log outcomes are co
 
 ### Suite Linting
 
-`qwen-swe-eval` also runs static lint checks against the suite definition:
+`idiom-swe-eval` also runs static lint checks against the suite definition:
 
 - fixture paths must be relative and stay under the suite directory.
 - suite-only validation checks that referenced fixture directories exist.
@@ -198,4 +198,4 @@ The default suite covers:
 
 ### Current Limitation
 
-This scorer still evaluates logs through deterministic oracles, and it can now generate those logs first with `qwen-swe-eval -run-live -runner-command ...`. The bundled runner covers the common headless path, while the live runner command remains externalized so local model launch details stay configurable and the suite schema/oracle layer remain deterministic.
+This scorer still evaluates logs through deterministic oracles, and it can now generate those logs first with `idiom-swe-eval -run-live -runner-command ...`. The bundled runner covers the common headless path, while the live runner command remains externalized so local model launch details stay configurable and the suite schema/oracle layer remain deterministic.

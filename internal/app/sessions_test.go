@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/config"
-	"qwen-bubbles/internal/llama"
+	"idiom/internal/config"
+	"idiom/internal/llama"
 )
 
 func writeSessionLog(t *testing.T, dir string, name string, lines []string) string {
@@ -111,8 +111,9 @@ func TestLoadHistoryFromSessionReplaysUserAssistant(t *testing.T) {
 		{Role: "user", Content: "second prompt"},
 	}
 	for i, w := range want {
-		if model.messages[i] != w {
-			t.Errorf("messages[%d] = %#v, want %#v", i, model.messages[i], w)
+		got := model.messages[i]
+		if got.Role != w.Role || got.Content != w.Content {
+			t.Errorf("messages[%d] = %#v, want %#v", i, got, w)
 		}
 	}
 }

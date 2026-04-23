@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 func patchWorkspaceConfig(t *testing.T) (*Manager, string) {

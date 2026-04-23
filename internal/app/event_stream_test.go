@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/agent"
-	"qwen-bubbles/internal/workspace"
+	"idiom/internal/agent"
+	"idiom/internal/workspace"
 )
 
 func decodeJSONEvents(t *testing.T, raw string) []map[string]any {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 func gitWorkspace(t *testing.T) (*Manager, string) {

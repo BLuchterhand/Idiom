@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"qwen-bubbles/internal/agent"
-	"qwen-bubbles/internal/llama"
+	"idiom/internal/agent"
+	"idiom/internal/llama"
 )
 
 // promptExecutionPlan is the minimal OpenCode-aligned carrier for a turn.

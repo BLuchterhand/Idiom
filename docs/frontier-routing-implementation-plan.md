@@ -16,20 +16,20 @@ Current implementation status:
 - Phase 6 complete: `architecture` is now a first-class lane with explicit routing, prompts, phase cards, and fallback synthesis
 - Phase 7 complete for `review`, `architecture`, and `explore`: summary retry requirements, log keys, acceptance checks, and fallback selection are now lane-aware
 - Phase 8 complete: structural hotspot ranking now uses deterministic semantic signals including funcs/methods, types, imports, local package imports, fan-in/fan-out, importer pressure, package span, entrypoint concentration, naming-based responsibility clusters, mixed-surface heuristics, and prompt relevance
-- Phase 11 complete: `qwen-eval` scenarios can now assert route lane, follow-up lane, route reason, answer contract, and thoroughness from debug logs
+- Phase 11 complete: `idiom-eval` scenarios can now assert route lane, follow-up lane, route reason, answer contract, and thoroughness from debug logs
 - Phase 12 complete: deterministic evidence can be normalized into a host-side evidence ledger, rendered in explore, review, and architecture fallback summaries, and used for non-fallback answer grounding
-- Phase 13 complete: analysis lanes can emit evidence-grounded replan recommendations, `qwen-eval` can assert them, and `/replan` can execute the last recommendation on user request
-- Phase 14 complete: deterministic language capability registry identifies Go, C/C++, shell, config, docs, prompts, and tests, injects tool capabilities into repository profiles, drives architecture fallback wording, is exposed through `qwen-eval`, and has language-support route coverage
+- Phase 13 complete: analysis lanes can emit evidence-grounded replan recommendations, `idiom-eval` can assert them, and `/replan` can execute the last recommendation on user request
+- Phase 14 complete: deterministic language capability registry identifies Go, C/C++, shell, config, docs, prompts, and tests, injects tool capabilities into repository profiles, drives architecture fallback wording, is exposed through `idiom-eval`, and has language-support route coverage
 - Phase 15 complete: implementation verification plans now expose risk level, expected failure modes, and repair policy in the execution panel
-- Phase 16 complete: verification plans are logged and replay-testable through `qwen-eval` scenario assertions
+- Phase 16 complete: verification plans are logged and replay-testable through `idiom-eval` scenario assertions
 - Phase 17 complete: final implementation summaries now include verification risk, expected failure modes, and repair policy
 - Phase 18 complete: guarded write approval proposals now include verification risk, expected failure modes, and repair policy before the user grants scope
-- Phase 19 complete: analysis summary rejections are now observable in `qwen-eval` metrics and enforceable through scenario budgets
+- Phase 19 complete: analysis summary rejections are now observable in `idiom-eval` metrics and enforceable through scenario budgets
 - Phase 20 complete: a representative SWE prompt suite now tests routing, follow-up legality, route reasons, answer contracts, and relevant thoroughness across common software engineering tasks
 - Phase 21 complete: representative SWE task suites can now score captured logs with task-specific oracles across route, verification, security, failure, multi-turn, tool-budget, and duration-budget expectations
 - Phase 22 complete: SWE suites now carry an explicit coverage contract so required task families, risk tags, and minimum task counts cannot silently drift out of the frontier corpus
 - Phase 23 complete: SWE suites now run static oracle-quality linting so read-only, security, direct implementation, multi-turn, failure-repair, and tool-error tasks cannot carry weak or unsafe expectations
-- Phase 24 complete: `qwen-swe-eval` can now run suite-definition-only gates for fast CI validation of coverage and lint without requiring captured task logs
+- Phase 24 complete: `idiom-swe-eval` can now run suite-definition-only gates for fast CI validation of coverage and lint without requiring captured task logs
 - Phase 25 complete: coverage contracts now gate behavioral breadth across route lanes, follow-up transitions, answer contracts, verification outcomes, and oracle assertion capabilities
 - Phase 26 complete: captured-log SWE reports now aggregate failures by family, initial lane, answer contract, verification expectation, and oracle assertion for faster frontier regression triage
 - Phase 27 complete: suite coverage now gates fixture-backed and derived task-shape representation, and suite-only validation enforces relative, existing fixture directories
@@ -564,7 +564,7 @@ Implementation status:
 - `internal/eval` now records route-plan snapshots from `route_plan` messages
 - `Scenario.require_route_plan` can assert lane, follow-up, reason, contract, and thoroughness
 - `BuildSuggestedScenario` captures the latest observed route plan
-- `qwen-eval` prints the latest route plan in human-readable metrics
+- `idiom-eval` prints the latest route plan in human-readable metrics
 - focused eval tests cover route extraction, route mismatch reporting, route expectation passing, and suggested scenario generation
 
 ### Phase 12: Evidence Ledger And Provenance
@@ -589,7 +589,7 @@ Implementation status:
   - evidence-ledger rendering in review fallback summaries
   - evidence-ledger rendering in architecture fallback summaries
   - deterministic candidate and hotspot paths folded into ledger provenance
-  - `qwen-eval` evidence-path metrics extracted from debug-log tool summaries
+  - `idiom-eval` evidence-path metrics extracted from debug-log tool summaries
   - scenario assertions for required evidence paths
   - suggested scenario generation for observed evidence paths
   - non-fallback explore/review/architecture answer acceptance now uses ledger-derived verified paths for grounding
@@ -617,7 +617,7 @@ Implementation status:
   - evidence-ledger paths can satisfy the grounding requirement when the summary has the right lane shape but omits explicit paths
   - summary rendering for recommended next lane and reason
   - debug-log `replan_recommendation` messages when recommendations are emitted
-  - `qwen-eval` metrics and scenario assertions for replan recommendations
+  - `idiom-eval` metrics and scenario assertions for replan recommendations
   - `/replan` command to explicitly execute the last recorded recommendation
   - replan prompt construction that carries the original request and prior evidence summary
   - tests for structural review-to-architecture recommendation, ungrounded rejection, and evidence-ledger grounding
@@ -641,7 +641,7 @@ Implementation status:
   - deterministic detection for Go, C/C++, shell, config, docs, prompt assets, and test surfaces
   - tool capability mapping for Go semantic tools, C/C++ semantic tools, shell checks, config validation, docs edits, prompt profile inspection, and regression checks
   - repository-profile injection for explore, review, and architecture bootstraps
-  - `qwen-eval` language capability metrics extracted from debug-log repository profiles
+  - `idiom-eval` language capability metrics extracted from debug-log repository profiles
   - scenario assertions for required language, tool, and detection signal capabilities
   - suggested scenario generation for observed language capability registries
   - language-aware architecture fallback wording for Go, C/C++, docs, and prompt-system surfaces
@@ -680,7 +680,7 @@ Make verification quality observable and replayable so implementation runs can b
 Deliverables:
 
 - log the computed verification plan before checks run
-- parse verification-plan log records in `qwen-eval`
+- parse verification-plan log records in `idiom-eval`
 - expose latest verification-plan metadata in CLI metrics
 - let scenarios assert coverage, confidence, risk level, full-suite escalation, required commands, and expected failure modes
 - include suggested scenario generation from observed verification plans
@@ -692,7 +692,7 @@ Implementation status:
   - `verification_plan` debug-log messages with commands, reasons, full-suite flag, coverage, confidence, risk, expected failures, and repair policy
   - `VerificationPlanSnapshot` metrics in `internal/eval`
   - `Scenario.require_verification_plan` assertions
-  - human-readable `qwen-eval` verification-plan output
+  - human-readable `idiom-eval` verification-plan output
   - suggested scenarios that capture the latest observed verification plan
   - tests for parsing, metrics extraction, mismatch reporting, and suggested scenario generation
 
@@ -743,7 +743,7 @@ Deliverables:
 
 - count analysis summary rejections from debug logs
 - record the lanes that rejected summaries
-- print summary rejection counts in human-readable `qwen-eval` output
+- print summary rejection counts in human-readable `idiom-eval` output
 - let scenarios cap acceptable summary rejections
 - include suggested scenario generation from observed rejection counts
 
@@ -784,10 +784,10 @@ Turn representative SWE prompts into a replayable task corpus that can evaluate 
 
 Deliverables:
 
-- task suite schema with embedded `qwen-eval` scenarios
+- task suite schema with embedded `idiom-eval` scenarios
 - SWE-specific oracle layer for changed files, forbidden files, approvals, shell use, errors, turns, tool budgets, and duration budgets
 - representative suite fixture under `testdata/swe`
-- `qwen-swe-eval` CLI for one-log-per-task scoring
+- `idiom-swe-eval` CLI for one-log-per-task scoring
 - starter adversarial and failure fixtures for prompt-injection and broken-Go repair tasks
 - docs and tests for the suite loader, oracle scoring, missing-log failures, and family coverage
 
@@ -797,7 +797,7 @@ Implementation status:
 - implemented:
   - `internal/eval` SWE suite loader, validator, evaluator, reports, and task oracle checks
   - `Metrics.duration_millis` from timestamped JSONL records
-  - `cmd/qwen-swe-eval` human-readable and JSON reporting
+  - `cmd/idiom-swe-eval` human-readable and JSON reporting
   - `testdata/swe/representative-suite.json` spanning common SWE task families
   - fixture repositories for adversarial README content and Go compile failure repair
   - `docs/swe-eval-suite.md`
@@ -824,7 +824,7 @@ Implementation status:
   - `SWECoverageContract` and `SWECoverageReport`
   - `AnalyzeSWESuiteCoverage`
   - coverage gating in `ValidateSWESuite` and `EvaluateSWESuite`
-  - CLI coverage summary in `qwen-swe-eval`
+  - CLI coverage summary in `idiom-swe-eval`
   - representative-suite coverage contract in `testdata/swe/representative-suite.json`
   - tests proving coverage failures are surfaced separately from task-log failures
 
@@ -862,7 +862,7 @@ Deliverables:
 
 - load suite JSON without immediately enforcing validation
 - evaluate suite definition coverage and lint without task logs
-- expose a `qwen-swe-eval -suite-only` mode
+- expose a `idiom-swe-eval -suite-only` mode
 - preserve normal captured-log mode validation before log scoring
 - tests proving definition-only reports do not require logs
 
@@ -872,7 +872,7 @@ Implementation status:
 - implemented:
   - `ReadSWESuite` for decode-only loading
   - `EvaluateSWESuiteDefinition`
-  - `qwen-swe-eval -suite-only`
+  - `idiom-swe-eval -suite-only`
   - docs for suite-only validation
   - regression coverage for log-free suite definition evaluation
 
@@ -1172,7 +1172,7 @@ Implementation status:
   - safe resume prompts that preserve completed stage context and target the next bounded file instead of repeating broad architecture discovery
   - stale/non-resumable stage cleanup after failed or completed refactor stages
   - structured `long_horizon_state` debug logs for `persist`, `resume`, and `clear` lifecycle actions
-  - `qwen-eval` metrics and scenario assertions for long-horizon state action, source lane, stage, focus path, remaining targets, next-step content, and resumability
+  - `idiom-eval` metrics and scenario assertions for long-horizon state action, source lane, stage, focus path, remaining targets, next-step content, and resumability
   - SWE suite coverage gates and result buckets for `persist`, `resume`, and `clear` long-horizon actions
   - durable workspace-scoped `task-memory.json` for general investigations and partial repairs
   - persisted open evidence gaps, attempted searches, chosen targets, verification history, and next actions
@@ -1287,13 +1287,13 @@ Implementation status:
 
 ### Phase 44: Captured-Log Regression Mode
 
-Definition-only suite validation is not enough. The existing `qwen-swe-eval` captured-log mode remains the canonical live regression path: missing logs fail, load errors fail, and result buckets identify which behavioral surface regressed.
+Definition-only suite validation is not enough. The existing `idiom-swe-eval` captured-log mode remains the canonical live regression path: missing logs fail, load errors fail, and result buckets identify which behavioral surface regressed.
 
 Implementation status:
 
 - complete
 - implemented:
-  - captured-log evaluation through `qwen-swe-eval -logs`
+  - captured-log evaluation through `idiom-swe-eval -logs`
   - per-task load-error and missing-log failures
   - result buckets for route, readiness, deepening, critic, effort, long-horizon, negative-evidence, tool, and file-surface dimensions
 

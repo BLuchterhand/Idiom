@@ -92,6 +92,69 @@ func TestApplyBuiltinChatPresetClonesThinkingPointer(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsImplementerServerBlock(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "llama_server": {
+    "binary": "llama-server",
+    "host": "127.0.0.1",
+    "port": 8080,
+    "model": "planner.gguf"
+  },
+  "implementer": {
+    "host": "127.0.0.1",
+    "port": 8081,
+    "model": "implementer.gguf",
+    "ctx_size": 131072
+  },
+  "chat": {"preset": "qwen3-coding-preserve", "max_tokens": 16}
+}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Implementer == nil {
+		t.Fatal("expected Implementer to be populated")
+	}
+	if cfg.Implementer.Binary != "llama-server" {
+		t.Fatalf("expected implementer.binary to default from llama_server, got %q", cfg.Implementer.Binary)
+	}
+	if cfg.Implementer.Reasoning != "auto" || cfg.Implementer.ReasoningFormat != "deepseek" {
+		t.Fatalf("expected implementer reasoning defaults to inherit from llama_server, got reasoning=%q format=%q",
+			cfg.Implementer.Reasoning, cfg.Implementer.ReasoningFormat)
+	}
+	if cfg.Implementer.LogFile == "" {
+		t.Fatal("expected implementer.log_file default")
+	}
+	if cfg.ImplementerBaseURL() != "http://127.0.0.1:8081" {
+		t.Fatalf("unexpected ImplementerBaseURL %q", cfg.ImplementerBaseURL())
+	}
+}
+
+func TestValidateRejectsImplementerPortCollision(t *testing.T) {
+	cfg := Default()
+	impl := cfg.LlamaServer
+	impl.Model = "implementer.gguf"
+	cfg.Implementer = &impl
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "implementer.port must differ") {
+		t.Fatalf("expected port-collision validation error, got %v", err)
+	}
+}
+
+func TestDefaultConfigHasNoImplementerByDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.Implementer != nil {
+		t.Fatalf("expected Default() to omit Implementer, got %+v", cfg.Implementer)
+	}
+	if cfg.ImplementerBaseURL() != "" {
+		t.Fatalf("expected ImplementerBaseURL empty when unset, got %q", cfg.ImplementerBaseURL())
+	}
+}
+
 func TestDefaultConfigPreservesQwenThinking(t *testing.T) {
 	cfg := Default()
 	if cfg.Chat.Preset != "qwen3-coding-preserve" {

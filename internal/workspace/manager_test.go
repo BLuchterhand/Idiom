@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"qwen-bubbles/internal/config"
+	"idiom/internal/config"
 )
 
 func testWorkspaceConfig() config.Workspace {
@@ -596,6 +597,161 @@ func TestListFilesEmitsPathSuggestionsOnMissingPath(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "Did you mean") || !strings.Contains(result.Output, "internal/agent") {
 		t.Fatalf("expected Did-you-mean output with real siblings, got %#v", result)
+	}
+}
+
+// TestSearchFilesZeroHitSurfacesClosestPaths verifies the enrichment
+// behavior: when the pattern matches no files, the result carries the
+// closest real-path candidates so the model can switch to a targeted
+// read_file on a concrete path instead of searching again with another
+// invented name.
+func TestSearchFilesZeroHitSurfacesClosestPaths(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/agent/runner.go"), "package agent\n")
+	mustWriteOverview(t, filepath.Join(dir, "internal/agent/tools.go"), "package agent\n")
+	mustWriteOverview(t, filepath.Join(dir, "internal/agent/workbranch.go"), "package agent\n")
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 512,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "task_tool",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_files should not error on zero-hit: %#v", result)
+	}
+	if !strings.Contains(strings.ToLower(result.Summary), "no file matches") {
+		t.Fatalf("expected zero-hit summary, got %q", result.Summary)
+	}
+	if !strings.Contains(result.Output, "internal/agent/tools.go") {
+		t.Fatalf("expected closest-path suggestion to surface tools.go, got output: %q", result.Output)
+	}
+	if !strings.Contains(strings.ToLower(result.Output), "read_file") {
+		t.Fatalf("expected output to tell the model to use read_file next, got: %q", result.Output)
+	}
+}
+
+// TestSearchContentZeroHitSuggestsPathsWhenPatternLooksLikeSymbol ensures
+// that when search_content gets no matches and the pattern is a bare
+// identifier (not a regex), we surface filename-match suggestions —
+// model often confuses "find the symbol" with "grep the symbol" and
+// the symbol's name lives in the filename.
+func TestSearchContentZeroHitSuggestsPathsWhenPatternLooksLikeSymbol(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed on this machine")
+	}
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/app/prompt_routing.go"), "package app\nfunc unrelated() {}\n")
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		MaxDirectoryEntries:   512,
+		CommandTimeoutSeconds: 10,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "prompt_routing",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_content should not error on zero-hit: %#v", result)
+	}
+	if !strings.Contains(result.Output, "prompt_routing.go") {
+		t.Fatalf("expected filename-match suggestion, got output: %q", result.Output)
+	}
+}
+
+func TestSearchContentSkipsNoisyDirsByDefault(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed on this machine")
+	}
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/app/plan.go"), "package app\nfunc planPanel() {}\n")
+	mustWriteOverview(t, filepath.Join(dir, "logs/conversations/recent.jsonl"), strings.Repeat(`{"content":"plan panel duplicated log context"}`, 200)+"\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		MaxDirectoryEntries:   512,
+		CommandTimeoutSeconds: 10,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "plan panel|planPanel",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_content failed: %#v", result)
+	}
+	if !strings.Contains(result.Output, "internal/app/plan.go") {
+		t.Fatalf("expected source hit, got output: %q", result.Output)
+	}
+	if strings.Contains(result.Output, "logs/conversations") {
+		t.Fatalf("default search should skip logs noise, got output: %q", result.Output)
+	}
+
+	logResult := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "plan panel",
+		Path:    "logs",
+	})
+	if logResult.Error != "" {
+		t.Fatalf("explicit logs search failed: %#v", logResult)
+	}
+	if !strings.Contains(logResult.Output, "logs/conversations/recent.jsonl") {
+		t.Fatalf("explicit logs search should still work, got output: %q", logResult.Output)
+	}
+}
+
+func TestSearchContentTruncatesLongMatchingLines(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed on this machine")
+	}
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/app/huge.go"), "package app\nvar huge = \"needle "+strings.Repeat("x", 800)+"\"\n")
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		MaxDirectoryEntries:   512,
+		CommandTimeoutSeconds: 10,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "needle",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_content failed: %#v", result)
+	}
+	if !strings.Contains(result.Output, "...[line truncated]") {
+		t.Fatalf("expected long matching line to be truncated, got output: %q", result.Output)
+	}
+	if len(result.Output) > 800 {
+		t.Fatalf("expected compact search output, got %d chars: %q", len(result.Output), result.Output)
+	}
+}
+
+func TestLooksLikeBareIdentifierRejectsRegexShapes(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"Foo", true},
+		{"foo_bar", true},
+		{"internal/agent/runner.go", true},
+		{"pkg.Foo", true},
+		{"", false},
+		{"x", false},        // too short
+		{"foo.*bar", false}, // regex
+		{"[a-z]+", false},
+		{"a|b", false},
+		{"^foo$", false},
+	}
+	for _, c := range cases {
+		if got := looksLikeBareIdentifier(c.in); got != c.want {
+			t.Errorf("looksLikeBareIdentifier(%q) = %v, want %v", c.in, got, c.want)
+		}
 	}
 }
 

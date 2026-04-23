@@ -92,8 +92,8 @@ an OpenCode gap for this codebase:
 
 - OpenCode drives Claude, which can plan an implementation, read the right
   files, make the edit, and verify it end-to-end in one loop. The classifier
-  that qwen-bubbles runs is redundant for that model.
-- qwen-bubbles drives a local Qwen model, which benefits from the implement
+  that idiom runs is redundant for that model.
+- idiom drives a local Qwen model, which benefits from the implement
   lane's scaffolding: target packet construction, structural anchor guards,
   verification + repair loops, rollback journal. Routing write-intent prompts
   to that lane is legitimate model-capability help, not a harness-knows-best

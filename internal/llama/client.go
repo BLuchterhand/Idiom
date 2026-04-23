@@ -20,10 +20,40 @@ type Client struct {
 }
 
 type ChatMessage struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
-	Usage            Usage  `json:"-"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	Name             string     `json:"name,omitempty"`
+	Usage            Usage      `json:"-"`
+}
+
+// ToolCall mirrors OpenAI function-calling `message.tool_calls[i]`.
+// Arguments is the raw JSON string the model emitted; callers decide how
+// to unmarshal it into a typed tool request.
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function ToolCallFunc `json:"function"`
+}
+
+type ToolCallFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// Tool defines a callable function in the OpenAI function-calling shape.
+// ParametersJSON is the raw JSON schema string; it's passed through as-is.
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
 type ChatOptions struct {
@@ -37,6 +67,8 @@ type ChatOptions struct {
 	EnableThinking    *bool
 	PreserveThinking  bool
 	MaxTokens         int
+	Tools             []Tool
+	ToolChoice        string
 }
 
 type Usage struct {
@@ -66,6 +98,8 @@ type chatRequest struct {
 	RepetitionPenalty  float64             `json:"repetition_penalty,omitempty"`
 	ChatTemplateKwargs *chatTemplateKwargs `json:"chat_template_kwargs,omitempty"`
 	MaxTokens          int                 `json:"max_tokens"`
+	Tools              []Tool              `json:"tools,omitempty"`
+	ToolChoice         string              `json:"tool_choice,omitempty"`
 }
 
 type chatTemplateKwargs struct {
@@ -79,9 +113,10 @@ type chatResponse struct {
 	} `json:"error,omitempty"`
 	Choices []struct {
 		Message struct {
-			Role             string `json:"role"`
-			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content,omitempty"`
+			Role             string     `json:"role"`
+			Content          string     `json:"content"`
+			ReasoningContent string     `json:"reasoning_content,omitempty"`
+			ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage Usage `json:"usage,omitempty"`
@@ -166,6 +201,8 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		RepetitionPenalty:  opts.RepetitionPenalty,
 		ChatTemplateKwargs: buildChatTemplateKwargs(opts),
 		MaxTokens:          opts.MaxTokens,
+		Tools:              opts.Tools,
+		ToolChoice:         opts.ToolChoice,
 	}
 
 	data, err := json.Marshal(payload)
@@ -264,6 +301,8 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		RepetitionPenalty:  opts.RepetitionPenalty,
 		ChatTemplateKwargs: buildChatTemplateKwargs(opts),
 		MaxTokens:          opts.MaxTokens,
+		Tools:              opts.Tools,
+		ToolChoice:         opts.ToolChoice,
 	}
 
 	data, err := json.Marshal(payload)
@@ -324,6 +363,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			Role:             role,
 			Content:          message.Content,
 			ReasoningContent: message.ReasoningContent,
+			ToolCalls:        message.ToolCalls,
 			Usage:            parsed.Usage,
 		}, nil
 	}

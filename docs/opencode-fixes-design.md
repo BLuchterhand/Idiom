@@ -325,7 +325,7 @@ corresponding test lives. That mapping is the "done" signal.
 
 - **That these fixes match what OpenCode does in every detail.** They take
   inspiration from OpenCode's user-observable contracts. Implementation
-  details differ and are chosen for what fits qwen-bubbles.
+  details differ and are chosen for what fits idiom.
 - **That small models will suddenly perform like Claude.** These changes
   remove classes of failure. They do not solve planning quality or code
   generation quality.

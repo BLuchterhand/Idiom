@@ -1,6 +1,6 @@
 ## Representative SWE Prompt Suite
 
-This suite defines the baseline task taxonomy that `qwen-bubbles` should route correctly for general software engineering work.
+This suite defines the baseline task taxonomy that `idiom` should route correctly for general software engineering work.
 
 The executable source of truth is `TestRepresentativeSWEPromptSuiteRoutesTypicalTasks` in `internal/app/swe_prompt_suite_test.go`.
 
