@@ -131,8 +131,8 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 			decision.RejectSummary = summary
 			decision.RejectError = errorText
 			decision.ForceAnswer = &runnerForcedAnswer{
-				Reason: "debug_logs_tail_answer_forced",
-				Prompt: "You already have the most recent log tail. Do not request any more tools. Answer directly from that log evidence: identify the weird decisions visible in the logs, say whether the harness can be made smarter, and name the most relevant generic improvement or the remaining uncertainty.",
+				Reason: "evidence_sufficient_after_blind_reread",
+				Prompt: "Evidence is sufficient. Answer from what you already have: state the observation, the inferred cause if any, and the remaining uncertainty. If a specific probe would still materially change the answer, name the exact missing claim instead of calling another tool.",
 			}
 			return decision
 		}

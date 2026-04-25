@@ -27,6 +27,13 @@ type runnerRequestBudgetState struct {
 	postChildReadFamilyNudgeFired    map[string]bool
 	zeroHitFingerprints              map[string]string
 	rejectedFingerprints             map[string]string
+	// postReadinessNoGapRejections counts the number of times this turn
+	// the model has been rejected for issuing a post-readiness read/search
+	// without `named_gap`. After the first such rejection the contract is
+	// in the model's context; if the model still emits another no-gap
+	// read, more rejection prose isn't going to teach it. Triggers a
+	// fast-track force-answer at threshold (≥2 — the second offense).
+	postReadinessNoGapRejections int
 }
 
 func (s runnerRequestBudgetState) postChildActive() bool {
@@ -146,7 +153,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Broad exploration after delegation nudge blocked",
-			RejectError:      "this turn has already been nudged to either delegate one focused read_only task, answer from the evidence already gathered, or continue with a materially narrower follow-up. Do not keep spending broad inspection calls.",
+			RejectError:      "broad inspection has already been nudged on this turn. Answer from the evidence gathered, or take one narrower next step naming the exact missing claim it closes.",
 			RejectStopReason: "exploration_broad_inspection_after_nudge_blocked",
 		}
 	}
@@ -154,7 +161,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Post-child broad inspection blocked",
-			RejectError:      "the read_only child task already returned the broad evidence packet. Do not restart broad discovery in the parent. Continue from the child result with one targeted read/search for a named gap, make the required change, or answer with the current evidence.",
+			RejectError:      "the read_only child task returned the broad evidence packet. Continue from that packet with one targeted read or search for a named gap, make the required change, or answer with the current evidence.",
 			RejectStopReason: "post_child_broad_inspection_blocked",
 		}
 	}
@@ -162,7 +169,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Additional read_only child task blocked",
-			RejectError:      "this turn already has a successful read_only child evidence packet. Do not delegate another read_only child task. Continue from that packet with at most a couple of targeted follow-ups, or answer with the current evidence.",
+			RejectError:      "this turn already has a successful read_only child evidence packet. Continue from that packet with at most a couple of targeted follow-ups, or answer with the current evidence.",
 			RejectStopReason: "duplicate_read_only_child_task_blocked",
 		}
 	}
@@ -204,10 +211,10 @@ func (s *runnerRequestBudgetState) readBudgetDecision(policy RunPolicy, req work
 			EventRole:         "post_child_read_budget_block",
 			EventContent:      fmt.Sprintf("post-child read budget exhausted after %d targeted reads", s.postChildReadBudget),
 			RejectSummary:     "Post-child read budget exhausted",
-			RejectError:       fmt.Sprintf("the child evidence packet has already been gathered and the parent used %d targeted follow-up reads. Do not inspect more files. Synthesize the answer, make the next write, run verification, or state the concrete blocker.", s.postChildReadBudget),
+			RejectError:       fmt.Sprintf("the child evidence packet has already been gathered and the parent used %d targeted follow-up reads. Synthesize from the child packet and targeted follow-up evidence, take the next non-read action, or state the concrete blocker.", s.postChildReadBudget),
 			RejectStopReason:  "post_child_read_budget_exhausted",
 			ForceAnswerReason: "post_child_read_budget_exhausted",
-			ForceAnswerPrompt: "Post-child read budget is exhausted. Tools are now disabled — do NOT emit another tool call. Use the child packet and targeted follow-up evidence to answer, identify the next write, or report the blocker.",
+			ForceAnswerPrompt: "Post-child read budget is exhausted. Tools are now disabled — do NOT emit another tool call. Use the child packet and targeted follow-up evidence to answer directly or report the blocker.",
 		}
 	}
 	if policy.ReadBudgetSoft > 0 && s.readCallCount >= policy.ReadBudgetSoft && !s.readBudgetNudgeFired {
@@ -224,7 +231,7 @@ func (s *runnerRequestBudgetState) readBudgetDecision(policy RunPolicy, req work
 			EventRole:         "read_budget_hard_block",
 			EventContent:      fmt.Sprintf("read-class budget exhausted after %d read/search calls without a write", s.readCallsSinceWrite-1),
 			RejectSummary:     "Read budget exhausted",
-			RejectError:       fmt.Sprintf("you already used %d read/search tool calls without making a write. Do not inspect more files in this turn. Summarize the concrete evidence gathered, unresolved gaps, and the narrowest next action.", s.readCallsSinceWrite-1),
+			RejectError:       fmt.Sprintf("you already used %d read/search tool calls without making a write. Summarize the concrete evidence gathered, unresolved gaps, and the narrowest next action.", s.readCallsSinceWrite-1),
 			RejectStopReason:  "read_budget_exhausted",
 			ForceAnswerReason: "read_budget_exhausted",
 			ForceAnswerPrompt: "Read/search budget is exhausted. Tools are now disabled — do NOT emit another tool call. Summarize the evidence already gathered, identify unresolved gaps, and name the narrowest next action. If enough evidence is present, answer directly.",
@@ -252,7 +259,7 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Post-child unrelated discovery blocked",
-			RejectError:      fmt.Sprintf("the delegated read_only child already named the relevant evidence paths (%s). Answer now, or inspect one of those paths directly for a named gap. Do not search for unrelated filenames first.", summarizePostChildEvidencePaths(s.postChildEvidencePaths, 3)),
+			RejectError:      fmt.Sprintf("the delegated read_only child already named the relevant evidence paths (%s). Answer now, or inspect one of those paths directly for a named gap.", summarizePostChildEvidencePaths(s.postChildEvidencePaths, 3)),
 			RejectStopReason: "post_child_unrelated_discovery_blocked",
 		}
 	}
@@ -268,7 +275,7 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Post-child reread blocked",
-			RejectError:      fmt.Sprintf("you already revisited %s multiple times after the child packet. Answer now, or inspect a different evidence path for a named gap.", label),
+			RejectError:      fmt.Sprintf("you already revisited %s multiple times after the child packet. Answer now, or take one narrow probe on a different evidence path that names the exact missing claim.", label),
 			RejectStopReason: "post_child_reread_blocked",
 		}
 	}
@@ -276,7 +283,7 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 		s.postChildReadFamilyNudgeFired[family] = true
 		return runnerRequestBudgetDecision{
 			Handled:   true,
-			Nudge:     fmt.Sprintf("You already inspected %s after the child packet. Unless one specific missing line remains, answer now or inspect a different evidence path. Do not keep rereading the same file family.", label),
+			Nudge:     fmt.Sprintf("you already inspected %s after the child packet. Either answer now, or take one narrow probe that names the exact missing claim; the same path is fine if you can name what new line you expect.", label),
 			EventRole: "post_child_reread_nudge",
 		}
 	}

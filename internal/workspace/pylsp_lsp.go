@@ -22,10 +22,11 @@ import (
 // pylspLSPClient drives a Python LSP server over stdio JSON-RPC.
 //
 // Server choice, in order of preference:
-//   1. pyright-langserver --stdio  (primary — faster, better completions)
-//   2. pylsp                       (fallback — plain-Python, pip-installed)
-// Neither is bundled with idiom; install instructions live in
-// docs/python-tooling.md.
+//  1. pyright-langserver --stdio
+//  2. pylsp
+//
+// Neither is bundled with idiom; callers report availability as a capability
+// gap instead of prescribing installation.
 type pylspLSPClient struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -124,16 +125,15 @@ func (m *Manager) pythonLSPBinary() (path string, server string) {
 	return "", ""
 }
 
-// pythonLSPInstallHint returns a short, user-facing note explaining how
-// to install a supported Python LSP server. Surfaced in tool errors.
+// pythonLSPInstallHint returns a short, user-facing capability note.
 func pythonLSPInstallHint() string {
-	return "install a Python LSP (`npm install -g pyright`, `pip install pyright`, or `pip install python-lsp-server[all]`)"
+	return "no Python LSP server available on PATH (pyright-langserver or pylsp)"
 }
 
 func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error) {
 	binary, server := m.pythonLSPBinary()
 	if binary == "" {
-		return nil, fmt.Errorf("no Python LSP server found: %s", pythonLSPInstallHint())
+		return nil, fmt.Errorf("%s", pythonLSPInstallHint())
 	}
 	var args []string
 	switch server {

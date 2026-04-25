@@ -275,7 +275,7 @@ func (m *Manager) pythonImplementations(ctx context.Context, req ToolRequest) To
 	}
 	impls := filterPythonSymbolMatches(index.Implementations(match.Name), pathFilter)
 	if len(impls) == 0 {
-		return ToolResult{Tool: "python_implementations", Summary: "Python implementations unavailable", Error: fmt.Sprintf("no implementations found for %q (install pyright or pylsp for better results: %s)", match.Name, pythonLSPInstallHint())}
+		return ToolResult{Tool: "python_implementations", Summary: "Python implementations unavailable", Error: fmt.Sprintf("no implementations found for %q in the available Python symbol evidence", match.Name)}
 	}
 	lines := make([]string, 0, len(impls))
 	for _, impl := range impls {
@@ -469,7 +469,7 @@ func (m *Manager) pythonFileOutline(req ToolRequest) ToolResult {
 
 func (m *Manager) pythonDiagnostics(ctx context.Context, req ToolRequest) ToolResult {
 	if binary, _ := m.pythonLSPBinary(); binary == "" {
-		return ToolResult{Tool: "python_diagnostics", Summary: "Python diagnostics unavailable", Error: fmt.Sprintf("no Python LSP server found: %s", pythonLSPInstallHint())}
+		return ToolResult{Tool: "python_diagnostics", Summary: "Python diagnostics unavailable", Error: "no Python LSP server available on PATH (pyright-langserver or pylsp). Diagnostics not produced."}
 	}
 	files, err := m.pythonDiagnosticTargets(req)
 	if err != nil {

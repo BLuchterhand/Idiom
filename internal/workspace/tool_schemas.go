@@ -82,7 +82,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "task",
-			Description: "Delegate a bounded evidence-gathering question to a sub-agent. For broad review, performance, security, architecture, or large search tasks, use a read_only explorer first and have it return inspected paths plus concise findings.",
+			Description: "Delegate a bounded question to a sub-agent. Read-only sub-agents return inspected paths and concise findings; write-mode sub-agents may also make changes within their scope.",
 			ParametersJSON: schemaObj(
 				[]string{"agent", "prompt"},
 				`"agent":`+strProp("agent name, e.g. explorer")+`,"mode":{"type":"string","enum":["read_only","write"]},"prompt":`+strProp("focused question"),
@@ -507,7 +507,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "python_diagnostics",
-			Description: "Run Python diagnostics (requires pyright or pylsp on PATH).",
+			Description: "Run Python diagnostics when a Python LSP server is available.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
 				`"path":`+strProp("file path"),

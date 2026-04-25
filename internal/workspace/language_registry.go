@@ -30,7 +30,7 @@ const (
 	CapEntrypoints     Capability = "entrypoints"
 )
 
-// LanguageSupport describes what deterministic tools are available for a
+// LanguageSupport describes what structured tools are available for a
 // language, which files trigger it, and a one-paragraph decision guide
 // the runner can inject JIT when the model is about to reach for a
 // generic tool on a file this language covers.
@@ -62,7 +62,7 @@ var languageRegistry = []LanguageSupport{
 			CapEntrypoints:     "go_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Go decision guide — prefer deterministic tools over raw shell/grep:
+Go decision guide - prefer structured tools over raw shell/grep:
 - Orient a .go file: go_file_outline (path)
 - Find a symbol anywhere: go_workspace_symbol (pattern)
 - Jump to a definition: go_definition (pattern, path scope)
@@ -71,7 +71,7 @@ Go decision guide — prefer deterministic tools over raw shell/grep:
 - Read one symbol body: go_read_symbol (pattern, path)
 - Files related to a concept: go_related_files (pattern, path)
 - Build/vet errors: go_diagnostics (path)
-Fallback to read_file with an explicit start_line/end_line range only when a semantic tool returns nothing.
+A narrow read_file range can supply exact context when semantic tools do not land.
 `),
 		Detect: func(root string) bool {
 			info, err := os.Stat(filepath.Join(root, "go.mod"))
@@ -97,7 +97,7 @@ Fallback to read_file with an explicit start_line/end_line range only when a sem
 			CapEntrypoints:     "cpp_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-C/C++ decision guide — prefer deterministic tools over raw shell/grep:
+C/C++ decision guide - prefer structured tools over raw shell/grep:
 - Orient a .cpp/.h file: cpp_file_outline (path)
 - Find a symbol anywhere: cpp_workspace_symbol (pattern)
 - Jump to a definition / declaration: cpp_definition, cpp_declaration
@@ -106,7 +106,7 @@ C/C++ decision guide — prefer deterministic tools over raw shell/grep:
 - Read one symbol body: cpp_read_symbol (pattern, path)
 - Include graph: cpp_includes, cpp_who_includes, cpp_blast_radius
 - Compiler diagnostics: cpp_diagnostics (path)
-Fallback to read_file with an explicit start_line/end_line range only when a semantic tool returns nothing.
+A narrow read_file range can supply exact context when semantic tools do not land.
 `),
 		Detect: func(root string) bool {
 			if info, err := os.Stat(filepath.Join(root, "compile_commands.json")); err == nil && !info.IsDir() {
@@ -154,7 +154,7 @@ Fallback to read_file with an explicit start_line/end_line range only when a sem
 			CapEntrypoints:     "python_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Python decision guide — prefer deterministic tools over raw shell/grep:
+Python decision guide - prefer structured tools over raw shell/grep:
 - Orient a .py file: python_file_outline (path)
 - Find a symbol anywhere: python_workspace_symbol (pattern)
 - Jump to a definition: python_definition (pattern, path scope)
@@ -163,8 +163,8 @@ Python decision guide — prefer deterministic tools over raw shell/grep:
 - Read one symbol body: python_read_symbol (pattern, path)
 - Files related to a concept: python_related_files (pattern, path)
 - Subclasses of a base class: python_implementations (pattern)
-- Type / lint errors: python_diagnostics (path) — requires pyright or pylsp
-Fallback to read_file with an explicit start_line/end_line range only when a semantic tool returns nothing.
+- Type / lint errors: python_diagnostics (path; reports unavailable if no Python LSP server is present)
+A narrow read_file range can supply exact context when semantic tools do not land.
 `),
 		Detect: func(root string) bool {
 			markers := []string{
@@ -230,7 +230,7 @@ Fallback to read_file with an explicit start_line/end_line range only when a sem
 			CapEntrypoints:     "ts_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-TypeScript/JavaScript decision guide — prefer deterministic tools over raw shell/grep:
+TypeScript/JavaScript decision guide - prefer structured tools over raw shell/grep:
 - Orient a .ts/.tsx/.js/.jsx file: ts_file_outline (path)
 - Find a symbol anywhere: ts_workspace_symbol (pattern)
 - Jump to a definition: ts_definition (pattern, path scope)
@@ -239,7 +239,7 @@ TypeScript/JavaScript decision guide — prefer deterministic tools over raw she
 - Read one symbol body: ts_read_symbol (pattern, path)
 - Files related to a concept: ts_related_files (pattern, path)
 - Type/compile errors: ts_diagnostics (path)
-The same toolset covers .js/.jsx/.mjs/.cjs — typescript-language-server handles both TS and JS from one process. Fallback to read_file with an explicit start_line/end_line range only when a semantic tool returns nothing.
+The same toolset covers .js/.jsx/.mjs/.cjs; typescript-language-server handles both TS and JS from one process. A narrow read_file range can supply exact context when semantic tools do not land.
 `),
 		Detect: func(root string) bool {
 			for _, marker := range []string{"tsconfig.json", "jsconfig.json", "package.json"} {
@@ -292,7 +292,7 @@ The same toolset covers .js/.jsx/.mjs/.cjs — typescript-language-server handle
 			CapEntrypoints:     "rust_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Rust decision guide — prefer deterministic tools over raw shell/grep:
+Rust decision guide - prefer structured tools over raw shell/grep:
 - Orient a .rs file: rust_file_outline (path)
 - Find a symbol anywhere: rust_workspace_symbol (pattern)
 - Jump to a definition: rust_definition (pattern, path scope)
@@ -302,7 +302,7 @@ Rust decision guide — prefer deterministic tools over raw shell/grep:
 - Trait impls across the crate: rust_implementations (trait name)
 - Files related to a concept: rust_related_files (pattern, path)
 - Build errors: rust_diagnostics (path, runs cargo check)
-Fallback to read_file with an explicit start_line/end_line range only when a semantic tool returns nothing.
+A narrow read_file range can supply exact context when semantic tools do not land.
 `),
 		Detect: func(root string) bool {
 			if info, err := os.Stat(filepath.Join(root, "Cargo.toml")); err == nil && !info.IsDir() {
@@ -351,7 +351,7 @@ Fallback to read_file with an explicit start_line/end_line range only when a sem
 			CapEntrypoints:     "java_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Java decision guide — prefer deterministic tools over raw shell/grep:
+Java decision guide - prefer structured tools over raw shell/grep:
 - Orient a .java file: java_file_outline (path)
 - Find a symbol anywhere: java_workspace_symbol (pattern)
 - Jump to a definition: java_definition (pattern, path scope)
@@ -361,7 +361,7 @@ Java decision guide — prefer deterministic tools over raw shell/grep:
 - Interface implementers: java_implementations (pattern)
 - Files related to a concept: java_related_files (pattern, path)
 - Build/compile errors: java_diagnostics (path)
-Fallback to read_file with an explicit start_line/end_line range only when a semantic tool returns nothing.
+A narrow read_file range can supply exact context when semantic tools do not land.
 `),
 		Detect: func(root string) bool {
 			for _, manifest := range []string{"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle"} {

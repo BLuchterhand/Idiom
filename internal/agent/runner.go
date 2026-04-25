@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"idiom/internal/frontier"
 	"idiom/internal/frontier/pathparse"
@@ -28,7 +29,17 @@ var (
 	closurePathCallPattern          = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?:[^\n]*?\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
 	callLikeIdentifierPattern       = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
 	goFuncDeclPattern               = regexp.MustCompile(`(?m)^func\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	codeShapedTokenPattern          = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
+	codeShapedSnakeCasePattern      = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
+	codeShapedLineRangePattern      = regexp.MustCompile(`(?i)\blines?\s+\d+(?:\s*[-–]\s*\d+)?\b`)
 )
+
+// delegatedReadOnlyProbeBudget is the soft cap on post-readiness probes the
+// child explorer lane is expected to use before answering. The
+// diminishing-returns nudge fires through followup count == 2 and stops
+// after; this is the same number, surfaced into the readiness contract so
+// the model and harness agree on the budget.
+const delegatedReadOnlyProbeBudget = 2
 
 type Runner struct {
 	Client *llama.Client
@@ -114,7 +125,18 @@ func (r *Runner) Run(
 			}
 			allowed = filtered
 		}
-		opts.Tools = buildLlamaTools(workspace.BuildToolDefinitions(allowed))
+		tools := buildLlamaTools(workspace.BuildToolDefinitions(allowed))
+		// Schema-level enforcement of the post-readiness contract: once
+		// the lane has reached answer readiness or received a child
+		// packet, mark named_gap and why_not_answering as required on
+		// every read-class tool. Missing fields fail at the model's
+		// tool-call decoder instead of being chased through prose
+		// rejections that the model has been ignoring on the first
+		// post-readiness call.
+		if delegatedReadOnlyAnswerReady || postChildPacketActive {
+			tools = applyPostReadinessSchemaRequirements(tools)
+		}
+		opts.Tools = tools
 	}
 	if r.Workspace != nil {
 		rebuildTools()
@@ -334,6 +356,15 @@ func (r *Runner) Run(
 				"original_raw":   strings.TrimSpace(preflight.OriginalRaw),
 				"rewritten_raw":  strings.TrimSpace(preflight.Raw),
 			}))
+			// Make the rewrite visible to the model. A silent substitution
+			// is firmer than a "you must" rejection — it removes the
+			// model's signal entirely. A visible note keeps the contract
+			// (the rewritten call still runs) while letting the model
+			// learn the routing rule for next time.
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(preflight.OriginalRequest.Tool, preflight.Request.Tool),
+			})
 		}
 		if preflight.RejectSummary != "" {
 			if preflight.ForceAnswer != nil {
@@ -435,6 +466,17 @@ func (r *Runner) Run(
 		}
 		if scope := postReadinessGapScope(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
+				requestBudget.postReadinessNoGapRejections++
+				// If the model has already been told once this turn that
+				// post-readiness reads require named_gap, and it's still
+				// emitting no-gap reads, reading another rejection won't
+				// teach it. Force-answer instead of letting the rejection
+				// ladder burn the rest of the step budget.
+				if requestBudget.postReadinessNoGapRejections >= 2 {
+					prompt := "You have repeatedly issued post-readiness reads without `named_gap`. Tools are now disabled. Synthesize a direct answer from the evidence already gathered; if a real gap remains, name it in prose rather than calling another tool."
+					answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
+					return finish(answer, err, "post_readiness_no_gap_repeated", true)
+				}
 				summary, errorText := missingPostReadinessGapMessage(scope)
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 				if done {
@@ -450,6 +492,19 @@ func (r *Runner) Run(
 				continue
 			}
 			r.emitPostReadinessGapDeclared(scope, req)
+		}
+		if prompt, ok := closureSynthesisAfterIgnoredNudgePrompt(
+			r.agentName(),
+			r.RuntimeBrief,
+			collectedResults,
+			req,
+			delegatedReadOnlyAnswerReady,
+			postChildPacketActive,
+			delegatedReadOnlyDiminishingNudgeStage,
+			postChildDiminishingNudgeStage,
+		); ok {
+			answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
+			return finish(answer, err, "closure_synthesis_after_ignored_nudge", true)
 		}
 		if decision := requestBudget.explorationDecision(r, req, collectedResults); decision.Handled {
 			if decision.Nudge != "" {
@@ -553,7 +608,7 @@ func (r *Runner) Run(
 				activeToolCall,
 				req,
 				"Chained list_files rejected",
-				fmt.Sprintf("you have run %d list_files calls in a row without inspecting any content. list_files has been removed from your available tools for the remainder of this turn. Use search_content with keywords from the user's question, read_file on a path you already discovered, or a language-specific symbol tool (go_workspace_symbol, go_references) instead.", executionState.consecutiveListFiles),
+				fmt.Sprintf("you have run %d list_files calls in a row without inspecting any content. list_files is hidden for the rest of this turn. Take one narrower next step on a path you already discovered, or answer with the evidence already gathered.", executionState.consecutiveListFiles),
 			)
 			if done {
 				return finish(answer, err, "list_files_chain_budget_exhausted", true)
@@ -579,10 +634,7 @@ func (r *Runner) Run(
 			continue
 		}
 		if executionState.needsNarrowingAfterBroad && workspace.IsBroadInspectionRequest(req) {
-			errorText := "you already have a broad workspace overview. Next use search_files, search_content, read_file on a discovered handle, or a targeted shell search/read command before doing more broad inspection."
-			if r.Workspace.IsExploreMode() {
-				errorText = "you already have a broad workspace overview. In explore mode you must narrow next with search_files, search_content, read_file on a discovered handle, or a targeted shell search/read command before doing more broad inspection."
-			}
+			errorText := "you already have a broad workspace overview. Either answer from the evidence already gathered, or take one narrower next step (a discovered handle, a single named symbol, or a focused search) before any further broad inspection."
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, "Broad inspection request rejected", errorText)
 			if done {
 				return finish(answer, err, "broad_inspection_budget_exhausted", true)
@@ -622,7 +674,7 @@ func (r *Runner) Run(
 					continue
 				}
 			}
-			errorText := "you just ran the same tool request. Do not loop on broad inspection. Use search_files, search_content, read_file on a discovered handle, or a targeted shell search/read command to narrow, or answer with what you already know."
+			errorText := "you just ran the same tool request. Either answer with what you already know, or take one materially different narrow step that names the exact missing claim it closes."
 			if scope := postReadinessGapScope(
 				r.agentName(),
 				delegatedReadOnlyAnswerReady || delegatedReadOnlyClosureReady(r.agentName(), r.RuntimeBrief, collectedResults),
@@ -692,7 +744,7 @@ func (r *Runner) Run(
 				turnHiddenTools["task"] = true
 				rebuildTools()
 				requestBudget.postChildReadCalls = 0
-				nudge := childPacketBoundaryNudge(r.RuntimeBrief.Objective, evidencePaths)
+				nudge := childPacketBoundaryNudge(r.RuntimeBrief.Objective, evidencePaths, postChildReadBudget)
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 				r.emitEvent(RunEvent{Role: "child_packet_boundary", Content: nudge})
 			}
@@ -851,34 +903,66 @@ func (r *Runner) Run(
 		r.attachInstructionsForTouchedPaths(&turnMessages, req, result)
 		childReadyBeforeResult := delegatedReadOnlyAnswerReady
 		if r.delegatedReadOnlyAnswerReadyAfterResult(req, result, collectedResults) {
+			justBecameReady := !delegatedReadOnlyAnswerReady
 			delegatedReadOnlyAnswerReady = true
 			r.RuntimeBrief.Constraints = mergeRunnerStateStrings(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
 			r.emitDelegatedReadOnlyAnswerReadyEvent(req, collectedResults)
 			if !delegatedReadOnlyAnswerReadyNudged {
 				delegatedReadOnlyAnswerReadyNudged = true
-				nudge := delegatedReadOnlyAnswerReadyNudge(r.RuntimeBrief.Objective, collectedResults)
+				nudge := delegatedReadOnlyAnswerReadyNudge(r.RuntimeBrief.Objective, collectedResults, delegatedReadOnlyProbeBudget)
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 				r.emitEvent(RunEvent{Role: "delegated_read_only_answer_ready_nudge", Content: nudge})
+			}
+			// Rebuild tools so the post-readiness schema constraint
+			// (named_gap / why_not_answering required) attaches before
+			// the next model call.
+			if justBecameReady {
+				rebuildTools()
 			}
 		}
 		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
-			if delegatedReadOnlyPostReadyFollowups > delegatedReadOnlyDiminishingNudgeStage {
+			// Skip the diminishing-returns nudge on the very probe that
+			// will trigger the disclosed-budget force-answer below:
+			// firing both back-to-back wastes a turn message the model
+			// never gets to react to before tools are disabled.
+			budgetWillForce := delegatedReadOnlyPostReadyFollowups >= delegatedReadOnlyProbeBudget
+			if !budgetWillForce && delegatedReadOnlyPostReadyFollowups > delegatedReadOnlyDiminishingNudgeStage {
 				if nudge := delegatedReadOnlyDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, delegatedReadOnlyPostReadyFollowups); nudge != "" {
 					delegatedReadOnlyDiminishingNudgeStage = delegatedReadOnlyPostReadyFollowups
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "delegated_read_only_diminishing_returns_nudge", Content: nudge})
 				}
 			}
+			// Disclosed-budget enforcement: the readiness contract told
+			// the model "use at most N targeted probes." Once the count
+			// hits N, force-answer with a stop reason that names the
+			// disclosed budget — instead of letting MaxToolSteps end the
+			// lane on the (N+1)th attempt with a generic exhaustion.
+			if budgetWillForce {
+				prompt := forcedSynthesisPromptDelegated(delegatedReadOnlyPostReadyFollowups, delegatedReadOnlyProbeBudget)
+				answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
+				return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
+			}
 		}
 		if postChildPacketActive && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			postChildFollowupReads++
-			if postChildFollowupReads > postChildDiminishingNudgeStage {
+			budgetWillForce := postChildReadBudget > 0 && postChildFollowupReads >= postChildReadBudget
+			if !budgetWillForce && postChildFollowupReads > postChildDiminishingNudgeStage {
 				if nudge := postChildDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, postChildFollowupReads); nudge != "" {
 					postChildDiminishingNudgeStage = postChildFollowupReads
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "child_packet_diminishing_returns_nudge", Content: nudge})
 				}
+			}
+			// Same disclosed-budget enforcement on the parent side once
+			// the child packet is in hand. Caps at the live
+			// postChildReadBudget value (the same number disclosed in
+			// the boundary nudge).
+			if budgetWillForce {
+				prompt := forcedSynthesisPromptPostChild(postChildFollowupReads, postChildReadBudget)
+				answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
+				return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
 			}
 		}
 		if strings.TrimSpace(result.Error) != "" {
@@ -1302,6 +1386,16 @@ func buildRunnerFailureFeedbackPacket(agent string, step int, reason string, req
 		Objective:                 brief.Objective,
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
 	})
+	// failure_feedback is emitted right after next_action_state, which
+	// already carries Lane/Step/Reason/InvalidNext/ValidNext/StateSummary
+	// for the same step. Re-emitting those fields wastes context. Keep
+	// only the failure-specific signals (FailedTool/FailedTarget for
+	// quick reference, FailureClass, the recovery-specific
+	// DoNotRepeat/RequiredNext, and the UserVisibleBlocker flag). Tests
+	// still rely on RequiredNext/ValidNext carrying closure-biased
+	// options, so ValidNext keeps recovery.ValidNext (the *new* options
+	// the recovery plan introduces) but drops the duplicates that
+	// next_action_state already published.
 	packet := runnerFailureFeedbackPacket{
 		Lane:               state.Lane,
 		Step:               state.Step,
@@ -1311,12 +1405,10 @@ func buildRunnerFailureFeedbackPacket(agent string, step int, reason string, req
 		FailureClass:       recovery.FailureClass,
 		ResultSummary:      state.ResultSummary,
 		ResultError:        state.ResultError,
-		InvalidNext:        mergeRunnerStateStrings(state.InvalidNextActions, recovery.InvalidNext),
-		ValidNext:          mergeRunnerStateStrings(state.NextValidActions, recovery.ValidNext),
-		StateSummary:       firstNonEmpty(recovery.StateSummary, state.StateSummary),
+		ValidNext:          append([]string(nil), recovery.ValidNext...),
 		UserVisibleBlocker: recovery.UserVisibleBlocker,
 	}
-	packet.DoNotRepeat = mergeRunnerStateStrings(recovery.DoNotRepeat, packet.InvalidNext)
+	packet.DoNotRepeat = append([]string(nil), recovery.DoNotRepeat...)
 	packet.RequiredNext = append([]string(nil), recovery.RequiredNext...)
 	return packet
 }
@@ -1486,6 +1578,71 @@ func runnerClosureGuidanceActive(agent string, brief workerruntime.WorkerRuntime
 	return postChildPacketClosureReadyWithBrief(brief, results)
 }
 
+// forcedSynthesisPromptDelegated and forcedSynthesisPromptPostChild build
+// the prompts handed to the model when the disclosed post-readiness probe
+// budget is hit. These prompts have to elicit an actual synthesis — the
+// previous "Synthesize a direct answer from the inspected evidence" was
+// too soft and produced 100-token replies that left the user with a
+// fallback template instead of a real answer. The new prompts name the
+// concrete obligations: cite paths, use the body content, write at least
+// a substantive paragraph, and only fall back to gap-naming as a last
+// resort.
+func forcedSynthesisPromptDelegated(used, budget int) string {
+	return fmt.Sprintf(
+		"You have used your disclosed post-readiness probe budget (%d/%d). Tools are now disabled. Write the final answer to the delegated question now, citing each implementation path and symbol you inspected. Use the body content from your symbol/extract probes — do not just list paths. Aim for a substantive synthesis (a paragraph or two) anchored in what you actually read. Only after that, if a specific gap still remains, state it in prose at the end.",
+		used, budget,
+	)
+}
+
+func forcedSynthesisPromptPostChild(used, budget int) string {
+	return fmt.Sprintf(
+		"You have used your disclosed post-child probe budget (%d/%d). Tools are now disabled. Write the final answer to the user's question now, anchored in the child packet plus the bodies from your %d targeted probe(s). Cite each path and symbol you inspected. Use the body content — do not just list paths. Aim for a substantive synthesis (a paragraph or two). Only after that, if a specific gap still remains, state it in prose at the end.",
+		used, budget, used,
+	)
+}
+
+func closureSynthesisAfterIgnoredNudgePrompt(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool, delegatedDiminishingNudges int, postChildDiminishingNudges int) (string, bool) {
+	if !isReadClassTool(req) || runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return "", false
+	}
+	// North-star contract: after readiness, the model is allowed "answer
+	// now or one exact probe with a named gap." If the model has declared
+	// a gap, it is satisfying the contract — let the upstream gap-shape
+	// validator and the budget caps do their work. Force-closing here
+	// short-circuits the contract on a request that just complied with
+	// it, which is exactly the failure mode flagged in the in-flight log
+	// (a declared-gap go_read_symbol probe was force-completed before the
+	// tool ran).
+	if postReadinessGap(req) != "" {
+		return "", false
+	}
+	closureReady := false
+	nudgeAlreadyFired := false
+	if strings.HasPrefix(strings.TrimSpace(agent), "child:") {
+		closureReady = delegatedReadOnlyAnswerReady || delegatedReadOnlyClosureReady(agent, brief, results)
+		nudgeAlreadyFired = delegatedDiminishingNudges > 0
+	} else {
+		closureReady = postChildPacketActive || postChildPacketClosureReadyWithBrief(brief, results)
+		nudgeAlreadyFired = postChildDiminishingNudges > 0
+	}
+	if !closureReady || !nudgeAlreadyFired {
+		return "", false
+	}
+	paths := delegatedClosureEvidencePaths(brief.Objective, results, 4)
+	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") {
+		paths = postChildClosureEvidencePaths(brief.Objective, results, 4)
+	}
+	var b strings.Builder
+	b.WriteString("Closure evidence is already sufficient and a closure nudge has already been followed by another read/search request. Tools are now disabled. Synthesize a direct answer from the retained evidence.")
+	if len(paths) > 0 {
+		b.WriteString("\nCarry forward the relevant inspected paths: ")
+		b.WriteString(summarizePostChildEvidencePaths(paths, 4))
+		b.WriteString(".")
+	}
+	b.WriteString("\nIf one detail remains uncertain, state that uncertainty in prose; do not request more tools or return a partial-findings template.")
+	return b.String(), true
+}
+
 func truncateRunnerStateText(value string, max int) string {
 	value = strings.TrimSpace(value)
 	if max <= 0 || len(value) <= max {
@@ -1566,6 +1723,9 @@ func (r *Runner) emitModelCallTrace(step int, label string, prompt []llama.ChatM
 		"role_chars":        roleChars,
 		"chosen_tool":       chosen,
 		"duration_ms":       durationMs,
+	}
+	if finish := strings.TrimSpace(reply.FinishReason); finish != "" {
+		payload["finish_reason"] = finish
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -1811,25 +1971,22 @@ func postChildClosureEvidencePaths(objective string, results []workspace.ToolRes
 	return closurePromptEvidencePaths(paths, max)
 }
 
-func childPacketBoundaryNudge(_ string, evidencePaths []string) string {
+func childPacketBoundaryNudge(_ string, evidencePaths []string, probeBudget int) string {
 	evidencePaths = closurePromptEvidencePaths(evidencePaths, 4)
-	base := "The delegated read_only child result is now the evidence packet. Treat it as inspected evidence; do not restart broad discovery in the parent."
-	validity, diminishing := closureDecisionRationale("", nil, evidencePaths)
-	lines := []string{base}
+	validity, _ := closureDecisionRationale("", nil, evidencePaths)
+	lines := []string{
+		"The delegated read_only child result is now your evidence packet.",
+	}
 	if validity != "" {
 		lines = append(lines, "Why answer now is valid: "+validity)
 	}
 	if len(evidencePaths) > 0 {
 		lines = append(lines, "Packet-named paths: "+summarizePostChildEvidencePaths(evidencePaths, 3))
 	}
-	if diminishing != "" {
-		lines = append(lines, "Lower-value next steps: "+diminishing)
-	}
+	lines = append(lines, postReadinessContinuationContract("child_packet_available", probeBudget))
 	lines = append(lines,
-		"Keep the next step minimal. Do not expand into side-path comparison, mode-by-mode breakdowns, or secondary policy detail unless that detail is necessary to answer the question.",
-		"If a gap remains, make it tool-shaped: name one exact missing claim, then choose one specific packet-named path, symbol, discovered handle, or narrow line range that would resolve it.",
-		"Ignore packet artifacts that are not real repository file paths.",
-		"Answer now, or inspect one specific packet-named path or symbol for a named gap. Do not search for unrelated filenames first.",
+		"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
+		"If no concrete gap remains, answer now from the packet.",
 	)
 	return strings.Join(lines, "\n")
 }
@@ -1851,12 +2008,15 @@ func postReadinessGap(req workspace.ToolRequest) string {
 	return firstNonEmpty(req.NamedGap, req.WhyNotAnswering)
 }
 
-func invalidPostReadinessGap(scope string, _ string, req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
+func invalidPostReadinessGap(scope string, objective string, req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
 	evidencePaths := closureEvidencePathsForScope(scope, results)
 	if len(evidencePaths) == 0 {
 		if strings.TrimSpace(scope) == "child_packet_available" {
 			return "", "", false
 		}
+	}
+	if summary, errorText, rejected := invalidPostReadinessGapContent(scope, objective, req); rejected {
+		return summary, errorText, true
 	}
 	if summary, errorText, rejected := invalidPostReadinessProbeShape(scope, req, results, evidencePaths); rejected {
 		return summary, errorText, true
@@ -1994,6 +2154,138 @@ func postReadinessReadSpan(req workspace.ToolRequest) int {
 	return req.EndLine - req.StartLine + 1
 }
 
+// invalidPostReadinessGapContent checks the content quality of named_gap and
+// why_not_answering. The harness already validates presence and probe shape;
+// this catches gaps that are *syntactically* valid but *semantically* empty
+// — paraphrases of the original question or generic "explain how X works"
+// asks that cannot be falsified by a single probe. Generic across question
+// types and lanes — the validator inspects only the gap text vs. the
+// objective text and looks for code-shaped tokens, no domain-specific rules.
+func invalidPostReadinessGapContent(scope string, objective string, req workspace.ToolRequest) (string, string, bool) {
+	gap := strings.TrimSpace(req.NamedGap)
+	if gap == "" {
+		gap = strings.TrimSpace(req.WhyNotAnswering)
+	}
+	if gap == "" {
+		return "", "", false
+	}
+	if postReadinessGapParaphrasesObjective(gap, objective) {
+		scopeLabel := "current evidence"
+		if strings.TrimSpace(scope) == "child_packet_available" {
+			scopeLabel = "the child packet"
+		}
+		return "Post-readiness named_gap restates the original question",
+			"the named_gap repeats the question rather than naming an exact unresolved claim. A real gap names one specific symbol body, branch, line range, or call edge whose answer would be different depending on what the probe finds. Either answer now from " + scopeLabel + ", or restate the gap as a falsifiable claim about a specific code element.",
+			true
+	}
+	if postReadinessGapIsGenericExplainer(gap) {
+		return "Post-readiness named_gap is an explainer ask, not a falsifiable claim",
+			"the named_gap reads as \"explain how X works\" rather than naming a specific symbol body, branch, line range, or call edge whose answer would change based on the probe. Either answer the explainer from the evidence already gathered, or restate the gap as a single concrete claim about one named code element (e.g. \"the body of `Foo.Bar` at runner.go:142\").",
+			true
+	}
+	return "", "", false
+}
+
+// postReadinessGapParaphrasesObjective returns true when the gap text is
+// largely the same content words as the objective (the user's original
+// question). Uses Jaccard similarity over lowercased tokens of length ≥ 4
+// after stripping common stop words. A near-duplicate gap is a syntactic
+// satisfaction of the requirement, not a meaningful new claim.
+func postReadinessGapParaphrasesObjective(gap string, objective string) bool {
+	gapTokens := postReadinessTokenSet(gap)
+	objTokens := postReadinessTokenSet(objective)
+	// Real user questions are often short ("Explain how X uses Y") so
+	// after stop-word filtering only 2 content tokens may remain. Don't
+	// give those a free pass — apply the check whenever both sides have
+	// at least two content tokens.
+	if len(gapTokens) < 2 || len(objTokens) < 2 {
+		return false
+	}
+	overlap := 0
+	for token := range gapTokens {
+		if _, ok := objTokens[token]; ok {
+			overlap++
+		}
+	}
+	denom := len(gapTokens) + len(objTokens) - overlap
+	if denom <= 0 {
+		return false
+	}
+	jaccard := float64(overlap) / float64(denom)
+	return jaccard >= 0.5
+}
+
+// postReadinessGapIsGenericExplainer returns true when the gap reads like an
+// "explain how X works" / "understand the flow of Y" ask without naming any
+// code-shaped token (CamelCase symbol, snake_case identifier, file path with
+// extension, or explicit line-range reference). These gaps cannot be closed
+// by a single targeted probe — they're a request for synthesis, which is
+// exactly what the model should produce as its answer.
+func postReadinessGapIsGenericExplainer(gap string) bool {
+	lower := strings.ToLower(strings.TrimSpace(gap))
+	if lower == "" {
+		return false
+	}
+	hasExplainerVerb := containsAny(lower,
+		"explain how", "explain the", "understand how", "understand the",
+		"describe how", "describe the",
+		"how does", "how do ", "how the ",
+		"what does", "what is the",
+		"overview of", "general flow", "high-level", "high level",
+	)
+	if !hasExplainerVerb {
+		return false
+	}
+	return !postReadinessGapNamesCodeToken(gap)
+}
+
+// postReadinessGapNamesCodeToken returns true when the gap contains at least
+// one token that looks like a concrete code element: a CamelCase symbol, a
+// snake_case identifier of length ≥ 4, a workspace path with a recognized
+// file extension, or an explicit line-range reference. Generic across
+// languages.
+func postReadinessGapNamesCodeToken(gap string) bool {
+	if codeShapedTokenPattern.MatchString(gap) {
+		return true
+	}
+	if codeShapedSnakeCasePattern.MatchString(gap) {
+		return true
+	}
+	if codeShapedLineRangePattern.MatchString(gap) {
+		return true
+	}
+	for _, field := range strings.Fields(gap) {
+		field = strings.Trim(field, "`'\"()[]{}<>,.:;!?")
+		if frontier.HasWorkspaceFileExtension(field) {
+			return true
+		}
+	}
+	return false
+}
+
+// postReadinessTokenSet returns the lowercased content tokens of length ≥ 4
+// from s, excluding common English stop words and explanatory verbs that
+// don't carry topic content. Used for paraphrase-detection.
+func postReadinessTokenSet(s string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	for _, raw := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	}) {
+		if len(raw) < 4 {
+			continue
+		}
+		switch raw {
+		case "explain", "describe", "understand", "what", "where", "when",
+			"this", "that", "these", "those", "with", "from", "into",
+			"about", "have", "does", "doesn", "deos", "make", "makes",
+			"work", "works", "using", "uses", "used", "utilize", "utilizes":
+			continue
+		}
+		tokens[raw] = struct{}{}
+	}
+	return tokens
+}
+
 func postReadinessGapLooksFileTopic(gap string, path string) bool {
 	lowerGap := strings.ToLower(strings.TrimSpace(gap))
 	if lowerGap == "" {
@@ -2093,32 +2385,58 @@ func repeatedClosureRequestErrorText(scope string) string {
 	}
 }
 
-func delegatedReadOnlyAnswerReadyNudge(objective string, results []workspace.ToolResult) string {
+func delegatedReadOnlyAnswerReadyNudge(objective string, results []workspace.ToolResult, probeBudget int) string {
 	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 4)
-	validity, diminishing := closureDecisionRationale(objective, results, paths)
+	validity, _ := closureDecisionRationale(objective, results, paths)
 	lines := []string{
-		"You likely have enough delegated read-only evidence to answer this question.",
+		"You have enough delegated read-only evidence to answer this question.",
 	}
 	if validity != "" {
 		lines = append(lines, "Why answer now is valid: "+validity)
 	}
 	if len(paths) > 0 {
 		lines = append(lines, "Core evidence paths: "+summarizePostChildEvidencePaths(paths, 3))
-		lines = append(lines, "If you answer now, explicitly carry forward the most relevant inspected implementation paths instead of collapsing the packet to a single file.")
 	}
-	if diminishing != "" {
-		lines = append(lines, "Lower-value next steps: "+diminishing)
-	}
-	if suggestion := closureProbeSuggestionLine(results, 3); suggestion != "" {
-		lines = append(lines, suggestion)
-	}
+	lines = append(lines, postReadinessContinuationContract("delegated_read_only_answer_ready", probeBudget))
 	lines = append(lines,
-		"Keep the answer minimal. Do not expand into side-path comparison, mode-by-mode breakdowns, or policy-by-policy detail unless the question explicitly requires that contrast.",
-		"Do not restart broad discovery.",
-		"If a specific gap remains, make it tool-shaped: name one exact missing claim, then choose one targeted follow-up read or search that would resolve it.",
-		"Do not use a file-level `read_file` request as the named gap itself; if you continue, the probe must isolate one exact symbol, branch, body, or narrow line range.",
-		"If you cannot name that exact probe, answer directly from the evidence gathered so far.",
+		"If you answer now, carry forward the inspected paths above and keep the answer minimal — no side-path comparison or mode-by-mode breakdown unless the question requires that contrast.",
+		"If you cannot meet the continuation contract on a real gap, answer directly from the evidence above.",
 	)
+	return strings.Join(lines, "\n")
+}
+
+// postReadinessContinuationContract returns the generic block that discloses,
+// up front, every constraint the harness will enforce on subsequent
+// read/search calls after readiness or a child packet. Putting this in the
+// readiness/boundary nudge — rather than letting the model discover each
+// constraint via a separate rejection — collapses the rejection ladder that
+// otherwise burns budget on retries the model could have avoided.
+//
+// budget is the number of post-readiness probes the harness will allow
+// before forcing the answer. Disclosing the real cap (rather than a
+// hard-coded "one") prevents the model/harness mismatch where the contract
+// implies one probe but the budget caps actually allow two.
+func postReadinessContinuationContract(scope string, budget int) string {
+	anchor := "be a symbol, branch, body, or narrow line-range probe — file-level raw reads of evidence paths will be rejected as too broad"
+	if strings.TrimSpace(scope) == "child_packet_available" {
+		anchor = "be anchored to a packet-named path or symbol (repo-wide search will be rejected) and target a symbol, branch, body, or narrow line range — file-level raw reads will be rejected as too broad"
+	}
+	probeBudgetLine := "  • use at most one targeted probe before answering or reporting the concrete blocker;"
+	switch {
+	case budget <= 0:
+		probeBudgetLine = "  • no further reads are budgeted — answer now or report the concrete blocker;"
+	case budget == 1:
+		// keep the default phrasing
+	default:
+		probeBudgetLine = fmt.Sprintf("  • use at most %d targeted probes before answering or reporting the concrete blocker;", budget)
+	}
+	lines := []string{
+		"Continuation contract — any further read or search after this point must:",
+		"  • include `named_gap` (one exact unresolved claim this probe would verify or falsify) and `why_not_answering` (what would be materially wrong if you answered now);",
+		"  • " + anchor + ";",
+		probeBudgetLine,
+		"  • the gap must reference a code-shaped token (symbol name, file path, or narrow line range) and must not paraphrase the original question.",
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -2126,31 +2444,16 @@ func delegatedReadOnlyDiminishingReturnsNudge(objective string, results []worksp
 	if followups <= 0 || followups > 2 {
 		return ""
 	}
-	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 4)
-	validity, diminishing := closureDecisionRationale(objective, results, paths)
-	lines := []string{
-		fmt.Sprintf("You have already spent %d targeted follow-up %s after answer readiness.", followups, pluralizeRunnerFollowup(followups)),
-	}
-	if validity != "" {
-		lines = append(lines, "Why answering is still valid: "+validity)
-	}
+	// The readiness nudge already disclosed the continuation contract
+	// (named_gap required, file-level reads rejected, one targeted probe).
+	// Repeating that prose burns context for no behavior change. Emit a
+	// factual probe-budget note instead and let the model decide.
+	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 3)
+	line := fmt.Sprintf("Post-readiness probes used: %d. Answer now from the evidence above unless one exact unresolved claim remains and a single tool-shaped probe (symbol/branch/range) would change the answer.", followups)
 	if len(paths) > 0 {
-		lines = append(lines, "If you answer now, explicitly name the inspected implementation paths you already relied on: "+summarizePostChildEvidencePaths(paths, 3))
+		line += " Inspected paths: " + summarizePostChildEvidencePaths(paths, 3) + "."
 	}
-	if diminishing != "" {
-		lines = append(lines, "Diminishing returns warning: "+diminishing)
-	}
-	if suggestion := closureProbeSuggestionLine(results, 3); suggestion != "" {
-		lines = append(lines, suggestion)
-	}
-	lines = append(lines, "If you continue, pivot to one exact symbol, discovered handle, outline, or narrow line range; do not repeat the same raw path request.")
-	lines = append(lines, "Do not widen the answer into side-path comparison, mode-by-mode breakdowns, or policy detail unless that extra detail is necessary to answer the question.")
-	if followups == 1 {
-		lines = append(lines, "If this did not close a tool-shaped named gap, the highest-value next move is to answer from the current evidence. Do not do another file-level `read_file` on the same topic.")
-	} else {
-		lines = append(lines, "A further read is now likely to repeat known context. Answer now unless you can name one exact missing branch, function body, or boundary and one exact probe that would resolve it. Another file-level `read_file` is lower value than answering.")
-	}
-	return strings.Join(lines, "\n")
+	return line
 }
 
 func closureProbeSuggestionLine(results []workspace.ToolResult, max int) string {
@@ -2320,28 +2623,15 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 	if followups <= 0 || followups > 2 {
 		return ""
 	}
-	paths := postChildClosureEvidencePaths(objective, results, 4)
-	validity, diminishing := closureDecisionRationale(objective, results, paths)
-	lines := []string{
-		fmt.Sprintf("You have already spent %d targeted follow-up %s after the child packet.", followups, pluralizeRunnerFollowup(followups)),
-	}
-	if validity != "" {
-		lines = append(lines, "Why answering is already justified: "+validity)
-	}
-	if diminishing != "" {
-		lines = append(lines, "Diminishing returns warning: "+diminishing)
-	}
+	// The child-packet boundary nudge already disclosed the continuation
+	// contract; this is a factual probe-budget note, not another prose
+	// block telling the model what was already said.
+	paths := postChildClosureEvidencePaths(objective, results, 3)
+	line := fmt.Sprintf("Post-child probes used: %d. Answer now from the packet above unless one exact unresolved claim remains and a single tool-shaped probe anchored to a packet-named path would change the answer.", followups)
 	if len(paths) > 0 {
-		lines = append(lines, "Current evidence still centers on: "+summarizePostChildEvidencePaths(paths, 3))
+		line += " Packet paths: " + summarizePostChildEvidencePaths(paths, 3) + "."
 	}
-	lines = append(lines, "If you continue, make the gap tool-shaped: one exact missing claim, one exact probe. Prefer packet-named symbols, discovered handles, or narrow ranges over repeating a raw path request.")
-	lines = append(lines, "Do not widen the answer into side-path comparison, mode-by-mode breakdowns, or policy detail unless that extra detail is necessary to answer the question.")
-	if followups == 1 {
-		lines = append(lines, "If the first follow-up did not reveal a named gap, prefer answering now over another discovery step.")
-	} else {
-		lines = append(lines, "Another follow-up is now lower value than answering unless you can name one exact unresolved gap and one exact probe that would resolve it.")
-	}
-	return strings.Join(lines, "\n")
+	return line
 }
 
 func delegatedClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
@@ -2440,13 +2730,6 @@ func closurePromptInvalidActions(scope string) []string {
 			"README/docs or repo-wide search outside named implementation paths after answer readiness",
 		}
 	}
-}
-
-func pluralizeRunnerFollowup(count int) string {
-	if count == 1 {
-		return "read/search"
-	}
-	return "reads/searches"
 }
 
 func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
@@ -3794,26 +4077,24 @@ func (r *Runner) initialBootstrapInstruction() string {
 		}
 		return strings.Join([]string{
 			"[verification bootstrap]",
-			"First action now: run the verification command before any inspection.",
-			"Emit exactly one shell tool call next.",
-			fmt.Sprintf(`{"tool":"shell","command":"%s","workdir":"."}`, cmd),
-			"Do not call pwd, ls, find, search_files, search_content, or read_file before that shell command.",
+			"Verification task contract: run the configured verification command before inspection.",
+			fmt.Sprintf("Configured verification command: %s", cmd),
+			"After it runs, answer with the observed pass/fail result.",
 		}, "\n")
 	case family == "debug_logs":
 		return strings.Join([]string{
 			"[debug-log bootstrap]",
-			"Start from the newest relevant log artifact, not from source-code orientation.",
+			"Start from the newest relevant log artifact; source-code orientation is lower value until log evidence is exhausted.",
 			"First choose the newest real log file (for example under logs/, *.log, or *.jsonl), then read its recent tail.",
 			"Stay on that selected log until you can cite the weird decision or declare the missing datum.",
 			"After one bounded log read, answer from the logs if the cause is already clear; otherwise do one targeted follow-up inside the same log.",
-			"Do not call pwd for a log-investigation turn.",
 		}, "\n")
 	case isEvidenceFirstMutationTaskFamily(family) && len(r.RuntimeBrief.TargetRefs) > 0:
 		return strings.Join([]string{
 			"[evidence-first mutation bootstrap]",
 			fmt.Sprintf("This turn will update named target file(s): %s.", strings.Join(r.RuntimeBrief.TargetRefs, ", ")),
-			"Do not read the entire named target file first.",
-			"First gather source evidence from the implementation files or configs that drive the change, then come back and read only the target section you plan to edit.",
+			"First gather source evidence from the implementation files or configs that drive the change.",
+			"Then read only the target section you plan to edit.",
 		}, "\n")
 	default:
 		return ""
@@ -3922,7 +4203,7 @@ func prematureTargetReadRejection(req workspace.ToolRequest, results []workspace
 		return "", "", false
 	}
 	return "Premature target-file read rejected",
-		"this turn needs source evidence before editing the named target file. Do not read the entire target file first. Inspect the implementation files or configs that drive the change, then read only the target section you plan to edit.",
+		"this turn needs source evidence before editing the named target file. Inspect the implementation files or configs that drive the change, then read only the target section you plan to edit.",
 		true
 }
 
@@ -3943,7 +4224,7 @@ func evidenceFirstTargetReadBudgetRejection(req workspace.ToolRequest, results [
 		return "", "", false
 	}
 	return "Target-read budget exhausted",
-		fmt.Sprintf("you already inspected %d bounded windows of the named target file in this turn. Stop reading the whole target. Make the edit now, or if one exact detail is still missing, use a narrow line range or a targeted search anchored to that missing section.", maxEvidenceFirstTargetReadWindows),
+		fmt.Sprintf("you already inspected %d bounded windows of the named target file in this turn. Make the edit now, or if one exact detail is still missing, use a narrow line range or a targeted search anchored to that missing section.", maxEvidenceFirstTargetReadWindows),
 		true
 }
 
@@ -3991,7 +4272,7 @@ func evidenceFirstTargetWritePhaseRejection(req workspace.ToolRequest, results [
 		return "", "", false
 	}
 	return "Target-inspection phase complete",
-		"you already gathered source evidence and inspected the named target file in bounded windows. Do not resume source-file discovery. Make the edit now, or if one exact detail is still missing, use search_content or a narrow read_file scoped to the named target only.",
+		"you already gathered source evidence and inspected the named target file in bounded windows. Make the edit now, or if one exact detail is still missing, stay scoped to the named target.",
 		true
 }
 
@@ -4204,7 +4485,7 @@ func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.
 	}
 	if isReadClassTool(req) && !debugLogRequestTargetsSelection(req, selection) {
 		return "Selected-log scope enforced",
-			"you already selected and read the newest relevant log. Stay on that log until you can cite the weird decision or declare the missing datum. Do not return to source-code or workspace discovery.",
+			"you already selected and read the newest relevant log. Stay on that log until you can cite the weird decision or declare the missing datum.",
 			true
 	}
 	if strings.TrimSpace(req.Tool) != "read_file" || !debugLogRequestTargetsSelection(req, selection) {
@@ -4214,7 +4495,7 @@ func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.
 		return "", "", false
 	}
 	return "Blind log reread rejected",
-		"you already have the newest tail of the selected log. Answer from that tail if it is sufficient, or use search_content scoped to the selected log to find one concrete marker. Do not keep rereading raw windows of the same log before you have a hit.",
+		"you already have the newest tail of the selected log. Answer from that tail if it is sufficient, or search within the selected log for one concrete marker.",
 		true
 }
 
@@ -4839,12 +5120,13 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	if reason == "" {
 		reason = "Do not request any more tools. Answer with the evidence you already have and explain any remaining blocker clearly."
 	}
-	if !shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief) {
+	preferModelSynthesis := shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults)
+	if !preferModelSynthesis {
 		if answer, ok := immediateBudgetFallbackAnswer(r.agentName(), r.RuntimeBrief, reason, collectedResults); ok {
 			return answer, nil
 		}
 	}
-	if shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief) {
+	if preferModelSynthesis {
 		reason = strings.TrimSpace(reason + "\nUse the evidence already gathered to answer the delegated question directly. Do not return a partial-findings template if a concise grounded answer is possible.")
 		if paths := delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, collectedResults, 4); len(paths) > 0 {
 			reason = strings.TrimSpace(reason + "\nCarry forward the inspected implementation paths explicitly in the answer: " + summarizePostChildEvidencePaths(paths, 4) + ". Do not collapse the answer to a single file when the evidence already spans multiple relevant implementation paths.")
@@ -4865,7 +5147,7 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		metrics.ModelCalls++
 	}
 	modelStart := time.Now()
-	textOnlyOpts := textOnlyChatOptions(opts)
+	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
 	assistantMessage, err := r.Client.CompleteChatMessage(ctx, turnMessages, textOnlyOpts)
 	if err != nil {
 		return "", err
@@ -4901,14 +5183,14 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	return r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics)
 }
 
-func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.WorkerRuntimeBrief) bool {
-	if !strings.HasPrefix(agentName, "child:") {
-		return false
-	}
+func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return false
 	}
-	return true
+	if strings.HasPrefix(agentName, "child:") {
+		return true
+	}
+	return strings.TrimSpace(brief.PermissionProfile) == "read_only_workspace" && postChildPacketClosureReadyWithBrief(brief, results)
 }
 
 func (r *Runner) advertisedAllowedTools(base []string) []string {
@@ -4953,13 +5235,27 @@ func (r *Runner) advertisedAllowedTools(base []string) []string {
 	return allowed
 }
 
-func textOnlyChatOptions(opts llama.ChatOptions) llama.ChatOptions {
+func textOnlyChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief) llama.ChatOptions {
 	opts.Tools = nil
 	opts.ToolChoice = ""
-	if opts.MaxTokens <= 0 || opts.MaxTokens > 384 {
-		opts.MaxTokens = 384
+	limit := textOnlyMaxTokensForBrief(brief)
+	if opts.MaxTokens <= 0 || opts.MaxTokens > limit {
+		opts.MaxTokens = limit
 	}
 	return opts
+}
+
+func textOnlyMaxTokensForBrief(brief workerruntime.WorkerRuntimeBrief) int {
+	switch strings.TrimSpace(brief.Contract) {
+	case "direct_answer":
+		return 1024
+	case "grounded_explanation", "grounded_evidence_summary", "locate_targets":
+		return 1536
+	case "architecture_assessment", "review_findings":
+		return 2048
+	default:
+		return 768
+	}
 }
 
 func looksLikeTextualToolCall(text string) bool {
@@ -5201,7 +5497,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 		metrics.ModelCalls++
 	}
 	modelStart := time.Now()
-	textOnlyOpts := textOnlyChatOptions(opts)
+	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
 	retryMessage, err := r.Client.CompleteChatMessage(ctx, retryMessages, textOnlyOpts)
 	if err != nil {
 		return "", err
@@ -5285,7 +5581,7 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 	var lastError *workspace.ToolResult
 	var successfulNarrowing []workspace.ToolResult
 	for i := range results {
-		result := results[i]
+		result := normalizeFallbackResult(results[i])
 		if result.Error == "" && strings.TrimSpace(result.Output) != "" && firstSuccessful == nil {
 			copy := result
 			firstSuccessful = &copy
@@ -5293,7 +5589,7 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 		if result.Error == "" && strings.TrimSpace(result.Output) != "" && isResultUsefulForFallback(result) {
 			successfulNarrowing = append(successfulNarrowing, result)
 		}
-		if result.Error != "" {
+		if result.Error != "" && !isHarnessRejectionSummary(result.Summary) && !isHarnessRejectionErrorText(result.Error) {
 			copy := result
 			lastError = &copy
 		}
@@ -5321,7 +5617,7 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 		for _, result := range limitFallbackResults(successfulNarrowing, 3) {
 			b.WriteString("- ")
 			b.WriteString(result.Summary)
-			if output := compactOutput(result.Output, fallbackLineBudgetForTool(result.Tool)); output != "" {
+			if output := compactOutput(sanitizeFallbackResultOutput(result), fallbackLineBudgetForTool(result.Tool)); output != "" {
 				b.WriteString("\n")
 				b.WriteString(output)
 			}
@@ -5483,6 +5779,141 @@ func containsAny(text string, needles ...string) bool {
 	return false
 }
 
+// rewriteVisibilityNote returns a short system-message body explaining that
+// the requested tool was redirected to a different tool by harness routing
+// rules. Generic across rewrite kinds (delegated bootstrap, verification
+// bootstrap, debug-log preflight, etc.) — it states the fact without
+// hard-picking the next tool, leaving the model free to act on the result.
+func rewriteVisibilityNote(originalTool, rewrittenTool string) string {
+	original := strings.TrimSpace(originalTool)
+	rewritten := strings.TrimSpace(rewrittenTool)
+	switch {
+	case original != "" && rewritten != "" && original != rewritten:
+		return fmt.Sprintf("Note: your `%s` call was redirected to `%s` by lane routing. The rewritten call will execute and return its result; use that result, not another retry of `%s`.", original, rewritten, original)
+	case rewritten != "":
+		return fmt.Sprintf("Note: your tool call was redirected to `%s` by lane routing. The rewritten call will execute and return its result.", rewritten)
+	default:
+		return "Note: your tool call was rewritten by lane routing. The rewritten call will execute and return its result."
+	}
+}
+
+// normalizeFallbackResult prepares a tool result for fallback synthesis by
+// removing nested fallback wrappers from a delegated child's Output. When a
+// child lane force-completes, its answer is already a "Partial findings from
+// this turn..." template; that wrapper bleeds into the parent's view of the
+// task result and produces nested "Partial findings" headers in the final
+// answer. We strip the outer template so the substance (Verified context
+// bullets, observations) folds cleanly into the parent's own template.
+func normalizeFallbackResult(result workspace.ToolResult) workspace.ToolResult {
+	if strings.TrimSpace(result.Tool) != "task" {
+		return result
+	}
+	stripped := stripNestedFallbackTemplate(result.Output)
+	if stripped != result.Output {
+		result.Output = stripped
+	}
+	return result
+}
+
+// stripNestedFallbackTemplate removes the outer scaffolding of a
+// synthesizeFallbackAnswer output so it can be embedded inside another
+// fallback answer without producing duplicated headers. Idempotent: if the
+// input is not a fallback template, it is returned unchanged.
+func stripNestedFallbackTemplate(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "Partial findings from this turn") {
+		return s
+	}
+	// Drop the leading "Partial findings from this turn (...):" line plus
+	// the immediately-following blank line, leaving just the substance.
+	if idx := strings.Index(trimmed, "\n"); idx >= 0 {
+		trimmed = strings.TrimLeft(trimmed[idx+1:], "\n")
+	}
+	// Drop the trailing "Recommended next step:" footer — that's
+	// scaffolding for the user, not evidence.
+	if idx := strings.Index(trimmed, "\nRecommended next step:"); idx >= 0 {
+		trimmed = strings.TrimSpace(trimmed[:idx])
+	}
+	// Drop the inner "Verified context:" header. The outer fallback adds
+	// its own header; nested verified-context labels make the answer read
+	// like two stacked reports.
+	trimmed = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(trimmed), "Verified context:"))
+	// Drop a trailing "Final blocker:" if it's just a harness rejection —
+	// that signal has already been recomputed by the outer template.
+	if idx := strings.Index(trimmed, "\nFinal blocker:"); idx >= 0 {
+		head := strings.TrimSpace(trimmed[:idx])
+		tail := strings.TrimSpace(trimmed[idx+len("\nFinal blocker:"):])
+		// Look one bullet ahead and drop the section if its content is a
+		// known harness-only blocker; otherwise keep it.
+		if firstBullet := firstBulletText(tail); isHarnessRejectionSummary(firstBullet) || isHarnessRejectionErrorText(tail) {
+			trimmed = head
+		}
+	}
+	return trimmed
+}
+
+// firstBulletText returns the text of the first bullet ("- ") in s, with the
+// leading dash trimmed. Returns the empty string if no bullet is found.
+func firstBulletText(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+			if idx := strings.Index(line, ":"); idx >= 0 {
+				return strings.TrimSpace(line[:idx])
+			}
+			return line
+		}
+	}
+	return ""
+}
+
+// isHarnessRejectionSummary returns true for tool-result Summary strings that
+// originate from harness contracts (post-readiness gap requirement, packet
+// anchoring, etc.) rather than from real tool failures. These are not useful
+// "Final blocker" lines — the user did nothing wrong and the message is
+// internal to the harness's own enforcement loop.
+func isHarnessRejectionSummary(summary string) bool {
+	switch strings.TrimSpace(summary) {
+	case "Post-readiness follow-up missing named gap",
+		"Post-child follow-up missing named gap",
+		"Post-readiness follow-up is not an exact probe",
+		"Post-readiness follow-up is broader than the current evidence requires",
+		"Post-readiness exact probe is not grounded in current evidence",
+		"Post-child follow-up gap is contradicted by current evidence",
+		"Post-child follow-up gap is not packet-anchored",
+		"Post-child broad inspection blocked",
+		"Post-child unrelated discovery blocked",
+		"Post-child reread blocked",
+		"Broad exploration after delegation nudge blocked",
+		"Additional read_only child task blocked",
+		"Broad inspection request rejected",
+		"Chained list_files rejected",
+		"Chained search rejected":
+		return true
+	}
+	return false
+}
+
+// isHarnessRejectionErrorText returns true when the error text reads like a
+// harness contract message rather than a real tool error. Used as a fallback
+// when the Summary itself isn't enough to classify the rejection.
+func isHarnessRejectionErrorText(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	return containsAny(lower,
+		"include `named_gap`",
+		"include named_gap",
+		"already contains sufficient evidence to bias toward answering",
+		"answer readiness has already been reached",
+		"file-level raw read is too broad",
+		"file-level outline is too broad",
+		"do not restart broad discovery",
+	)
+}
+
 func isResultUsefulForFallback(result workspace.ToolResult) bool {
 	lowerSummary := strings.ToLower(strings.TrimSpace(result.Summary))
 	lowerOutput := strings.ToLower(strings.TrimSpace(result.Output))
@@ -5595,29 +6026,22 @@ func toolFailurePathStem(req workspace.ToolRequest) string {
 	return parts[0]
 }
 
-// buildRejectionRecoveryNudge returns a concrete, copy-paste-ready next
-// action the model can execute after its second consecutive rejected tool
-// call in a turn. Called once per turn (gated by rejectionRecoveryNudgeUsed)
-// before the runner bails out with repeated_dead_end_budget_exhausted. The
-// goal is not to be clever — it is to hand a small local model an escape
-// hatch that it can execute verbatim.
+// buildRejectionRecoveryNudge gives the model one last closure-biased repair
+// after repeated rejected tool calls. It should state the contract and avoid
+// prescribing a copy-paste tool sequence unless a hard invariant requires it.
 func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.ToolResult, mgr *workspace.Manager, brief workerruntime.WorkerRuntimeBrief, agent string, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool) string {
 	tool := strings.TrimSpace(req.Tool)
 	var b strings.Builder
-	b.WriteString("Recovery nudge — this is your last chance before the harness ends the turn. Pick ONE of the concrete next steps below (you can copy-paste the JSON). Do NOT repeat the rejected tool call.\n\n")
+	b.WriteString("Recovery nudge — last chance before the harness ends the turn. Either answer with the evidence already gathered, or take one narrow next step that names the exact missing claim it is closing. Do not repeat the rejected tool call.\n\n")
 
 	if strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_verification_shell") {
 		cmd := "go test ./..."
 		if len(brief.VerificationPlan) > 0 && strings.TrimSpace(brief.VerificationPlan[0]) != "" {
 			cmd = strings.TrimSpace(brief.VerificationPlan[0])
 		}
-		b.WriteString("This is a verification-only turn. Do not explore first.\n")
-		b.WriteString("Run the requested check now:\n")
-		b.WriteString("  {\"tool\":\"shell\",\"command\":\"")
-		b.WriteString(strings.ReplaceAll(cmd, "\"", "\\\""))
-		b.WriteString("\",\"workdir\":\".\"}\n")
-		b.WriteString("If that command already ran, answer with the observed pass/fail result instead of calling another tool.\n")
-		b.WriteString("\nDo not call `pwd`, `ls`, `find`, `search_files`, `search_content`, or `read_file` before the verification command.\n")
+		b.WriteString("This is a verification-only turn; the requested check has not yet run. Run it (the configured plan starts with `")
+		b.WriteString(cmd)
+		b.WriteString("`), then answer with the observed pass/fail. If the check has already run, answer with that result.\n")
 		return b.String()
 	}
 	if strings.TrimSpace(brief.TaskFamily) == "debug_logs" {
@@ -5641,7 +6065,6 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 				b.WriteString(marshalToolRequestRaw(redirected))
 				b.WriteString("\n")
 			}
-			b.WriteString("Do not switch back to source files, broad workspace discovery, or another raw read_file window of the same log.\n")
 			return b.String()
 		}
 	}
@@ -5656,25 +6079,19 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 		}
 	}
 	if isPrematureEvidenceFirstTargetRead(req, results, brief) {
-		b.WriteString("This turn still needs source evidence before the named target file. Do not keep reading the target yet.\n")
+		b.WriteString("This turn still needs source evidence before the named target file.\n")
 		candidates := nonTargetRecoveryFileCandidates(results, brief.TargetRefs)
 		if len(candidates) > 0 {
-			b.WriteString("Inspect one implementation file first:\n")
+			b.WriteString("Candidate source paths:\n")
 			for _, path := range candidates {
-				if strings.HasSuffix(strings.ToLower(path), ".go") {
-					b.WriteString("  {\"tool\":\"go_file_outline\",\"path\":\"")
-					b.WriteString(strings.ReplaceAll(path, "\"", "\\\""))
-					b.WriteString("\"}\n")
-					continue
-				}
-				b.WriteString("  {\"tool\":\"read_file\",\"path\":\"")
-				b.WriteString(strings.ReplaceAll(path, "\"", "\\\""))
-				b.WriteString("\",\"start_line\":1,\"end_line\":160}\n")
+				b.WriteString("  - ")
+				b.WriteString(path)
+				b.WriteString("\n")
 			}
 		} else {
-			b.WriteString("Pick one non-target implementation file or search result and inspect it before coming back to the doc.\n")
+			b.WriteString("Use a non-target implementation file or search result that can explain the change before returning to the target.\n")
 		}
-		b.WriteString("\nOr, if the source evidence is already sufficient in prior results, answer the user directly instead of calling another tool.\n")
+		b.WriteString("\nIf the source evidence is already sufficient in prior results, answer the user directly instead of calling another tool.\n")
 		return b.String()
 	}
 	if evidenceFirstTargetWritePhaseActive(brief, results) {
@@ -5682,7 +6099,7 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 		if target == "" {
 			target = strings.TrimSpace(req.Path)
 		}
-		b.WriteString("This turn is now in target-write phase. Do not inspect more source files.\n")
+		b.WriteString("This turn is now in target-write phase.\n")
 		b.WriteString("Either edit the target now, or if one exact detail is still missing, stay inside the named target with one narrow read.\n")
 		if target != "" {
 			start, end := 1, 40
@@ -5693,16 +6110,11 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 				}
 				end = window.End
 			}
-			b.WriteString("Narrow target read example:\n")
-			b.WriteString("  {\"tool\":\"read_file\",\"path\":\"")
-			b.WriteString(strings.ReplaceAll(target, "\"", "\\\""))
-			b.WriteString("\",\"start_line\":")
-			b.WriteString(fmt.Sprintf("%d", start))
-			b.WriteString(",\"end_line\":")
-			b.WriteString(fmt.Sprintf("%d", end))
-			b.WriteString("}\n")
+			b.WriteString("Relevant target window: ")
+			b.WriteString(target)
+			b.WriteString(fmt.Sprintf(" lines %d-%d\n", start, end))
 		}
-		b.WriteString("\nOr, if you already have enough evidence, answer the user now with what you observed — do not call any more tools.\n")
+		b.WriteString("\nIf you already have enough evidence, answer the user now with what you observed.\n")
 		return b.String()
 	}
 
@@ -5710,45 +6122,35 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 	case tool == "list_files" || tool == "list_dir":
 		candidates := rejectionRecoveryFileCandidates(results)
 		if len(candidates) > 0 {
-			b.WriteString("You already have a workspace overview. Narrow next. Try any of:\n")
-			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"TODO|FIXME|XXX|HACK\",\"path\":\".\"}\n")
-			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"panic\\\\(\",\"path\":\".\"}\n")
+			b.WriteString("You already have a workspace overview. Choose one discovered path that can close a named gap:\n")
 			for _, path := range candidates {
-				b.WriteString("  {\"tool\":\"read_file\",\"path\":\"")
+				b.WriteString("  - ")
 				b.WriteString(path)
-				b.WriteString("\",\"start_line\":1,\"end_line\":200}\n")
+				b.WriteString("\n")
 			}
 		} else {
-			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"TODO|FIXME|XXX|HACK\",\"path\":\".\"}\n")
-			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"panic\\\\(\",\"path\":\".\"}\n")
+			b.WriteString("You already have a workspace overview. Either answer now or take one focused search/read step tied to a named gap.\n")
 		}
 	case tool == "read_file":
 		path := strings.TrimSpace(req.Path)
 		if path != "" {
-			b.WriteString("Narrow the read (request a smaller window) or switch to a structured tool:\n")
-			b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"func \",\"path\":\"")
+			b.WriteString("The repeated read should become a smaller window or a structured probe tied to a named gap on ")
 			b.WriteString(path)
-			b.WriteString("\"}\n")
-			b.WriteString("  {\"tool\":\"read_file\",\"path\":\"")
-			b.WriteString(path)
-			b.WriteString("\",\"start_line\":1,\"end_line\":80}\n")
+			b.WriteString(".\n")
 		} else {
-			b.WriteString("  {\"tool\":\"search_files\",\"pattern\":\"*.go\"}\n")
+			b.WriteString("The repeated read needs a concrete discovered path and a named gap.\n")
 		}
 	case tool == "search_content":
-		b.WriteString("Change the pattern materially (new keyword) or scope to a specific path:\n")
-		b.WriteString("  {\"tool\":\"search_files\",\"pattern\":\"*.go\"}\n")
+		b.WriteString("A follow-up search should change the claim being tested or narrow to a specific discovered path.\n")
 		if strings.TrimSpace(req.Path) != "" {
-			b.WriteString("  {\"tool\":\"read_file\",\"path\":\"")
+			b.WriteString("Current scope: ")
 			b.WriteString(req.Path)
-			b.WriteString("\",\"start_line\":1,\"end_line\":160}\n")
+			b.WriteString("\n")
 		}
 	default:
-		b.WriteString("Pick a materially different move. Good general options:\n")
-		b.WriteString("  {\"tool\":\"search_content\",\"pattern\":\"TODO|FIXME\",\"path\":\".\"}\n")
-		b.WriteString("  {\"tool\":\"search_files\",\"pattern\":\"*.go\"}\n")
+		b.WriteString("Pick a materially different move that names the exact missing claim it closes.\n")
 	}
-	b.WriteString("\nOr, if you already have enough evidence, answer the user now with what you observed — do not call any more tools.\n")
+	b.WriteString("\nIf you already have enough evidence, answer the user now with what you observed.\n")
 	return b.String()
 }
 
@@ -5807,7 +6209,7 @@ func buildClosureRecoveryNudge(scope string, req workspace.ToolRequest, results 
 		b.WriteString(why)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nDo not restart broad discovery, do not call `search_files`, and do not switch to README, docs, repo-wide content search, or unanchored workspace symbol lookup.\n")
+	b.WriteString("\nStay anchored to the evidence paths, symbols, or narrow ranges already surfaced.\n")
 	return b.String()
 }
 
@@ -5904,6 +6306,7 @@ func recoveryCandidatePath(line string) string {
 }
 
 func compactOutput(output string, maxLines int) string {
+	output = stripFallbackJSONArtifacts(output)
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) == 0 || lines[0] == "" {
 		return ""
@@ -5912,4 +6315,83 @@ func compactOutput(output string, maxLines int) string {
 		return strings.Join(lines, "\n")
 	}
 	return strings.Join(lines[:maxLines], "\n") + "\n..."
+}
+
+// sanitizeFallbackResultOutput returns a tool-result Output that's safe to
+// embed under "Verified context" in a forced-completion fallback. Some
+// tools produce Output that is fine for the model's tool-call loop but
+// reads as noise in the final user-facing answer:
+//
+//   - search_content matches against test fixtures often span multi-line
+//     quoted Go strings containing JSON, so the per-line strip can't
+//     reach the JSON cleanly. The count summary ("Found N matching
+//     lines.") is sufficient context for synthesis; drop the raw output.
+//   - read_file and symbol-read outputs are kept — those are the actual
+//     evidence the model needs to summarize.
+//
+// Generic across languages: applies to *any* tool whose output is a
+// long quoted-string match list.
+func sanitizeFallbackResultOutput(result workspace.ToolResult) string {
+	switch strings.TrimSpace(result.Tool) {
+	case "search_content", "search_files":
+		return ""
+	default:
+		return result.Output
+	}
+}
+
+// stripFallbackJSONArtifacts removes JSON-shaped object dumps from a tool
+// result Output before it gets surfaced under "Verified context" in the
+// forced-completion fallback. When a child lane's task result Output
+// includes a discovery_query summary, the artifact metadata JSON often
+// follows verbatim ({"id": "...", "purpose": "...", "layers_run": [...]
+// }) and bleeds into the user-facing answer as opaque blocks. The
+// fallback should show prose bullets; metadata blobs belong in the
+// artifact file, not the answer. Generic across artifact JSON — any
+// brace-delimited object whose first content line starts with a quoted
+// key is treated as a metadata dump and dropped.
+func stripFallbackJSONArtifacts(output string) string {
+	if !strings.Contains(output, "{") {
+		return output
+	}
+	lines := strings.Split(output, "\n")
+	out := make([]string, 0, len(lines))
+	skipUntilBaseline := false
+	skipDepth := 0
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if skipUntilBaseline {
+			// Track nested braces. We exit the skip when depth returns
+			// to zero, when we see a blank line, or when a new bullet
+			// starts (lines beginning with "- " mark the next section).
+			skipDepth += strings.Count(trimmed, "{") - strings.Count(trimmed, "}")
+			if skipDepth <= 0 {
+				skipUntilBaseline = false
+				skipDepth = 0
+			}
+			if trimmed == "" || strings.HasPrefix(trimmed, "- ") {
+				skipUntilBaseline = false
+				skipDepth = 0
+				if strings.HasPrefix(trimmed, "- ") {
+					out = append(out, line)
+				}
+			}
+			continue
+		}
+		// A bare "{" line, or a "{...}" JSON one-liner whose first
+		// inner content is a quoted key, marks the start of a metadata
+		// dump. Drop the block.
+		if trimmed == "{" || (strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, "\":")) {
+			skipUntilBaseline = true
+			skipDepth = strings.Count(trimmed, "{") - strings.Count(trimmed, "}")
+			if skipDepth <= 0 {
+				// One-liner JSON; consume just this line.
+				skipUntilBaseline = false
+				skipDepth = 0
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }

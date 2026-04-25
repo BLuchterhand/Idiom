@@ -510,7 +510,7 @@ func (m *Manager) rustImplementations(ctx context.Context, req ToolRequest) Tool
 
 func (m *Manager) rustDiagnostics(ctx context.Context, req ToolRequest) ToolResult {
 	if _, err := exec.LookPath("cargo"); err != nil {
-		return ToolResult{Tool: "rust_diagnostics", Summary: "Rust diagnostics unavailable", Error: "cargo is not installed; install rustup from https://rustup.rs/"}
+		return ToolResult{Tool: "rust_diagnostics", Summary: "Rust diagnostics unavailable", Error: "cargo is not installed"}
 	}
 	workdir := m.cfg.Root
 	if req.Path != "" {

@@ -98,7 +98,7 @@ func (m *Manager) rustAnalyzerBinary() string {
 func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLSPClient, error) {
 	ra := m.rustAnalyzerBinary()
 	if ra == "" {
-		return nil, fmt.Errorf("rust-analyzer is not installed; run `rustup component add rust-analyzer` or see https://rust-analyzer.github.io/")
+		return nil, fmt.Errorf("rust-analyzer is not installed")
 	}
 	cmd := exec.CommandContext(ctx, ra)
 	cmd.Dir = m.cfg.Root

@@ -9,7 +9,54 @@ import (
 	"testing"
 
 	"idiom/internal/config"
+	"idiom/internal/semantic"
 )
+
+func TestGoReadSymbolWindowUsesSymbolExtentWhenAvailable(t *testing.T) {
+	// Symbol declared at lines 16-132 (e.g. Runner.runChildTask): the
+	// returned window should start at 16 and run for the full body
+	// (capped). Previous bug used match.Line - 12 / +20, which returned
+	// imports for any function declared past line 12. Live run
+	// 20260425-161904 exposed this when go_read_symbol on
+	// `Runner.runChildTask` returned lines 4-36 — the imports.
+	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 16, StartLine: 16, EndLine: 132}, 0, 0)
+	if start != 16 {
+		t.Fatalf("expected start=16, got %d", start)
+	}
+	if end <= start || end > 16+59 {
+		t.Fatalf("expected end to be capped at 60-line window from start, got %d (start=%d)", end, start)
+	}
+}
+
+func TestGoReadSymbolWindowHonorsExplicitRequest(t *testing.T) {
+	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 16, StartLine: 16, EndLine: 132}, 50, 70)
+	if start != 50 || end != 70 {
+		t.Fatalf("expected explicit window to be honored, got %d-%d", start, end)
+	}
+}
+
+func TestGoReadSymbolWindowFallsBackToCenteredWindow(t *testing.T) {
+	// SymbolMatch with no extent (legacy index entry): fall back to the
+	// old centered window so we don't regress.
+	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 200}, 0, 0)
+	if start != 188 {
+		t.Fatalf("expected fallback start=188 (200-12), got %d", start)
+	}
+	if end != 220 {
+		t.Fatalf("expected fallback end=220 (200+20), got %d", end)
+	}
+}
+
+func TestGoReadSymbolWindowCapsAtMaxLines(t *testing.T) {
+	// A 500-line function should be capped at 60 lines.
+	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 16, StartLine: 16, EndLine: 516}, 0, 0)
+	if start != 16 {
+		t.Fatalf("expected start=16, got %d", start)
+	}
+	if end != 75 {
+		t.Fatalf("expected end capped at 60-line window (16+59), got %d", end)
+	}
+}
 
 func testWorkspaceConfig() config.Workspace {
 	return config.Workspace{
@@ -721,7 +768,7 @@ func TestEditFileRequiresPriorObservationOfPath(t *testing.T) {
 		OldText: "package bubble",
 		NewText: "package bubble2",
 	})
-	if result.Error == "" || !strings.Contains(result.Error, "requires you to have read") {
+	if result.Error == "" || !strings.Contains(result.Error, "requires you to have observed") {
 		t.Fatalf("expected read-before-edit rejection on first edit, got %#v", result)
 	}
 
@@ -802,13 +849,10 @@ func TestFindPathSuggestionsSurfacesSiblingDirectoriesOfMissingAncestor(t *testi
 	}
 }
 
-// Adoption fix D — when list_files is called on a fabricated directory,
+// Adoption fix D - when list_files is called on a fabricated directory,
 // the error must explicitly tell the model the directory does not exist
-// and forbid probing children of that path. Guards against the failure
-// loop in logs/conversations/20260421-053044.479.jsonl where
-// list_files(internal/llm) failed and the model then probed
-// internal/llm/llm.go and internal/llm/llm_provider.go.
-func TestListFilesErrorNamesMissingDirectoryAndForbidsChildProbes(t *testing.T) {
+// while keeping the payload descriptive rather than prescriptive.
+func TestListFilesErrorNamesMissingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/agent/runner.go"), "package agent\n")
 	mgr := NewManager(config.Workspace{
@@ -823,14 +867,13 @@ func TestListFilesErrorNamesMissingDirectoryAndForbidsChildProbes(t *testing.T) 
 	if !strings.Contains(result.Error, "does not exist in this workspace") {
 		t.Fatalf("expected clear 'does not exist' framing, got error:\n%s", result.Error)
 	}
-	if !strings.Contains(result.Error, "Do NOT retry with children") {
-		t.Fatalf("expected explicit 'do not retry children' instruction, got error:\n%s", result.Error)
+	if strings.Contains(result.Error, "Do NOT retry") || strings.Contains(result.Error, "Do not retry") {
+		t.Fatalf("expected descriptive path-miss error without retry directive, got error:\n%s", result.Error)
 	}
 }
 
-// Adoption fix D — read_file on a fabricated path whose PARENT directory is
-// also missing must call that out explicitly so the model stops probing
-// siblings of the phantom directory.
+// Adoption fix D - read_file on a fabricated path whose PARENT directory is
+// also missing must call that out explicitly without prescribing recovery.
 func TestReadFileErrorNamesMissingParentDirectoryWhenFabricated(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/agent/runner.go"), "package agent\n")
@@ -847,8 +890,8 @@ func TestReadFileErrorNamesMissingParentDirectoryWhenFabricated(t *testing.T) {
 	if !strings.Contains(result.Error, "parent directory") || !strings.Contains(result.Error, "does not exist") {
 		t.Fatalf("expected 'parent directory ... does not exist' framing, got error:\n%s", result.Error)
 	}
-	if !strings.Contains(result.Error, "Do NOT retry sibling files") {
-		t.Fatalf("expected explicit 'do not retry siblings' instruction, got error:\n%s", result.Error)
+	if strings.Contains(result.Error, "Do NOT retry") || strings.Contains(result.Error, "Do not retry") {
+		t.Fatalf("expected descriptive parent-miss error without retry directive, got error:\n%s", result.Error)
 	}
 }
 

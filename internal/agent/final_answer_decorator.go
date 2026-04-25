@@ -91,6 +91,10 @@ func finalAnswerStopReasonPrefersDecoration(stopReason string) bool {
 }
 
 func finalAnswerStopReasonPreservesUncertainty(stopReason string) bool {
+	switch strings.TrimSpace(stopReason) {
+	case "post_child_read_budget_exhausted", "closure_synthesis_after_ignored_nudge":
+		return false
+	}
 	return strings.HasSuffix(strings.TrimSpace(stopReason), "_budget_exhausted")
 }
 

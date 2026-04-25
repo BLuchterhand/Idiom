@@ -261,7 +261,7 @@ func TestRustDiagnosticsNoCargo(t *testing.T) {
 		t.Fatal("expected error when cargo is absent")
 	}
 	if !strings.Contains(result.Error, "cargo") {
-		t.Fatalf("expected cargo-install hint, got: %q", result.Error)
+		t.Fatalf("expected cargo capability error, got: %q", result.Error)
 	}
 }
 

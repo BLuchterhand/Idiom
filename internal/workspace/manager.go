@@ -1077,18 +1077,9 @@ func (m *Manager) listFiles(req ToolRequest) ToolResult {
 
 	info, err := os.Stat(base)
 	if err != nil {
-		// OpenCode-adoption fix D (list_files directory-missing clarity). The
-		// recent failure in logs/conversations/20260421-053044.479.jsonl was a
-		// loop where list_files on `internal/llm` returned a bare
-		// OS-level error and the model then probed `read_file
-		// internal/llm/llm.go`, `read_file internal/llm/llm_provider.go`,
-		// etc. A clearer "this directory does not exist — stop probing
-		// children of it" framing (alongside the existing Did-you-mean
-		// suggestions) steers the model toward a sibling directory or
-		// answering from the evidence it already has.
 		errMsg := err.Error()
 		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
-			errMsg = fmt.Sprintf("directory %q does not exist in this workspace. Do NOT retry with children of this path (e.g. %q/foo.go) — they cannot exist either. Check the Did-you-mean suggestions below or ask the user for the real location. (os: %s)", req.Path, strings.TrimRight(req.Path, "/"), err.Error())
+			errMsg = fmt.Sprintf("directory %q does not exist in this workspace. (os: %s)", req.Path, err.Error())
 		}
 		result := ToolResult{Tool: "list_files", Summary: "Failed to stat path", Error: errMsg}
 		if strings.TrimSpace(req.Path) != "" {
@@ -1445,7 +1436,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			if parent != "." && parent != "/" && parent != "" {
 				if parentAbs, parentErr := m.resolvePath(parent, req.Workdir); parentErr == nil {
 					if _, statErr := os.Stat(parentAbs); os.IsNotExist(statErr) {
-						errMsg = fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. Do NOT retry sibling files under %q. Check the Did-you-mean suggestions below or ask the user for the real location. (inner: %s)", parent, req.Path, parent, err.Error())
+						errMsg = fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. (inner: %s)", parent, req.Path, err.Error())
 					}
 				}
 			}
@@ -1469,7 +1460,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			if parent != "." && parent != "/" && parent != "" {
 				if parentAbs, parentErr := m.resolvePath(parent, req.Workdir); parentErr == nil {
 					if _, statErr := os.Stat(parentAbs); os.IsNotExist(statErr) {
-						errMsg = fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. Do NOT retry sibling files under %q. Check the Did-you-mean suggestions below or ask the user for the real location. (os: %s)", parent, req.Path, parent, err.Error())
+						errMsg = fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. (os: %s)", parent, req.Path, err.Error())
 					}
 				}
 			}
@@ -1778,15 +1769,7 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 	}
 	m.rememberPath(abs)
 
-	start := req.StartLine
-	end := req.EndLine
-	if start <= 0 || end <= 0 || start > end {
-		start = match.Line - 12
-		if start < 1 {
-			start = 1
-		}
-		end = match.Line + 20
-	}
+	start, end := goReadSymbolWindow(match, req.StartLine, req.EndLine)
 
 	snippet, err := m.readFileLines(abs, start, end)
 	if err != nil {
@@ -1797,6 +1780,50 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", goQualifiedSymbol(match), m.displayPath(abs), start, end),
 		Output:  snippet,
 	}
+}
+
+// goReadSymbolWindow picks the line range to return for a go_read_symbol
+// call. When the model passes an explicit StartLine/EndLine, honor that.
+// Otherwise prefer the symbol's actual extent (match.StartLine / EndLine
+// from the index) capped at goReadSymbolMaxLines so very large functions
+// don't dump hundreds of lines into the model's context. Falls back to a
+// window centered on match.Line only when the symbol has no recorded
+// extent — that's the legacy behavior for index entries that pre-date
+// extent tracking.
+//
+// Previous bug: this function used `match.Line - 12` to `match.Line + 20`
+// regardless of where the symbol started. For a function declared at
+// line 16 (with imports above), the read returned lines 4-36 — the
+// imports plus the function signature, not the function body. Live
+// run 20260425-161904 surfaced this when go_read_symbol on
+// `Runner.runChildTask` returned imports while go_extract_body returned
+// the actual 117-line function body. Fixed by reading from the symbol's
+// real start line.
+func goReadSymbolWindow(match semantic.SymbolMatch, requestedStart, requestedEnd int) (int, int) {
+	if requestedStart > 0 && requestedEnd >= requestedStart {
+		return requestedStart, requestedEnd
+	}
+	const goReadSymbolMaxLines = 60
+	if match.StartLine > 0 {
+		start := match.StartLine
+		end := match.EndLine
+		if end < start {
+			end = start
+		}
+		if end == 0 {
+			end = start + goReadSymbolMaxLines
+		}
+		if end-start+1 > goReadSymbolMaxLines {
+			end = start + goReadSymbolMaxLines - 1
+		}
+		return start, end
+	}
+	start := match.Line - 12
+	if start < 1 {
+		start = 1
+	}
+	end := match.Line + 20
+	return start, end
 }
 
 func (m *Manager) goFindPackage(req ToolRequest) ToolResult {
@@ -3172,8 +3199,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 		return ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
-			Error: fmt.Sprintf("edit_file requires you to have read %s first in this session. Call read_file on this path (or use search_content / search_files / list_files to confirm it exists), then retry the edit.",
-				m.displayPath(path)),
+			Error:   fmt.Sprintf("edit_file requires you to have observed %s in this session before editing it.", m.displayPath(path)),
 		}
 	}
 
@@ -3276,7 +3302,7 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 	startLine := req.StartLine
 	endLine := req.EndLine
 	if startLine <= 0 {
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "start_line must be >= 1 (line numbers are 1-indexed). If you don't know the line number, read the file first or use old_text/new_text instead."}
+		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "start_line must be >= 1 (line numbers are 1-indexed)."}
 	}
 	if endLine == 0 {
 		endLine = startLine

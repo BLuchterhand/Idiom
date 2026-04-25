@@ -35,6 +35,14 @@ type ChatMessage struct {
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 	Name             string     `json:"name,omitempty"`
 	Usage            Usage      `json:"-"`
+	// FinishReason carries the OpenAI-compatible `finish_reason` from the
+	// upstream backend (llama.cpp and mlx_lm.server both populate it).
+	// Common values: "stop" (model emitted EOS / stop-sequence),
+	// "length" (hit max_tokens), "tool_calls" (response is a tool call),
+	// "content_filter" (filtered). Empty when the backend omits it.
+	// Diagnostic only — callers may log it to distinguish a self-stop from
+	// a budget cutoff. Not serialized in chat history.
+	FinishReason string `json:"-"`
 }
 
 // ToolCall mirrors OpenAI function-calling `message.tool_calls[i]`.
@@ -118,6 +126,11 @@ type chatTemplateKwargs struct {
 // chatResponse captures both llama.cpp's `reasoning_content` field and MLX's
 // `reasoning` alias. Upstream code reads the unified Message.ReasoningContent;
 // decoding resolves MLX's shorthand into the same slot via the parsed helper.
+//
+// FinishReason is captured per OpenAI's chat-completion spec. Both llama.cpp
+// and mlx_lm.server emit it ("stop" / "length" / "tool_calls" /
+// "content_filter"). Empty when omitted. Surfaced through ChatMessage so
+// callers can log self-stop vs budget cutoff.
 type chatResponse struct {
 	Error *struct {
 		Message string `json:"message"`
@@ -130,6 +143,7 @@ type chatResponse struct {
 			Reasoning        string     `json:"reasoning,omitempty"`
 			ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
 	Usage Usage `json:"usage,omitempty"`
 }
@@ -401,7 +415,8 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			return ChatMessage{}, fmt.Errorf("chat response did not contain any choices")
 		}
 
-		message := parsed.Choices[0].Message
+		choice := parsed.Choices[0]
+		message := choice.Message
 		role := strings.TrimSpace(message.Role)
 		if role == "" {
 			role = "assistant"
@@ -416,6 +431,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			ReasoningContent: reasoning,
 			ToolCalls:        message.ToolCalls,
 			Usage:            parsed.Usage,
+			FinishReason:     strings.TrimSpace(choice.FinishReason),
 		}, nil
 	}
 }

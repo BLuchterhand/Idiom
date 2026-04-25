@@ -248,7 +248,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "python_calls_from", Request: `{"tool":"python_calls_from","pattern":"Name","path":"."}`, Purpose: "find outgoing Python calls"},
 		{Tool: "python_calls_into", Request: `{"tool":"python_calls_into","pattern":"Name","path":"."}`, Purpose: "find incoming Python calls"},
 		{Tool: "python_workspace_symbol", Request: `{"tool":"python_workspace_symbol","pattern":"Name"}`, Purpose: "workspace-wide Python symbol lookup"},
-		{Tool: "python_diagnostics", Request: `{"tool":"python_diagnostics","path":"src/pkg/file.py"}`, Purpose: "run Python diagnostics (needs pyright/pylsp)"},
+		{Tool: "python_diagnostics", Request: `{"tool":"python_diagnostics","path":"src/pkg/file.py"}`, Purpose: "run Python diagnostics"},
 		{Tool: "python_file_outline", Request: `{"tool":"python_file_outline","path":"src/pkg/file.py"}`, Purpose: "list Python declarations with line ranges"},
 		{Tool: "ts_overview", Request: `{"tool":"ts_overview"}`, Purpose: "summarize TypeScript/JavaScript workspace"},
 		{Tool: "ts_entrypoints", Request: `{"tool":"ts_entrypoints"}`, Purpose: "find TypeScript/JavaScript entrypoints"},
@@ -365,7 +365,6 @@ func RenderSemanticToolRules(allowedTools []string, readOnly bool) string {
 			"Python semantic-tool rules:",
 			"- Prefer Python semantic tools over raw shell/grep for module, symbol, entrypoint, reference, and diagnostics questions.",
 			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
-			"- python_diagnostics requires pyright or pylsp; if neither is installed, fall back to shell (`python -m py_compile`, `ruff check`) explicitly.",
 		)
 	}
 	if hasTs {

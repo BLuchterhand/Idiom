@@ -110,6 +110,9 @@ func TestRunnerRequestBudgetReadBudgetBlocksAfterPostChildBudget(t *testing.T) {
 	if !strings.Contains(decision.ForceAnswerPrompt, "child packet") {
 		t.Fatalf("expected forced-answer guidance to mention child packet, got %#v", decision)
 	}
+	if strings.Contains(strings.ToLower(decision.RejectError+decision.ForceAnswerPrompt), "verification") {
+		t.Fatalf("post-child read budget guidance should not inject verification requirements, got %#v", decision)
+	}
 }
 
 func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {

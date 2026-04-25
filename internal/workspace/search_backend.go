@@ -35,7 +35,7 @@ func resolveContentSearchBackend() (contentSearchBackend, error) {
 			}
 		}
 	}
-	return contentSearchBackend{}, fmt.Errorf("no supported content search backend found; install ripgrep (`rg`) or GNU grep (`ggrep`)")
+	return contentSearchBackend{}, fmt.Errorf("no supported content search backend found (rg or ggrep)")
 }
 
 func hasContentSearchBackend() bool {

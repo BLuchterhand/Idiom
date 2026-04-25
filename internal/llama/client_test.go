@@ -76,6 +76,37 @@ func TestCompleteChatReportsHTTPAndEmptyChoiceErrors(t *testing.T) {
 	}
 }
 
+func TestCompleteChatCapturesFinishReasonFromBothBackends(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		backend string
+		body    string
+		want    string
+	}{
+		{"llama-stop", BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`, "stop"},
+		{"llama-length", BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"length"}]}`, "length"},
+		{"mlx-stop", BackendMLX, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`, "stop"},
+		{"mlx-length", BackendMLX, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"length"}]}`, "length"},
+		{"omitted", BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := tc.body
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client := NewClient(server.URL, time.Second).WithBackend(tc.backend)
+			reply, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{Model: "m"})
+			if err != nil {
+				t.Fatalf("CompleteChatMessage: %v", err)
+			}
+			if reply.FinishReason != tc.want {
+				t.Fatalf("backend=%s: expected finish_reason=%q, got %q", tc.backend, tc.want, reply.FinishReason)
+			}
+		})
+	}
+}
+
 func TestMLXBackendOmitsChatTemplateKwargs(t *testing.T) {
 	enableThinking := true
 	var got chatRequest

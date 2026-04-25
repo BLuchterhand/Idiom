@@ -87,7 +87,7 @@ func (s *taskLedgerState) completionRejection(reply string) (workspace.ToolResul
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Task ledger completion gate rejected final answer",
-			Error:   "this is complex multi-step work, but no task_ledger has been created. Create a task ledger, continue the work, or answer with an explicit blocker/no-op reason.",
+			Error:   "this is complex multi-step work and no task_ledger exists. Create a ledger or, if you are not yet acting on a write, answer with an explicit blocker or no-op reason.",
 		}, true
 	}
 	if !s.created {
@@ -97,7 +97,7 @@ func (s *taskLedgerState) completionRejection(reply string) (workspace.ToolResul
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Task ledger completion gate rejected final answer",
-			Error:   "task ledger still has unfinished required work: " + strings.Join(unfinished, "; ") + ". Continue with the next tool call, update the ledger with a concrete blocker, or if the user asked only for a plan, reply with an explicit planning-exit phrase (for example \"plan ready - awaiting approval\").",
+			Error:   "task ledger still has unfinished required work: " + strings.Join(unfinished, "; ") + ". Continue the work, mark the ledger item with a concrete blocker, or if the user asked only for a plan, finish with an explicit planning-exit phrase (e.g. \"plan ready - awaiting approval\").",
 		}, true
 	}
 	if blocked := s.blockedItems(); len(blocked) > 0 && !taskLedgerFinalHasTerminalReason(reply) {

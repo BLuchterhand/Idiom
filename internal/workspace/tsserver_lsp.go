@@ -129,7 +129,7 @@ func (m *Manager) tsserverBinary() string {
 func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 	tsserver := m.tsserverBinary()
 	if tsserver == "" {
-		return nil, fmt.Errorf("typescript-language-server is not installed. Install with: npm install -g typescript-language-server typescript")
+		return nil, fmt.Errorf("typescript-language-server is not installed")
 	}
 	cmd := exec.CommandContext(ctx, tsserver, "--stdio")
 	cmd.Dir = m.cfg.Root
@@ -173,9 +173,9 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 			"name": filepath.Base(m.cfg.Root),
 		}},
 		"initializationOptions": map[string]any{
-			"hostInfo":     "idiom",
-			"preferences":  map[string]any{},
-			"tsserver":     map[string]any{"logVerbosity": "off"},
+			"hostInfo":                          "idiom",
+			"preferences":                       map[string]any{},
+			"tsserver":                          map[string]any{"logVerbosity": "off"},
 			"disableAutomaticTypingAcquisition": true,
 		},
 	}

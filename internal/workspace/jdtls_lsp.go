@@ -120,7 +120,7 @@ func (m *Manager) jdtlsBinary() string {
 func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error) {
 	jdtls := m.jdtlsBinary()
 	if jdtls == "" {
-		return nil, fmt.Errorf("jdtls is not installed; install with `brew install jdtls` or from https://download.eclipse.org/jdtls/snapshots/")
+		return nil, fmt.Errorf("jdtls is not installed")
 	}
 	cmd := exec.CommandContext(ctx, jdtls)
 	cmd.Dir = m.cfg.Root

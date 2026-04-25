@@ -34,6 +34,156 @@ func buildLlamaTools(defs []workspace.ToolDefinition) []llama.Tool {
 	return out
 }
 
+// postReadinessRequiredFields lists the JSON Schema properties that become
+// required on read-class tool calls once the lane has reached answer
+// readiness or received a child packet. Schema-level enforcement is the
+// load-bearing piece: the model's tool-call decoder rejects calls that
+// omit a required field, so the failure mode "model knows the contract,
+// still emits a no-gap call" closes at the protocol layer instead of
+// being chased through prose rejections.
+var postReadinessRequiredFields = []string{"named_gap", "why_not_answering"}
+
+// applyPostReadinessSchemaRequirements rewrites the JSON Schema of every
+// read-class tool in tools to mark `named_gap` and `why_not_answering` as
+// required and to ensure both properties are declared. Generic across
+// tools — anything that is_read_class returns true for picks up the same
+// schema constraint. Non-read-class tools are returned unchanged.
+//
+// Called from the runner's rebuildTools when delegatedReadOnlyAnswerReady
+// or postChildPacketActive is true. Idempotent: calling twice in a row
+// produces the same schema.
+func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	out := make([]llama.Tool, len(tools))
+	for i, tool := range tools {
+		if !isPostReadinessGapTool(tool.Function.Name) {
+			out[i] = tool
+			continue
+		}
+		mutated, ok := mutateSchemaRequireFields(tool.Function.Parameters, postReadinessRequiredFields)
+		if !ok {
+			out[i] = tool
+			continue
+		}
+		tool.Function.Parameters = mutated
+		out[i] = tool
+	}
+	return out
+}
+
+// isPostReadinessGapTool reports whether a tool name is read-class — i.e.
+// the kind of call that, after readiness or a child packet, must carry a
+// named_gap. Mirrors workspace.IsReadClassRequest's tool list at the name
+// level so we don't need to reconstruct ToolRequest shapes here.
+func isPostReadinessGapTool(name string) bool {
+	switch name {
+	case "read_file", "search_content", "search_files", "list_files",
+		"discovery_query", "structural_search", "ctags_symbols",
+		"go_read_symbol", "go_file_outline", "go_extract_body",
+		"go_workspace_symbol", "go_references", "go_definition",
+		"go_calls_from", "go_calls_into", "go_related_files",
+		"cpp_read_symbol", "cpp_file_outline", "cpp_extract_body",
+		"cpp_workspace_symbol", "cpp_references", "cpp_definition",
+		"cpp_calls_from", "cpp_calls_into", "cpp_related_files",
+		"python_read_symbol", "python_file_outline",
+		"python_workspace_symbol", "python_references", "python_definition",
+		"python_calls_from", "python_calls_into", "python_related_files",
+		"ts_read_symbol", "ts_file_outline",
+		"ts_workspace_symbol", "ts_references", "ts_definition",
+		"ts_calls_from", "ts_calls_into", "ts_related_files",
+		"rust_read_symbol", "rust_file_outline",
+		"rust_workspace_symbol", "rust_references", "rust_definition",
+		"rust_calls_from", "rust_calls_into", "rust_related_files",
+		"java_read_symbol", "java_file_outline",
+		"java_workspace_symbol", "java_references", "java_definition",
+		"java_calls_from", "java_calls_into", "java_related_files",
+		"dependency_graph", "history_range", "history_symbol", "blame_range",
+		"semgrep_scan", "joern_scan":
+		return true
+	default:
+		return false
+	}
+}
+
+// mutateSchemaRequireFields takes a raw JSON Schema (object) and adds the
+// given names to its `required` array and `properties` map. Returns the
+// new raw schema and ok=true. Returns ok=false when the input is not an
+// object schema we can sensibly extend.
+func mutateSchemaRequireFields(raw json.RawMessage, fields []string) (json.RawMessage, bool) {
+	if len(raw) == 0 {
+		raw = json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, false
+	}
+	if t, _ := schema["type"].(string); t != "" && t != "object" {
+		return nil, false
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		props = make(map[string]any)
+	}
+	for _, name := range fields {
+		if _, exists := props[name]; !exists {
+			props[name] = map[string]any{
+				"type":        "string",
+				"description": postReadinessFieldDescription(name),
+			}
+		}
+	}
+	schema["properties"] = props
+
+	requiredSet := make(map[string]struct{})
+	if existing, ok := schema["required"].([]any); ok {
+		for _, v := range existing {
+			if s, ok := v.(string); ok {
+				requiredSet[s] = struct{}{}
+			}
+		}
+	}
+	for _, name := range fields {
+		requiredSet[name] = struct{}{}
+	}
+	required := make([]string, 0, len(requiredSet))
+	if existing, ok := schema["required"].([]any); ok {
+		for _, v := range existing {
+			if s, ok := v.(string); ok {
+				if _, seen := requiredSet[s]; seen {
+					required = append(required, s)
+					delete(requiredSet, s)
+				}
+			}
+		}
+	}
+	for _, name := range fields {
+		if _, ok := requiredSet[name]; ok {
+			required = append(required, name)
+			delete(requiredSet, name)
+		}
+	}
+	schema["required"] = required
+
+	updated, err := json.Marshal(schema)
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(updated), true
+}
+
+func postReadinessFieldDescription(name string) string {
+	switch name {
+	case "named_gap":
+		return "after answer-readiness or a child packet, name one exact unresolved claim this follow-up will verify or falsify; reference a specific symbol, file path, or narrow line range"
+	case "why_not_answering":
+		return "after answer-readiness or a child packet, state what would be materially wrong or missing if you answered now"
+	default:
+		return ""
+	}
+}
+
 // toolResultMessage builds the message we append to turnMessages after
 // a tool executes. When the call came in via native tool_calls (call is
 // non-nil), we return a role:"tool" message linked by tool_call_id —

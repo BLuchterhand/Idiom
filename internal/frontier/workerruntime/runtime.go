@@ -520,7 +520,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	if containsAny(combined, "approval required", "write approval required") {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "stop and report that write approval is required")
 	}
-	if strings.Contains(combined, "verification") {
+	if isActualVerificationRecoverySignal(combined) {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "resolve verification status before claiming completion")
 	}
 	if containsAny(combined, "completion gate", "final answer rejected") {
@@ -541,7 +541,7 @@ func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.
 		return "guard_rejection"
 	case containsAny(combined, "completion gate", "final answer rejected"):
 		return "completion_gate"
-	case strings.Contains(combined, "verification"):
+	case isActualVerificationRecoverySignal(combined):
 		return "verification_unresolved"
 	case containsAny(combined, "same tool request", "repeated tool request", "replayed", "already failed earlier", "repeated dead-end"):
 		return "repeated_action"
@@ -560,6 +560,26 @@ func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.
 	default:
 		return "unknown"
 	}
+}
+
+func isActualVerificationRecoverySignal(combined string) bool {
+	combined = strings.ToLower(strings.TrimSpace(combined))
+	if combined == "" {
+		return false
+	}
+	return containsAny(combined,
+		"verification failed",
+		"verification result",
+		"verification status",
+		"verification-only",
+		"verification only",
+		"verification command",
+		"verification contract",
+		"missing verification",
+		"missing-verification",
+		"post-edit verification",
+		"resolve verification",
+	)
 }
 
 func ClassifyPhase(req workspace.ToolRequest, result workspace.ToolResult) string {

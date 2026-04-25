@@ -137,6 +137,26 @@ func TestBuildRecoveryPlanDoesNotPromoteEveryValidNextToRequiredNext(t *testing.
 	}
 }
 
+func TestBuildRecoveryPlanDoesNotTreatOptionListVerificationAsRequirement(t *testing.T) {
+	plan := BuildRecoveryPlan(RecoveryInput{
+		Reason:       "tool_rejected",
+		Request:      workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner_child_tasks.go"},
+		Constraints:  []string{"child_packet_available"},
+		WriteCapable: false,
+		Result: workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Post-child read budget exhausted",
+			Error:   "the child evidence packet has already been gathered. Synthesize the answer, make the next write, run verification, or state the concrete blocker.",
+		},
+	})
+	if plan.FailureClass == "verification_unresolved" {
+		t.Fatalf("option-list wording should not become verification_unresolved, got %#v", plan)
+	}
+	if containsString(plan.RequiredNext, "resolve verification status before claiming completion") {
+		t.Fatalf("option-list wording should not add verification required_next, got %#v", plan)
+	}
+}
+
 func TestBuildActionGuidanceClosureOmitsTextSearchFallbackAfterReadSuccess(t *testing.T) {
 	guidance := BuildActionGuidance(ActionGuidanceInput{
 		Reason:      "tool_result",

@@ -1,9 +1,9 @@
 package workspace
 
-// TypeScript/JavaScript deterministic tools. Mirrors cpp_tools.go at the
+// TypeScript/JavaScript structured tools. Mirrors cpp_tools.go at the
 // same depth: all 13 canonical capabilities, a semantic-index-backed
 // fallback, an LSP-backed path that uses typescript-language-server when
-// installed. No include-graph / blast-radius / dead-symbol extras — those
+// available. No include-graph / blast-radius / dead-symbol extras - those
 // are C++-specific.
 //
 // The index is cached per-Manager in a package-level map rather than on
@@ -283,7 +283,7 @@ func (m *Manager) tsImplementations(ctx context.Context, req ToolRequest) ToolRe
 			Output:  output,
 		}
 	}
-	return ToolResult{Tool: "ts_implementations", Summary: "TypeScript implementations unavailable", Error: "typescript-language-server is required for implementation queries (install: npm install -g typescript-language-server typescript)"}
+	return ToolResult{Tool: "ts_implementations", Summary: "TypeScript implementations unavailable", Error: "typescript-language-server is required for implementation queries"}
 }
 
 func (m *Manager) tsReferences(ctx context.Context, req ToolRequest) ToolResult {
@@ -472,7 +472,7 @@ func (m *Manager) tsFileOutline(req ToolRequest) ToolResult {
 
 func (m *Manager) tsDiagnostics(ctx context.Context, req ToolRequest) ToolResult {
 	if m.tsserverBinary() == "" {
-		return ToolResult{Tool: "ts_diagnostics", Summary: "TypeScript diagnostics unavailable", Error: "typescript-language-server is not installed (install: npm install -g typescript-language-server typescript)"}
+		return ToolResult{Tool: "ts_diagnostics", Summary: "TypeScript diagnostics unavailable", Error: "typescript-language-server is not installed"}
 	}
 	files, err := m.tsDiagnosticTargets(req)
 	if err != nil {
