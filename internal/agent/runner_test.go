@@ -3448,6 +3448,89 @@ func TestAnswerComposerDoesNotLeakTelemetrySections(t *testing.T) {
 	}
 }
 
+func TestAnswerComposerDecoratesDiscoveryToolImprovementAnswer(t *testing.T) {
+	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
+		Question: "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+		EvidencePaths: []string{
+			"internal/agent/runner.go",
+			"internal/agent/answer_composer.go",
+			"internal/agent/runner_lane_policy.go",
+			"internal/agent/discovery_redirect.go",
+			"internal/agent/runner_test.go",
+		},
+		Summaries: []delegatedDiscoverySummary{{
+			Purpose:      "architecture_boundary",
+			ArtifactPath: ".idiom/discovery/queries/query.json",
+			Evidence: []struct {
+				Name          string `json:"name"`
+				Tool          string `json:"tool"`
+				Summary       string `json:"summary"`
+				Error         string `json:"error,omitempty"`
+				OutputExcerpt string `json:"output_excerpt,omitempty"`
+			}{
+				{Name: "text_anchor_search", Summary: "Found 178 matching line(s) (showing first 50). Use read_file on a returned handle, or narrow the pattern to see more."},
+				{Name: "dependency_graph", Summary: "Collected Go dependency graph with go list -deps"},
+			},
+		}},
+	})
+	if !ok {
+		t.Fatal("expected discovery-tool improvement answer")
+	}
+	for _, want := range []string{
+		"## Discovery Tool Improvements",
+		"### Additions Worth Making",
+		"Purpose-specific answer blueprints",
+		"Layer-aware synthesis",
+		"### Where This Belongs",
+		"`internal/agent/answer_composer.go`",
+		"`internal/agent/runner.go`",
+		"`internal/agent/runner_lane_policy.go`",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected discovery improvement answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"What I found:", "text_anchor_search:", "Open a returned handle", "Discovery packet:", "discovery packet", "Evidence used:", "Confidence:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("discovery improvement answer leaked weak/raw section %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestAnswerComposerGenericFallbackDecoratesDiscoveryLayers(t *testing.T) {
+	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
+		Question:      "How is routing decided?",
+		EvidencePaths: []string{"internal/app/turn_planner.go", "internal/agent/modes.go"},
+		Summaries: []delegatedDiscoverySummary{{
+			Purpose:      "architecture_boundary",
+			ArtifactPath: ".idiom/discovery/queries/query.json",
+			Evidence: []struct {
+				Name          string `json:"name"`
+				Tool          string `json:"tool"`
+				Summary       string `json:"summary"`
+				Error         string `json:"error,omitempty"`
+				OutputExcerpt string `json:"output_excerpt,omitempty"`
+			}{
+				{Name: "text_anchor_search", Summary: "Found routing anchors in internal/app/turn_planner.go. Use read_file on a returned handle, or narrow the pattern to see more."},
+				{Name: "go_read_symbol", Summary: "Read classifyPromptRoute in internal/app/turn_planner.go lines 42-96"},
+			},
+		}},
+	})
+	if !ok {
+		t.Fatal("expected generic composed answer")
+	}
+	for _, want := range []string{"## Grounded Answer", "### Evidence Highlights", "Text anchors:", "Symbol read:", "### Recommended Next Step"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected decorated generic answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"What I found:", "text_anchor_search:", "go_read_symbol:", "Use read_file on a returned handle", "Discovery packet:", "discovery packet", "Confidence:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("generic answer leaked raw discovery wording %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
 func TestDelegatedReadOnlyReadRedirectUsesPriorSearchHitWindow(t *testing.T) {
 	runner := &Runner{
 		AgentName: "child:explorer",
@@ -3928,7 +4011,7 @@ func TestRunnerArchitectureReturnsChildPacketWithoutParentFollowups(t *testing.T
 	}
 }
 
-func TestRunnerChildAnswerReadyRejectionStillLeadsToFinalAnswer(t *testing.T) {
+func TestRunnerChildDiscoveryPacketAutoSynthesizesFinalAnswer(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "agent"), 0o755); err != nil {
 		t.Fatalf("mkdir agent dir: %v", err)
@@ -3962,6 +4045,7 @@ func TestRunnerChildAnswerReadyRejectionStillLeadsToFinalAnswer(t *testing.T) {
 	}))
 	defer server.Close()
 
+	var roles []string
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, 2*time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -3978,6 +4062,9 @@ func TestRunnerChildAnswerReadyRejectionStillLeadsToFinalAnswer(t *testing.T) {
 			AllowedTools:      []string{"task", "search_content", "read_file", "go_file_outline"},
 			SearchPolicy:      []string{"delegate_broad_discovery_when_needed"},
 		},
+	}
+	runner.OnEvent = func(event RunEvent) {
+		roles = append(roles, event.Role)
 	}
 	answer, err := runner.Run(
 		context.Background(),
@@ -4001,8 +4088,51 @@ func TestRunnerChildAnswerReadyRejectionStillLeadsToFinalAnswer(t *testing.T) {
 			t.Fatalf("unexpected answer with %q: %q", forbidden, answer)
 		}
 	}
-	if requests >= len(replies) {
-		t.Fatalf("expected child answer-ready rejection to synthesize before exhausting scripted replies, used %d/%d replies", requests, len(replies))
+	if !slices.Contains(roles, "child_delegated_read_only_answer_ready") {
+		t.Fatalf("expected child answer-ready event, got roles %v", roles)
+	}
+	if requests != 2 {
+		t.Fatalf("expected parent task call plus one child discovery call, used %d requests", requests)
+	}
+}
+
+func TestDelegatedReadOnlyAnswerReadyAfterDiscoveryQuery(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Discovery query complete",
+		Output:  `{"artifact_path":".codex/discovery/impact-analysis.json","evidence":[{"path":"internal/agent/runner.go","excerpt":"task child delegated_read_only"},{"path":"internal/agent/runner_child_tasks.go","excerpt":"child task runner"}]}`,
+	}}
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "delegated_read_only",
+			Objective:         "Explain child discovery.",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+
+	forced, ok := runner.delegatedReadOnlyAnswerReadyAfterResult(
+		workspace.ToolRequest{Tool: "discovery_query"},
+		results[0],
+		results,
+	)
+	if !ok || forced == nil {
+		t.Fatalf("expected sufficient discovery_query packet to force a delegated read-only answer")
+	}
+	if forced.Reason != "delegated_read_only_answer_ready" {
+		t.Fatalf("unexpected forced reason: %q", forced.Reason)
+	}
+
+	mutationRunner := *runner
+	mutationRunner.RuntimeBrief.Contract = "implementation"
+	if forced, ok := mutationRunner.delegatedReadOnlyAnswerReadyAfterResult(workspace.ToolRequest{Tool: "discovery_query"}, results[0], results); ok || forced != nil {
+		t.Fatalf("did not expect answer-ready shortcut for mutation-required child")
+	}
+
+	failingResult := results[0]
+	failingResult.Error = "discovery failed"
+	if forced, ok := runner.delegatedReadOnlyAnswerReadyAfterResult(workspace.ToolRequest{Tool: "discovery_query"}, failingResult, []workspace.ToolResult{failingResult}); ok || forced != nil {
+		t.Fatalf("did not expect answer-ready shortcut after failed discovery")
 	}
 }
 

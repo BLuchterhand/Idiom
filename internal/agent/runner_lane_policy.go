@@ -74,17 +74,12 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
-	if _, ok := r.delegatedReadOnlyAnswerReadyPrompt(input.Results, decision.Request); ok {
+	if prompt, ok := r.delegatedReadOnlyAnswerReadyPrompt(input.Results, decision.Request); ok {
 		decision.RejectSummary = "Delegated child evidence is sufficient for a grounded answer"
 		decision.RejectError = "you already inspected the key implementation surfaces needed for this delegated read-only question. Do not request more tools; answer directly from the evidence you already have."
 		decision.ForceAnswer = &runnerForcedAnswer{
 			Reason: "delegated_read_only_answer_ready",
-			Prompt: strings.Join([]string{
-				"You already inspected enough implementation evidence for this delegated read-only question.",
-				"Do not request more tools.",
-				"Answer directly from the inspected code.",
-				"State the mechanism, cite the inspected repository-relative paths, and give a concise confidence level.",
-			}, "\n"),
+			Prompt: prompt,
 		}
 		return decision
 	}
@@ -637,6 +632,39 @@ func (r *Runner) delegatedReadOnlyAnswerReadyPrompt(results []workspace.ToolResu
 		"Answer directly from the inspected code.",
 		"State the mechanism, cite the inspected repository-relative paths, and give a concise confidence level.",
 	}, "\n"), true
+}
+
+func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) (*runnerForcedAnswer, bool) {
+	if r == nil || strings.TrimSpace(result.Error) != "" {
+		return nil, false
+	}
+	if !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
+		return nil, false
+	}
+	if runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+		return nil, false
+	}
+	tool := strings.TrimSpace(firstNonEmpty(result.Tool, req.Tool))
+	switch {
+	case tool == "discovery_query":
+		if !delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
+			return nil, false
+		}
+	case isReadClassTool(workspace.ToolRequest{Tool: tool}):
+		if len(delegatedReadOnlyInspectedImplementationPaths(results)) < 2 {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+	prompt, ok := r.delegatedReadOnlyAnswerReadyPrompt(results, workspace.ToolRequest{Tool: "read_file"})
+	if !ok {
+		return nil, false
+	}
+	return &runnerForcedAnswer{
+		Reason: "delegated_read_only_answer_ready",
+		Prompt: prompt,
+	}, true
 }
 
 func delegatedReadOnlyHasCompositeDiscoveryPacket(results []workspace.ToolResult) bool {

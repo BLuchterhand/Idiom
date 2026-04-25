@@ -162,6 +162,77 @@
       }
     },
     {
+      "id": "discovery-tools-usefulness",
+      "family": "architecture",
+      "prompt": "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+      "tags": [
+        "read-only",
+        "architecture",
+        "explain",
+        "discovery"
+      ],
+      "scenario": {
+        "name": "discovery-tools-usefulness",
+        "prompt_contains": [
+          "discovery tools",
+          "overall usefulness"
+        ],
+        "final_assistant_contains": [
+          "Discovery Tool Improvements",
+          "Additions Worth Making",
+          "Purpose-specific answer blueprints",
+          "Layer-aware synthesis"
+        ],
+        "forbid_final_assistant_contains": [
+          "What I found:",
+          "text_anchor_search:",
+          "Discovery packet",
+          "Relevant source hits",
+          "Evidence used"
+        ],
+        "require_tools": [
+          "task"
+        ],
+        "require_discovery_tools": [
+          "discovery_query"
+        ],
+        "require_discovery_classes": [
+          "composite_query"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "mkdir"
+        ],
+        "require_readiness": {
+          "lane": "architecture",
+          "ready": true,
+          "action": "answer",
+          "min_evidence_paths": 2
+        },
+        "require_final_answer_critic": {
+          "contract": "architecture_assessment",
+          "passed": true,
+          "action": "accept"
+        },
+        "require_evidence_paths": [
+          "internal/agent/answer_composer.go",
+          "internal/agent/runner.go"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 5,
+        "max_duration_millis": 90000
+      }
+    },
+    {
       "id": "verification-only-report-failure",
       "family": "verification_only",
       "prompt": "Run the tests in the seeded failing fixture and report the failure without editing files.",

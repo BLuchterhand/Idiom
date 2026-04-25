@@ -814,6 +814,13 @@ func (r *Runner) Run(
 		}
 		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
 		r.attachInstructionsForTouchedPaths(&turnMessages, req, result)
+		if forced, ok := r.delegatedReadOnlyAnswerReadyAfterResult(req, result, collectedResults); ok {
+			if answer, ok := r.directForcedAnswer(forced, collectedResults); ok {
+				r.emitDelegatedReadOnlyAnswerReadyEvent(req, collectedResults)
+				r.emitAcceptedAnswerSignals(answer, collectedResults)
+				return finish(answer, nil, forced.Reason, false)
+			}
+		}
 		if strings.TrimSpace(result.Error) != "" {
 			// Track same-stem tool failures so we can inject a recovery
 			// nudge before burning the whole budget on hallucinated paths
@@ -1362,6 +1369,28 @@ func (r *Runner) emitEvent(event RunEvent) {
 		return
 	}
 	r.OnEvent(event)
+}
+
+func (r *Runner) emitDelegatedReadOnlyAnswerReadyEvent(req workspace.ToolRequest, results []workspace.ToolResult) {
+	if r == nil || r.OnEvent == nil {
+		return
+	}
+	paths := delegatedDiscoveryQueryEvidencePaths(results, 8)
+	if len(paths) == 0 {
+		paths = delegatedReadOnlyInspectedImplementationPaths(results)
+	}
+	payload := map[string]any{
+		"agent":                      r.agentName(),
+		"reason":                     "sufficient_delegated_read_only_evidence",
+		"trigger_tool":               strings.TrimSpace(req.Tool),
+		"composite_discovery_packet": delegatedReadOnlyHasCompositeDiscoveryPacket(results),
+		"evidence_paths":             paths,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	r.OnEvent(RunEvent{Role: "delegated_read_only_answer_ready", Content: string(data)})
 }
 
 func (r *Runner) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage, policy RunPolicy, ledger *taskLedgerState, results []workspace.ToolResult) bool {
@@ -2109,7 +2138,7 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 
 	paths := delegatedReadOnlyInspectedImplementationPaths(results)
 	if len(paths) == 0 {
-		paths = delegatedDiscoveryQueryEvidencePaths(results, 4)
+		paths = delegatedDiscoveryQueryEvidencePaths(results, 8)
 	}
 	if len(paths) == 0 {
 		paths = pinnedPathsFromToolResults(results, 4)

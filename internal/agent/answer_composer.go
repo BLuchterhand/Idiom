@@ -23,8 +23,10 @@ func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool) {
 		return composeDebugLogRedactedModeAnswer(delegatedDiscoveryAnswerEvidencePaths(question, paths)), true
 	case delegatedObjectiveLooksLikeSubagents(question):
 		return composeSubagentHandoffAnswer(delegatedDiscoveryAnswerEvidencePaths(question, paths)), true
+	case delegatedObjectiveLooksLikeDiscoveryToolImprovement(question):
+		return composeDiscoveryToolImprovementAnswer(delegatedDiscoveryAnswerEvidencePaths(question, paths)), true
 	case len(input.Summaries) > 0:
-		return composeGenericEvidenceAnswer(input.Summaries, paths), true
+		return composeGenericEvidenceAnswer(question, input.Summaries, paths), true
 	default:
 		return "", false
 	}
@@ -102,20 +104,135 @@ func composeSubagentHandoffAnswer(paths []string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func composeGenericEvidenceAnswer(summaries []delegatedDiscoverySummary, paths []string) string {
+func composeDiscoveryToolImprovementAnswer(paths []string) string {
+	paths = preferComposerPaths(paths,
+		"internal/agent/answer_composer.go",
+		"internal/agent/runner.go",
+		"internal/agent/runner_lane_policy.go",
+		"internal/agent/discovery_redirect.go",
+		"internal/workspace/tool_manifest.go",
+	)
 	var b strings.Builder
-	b.WriteString("What I found:\n")
-	for _, line := range delegatedDiscoveryFindingLines(summaries, 4) {
-		b.WriteString("- ")
-		b.WriteString(line)
+	b.WriteString("## Discovery Tool Improvements\n\n")
+	b.WriteString("The current discovery stack is already good at finding evidence; the weak point is turning that evidence into a useful human answer. The next useful additions should make discovery more purpose-aware and answer-oriented, not just add more raw search surfaces.\n\n")
+	b.WriteString("### Additions Worth Making\n\n")
+	b.WriteString("- **Purpose-specific answer blueprints**: map common discovery purposes such as impact analysis, function tracing, architecture explanation, and debugging to expected answer sections.\n")
+	b.WriteString("- **Evidence scoring and deduping**: rank implementation files above tests, artifacts, raw search handles, and incidental path-looking strings before they reach the final answer.\n")
+	b.WriteString("- **Gap extraction**: make each evidence bundle name what it did not prove, so final answers can distinguish verified claims from remaining uncertainty.\n")
+	b.WriteString("- **Layer-aware synthesis**: translate deterministic layers like text search, dependency graphs, related files, and symbol reads into human-facing findings instead of exposing tool labels.\n")
+	b.WriteString("- **Composer coverage tests**: every discovery purpose that can short-circuit into an answer should have a fixture proving the final response is readable, specific, and free of telemetry sections.\n\n")
+	b.WriteString("### Where This Belongs\n\n")
+	b.WriteString("- `discovery_query` should stay responsible for collecting deterministic evidence packets.\n")
+	b.WriteString("- `runner_lane_policy.go` should decide when a child has enough evidence and can stop.\n")
+	b.WriteString("- `answer_composer.go` should own final presentation, including purpose-specific response shapes and generic fallback decoration.\n")
+	b.WriteString("- Live/eval scenarios should assert both the efficient path and the answer shape, otherwise the system can be technically correct and still useless to a human.\n")
+	if len(paths) > 0 {
+		b.WriteString("\nPrimary files: ")
+		b.WriteString(formatInlinePathList(paths, 5))
+		b.WriteString(".")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func composeGenericEvidenceAnswer(question string, summaries []delegatedDiscoverySummary, paths []string) string {
+	var b strings.Builder
+	b.WriteString("## Grounded Answer\n\n")
+	if strings.TrimSpace(question) != "" {
+		b.WriteString("For `")
+		b.WriteString(strings.TrimSpace(question))
+		b.WriteString("`, deterministic discovery found the relevant implementation surfaces, but no purpose-specific answer template matched. The useful response is therefore a compact synthesis of the strongest evidence, not a dump of raw discovery layers.\n\n")
+	} else {
+		b.WriteString("Deterministic discovery found relevant implementation surfaces, but no purpose-specific answer template matched. The useful response is therefore a compact synthesis of the strongest evidence, not a dump of raw discovery layers.\n\n")
+	}
+	if lines := decoratedDiscoveryFindingLines(summaries, 4); len(lines) > 0 {
+		b.WriteString("### Evidence Highlights\n")
+		for _, line := range lines {
+			b.WriteString("- ")
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
 		b.WriteString("\n")
 	}
+	b.WriteString("### Recommended Next Step\n")
+	b.WriteString("- Add or refine a purpose-specific composer for this question class if it is expected to recur; otherwise use the primary files below for one targeted follow-up read before answering in detail.\n")
 	if len(paths) > 0 {
 		b.WriteString("\nPrimary files: ")
 		b.WriteString(formatInlinePathList(paths, 4))
 		b.WriteString(".")
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func decoratedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit int) []string {
+	raw := delegatedDiscoveryFindingLines(summaries, limit)
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		name, text, ok := strings.Cut(line, ":")
+		if ok {
+			line = humanDiscoveryLayerName(name) + ": " + cleanDiscoveryFindingText(text)
+		} else {
+			line = cleanDiscoveryFindingText(line)
+		}
+		if line == "" || strings.Contains(strings.ToLower(line), "open a returned handle") {
+			continue
+		}
+		lines = append(lines, line)
+		if limit > 0 && len(lines) >= limit {
+			return lines
+		}
+	}
+	return lines
+}
+
+func humanDiscoveryLayerName(name string) string {
+	switch strings.TrimSpace(name) {
+	case "text_anchor_search":
+		return "Text anchors"
+	case "dependency_graph":
+		return "Dependency graph"
+	case "related_files":
+		return "Related files"
+	case "go_read_symbol":
+		return "Symbol read"
+	case "go_workspace_symbol", "ctags_symbols":
+		return "Symbol index"
+	case "structural_search":
+		return "Structural search"
+	case "history_range", "history_symbol":
+		return "History"
+	case "blame_range":
+		return "Blame"
+	case "semgrep_scan":
+		return "Static scan"
+	case "joern_scan":
+		return "Code property graph"
+	default:
+		return strings.TrimSpace(strings.ReplaceAll(name, "_", " "))
+	}
+}
+
+func cleanDiscoveryFindingText(text string) string {
+	text = strings.TrimSpace(text)
+	for _, suffix := range []string{
+		" Use read_file on a returned handle, or narrow the pattern to see more.",
+		" Open a returned handle with read_file.",
+		" Use read_file on a returned handle to inspect a file.",
+	} {
+		text = strings.ReplaceAll(text, suffix, ".")
+	}
+	text = strings.ReplaceAll(text, "  ", " ")
+	return strings.TrimSpace(text)
+}
+
+func delegatedObjectiveLooksLikeDiscoveryToolImprovement(objective string) bool {
+	lower := strings.ToLower(objective)
+	return strings.Contains(lower, "discovery tool") &&
+		(containsAny(lower, "useful", "usefulness", "improve", "increasing", "add", "complement", "better") ||
+			strings.Contains(lower, "what can we add"))
 }
 
 func preferComposerPaths(paths []string, preferred ...string) []string {
