@@ -179,15 +179,24 @@ func (r *Runner) delegatedReadOnlyBootstrapRequest(results []workspace.ToolResul
 	}
 	switch strings.TrimSpace(req.Tool) {
 	case "list_files":
+		if redirected, ok := delegatedReadOnlyBootstrapStructuredRequest(r.RuntimeBrief.Objective, r.RuntimeBrief.AllowedTools); ok {
+			return redirected, true
+		}
 		return delegatedReadOnlyBootstrapSearchRequest(r.RuntimeBrief.Objective)
 	case "search_files":
 		pattern := strings.TrimSpace(req.Pattern)
 		if pattern == "" || pattern == "*" || pattern == "*.go" || strings.HasPrefix(pattern, "*") {
+			if redirected, ok := delegatedReadOnlyBootstrapStructuredRequest(r.RuntimeBrief.Objective, r.RuntimeBrief.AllowedTools); ok {
+				return redirected, true
+			}
 			return delegatedReadOnlyBootstrapSearchRequest(r.RuntimeBrief.Objective)
 		}
 	case "search_content":
 		path := strings.TrimSpace(req.Path)
 		if path == "" || path == "." || !frontier.HasWorkspaceFileExtension(path) {
+			if redirected, ok := delegatedReadOnlyBootstrapStructuredRequest(r.RuntimeBrief.Objective, r.RuntimeBrief.AllowedTools); ok {
+				return redirected, true
+			}
 			return delegatedReadOnlyBootstrapSearchRequest(r.RuntimeBrief.Objective)
 		}
 	}
@@ -291,6 +300,17 @@ func delegatedReadOnlyBootstrapSearchRequest(objective string) (workspace.ToolRe
 	return req, true
 }
 
+func delegatedReadOnlyBootstrapStructuredRequest(objective string, allowedTools []string) (workspace.ToolRequest, bool) {
+	if !containsRunnerTool(allowedTools, "go_workspace_symbol") {
+		return workspace.ToolRequest{}, false
+	}
+	pattern := delegatedReadOnlyBootstrapSymbolPattern(objective)
+	if pattern == "" {
+		return workspace.ToolRequest{}, false
+	}
+	return workspace.ToolRequest{Tool: "go_workspace_symbol", Pattern: pattern}, true
+}
+
 func delegatedReadOnlyBootstrapScope(objective string) string {
 	for _, line := range strings.Split(objective, "\n") {
 		line = strings.TrimSpace(line)
@@ -361,6 +381,39 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 	return strings.Join(terms, "|")
 }
 
+func delegatedReadOnlyBootstrapSymbolPattern(objective string) string {
+	candidates := make([]string, 0, 6)
+	for _, line := range strings.Split(objective, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		if !strings.HasPrefix(lower, "key terms:") {
+			continue
+		}
+		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
+			if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(candidate); ok {
+				candidates = appendUniqueSearchTerm(candidates, symbol)
+			}
+		}
+	}
+	for _, fragment := range frontier.QuotedPromptFragments(objective) {
+		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(fragment); ok {
+			candidates = appendUniqueSearchTerm(candidates, symbol)
+		}
+	}
+	for _, candidate := range strings.Fields(objective) {
+		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(candidate); ok {
+			candidates = appendUniqueSearchTerm(candidates, symbol)
+		}
+		if len(candidates) >= 2 {
+			break
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
+}
+
 func delegatedReadOnlySearchTerm(raw string) (string, bool) {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	value = strings.Trim(value, "`'\"()[]{}<>,:;!?")
@@ -389,6 +442,37 @@ func delegatedReadOnlySearchTerm(raw string) (string, bool) {
 		return "", false
 	}
 	return pattern, true
+}
+
+func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
+	value := strings.TrimSpace(raw)
+	value = strings.Trim(value, "`'\"()[]{}<>,:;!?")
+	value = strings.TrimSpace(strings.TrimPrefix(value, "./"))
+	if value == "" || frontier.LooksLikeWorkspacePathToken(strings.ToLower(value)) {
+		return "", false
+	}
+	if len(value) < 4 {
+		return "", false
+	}
+	hasLetter := false
+	for _, r := range value {
+		switch {
+		case unicode.IsLetter(r):
+			hasLetter = true
+		case unicode.IsDigit(r), r == '_':
+		default:
+			return "", false
+		}
+	}
+	if !hasLetter {
+		return "", false
+	}
+	lower := strings.ToLower(value)
+	switch lower {
+	case "agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main", "files", "file", "directory", "directories", "entry", "entrypoints", "line", "lines", "harness", "implementation", "source", "truth", "before", "tests", "test", "readme", "docs", "start", "subagent", "subagents", "delegate", "delegated", "task", "runner":
+		return "", false
+	}
+	return value, true
 }
 
 func appendUniqueSearchTerm(values []string, value string) []string {
@@ -526,6 +610,9 @@ func (r *Runner) delegatedReadOnlyNamedFileReadRedirect(results []workspace.Tool
 	pattern := delegatedReadOnlyBootstrapPattern(r.RuntimeBrief.Objective)
 	if pattern == "" {
 		return workspace.ToolRequest{}, false
+	}
+	if containsRunnerTool(r.RuntimeBrief.AllowedTools, "go_file_outline") {
+		return workspace.ToolRequest{Tool: "go_file_outline", Path: path}, true
 	}
 	return workspace.ToolRequest{Tool: "search_content", Path: path, Pattern: pattern}, true
 }

@@ -93,15 +93,19 @@ type ToolRequest struct {
 	Moves        []GoDeclarationMove `json:"moves,omitempty"`
 	Todos        []TaskLedgerItem    `json:"todos,omitempty"`
 	Items        []TaskLedgerItem    `json:"items,omitempty"`
-	// NamedGap explains the exact unresolved question a post-readiness
-	// follow-up tool call is trying to close. Optional in general, but
-	// required by the runner once answer-readiness or child-packet
-	// sufficiency has already been reached and the model still wants
-	// another read/search step.
+	// NamedGap explains one exact unresolved claim a post-readiness
+	// follow-up tool call is trying to verify or falsify. It should be
+	// specific enough that the next discovery move is obvious (for
+	// example, inspect one function body, one caller branch, or one
+	// implementation boundary). Optional in general, but required by the
+	// runner once answer-readiness or child-packet sufficiency has
+	// already been reached and the model still wants another read/search
+	// step.
 	NamedGap string `json:"named_gap,omitempty"`
-	// WhyNotAnswering is a short explanation for why the model is not
-	// answering yet despite already reaching a closure-biased state.
-	// Optional, and usually paired with NamedGap on post-readiness reads.
+	// WhyNotAnswering is a short explanation for what would be materially
+	// wrong or missing if the model answered now despite already reaching
+	// a closure-biased state. Optional, and usually paired with NamedGap
+	// on post-readiness reads.
 	WhyNotAnswering string `json:"why_not_answering,omitempty"`
 	// Description is the tactical intent for a write-tool call — why this
 	// edit, in one short sentence. Required for edit_file, write_file,

@@ -53,7 +53,7 @@ func (c *runnerTurnController) rejectTool(step int, activeToolCall *llama.ToolCa
 	})
 	if c.consecutiveRejected != nil && *c.consecutiveRejected >= 2 {
 		if c.rejectionRecoveryNudgeUsed != nil && !*c.rejectionRecoveryNudgeUsed {
-			if nudge := buildRejectionRecoveryNudge(req, c.snapshotResults(), c.runner.Workspace, c.runner.RuntimeBrief); nudge != "" {
+			if nudge := buildRejectionRecoveryNudge(req, c.snapshotResults(), c.runner.Workspace, c.runner.RuntimeBrief, c.runner.agentName(), false, false); nudge != "" {
 				*c.rejectionRecoveryNudgeUsed = true
 				if c.turnMessages != nil {
 					*c.turnMessages = append(*c.turnMessages, llama.ChatMessage{Role: "system", Content: nudge})

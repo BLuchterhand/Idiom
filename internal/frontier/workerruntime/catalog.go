@@ -84,7 +84,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			PermissionProfile:    "read_only_workspace",
 			ToolProfile:          CapabilityLocateOnly,
 			RequiredEvidence:     []string{"exact_workspace_path", "line_or_snippet", "target_match_reason"},
-			SearchPolicy:         []string{"literal_search_first", "fallback_pattern_search", "read_best_candidate"},
+			SearchPolicy:         []string{"literal_search_first", "prefer_symbol_or_handle_before_raw_file_read", "fallback_pattern_search", "stop_when_exact_target_is_supported"},
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"required_evidence_satisfied", "blocked_by_missing_information"},
 		}
@@ -103,7 +103,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			FinalCritic:          []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"},
 		}
 	case "security_review", "performance_review":
-		searchPolicy := []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_composite_review", "rank_candidates", "deepen_if_no_bounded_finding", "use_structural_search_for_syntax_shapes", "use_dependency_graph_for_boundary_or_import_questions"}
+		searchPolicy := []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_composite_review", "rank_candidates", "answer_when_bounded_finding_or_no_finding_is_supported", "if_continuing_name_one_exact_missing_claim_and_probe", "deepen_if_no_bounded_finding", "use_structural_search_for_syntax_shapes", "use_dependency_graph_for_boundary_or_import_questions"}
 		if strings.TrimSpace(family) == "security_review" {
 			searchPolicy = append(searchPolicy, "prefer_discovery_query_security_review_before_raw_scans", "prefer_semgrep_scan_for_security_patterns", "reserve_joern_scan_for_heavy_dataflow_questions")
 		}
@@ -126,7 +126,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			ToolProfile:          CapabilityReadOnlyDiscovery,
 			RequiredEvidence:     []string{"inspected_paths", "architecture_boundary_evidence", "confidence"},
 			RequiredTools:        []string{"workspace_inspection"},
-			SearchPolicy:         []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components", "use_dependency_graph_for_boundary_or_import_questions", "use_history_only_for_evolution_questions"},
+			SearchPolicy:         []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components", "answer_when_boundary_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "use_dependency_graph_for_boundary_or_import_questions", "use_history_only_for_evolution_questions"},
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"required_evidence_satisfied", "budget_exhausted_with_uncertainty_declared"},
 		}

@@ -56,6 +56,7 @@ type ActionGuidanceInput struct {
 	Reason                     string
 	Request                    workspace.ToolRequest
 	Result                     workspace.ToolResult
+	Constraints                []string
 	DeclarationMovesForbidden  bool
 	ApprovedTargetScopePresent bool
 	// Objective is the current user ask for this turn, pulled verbatim
@@ -119,6 +120,7 @@ type RecoveryInput struct {
 	Request                   workspace.ToolRequest
 	Result                    workspace.ToolResult
 	EvidencePaths             []string
+	Constraints               []string
 	DeclarationMovesForbidden bool
 	Objective                 string
 }
@@ -136,6 +138,7 @@ type RecoveryPlan struct {
 func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	statusCombined := combinedLower(input.Reason, input.Result.Summary, input.Result.Error)
 	tool := strings.TrimSpace(input.Request.Tool)
+	closureScope := closureGuidanceScope(input.Constraints, statusCombined)
 	guidance := ActionGuidance{}
 	if input.DeclarationMovesForbidden {
 		guidance.Constraints = appendUnique(guidance.Constraints, "declaration_moves_forbidden")
@@ -152,6 +155,9 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 	if strings.Contains(statusCombined, "bootstrap already inspected") {
 		guidance.Constraints = appendUnique(guidance.Constraints, "bootstrap_evidence_available")
+	}
+	if closureScope != "" {
+		guidance.Constraints = appendUnique(guidance.Constraints, closureScope)
 	}
 
 	if containsAny(statusCombined, "malformed tool request", "tool_parse") {
@@ -176,6 +182,9 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	if containsAny(statusCombined, "completion gate", "final answer rejected") {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "final_answer_without_satisfying_completion_gate")
 	}
+	if closureScope != "" {
+		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "open-ended discovery after readiness without one exact missing claim and one exact probe")
+	}
 
 	if strings.Contains(statusCombined, "bootstrap already inspected") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file on the approved target using bootstrapped evidence")
@@ -188,10 +197,10 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the explicit blocker and evidence")
 	}
 	if strings.Contains(statusCombined, "broad inspection") {
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "search_files on a discovered path or pattern")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "search_content for a specific symbol or phrase")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "read_file on a discovered handle or narrow line range")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "use a targeted read-only shell search")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "use one structured symbol, call/reference, or file-outline probe on a named target")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "use one discovery_query for a broad architecture, tracing, or impact question")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "use search_content for one exact phrase only when a semantic probe or discovered handle does not land")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the current evidence already resolves the question")
 	}
 	if containsAny(statusCombined, "post-edit", "workspace edit already landed") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "run targeted verification")
@@ -210,6 +219,11 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "use a tool to gather or edit the missing evidence")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger if the gate requires ledger state")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer only after the gate condition is satisfied")
+	}
+	if closureScope != "" {
+		for _, next := range closureGuidanceNext(scopeSpecificClosureLabel(closureScope)) {
+			guidance.ValidNext = appendUnique(guidance.ValidNext, next)
+		}
 	}
 	if input.DeclarationMovesForbidden {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "do not call go_file_outline or go_move_declarations")
@@ -238,8 +252,10 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		}
 	case "read_file", "go_extract_body", "go_read_symbol":
 		if strings.TrimSpace(input.Result.Error) == "" {
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the inspected body already resolves the question")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "if one exact missing claim remains, use one exact symbol, reference, or narrow range probe that would resolve it")
 			guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file using the inspected evidence")
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "search_content or narrow read_file for any missing exact lines")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "use one narrow read_file or exact text search only if a specific anchor is still missing")
 		}
 	case "search_files", "search_content", "rg", "go_find_symbol", "go_find_type", "go_find_const", "go_references", "go_definition":
 		if strings.TrimSpace(input.Result.Error) == "" {
@@ -249,13 +265,12 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 				// a different search shape instead — its common failure
 				// after a zero-hit search_files is to invent more
 				// filenames to search for.
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "switch to search_content with keywords from the user's question")
-				if strings.EqualFold(tool, "search_files") {
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "use a language-specific symbol tool (go_workspace_symbol, cpp_workspace_symbol) instead of guessing filenames")
-				}
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "use a language-specific symbol tool before guessing filenames or repeating the same search")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow to one exact term or scope from the user's question")
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the evidence you already have if the target may not exist")
 			} else {
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "read_file or symbol-read the highest-confidence hit")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "read one exact symbol body, discovered handle, or narrow range from the highest-confidence hit")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the best hit already resolves the question")
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file if the target is already clear")
 			}
 		}
@@ -269,8 +284,8 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if all required ledger items are complete")
 	}
 	if len(guidance.ValidNext) == 0 {
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "continue from the latest evidence with a targeted tool")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer only if the task is complete or concretely blocked")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer from the current evidence if it already resolves the task")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "otherwise take one exact tool-shaped follow-up tied to a concrete missing claim")
 	}
 	if objectiveImpliesRelation(input.Objective) && isDiscoveryTool(tool) {
 		// Promote the semantic symbol tools ahead of the generic
@@ -292,7 +307,89 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		}
 		guidance.ValidNext = rebuilt
 	}
+	if closureScope != "" {
+		guidance.ValidNext = filterClosureGuidanceNext(guidance.ValidNext, closureScope)
+	}
 	return guidance
+}
+
+func closureGuidanceScope(constraints []string, statusCombined string) string {
+	switch {
+	case containsStringValue(constraints, "child_packet_available"):
+		return "child_packet_available"
+	case containsStringValue(constraints, "answer_readiness_reached"):
+		return "answer_readiness_reached"
+	}
+	switch {
+	case containsAny(statusCombined,
+		"child packet already contains sufficient evidence",
+		"post-child follow-up missing named gap",
+		"child_packet_available",
+	):
+		return "child_packet_available"
+	case containsAny(statusCombined,
+		"answer readiness has already been reached",
+		"post-readiness follow-up missing named gap",
+		"answer_readiness_reached",
+	):
+		return "answer_readiness_reached"
+	default:
+		return ""
+	}
+}
+
+func scopeSpecificClosureLabel(scope string) string {
+	if strings.TrimSpace(scope) == "child_packet_available" {
+		return "child packet"
+	}
+	return "current evidence"
+}
+
+func closureGuidanceNext(subject string) []string {
+	if strings.TrimSpace(subject) == "child packet" {
+		return []string{
+			"answer now from the child packet evidence",
+			"if one exact missing claim remains, choose one exact packet-named path, symbol, discovered handle, or narrow range that would resolve it",
+			"state what would be materially wrong or missing if you answered now",
+		}
+	}
+	return []string{
+		"answer now from the evidence already gathered",
+		"if one exact missing claim remains, choose one exact symbol, discovered handle, outline, or narrow range that would resolve it",
+		"state what would be materially wrong or missing if you answered now",
+	}
+}
+
+func filterClosureGuidanceNext(values []string, scope string) []string {
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		lower := strings.ToLower(strings.TrimSpace(value))
+		switch {
+		case strings.Contains(lower, "search_files"),
+			strings.Contains(lower, "todo|fixme"),
+			strings.Contains(lower, "panic\\("),
+			strings.Contains(lower, "continue from the latest evidence with a targeted tool"),
+			strings.Contains(lower, "choose a materially different tool or target"),
+			strings.Contains(lower, "use a targeted read-only shell search"),
+			strings.Contains(lower, "use a tool to gather or edit the missing evidence"),
+			strings.Contains(lower, "update task_ledger"),
+			strings.Contains(lower, "edit_file"),
+			strings.Contains(lower, "verification"),
+			strings.Contains(lower, "changed file"),
+			strings.Contains(lower, "target-scope update"),
+			strings.Contains(lower, "go_move_declarations"):
+			continue
+		}
+		filtered = appendUnique(filtered, value)
+	}
+	prefixed := make([]string, 0, len(filtered)+3)
+	for _, value := range closureGuidanceNext(scopeSpecificClosureLabel(scope)) {
+		prefixed = appendUnique(prefixed, value)
+	}
+	for _, value := range filtered {
+		prefixed = appendUnique(prefixed, value)
+	}
+	return prefixed
 }
 
 // relationalObjectiveVerbs enumerates the words that signal "find how X
@@ -361,6 +458,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		Reason:                    input.Reason,
 		Request:                   input.Request,
 		Result:                    input.Result,
+		Constraints:               input.Constraints,
 		DeclarationMovesForbidden: input.DeclarationMovesForbidden,
 		Objective:                 input.Objective,
 	})
@@ -396,8 +494,11 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	if containsAny(combined, "malformed tool", "tool_parse") {
 		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "markdown-wrapped or malformed tool JSON")
 	}
-	for _, action := range plan.ValidNext {
-		plan.RequiredNext = appendUnique(plan.RequiredNext, action)
+	if containsAny(combined, "malformed tool", "tool_parse") {
+		plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one valid JSON tool object")
+	}
+	if containsAny(combined, "approval required", "write approval required") {
+		plan.RequiredNext = appendUnique(plan.RequiredNext, "stop and report that write approval is required")
 	}
 	if strings.Contains(combined, "verification") {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "resolve verification status before claiming completion")
@@ -481,9 +582,13 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state.UserBoundaries = uniqueNonEmpty(state.UserBoundaries)
 	state.NextActions = uniqueNonEmpty(state.NextActions)
 	state.InvalidActions = uniqueNonEmpty(state.InvalidActions)
+	directive := "Use this current-state packet for the next action. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+	if containsStringValue(state.Constraints, "answer_readiness_reached") || containsStringValue(state.Constraints, "child_packet_available") {
+		directive = "Use this current-state packet for the next action. Prefer answering now; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+	}
 	return StepInstruction{
 		CurrentState: state,
-		Directive:    "Use this current-state packet for the next action. Do not repeat invalid actions.",
+		Directive:    directive,
 	}
 }
 
@@ -491,7 +596,7 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	state := MergeRuntimeBriefIntoState(brief, RunState{Phase: "start", Step: 1})
 	return StepInstruction{
 		CurrentState: state,
-		Directive:    "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them.",
+		Directive:    "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them. Treat the search policy and examples as guidance, not a fixed script.",
 	}
 }
 
@@ -738,7 +843,7 @@ func RenderFailureFeedbackPacket(packet any) string {
 	}
 	return strings.Join([]string{
 		"[failure feedback packet]",
-		"Use this packet to choose the next action. Do not repeat invalid actions from this packet.",
+		"Use this packet to recover. `required_next` lists hard requirements; `valid_next` lists safe options. Do not repeat invalid actions from this packet.",
 		string(data),
 	}, "\n")
 }
@@ -827,6 +932,19 @@ func IsZeroHitSearchResult(result workspace.ToolResult) bool {
 func containsAny(value string, needles ...string) bool {
 	for _, needle := range needles {
 		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsStringValue(values []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
 			return true
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -812,6 +813,9 @@ func TestVerificationOnlyRecoveryNudgeSuggestsVerificationCommand(t *testing.T) 
 			PermissionProfile: "read_only_verification_shell",
 			VerificationPlan:  []string{"go test ./..."},
 		},
+		"main",
+		false,
+		false,
 	)
 	if !strings.Contains(nudge, `{"tool":"shell","command":"go test ./...","workdir":"."}`) {
 		t.Fatalf("expected verification command in recovery nudge, got:\n%s", nudge)
@@ -835,6 +839,9 @@ func TestTargetWritePhaseRecoveryNudgeStaysInsideTarget(t *testing.T) {
 			TaskFamily: "explore_then_implement",
 			TargetRefs: []string{"docs/frontier-routing-implementation-plan.md"},
 		},
+		"main",
+		false,
+		false,
 	)
 	if !strings.Contains(nudge, "Do not inspect more source files.") {
 		t.Fatalf("expected target-write guidance, got:\n%s", nudge)
@@ -859,6 +866,9 @@ func TestPrematureTargetReadRecoveryNudgeSuggestsSourceEvidence(t *testing.T) {
 			TaskFamily: "explore_then_implement",
 			TargetRefs: []string{"docs/frontier-routing-implementation-plan.md"},
 		},
+		"main",
+		false,
+		false,
 	)
 	if !strings.Contains(nudge, "This turn still needs source evidence before the named target file.") {
 		t.Fatalf("expected source-evidence guidance, got:\n%s", nudge)
@@ -868,6 +878,78 @@ func TestPrematureTargetReadRecoveryNudgeSuggestsSourceEvidence(t *testing.T) {
 	}
 	if strings.Contains(nudge, `{"tool":"read_file","path":"docs/frontier-routing-implementation-plan.md"`) {
 		t.Fatalf("premature target recovery nudge should not suggest reading the target again, got:\n%s", nudge)
+	}
+}
+
+func TestClosureRecoveryNudgeAvoidsBroadRediscoveryAfterReadiness(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Ran architecture_boundary discovery query",
+		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"path":"internal/agent/runner.go","excerpt":"result := r.runChildTask(ctx, req, opts)"},{"path":"internal/agent/runner_child_tasks.go","excerpt":"You are a read-only delegated child task."}]}`,
+	}}
+	nudge := buildRejectionRecoveryNudge(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"},
+		results,
+		nil,
+		workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "delegated_read_only",
+			Objective:  "Explain how this harness uses subagents.",
+		},
+		"child:explorer",
+		true,
+		false,
+	)
+	for _, want := range []string{"closure is already justified", "Prefer answering now", "one exact missing claim", "one exact probe"} {
+		if !strings.Contains(nudge, want) {
+			t.Fatalf("expected closure recovery nudge to contain %q, got:\n%s", want, nudge)
+		}
+	}
+	for _, forbidden := range []string{`{"tool":"search_files"`, `{"tool":"search_content","pattern":"TODO|FIXME"`} {
+		if strings.Contains(nudge, forbidden) {
+			t.Fatalf("closure recovery nudge should not reopen broad discovery with %q, got:\n%s", forbidden, nudge)
+		}
+	}
+}
+
+func TestFailureFeedbackPacketKeepsRepeatedActionClosureBiased(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Ran architecture_boundary discovery query",
+		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"path":"internal/agent/runner.go","excerpt":"result := r.runChildTask(ctx, req, opts)"},{"path":"internal/agent/runner_child_tasks.go","excerpt":"You are a read-only delegated child task."}]}`,
+	}}
+	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/answer_composer.go"}
+	result := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Repeated tool request rejected",
+		Error:   repeatedClosureRequestErrorText("delegated_read_only_answer_ready"),
+	}
+	packet := buildRunnerFailureFeedbackPacket(
+		"child:explorer",
+		3,
+		"tool_rejected",
+		req,
+		result,
+		results,
+		false,
+		workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "delegated_read_only",
+			Objective:  "Explain how this harness uses subagents.",
+		},
+	)
+	joined := strings.Join(append(append([]string{}, packet.RequiredNext...), packet.ValidNext...), "\n")
+	for _, want := range []string{
+		"answer directly from the evidence already gathered",
+		"one exact symbol, discovered handle, outline, or narrow range",
+		"materially incomplete if you answered now",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected closure-biased failure feedback to contain %q, got %#v", want, packet)
+		}
+	}
+	for _, forbidden := range []string{"search_files on a discovered path or pattern", "use a targeted read-only shell search"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("failure feedback should not reintroduce broad fallback %q, got %#v", forbidden, packet)
+		}
 	}
 }
 
@@ -3072,15 +3154,35 @@ func TestChildPacketContainsGroundedAnswerEvidenceRequiresRealEvidence(t *testin
 }
 
 func TestNormalizeDelegatedReadOnlyPacketStripsTransientHandles(t *testing.T) {
-	packet := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Read f23 internal/agent/runner_child_tasks.go lines 1-40\nf23 internal/agent/runner_child_tasks.go\nf7 README.md\n"
+	packet := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Read f23 internal/agent/runner_child_tasks.go lines 1-40\n- The caller is internal/agent/runner.go:574 and the composer lives in internal/agent/answer_composer.go``\nf23 internal/agent/runner_child_tasks.go\nf7 README.md\n"
 	got := normalizeDelegatedReadOnlyPacket(packet)
 	if strings.Contains(got, "f23 ") || strings.Contains(got, "f7 ") {
 		t.Fatalf("expected transient handles to be stripped, got:\n%s", got)
 	}
-	for _, want := range []string{"internal/agent/runner_child_tasks.go", "README.md"} {
+	if strings.Contains(got, "internal/agent/runner.go:574") || strings.Contains(got, "internal/agent/answer_composer.go``") {
+		t.Fatalf("expected packet normalization to strip speculative line citations and malformed quotes, got:\n%s", got)
+	}
+	for _, want := range []string{"internal/agent/runner_child_tasks.go", "internal/agent/runner.go", "internal/agent/answer_composer.go", "README.md"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected normalized packet to retain %q, got:\n%s", want, got)
 		}
+	}
+}
+
+func TestUniqueDelegatedDiscoveryPathsNormalizesPacketArtifacts(t *testing.T) {
+	paths := uniqueDelegatedDiscoveryPaths([]string{
+		"internal/agent/runner.go``",
+		"internal/agent/runner.go:648",
+		"internal/agent/runner_child_tasks.go:93-94",
+		"`internal/agent/answer_composer.go`",
+	})
+	want := []string{
+		"internal/agent/runner.go",
+		"internal/agent/runner_child_tasks.go",
+		"internal/agent/answer_composer.go",
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("expected normalized delegated paths %#v, got %#v", want, paths)
 	}
 }
 
@@ -3123,6 +3225,23 @@ func TestDelegatedReadOnlyBootstrapFallsBackToSearchWithoutDiscoveryQuery(t *tes
 	})
 	if decision.Request.Tool != "search_content" {
 		t.Fatalf("expected bootstrap redirect to search_content, got %#v", decision.Request)
+	}
+}
+
+func TestDelegatedReadOnlyBootstrapPrefersWorkspaceSymbolWhenAvailable(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"go_workspace_symbol", "search_content", "read_file"},
+			Objective:    "Explain how `runChildTask` is used.\nNamed workspace scope: internal, cmd, prompts\nKey terms: runChildTask, child task",
+		},
+	}
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "search_files", Pattern: "*.go"},
+	})
+	if decision.Request.Tool != "go_workspace_symbol" || decision.Request.Pattern != "runChildTask" {
+		t.Fatalf("expected bootstrap redirect to go_workspace_symbol for exact symbol, got %#v", decision.Request)
 	}
 }
 
@@ -3210,6 +3329,23 @@ func TestDelegatedReadOnlyNamedGoReadRedirectsToScopedSearch(t *testing.T) {
 		if !strings.Contains(decision.Request.Pattern, want) {
 			t.Fatalf("expected scoped search pattern to include %q, got %q", want, decision.Request.Pattern)
 		}
+	}
+}
+
+func TestDelegatedReadOnlyNamedGoReadPrefersOutlineWhenAvailable(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"go_file_outline", "search_content", "read_file"},
+			Objective:    "Explain how sub-agents are invoked.\nKey terms: task, sub-agent, subagent",
+		},
+	}
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"},
+	})
+	if decision.Request.Tool != "go_file_outline" || decision.Request.Path != "internal/agent/runner.go" {
+		t.Fatalf("expected named go-file read to redirect to go_file_outline, got %#v", decision.Request)
 	}
 }
 
@@ -3450,6 +3586,30 @@ func TestAnswerComposerDoesNotLeakTelemetrySections(t *testing.T) {
 	}
 }
 
+func TestAnswerComposerSeparatesReadOnlyAndWriteChildFacts(t *testing.T) {
+	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
+		Question: "How does this harness make use of sub-agents?",
+		EvidencePaths: []string{
+			"internal/agent/runner.go",
+			"internal/agent/runner_child_tasks.go",
+			"internal/agent/answer_composer.go",
+		},
+	})
+	if !ok {
+		t.Fatal("expected answer composer to produce subagent explanation")
+	}
+	for _, want := range []string{
+		"read-only child is explicitly told not to edit files",
+		"`runWorkbranchChildTask`",
+		"write-mode child has separate constraints from the read-only path",
+		"### Parent Consumption",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected subagent answer to separate child modes with %q, got:\n%s", want, answer)
+		}
+	}
+}
+
 func TestAnswerComposerDecoratesDiscoveryToolImprovementAnswer(t *testing.T) {
 	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
 		Question: "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
@@ -3654,11 +3814,27 @@ func TestChildPacketBoundaryNudgeNamesEvidencePaths(t *testing.T) {
 		"Packet-named paths:",
 		"`internal/agent/discovery_redirect.go`",
 		"Lower-value next steps:",
+		"make it tool-shaped",
 		"Do not search for unrelated filenames first.",
 	} {
 		if !strings.Contains(nudge, want) {
 			t.Fatalf("expected child packet nudge to contain %q, got:\n%s", want, nudge)
 		}
+	}
+}
+
+func TestChildPacketBoundaryNudgeFiltersNonFileArtifacts(t *testing.T) {
+	nudge := childPacketBoundaryNudge([]string{
+		".idiom/discovery/queries/query.json",
+		"start_line/end_line",
+		"internal/agent/runner_child_tasks.go",
+		"idiom/internal/config",
+	})
+	if strings.Contains(nudge, ".idiom/discovery") || strings.Contains(nudge, "start_line/end_line") || strings.Contains(nudge, "idiom/internal/config") {
+		t.Fatalf("expected child packet nudge to drop non-file artifacts, got:\n%s", nudge)
+	}
+	if !strings.Contains(nudge, "`internal/agent/runner_child_tasks.go`") {
+		t.Fatalf("expected child packet nudge to keep real repository paths, got:\n%s", nudge)
 	}
 }
 
@@ -3674,6 +3850,7 @@ func TestDelegatedReadOnlyAnswerReadyNudgeIncludesClosureJustification(t *testin
 		"Why answer now is valid:",
 		"Core evidence paths:",
 		"Lower-value next steps:",
+		"make it tool-shaped",
 		"`internal/agent/runner.go`",
 	} {
 		if !strings.Contains(nudge, want) {
@@ -3788,6 +3965,9 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterChildPacket(t *testing.T) 
 	}
 	if len(state.NextValidActions) == 0 || state.NextValidActions[0] != "answer directly from the child packet if it already resolves the question" {
 		t.Fatalf("expected child packet answer-first guidance, got %#v", state.NextValidActions)
+	}
+	if !containsRunnerString(state.NextValidActions, "if one exact missing claim remains, choose one exact packet-named path, symbol, discovered handle, or narrow range that would resolve it") {
+		t.Fatalf("expected exact-probe child packet guidance, got %#v", state.NextValidActions)
 	}
 	if !containsRunnerString(state.InvalidNextActions, "open-ended discovery after a child packet without naming a concrete gap") {
 		t.Fatalf("expected anti-drift invalid action, got %#v", state.InvalidNextActions)
@@ -4398,8 +4578,74 @@ func TestPostReadinessGapScopeRequiresNamedGapAfterChildPacket(t *testing.T) {
 	if summary != "Post-child follow-up missing named gap" {
 		t.Fatalf("unexpected summary %q", summary)
 	}
-	if !strings.Contains(errorText, "`named_gap`") {
-		t.Fatalf("expected named_gap guidance, got %q", errorText)
+	for _, want := range []string{"`named_gap`", "`why_not_answering`", "discovered handle", "raw path request"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("expected named-gap guidance to contain %q, got %q", want, errorText)
+		}
+	}
+}
+
+func TestClosurePromptEvidencePathsDropsArtifacts(t *testing.T) {
+	got := closurePromptEvidencePaths([]string{
+		".idiom/discovery/queries/query.json",
+		"start_line/end_line",
+		"search/read",
+		"internal/agent/runner.go",
+		"internal/agent/runner_child_tasks.go:93-94",
+		"idiom/internal/frontier",
+	}, 0)
+	want := []string{
+		"internal/agent/runner.go",
+		"internal/agent/runner_child_tasks.go",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected prompt evidence paths %#v, got %#v", want, got)
+	}
+}
+
+func TestPromptEvidencePathsFromToolResultsDropsPromptArtifacts(t *testing.T) {
+	got := promptEvidencePathsFromToolResults([]workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output:  "Inspected paths:\n- `.idiom/discovery/queries/query.json`\n- `internal/agent/runner.go`\n- `internal/agent/runner_child_tasks.go:93-94`\n- `search/read`\n",
+	}}, 6)
+	want := []string{
+		"internal/agent/runner.go",
+		"internal/agent/runner_child_tasks.go",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected sanitized prompt evidence paths %#v, got %#v", want, got)
+	}
+}
+
+func TestDelegatedReadOnlyDiminishingReturnsNudgeEncouragesExactProbe(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Ran architecture_boundary discovery query",
+		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"path":"internal/agent/runner.go","excerpt":"delegatedObjectiveLooksLikeSubagents"},{"path":"internal/agent/runner_child_tasks.go","excerpt":"runChildTask"}]}`,
+	}}
+	first := delegatedReadOnlyDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 1)
+	second := delegatedReadOnlyDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 2)
+	for _, want := range []string{"one exact symbol, discovered handle, outline, or narrow line range", "tool-shaped named gap"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("expected first diminishing-returns nudge to contain %q, got:\n%s", want, first)
+		}
+	}
+	if !strings.Contains(second, "one exact probe") {
+		t.Fatalf("expected second diminishing-returns nudge to require an exact probe, got:\n%s", second)
+	}
+}
+
+func TestPostChildDiminishingReturnsNudgeEncouragesExactProbe(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:   "task",
+		Output: "Question: explain subagents\nSource: delegated subagent task packet.\n\nInspected paths:\n- `internal/agent/runner.go`\n- `internal/agent/runner_child_tasks.go`\n",
+	}}
+	nudge := postChildDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 2)
+	for _, want := range []string{"make the gap tool-shaped", "one exact probe", "`internal/agent/runner.go`"} {
+		if !strings.Contains(nudge, want) {
+			t.Fatalf("expected post-child diminishing-returns nudge to contain %q, got:\n%s", want, nudge)
+		}
 	}
 }
 

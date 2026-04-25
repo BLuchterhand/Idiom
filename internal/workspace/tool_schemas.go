@@ -45,7 +45,7 @@ func schemaObj(required []string, properties string) string {
 	if properties != "" {
 		properties += ","
 	}
-	properties += `"named_gap":` + strProp("optional: after answer-readiness or a child packet, name the exact unresolved gap this follow-up will close") + `,"why_not_answering":` + strProp("optional: short reason you are not answering yet despite the current evidence")
+	properties += `"named_gap":` + strProp("optional: after answer-readiness or a child packet, name one exact unresolved claim this follow-up will verify or falsify; make it specific enough that the next probe is obvious") + `,"why_not_answering":` + strProp("optional: short reason describing what would be materially wrong or missing if you answered now")
 	req := ""
 	if len(required) > 0 {
 		req = `,"required":[`

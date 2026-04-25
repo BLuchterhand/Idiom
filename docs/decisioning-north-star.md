@@ -55,6 +55,8 @@ Good:
 - “Do not restart broad discovery. Either answer now or do one targeted follow-up read.”
 - “After a child packet, block unrelated broad rediscovery, but leave packet-anchored follow-up reads open.”
 - “If a follow-up is rejected only because it failed to name the gap it is closing, require the named gap and allow one corrected retry.”
+- “After readiness, ask the model to name one exact missing claim and one exact probe that would resolve it; do not hard-pick the probe for the model.”
+- “Later recovery and failure prompts should stay closure-biased too: after readiness, prefer ‘answer now or one exact probe,’ not broad fallback menus like repo-wide filename search.”
 - “Use the structured tool instead; if it returns nothing, retry the original request.”
 - “You have already used many read calls. Pause, summarize, and commit to the minimal next step.”
 
@@ -68,10 +70,18 @@ Bad:
 
 This standard applies across:
 
+- static prompt files, role specs, runtime briefs, and recovery/failure packets
 - runner preflight and request-budget logic
 - discovery redirects
 - completion and readiness gates
 - delegated child-task handling
 - control-rail documentation and future features
+
+Prompt layers should agree on the same shape:
+
+- structured tools before generic text search when the language supports them
+- answer once the evidence is sufficient
+- after readiness, continue only for one exact missing claim and one exact probe
+- treat search policies and examples as ranked guidance, not mandatory scripts
 
 The goal is frontier-style behavior: open-ended model decisioning constrained by explicit, observable harness contracts.

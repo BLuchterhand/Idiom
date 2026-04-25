@@ -1,13 +1,14 @@
 When the session is about code:
-- **No path guessing.** Before any file operation (read or write), confirm the path exists via `list_files` or `search_files`. If a file is not found, report it explicitly — do not fabricate a path and proceed.
+- **No path guessing.** Before any file operation on a path that has not already been returned by a tool, confirm the path exists via `list_files` or `search_files`. If a file is not found, report it explicitly — do not fabricate a path and proceed.
 - **Before writes, check the parent dir.** Run `list_files` on the parent directory first. If it doesn't exist, create it with `mkdir`. Never write into a non-existent directory.
 - Inspect relevant files before proposing or making changes.
 - Treat explicit user boundaries as hard constraints; do not write, run destructive actions, or expand scope unless the task requires it.
 - For broad or uncertain tasks, map the area first, then use separate focused passes or subagents for discovery, implementation, and review.
+- Once the evidence is sufficient, answer or act. If you continue, tie it to one exact missing claim and one exact probe that would resolve it.
 - Keep a short task ledger: current hypothesis, files checked, verification done, and next action.
-- After one broad directory listing, narrow with `search_files`, `search_content`, or `read_file`; do not keep looping on file listings.
+- After one broad directory listing, narrow with structured tools or discovered handles first; use `search_content` / `read_file` only when the semantic probe did not land or when you need prose / exact ranges.
 - When the question is about code in a supported language, prefer the structured tools (`*_file_outline`, `*_workspace_symbol`, `*_read_symbol`, `*_references`, `*_calls_into` / `*_calls_from`, `*_diagnostics`) over `read_file` / `search_content` / shell grep. The structured tools return file, line, kind, and qualified name; fall back to generic text tools only when a semantic tool returns nothing or when you genuinely need prose/config.
-- Do not guess file paths. Open files by discovered handle whenever possible.
+- Do not guess file paths. Open files by discovered handle or semantic result whenever possible.
 - Prefer minimal, targeted edits over broad rewrites.
 - Verify the behavior you changed with focused tests or a concrete manual check, and call out when verification is incomplete.
 - Keep explanations pragmatic, high signal.

@@ -64,12 +64,13 @@ func composeSubagentHandoffAnswer(paths []string) string {
 		"internal/agent/runner_child_tasks.go",
 		"internal/agent/runner.go",
 		"internal/agent/runner_lane_policy.go",
+		"internal/agent/answer_composer.go",
 		"internal/workspace/tool_manifest.go",
 		"internal/frontier/workerruntime/roles.go",
 	)
 	var b strings.Builder
 	b.WriteString("## Subagent Handoff Architecture\n\n")
-	b.WriteString("The harness uses subagents through the `task` tool. The parent runner delegates a focused unit of work to a child runner, then consumes the child result as evidence or as an isolated patch instead of letting broad exploration pollute the parent loop.\n\n")
+	b.WriteString("The harness uses subagents through the `task` tool, but it keeps the read-only investigation path and the write-isolated implementation path distinct. The parent runner owns delegation, budgeting, and final acceptance; the child only handles the scoped delegated work.\n\n")
 	b.WriteString("### Two Modes\n\n")
 	b.WriteString("| Mode | What Happens | Budget | Safety Boundary |\n")
 	b.WriteString("|---|---|---|---|\n")
@@ -78,14 +79,20 @@ func composeSubagentHandoffAnswer(paths []string) string {
 	b.WriteString("### How Read-Only Handoff Works\n\n")
 	b.WriteString("1. The parent emits a `task` request with an `agent`, `mode`, and focused `prompt`.\n")
 	b.WriteString("2. `runChildTask` normalizes the prompt, builds a `child_read_only` runtime brief, and gives the child its own budget and permission policy.\n")
-	b.WriteString("3. The child runs its own tool loop with read/discovery/semantic tools and returns a concise grounded answer.\n")
-	b.WriteString("4. Child events are forwarded into the parent event stream with `child_` prefixes for auditability.\n")
-	b.WriteString("5. The parent treats the returned packet as inspected evidence and can answer without repeating the same discovery.\n\n")
+	b.WriteString("3. The read-only child is explicitly told not to edit files, create files, install packages, push, publish, deploy, or spawn more tasks.\n")
+	b.WriteString("4. The child runs its own tool loop with read/discovery/semantic tools and returns a concise grounded answer.\n")
+	b.WriteString("5. Child events are forwarded into the parent event stream with `child_` prefixes for auditability.\n")
+	b.WriteString("6. The parent treats the returned packet as inspected evidence and can answer without repeating the same discovery.\n\n")
 	b.WriteString("### How Isolated Write Handoff Works\n\n")
-	b.WriteString("1. A write-mode task creates a temporary git worktree from the current workspace state.\n")
-	b.WriteString("2. The child runs in that worktree with writes enabled, `task_ledger` required, and checkpoints enabled.\n")
-	b.WriteString("3. After the child finishes, the harness captures changed paths, diff stat, patch text, and the child answer.\n")
-	b.WriteString("4. The worktree is removed. The parent must inspect and apply or reject the diff explicitly.\n\n")
+	b.WriteString("1. A write-mode task routes to `runWorkbranchChildTask`, which creates a temporary git worktree from the current workspace state.\n")
+	b.WriteString("2. The write child runs there with writes enabled, `task_ledger` required, checkpoints enabled, and a different prompt focused on making only the delegated change.\n")
+	b.WriteString("3. That write-mode child has separate constraints from the read-only path: keep the change bounded, verify the changed surface when practical, and never push, publish, deploy, or spawn more tasks.\n")
+	b.WriteString("4. After the child finishes, the harness captures changed paths, diff stat, patch text, and the child answer.\n")
+	b.WriteString("5. The worktree is removed. The parent must inspect and apply or reject the diff explicitly.\n\n")
+	b.WriteString("### Parent Consumption\n\n")
+	b.WriteString("1. Read-only child output is consumed as evidence for the parent answer.\n")
+	b.WriteString("2. Write child output is consumed as an isolated patch plus child rationale, not as an automatically accepted workspace mutation.\n")
+	b.WriteString("3. Purpose-specific answer composition happens after the packet is normalized so packet telemetry does not leak straight into the final response.\n\n")
 	b.WriteString("### What Cases It Covers\n\n")
 	b.WriteString("- **Bounded read-only investigation**: find references, inspect a subsystem, explain a mechanism, or gather evidence without risking writes.\n")
 	b.WriteString("- **Architecture or impact discovery**: offload broad context gathering while preserving the parent budget and transcript clarity.\n")

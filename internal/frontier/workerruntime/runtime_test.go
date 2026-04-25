@@ -57,6 +57,86 @@ func TestBuildActionGuidanceIgnoresCompletionGatePhrasesInSearchOutput(t *testin
 	}
 }
 
+func TestBuildActionGuidancePrefersClosureAfterPostChildGapBlocker(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:  "pre_execute_guard",
+		Request: workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"},
+		Result: workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Post-child follow-up missing named gap",
+			Error:   "the child packet already contains sufficient evidence to bias toward answering. Before any additional read/search call, include `named_gap` describing one exact unresolved claim this follow-up will verify or falsify. Use `why_not_answering` to state what would be materially wrong or missing if you answered now.",
+		},
+	})
+	if !containsString(guidance.Constraints, "child_packet_available") {
+		t.Fatalf("expected child-packet closure constraint, got %#v", guidance)
+	}
+	if !containsString(guidance.InvalidNext, "open-ended discovery after readiness without one exact missing claim and one exact probe") {
+		t.Fatalf("expected closure invalid action, got %#v", guidance)
+	}
+	joined := strings.Join(guidance.ValidNext, "\n")
+	for _, want := range []string{
+		"answer now from the child packet evidence",
+		"one exact packet-named path, symbol, discovered handle, or narrow range",
+		"materially wrong or missing if you answered now",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected closure-biased valid action %q, got %#v", want, guidance.ValidNext)
+		}
+	}
+	for _, forbidden := range []string{"search_files", "targeted read-only shell search", "update task_ledger"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("closure-biased guidance should drop generic fallback %q, got %#v", forbidden, guidance.ValidNext)
+		}
+	}
+}
+
+func TestBuildRecoveryPlanPreservesClosureScopeOnRepeatedAction(t *testing.T) {
+	plan := BuildRecoveryPlan(RecoveryInput{
+		Reason:      "tool_rejected",
+		Request:     workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/answer_composer.go"},
+		Constraints: []string{"answer_readiness_reached"},
+		Result: workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Repeated tool request rejected",
+			Error:   "you just retried the same post-readiness follow-up. Do not reopen broad discovery. Either answer from the current evidence, or choose one exact symbol, discovered handle, outline, or narrow line range that resolves a still-material missing claim.",
+		},
+	})
+	joined := strings.Join(append(append([]string{}, plan.RequiredNext...), plan.ValidNext...), "\n")
+	for _, want := range []string{
+		"answer now from the evidence already gathered",
+		"one exact symbol, discovered handle, outline, or narrow range",
+		"materially wrong or missing if you answered now",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected closure-preserving recovery guidance %q, got %#v", want, plan)
+		}
+	}
+	for _, forbidden := range []string{"search_files", "targeted read-only shell search"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("repeated-action recovery should not reopen broad fallback %q, got %#v", forbidden, plan)
+		}
+	}
+}
+
+func TestBuildRecoveryPlanDoesNotPromoteEveryValidNextToRequiredNext(t *testing.T) {
+	plan := BuildRecoveryPlan(RecoveryInput{
+		Reason:      "tool_rejected",
+		Request:     workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/answer_composer.go"},
+		Constraints: []string{"answer_readiness_reached"},
+		Result: workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Repeated tool request rejected",
+			Error:   "you just retried the same post-readiness follow-up. Do not reopen broad discovery. Either answer from the current evidence, or choose one exact symbol, discovered handle, outline, or narrow line range that resolves a still-material missing claim.",
+		},
+	})
+	if len(plan.RequiredNext) != 0 {
+		t.Fatalf("expected repeated-action recovery to keep closure options in valid_next only, got %#v", plan.RequiredNext)
+	}
+	if len(plan.ValidNext) == 0 {
+		t.Fatalf("expected repeated-action recovery to preserve valid_next options, got %#v", plan)
+	}
+}
+
 func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -151,6 +231,28 @@ func TestRenderStepInstructionIncludesCurrentState(t *testing.T) {
 	}
 }
 
+func TestBuildStepInstructionUsesClosureDirective(t *testing.T) {
+	instruction := BuildStepInstruction(RunState{
+		Lane:        "main",
+		Phase:       "evidence",
+		Step:        3,
+		Constraints: []string{"child_packet_available"},
+		NextActions: []string{"answer directly from the child packet if it already resolves the question"},
+		InvalidActions: []string{
+			"open-ended discovery after a child packet without naming a concrete gap",
+		},
+	})
+	if !strings.Contains(instruction.Directive, "Prefer answering now") {
+		t.Fatalf("expected closure-biased directive, got %q", instruction.Directive)
+	}
+	if !strings.Contains(instruction.Directive, "one exact missing claim") || !strings.Contains(instruction.Directive, "one exact probe") {
+		t.Fatalf("expected exact-claim/exact-probe language, got %q", instruction.Directive)
+	}
+	if !strings.Contains(instruction.Directive, "ranked options, not mandatory commands") {
+		t.Fatalf("expected closure directive to clarify option-vs-command, got %q", instruction.Directive)
+	}
+}
+
 func TestRenderInitialRuntimeBriefIncludesPolicyManifestAndTargets(t *testing.T) {
 	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
 		Lane:                 "implement",
@@ -179,6 +281,16 @@ func TestRenderInitialRuntimeBriefIncludesPolicyManifestAndTargets(t *testing.T)
 		if !strings.Contains(rendered, needle) {
 			t.Fatalf("expected %q in initial runtime brief:\n%s", needle, rendered)
 		}
+	}
+}
+
+func TestRenderFailureFeedbackPacketExplainsRequiredVsValid(t *testing.T) {
+	rendered := RenderFailureFeedbackPacket(map[string]any{
+		"required_next": []string{"emit exactly one valid JSON tool object"},
+		"valid_next":    []string{"answer from the current evidence if it already resolves the task"},
+	})
+	if !strings.Contains(rendered, "`required_next` lists hard requirements; `valid_next` lists safe options") {
+		t.Fatalf("expected failure-feedback directive to explain packet semantics, got %q", rendered)
 	}
 }
 
@@ -273,6 +385,11 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 	for _, want := range []string{"read_file", "search_files", "search_content", "structural_search", "dependency_graph", "history_range", "blame_range", "semgrep_scan"} {
 		if !containsString(spec.AllowedTools, want) {
 			t.Fatalf("expected child read-only role to allow %q, got %#v", want, spec.AllowedTools)
+		}
+	}
+	for _, want := range []string{"answer_when_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "prefer_symbol_or_handle_probes_over_raw_path_reads"} {
+		if !containsString(spec.SearchPolicy, want) {
+			t.Fatalf("expected child read-only search policy to include %q, got %#v", want, spec.SearchPolicy)
 		}
 	}
 }
