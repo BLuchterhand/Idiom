@@ -76,6 +76,47 @@ func TestCompleteChatReportsHTTPAndEmptyChoiceErrors(t *testing.T) {
 	}
 }
 
+func TestMLXBackendOmitsChatTemplateKwargs(t *testing.T) {
+	enableThinking := true
+	var got chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(BackendMLX)
+	if _, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
+		Model:            "mlx-model",
+		EnableThinking:   &enableThinking,
+		PreserveThinking: true,
+		MaxTokens:        16,
+	}); err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+
+	if got.ChatTemplateKwargs != nil {
+		t.Fatalf("expected chat_template_kwargs to be omitted for MLX backend, got %#v", got.ChatTemplateKwargs)
+	}
+}
+
+func TestWithBackendNormalizesValue(t *testing.T) {
+	c := NewClient("http://example.invalid", time.Second)
+	if c.Backend() != BackendLlama {
+		t.Fatalf("expected default backend llama, got %q", c.Backend())
+	}
+	c.WithBackend("MLX")
+	if c.Backend() != BackendMLX {
+		t.Fatalf("expected mlx after WithBackend(MLX), got %q", c.Backend())
+	}
+	c.WithBackend("unknown")
+	if c.Backend() != BackendLlama {
+		t.Fatalf("expected fallback to llama for unknown backend, got %q", c.Backend())
+	}
+}
+
 func TestShouldRetryLoadingModel(t *testing.T) {
 	if !shouldRetryLoadingModel(http.StatusServiceUnavailable, "loading model") {
 		t.Fatal("expected loading model 503 to retry")

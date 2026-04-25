@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/discovery"
 	"idiom/internal/semantic"
 )
 
@@ -55,10 +56,7 @@ func (m *Manager) isRustWorkspace() bool {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if _, skip := exploreSkippedDirNames[name]; skip && path != m.cfg.Root {
-				return filepath.SkipDir
-			}
-			if name == "target" && path != m.cfg.Root {
+			if discovery.ShouldSkipDirName(name) && path != m.cfg.Root {
 				return filepath.SkipDir
 			}
 			return nil
@@ -727,4 +725,3 @@ func RustToolNames() []string {
 		"rust_diagnostics",
 	}
 }
-

@@ -413,6 +413,198 @@ func readTestFile(t *testing.T, path string) string {
 	return string(data)
 }
 
+func TestSearchFilesSkipsNoisyDirsByDefaultButAllowsExplicitPath(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, ".claude", "worktrees", "HiddenWorktreeWidget.go"), "package hidden\n")
+	writeTestFile(t, filepath.Join(dir, "internal", "app", "app.go"), "package app\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "HiddenWorktree",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_files failed: %#v", result)
+	}
+	if strings.Contains(result.Output, ".claude") {
+		t.Fatalf("default search_files should skip .claude worktrees, got:\n%s", result.Output)
+	}
+
+	explicit := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "HiddenWorktree",
+		Path:    ".claude",
+	})
+	if explicit.Error != "" {
+		t.Fatalf("explicit search_files failed: %#v", explicit)
+	}
+	if !strings.Contains(explicit.Output, ".claude/worktrees/HiddenWorktreeWidget.go") {
+		t.Fatalf("explicit .claude search should still work, got:\n%s", explicit.Output)
+	}
+}
+
+func TestSearchFilesIncludesLogsForLogIntent(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "logs", "llama-server.log"), "failed to bind\n")
+	writeTestFile(t, filepath.Join(dir, "internal", "app", "app.go"), "package app\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "*.log",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_files failed: %#v", result)
+	}
+	if !strings.Contains(result.Output, "logs/llama-server.log") {
+		t.Fatalf("log-shaped search should include logs directory, got:\n%s", result.Output)
+	}
+	if !strings.Contains(result.Output, "modified ") || !strings.Contains(result.Output, "size ") || !strings.Contains(result.Summary, "newest first") {
+		t.Fatalf("log-shaped search should include recency metadata, summary=%q output=\n%s", result.Summary, result.Output)
+	}
+}
+
+func TestSearchFilesCapsLargeLogListings(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 30; i++ {
+		writeTestFile(t, filepath.Join(dir, "logs", "conversations", fmt.Sprintf("recent-%02d.jsonl", i)), "{\"event\":\"x\"}\n")
+	}
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 128,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "logs/**/*",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_files failed: %#v", result)
+	}
+	if !strings.Contains(result.Summary, "showing first 24") {
+		t.Fatalf("expected capped log listing summary, got %q", result.Summary)
+	}
+	if !strings.Contains(result.Output, "omitted 6 older log-like match(es)") {
+		t.Fatalf("expected omitted-count marker, got output:\n%s", result.Output)
+	}
+}
+
+func TestReadFileDefaultsToLogTail(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, defaultLogReadLineCap+20)
+	for i := 1; i <= defaultLogReadLineCap+20; i++ {
+		lines = append(lines, fmt.Sprintf("line-%03d", i))
+	}
+	writeTestFile(t, filepath.Join(dir, "logs", "server.log"), strings.Join(lines, "\n"))
+
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		MaxFileBytes: 1 << 20,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "read_file",
+		Path: "logs/server.log",
+	})
+	if result.Error != "" {
+		t.Fatalf("read_file failed: %#v", result)
+	}
+	if strings.Contains(result.Output, "1:line-001") {
+		t.Fatalf("expected default log read to skip old head lines, got:\n%s", result.Output)
+	}
+	wantLast := fmt.Sprintf("%d:line-%03d", defaultLogReadLineCap+20, defaultLogReadLineCap+20)
+	if !strings.Contains(result.Output, wantLast) || !strings.Contains(result.Summary, "recent log tail") {
+		t.Fatalf("expected recent log tail, summary=%q output=\n%s", result.Summary, result.Output)
+	}
+}
+
+func TestReadFileCapsOpenEndedLogRange(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, defaultLogReadLineCap+20)
+	for i := 1; i <= defaultLogReadLineCap+20; i++ {
+		lines = append(lines, fmt.Sprintf("line-%03d", i))
+	}
+	writeTestFile(t, filepath.Join(dir, "logs", "server.log"), strings.Join(lines, "\n"))
+
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		MaxFileBytes: 1 << 20,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "read_file",
+		Path:      "logs/server.log",
+		StartLine: 1,
+		EndLine:   0,
+	})
+	if result.Error != "" {
+		t.Fatalf("read_file failed: %#v", result)
+	}
+	if strings.Contains(result.Output, "100:line-100") || !strings.Contains(result.Summary, "open-ended log range capped") {
+		t.Fatalf("expected open-ended log range cap, summary=%q output=\n%s", result.Summary, result.Output)
+	}
+	if lines := strings.Count(result.Output, "\n") + 1; lines != defaultLogReadLineCap {
+		t.Fatalf("expected %d output lines, got %d", defaultLogReadLineCap, lines)
+	}
+}
+
+func TestReadFileClampsLogTailStartBeyondEOF(t *testing.T) {
+	dir := t.TempDir()
+	lines := []string{"line-001", "line-002", "line-003"}
+	writeTestFile(t, filepath.Join(dir, "logs", "server.log"), strings.Join(lines, "\n"))
+
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		MaxFileBytes: 1 << 20,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "read_file",
+		Path:      "logs/server.log",
+		StartLine: 99990,
+	})
+	if result.Error != "" {
+		t.Fatalf("expected log tail clamp instead of invalid range, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "1:line-001") || !strings.Contains(result.Output, "3:line-003") {
+		t.Fatalf("expected log tail output after clamp, got:\n%s", result.Output)
+	}
+}
+
+func TestListFilesCapsLargeOutput(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < listFilesDisplayCap+20; i++ {
+		writeTestFile(t, filepath.Join(dir, fmt.Sprintf("file-%03d.go", i)), "package main\n")
+	}
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: listFilesDisplayCap + 50,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "list_files", Path: "."})
+	if result.Error != "" {
+		t.Fatalf("list_files failed: %#v", result)
+	}
+	if !strings.Contains(result.Summary, "showing first 80") || !strings.Contains(result.Output, "more path(s) omitted") {
+		t.Fatalf("expected capped list_files output, got summary=%q output=\n%s", result.Summary, result.Output)
+	}
+	if lines := strings.Count(result.Output, "\n") + 1; lines > listFilesDisplayCap+1 {
+		t.Fatalf("expected at most %d output lines, got %d:\n%s", listFilesDisplayCap+1, lines, result.Output)
+	}
+}
+
 func TestExecuteRejectsPathTraversalAndUnsupportedTools(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(config.Workspace{
@@ -704,6 +896,74 @@ func TestSearchContentSkipsNoisyDirsByDefault(t *testing.T) {
 	}
 }
 
+func TestSearchContentPrioritizesSourceFilesOverTests(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed on this machine")
+	}
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal", "agent", "runner.go"), "package agent\nfunc runChildTask() { /* delegate child spawn */ }\n")
+	mustWriteOverview(t, filepath.Join(dir, "internal", "agent", "runner_test.go"), "package agent\nfunc TestRunnerDelegate(t *testing.T) { /* task child */ }\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		MaxDirectoryEntries:   512,
+		CommandTimeoutSeconds: 10,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "delegate|child|spawn",
+		Path:    "internal/agent",
+		Glob:    "*.go",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_content failed: %#v", result)
+	}
+	lines := strings.Split(result.Output, "\n")
+	if len(lines) == 0 || !strings.Contains(lines[0], "internal/agent/runner.go") {
+		t.Fatalf("expected source file hit to rank ahead of test file, got output: %q", result.Output)
+	}
+}
+
+func TestSearchContentSkipsSuiteManifestByDefaultButAllowsExplicitPath(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed on this machine")
+	}
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "testdata", "swe", "representative-suite.json"), `{"needle":"SuiteManifestOnlyWidget"}`+"\n")
+	mustWriteOverview(t, filepath.Join(dir, "internal", "app", "banner.go"), "package app\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		MaxDirectoryEntries:   512,
+		CommandTimeoutSeconds: 10,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "SuiteManifestOnlyWidget",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_content failed: %#v", result)
+	}
+	if strings.Contains(result.Output, "representative-suite.json") {
+		t.Fatalf("default search should skip suite manifest, got output: %q", result.Output)
+	}
+
+	explicit := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "SuiteManifestOnlyWidget",
+		Path:    "testdata/swe/representative-suite.json",
+	})
+	if explicit.Error != "" {
+		t.Fatalf("explicit suite manifest search failed: %#v", explicit)
+	}
+	if !strings.Contains(explicit.Output, "representative-suite.json") {
+		t.Fatalf("explicit suite manifest search should work, got output: %q", explicit.Output)
+	}
+}
+
 func TestSearchContentTruncatesLongMatchingLines(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("rg not installed on this machine")
@@ -810,5 +1070,29 @@ func TestReadFileHonorsExplicitRangeOverSoftCap(t *testing.T) {
 	}
 	if strings.Contains(result.Summary, "file has ") && strings.Contains(result.Summary, "lines total") {
 		t.Fatalf("explicit range should not trigger truncation hint; summary=%q", result.Summary)
+	}
+}
+
+func TestReadFileClampsExplicitRangeBeyondEOF(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, 50)
+	for i := 0; i < 50; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i+1))
+	}
+	mustWriteOverview(t, filepath.Join(dir, "big.txt"), strings.Join(lines, "\n"))
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, MaxFileBytes: 1 << 20})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "big.txt", StartLine: 90, EndLine: 110})
+	if result.Error != "" {
+		t.Fatalf("read_file failed: %#v", result)
+	}
+	if !strings.Contains(result.Summary, "clamped to file bounds") {
+		t.Fatalf("expected explicit out-of-range read to clamp, summary=%q", result.Summary)
+	}
+	if !strings.Contains(result.Summary, "lines 30-50") {
+		t.Fatalf("expected clamped tail window, summary=%q", result.Summary)
+	}
+	if !strings.Contains(result.Output, "30:line 30") || !strings.Contains(result.Output, "50:line 50") {
+		t.Fatalf("expected clamped output window, got:\n%s", result.Output)
 	}
 }

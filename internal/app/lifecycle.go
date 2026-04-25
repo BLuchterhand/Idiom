@@ -16,6 +16,7 @@ import (
 	"idiom/internal/agent"
 	"idiom/internal/config"
 	"idiom/internal/llama"
+	"idiom/internal/projectartifacts"
 	"idiom/internal/promptstack"
 	"idiom/internal/transcript"
 	"idiom/internal/workspace"
@@ -55,7 +56,7 @@ func New(cfg config.Config) *Model {
 	var summaryController *llama.ServerController
 	if url := cfg.RouteClassifier.BaseURL; url != "" {
 		timeout := time.Duration(cfg.RouteClassifier.TimeoutSeconds) * time.Second
-		summaryClient = llama.NewClient(url, timeout)
+		summaryClient = llama.NewClient(url, timeout).WithBackend(cfg.RouteClassifier.Kind)
 		if cfg.RouteClassifier.AutoStartServer && cfg.RouteClassifier.Binary != "" {
 			summaryController = llama.NewServerController(cfg.RouteClassifier.LlamaServerSpec(), summaryClient)
 		}
@@ -71,13 +72,13 @@ func New(cfg config.Config) *Model {
 	var implementerClient *llama.Client
 	var implementerController *llama.ServerController
 	if url := cfg.ImplementerBaseURL(); url != "" {
-		implementerClient = llama.NewClient(url, callTimeout)
+		implementerClient = llama.NewClient(url, callTimeout).WithBackend(cfg.Implementer.Kind)
 		implementerController = llama.NewServerController(*cfg.Implementer, implementerClient)
 	}
 
 	m := &Model{
 		cfg:                   cfg,
-		client:                llama.NewClient(cfg.BaseURL(), callTimeout),
+		client:                llama.NewClient(cfg.BaseURL(), callTimeout).WithBackend(cfg.LlamaServer.Kind),
 		implementerClient:     implementerClient,
 		implementerController: implementerController,
 		summaryClient:         summaryClient,
@@ -224,20 +225,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlB:
 			// Ctrl+B toggles the history panel open/closed.
 			// Panel opens unfocused — Tab moves focus in, Esc moves focus back.
-			m.historyPanelOpen = !m.historyPanelOpen
-			m.historyFocused = false
-			if m.historyPanelOpen && len(m.historyEntries) > 0 {
-				m.historySelected = len(m.historyEntries) - 1
+			if !m.historyPanelOpen {
+				m.panelTab = panelTabHistory
 			}
-			m.resize()
+			m.setHistoryPanelOpen(!m.historyPanelOpen)
+			if m.historyPanelOpen {
+				m.status = "History panel open. Tab focuses it. Ctrl+T cycles tabs."
+			} else {
+				m.status = "Panel closed."
+			}
 			return m, waitForEvent(m.events)
 		case tea.KeyCtrlT:
 			// Ctrl+T cycles the side-panel tabs. Opens the panel if closed.
 			if !m.historyPanelOpen {
-				m.historyPanelOpen = true
-				m.resize()
+				m.setHistoryPanelOpen(true)
 			}
 			m.panelTab = (m.panelTab + 1) % panelTabCount
+			if m.panelTab == panelTabSessions {
+				m.refreshSessionsList()
+			}
 			m.rerenderActivePanel()
 			return m, waitForEvent(m.events)
 		case tea.KeyTab:
@@ -341,7 +347,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case historySummaryMsg:
 		if msg.index >= 0 && msg.index < len(m.historyEntries) {
 			m.historyEntries[msg.index].summary = msg.summary
-			m.renderHistoryPanelContent()
+			m.requestHistoryPanelRender(false, false)
+		}
+	case historyPanelRefreshMsg:
+		if m.historyRenderPending {
+			m.flushHistoryPanelRender()
 		}
 	case planEditorDoneMsg:
 		if msg.err != nil {
@@ -580,6 +590,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		MaxToolSteps:        steps,
 		Policy:              modeRunPolicy(mode, m.cfg.Chat),
 		AgentName:           "main",
+		RuntimeBrief:        plan.runtimeBrief,
 		InstructionAttacher: m.instructionAttacher,
 		ContextSize:         m.cfg.LlamaServer.CtxSize,
 		OnEvent: func(event agent.RunEvent) {
@@ -632,6 +643,11 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			m.recordWriteFailure(event.Step, event.Request, event.Result)
 			m.recordWriteSuccess(event.Step, event.Request, event.Result)
 			m.recordTaskLedger(event.Request, event.Result)
+			if workspace.IsWorkspaceWriteTool(event.Request.Tool) && strings.TrimSpace(event.Result.Error) == "" {
+				if err := m.reloadPromptStack(); err != nil {
+					m.setContextError("Prompt context failed: " + err.Error())
+				}
+			}
 			m.events <- toolTraceMsg{step: event.Step, text: workspace.FormatToolTrace(event.Result)}
 			// Poke the UI only when this tool could have mutated the
 			// plan (write tools + task_ledger). Other tool results
@@ -757,7 +773,7 @@ func (m *Model) systemPrompt() string {
 	if base := strings.TrimSpace(m.promptStack.Text); base != "" {
 		parts = append(parts, base)
 	}
-	if extras := strings.TrimSpace(loadModeSystemPrompts(mode, m.projectRoot())); extras != "" {
+	if extras := strings.TrimSpace(loadModeSystemPrompts(mode, m.projectRoot(), m.promptStack.Sources)); extras != "" {
 		parts = append(parts, extras)
 	}
 	return strings.Join(parts, "\n\n")
@@ -781,14 +797,33 @@ func (m *Model) projectRoot() string {
 
 // loadModeSystemPrompts reads each file named in Mode.SystemPromptFiles
 // and joins their contents into a single trailing system-prompt section.
+// Files already present in the prompt stack are skipped so the same
+// baseline guidance is not sent twice when both config and Mode include it.
 // Unknown or unreadable files are skipped silently so a Mode can list
 // optional fragments without breaking when they're absent.
-func loadModeSystemPrompts(mode agent.Mode, projectRoot string) string {
+func loadModeSystemPrompts(mode agent.Mode, projectRoot string, existing []promptstack.Source) string {
 	if len(mode.SystemPromptFiles) == 0 {
 		return ""
 	}
 	sections := make([]string, 0, len(mode.SystemPromptFiles))
 	seen := make(map[string]struct{}, len(mode.SystemPromptFiles))
+	seenBodies := make(map[string]struct{}, len(existing))
+	for _, source := range existing {
+		path := strings.TrimSpace(source.Path)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) && projectRoot != "" {
+			path = filepath.Join(projectRoot, path)
+		}
+		path = filepath.Clean(path)
+		seen[path] = struct{}{}
+		if data, err := os.ReadFile(path); err == nil {
+			if body := strings.TrimSpace(string(data)); body != "" {
+				seenBodies[body] = struct{}{}
+			}
+		}
+	}
 	for _, relOrAbs := range mode.SystemPromptFiles {
 		path := strings.TrimSpace(relOrAbs)
 		if path == "" {
@@ -797,6 +832,7 @@ func loadModeSystemPrompts(mode agent.Mode, projectRoot string) string {
 		if !filepath.IsAbs(path) && projectRoot != "" {
 			path = filepath.Join(projectRoot, path)
 		}
+		path = filepath.Clean(path)
 		if _, ok := seen[path]; ok {
 			continue
 		}
@@ -807,6 +843,10 @@ func loadModeSystemPrompts(mode agent.Mode, projectRoot string) string {
 		}
 		trimmed := strings.TrimSpace(string(data))
 		if trimmed != "" {
+			if _, ok := seenBodies[trimmed]; ok {
+				continue
+			}
+			seenBodies[trimmed] = struct{}{}
 			sections = append(sections, trimmed)
 		}
 	}
@@ -821,7 +861,13 @@ func (m *Model) reloadPromptStack() error {
 }
 
 func (m *Model) reloadPromptStackWithProfiles(profiles []string) error {
-	stack, err := promptstack.Build(m.cfg.Chat, profiles)
+	chat := m.cfg.Chat
+	if strings.TrimSpace(chat.ProjectRoot) != "" {
+		if _, err := projectartifacts.Ensure(chat.ProjectRoot); err != nil {
+			return err
+		}
+	}
+	stack, err := promptstack.Build(chat, profiles)
 	if err != nil {
 		return err
 	}

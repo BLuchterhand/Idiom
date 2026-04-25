@@ -1,11 +1,12 @@
 {
   "app_name": "Qwen Bubbles",
   "llama_server": {
+    "kind": "llama",
     "binary": "llama-server",
     "host": "127.0.0.1",
     "port": 8080,
     "model": "models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
-    "ctx_size": 65536,
+    "ctx_size": 196608,
     "threads": 0,
     "gpu_layers": 0,
     "jinja": true,
@@ -59,6 +60,7 @@
     "timeout_seconds": 20,
     "start_timeout_seconds": 120,
     "auto_start_server": false,
+    "kind": "llama",
     "binary": "llama-server",
     "host": "127.0.0.1",
     "port": 11437,

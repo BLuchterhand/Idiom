@@ -32,6 +32,9 @@ func TestOverviewSystemPromptListsTopLevelLayout(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "cmd/idiom/main.go"), "package main\n")
 	mustMkdir(t, filepath.Join(dir, "node_modules")) // should be skipped
 	mustWrite(t, filepath.Join(dir, "node_modules/leftpad.js"), "module.exports={}\n")
+	mustWrite(t, filepath.Join(dir, ".claude", "worktrees", "old", "main.go"), "package main\n")
+	mustWrite(t, filepath.Join(dir, ".planning", "notes.md"), "noise\n")
+	mustWrite(t, filepath.Join(dir, "testdata", "swe", "representative-suite.json"), "{}\n")
 
 	got := OverviewSystemPrompt(dir)
 	if got == "" {
@@ -50,8 +53,10 @@ func TestOverviewSystemPromptListsTopLevelLayout(t *testing.T) {
 			t.Fatalf("expected overview to mention %q, got:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "node_modules") {
-		t.Fatalf("overview should skip node_modules, got:\n%s", got)
+	for _, noisy := range []string{"node_modules", ".claude", ".planning", "representative-suite.json"} {
+		if strings.Contains(got, noisy) {
+			t.Fatalf("overview should skip %s, got:\n%s", noisy, got)
+		}
 	}
 	if len(got) > workspaceOverviewMaxContentBytes+64 {
 		t.Fatalf("overview exceeds configured cap: len=%d", len(got))

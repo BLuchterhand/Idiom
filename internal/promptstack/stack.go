@@ -15,6 +15,7 @@ var autoProjectPromptCandidates = []string{
 	"QWEN.md",
 	"AGENTS.md",
 	"CLAUDE.md",
+	".idiom/discovery/context.md",
 }
 
 type Source struct {

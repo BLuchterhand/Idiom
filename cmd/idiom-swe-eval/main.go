@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -120,133 +119,6 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, commandTemplate string, stderr io.Writer) (map[string]string, error) {
-	commandTemplate = strings.TrimSpace(commandTemplate)
-	if commandTemplate == "" {
-		return nil, fmt.Errorf("-run-live requires -runner-command")
-	}
-	// The runner script sets its own cmd.Dir per task based on the
-	// fixture path. If that fixture or the log path stays relative,
-	// they get re-resolved against cmd.Dir and blow up on the second
-	// `cd` inside the script. Absolute-ize everything up front so the
-	// env vars passed through to the script are unambiguous.
-	absOutputDir, err := filepath.Abs(outputDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve generated logs dir: %w", err)
-	}
-	outputDir = absOutputDir
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create generated logs dir: %w", err)
-	}
-	logPaths := make(map[string]string, len(suite.Tasks))
-	for _, task := range suite.Tasks {
-		logPath := taskLogPath(suitePath, outputDir, task)
-		if strings.TrimSpace(task.LogPath) != "" {
-			logPath = filepath.Join(outputDir, strings.TrimSpace(task.ID)+".jsonl")
-		}
-		logPaths[task.ID] = logPath
-		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-			return nil, fmt.Errorf("create log dir for %s: %w", task.ID, err)
-		}
-		fixture := taskFixturePath(suitePath, task)
-		if fixture != "" {
-			if abs, err := filepath.Abs(fixture); err == nil {
-				fixture = abs
-			}
-		}
-		prompt := taskPrompt(task)
-		turns := taskTurns(task)
-		turnsJSON, err := json.Marshal(turns)
-		if err != nil {
-			return nil, fmt.Errorf("encode turns for %s: %w", task.ID, err)
-		}
-		command := renderRunnerCommand(commandTemplate, map[string]string{
-			"prompt":     prompt,
-			"turns_json": string(turnsJSON),
-			"turn_count": fmt.Sprintf("%d", len(turns)),
-			"task_id":    strings.TrimSpace(task.ID),
-			"log_path":   logPath,
-			"fixture":    fixture,
-		})
-		cmd := exec.Command("/bin/sh", "-lc", command)
-		cmd.Dir = firstNonEmpty(fixture, filepath.Dir(suitePath))
-		cmd.Env = append(os.Environ(),
-			"IDIOM_SWE_PROMPT="+prompt,
-			"IDIOM_SWE_TURNS_JSON="+string(turnsJSON),
-			"IDIOM_SWE_TURN_COUNT="+fmt.Sprintf("%d", len(turns)),
-			"IDIOM_SWE_TASK_ID="+strings.TrimSpace(task.ID),
-			"IDIOM_SWE_LOG="+logPath,
-			"IDIOM_SWE_FIXTURE="+fixture,
-		)
-		output, err := cmd.CombinedOutput()
-		if len(output) > 0 && fileMissingOrEmpty(logPath) {
-			if writeErr := os.WriteFile(logPath, output, 0o644); writeErr != nil {
-				return nil, fmt.Errorf("write captured log for %s: %w", task.ID, writeErr)
-			}
-		}
-		if err != nil {
-			return nil, fmt.Errorf("run live task %s: %w: %s", task.ID, err, strings.TrimSpace(string(output)))
-		}
-		fmt.Fprintf(stderr, "generated %s\n", logPath)
-	}
-	return logPaths, nil
-}
-
-func renderRunnerCommand(template string, values map[string]string) string {
-	pairs := make([]string, 0, 8)
-	for _, key := range []string{"prompt", "turns_json", "turn_count", "task_id", "log_path", "fixture"} {
-		if value, ok := values[key]; ok {
-			pairs = append(pairs, "{"+key+"}", shellQuote(value))
-		}
-	}
-	if len(pairs) == 0 {
-		return template
-	}
-	return strings.NewReplacer(pairs...).Replace(template)
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
-}
-
-func taskPrompt(task eval.SWETask) string {
-	if strings.TrimSpace(task.Prompt) != "" {
-		return strings.TrimSpace(task.Prompt)
-	}
-	if len(task.Turns) == 0 {
-		return ""
-	}
-	return strings.TrimSpace(task.Turns[len(task.Turns)-1])
-}
-
-func taskTurns(task eval.SWETask) []string {
-	if len(task.Turns) > 0 {
-		turns := make([]string, 0, len(task.Turns))
-		for _, turn := range task.Turns {
-			if turn = strings.TrimSpace(turn); turn != "" {
-				turns = append(turns, turn)
-			}
-		}
-		if len(turns) > 0 {
-			return turns
-		}
-	}
-	if prompt := taskPrompt(task); prompt != "" {
-		return []string{prompt}
-	}
-	return nil
-}
-
-func taskFixturePath(suitePath string, task eval.SWETask) string {
-	if strings.TrimSpace(task.Fixture) == "" {
-		return ""
-	}
-	if filepath.IsAbs(task.Fixture) {
-		return filepath.Clean(task.Fixture)
-	}
-	return filepath.Clean(filepath.Join(filepath.Dir(suitePath), task.Fixture))
-}
-
 func writeSWESuite(path string, suite eval.SWESuite) error {
 	data, err := json.MarshalIndent(suite, "", "  ")
 	if err != nil {
@@ -259,11 +131,6 @@ func writeSWESuite(path string, suite eval.SWESuite) error {
 		return fmt.Errorf("write generated suite: %w", err)
 	}
 	return nil
-}
-
-func fileMissingOrEmpty(path string) bool {
-	info, err := os.Stat(path)
-	return err != nil || info.Size() == 0
 }
 
 func firstNonEmpty(values ...string) string {
@@ -318,6 +185,12 @@ func printSuiteReport(report eval.SWESuiteReport) {
 			fmt.Fprintf(output, " [%s]", task.Family)
 		}
 		fmt.Fprintf(output, ": tools=%d broad=%d verification=%s", task.Metrics.ToolRequests, task.Metrics.BroadToolRequests, eval.VerificationStatus(task.Metrics))
+		if len(task.Metrics.DiscoveryClasses) > 0 {
+			fmt.Fprintf(output, " discovery=%s", formatCountMap(task.Metrics.DiscoveryClasses))
+		}
+		if task.Metrics.HeavyDiscoveryRequests > 0 {
+			fmt.Fprintf(output, " heavy_discovery=%d", task.Metrics.HeavyDiscoveryRequests)
+		}
 		if task.Metrics.DurationMillis > 0 {
 			fmt.Fprintf(output, " duration=%dms", task.Metrics.DurationMillis)
 		}
@@ -332,6 +205,24 @@ func printSuiteReport(report eval.SWESuiteReport) {
 			fmt.Fprintf(output, "  - %s\n", finding)
 		}
 	}
+}
+
+func formatCountMap(counts map[string]int) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s:%d", key, counts[key]))
+	}
+	return strings.Join(parts, ",")
 }
 
 func printSummary(summary eval.SWEResultSummary) {

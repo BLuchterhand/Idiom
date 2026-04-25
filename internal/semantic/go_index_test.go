@@ -92,6 +92,28 @@ func TestBuildGoIndexReturnsNilForEmptyRoot(t *testing.T) {
 	}
 }
 
+func TestBuildGoIndexSkipsDiscoveryNoise(t *testing.T) {
+	root := t.TempDir()
+	writeSemanticFile(t, filepath.Join(root, "go.mod"), "module example.com/noise\n")
+	writeSemanticFile(t, filepath.Join(root, "internal", "app", "app.go"), "package app\nfunc Real() {}\n")
+	writeSemanticFile(t, filepath.Join(root, ".claude", "worktrees", "old", "hidden.go"), "package hidden\nfunc Hidden() {}\n")
+	writeSemanticFile(t, filepath.Join(root, ".planning", "scratch.go"), "package scratch\nfunc Scratch() {}\n")
+
+	idx, err := BuildGoIndex(root)
+	if err != nil {
+		t.Fatalf("BuildGoIndex: %v", err)
+	}
+	if idx == nil {
+		t.Fatal("expected Go index")
+	}
+	if len(idx.Files) != 1 || idx.Files[0].Path != "internal/app/app.go" {
+		t.Fatalf("expected only source file indexed, got %#v", idx.Files)
+	}
+	if symbols := idx.FindSymbols("Hidden", 5); len(symbols) != 0 {
+		t.Fatalf("expected hidden .claude symbol to be skipped, got %#v", symbols)
+	}
+}
+
 func writeSemanticFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

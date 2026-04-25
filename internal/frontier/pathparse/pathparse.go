@@ -16,7 +16,7 @@ func LooksLikeWorkspacePathToken(candidate string) bool {
 		return false
 	}
 	if strings.Contains(candidate, "/") {
-		return strings.Contains(candidate, ".")
+		return true
 	}
 	switch candidate {
 	case "README.md", "go.mod", "go.sum", "config.json", "Makefile":

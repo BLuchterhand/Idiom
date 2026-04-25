@@ -14,8 +14,16 @@ import (
 
 const loadingModelRetryDelay = 500 * time.Millisecond
 
+// Backend identifiers for Client. Mirrored from config.BackendLlama /
+// config.BackendMLX to avoid an import cycle; keep values in sync.
+const (
+	BackendLlama = "llama"
+	BackendMLX   = "mlx"
+)
+
 type Client struct {
 	baseURL string
+	backend string
 	http    *http.Client
 }
 
@@ -107,6 +115,9 @@ type chatTemplateKwargs struct {
 	PreserveThinking bool  `json:"preserve_thinking,omitempty"`
 }
 
+// chatResponse captures both llama.cpp's `reasoning_content` field and MLX's
+// `reasoning` alias. Upstream code reads the unified Message.ReasoningContent;
+// decoding resolves MLX's shorthand into the same slot via the parsed helper.
 type chatResponse struct {
 	Error *struct {
 		Message string `json:"message"`
@@ -116,6 +127,7 @@ type chatResponse struct {
 			Role             string     `json:"role"`
 			Content          string     `json:"content"`
 			ReasoningContent string     `json:"reasoning_content,omitempty"`
+			Reasoning        string     `json:"reasoning,omitempty"`
 			ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
@@ -130,17 +142,27 @@ type chatStreamChunk struct {
 		Delta struct {
 			Content          string `json:"content"`
 			ReasoningContent string `json:"reasoning_content,omitempty"`
+			Reasoning        string `json:"reasoning,omitempty"`
 		} `json:"delta"`
 		Message struct {
 			Role             string `json:"role"`
 			Content          string `json:"content"`
 			ReasoningContent string `json:"reasoning_content,omitempty"`
+			Reasoning        string `json:"reasoning,omitempty"`
 		} `json:"message"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
-func buildChatTemplateKwargs(opts ChatOptions) *chatTemplateKwargs {
+func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwargs {
+	// chat_template_kwargs is a llama.cpp server extension for Jinja-templated
+	// chat templates (e.g. Qwen3's enable_thinking / preserve_thinking hooks).
+	// mlx_lm.server ignores the field, and other backends may reject unknown
+	// request keys outright — so omit it entirely unless we're talking to
+	// llama.cpp.
+	if backend != "" && backend != BackendLlama {
+		return nil
+	}
 	if opts.EnableThinking == nil && !opts.PreserveThinking {
 		return nil
 	}
@@ -153,10 +175,35 @@ func buildChatTemplateKwargs(opts ChatOptions) *chatTemplateKwargs {
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
+		backend: BackendLlama,
 		http: &http.Client{
 			Timeout: timeout,
 		},
 	}
+}
+
+// WithBackend sets the backend kind this client is talking to. Defaults to
+// llama; call with BackendMLX when the endpoint is mlx_lm.server (or another
+// OpenAI-compatible server that doesn't understand llama.cpp extensions like
+// chat_template_kwargs). Returns the same client for chaining at call sites.
+func (c *Client) WithBackend(backend string) *Client {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case BackendMLX:
+		c.backend = BackendMLX
+	case "", BackendLlama:
+		c.backend = BackendLlama
+	default:
+		c.backend = BackendLlama
+	}
+	return c
+}
+
+// Backend reports the backend kind configured on this client.
+func (c *Client) Backend() string {
+	if c.backend == "" {
+		return BackendLlama
+	}
+	return c.backend
 }
 
 func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
@@ -199,7 +246,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		PresencePenalty:    opts.PresencePenalty,
 		RepeatPenalty:      opts.RepetitionPenalty,
 		RepetitionPenalty:  opts.RepetitionPenalty,
-		ChatTemplateKwargs: buildChatTemplateKwargs(opts),
+		ChatTemplateKwargs: buildChatTemplateKwargs(opts, c.backend),
 		MaxTokens:          opts.MaxTokens,
 		Tools:              opts.Tools,
 		ToolChoice:         opts.ToolChoice,
@@ -299,7 +346,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		PresencePenalty:    opts.PresencePenalty,
 		RepeatPenalty:      opts.RepetitionPenalty,
 		RepetitionPenalty:  opts.RepetitionPenalty,
-		ChatTemplateKwargs: buildChatTemplateKwargs(opts),
+		ChatTemplateKwargs: buildChatTemplateKwargs(opts, c.backend),
 		MaxTokens:          opts.MaxTokens,
 		Tools:              opts.Tools,
 		ToolChoice:         opts.ToolChoice,
@@ -359,10 +406,14 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		if role == "" {
 			role = "assistant"
 		}
+		reasoning := message.ReasoningContent
+		if reasoning == "" {
+			reasoning = message.Reasoning
+		}
 		return ChatMessage{
 			Role:             role,
 			Content:          message.Content,
-			ReasoningContent: message.ReasoningContent,
+			ReasoningContent: reasoning,
 			ToolCalls:        message.ToolCalls,
 			Usage:            parsed.Usage,
 		}, nil

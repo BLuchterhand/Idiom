@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"idiom/internal/discovery"
 )
 
 // PythonIndex is the tree-sitter-style index for a Python workspace. It
@@ -22,17 +24,17 @@ type PythonIndex struct {
 }
 
 type PythonFile struct {
-	Path      string
-	Imports   []string        // resolved relative paths when possible; else raw module names
-	RawImports []string       // raw module strings as seen in source (for UI)
-	Symbols   []PythonSymbol
-	Funcs     int
-	Methods   int
-	Classes   int
-	HasMain   bool
-	IsTest    bool
-	IsInit    bool
-	SourceDir string
+	Path       string
+	Imports    []string // resolved relative paths when possible; else raw module names
+	RawImports []string // raw module strings as seen in source (for UI)
+	Symbols    []PythonSymbol
+	Funcs      int
+	Methods    int
+	Classes    int
+	HasMain    bool
+	IsTest     bool
+	IsInit     bool
+	SourceDir  string
 }
 
 type PythonSymbol struct {
@@ -89,7 +91,7 @@ func BuildPythonIndex(root string) (*PythonIndex, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if _, skip := skippedDirNames[d.Name()]; skip && path != root {
+			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
 			if _, skip := pythonSkippedDirNames[d.Name()]; skip && path != root {
@@ -105,6 +107,9 @@ func BuildPythonIndex(root string) (*PythonIndex, error) {
 			return nil
 		}
 		rel = filepath.ToSlash(filepath.Clean(rel))
+		if discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
 		paths = append(paths, rel)
 		byRel[rel] = rel
 		for _, module := range pythonModuleNamesFor(rel) {
@@ -170,14 +175,14 @@ func BuildPythonIndex(root string) (*PythonIndex, error) {
 }
 
 var pythonSkippedDirNames = map[string]struct{}{
-	".venv":       {},
-	"venv":        {},
-	"__pycache__": {},
-	".mypy_cache": {},
+	".venv":         {},
+	"venv":          {},
+	"__pycache__":   {},
+	".mypy_cache":   {},
 	".pytest_cache": {},
-	".tox":        {},
+	".tox":          {},
 	"site-packages": {},
-	".eggs":       {},
+	".eggs":         {},
 }
 
 // Summary produces a short, human-readable overview of the index.

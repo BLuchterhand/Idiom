@@ -1,0 +1,92 @@
+{
+  "name": "subagent-explanation-focused",
+  "version": 1,
+  "tasks": [
+    {
+      "id": "subagent-explanation",
+      "family": "architecture",
+      "prompt": "Can you tell me how this harness uses subagents?",
+      "tags": [
+        "read-only",
+        "architecture",
+        "explain",
+        "subagents",
+        "go"
+      ],
+      "scenario": {
+        "name": "subagent-explanation",
+        "prompt_contains": [
+          "harness uses subagents"
+        ],
+        "final_assistant_contains": [
+          "task",
+          "subagent"
+        ],
+        "forbid_final_assistant_contains": [
+          "partial findings",
+          "budget was reached before a full synthesis"
+        ],
+        "require_tools": [
+          "task"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "mkdir"
+        ],
+        "require_control_rails": {
+          "lane": "architecture",
+          "contract": "architecture_assessment",
+          "task_family": "architecture",
+          "permission_profile": "read_only_workspace",
+          "require_allowed_tools": [
+            "task"
+          ],
+          "require_evidence": [
+            "inspected_paths",
+            "architecture_boundary_evidence",
+            "confidence"
+          ],
+          "require_tools": [
+            "workspace_inspection"
+          ],
+          "require_forbidden_tools": [
+            "mutating_shell"
+          ],
+          "verification_contract": "not_required_for_read_only_lane",
+          "require_stop_conditions": [
+            "required_evidence_satisfied",
+            "budget_exhausted_with_uncertainty_declared"
+          ],
+          "failure_to_eval": false
+        },
+        "require_readiness": {
+          "lane": "architecture",
+          "ready": true,
+          "action": "answer",
+          "min_evidence_paths": 2
+        },
+        "require_final_answer_critic": {
+          "contract": "architecture_assessment",
+          "passed": true,
+          "action": "accept"
+        },
+        "require_evidence_paths": [
+          "internal/agent/runner.go",
+          "internal/agent/runner_child_tasks.go"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 5,
+        "max_duration_millis": 60000
+      }
+    }
+  ]
+}

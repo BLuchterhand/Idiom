@@ -11,6 +11,8 @@ import (
 	"idiom/internal/llama"
 )
 
+const historyPanelRenderThrottle = 75 * time.Millisecond
+
 // wrapLines word-wraps s to at most width runes per line and returns each
 // wrapped line as a slice element. Empty input returns a single empty string
 // so callers can iterate uniformly.
@@ -91,10 +93,7 @@ func (m *Model) appendHistoryMessage(sender, content string, toolCalls []string)
 		go m.summarizeEntry(idx, m.historyEntries[idx])
 	}
 
-	m.renderHistoryPanelContent()
-	if m.historyPanelOpen {
-		m.historyViewport.GotoBottom()
-	}
+	m.requestHistoryPanelRender(false, true)
 }
 
 func historyToolCallsFromLines(lines []string) []historyToolCall {
@@ -122,10 +121,7 @@ func (m *Model) beginAgentHistoryTurn() {
 	m.historyEntries = append(m.historyEntries, entry)
 	m.historySelected = len(m.historyEntries) - 1
 
-	m.renderHistoryPanelContent()
-	if m.historyPanelOpen {
-		m.historyViewport.GotoBottom()
-	}
+	m.requestHistoryPanelRender(true, true)
 }
 
 func (m *Model) activeAgentHistoryEntry() (int, *historyEntry, bool) {
@@ -151,10 +147,7 @@ func (m *Model) recordToolTraceInHistory(step int, text, intent string, running 
 	if _, entry, ok := m.activeAgentHistoryEntry(); ok {
 		entry.upsertToolCall(step, line, intent, running)
 		entry.summary = localFallbackSummary(entry)
-		m.renderHistoryPanelContent()
-		if m.historyPanelOpen {
-			m.historyViewport.GotoBottom()
-		}
+		m.requestHistoryPanelRender(false, true)
 		return
 	}
 	m.currentTurnTools = append(m.currentTurnTools, line)
@@ -213,10 +206,7 @@ func (m *Model) finishAgentHistoryTurn(response string) {
 		if m.cfg.RouteClassifier.Enabled && m.summaryClient != nil {
 			go m.summarizeEntry(idx, *entry)
 		}
-		m.renderHistoryPanelContent()
-		if m.historyPanelOpen {
-			m.historyViewport.GotoBottom()
-		}
+		m.requestHistoryPanelRender(true, true)
 		return
 	}
 
@@ -238,10 +228,7 @@ func (m *Model) failAgentHistoryTurn(err error) {
 		m.currentTurnTools = nil
 		entry.contents = append(entry.contents, "Chat failed: "+err.Error())
 		entry.summary = localFallbackSummary(entry)
-		m.renderHistoryPanelContent()
-		if m.historyPanelOpen {
-			m.historyViewport.GotoBottom()
-		}
+		m.requestHistoryPanelRender(true, true)
 		return
 	}
 	m.currentTurnTools = nil
@@ -259,7 +246,52 @@ func (m *Model) removeEmptyCurrentHistoryEntry() {
 	if m.historySelected < 0 {
 		m.historySelected = 0
 	}
+	m.requestHistoryPanelRender(true, false)
+}
+
+func (m *Model) requestHistoryPanelRender(force bool, stickBottom bool) {
+	if m == nil {
+		return
+	}
+	if stickBottom {
+		m.historyRenderScrollBottom = true
+	}
+	if !m.historyPanelOpen || m.panelTab != panelTabHistory {
+		return
+	}
+	if force || !m.streaming || !m.currentTurnHistoryActive || m.historyFocused {
+		m.flushHistoryPanelRender()
+		return
+	}
+	if m.historyRenderLast.IsZero() || time.Since(m.historyRenderLast) >= historyPanelRenderThrottle {
+		m.flushHistoryPanelRender()
+		return
+	}
+	if m.historyRenderPending {
+		return
+	}
+	m.historyRenderPending = true
+	delay := historyPanelRenderThrottle - time.Since(m.historyRenderLast)
+	if delay < 0 {
+		delay = historyPanelRenderThrottle
+	}
+	go func() {
+		time.Sleep(delay)
+		m.events <- historyPanelRefreshMsg{}
+	}()
+}
+
+func (m *Model) flushHistoryPanelRender() {
+	if m == nil {
+		return
+	}
+	m.historyRenderPending = false
 	m.renderHistoryPanelContent()
+	if m.historyPanelOpen && m.historyRenderScrollBottom {
+		m.historyViewport.GotoBottom()
+	}
+	m.historyRenderScrollBottom = false
+	m.historyRenderLast = time.Now()
 }
 
 // localFallbackSummary produces a short readable summary without hitting any

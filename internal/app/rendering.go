@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -140,11 +142,54 @@ func (m *Model) renderMessages(forceBottom bool) {
 	if !m.ready {
 		return
 	}
+	start := time.Now()
+	defer m.logUISlowPath("ui.render_messages", start, fmt.Sprintf("messages=%d streaming=%t width=%d", len(m.messages), m.streaming, m.viewport.Width))
 
 	stickBottom := forceBottom || m.viewport.AtBottom()
 
 	msgBodyStyle := bodyStyle.Width(maxInt(1, m.viewport.Width))
+	base := m.renderedMessageBody()
 
+	// While a turn is in flight, render a live "Qwen is working" affordance
+	// after the last message. The in-flight reply is NOT kept in m.messages
+	// as an empty placeholder (that caused double-rendering via the reply
+	// bookkeeping path); we draw the spinner inline instead.
+	var b strings.Builder
+	if base != "" {
+		b.WriteString(base)
+	}
+	if m.streaming {
+		label := assistantLabelStyle.Render("Qwen")
+		content := m.spinner.View() + " Qwen is working on your request" + m.workingDots()
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(label)
+		b.WriteString("\n")
+		b.WriteString(msgBodyStyle.Render(content))
+	}
+
+	if base == "" && !m.streaming {
+		b.WriteString(msgBodyStyle.Render("No messages yet. Type a prompt below or use /help."))
+	}
+
+	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
+	if stickBottom {
+		m.viewport.GotoBottom()
+	}
+}
+
+func (m *Model) renderedMessageBody() string {
+	width := maxInt(1, m.viewport.Width)
+	useMarkdown := m.mdRenderer != nil
+	hash := messageRenderFingerprint(m.messages)
+	if m.messageRenderWidth == width && m.messageRenderHash == hash && m.messageRenderMD == useMarkdown {
+		if m.messageRenderCache != "" || len(m.messages) == 0 {
+			return m.messageRenderCache
+		}
+	}
+
+	msgBodyStyle := bodyStyle.Width(width)
 	var b strings.Builder
 	for _, msg := range m.messages {
 		var label string
@@ -159,7 +204,6 @@ func (m *Model) renderMessages(forceBottom bool) {
 				useGlamour = true
 			}
 		case "tool":
-			// Surface the tool name from the first line: "tool_name | summary..."
 			toolName := "tool"
 			if idx := strings.Index(content, " | "); idx > 0 {
 				toolName = content[:idx]
@@ -185,27 +229,22 @@ func (m *Model) renderMessages(forceBottom bool) {
 		b.WriteString("\n\n")
 	}
 
-	// While a turn is in flight, render a live "Qwen is working" affordance
-	// after the last message. The in-flight reply is NOT kept in m.messages
-	// as an empty placeholder (that caused double-rendering via the reply
-	// bookkeeping path); we draw the spinner inline instead.
-	if m.streaming {
-		label := assistantLabelStyle.Render("Qwen")
-		content := m.spinner.View() + " Qwen is working on your request" + m.workingDots()
-		b.WriteString(label)
-		b.WriteString("\n")
-		b.WriteString(msgBodyStyle.Render(content))
-		b.WriteString("\n\n")
-	}
+	m.messageRenderCache = strings.TrimRight(b.String(), "\n")
+	m.messageRenderWidth = width
+	m.messageRenderHash = hash
+	m.messageRenderMD = useMarkdown
+	return m.messageRenderCache
+}
 
-	if len(m.messages) == 0 && !m.streaming {
-		b.WriteString(msgBodyStyle.Render("No messages yet. Type a prompt below or use /help."))
+func messageRenderFingerprint(messages []llama.ChatMessage) uint64 {
+	hasher := fnv.New64a()
+	for _, msg := range messages {
+		_, _ = hasher.Write([]byte(msg.Role))
+		_, _ = hasher.Write([]byte{0})
+		_, _ = hasher.Write([]byte(strings.TrimSpace(msg.Content)))
+		_, _ = hasher.Write([]byte{'\n'})
 	}
-
-	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
-	if stickBottom {
-		m.viewport.GotoBottom()
-	}
+	return hasher.Sum64()
 }
 
 func (m *Model) updateViewport(msg tea.Msg) {

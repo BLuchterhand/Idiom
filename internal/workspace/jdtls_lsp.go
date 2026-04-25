@@ -864,4 +864,3 @@ func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semantic.
 	}
 	return m.formatJdtlsOutgoingCalls(abs, calls, pathFilter), nil
 }
-

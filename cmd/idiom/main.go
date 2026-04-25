@@ -261,7 +261,7 @@ func runListSessions(cfg config.Config, stdout io.Writer) error {
 }
 
 func runServerOnly(cfg config.Config, _ runOptions) error {
-	client := llama.NewClient(cfg.BaseURL(), 0)
+	client := llama.NewClient(cfg.BaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
 	controller := llama.NewServerController(cfg.LlamaServer, client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Chat.ServerStartTimeoutSecs)*time.Second)

@@ -1,0 +1,82 @@
+{
+  "name": "debug-logs-weird-decisions-suite",
+  "version": 1,
+  "tasks": [
+    {
+      "id": "debug-logs-weird-decisions",
+      "family": "debug_logs",
+      "prompt": "Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?",
+      "tags": [
+        "read-only",
+        "logs",
+        "review",
+        "performance"
+      ],
+      "scenario": {
+        "name": "debug-logs-weird-decisions",
+        "prompt_contains": [
+          "most recent logs",
+          "made smarter"
+        ],
+        "final_assistant_contains": [
+          "logs",
+          "smarter"
+        ],
+        "require_control_rails": {
+          "lane": "explore",
+          "contract": "grounded_explanation",
+          "task_family": "debug_logs",
+          "permission_profile": "read_only_workspace",
+          "require_evidence": [
+            "log_record",
+            "failure_output",
+            "timestamp_or_latest_selection"
+          ],
+          "require_tools": [
+            "log_inspection"
+          ],
+          "require_forbidden_tools": [
+            "edit_file",
+            "write_file",
+            "append_file",
+            "mkdir",
+            "mutating_shell"
+          ],
+          "require_readiness_gate": [
+            "latest_log_selected",
+            "failure_cause_supported_by_log",
+            "low_confidence_triggers_deepening"
+          ],
+          "require_search_policy": [
+            "start_with_most_recent_log",
+            "extract_failure_window"
+          ],
+          "verification_contract": "not_required_for_read_only_lane",
+          "require_stop_conditions": [
+            "log_cause_identified_or_log_gap_declared"
+          ],
+          "require_final_critic": [
+            "answers_actual_user_request",
+            "required_evidence_cited"
+          ],
+          "failure_to_eval": true
+        },
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "mkdir"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 12,
+        "max_duration_millis": 120000
+      }
+    }
+  ]
+}

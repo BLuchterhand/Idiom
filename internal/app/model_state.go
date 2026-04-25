@@ -43,6 +43,8 @@ type sessionAggregate struct {
 	compactions      int
 	toolOutputBytes  map[string]int
 	toolCallCounts   map[string]int
+	discoveryClasses map[string]int
+	discoveryCosts   map[string]int
 }
 
 func (a *sessionAggregate) recordModelCall(promptTokens, completionTokens, totalTokens int) {
@@ -71,6 +73,24 @@ func (a *sessionAggregate) recordToolResult(tool string, outputChars int) {
 	a.toolOutputBytes[tool] += outputChars
 }
 
+func (a *sessionAggregate) recordToolRequest(profile workspace.ToolDiscoveryProfile) {
+	if !profile.Discovery {
+		return
+	}
+	if a.discoveryClasses == nil {
+		a.discoveryClasses = make(map[string]int)
+	}
+	if a.discoveryCosts == nil {
+		a.discoveryCosts = make(map[string]int)
+	}
+	if class := strings.TrimSpace(profile.Class); class != "" {
+		a.discoveryClasses[class]++
+	}
+	if cost := strings.TrimSpace(profile.Cost); cost != "" {
+		a.discoveryCosts[cost]++
+	}
+}
+
 func (a *sessionAggregate) topToolsByOutput(n int) []transcript.ToolOutputAggregate {
 	if len(a.toolOutputBytes) == 0 {
 		return nil
@@ -88,6 +108,22 @@ func (a *sessionAggregate) topToolsByOutput(n int) []transcript.ToolOutputAggreg
 	})
 	if len(out) > n {
 		out = out[:n]
+	}
+	return out
+}
+
+func discoveryAggregates(counts map[string]int) []transcript.DiscoveryAggregate {
+	if len(counts) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]transcript.DiscoveryAggregate, 0, len(names))
+	for _, name := range names {
+		out = append(out, transcript.DiscoveryAggregate{Name: name, Calls: counts[name]})
 	}
 	return out
 }
@@ -145,6 +181,11 @@ type Model struct {
 	rollbackHistory     []rollbackEntry
 	instructionAttacher *agent.InstructionAttacher
 	mdRenderer          *glamour.TermRenderer
+	mdRendererWrapWidth int
+	messageRenderCache  string
+	messageRenderWidth  int
+	messageRenderHash   uint64
+	messageRenderMD     bool
 
 	// History panel
 	historyEntries    []historyEntry
@@ -161,6 +202,7 @@ type Model struct {
 	planViewport  viewport.Model
 	planPath      string
 	planMTime     time.Time
+	planContent   string
 	planLoadError string
 
 	// planWriteSnapshots holds the pre-edit file contents captured during
@@ -210,6 +252,15 @@ type Model struct {
 	// ↑/↓ navigation doesn't re-scan the debug-log dir on every key.
 	// Refreshed on Ctrl+T into the Sessions tab and on /resume.
 	sessionsList []SessionInfo
+	// sessionsRawCache stores the newest-first directory scan before
+	// filtering out the current live session. Reused while the debug-log
+	// directory mtime is unchanged so opening/focusing the Sessions tab
+	// does not rescan every JSONL file.
+	sessionsRawCache      []SessionInfo
+	sessionsRawCacheDir   string
+	sessionsRawCacheMTime time.Time
+	sessionsRawCacheValid bool
+	sessionsSummaryCache  map[string]sessionSummaryCacheEntry
 	// sessionsCursor is the index into sessionsList that Enter would
 	// resume. Clamped during render when the list shrinks under it.
 	sessionsCursor int
@@ -222,9 +273,12 @@ type Model struct {
 
 	// Tool-call names collected during the current agent turn; consumed when
 	// streamDoneMsg fires and cleared before the next turn begins.
-	currentTurnTools         []string
-	currentTurnHistoryIndex  int
-	currentTurnHistoryActive bool
+	currentTurnTools          []string
+	currentTurnHistoryIndex   int
+	currentTurnHistoryActive  bool
+	historyRenderPending      bool
+	historyRenderLast         time.Time
+	historyRenderScrollBottom bool
 }
 
 // pinnedFilesRegistry returns the lazy-initialized per-session pin set.
@@ -241,6 +295,8 @@ func (m *Model) pinnedFilesRegistry() *pinnedFileRegistry {
 type infoMsg struct {
 	text string
 }
+
+type historyPanelRefreshMsg struct{}
 
 type toolTraceMsg struct {
 	step    int
@@ -297,9 +353,13 @@ func (m *Model) chatOptions() llama.ChatOptions {
 }
 
 func (m *Model) samplingSummary() string {
+	return samplingSummaryForOptions(m.chatOptions())
+}
+
+func samplingSummaryForOptions(opts llama.ChatOptions) string {
 	thinking := "auto"
-	if m.cfg.Chat.EnableThinking != nil {
-		if *m.cfg.Chat.EnableThinking {
+	if opts.EnableThinking != nil {
+		if *opts.EnableThinking {
 			thinking = "on"
 		} else {
 			thinking = "off"
@@ -307,15 +367,15 @@ func (m *Model) samplingSummary() string {
 	}
 	return fmt.Sprintf(
 		"temp=%.2f top_p=%.2f top_k=%d min_p=%.2f presence=%.2f repeat=%.2f thinking=%s preserve=%t max_tokens=%d",
-		m.cfg.Chat.Temperature,
-		m.cfg.Chat.TopP,
-		m.cfg.Chat.TopK,
-		m.cfg.Chat.MinP,
-		m.cfg.Chat.PresencePenalty,
-		m.cfg.Chat.RepetitionPenalty,
+		opts.Temperature,
+		opts.TopP,
+		opts.TopK,
+		opts.MinP,
+		opts.PresencePenalty,
+		opts.RepetitionPenalty,
 		thinking,
-		m.cfg.Chat.PreserveThinking,
-		m.cfg.Chat.MaxTokens,
+		opts.PreserveThinking,
+		opts.MaxTokens,
 	)
 }
 
@@ -473,16 +533,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 			m.status = summary
 		}
 	case "/panel":
-		m.historyPanelOpen = !m.historyPanelOpen
-		if m.historyPanelOpen {
-			m.historyFocused = false // open but unfocused; Tab to focus
-			if len(m.historyEntries) > 0 {
-				m.historySelected = len(m.historyEntries) - 1
-			}
-		} else {
-			m.historyFocused = false
-		}
-		m.resize()
+		m.setHistoryPanelOpen(!m.historyPanelOpen)
 		if m.historyPanelOpen {
 			m.status = "Panel open. Ctrl+T cycles tabs · Tab focuses · ↑↓ select · Enter expand · PgUp/PgDn or j/k scroll"
 		} else {
@@ -493,10 +544,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 		// so ↑/↓/Enter pick from the list. With an arg it's a direct
 		// shortcut that swaps into the named session immediately.
 		if len(fields) < 2 {
-			if !m.historyPanelOpen {
-				m.historyPanelOpen = true
-				m.resize()
-			}
+			m.setHistoryPanelOpen(true)
 			m.panelTab = panelTabSessions
 			m.refreshSessionsList()
 			m.historyFocused = true
@@ -516,10 +564,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 			m.rerenderActivePanel()
 		}
 	case "/plan":
-		if !m.historyPanelOpen {
-			m.historyPanelOpen = true
-			m.resize()
-		}
+		m.setHistoryPanelOpen(true)
 		m.panelTab = panelTabPlan
 		cmd, status, err := m.prepareEditPlanCmd()
 		m.rerenderActivePanel()
@@ -815,6 +860,9 @@ func (m *Model) renderHistoryPanelContent() {
 }
 
 func (m *Model) resize() {
+	start := time.Now()
+	defer m.logUISlowPath("ui.resize", start, fmt.Sprintf("panel_open=%t tab=%d size=%dx%d", m.historyPanelOpen, m.panelTab, m.width, m.height))
+
 	headerHeight := 1
 	dividerCount := 2 // one after header, one before input
 	inputHeight := 5
@@ -836,6 +884,7 @@ func (m *Model) resize() {
 		m.viewport = viewport.New(mainWidth, contentHeight)
 		m.ready = true
 	}
+	mainWidthChanged := m.viewport.Width != mainWidth
 	m.viewport.Width = mainWidth
 	m.viewport.Height = contentHeight
 
@@ -851,14 +900,76 @@ func (m *Model) resize() {
 	}
 
 	m.input.SetWidth(m.width)
+	m.ensureMarkdownRenderer(maxInt(20, mainWidth-2))
+	if mainWidthChanged {
+		m.invalidateMessageRenderCache()
+	}
+	m.renderMessages(false)
+	if m.historyPanelOpen {
+		m.rerenderActivePanel()
+	}
+}
+
+func (m *Model) ensureMarkdownRenderer(wrapWidth int) {
+	if wrapWidth < 20 {
+		wrapWidth = 20
+	}
+	if m.mdRenderer != nil && m.mdRendererWrapWidth == wrapWidth {
+		return
+	}
 	m.mdRenderer, _ = glamour.NewTermRenderer(
 		glamour.WithStyles(mochaStyleConfig),
-		glamour.WithWordWrap(maxInt(20, mainWidth-2)),
+		glamour.WithWordWrap(wrapWidth),
 	)
-	m.renderMessages(false)
-	m.renderHistoryPanelContent()
-	m.renderPlanPanelContent()
-	m.renderSessionsPanelContent()
+	m.mdRendererWrapWidth = wrapWidth
+	m.invalidateMessageRenderCache()
+}
+
+func (m *Model) invalidateMessageRenderCache() {
+	m.messageRenderCache = ""
+	m.messageRenderWidth = 0
+	m.messageRenderHash = 0
+	m.messageRenderMD = false
+}
+
+func (m *Model) setHistoryPanelOpen(open bool) {
+	start := time.Now()
+	defer m.logUISlowPath("ui.toggle_panel", start, fmt.Sprintf("open=%t tab=%d", open, m.panelTab))
+
+	if m.historyPanelOpen == open && m.ready {
+		if open {
+			m.rerenderActivePanel()
+		}
+		return
+	}
+	m.historyPanelOpen = open
+	m.historyFocused = false
+	if !open {
+		m.historyRenderPending = false
+		m.historyRenderScrollBottom = false
+	}
+	if open && len(m.historyEntries) > 0 {
+		m.historySelected = len(m.historyEntries) - 1
+	}
+	if open && m.panelTab == panelTabSessions {
+		m.refreshSessionsList()
+	}
+	m.resize()
+}
+
+func (m *Model) logUISlowPath(name string, start time.Time, detail string) {
+	if m == nil {
+		return
+	}
+	duration := time.Since(start)
+	if duration < 50*time.Millisecond {
+		return
+	}
+	content := fmt.Sprintf("%s duration_ms=%d", name, duration.Milliseconds())
+	if strings.TrimSpace(detail) != "" {
+		content += " " + strings.TrimSpace(detail)
+	}
+	m.logMessage("ui_trace", content)
 }
 
 func (m *Model) workingDots() string {
@@ -1023,19 +1134,36 @@ func (m *Model) takeLastAssistantReasoningContent() string {
 
 func (m *Model) logToolRequest(event agent.ToolRequestEvent) {
 	m.emitJSONToolRequest(event)
+	profile := workspace.DiscoveryProfileForRequest(event.Request)
+	if event.DiscoveryClass != "" {
+		profile.Class = event.DiscoveryClass
+	}
+	if event.DiscoveryScope != "" {
+		profile.Scope = event.DiscoveryScope
+	}
+	if event.DiscoveryCost != "" {
+		profile.Cost = event.DiscoveryCost
+	}
+	if !profile.Discovery {
+		profile = workspace.ToolDiscoveryProfile{}
+	}
+	m.sessionAgg.recordToolRequest(profile)
 	if m.debugLogger == nil {
 		return
 	}
-	_ = m.debugLogger.LogToolRequest(
-		event.Step,
-		event.Agent,
-		event.Raw,
-		event.Request.Tool,
-		string(event.Mode),
-		event.Broad,
-		event.Narrowing,
-		event.Action,
-	)
+	_ = m.debugLogger.LogToolRequestDetail(transcript.ToolRequestDetail{
+		Step:           event.Step,
+		Agent:          event.Agent,
+		Raw:            event.Raw,
+		Tool:           event.Request.Tool,
+		WorkspaceMode:  string(event.Mode),
+		Broad:          event.Broad,
+		Narrowing:      event.Narrowing,
+		Action:         event.Action,
+		DiscoveryClass: profile.Class,
+		DiscoveryScope: profile.Scope,
+		DiscoveryCost:  profile.Cost,
+	})
 }
 
 func (m *Model) logToolResult(event agent.ToolResultEvent) {
@@ -1053,18 +1181,34 @@ func (m *Model) logToolResult(event agent.ToolResultEvent) {
 	if m.debugLogger == nil {
 		return
 	}
+	profile := profileForToolResult(event)
 	_ = m.debugLogger.LogToolResultDetail(transcript.ToolResultDetail{
-		Step:        event.Step,
-		Agent:       event.Agent,
-		Tool:        event.Result.Tool,
-		Summary:     event.Result.Summary,
-		Error:       event.Result.Error,
-		OutputChars: chars,
-		OutputLines: lines,
-		Path:        strings.TrimSpace(event.Request.Path),
-		StartLine:   event.Request.StartLine,
-		EndLine:     event.Request.EndLine,
+		Step:           event.Step,
+		Agent:          event.Agent,
+		Tool:           event.Result.Tool,
+		Summary:        event.Result.Summary,
+		Error:          event.Result.Error,
+		OutputChars:    chars,
+		OutputLines:    lines,
+		Path:           strings.TrimSpace(event.Request.Path),
+		StartLine:      event.Request.StartLine,
+		EndLine:        event.Request.EndLine,
+		DiscoveryClass: profile.Class,
+		DiscoveryScope: profile.Scope,
+		DiscoveryCost:  profile.Cost,
 	})
+}
+
+func profileForToolResult(event agent.ToolResultEvent) workspace.ToolDiscoveryProfile {
+	req := event.Request
+	if strings.TrimSpace(req.Tool) == "" {
+		req.Tool = event.Result.Tool
+	}
+	profile := workspace.DiscoveryProfileForRequest(req)
+	if !profile.Discovery {
+		return workspace.ToolDiscoveryProfile{}
+	}
+	return profile
 }
 
 func (m *Model) logRunEvent(event agent.RunEvent) {
@@ -1144,8 +1288,102 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 			}
 		}
 		return
+	case "phase":
+		var payload struct {
+			Lane   string `json:"lane"`
+			Phase  string `json:"phase"`
+			State  string `json:"state"`
+			Detail string `json:"detail"`
+		}
+		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
+			if m.debugLogger != nil {
+				_ = m.debugLogger.LogPhase(payload.Lane, payload.Phase, payload.State, payload.Detail)
+			}
+		}
+		return
+	case "child_tool_request":
+		if m.logNestedToolRequest(event.Content) {
+			return
+		}
+	case "child_tool_result":
+		if m.logNestedToolResult(event.Content) {
+			return
+		}
 	}
 	m.logMessage(event.Role, event.Content)
+}
+
+func (m *Model) logNestedToolRequest(content string) bool {
+	var payload agent.ToolRequestEvent
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return false
+	}
+	profile := workspace.DiscoveryProfileForRequest(payload.Request)
+	if payload.DiscoveryClass != "" {
+		profile.Class = payload.DiscoveryClass
+	}
+	if payload.DiscoveryScope != "" {
+		profile.Scope = payload.DiscoveryScope
+	}
+	if payload.DiscoveryCost != "" {
+		profile.Cost = payload.DiscoveryCost
+	}
+	if !profile.Discovery {
+		profile = workspace.ToolDiscoveryProfile{}
+	}
+	m.sessionAgg.recordToolRequest(profile)
+	if m.debugLogger != nil {
+		_ = m.debugLogger.LogToolRequestDetail(transcript.ToolRequestDetail{
+			Step:           payload.Step,
+			Agent:          payload.Agent,
+			Raw:            payload.Raw,
+			Tool:           payload.Request.Tool,
+			WorkspaceMode:  string(payload.Mode),
+			Broad:          payload.Broad,
+			Narrowing:      payload.Narrowing,
+			Action:         payload.Action,
+			DiscoveryClass: profile.Class,
+			DiscoveryScope: profile.Scope,
+			DiscoveryCost:  profile.Cost,
+		})
+	}
+	return true
+}
+
+func (m *Model) logNestedToolResult(content string) bool {
+	var payload agent.ToolResultEvent
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return false
+	}
+	output := payload.Result.Output
+	chars := len(output)
+	lines := 0
+	if chars > 0 {
+		lines = strings.Count(output, "\n")
+		if !strings.HasSuffix(output, "\n") {
+			lines++
+		}
+	}
+	m.sessionAgg.recordToolResult(payload.Result.Tool, chars)
+	if m.debugLogger != nil {
+		profile := profileForToolResult(payload)
+		_ = m.debugLogger.LogToolResultDetail(transcript.ToolResultDetail{
+			Step:           payload.Step,
+			Agent:          payload.Agent,
+			Tool:           payload.Result.Tool,
+			Summary:        payload.Result.Summary,
+			Error:          payload.Result.Error,
+			OutputChars:    chars,
+			OutputLines:    lines,
+			Path:           strings.TrimSpace(payload.Request.Path),
+			StartLine:      payload.Request.StartLine,
+			EndLine:        payload.Request.EndLine,
+			DiscoveryClass: profile.Class,
+			DiscoveryScope: profile.Scope,
+			DiscoveryCost:  profile.Cost,
+		})
+	}
+	return true
 }
 
 func (m *Model) writeSessionSummary() {
@@ -1176,6 +1414,8 @@ func (m *Model) writeSessionSummary() {
 		PeakCtxPct:       peakPct,
 		Compactions:      m.sessionAgg.compactions,
 		TopToolsByOutput: m.sessionAgg.topToolsByOutput(10),
+		DiscoveryByClass: discoveryAggregates(m.sessionAgg.discoveryClasses),
+		DiscoveryByCost:  discoveryAggregates(m.sessionAgg.discoveryCosts),
 		DurationMillis:   duration,
 	})
 }

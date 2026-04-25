@@ -155,6 +155,45 @@ func TestDefaultConfigHasNoImplementerByDefault(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsMLXBackendWithoutPathResolution(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "llama_server": {
+    "kind": "mlx",
+    "binary": "mlx_lm.server",
+    "host": "127.0.0.1",
+    "port": 8080,
+    "model": "mlx-community/Qwen3.6-27B-MLX-4bit"
+  },
+  "chat": {"preset": "qwen3-coding-preserve", "max_tokens": 16}
+}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LlamaServer.Kind != "mlx" {
+		t.Fatalf("expected kind=mlx, got %q", cfg.LlamaServer.Kind)
+	}
+	if cfg.LlamaServer.Model != "mlx-community/Qwen3.6-27B-MLX-4bit" {
+		t.Fatalf("expected HF id to be preserved (not joined with baseDir), got %q", cfg.LlamaServer.Model)
+	}
+	if !cfg.LlamaServer.IsMLX() {
+		t.Fatal("expected IsMLX() to be true")
+	}
+}
+
+func TestValidateRejectsUnknownBackendKind(t *testing.T) {
+	cfg := Default()
+	cfg.LlamaServer.Kind = "nope"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "llama_server.kind must be one of") {
+		t.Fatalf("expected kind validation error, got %v", err)
+	}
+}
+
 func TestDefaultConfigPreservesQwenThinking(t *testing.T) {
 	cfg := Default()
 	if cfg.Chat.Preset != "qwen3-coding-preserve" {
@@ -165,5 +204,8 @@ func TestDefaultConfigPreservesQwenThinking(t *testing.T) {
 	}
 	if !cfg.Chat.PreserveThinking {
 		t.Fatal("expected preserve_thinking enabled by default")
+	}
+	if cfg.LlamaServer.CtxSize != 196608 {
+		t.Fatalf("expected default ctx_size 196608, got %d", cfg.LlamaServer.CtxSize)
 	}
 }

@@ -859,6 +859,78 @@ func TestBuildSuggestedScenarioSkipsBroadOrFailedTools(t *testing.T) {
 	}
 }
 
+func TestAnalyzeTracksDiscoveryBalanceMetadata(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "structural_search", "discovery_class": "ast_search", "discovery_scope": "targeted", "discovery_cost": "medium"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "discovery_query", "discovery_class": "composite_query", "discovery_scope": "targeted", "discovery_cost": "medium"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 3, "tool": "semgrep_scan", "discovery_class": "security_scan", "discovery_scope": "broad", "discovery_cost": "high"}},
+		{Type: "tool_result", Data: map[string]any{"step": 3, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 4, "tool": "dependency_graph"}},
+		{Type: "tool_result", Data: map[string]any{"step": 4, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 5, "tool": "shell", "discovery_class": "shell", "discovery_scope": "targeted", "discovery_cost": "high"}},
+		{Type: "tool_result", Data: map[string]any{"step": 5, "error": ""}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.DiscoveryTools["structural_search"] != 1 || metrics.DiscoveryTools["discovery_query"] != 1 || metrics.DiscoveryTools["semgrep_scan"] != 1 || metrics.DiscoveryTools["dependency_graph"] != 1 {
+		t.Fatalf("unexpected discovery tool counts: %#v", metrics.DiscoveryTools)
+	}
+	if metrics.DiscoveryClasses["ast_search"] != 1 || metrics.DiscoveryClasses["composite_query"] != 1 || metrics.DiscoveryClasses["security_scan"] != 1 || metrics.DiscoveryClasses["dependency_graph"] != 1 {
+		t.Fatalf("unexpected discovery class counts: %#v", metrics.DiscoveryClasses)
+	}
+	if metrics.DiscoveryScopes["targeted"] != 2 || metrics.DiscoveryScopes["broad"] != 2 {
+		t.Fatalf("unexpected discovery scope counts: %#v", metrics.DiscoveryScopes)
+	}
+	if metrics.DiscoveryCosts["high"] != 1 || metrics.DiscoveryCosts["medium"] != 3 || metrics.HeavyDiscoveryRequests != 1 {
+		t.Fatalf("unexpected discovery cost metrics: costs=%#v heavy=%d", metrics.DiscoveryCosts, metrics.HeavyDiscoveryRequests)
+	}
+}
+
+func TestAnalyzePromotesReadinessEvidencePaths(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "readiness_check", "content": `{"action":"answer","lane":"architecture","ready":true,"evidence_paths":["internal/agent/runner.go","internal/agent/runner_child_tasks.go"]}`}},
+	}
+
+	metrics := Analyze(records)
+	for _, want := range []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"} {
+		if !containsStringFold(metrics.EvidencePaths, want) {
+			t.Fatalf("expected readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths)
+		}
+	}
+}
+
+func TestEvaluateDiscoveryBalanceAssertions(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "find insecure eval"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "discovery_query", "discovery_class": "composite_query", "discovery_scope": "targeted", "discovery_cost": "medium"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "semgrep_scan", "discovery_class": "security_scan", "discovery_scope": "broad", "discovery_cost": "high"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "error": ""}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "No bounded finding."}},
+	}
+	maxHeavy := 1
+	report := Evaluate("discovery.jsonl", records, Scenario{
+		Name:                      "discovery balance",
+		RequireDiscoveryTools:     []string{"discovery_query", "semgrep_scan"},
+		RequireDiscoveryClasses:   []string{"composite_query", "security_scan"},
+		MaxHeavyDiscoveryRequests: &maxHeavy,
+	})
+	if !report.Passed {
+		t.Fatalf("expected discovery balance scenario to pass, findings=%#v", report.Findings)
+	}
+
+	zeroHeavy := 0
+	report = Evaluate("discovery.jsonl", records, Scenario{
+		Name:                      "heavy budget",
+		MaxHeavyDiscoveryRequests: &zeroHeavy,
+	})
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "heavy discovery requests exceeded") {
+		t.Fatalf("expected heavy discovery budget failure, got passed=%t findings=%#v", report.Passed, report.Findings)
+	}
+}
+
 func TestLoadRecordsReadsJSONL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sample.jsonl")

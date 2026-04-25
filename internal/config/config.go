@@ -33,6 +33,7 @@ type RouteClassifier struct {
 	TimeoutSeconds      int      `json:"timeout_seconds"`
 	StartTimeoutSeconds int      `json:"start_timeout_seconds"`
 	AutoStartServer     bool     `json:"auto_start_server"`
+	Kind                string   `json:"kind,omitempty"`
 	Binary              string   `json:"binary"`
 	Host                string   `json:"host"`
 	Port                int      `json:"port"`
@@ -49,6 +50,7 @@ type RouteClassifier struct {
 // llama.NewServerController for on-demand launch.
 func (r RouteClassifier) LlamaServerSpec() LlamaServer {
 	return LlamaServer{
+		Kind:            r.Kind,
 		Binary:          r.Binary,
 		Host:            r.Host,
 		Port:            r.Port,
@@ -74,7 +76,19 @@ type MCPServer struct {
 	Env     []string `json:"env,omitempty"`
 }
 
+// Backend kinds accepted by LlamaServer.Kind.
+const (
+	BackendLlama = "llama"
+	BackendMLX   = "mlx"
+)
+
+// LlamaServer describes a local inference backend the harness can launch and
+// talk to via an OpenAI-compatible HTTP API. Despite the name, two backend
+// kinds are supported: "llama" (llama.cpp's llama-server, the default) and
+// "mlx" (Apple MLX's mlx_lm.server on Apple Silicon). The llama-only fields
+// below (Jinja, FlashAttention, Reasoning*) are ignored for kind=mlx.
 type LlamaServer struct {
+	Kind            string   `json:"kind,omitempty"`
 	Binary          string   `json:"binary"`
 	Host            string   `json:"host"`
 	Port            int      `json:"port"`
@@ -89,6 +103,12 @@ type LlamaServer struct {
 	ReasoningBudget int      `json:"reasoning_budget"`
 	LogFile         string   `json:"log_file"`
 	ExtraArgs       []string `json:"extra_args"`
+}
+
+// IsMLX reports whether this backend is an MLX-based server (mlx_lm.server or
+// equivalent) rather than llama.cpp. Empty Kind defaults to llama.
+func (l LlamaServer) IsMLX() bool {
+	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendMLX)
 }
 
 type Chat struct {
@@ -173,7 +193,7 @@ func Default() Config {
 			Host:            "127.0.0.1",
 			Port:            8080,
 			Model:           "models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
-			CtxSize:         65536,
+			CtxSize:         196608,
 			Threads:         defaultThreads(),
 			GPULayers:       0,
 			Jinja:           true,
@@ -254,52 +274,19 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
-	if c.LlamaServer.Binary == "" {
-		return fmt.Errorf("llama_server.binary is required")
-	}
-	if c.LlamaServer.Host == "" {
-		return fmt.Errorf("llama_server.host is required")
-	}
-	if c.LlamaServer.Port <= 0 {
-		return fmt.Errorf("llama_server.port must be positive")
-	}
-	if c.LlamaServer.Model == "" {
-		return fmt.Errorf("llama_server.model is required")
-	}
-	if c.LlamaServer.CtxSize <= 0 {
-		return fmt.Errorf("llama_server.ctx_size must be positive")
-	}
-	if c.LlamaServer.Reasoning != "" && !containsString([]string{"on", "off", "auto"}, c.LlamaServer.Reasoning) {
-		return fmt.Errorf("llama_server.reasoning must be one of on, off, auto")
-	}
-	if c.LlamaServer.ReasoningFormat != "" && !containsString([]string{"auto", "none", "deepseek", "deepseek-legacy"}, c.LlamaServer.ReasoningFormat) {
-		return fmt.Errorf("llama_server.reasoning_format must be one of auto, none, deepseek, deepseek-legacy")
+	if err := validateBackend("llama_server", c.LlamaServer); err != nil {
+		return err
 	}
 	if c.Implementer != nil {
-		if c.Implementer.Binary == "" {
-			return fmt.Errorf("implementer.binary is required")
-		}
-		if c.Implementer.Host == "" {
-			return fmt.Errorf("implementer.host is required")
-		}
-		if c.Implementer.Port <= 0 {
-			return fmt.Errorf("implementer.port must be positive")
+		if err := validateBackend("implementer", *c.Implementer); err != nil {
+			return err
 		}
 		if c.Implementer.Port == c.LlamaServer.Port && c.Implementer.Host == c.LlamaServer.Host {
 			return fmt.Errorf("implementer.port must differ from llama_server.port on the same host")
 		}
-		if c.Implementer.Model == "" {
-			return fmt.Errorf("implementer.model is required")
-		}
-		if c.Implementer.CtxSize <= 0 {
-			return fmt.Errorf("implementer.ctx_size must be positive")
-		}
-		if c.Implementer.Reasoning != "" && !containsString([]string{"on", "off", "auto"}, c.Implementer.Reasoning) {
-			return fmt.Errorf("implementer.reasoning must be one of on, off, auto")
-		}
-		if c.Implementer.ReasoningFormat != "" && !containsString([]string{"auto", "none", "deepseek", "deepseek-legacy"}, c.Implementer.ReasoningFormat) {
-			return fmt.Errorf("implementer.reasoning_format must be one of auto, none, deepseek, deepseek-legacy")
-		}
+	}
+	if k := strings.TrimSpace(c.RouteClassifier.Kind); k != "" && k != BackendLlama && k != BackendMLX {
+		return fmt.Errorf("route_classifier.kind must be one of llama, mlx (got %q)", c.RouteClassifier.Kind)
 	}
 	if c.Chat.SaveDir == "" {
 		return fmt.Errorf("chat.save_dir is required")
@@ -385,10 +372,14 @@ func (c Config) ImplementerBaseURL() string {
 }
 
 func (c *Config) resolvePaths(baseDir string) {
-	c.LlamaServer.Model = resolvePath(baseDir, c.LlamaServer.Model)
+	if !c.LlamaServer.IsMLX() {
+		c.LlamaServer.Model = resolvePath(baseDir, c.LlamaServer.Model)
+	}
 	c.LlamaServer.LogFile = resolvePath(baseDir, c.LlamaServer.LogFile)
 	if c.Implementer != nil {
-		c.Implementer.Model = resolvePath(baseDir, c.Implementer.Model)
+		if !c.Implementer.IsMLX() {
+			c.Implementer.Model = resolvePath(baseDir, c.Implementer.Model)
+		}
 		c.Implementer.LogFile = resolvePath(baseDir, c.Implementer.LogFile)
 	}
 	c.Chat.SaveDir = resolvePath(baseDir, c.Chat.SaveDir)
@@ -415,49 +406,21 @@ func (c *Config) applyRuntimeDefaults() {
 	if c.AppName == "" {
 		c.AppName = "Idiom"
 	}
-	if c.LlamaServer.Threads <= 0 {
-		c.LlamaServer.Threads = defaultThreads()
+	if c.LlamaServer.Kind == "" {
+		c.LlamaServer.Kind = BackendLlama
 	}
-	if c.LlamaServer.CtxSize <= 0 {
-		c.LlamaServer.CtxSize = 65536
-	}
-	if c.LlamaServer.Reasoning == "" {
-		c.LlamaServer.Reasoning = "auto"
-	}
-	if c.LlamaServer.ReasoningFormat == "" {
-		c.LlamaServer.ReasoningFormat = "deepseek"
-	}
-	if c.LlamaServer.ReasoningBudget == 0 {
-		c.LlamaServer.ReasoningBudget = -1
-	}
-	if c.LlamaServer.LogFile == "" {
-		c.LlamaServer.LogFile = "logs/llama-server.log"
-	}
+	applyBackendRuntimeDefaults(&c.LlamaServer, nil, "logs/llama-server.log")
 	if c.Implementer != nil {
+		if c.Implementer.Kind == "" {
+			c.Implementer.Kind = BackendLlama
+		}
 		if c.Implementer.Binary == "" {
 			c.Implementer.Binary = c.LlamaServer.Binary
 		}
 		if c.Implementer.Host == "" {
 			c.Implementer.Host = c.LlamaServer.Host
 		}
-		if c.Implementer.Threads <= 0 {
-			c.Implementer.Threads = defaultThreads()
-		}
-		if c.Implementer.CtxSize <= 0 {
-			c.Implementer.CtxSize = 65536
-		}
-		if c.Implementer.Reasoning == "" {
-			c.Implementer.Reasoning = c.LlamaServer.Reasoning
-		}
-		if c.Implementer.ReasoningFormat == "" {
-			c.Implementer.ReasoningFormat = c.LlamaServer.ReasoningFormat
-		}
-		if c.Implementer.ReasoningBudget == 0 {
-			c.Implementer.ReasoningBudget = c.LlamaServer.ReasoningBudget
-		}
-		if c.Implementer.LogFile == "" {
-			c.Implementer.LogFile = "logs/implementer-server.log"
-		}
+		applyBackendRuntimeDefaults(c.Implementer, &c.LlamaServer, "logs/implementer-server.log")
 	}
 	if c.Chat.SaveDir == "" {
 		c.Chat.SaveDir = "transcripts"
@@ -713,4 +676,76 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// applyBackendRuntimeDefaults fills llama-specific defaults when the backend
+// kind is llama. For MLX backends, ctx_size / threads / reasoning flags are
+// left zero (mlx_lm.server has no equivalents), but generic fields like the
+// log file path still get defaulted. If parent is non-nil, llama reasoning
+// fields inherit from it when unset (used for the implementer block).
+func applyBackendRuntimeDefaults(b *LlamaServer, parent *LlamaServer, defaultLogFile string) {
+	if b.LogFile == "" {
+		b.LogFile = defaultLogFile
+	}
+	if b.IsMLX() {
+		return
+	}
+	if b.Threads <= 0 {
+		b.Threads = defaultThreads()
+	}
+	if b.CtxSize <= 0 {
+		b.CtxSize = 196608
+	}
+	if b.Reasoning == "" {
+		if parent != nil && parent.Reasoning != "" {
+			b.Reasoning = parent.Reasoning
+		} else {
+			b.Reasoning = "auto"
+		}
+	}
+	if b.ReasoningFormat == "" {
+		if parent != nil && parent.ReasoningFormat != "" {
+			b.ReasoningFormat = parent.ReasoningFormat
+		} else {
+			b.ReasoningFormat = "deepseek"
+		}
+	}
+	if b.ReasoningBudget == 0 {
+		if parent != nil {
+			b.ReasoningBudget = parent.ReasoningBudget
+		} else {
+			b.ReasoningBudget = -1
+		}
+	}
+}
+
+func validateBackend(name string, b LlamaServer) error {
+	kind := strings.TrimSpace(b.Kind)
+	if kind != "" && kind != BackendLlama && kind != BackendMLX {
+		return fmt.Errorf("%s.kind must be one of llama, mlx (got %q)", name, b.Kind)
+	}
+	if b.Binary == "" {
+		return fmt.Errorf("%s.binary is required", name)
+	}
+	if b.Host == "" {
+		return fmt.Errorf("%s.host is required", name)
+	}
+	if b.Port <= 0 {
+		return fmt.Errorf("%s.port must be positive", name)
+	}
+	if b.Model == "" {
+		return fmt.Errorf("%s.model is required", name)
+	}
+	if !b.IsMLX() {
+		if b.CtxSize <= 0 {
+			return fmt.Errorf("%s.ctx_size must be positive", name)
+		}
+		if b.Reasoning != "" && !containsString([]string{"on", "off", "auto"}, b.Reasoning) {
+			return fmt.Errorf("%s.reasoning must be one of on, off, auto", name)
+		}
+		if b.ReasoningFormat != "" && !containsString([]string{"auto", "none", "deepseek", "deepseek-legacy"}, b.ReasoningFormat) {
+			return fmt.Errorf("%s.reasoning_format must be one of auto, none, deepseek, deepseek-legacy", name)
+		}
+	}
+	return nil
 }

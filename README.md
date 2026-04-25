@@ -126,8 +126,17 @@ Notes:
 
 - If you hand-tune the numeric sampling fields in `config.json`, set `preset: "custom"` so startup does not re-apply a built-in preset over your manual values.
 - `qwen3-coding-preserve` is the shipped coding default for long sessions; it consumes more context because historical thinking traces are retained. Use `qwen3-coding` when you want the same sampling settings without retained thinking.
-- The shipped config now uses `ctx_size: 65536`; preserved thinking becomes more useful as context grows, and Qwen officially recommends even larger windows for strongest long-horizon behavior.
+- The shipped config now uses `ctx_size: 196608`; preserved thinking becomes more useful as context grows, and Qwen officially recommends even larger windows for strongest long-horizon behavior.
 - The harness now starts `llama-server` with `flash_attention`, `reasoning: auto`, and `reasoning_format: deepseek` by default, so visible responses stay clean while reasoning content remains structured on the server side.
+
+## Inference backends
+
+Each of the three server blocks (`llama_server`, `implementer`, `route_classifier`) accepts a `kind` field that selects the inference backend:
+
+- `"kind": "llama"` (default) — launches `llama-server` from llama.cpp with the existing GGUF model path and llama-specific flags (`jinja`, `flash_attention`, `reasoning*`, `cache-type-*`, etc).
+- `"kind": "mlx"` — launches `mlx_lm.server` from [mlx-lm](https://github.com/ml-explore/mlx-lm). On Apple Silicon this typically beats llama.cpp's Metal backend by ~15–30% throughput and ~10% memory. `model` becomes a Hugging Face ID (e.g. `unsloth/Qwen3.6-27B-UD-MLX-4bit`) or a local MLX directory — not a GGUF path. Llama-specific flags (`jinja`, `flash_attention`, `reasoning*`) are ignored, and `chat_template_kwargs` (`enable_thinking`, `preserve_thinking`) is omitted from requests since MLX doesn't understand it.
+
+The blocks are independent, so mixed setups work — for example, main chat on MLX and the route classifier still on llama.cpp. Set `binary` to `mlx_lm.server` (install via `pip install mlx-lm`) and pass any additional flags via `extra_args`.
 
 ## Route Classifier
 
@@ -181,8 +190,9 @@ Each record includes a timestamp and event type. The log captures:
 - the hidden prompt/context bundle active for the session
 - workspace mode and explore thoroughness changes
 - user, assistant, and tool messages
-- raw tool requests with step numbers, agent lane, and broad-vs-narrow classification
-- tool results with step numbers, agent lane, summaries, and errors
+- raw tool requests with step numbers, agent lane, broad-vs-narrow classification, and discovery balance metadata (`discovery_class`, `discovery_scope`, `discovery_cost`)
+- tool results with step numbers, agent lane, summaries, errors, and the same discovery balance metadata when applicable
+- delegated child tool requests/results as typed records, so live-suite scoring sees the actual discovery tools used inside `task`
 - server state changes
 - chat/runtime/context errors
 - saved transcript paths
@@ -250,6 +260,13 @@ make swe-live
 ```
 
 The live runner executes each task's prompt or multi-turn sequence in an isolated temporary workspace, then scores the produced debug log with the same deterministic SWE oracles.
+The SWE report prints per-task discovery-class counts from typed tool request records, which makes broad delegation, text search, file reads, language-symbol tools, AST search, dependency graphs, history, and security scans visible as separate balance buckets.
+
+For faster iteration against a small checked-in subset, including the subagent explanation benchmark, run:
+
+```bash
+make swe-live-subset
+```
 
 ## Explore Mode
 
@@ -296,6 +313,12 @@ The harness now gives Qwen a tool loop for workspace operations. When needed, th
 - list files with `list_files`
 - read files with `read_file`
 - search with `rg`
+- run deterministic purpose-built discovery with `discovery_query` (`impact_analysis`, `function_tracing`, `architecture_boundary`, `security_review`, or `history_context`)
+- search code structurally with `structural_search` (ast-grep when installed)
+- inspect module/import dependencies with `dependency_graph`
+- inspect code history with `history_range`, `history_symbol`, and `blame_range`
+- use fallback symbol discovery with `ctags_symbols` (Universal Ctags when installed)
+- run optional security/dataflow discovery with `semgrep_scan` and `joern_scan` when those CLIs are installed
 - inspect Go repos semantically with `go_overview`, `go_entrypoints`, `go_find_symbol`, `go_find_type`, `go_find_const`, `go_read_symbol`, `go_find_package`, `go_related_files`, `go_definition`, `go_references`, `go_implementations`, `go_calls_from`, `go_calls_into`, `go_extract_body`, `go_importers`, `go_diagnostics`, and `go_workspace_symbol`
 - inspect C/C++ repos semantically with `cpp_overview`, `cpp_entrypoints`, `cpp_find_symbol`, `cpp_read_symbol`, `cpp_related_files`, `cpp_definition`, `cpp_declaration`, `cpp_implementations`, `cpp_references`, `cpp_calls_from`, `cpp_calls_into`, `cpp_extract_body`, `cpp_includes`, `cpp_who_includes`, `cpp_blast_radius`, `cpp_dead_symbol`, `cpp_diagnostics`, and `cpp_workspace_symbol`
 - create directories with `mkdir`
@@ -325,6 +348,7 @@ For C/C++ workspaces, the semantic tools are deterministic and genericized from 
 - the current workspace summary is shown in the footer as `workspace: ...`
 - file exploration is discovery-first and deterministic: `search_files`, `search_content`, and `list_files` return stable file handles like `f12`
 - `read_file` should use those handles; raw path reads are rejected until that exact path has already appeared in a prior tool result
+- `discovery_query` writes a compact summary to the tool result and persists the full layered evidence packet under `.idiom/discovery/queries/<id>.json` in the target project; git workspaces are updated via `.git/info/exclude` so these local harness artifacts stay out of status
 
 ### Repo-local discovery tool parity
 

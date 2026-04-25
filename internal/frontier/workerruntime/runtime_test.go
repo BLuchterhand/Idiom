@@ -161,6 +161,63 @@ func TestRenderInitialRuntimeBriefIncludesPolicyManifestAndTargets(t *testing.T)
 	}
 }
 
+func TestRenderInitialRuntimeBriefAddsDeterministicDiscoveryExamples(t *testing.T) {
+	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "architecture",
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"search_content", "read_file", "discovery_query"},
+	})
+
+	for _, needle := range []string{
+		`"discovery_examples"`,
+		"Use one discovery_query before ad hoc list/search/read",
+		"architecture_boundary",
+		"impact_analysis",
+		"function_tracing",
+		"security_review",
+	} {
+		if !strings.Contains(rendered, needle) {
+			t.Fatalf("expected %q in deterministic discovery guidance:\n%s", needle, rendered)
+		}
+	}
+}
+
+func TestRenderInitialRuntimeBriefOmitsDiscoveryExamplesWithoutToolAccess(t *testing.T) {
+	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        "direct_question",
+		Contract:          "direct_answer",
+		PermissionProfile: "conversation_only",
+		AllowedTools:      []string{"discovery_query"},
+	})
+	if strings.Contains(rendered, "discovery_examples") || strings.Contains(rendered, "purpose\":\"impact_analysis") {
+		t.Fatalf("conversation-only runtime brief should not advertise discovery examples:\n%s", rendered)
+	}
+}
+
+func TestNormalizeRuntimeBriefConversationOnlyClearsToolSurface(t *testing.T) {
+	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{
+		PermissionProfile: "conversation_only",
+		AllowedTools:      []string{"task", "search_files"},
+		RequiredTools:     []string{"search_files"},
+		DiscoveryExamples: []string{"use discovery_query"},
+	})
+	if len(brief.AllowedTools) != 0 {
+		t.Fatalf("conversation-only brief should not advertise tools, got %#v", brief.AllowedTools)
+	}
+	if len(brief.RequiredTools) != 0 {
+		t.Fatalf("conversation-only brief should not require tools, got %#v", brief.RequiredTools)
+	}
+	if len(brief.ToolManifest) != 0 {
+		t.Fatalf("conversation-only brief should not emit a tool manifest, got %#v", brief.ToolManifest)
+	}
+	if len(brief.DiscoveryExamples) != 0 {
+		t.Fatalf("conversation-only brief should not emit discovery examples, got %#v", brief.DiscoveryExamples)
+	}
+}
+
 func TestRoleSpecForChildWriteCarriesIsolatedContract(t *testing.T) {
 	spec := RoleSpecFor("workbranch_write")
 	if spec.Name != "child_write" || spec.PermissionProfile != "isolated_workbranch_write" {
@@ -179,6 +236,33 @@ func TestRoleSpecForChildWriteCarriesIsolatedContract(t *testing.T) {
 	brief := RuntimeBriefForRole("child_write", "child_write:patch", "patch README")
 	if brief.Lane != "child_write:patch" || brief.ToolManifest == nil {
 		t.Fatalf("expected normalized child write runtime brief, got %#v", brief)
+	}
+}
+
+func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
+	spec := RoleSpecFor("child_read_only")
+	if spec.Name != "child_read_only" || spec.PermissionProfile != "read_only_workspace" {
+		t.Fatalf("unexpected child read-only role: %#v", spec)
+	}
+	for _, forbidden := range []string{"task", "list_files"} {
+		if containsString(spec.AllowedTools, forbidden) {
+			t.Fatalf("child read-only role must not advertise %q, got %#v", forbidden, spec.AllowedTools)
+		}
+	}
+	for _, want := range []string{"read_file", "search_files", "search_content", "structural_search", "dependency_graph", "history_range", "blame_range", "semgrep_scan"} {
+		if !containsString(spec.AllowedTools, want) {
+			t.Fatalf("expected child read-only role to allow %q, got %#v", want, spec.AllowedTools)
+		}
+	}
+}
+
+func TestRoleSpecForMainUsesConversationOnlyFallback(t *testing.T) {
+	spec := RoleSpecFor("main")
+	if spec.Name != "main" || spec.PermissionProfile != "conversation_only" {
+		t.Fatalf("unexpected main role: %#v", spec)
+	}
+	if len(spec.AllowedTools) != 0 {
+		t.Fatalf("main role should not advertise tools by default, got %#v", spec.AllowedTools)
 	}
 }
 

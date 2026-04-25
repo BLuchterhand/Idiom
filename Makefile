@@ -1,6 +1,7 @@
 APP_NAME ?= idiom
 CONFIG ?= config.json
 SUITE ?= testdata/swe/representative-suite.json
+LIVE_SUBSET_SUITE ?= testdata/swe/live-subset.json
 LIVE_LOGS ?= testdata/swe/generated-logs
 CLASSIFIER_BINARY ?= llama-server
 CLASSIFIER_MODEL ?= /Users/ben/models/qwen35-9b/Qwen3.5-9B-Q8_0.gguf
@@ -12,7 +13,7 @@ CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
 
-.PHONY: run server opencode classifier-server route-classifier build fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live
+.PHONY: run server opencode classifier-server route-classifier build fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset
 
 run:
 	go run ./cmd/idiom -config $(CONFIG)
@@ -59,3 +60,6 @@ swe-suite:
 
 swe-live:
 	go run ./cmd/idiom-swe-eval -suite $(SUITE) -run-live -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"
+
+swe-live-subset:
+	go run ./cmd/idiom-swe-eval -suite $(LIVE_SUBSET_SUITE) -run-live -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"

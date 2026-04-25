@@ -191,6 +191,27 @@ func TestEvaluateSWESuiteDefinitionDoesNotRequireLogs(t *testing.T) {
 	}
 }
 
+func TestTaskScenarioAssertionsIncludeDiscoveryBalance(t *testing.T) {
+	maxHeavy := 1
+	task := SWETask{
+		ID:     "discovery",
+		Family: "security_review",
+		Prompt: "Review security discovery usage.",
+		Scenario: Scenario{
+			Name:                      "discovery",
+			RequireDiscoveryTools:     []string{"semgrep_scan"},
+			RequireDiscoveryClasses:   []string{"security_scan"},
+			MaxHeavyDiscoveryRequests: &maxHeavy,
+		},
+	}
+	assertions := taskScenarioAssertions(task)
+	for _, want := range []string{"discovery_tools", "discovery_classes", "heavy_discovery_budget"} {
+		if !containsStringFold(assertions, want) {
+			t.Fatalf("expected discovery assertion %q in %#v", want, assertions)
+		}
+	}
+}
+
 func TestEvaluateSWESuiteDefinitionWithFixturesReportsMissingFixture(t *testing.T) {
 	dir := t.TempDir()
 	suite := SWESuite{

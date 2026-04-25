@@ -944,4 +944,3 @@ func filterPylspDocumentSymbolMatches(symbols []pylspSymbolInfo, pattern string)
 	}
 	return filtered
 }
-

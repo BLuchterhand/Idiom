@@ -206,6 +206,9 @@ type Scenario struct {
 	ForbidFinalAssistantContains []string                          `json:"forbid_final_assistant_contains,omitempty"`
 	RequireTools                 []string                          `json:"require_tools,omitempty"`
 	ForbidTools                  []string                          `json:"forbid_tools,omitempty"`
+	RequireDiscoveryTools        []string                          `json:"require_discovery_tools,omitempty"`
+	RequireDiscoveryClasses      []string                          `json:"require_discovery_classes,omitempty"`
+	MaxHeavyDiscoveryRequests    *int                              `json:"max_heavy_discovery_requests,omitempty"`
 	RequirePhases                []PhaseExpectation                `json:"require_phases,omitempty"`
 	RequireRoutePlan             *RoutePlanExpectation             `json:"require_route_plan,omitempty"`
 	RequireReplan                *ReplanExpectation                `json:"require_replan,omitempty"`
@@ -481,6 +484,11 @@ type Metrics struct {
 	SummaryRejections         int                             `json:"summary_rejections"`
 	SummaryRejectionLanes     []string                        `json:"summary_rejection_lanes,omitempty"`
 	Tools                     map[string]int                  `json:"tools"`
+	DiscoveryTools            map[string]int                  `json:"discovery_tools,omitempty"`
+	DiscoveryClasses          map[string]int                  `json:"discovery_classes,omitempty"`
+	DiscoveryScopes           map[string]int                  `json:"discovery_scopes,omitempty"`
+	DiscoveryCosts            map[string]int                  `json:"discovery_costs,omitempty"`
+	HeavyDiscoveryRequests    int                             `json:"heavy_discovery_requests,omitempty"`
 	Phases                    []PhaseSnapshot                 `json:"phases,omitempty"`
 	RoutePlans                []RoutePlanSnapshot             `json:"route_plans,omitempty"`
 	Replans                   []ReplanSnapshot                `json:"replans,omitempty"`
@@ -833,6 +841,10 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 		max := metrics.BroadToolRequests
 		scenario.MaxBroadToolRequests = &max
 	}
+	if metrics.HeavyDiscoveryRequests > 0 {
+		max := metrics.HeavyDiscoveryRequests
+		scenario.MaxHeavyDiscoveryRequests = &max
+	}
 	deadEnds := metrics.RepeatedDeadEndRejections + metrics.RepeatedToolRejections
 	if deadEnds > 0 {
 		scenario.MaxRepeatedDeadEnds = &deadEnds
@@ -895,6 +907,7 @@ func suggestedTools(records []Record) []string {
 func isSuggestedScenarioTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
 	case "read_file", "search_content", "edit_file", "write_file", "append_file", "mkdir", "shell",
+		"discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_read_symbol", "go_definition", "go_references",
 		"go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_importers",
 		"go_diagnostics", "go_workspace_symbol", "go_related_files", "go_find_package", "go_find_type", "go_find_const":
@@ -904,9 +917,66 @@ func isSuggestedScenarioTool(tool string) bool {
 	}
 }
 
+func legacyDiscoveryProfile(tool string) (class string, scope string, cost string) {
+	tool = strings.TrimSpace(tool)
+	switch tool {
+	case "pwd":
+		return "workspace_context", "targeted", "low"
+	case "list_files":
+		return "workspace_listing", "broad", "low"
+	case "search_files":
+		return "file_search", "targeted", "low"
+	case "search_content", "rg":
+		return "text_search", "targeted", "low"
+	case "read_file":
+		return "file_read", "targeted", "low"
+	case "discovery_query":
+		return "composite_query", "targeted", "medium"
+	case "structural_search":
+		return "ast_search", "targeted", "medium"
+	case "dependency_graph":
+		return "dependency_graph", "broad", "medium"
+	case "history_range", "history_symbol", "blame_range":
+		return "history", "targeted", "medium"
+	case "ctags_symbols":
+		return "symbol_index", "targeted", "medium"
+	case "semgrep_scan", "joern_scan":
+		return "security_scan", "broad", "high"
+	case "task":
+		return "delegated_discovery", "broad", "high"
+	case "shell":
+		return "other", "", ""
+	default:
+		return legacyLanguageDiscoveryProfile(tool)
+	}
+}
+
+func legacyLanguageDiscoveryProfile(tool string) (class string, scope string, cost string) {
+	for _, prefix := range []string{"go_", "cpp_", "python_", "ts_", "rust_", "java_"} {
+		if strings.HasPrefix(tool, prefix) {
+			suffix := strings.TrimPrefix(tool, prefix)
+			switch suffix {
+			case "overview", "entrypoints":
+				return "language_overview", "broad", "medium"
+			case "find_symbol", "find_function", "find_type", "find_const", "find_package", "workspace_symbol", "file_outline", "read_symbol":
+				return "language_symbol", "targeted", "low"
+			case "definition", "declaration", "references", "implementations", "calls_from", "calls_into", "extract_body", "related_files", "importers", "includes", "who_includes", "blast_radius", "dead_symbol":
+				return "language_relationship", "targeted", "medium"
+			case "diagnostics":
+				return "diagnostics", "targeted", "medium"
+			}
+		}
+	}
+	return "other", "", ""
+}
+
 func Analyze(records []Record) Metrics {
 	metrics := Metrics{
-		Tools: make(map[string]int),
+		Tools:            make(map[string]int),
+		DiscoveryTools:   make(map[string]int),
+		DiscoveryClasses: make(map[string]int),
+		DiscoveryScopes:  make(map[string]int),
+		DiscoveryCosts:   make(map[string]int),
 	}
 	verifyAgentSeen := false
 	verifyHasFailure := false
@@ -964,6 +1034,7 @@ func Analyze(records []Record) Metrics {
 			case "readiness_check":
 				if readiness := parseReadinessCheck(content); readiness.Raw != "" {
 					metrics.ReadinessChecks = append(metrics.ReadinessChecks, readiness)
+					metrics.EvidencePaths = append(metrics.EvidencePaths, readiness.EvidencePaths...)
 				}
 			case "deepening_attempt":
 				if deepening := parseDeepeningAttempt(content); deepening.Raw != "" {
@@ -1026,6 +1097,37 @@ func Analyze(records []Record) Metrics {
 			tool := stringField(record.Data, "tool")
 			if tool != "" {
 				metrics.Tools[tool]++
+			}
+			class := strings.TrimSpace(stringField(record.Data, "discovery_class"))
+			scope := strings.TrimSpace(stringField(record.Data, "discovery_scope"))
+			cost := strings.TrimSpace(stringField(record.Data, "discovery_cost"))
+			if class == "shell" {
+				class, scope, cost = "other", "", ""
+			}
+			if class == "" || scope == "" || cost == "" {
+				fallbackClass, fallbackScope, fallbackCost := legacyDiscoveryProfile(tool)
+				if class == "" {
+					class = fallbackClass
+				}
+				if scope == "" {
+					scope = fallbackScope
+				}
+				if cost == "" {
+					cost = fallbackCost
+				}
+			}
+			if class != "" && class != "other" {
+				metrics.DiscoveryTools[tool]++
+				metrics.DiscoveryClasses[class]++
+				if scope != "" {
+					metrics.DiscoveryScopes[scope]++
+				}
+				if cost != "" {
+					metrics.DiscoveryCosts[cost]++
+					if cost == "high" {
+						metrics.HeavyDiscoveryRequests++
+					}
+				}
 			}
 			if boolField(record.Data, "broad") {
 				metrics.BroadToolRequests++
@@ -1136,6 +1238,19 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 		if metrics.Tools[strings.TrimSpace(tool)] > 0 {
 			addFinding("forbidden tool %q was used", tool)
 		}
+	}
+	for _, tool := range scenario.RequireDiscoveryTools {
+		if metrics.DiscoveryTools[strings.TrimSpace(tool)] == 0 {
+			addFinding("required discovery tool %q was not used", tool)
+		}
+	}
+	for _, class := range scenario.RequireDiscoveryClasses {
+		if metrics.DiscoveryClasses[strings.TrimSpace(class)] == 0 {
+			addFinding("required discovery class %q was not used", class)
+		}
+	}
+	if scenario.MaxHeavyDiscoveryRequests != nil && metrics.HeavyDiscoveryRequests > *scenario.MaxHeavyDiscoveryRequests {
+		addFinding("heavy discovery requests exceeded limit: got %d want <= %d", metrics.HeavyDiscoveryRequests, *scenario.MaxHeavyDiscoveryRequests)
 	}
 	for _, phase := range scenario.RequirePhases {
 		if !containsPhase(metrics.Phases, phase) {

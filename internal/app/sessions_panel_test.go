@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 
@@ -107,5 +108,46 @@ func TestSessionsCursorClampsAfterRefresh(t *testing.T) {
 	m.refreshSessionsList()
 	if m.sessionsCursor >= len(m.sessionsList) {
 		t.Errorf("cursor not clamped after list shrank: cursor=%d len=%d", m.sessionsCursor, len(m.sessionsList))
+	}
+}
+
+func TestRefreshSessionsListReusesCachedSummaryForUnchangedLog(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"original prompt"}`})
+	m := sessionsPanelModel(t, dir)
+
+	m.refreshSessionsList()
+	cached := m.sessionsSummaryCache[path]
+	cached.info.FirstPrompt = "cached prompt"
+	m.sessionsSummaryCache[path] = cached
+
+	m.refreshSessionsList()
+	if len(m.sessionsList) != 1 {
+		t.Fatalf("expected one session, got %d", len(m.sessionsList))
+	}
+	if got := m.sessionsList[0].FirstPrompt; got != "cached prompt" {
+		t.Fatalf("expected unchanged log to reuse cached summary, got %q", got)
+	}
+}
+
+func TestRefreshSessionsListReloadsChangedLogSummary(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"first prompt"}`})
+	m := sessionsPanelModel(t, dir)
+
+	m.refreshSessionsList()
+
+	writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"updated prompt"}`})
+	modTime := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	m.refreshSessionsList()
+	if len(m.sessionsList) != 1 {
+		t.Fatalf("expected one session, got %d", len(m.sessionsList))
+	}
+	if got := m.sessionsList[0].FirstPrompt; got != "updated prompt" {
+		t.Fatalf("expected changed log to be re-summarized, got %q", got)
 	}
 }

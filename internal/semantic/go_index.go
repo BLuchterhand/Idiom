@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"idiom/internal/discovery"
 )
 
 type GoIndex struct {
@@ -58,22 +60,6 @@ type GoPackage struct {
 	Types   int
 }
 
-var skippedDirNames = map[string]struct{}{
-	".cache":       {},
-	".git":         {},
-	".hg":          {},
-	".svn":         {},
-	"bin":          {},
-	"build":        {},
-	"dist":         {},
-	"logs":         {},
-	"models":       {},
-	"node_modules": {},
-	"tmp":          {},
-	"transcripts":  {},
-	"vendor":       {},
-}
-
 func BuildGoIndex(root string) (*GoIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
@@ -93,7 +79,7 @@ func BuildGoIndex(root string) (*GoIndex, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if _, skip := skippedDirNames[d.Name()]; skip && path != root {
+			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
 			return nil
@@ -107,6 +93,9 @@ func BuildGoIndex(root string) (*GoIndex, error) {
 			return nil
 		}
 		rel = filepath.ToSlash(filepath.Clean(rel))
+		if discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
 
 		fileNode, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {

@@ -28,7 +28,16 @@ stderr_path="$run_dir/stderr.txt"
 mkdir -p "$debug_log_dir" "$save_dir" "$(dirname "$log_path")" "$workspace_root"
 printf '%s\n' "$turns_json" > "$turns_file"
 
-(cd "$workspace_source" && tar --exclude .git --exclude logs --exclude transcripts --exclude bin --exclude models --exclude testdata/swe/generated-logs -cf - .) | (cd "$workspace_root" && tar -xf -)
+(cd "$workspace_source" && tar \
+  --exclude .git \
+  --exclude .cache \
+  --exclude .claude \
+  --exclude .planning \
+  --exclude transcripts \
+  --exclude bin \
+  --exclude models \
+  --exclude testdata/swe/generated-logs \
+  -cf - .) | (cd "$workspace_root" && tar -xf -)
 
 python3 - "$base_config" "$config_path" "$debug_log_dir" "$save_dir" "$workspace_root" "$repo_root" <<'PY'
 import json

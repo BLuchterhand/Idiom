@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"idiom/internal/discovery"
 	"idiom/internal/semantic"
 )
 
@@ -41,7 +42,7 @@ func (m *Manager) isPythonWorkspace() bool {
 			return nil
 		}
 		if d.IsDir() {
-			if _, skip := exploreSkippedDirNames[d.Name()]; skip && path != m.cfg.Root {
+			if discovery.ShouldSkipDirName(d.Name()) && path != m.cfg.Root {
 				return filepath.SkipDir
 			}
 			if _, skip := pythonWorkspaceSkipDirs[d.Name()]; skip && path != m.cfg.Root {
@@ -687,4 +688,3 @@ func pythonDisplayName(qualified string, name string) string {
 	}
 	return strings.TrimSpace(name)
 }
-

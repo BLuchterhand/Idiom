@@ -50,6 +50,36 @@ func TestRequestMessagesOmitsStaticWorkspaceOverview(t *testing.T) {
 	}
 }
 
+func TestRenderedMessageBodyCacheInvalidatesWhenMessagesChange(t *testing.T) {
+	m := &Model{
+		ready:    true,
+		viewport: viewport.New(48, 12),
+		messages: []llama.ChatMessage{{Role: "assistant", Content: "first body"}},
+	}
+
+	first := m.renderedMessageBody()
+	if !strings.Contains(first, "first body") {
+		t.Fatalf("expected initial render to include first body, got:\n%s", first)
+	}
+
+	m.messageRenderCache = "cached sentinel"
+	m.messageRenderWidth = m.viewport.Width
+	m.messageRenderHash = messageRenderFingerprint(m.messages)
+	m.messageRenderMD = false
+	if got := m.renderedMessageBody(); got != "cached sentinel" {
+		t.Fatalf("expected unchanged transcript to reuse cache, got:\n%s", got)
+	}
+
+	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "second body"})
+	updated := m.renderedMessageBody()
+	if strings.Contains(updated, "cached sentinel") {
+		t.Fatalf("expected cache to be invalidated after message change, got:\n%s", updated)
+	}
+	if !strings.Contains(updated, "second body") {
+		t.Fatalf("expected updated render to include new message, got:\n%s", updated)
+	}
+}
+
 func containsSystemContent(messages []llama.ChatMessage, needle string) bool {
 	for _, msg := range messages {
 		if msg.Role == "system" && strings.Contains(msg.Content, needle) {

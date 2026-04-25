@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"idiom/internal/discovery"
 )
 
 // RustIndex is a lightweight, regex-based semantic index over the .rs
@@ -143,10 +145,7 @@ func BuildRustIndex(root string) (*RustIndex, error) {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if _, skip := skippedDirNames[name]; skip && path != root {
-				return filepath.SkipDir
-			}
-			if name == "target" && path != root {
+			if discovery.ShouldSkipDirName(name) && path != root {
 				return filepath.SkipDir
 			}
 			return nil
@@ -159,6 +158,9 @@ func BuildRustIndex(root string) (*RustIndex, error) {
 			return nil
 		}
 		rel = filepath.ToSlash(filepath.Clean(rel))
+		if discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
 		paths = append(paths, rel)
 		return nil
 	})
@@ -450,9 +452,9 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 
 	// Track impl/trait block scope so methods get a qualified name.
 	type scope struct {
-		kind     string // "impl" or "trait" or "mod"
-		name     string // e.g. "Foo" for `impl Foo` or "Bar for Foo" descriptor
-		endLine  int
+		kind    string // "impl" or "trait" or "mod"
+		name    string // e.g. "Foo" for `impl Foo` or "Bar for Foo" descriptor
+		endLine int
 	}
 	var scopes []scope
 

@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"idiom/internal/discovery"
 )
 
 type TsIndex struct {
@@ -24,19 +26,19 @@ type TsIndex struct {
 }
 
 type TsFile struct {
-	Path      string
-	Imports   []string
-	Symbols   []TsSymbol
-	Funcs     int
-	Methods   int
-	Types     int
-	Classes   int
-	HasMain   bool
-	IsTest    bool
+	Path       string
+	Imports    []string
+	Symbols    []TsSymbol
+	Funcs      int
+	Methods    int
+	Types      int
+	Classes    int
+	HasMain    bool
+	IsTest     bool
 	IsDeclFile bool
-	IsTSX     bool
-	IsJS      bool
-	SourceDir string
+	IsTSX      bool
+	IsJS       bool
+	SourceDir  string
 }
 
 type TsSymbol struct {
@@ -59,20 +61,20 @@ type TsCall struct {
 }
 
 var (
-	tsImportFromRe  = regexp.MustCompile(`(?:^|\s)(?:import|export)\b[^;]*?from\s+['"]([^'"]+)['"]`)
-	tsImportSideRe  = regexp.MustCompile(`(?:^|\s)import\s+['"]([^'"]+)['"]`)
-	tsRequireRe     = regexp.MustCompile(`\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)`)
-	tsDynImportRe   = regexp.MustCompile(`\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)`)
-	tsClassRe       = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsInterfaceRe   = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?interface\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsTypeAliasRe   = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?type\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=`)
-	tsEnumRe        = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:const\s+)?enum\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsNamespaceRe   = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:namespace|module)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsFunctionRe    = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsArrowRe       = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=>`)
-	tsMethodRe      = regexp.MustCompile(`^\s*(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+|async\s+|override\s+|abstract\s+)*(?:get\s+|set\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
-	tsCallRe        = regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
-	tsIdentStart    = regexp.MustCompile(`^[A-Za-z_$]`)
+	tsImportFromRe = regexp.MustCompile(`(?:^|\s)(?:import|export)\b[^;]*?from\s+['"]([^'"]+)['"]`)
+	tsImportSideRe = regexp.MustCompile(`(?:^|\s)import\s+['"]([^'"]+)['"]`)
+	tsRequireRe    = regexp.MustCompile(`\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	tsDynImportRe  = regexp.MustCompile(`\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	tsClassRe      = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsInterfaceRe  = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?interface\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsTypeAliasRe  = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?type\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=`)
+	tsEnumRe       = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:const\s+)?enum\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsNamespaceRe  = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:namespace|module)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsFunctionRe   = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsArrowRe      = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=>`)
+	tsMethodRe     = regexp.MustCompile(`^\s*(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+|async\s+|override\s+|abstract\s+)*(?:get\s+|set\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+	tsCallRe       = regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+	tsIdentStart   = regexp.MustCompile(`^[A-Za-z_$]`)
 )
 
 var tsFileExtensions = map[string]struct{}{
@@ -87,7 +89,7 @@ var tsFileExtensions = map[string]struct{}{
 }
 
 var tsDeclExtensions = map[string]struct{}{
-	".d.ts": {},
+	".d.ts":  {},
 	".d.mts": {},
 	".d.cts": {},
 }
@@ -129,7 +131,7 @@ func BuildTsIndex(root string) (*TsIndex, error) {
 			if _, skip := tsSkippedDirs[d.Name()]; skip && path != root {
 				return filepath.SkipDir
 			}
-			if _, skip := skippedDirNames[d.Name()]; skip && path != root {
+			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
 			return nil
@@ -142,6 +144,9 @@ func BuildTsIndex(root string) (*TsIndex, error) {
 			return nil
 		}
 		rel = filepath.ToSlash(filepath.Clean(rel))
+		if discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
 		paths = append(paths, rel)
 		byName[filepath.Base(rel)] = rel
 		byRel[rel] = rel
@@ -542,7 +547,7 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 					symbols = append(symbols, TsSymbol{
 						Name: name, Qualified: qualified, Kind: "method",
 						Scope: class.name, Line: lineNo,
-						Column: indexOfIdent(line, name) + 1,
+						Column:    indexOfIdent(line, name) + 1,
 						StartLine: lineNo, EndLine: end, Calls: calls,
 						SourceFile: rel,
 					})

@@ -40,6 +40,7 @@ type WorkerRuntimeBrief struct {
 	RequiredTools        []string            `json:"required_tools,omitempty"`
 	ReadinessGate        []string            `json:"readiness_gate,omitempty"`
 	SearchPolicy         []string            `json:"search_policy,omitempty"`
+	DiscoveryExamples    []string            `json:"discovery_examples,omitempty"`
 	VerificationContract string              `json:"verification_contract,omitempty"`
 	VerificationPlan     []string            `json:"verification_plan,omitempty"`
 	StopConditions       []string            `json:"stop_conditions,omitempty"`
@@ -91,6 +92,7 @@ type RunState struct {
 	RequiredTools        []string            `json:"required_tools,omitempty"`
 	ReadinessGate        []string            `json:"readiness_gate,omitempty"`
 	SearchPolicy         []string            `json:"search_policy,omitempty"`
+	DiscoveryExamples    []string            `json:"discovery_examples,omitempty"`
 	VerificationContract string              `json:"verification_contract,omitempty"`
 	VerificationPlan     []string            `json:"verification_plan,omitempty"`
 	StopConditions       []string            `json:"stop_conditions,omitempty"`
@@ -576,6 +578,9 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 	if len(state.SearchPolicy) == 0 {
 		state.SearchPolicy = append([]string(nil), brief.SearchPolicy...)
 	}
+	if len(state.DiscoveryExamples) == 0 {
+		state.DiscoveryExamples = append([]string(nil), brief.DiscoveryExamples...)
+	}
 	if state.VerificationContract == "" {
 		state.VerificationContract = brief.VerificationContract
 	}
@@ -619,6 +624,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.RequiredTools = uniqueNonEmpty(brief.RequiredTools)
 	brief.ReadinessGate = uniqueNonEmpty(brief.ReadinessGate)
 	brief.SearchPolicy = uniqueNonEmpty(brief.SearchPolicy)
+	brief.DiscoveryExamples = uniqueNonEmpty(brief.DiscoveryExamples)
 	brief.VerificationPlan = uniqueNonEmpty(brief.VerificationPlan)
 	brief.StopConditions = uniqueNonEmpty(brief.StopConditions)
 	brief.FinalCritic = uniqueNonEmpty(brief.FinalCritic)
@@ -626,6 +632,12 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.Constraints = uniqueNonEmpty(brief.Constraints)
 	brief.RequiredNext = uniqueNonEmpty(brief.RequiredNext)
 	brief.InvalidActions = uniqueNonEmpty(brief.InvalidActions)
+	if strings.EqualFold(brief.PermissionProfile, "conversation_only") {
+		brief.AllowedTools = nil
+		brief.RequiredTools = nil
+		brief.ToolManifest = nil
+		brief.DiscoveryExamples = nil
+	}
 	if len(brief.ToolManifest) == 0 && len(brief.AllowedTools) > 0 {
 		brief.ToolManifest = BuildToolManifest(brief.AllowedTools)
 	}
@@ -653,10 +665,38 @@ func RenderRunState(state RunState) string {
 
 func RenderInitialRuntimeBrief(brief WorkerRuntimeBrief) string {
 	brief = NormalizeRuntimeBrief(brief)
+	brief = withDeterministicDiscoveryExamples(brief)
 	if !RuntimeBriefHasContent(brief) {
 		return ""
 	}
 	return RenderStepInstruction(BuildInitialStepInstruction(brief))
+}
+
+func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
+	if !toolAllowedInBrief(brief.AllowedTools, "discovery_query") {
+		return brief
+	}
+	brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
+		`Use one discovery_query before ad hoc list/search/read for broad architecture, impact, tracing, security, or history questions; follow with targeted reads only for named gaps.`,
+		`architecture_boundary: {"tool":"discovery_query","purpose":"architecture_boundary","path":"internal/agent","pattern":"subagent|task|delegate","language":"go","max_depth":2}`,
+		`impact_analysis: {"tool":"discovery_query","purpose":"impact_analysis","path":"internal/app/turn_planner.go","pattern":"classifyTurnRoute","language":"go","max_depth":2}`,
+		`function_tracing: {"tool":"discovery_query","purpose":"function_tracing","path":"internal","pattern":"runChildTask","language":"go","max_depth":2}`,
+		`security_review: {"tool":"discovery_query","purpose":"security_review","path":".","pattern":"auth|token|secret","max_depth":2}`,
+	))
+	return brief
+}
+
+func toolAllowedInBrief(tools []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	for _, tool := range tools {
+		if strings.EqualFold(strings.TrimSpace(tool), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func RenderRuntimeBriefSummary(brief WorkerRuntimeBrief) string {
@@ -686,6 +726,7 @@ func RuntimeBriefHasContent(brief WorkerRuntimeBrief) bool {
 		len(brief.ForbiddenTools) > 0 ||
 		len(brief.RequiredEvidence) > 0 ||
 		len(brief.ReadinessGate) > 0 ||
+		len(brief.DiscoveryExamples) > 0 ||
 		len(brief.TargetPacket) > 0 ||
 		len(brief.VerificationPlan) > 0
 }

@@ -1,0 +1,208 @@
+package agent
+
+import (
+	"fmt"
+	"strings"
+
+	"idiom/internal/workspace"
+)
+
+type runnerRequestBudgetState struct {
+	lastRequestFingerprint           string
+	identicalCallRun                 int
+	fingerprintCounts                map[string]int
+	fingerprintNudgeFired            map[string]bool
+	broadEvidenceDelegationRequired  bool
+	broadEvidenceDelegationSatisfied bool
+	readOnlyChildTaskSatisfied       bool
+	synthesisNudgeFired              bool
+	readBudgetNudgeFired             bool
+	readCallCount                    int
+	readCallsSinceWrite              int
+	postChildReadCalls               int
+	postChildReadBudget              int
+	zeroHitFingerprints              map[string]string
+	rejectedFingerprints             map[string]string
+}
+
+type runnerRequestBudgetDecision struct {
+	Handled           bool
+	RejectSummary     string
+	RejectError       string
+	RejectStopReason  string
+	ForceAnswerPrompt string
+	ForceAnswerReason string
+	Nudge             string
+	EventRole         string
+	EventContent      string
+}
+
+func newRunnerRequestBudgetState(postChildReadBudget int) runnerRequestBudgetState {
+	return runnerRequestBudgetState{
+		fingerprintCounts:     make(map[string]int),
+		fingerprintNudgeFired: make(map[string]bool),
+		postChildReadBudget:   postChildReadBudget,
+		zeroHitFingerprints:   make(map[string]string),
+		rejectedFingerprints:  make(map[string]string),
+	}
+}
+
+func (s *runnerRequestBudgetState) noteFingerprint(currentFingerprint string) int {
+	if currentFingerprint != "" && currentFingerprint == s.lastRequestFingerprint {
+		s.identicalCallRun++
+	} else {
+		s.identicalCallRun = 1
+		s.lastRequestFingerprint = currentFingerprint
+	}
+	if currentFingerprint != "" {
+		s.fingerprintCounts[currentFingerprint]++
+	}
+	return s.identicalCallRun
+}
+
+func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req workspace.ToolRequest, currentFingerprint string) runnerRequestBudgetDecision {
+	if currentFingerprint == "" {
+		return runnerRequestBudgetDecision{}
+	}
+	if policy.FingerprintNudgeAt > 0 {
+		count := s.fingerprintCounts[currentFingerprint]
+		nudgeFired := s.fingerprintNudgeFired[currentFingerprint]
+		if count >= policy.FingerprintNudgeAt && !nudgeFired {
+			s.fingerprintNudgeFired[currentFingerprint] = true
+			return runnerRequestBudgetDecision{
+				Handled:   true,
+				Nudge:     fmt.Sprintf("You have called %s with the same arguments %d times this turn (not consecutively). Summarize what you learned from those calls and pick a materially different next step, or answer with the evidence you already have. Any further identical call will be blocked.", req.Tool, count),
+				EventRole: "fingerprint_nudge",
+			}
+		}
+		if count > policy.FingerprintNudgeAt && nudgeFired {
+			return runnerRequestBudgetDecision{
+				Handled:           true,
+				EventRole:         "fingerprint_hard_block",
+				EventContent:      fmt.Sprintf("%s repeated %d times; hard-blocking", req.Tool, count),
+				ForceAnswerReason: "fingerprint_hard_block_exhausted",
+				ForceAnswerPrompt: fmt.Sprintf("You called %s with identical arguments %d times after being warned. Do not call any more tools. Summarize the blocker and the narrowest remaining next action using the evidence you have.", req.Tool, count),
+			}
+		}
+	}
+	if priorSummary, seen := s.zeroHitFingerprints[currentFingerprint]; seen {
+		return runnerRequestBudgetDecision{
+			Handled:          true,
+			RejectSummary:    "Zero-hit retry blocked",
+			RejectError:      fmt.Sprintf("this exact %s call already returned no results earlier this turn (\"%s\"). Repeating it will not find new matches. Broaden or change the pattern, search a different scope, or answer with the evidence you have.", req.Tool, priorSummary),
+			RejectStopReason: "zero_hit_retry_budget_exhausted",
+		}
+	}
+	if priorSummary, seen := s.rejectedFingerprints[currentFingerprint]; seen {
+		return runnerRequestBudgetDecision{
+			Handled:           true,
+			EventRole:         "rejection_retry_blocked",
+			EventContent:      fmt.Sprintf("model retried a previously rejected %s call (%s) — forcing answer with the evidence already gathered", req.Tool, priorSummary),
+			ForceAnswerReason: "rejection_retry_blocked",
+			ForceAnswerPrompt: fmt.Sprintf("You retried a %s request that was already rejected this turn (\"%s\"). Do not call any more tools. Summarize the blocker and the narrowest remaining next action using the evidence you already have.", req.Tool, priorSummary),
+		}
+	}
+	return runnerRequestBudgetDecision{}
+}
+
+func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.ToolRequest, results []workspace.ToolResult) runnerRequestBudgetDecision {
+	var decision runnerRequestBudgetDecision
+	if !s.broadEvidenceDelegationRequired {
+		if nudge := r.explorationDelegationNudge(s.readCallsSinceWrite, results); nudge != "" {
+			s.broadEvidenceDelegationRequired = true
+			decision = runnerRequestBudgetDecision{
+				Handled:   true,
+				Nudge:     nudge,
+				EventRole: "exploration_task_delegation_nudge",
+			}
+		}
+	}
+	if s.broadEvidenceDelegationRequired && !s.broadEvidenceDelegationSatisfied && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) {
+		decision.Handled = true
+		decision.RejectSummary = "Exploration delegation required"
+		decision.RejectError = "this turn is spending too many read/search steps without converging. Delegate one focused read_only task with inspected paths, key findings, confidence, and named gaps before continuing main-loop reads."
+		decision.RejectStopReason = "exploration_task_delegation_required"
+		return decision
+	}
+	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied && workspace.IsBroadInspectionRequest(req) {
+		return runnerRequestBudgetDecision{
+			Handled:          true,
+			RejectSummary:    "Post-child broad inspection blocked",
+			RejectError:      "the read_only child task already returned the broad evidence packet. Do not restart broad discovery in the parent. Continue from the child result with one targeted read/search for a named gap, make the required change, or answer with the current evidence.",
+			RejectStopReason: "post_child_broad_inspection_blocked",
+		}
+	}
+	if s.readOnlyChildTaskSatisfied && strings.TrimSpace(req.Tool) == "task" && !isWriteChildMode(req.Mode) {
+		return runnerRequestBudgetDecision{
+			Handled:          true,
+			RejectSummary:    "Additional read_only child task blocked",
+			RejectError:      "this turn already has a successful read_only child evidence packet. Do not delegate another read_only child task. Continue from that packet with at most a couple of targeted follow-ups, or answer with the current evidence.",
+			RejectStopReason: "duplicate_read_only_child_task_blocked",
+		}
+	}
+	return decision
+}
+
+func (s *runnerRequestBudgetState) synthesisDecision(policy RunPolicy, toolCalls int) runnerRequestBudgetDecision {
+	if policy.SynthesisNudgeAt > 0 && toolCalls >= policy.SynthesisNudgeAt && !s.synthesisNudgeFired {
+		s.synthesisNudgeFired = true
+		return runnerRequestBudgetDecision{
+			Handled:   true,
+			Nudge:     fmt.Sprintf("You have used %d tool calls this turn. Before more tool calls, pause: summarize what you've learned so far, state the specific question that remains, and commit to the minimal next step. If the remaining gap is small, answer now with what you have.", toolCalls),
+			EventRole: "synthesis_nudge",
+		}
+	}
+	return runnerRequestBudgetDecision{}
+}
+
+func (s *runnerRequestBudgetState) noteReadClassRequest() {
+	s.readCallCount++
+	s.readCallsSinceWrite++
+	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied {
+		s.postChildReadCalls++
+	}
+}
+
+func (s *runnerRequestBudgetState) readBudgetDecision(policy RunPolicy, req workspace.ToolRequest) runnerRequestBudgetDecision {
+	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied && s.postChildReadCalls > s.postChildReadBudget {
+		return runnerRequestBudgetDecision{
+			Handled:           true,
+			EventRole:         "post_child_read_budget_block",
+			EventContent:      fmt.Sprintf("post-child read budget exhausted after %d targeted reads", s.postChildReadBudget),
+			RejectSummary:     "Post-child read budget exhausted",
+			RejectError:       fmt.Sprintf("the child evidence packet has already been gathered and the parent used %d targeted follow-up reads. Do not inspect more files. Synthesize the answer, make the next write, run verification, or state the concrete blocker.", s.postChildReadBudget),
+			RejectStopReason:  "post_child_read_budget_exhausted",
+			ForceAnswerReason: "post_child_read_budget_exhausted",
+			ForceAnswerPrompt: "Post-child read budget is exhausted. Tools are now disabled — do NOT emit another tool call. Use the child packet and targeted follow-up evidence to answer, identify the next write, or report the blocker.",
+		}
+	}
+	if policy.ReadBudgetSoft > 0 && s.readCallCount >= policy.ReadBudgetSoft && !s.readBudgetNudgeFired {
+		s.readBudgetNudgeFired = true
+		return runnerRequestBudgetDecision{
+			Handled:   true,
+			Nudge:     fmt.Sprintf("You have made %d read-class tool calls this turn. Before more reads, update your plan: summarize what you've learned, state the remaining unknown, and commit to the minimal next step. In plan mode, the output is the plan — not another round of reads.", s.readCallCount),
+			EventRole: "read_budget_nudge",
+		}
+	}
+	if policy.ReadBudgetHard > 0 && s.readCallsSinceWrite > policy.ReadBudgetHard {
+		return runnerRequestBudgetDecision{
+			Handled:           true,
+			EventRole:         "read_budget_hard_block",
+			EventContent:      fmt.Sprintf("read-class budget exhausted after %d read/search calls without a write", s.readCallsSinceWrite-1),
+			RejectSummary:     "Read budget exhausted",
+			RejectError:       fmt.Sprintf("you already used %d read/search tool calls without making a write. Do not inspect more files in this turn. Summarize the concrete evidence gathered, unresolved gaps, and the narrowest next action.", s.readCallsSinceWrite-1),
+			RejectStopReason:  "read_budget_exhausted",
+			ForceAnswerReason: "read_budget_exhausted",
+			ForceAnswerPrompt: "Read/search budget is exhausted. Tools are now disabled — do NOT emit another tool call. Summarize the evidence already gathered, identify unresolved gaps, and name the narrowest next action. If enough evidence is present, answer directly.",
+		}
+	}
+	return runnerRequestBudgetDecision{}
+}
+
+func (s *runnerRequestBudgetState) noteVerification() {
+	s.readCallsSinceWrite = 0
+}
+
+func (s *runnerRequestBudgetState) noteWriteProgress() {
+	s.readCallsSinceWrite = 0
+}

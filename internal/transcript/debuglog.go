@@ -59,17 +59,34 @@ type SessionStart struct {
 // resolved-target metadata. Lets a session log answer "what filled the
 // context" without re-reading every tool payload.
 type ToolResultDetail struct {
-	Step        int
-	Agent       string
-	Tool        string
-	Summary     string
-	Error       string
-	OutputChars int
-	OutputLines int
-	Path        string
-	StartLine   int
-	EndLine     int
-	Truncated   bool
+	Step           int
+	Agent          string
+	Tool           string
+	Summary        string
+	Error          string
+	OutputChars    int
+	OutputLines    int
+	Path           string
+	StartLine      int
+	EndLine        int
+	Truncated      bool
+	DiscoveryClass string
+	DiscoveryScope string
+	DiscoveryCost  string
+}
+
+type ToolRequestDetail struct {
+	Step           int
+	Agent          string
+	Raw            string
+	Tool           string
+	WorkspaceMode  string
+	Broad          bool
+	Narrowing      bool
+	Action         string
+	DiscoveryClass string
+	DiscoveryScope string
+	DiscoveryCost  string
 }
 
 // ModelCall records one CompleteChatMessage round-trip.
@@ -120,6 +137,8 @@ type SessionSummary struct {
 	PeakCtxPct       float64
 	Compactions      int
 	TopToolsByOutput []ToolOutputAggregate
+	DiscoveryByClass []DiscoveryAggregate
+	DiscoveryByCost  []DiscoveryAggregate
 	DurationMillis   int64
 }
 
@@ -127,6 +146,11 @@ type ToolOutputAggregate struct {
 	Tool        string `json:"tool"`
 	Calls       int    `json:"calls"`
 	OutputChars int    `json:"output_chars"`
+}
+
+type DiscoveryAggregate struct {
+	Name  string `json:"name"`
+	Calls int    `json:"calls"`
 }
 
 func NewDebugLogger(opts DebugLoggerOptions) (*DebugLogger, error) {
@@ -233,18 +257,41 @@ func (l *DebugLogger) LogContext(contextSources []string, systemPrompt string, w
 }
 
 func (l *DebugLogger) LogToolRequest(step int, agent string, raw string, tool string, workspaceMode string, broad bool, narrowing bool, action string) error {
-	return l.writeRecord(map[string]any{
+	return l.LogToolRequestDetail(ToolRequestDetail{
+		Step:          step,
+		Agent:         agent,
+		Raw:           raw,
+		Tool:          tool,
+		WorkspaceMode: workspaceMode,
+		Broad:         broad,
+		Narrowing:     narrowing,
+		Action:        action,
+	})
+}
+
+func (l *DebugLogger) LogToolRequestDetail(d ToolRequestDetail) error {
+	record := map[string]any{
 		"ts":             time.Now().Format(time.RFC3339Nano),
 		"type":           "tool_request",
-		"step":           step,
-		"agent":          agent,
-		"tool":           tool,
-		"raw":            l.sanitizeToolRaw(raw),
-		"workspace_mode": workspaceMode,
-		"broad":          broad,
-		"narrowing":      narrowing,
-		"action":         action,
-	})
+		"step":           d.Step,
+		"agent":          d.Agent,
+		"tool":           d.Tool,
+		"raw":            l.sanitizeToolRaw(d.Raw),
+		"workspace_mode": d.WorkspaceMode,
+		"broad":          d.Broad,
+		"narrowing":      d.Narrowing,
+		"action":         d.Action,
+	}
+	if strings.TrimSpace(d.DiscoveryClass) != "" {
+		record["discovery_class"] = strings.TrimSpace(d.DiscoveryClass)
+	}
+	if strings.TrimSpace(d.DiscoveryScope) != "" {
+		record["discovery_scope"] = strings.TrimSpace(d.DiscoveryScope)
+	}
+	if strings.TrimSpace(d.DiscoveryCost) != "" {
+		record["discovery_cost"] = strings.TrimSpace(d.DiscoveryCost)
+	}
+	return l.writeRecord(record)
 }
 
 func (l *DebugLogger) LogToolResult(step int, agent string, tool string, summary string, errText string) error {
@@ -284,6 +331,15 @@ func (l *DebugLogger) LogToolResultDetail(d ToolResultDetail) error {
 	}
 	if d.Truncated {
 		record["truncated"] = true
+	}
+	if strings.TrimSpace(d.DiscoveryClass) != "" {
+		record["discovery_class"] = strings.TrimSpace(d.DiscoveryClass)
+	}
+	if strings.TrimSpace(d.DiscoveryScope) != "" {
+		record["discovery_scope"] = strings.TrimSpace(d.DiscoveryScope)
+	}
+	if strings.TrimSpace(d.DiscoveryCost) != "" {
+		record["discovery_cost"] = strings.TrimSpace(d.DiscoveryCost)
 	}
 	return l.writeRecord(record)
 }
@@ -370,6 +426,12 @@ func (l *DebugLogger) LogSessionSummary(s SessionSummary) error {
 	}
 	if len(s.TopToolsByOutput) > 0 {
 		record["top_tools_by_output"] = s.TopToolsByOutput
+	}
+	if len(s.DiscoveryByClass) > 0 {
+		record["discovery_by_class"] = s.DiscoveryByClass
+	}
+	if len(s.DiscoveryByCost) > 0 {
+		record["discovery_by_cost"] = s.DiscoveryByCost
 	}
 	return l.writeRecord(record)
 }

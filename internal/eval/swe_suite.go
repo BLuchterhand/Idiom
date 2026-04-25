@@ -1089,6 +1089,15 @@ func taskScenarioAssertions(task SWETask) []string {
 	if scenario.MaxBroadToolRequests != nil {
 		assertions = append(assertions, "broad_tool_budget")
 	}
+	if len(scenario.RequireDiscoveryTools) > 0 {
+		assertions = append(assertions, "discovery_tools")
+	}
+	if len(scenario.RequireDiscoveryClasses) > 0 {
+		assertions = append(assertions, "discovery_classes")
+	}
+	if scenario.MaxHeavyDiscoveryRequests != nil {
+		assertions = append(assertions, "heavy_discovery_budget")
+	}
 	if scenario.MaxRepeatedDeadEnds != nil {
 		assertions = append(assertions, "repeated_dead_end_budget")
 	}
@@ -1384,6 +1393,7 @@ func taskStartsInLane(task SWETask, lane string) bool {
 	}
 	return strings.EqualFold(strings.TrimSpace(task.Scenario.RequireRoutePlan.InitialLane), strings.TrimSpace(lane))
 }
+
 // VerificationStatus returns a short string describing the verification outcome.
 func VerificationStatus(m Metrics) string {
 	switch {

@@ -157,7 +157,7 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	// the third fire cuts the tail.
 	hardReject := cap == workspace.CapFileOutline && d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
 
-	summary := fmt.Sprintf("Redirected to %s", replacement)
+	summary := redirectSummary(req, replacement)
 	if hardReject {
 		summary = fmt.Sprintf("Raw %s on %s code blocked — use %s instead", req.Tool, lang.Name, replacement)
 	}
@@ -186,6 +186,15 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 		Language:       lang.Name,
 		Capability:     cap,
 	}
+}
+
+func redirectSummary(req workspace.ToolRequest, replacement string) string {
+	replacement = strings.TrimSpace(replacement)
+	path := strings.TrimSpace(req.Path)
+	if path != "" {
+		return fmt.Sprintf("Redirected %s to %s", path, replacement)
+	}
+	return fmt.Sprintf("Redirected to %s", replacement)
 }
 
 // escalateRedirectMessage prepends a hardened preface to the standard
@@ -286,20 +295,7 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		if pattern == "" {
 			return workspace.LanguageSupport{}, "", false
 		}
-		// Three ways to qualify: (a) unambiguous Go syntax (func/type/
-		// func.*X) → lang=go regardless of glob; (b) unambiguous C++
-		// syntax (class/namespace/enum/template) → lang=cpp regardless
-		// of glob; (c) bare identifier + a language-specific glob;
-		// (d) none of the above → skip.
-		var lang workspace.LanguageSupport
-		var ok bool
-		if _, isGo := extractGoSymbolFromPattern(pattern); isGo {
-			lang, ok = workspace.LanguageForExtension(".go")
-		} else if _, isCpp := extractCppSymbolFromPattern(pattern); isCpp {
-			lang, ok = workspace.LanguageForExtension(".cpp")
-		} else if looksLikeIdentifier(pattern) {
-			lang, ok = languageFromGlob(req.Glob)
-		}
+		lang, ok := languageForSearchRequest(req, ws)
 		if !ok {
 			return workspace.LanguageSupport{}, "", false
 		}
@@ -328,6 +324,36 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		return lang, cap, true
 	}
 	return workspace.LanguageSupport{}, "", false
+}
+
+// languageForSearchRequest infers a language for a generic search_content
+// request from the strongest available signal. It deliberately avoids
+// guessing: ambiguous syntax in a polyglot workspace falls through to the
+// original text search instead of redirecting to the wrong language tool.
+func languageForSearchRequest(req workspace.ToolRequest, ws *workspace.Manager) (workspace.LanguageSupport, bool) {
+	if lang, ok := languageFromConcretePath(req.Path); ok && patternCompatibleWithLanguage(req.Pattern, lang) {
+		return lang, true
+	}
+	if lang, ok := languageFromGlob(req.Glob); ok && patternCompatibleWithLanguage(req.Pattern, lang) {
+		return lang, true
+	}
+	return languageFromSyntaxPattern(req.Pattern, ws)
+}
+
+func patternCompatibleWithLanguage(pattern string, lang workspace.LanguageSupport) bool {
+	return looksLikeIdentifier(pattern) || languageSyntaxMatches(lang.Name, pattern)
+}
+
+func languageFromConcretePath(path string) (workspace.LanguageSupport, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return workspace.LanguageSupport{}, false
+	}
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return workspace.LanguageSupport{}, false
+	}
+	return workspace.LanguageForExtension(ext)
 }
 
 func languageActive(ws *workspace.Manager, lang workspace.LanguageSupport) bool {
@@ -394,6 +420,23 @@ func languageFromGlob(glob string) (workspace.LanguageSupport, bool) {
 		return workspace.LanguageSupport{}, false
 	}
 	return workspace.LanguageForExtension(ext)
+}
+
+func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (workspace.LanguageSupport, bool) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || ws == nil {
+		return workspace.LanguageSupport{}, false
+	}
+	var matches []workspace.LanguageSupport
+	for _, lang := range ws.ActiveLanguages() {
+		if languageSyntaxMatches(lang.Name, pattern) {
+			matches = append(matches, lang)
+		}
+	}
+	if len(matches) != 1 {
+		return workspace.LanguageSupport{}, false
+	}
+	return matches[0], true
 }
 
 // considerShell handles shell-command redirects. Two shapes are covered:
@@ -518,20 +561,9 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 	}
 
 	if match := matchShellGrepIdentifier(cmd); match != nil {
-		// Infer language: from the target file's extension if present,
-		// otherwise from the first active language in the workspace.
-		var lang workspace.LanguageSupport
-		var ok bool
-		if match.path != "" {
-			lang, ok = workspace.LanguageForFile(match.path)
-		}
+		lang, ok := languageForShellGrep(match, ws)
 		if !ok {
-			active := ws.ActiveLanguages()
-			if len(active) == 0 {
-				return RedirectDecision{}
-			}
-			lang = active[0]
-			ok = true
+			return RedirectDecision{}
 		}
 		if !languageActive(ws, lang) {
 			return RedirectDecision{}
@@ -625,6 +657,7 @@ func matchShellSedRange(cmd string) *shellSedMatch {
 type shellGrepMatch struct {
 	pattern string
 	path    string
+	glob    string
 }
 
 var reShellGrepIdentToken = regexp.MustCompile(`^[A-Za-z_][\w:]*$`)
@@ -647,8 +680,9 @@ func matchShellGrepIdentifier(cmd string) *shellGrepMatch {
 	}
 	i := 1
 	// Skip flag tokens. Accept single-letter combos (-rn) and long
-	// flags (--include=foo); reject anything with `=` on its own as
-	// too close to shell-var territory.
+	// flags (--include=foo). Capture include/glob flags because they
+	// are the only language signal in common unscoped grep/rg searches.
+	glob := ""
 	for i < len(fields) && strings.HasPrefix(fields[i], "-") {
 		// -E, -P, -F change pattern semantics — bail. The caller's
 		// pattern might be valid identifier in basic grep but a regex
@@ -656,6 +690,12 @@ func matchShellGrepIdentifier(cmd string) *shellGrepMatch {
 		if fields[i] == "-E" || fields[i] == "-P" || fields[i] == "-F" ||
 			fields[i] == "--extended-regexp" || fields[i] == "--perl-regexp" {
 			return nil
+		}
+		if strings.HasPrefix(fields[i], "--include=") {
+			glob = stripShellQuotes(strings.TrimPrefix(fields[i], "--include="))
+		} else if fields[i] == "-g" && i+1 < len(fields) {
+			i++
+			glob = stripShellQuotes(fields[i])
 		}
 		i++
 	}
@@ -681,7 +721,24 @@ func matchShellGrepIdentifier(cmd string) *shellGrepMatch {
 		}
 		path = candidate
 	}
-	return &shellGrepMatch{pattern: pattern, path: path}
+	return &shellGrepMatch{pattern: pattern, path: path, glob: glob}
+}
+
+func languageForShellGrep(match *shellGrepMatch, ws *workspace.Manager) (workspace.LanguageSupport, bool) {
+	if match == nil || ws == nil {
+		return workspace.LanguageSupport{}, false
+	}
+	if lang, ok := languageFromConcretePath(match.path); ok {
+		return lang, true
+	}
+	if lang, ok := languageFromGlob(match.glob); ok {
+		return lang, true
+	}
+	active := ws.ActiveLanguages()
+	if len(active) == 1 {
+		return active[0], true
+	}
+	return workspace.LanguageSupport{}, false
 }
 
 // reShellHeadTail matches `head -N FILE` / `tail -N FILE` / `head -n N FILE`.
@@ -782,56 +839,51 @@ func stripShellQuotes(s string) string {
 	return s
 }
 
-// extractGoSymbolFromPattern recognizes unambiguous Go declaration shapes
-// in a search_content pattern and returns the target identifier. `ok` is
-// true only when the pattern is syntactically Go — lets the redirect fire
-// on `func.*Foo` / `func Foo(` / `type Foo` even without an explicit glob.
-func extractGoSymbolFromPattern(pattern string) (string, bool) {
-	p := strings.TrimSpace(pattern)
-	if p == "" {
-		return "", false
-	}
-	for _, re := range goSyntaxExtractors {
-		if m := re.FindStringSubmatch(p); len(m) >= 2 && m[1] != "" {
-			return m[1], true
+func languageSyntaxMatches(language string, pattern string) bool {
+	for _, re := range syntaxExtractors[strings.ToLower(strings.TrimSpace(language))] {
+		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
+			return true
 		}
 	}
-	return "", false
+	return false
 }
 
-var goSyntaxExtractors = []*regexp.Regexp{
-	regexp.MustCompile(`^func\s*\([^)]*\)\s*([A-Za-z_]\w*)`),
-	regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
-	regexp.MustCompile(`^func[.*\\\s]+([A-Za-z_]\w*)`),
-	regexp.MustCompile(`^type\s+([A-Za-z_]\w*)`),
-}
-
-// extractCppSymbolFromPattern recognizes unambiguous C++ declaration
-// shapes and returns the target identifier. Only keywords absent from
-// Go qualify — `struct` is shared and stays out of this list to avoid
-// false positives. `template<...>` matches the keyword form even
-// without a following identifier (the query intent is still "find the
-// template"); in that case we return the raw "template" sentinel and
-// let the caller fall back to workspace_symbol.
-func extractCppSymbolFromPattern(pattern string) (string, bool) {
-	p := strings.TrimSpace(pattern)
-	if p == "" {
-		return "", false
-	}
-	for _, re := range cppSyntaxExtractors {
-		if m := re.FindStringSubmatch(p); len(m) >= 2 && m[1] != "" {
-			return m[1], true
-		}
-	}
-	return "", false
-}
-
-var cppSyntaxExtractors = []*regexp.Regexp{
-	regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
-	regexp.MustCompile(`^class[.*\\\s]+([A-Za-z_]\w*)`),
-	regexp.MustCompile(`^namespace\s+([A-Za-z_]\w*)`),
-	regexp.MustCompile(`^enum(?:\s+class)?\s+([A-Za-z_]\w*)`),
-	regexp.MustCompile(`^template\s*<[^>]*>\s*(?:class|struct|typename)?\s*([A-Za-z_]\w*)`),
+var syntaxExtractors = map[string][]*regexp.Regexp{
+	"go": {
+		regexp.MustCompile(`^func\s*\([^)]*\)\s*([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^func[.*\\\s]+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^type\s+([A-Za-z_]\w*)`),
+	},
+	"cpp": {
+		regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^class[.*\\\s]+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^namespace\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^enum(?:\s+class)?\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^template\s*<[^>]*>\s*(?:class|struct|typename)?\s*([A-Za-z_]\w*)`),
+	},
+	"python": {
+		regexp.MustCompile(`^(?:async\s+)?def\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
+	},
+	"typescript": {
+		regexp.MustCompile(`^(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)`),
+		regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)`),
+		regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)`),
+		regexp.MustCompile(`^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)`),
+		regexp.MustCompile(`^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)`),
+	},
+	"rust": {
+		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait)\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*)`),
+	},
+	"java": {
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*class\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*interface\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*enum\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*record\s+([A-Za-z_]\w*)`),
+	},
 }
 
 // isStructuredTool reports whether a tool name is already a
@@ -842,10 +894,26 @@ func isStructuredTool(tool string) bool {
 	if t == "" {
 		return false
 	}
-	for _, prefix := range []string{"go_", "cpp_"} {
+	for _, prefix := range structuredToolPrefixes() {
 		if strings.HasPrefix(t, prefix) {
 			return true
 		}
 	}
 	return false
+}
+
+func structuredToolPrefixes() []string {
+	seen := make(map[string]bool)
+	var prefixes []string
+	for _, lang := range workspace.LanguageRegistry() {
+		for _, tool := range lang.Tools {
+			prefix, _, ok := strings.Cut(strings.ToLower(strings.TrimSpace(tool)), "_")
+			if !ok || prefix == "" || seen[prefix+"_"] {
+				continue
+			}
+			seen[prefix+"_"] = true
+			prefixes = append(prefixes, prefix+"_")
+		}
+	}
+	return prefixes
 }

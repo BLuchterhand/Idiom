@@ -97,6 +97,62 @@ func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 	}
 }
 
+func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {
+	dir := t.TempDir()
+	suitePath := filepath.Join(dir, "suite.json")
+	logsDir := filepath.Join(dir, "generated")
+	maxDurationMillis := int64(45000)
+	requireApproval := false
+	suite := eval.SWESuite{
+		Name: "cli-timeout-suite",
+		Tasks: []eval.SWETask{{
+			ID:     "direct",
+			Family: "direct_question",
+			Prompt: "Explain routing.",
+			Tags:   []string{"read-only"},
+			Scenario: eval.Scenario{
+				Name:                "direct",
+				PromptContains:      []string{"Explain routing"},
+				RequireVerification: "none",
+				RequireApproval:     &requireApproval,
+				RequireRoutePlan: &eval.RoutePlanExpectation{
+					InitialLane: "main",
+					Reason:      "direct_conversation",
+					Contract:    "direct_answer",
+				},
+			},
+			Oracle: eval.SWEOracle{
+				RequireNoChangedFiles: true,
+				RequireNoApproval:     true,
+				MaxDurationMillis:     &maxDurationMillis,
+			},
+		}},
+	}
+	if err := writeSWESuite(suitePath, suite); err != nil {
+		t.Fatalf("write suite: %v", err)
+	}
+
+	command := strings.Join([]string{
+		`test "$IDIOM_SWE_TASK_TIMEOUT" = "75"`,
+		`&& printf '%s\n'`,
+		`'{"type":"message","role":"user","content":"Explain routing."}'`,
+		`'{"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}'`,
+		`'{"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}'`,
+		`> {log_path}`,
+	}, " ")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "[1/1] running direct (timeout=75s)") {
+		t.Fatalf("expected task start progress in stderr, got %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "[1/1] finished direct in ") {
+		t.Fatalf("expected task finish progress in stderr, got %s", stderr.String())
+	}
+}
+
 func TestRunWritesFailingScenarioSuite(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")

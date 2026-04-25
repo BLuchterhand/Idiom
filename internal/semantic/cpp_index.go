@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"idiom/internal/discovery"
 )
 
 type CppIndex struct {
@@ -97,7 +99,7 @@ func BuildCppIndex(root string) (*CppIndex, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if _, skip := skippedDirNames[d.Name()]; skip && path != root {
+			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
 			return nil
@@ -110,6 +112,9 @@ func BuildCppIndex(root string) (*CppIndex, error) {
 			return nil
 		}
 		rel = filepath.ToSlash(filepath.Clean(rel))
+		if discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
 		paths = append(paths, rel)
 		byName[filepath.Base(rel)] = rel
 		byRel[rel] = rel

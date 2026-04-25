@@ -69,19 +69,35 @@ func (m *Model) loadPlanContent() string {
 	if path == "" {
 		return ""
 	}
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if os.IsNotExist(err) {
+			m.planLoadError = ""
+		} else {
 			m.planLoadError = err.Error()
 		}
+		m.planMTime = time.Time{}
+		m.planContent = ""
+		return ""
+	}
+	if info.ModTime().Equal(m.planMTime) && m.planLoadError == "" {
+		return m.planContent
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			m.planLoadError = ""
+		} else {
+			m.planLoadError = err.Error()
+		}
+		m.planMTime = time.Time{}
+		m.planContent = ""
 		return ""
 	}
 	m.planLoadError = ""
-	info, err := os.Stat(path)
-	if err == nil {
-		m.planMTime = info.ModTime()
-	}
-	return string(data)
+	m.planMTime = info.ModTime()
+	m.planContent = string(data)
+	return m.planContent
 }
 
 // renderPlanPanelContent rebuilds the plan viewport from the current plan file.
@@ -410,7 +426,6 @@ func (m *Model) rerenderActivePanel() {
 	case panelTabPlan:
 		m.renderPlanPanelContent()
 	case panelTabSessions:
-		m.refreshSessionsList()
 		m.renderSessionsPanelContent()
 	default:
 		m.renderHistoryPanelContent()

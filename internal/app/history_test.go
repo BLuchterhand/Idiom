@@ -4,8 +4,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"idiom/internal/agent"
 	"idiom/internal/llama"
@@ -16,6 +19,8 @@ func newHistoryPanelModel() *Model {
 	return &Model{
 		historyPanelOpen: true,
 		historyViewport:  viewport.New(72, 20),
+		panelTab:         panelTabHistory,
+		events:           make(chan tea.Msg, 2),
 	}
 }
 
@@ -134,5 +139,49 @@ func TestFailAgentHistoryTurnFinalizesPlaceholder(t *testing.T) {
 	}
 	if !strings.Contains(entry.summary, "Chat failed: server unavailable") {
 		t.Fatalf("failure summary missing error: %q", entry.summary)
+	}
+}
+
+func TestRecordToolTraceInHistoryThrottlesLiveHistoryRender(t *testing.T) {
+	m := newHistoryPanelModel()
+	m.appendHistoryMessage("user", "inspect the app", nil)
+	m.beginAgentHistoryTurn()
+	m.streaming = true
+	m.historyFocused = false
+	m.historyRenderLast = time.Now()
+
+	m.recordToolTraceInHistory(1, "read_file | running internal/app/history.go", "inspect the history model", true)
+
+	if !m.historyRenderPending {
+		t.Fatal("expected live history render to be throttled while streaming")
+	}
+	if strings.Contains(m.historyViewport.View(), "read_file | running internal/app/history.go") {
+		t.Fatalf("expected throttled render to defer viewport update, got:\n%s", m.historyViewport.View())
+	}
+}
+
+func TestCtrlBOpensHistoryTabAndSetsStatusWhileStreaming(t *testing.T) {
+	m := &Model{
+		ready:     true,
+		width:     120,
+		height:    40,
+		viewport:  viewport.New(80, 20),
+		input:     textarea.New(),
+		panelTab:  panelTabSessions,
+		streaming: true,
+		events:    make(chan tea.Msg, 2),
+	}
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	updated := model.(*Model)
+
+	if !updated.historyPanelOpen {
+		t.Fatal("expected Ctrl+B to open the panel")
+	}
+	if updated.panelTab != panelTabHistory {
+		t.Fatalf("expected Ctrl+B to switch to history tab, got %d", updated.panelTab)
+	}
+	if !strings.Contains(updated.status, "History panel open") {
+		t.Fatalf("expected status to acknowledge panel open, got %q", updated.status)
 	}
 }

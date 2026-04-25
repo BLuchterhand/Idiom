@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/discovery"
 	"idiom/internal/semantic"
 )
 
@@ -26,7 +27,7 @@ func (m *Manager) isCppWorkspace() bool {
 			return nil
 		}
 		if d.IsDir() {
-			if _, skip := exploreSkippedDirNames[d.Name()]; skip && path != m.cfg.Root {
+			if discovery.ShouldSkipDirName(d.Name()) && path != m.cfg.Root {
 				return filepath.SkipDir
 			}
 			return nil

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/discovery"
 	"idiom/internal/semantic"
 )
 
@@ -58,7 +59,7 @@ func (m *Manager) isJavaWorkspace() bool {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if _, skip := exploreSkippedDirNames[name]; skip && path != m.cfg.Root {
+			if discovery.ShouldSkipDirName(name) && path != m.cfg.Root {
 				return filepath.SkipDir
 			}
 			// Java-specific skips — jdtls stores large caches in these.
@@ -651,6 +652,7 @@ func (m *Manager) javaFileOutline(req ToolRequest) ToolResult {
 //   - Otherwise, invoke javac on the requested file(s) with -Xlint:all.
 //   - If the workspace has no build system configured, fall back to
 //     javac on a single file and report the result verbatim.
+//
 // jdtls-driven diagnostics (publishDiagnostics) are intentionally not
 // wired in here — a full LSP diagnostics pull requires tracking push
 // notifications over the client lifetime, which doesn't fit the single-

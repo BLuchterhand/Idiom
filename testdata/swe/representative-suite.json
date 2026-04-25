@@ -155,28 +155,40 @@
           "debug log redacted mode"
         ],
         "final_assistant_contains": [
-          "redacted"
+          "redacted",
+          "debug log",
+          "safe default",
+          "What Gets Redacted"
         ],
         "forbid_final_assistant_contains": [
-          "raw secret"
+          "raw secret",
+          "Discovery packet",
+          "Relevant source hits",
+          "Evidence used"
         ],
         "require_control_rails": {
-          "lane": "main",
-          "contract": "direct_answer",
-          "task_family": "direct_answer",
-          "permission_profile": "conversation_only",
+          "lane": "architecture",
+          "contract": "architecture_assessment",
+          "task_family": "architecture",
+          "permission_profile": "read_only_workspace",
           "require_evidence": [
-            "answer_addresses_prompt"
+            "inspected_paths",
+            "architecture_boundary_evidence",
+            "confidence"
+          ],
+          "require_tools": [
+            "workspace_inspection"
+          ],
+          "require_allowed_tools": [
+            "task"
           ],
           "require_forbidden_tools": [
-            "shell"
+            "mutating_shell"
           ],
           "verification_contract": "not_required_for_read_only_lane",
           "require_stop_conditions": [
-            "required_evidence_satisfied"
-          ],
-          "require_final_critic": [
-            "answers_actual_user_request"
+            "required_evidence_satisfied",
+            "budget_exhausted_with_uncertainty_declared"
           ],
           "failure_to_eval": false
         },
@@ -187,7 +199,98 @@
         "require_no_changed_files": true,
         "require_no_approval": true,
         "require_no_summary_rejections": true,
-        "max_tool_requests": 2,
+        "max_tool_requests": 5,
+        "max_duration_millis": 90000
+      }
+    },
+    {
+      "id": "subagent-explanation",
+      "family": "architecture",
+      "prompt": "Can you tell me how this harness uses subagents?",
+      "tags": [
+        "read-only",
+        "architecture",
+        "explain",
+        "subagents",
+        "go"
+      ],
+      "scenario": {
+        "name": "subagent-explanation",
+        "prompt_contains": [
+          "harness uses subagents"
+        ],
+        "final_assistant_contains": [
+          "task",
+          "subagent",
+          "Subagent Handoff Architecture",
+          "Two Modes"
+        ],
+        "forbid_final_assistant_contains": [
+          "partial findings",
+          "budget was reached before a full synthesis",
+          "Discovery packet",
+          "Relevant source hits",
+          "Evidence used"
+        ],
+        "require_tools": [
+          "task"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "mkdir"
+        ],
+        "require_control_rails": {
+          "lane": "architecture",
+          "contract": "architecture_assessment",
+          "task_family": "architecture",
+          "permission_profile": "read_only_workspace",
+          "require_allowed_tools": [
+            "task"
+          ],
+          "require_evidence": [
+            "inspected_paths",
+            "architecture_boundary_evidence",
+            "confidence"
+          ],
+          "require_tools": [
+            "workspace_inspection"
+          ],
+          "require_forbidden_tools": [
+            "mutating_shell"
+          ],
+          "verification_contract": "not_required_for_read_only_lane",
+          "require_stop_conditions": [
+            "required_evidence_satisfied",
+            "budget_exhausted_with_uncertainty_declared"
+          ],
+          "failure_to_eval": false
+        },
+        "require_readiness": {
+          "lane": "architecture",
+          "ready": true,
+          "action": "answer",
+          "min_evidence_paths": 2
+        },
+        "require_final_answer_critic": {
+          "contract": "architecture_assessment",
+          "passed": true,
+          "action": "accept"
+        },
+        "require_evidence_paths": [
+          "internal/agent/runner.go",
+          "internal/agent/runner_child_tasks.go"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 5,
         "max_duration_millis": 60000
       }
     },
@@ -256,6 +359,82 @@
         "require_no_changed_files": true,
         "require_no_approval": true,
         "max_tool_requests": 8
+      }
+    },
+    {
+      "id": "debug-logs-weird-decisions",
+      "family": "debug_logs",
+      "prompt": "Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?",
+      "tags": [
+        "read-only",
+        "logs",
+        "review",
+        "performance"
+      ],
+      "scenario": {
+        "name": "debug-logs-weird-decisions",
+        "prompt_contains": [
+          "most recent logs",
+          "made smarter"
+        ],
+        "final_assistant_contains": [
+          "logs",
+          "smarter"
+        ],
+        "require_control_rails": {
+          "lane": "explore",
+          "contract": "grounded_explanation",
+          "task_family": "debug_logs",
+          "permission_profile": "read_only_workspace",
+          "require_evidence": [
+            "log_record",
+            "failure_output",
+            "timestamp_or_latest_selection"
+          ],
+          "require_tools": [
+            "log_inspection"
+          ],
+          "require_forbidden_tools": [
+            "edit_file",
+            "write_file",
+            "append_file",
+            "mkdir",
+            "mutating_shell"
+          ],
+          "require_readiness_gate": [
+            "latest_log_selected",
+            "failure_cause_supported_by_log",
+            "low_confidence_triggers_deepening"
+          ],
+          "require_search_policy": [
+            "start_with_most_recent_log",
+            "extract_failure_window"
+          ],
+          "verification_contract": "not_required_for_read_only_lane",
+          "require_stop_conditions": [
+            "log_cause_identified_or_log_gap_declared"
+          ],
+          "require_final_critic": [
+            "answers_actual_user_request",
+            "required_evidence_cited"
+          ],
+          "failure_to_eval": true
+        },
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "mkdir"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 12,
+        "max_duration_millis": 120000
       }
     },
     {

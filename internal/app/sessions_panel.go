@@ -2,27 +2,104 @@ package app
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+type sessionSummaryCacheEntry struct {
+	modTime time.Time
+	size    int64
+	info    SessionInfo
+}
 
 // refreshSessionsList rescans the debug-log directory and caches the
 // result on the model. Called when entering the Sessions tab and from
 // `/resume`, so the list reflects sessions landed by the current
 // process (or any sibling process) since the last view.
 func (m *Model) refreshSessionsList() {
-	sessions, err := ListRecordedSessions(m.cfg)
+	start := time.Now()
+	defer func() {
+		m.logUISlowPath("ui.refresh_sessions", start, fmt.Sprintf("tab=%d entries=%d", m.panelTab, len(m.sessionsList)))
+	}()
+
+	dir := strings.TrimSpace(m.cfg.Chat.DebugLogDir)
+	if dir == "" {
+		dir = "logs/conversations"
+	}
+	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			m.sessionsList = nil
+			m.sessionsRawCache = nil
+			m.sessionsRawCacheDir = dir
+			m.sessionsRawCacheMTime = time.Time{}
+			m.sessionsRawCacheValid = true
+			m.sessionsSummaryCache = nil
+			return
+		}
 		m.sessionsList = nil
 		return
 	}
+	if m.sessionsSummaryCache == nil {
+		m.sessionsSummaryCache = make(map[string]sessionSummaryCacheEntry, len(entries))
+	}
+	nextCache := make(map[string]sessionSummaryCacheEntry, len(entries))
+	sessions := make([]SessionInfo, 0, len(entries))
+	var dirMTime time.Time
+	if info, err := os.Stat(dir); err == nil {
+		dirMTime = info.ModTime()
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		id := strings.TrimSuffix(name, ".jsonl")
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		size := info.Size()
+		modTime := info.ModTime()
+
+		session := SessionInfo{ID: id, Path: path}
+		if cached, ok := m.sessionsSummaryCache[path]; ok && cached.size == size && cached.modTime.Equal(modTime) {
+			session = cached.info
+		} else {
+			session = summarizeSessionLog(path)
+			session.ID = id
+			session.Path = path
+		}
+		nextCache[path] = sessionSummaryCacheEntry{
+			modTime: modTime,
+			size:    size,
+			info:    session,
+		}
+		sessions = append(sessions, session)
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].ID > sessions[j].ID
+	})
+	m.sessionsSummaryCache = nextCache
+	m.sessionsRawCache = append(m.sessionsRawCache[:0], sessions...)
+	m.sessionsRawCacheDir = dir
+	m.sessionsRawCacheMTime = dirMTime
+	m.sessionsRawCacheValid = true
 	// Filter out the live session's own log: resuming into yourself
 	// adds nothing and invites confusion. Empty debugLogPath (pre-init
 	// race) falls through harmlessly.
 	currentID := m.sessionID()
-	filtered := sessions[:0]
+	filtered := make([]SessionInfo, 0, len(sessions))
 	for _, s := range sessions {
 		if s.ID == currentID {
 			continue

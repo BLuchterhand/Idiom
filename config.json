@@ -1,32 +1,25 @@
 {
   "app_name": "Idiom",
   "llama_server": {
-    "binary": "llama-server",
+    "kind": "mlx",
+    "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
     "host": "127.0.0.1",
     "port": 47680,
-    "model": "/Users/ben/models/qwen3.6-27b/Qwen3.6-27B-Q6_K.gguf",
+    "model": "/Users/ben/models/qwen3.6-27b-mlx-6bit",
     "ctx_size": 196608,
-    "threads": 0,
-    "gpu_layers": 999,
-    "jinja": true,
-    "flash_attention": true,
-    "reasoning": "auto",
-    "reasoning_format": "deepseek",
-    "reasoning_budget": -1,
-    "log_file": "logs/llama-server.log",
+    "log_file": "logs/mlx-server.log",
     "extra_args": [
-      "--cache-type-k", "q8_0",
-      "--cache-type-v", "q8_0",
-      "--mlock",
-      "--no-mmap"
+      "--prompt-cache-size", "4",
+      "--prompt-cache-bytes", "21474836480"
     ]
   },
   "implementer": {
+    "kind": "llama",
     "binary": "llama-server",
     "host": "127.0.0.1",
     "port": 47681,
     "model": "models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
-    "ctx_size": 131072,
+    "ctx_size": 196608,
     "threads": 0,
     "gpu_layers": 999,
     "jinja": true,

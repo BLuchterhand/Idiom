@@ -78,15 +78,15 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "task",
-			Description: "Delegate a bounded read-only evidence-gathering question to a sub-agent.",
+			Description: "Delegate a bounded evidence-gathering question to a sub-agent. For broad review, performance, security, architecture, or large search tasks, use a read_only explorer first and have it return inspected paths plus concise findings.",
 			ParametersJSON: schemaObj(
 				[]string{"agent", "prompt"},
 				`"agent":`+strProp("agent name, e.g. explorer")+`,"mode":{"type":"string","enum":["read_only","write"]},"prompt":`+strProp("focused question"),
 			),
 		},
 		{
-			Name:        "pwd",
-			Description: "Show the current working directory.",
+			Name:           "pwd",
+			Description:    "Show the current working directory.",
 			ParametersJSON: `{"type":"object","properties":{}}`,
 		},
 		{
@@ -119,6 +119,78 @@ func baseToolDefinitions() []ToolDefinition {
 			ParametersJSON: schemaObj(
 				nil,
 				`"path":`+strProp("relative or absolute path")+`,"id":`+strProp("discovered-file handle like f3")+`,"start_line":`+intProp("1-based start")+`,"end_line":`+intProp("1-based end"),
+			),
+		},
+		{
+			Name:        "discovery_query",
+			Description: "Run a deterministic layered discovery recipe for a configured purpose and persist the full evidence packet under .idiom/discovery/queries. Use when you need reproducible impact analysis, function tracing, architecture-boundary discovery, security review, or history context instead of choosing tools ad hoc.",
+			ParametersJSON: schemaObj(
+				[]string{"purpose"},
+				`"purpose":{"type":"string","enum":["impact_analysis","function_tracing","architecture_boundary","security_review","history_context"],"description":"deterministic recipe to run"},"path":`+strProp("optional target file/directory")+`,"pattern":`+strProp("optional symbol, function, type, package, or search pattern")+`,"language":`+strProp("optional language/ecosystem hint, e.g. go, typescript, python, cpp, rust, java")+`,"max_depth":`+intProp("optional relationship depth/budget; default 2"),
+			),
+		},
+		{
+			Name:        "structural_search",
+			Description: "Search code by AST shape via ast-grep. Use for syntax-shaped questions that grep and symbol tools cannot answer precisely.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("ast-grep pattern, e.g. if $COND { $BODY }")+`,"language":`+strProp("ast-grep language id, e.g. go, ts, python, cpp, rust, java")+`,"path":`+strProp("file or directory to search"),
+			),
+		},
+		{
+			Name:        "dependency_graph",
+			Description: "Summarize package/module/import dependencies. Uses native Go/Rust tools where available, Madge/Pydeps if installed, or lightweight local import extraction for TS/JS and Python.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"language":`+strProp("optional ecosystem: go, rust, typescript, python, java")+`,"path":`+strProp("file or directory to analyze"),
+			),
+		},
+		{
+			Name:        "history_range",
+			Description: "Show git history for a specific line range using git log -L.",
+			ParametersJSON: schemaObj(
+				[]string{"path", "start_line", "end_line"},
+				`"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start")+`,"end_line":`+intProp("1-based end"),
+			),
+		},
+		{
+			Name:        "history_symbol",
+			Description: "Show git history for a function/symbol using git log -L :symbol:path.",
+			ParametersJSON: schemaObj(
+				[]string{"path", "pattern"},
+				`"path":`+strProp("file path")+`,"pattern":`+strProp("function or symbol regex understood by git log -L"),
+			),
+		},
+		{
+			Name:        "blame_range",
+			Description: "Show git blame for a file or line range.",
+			ParametersJSON: schemaObj(
+				[]string{"path"},
+				`"path":`+strProp("file path")+`,"start_line":`+intProp("optional 1-based start")+`,"end_line":`+intProp("optional 1-based end"),
+			),
+		},
+		{
+			Name:        "ctags_symbols",
+			Description: "Fallback symbol discovery via Universal Ctags JSON output. Use when language-specific tools do not cover a file type.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"path":`+strProp("file or directory to index")+`,"pattern":`+strProp("optional symbol name filter"),
+			),
+		},
+		{
+			Name:        "semgrep_scan",
+			Description: "Run Semgrep for security/dataflow-shaped discovery. Requires semgrep on PATH; pattern is the Semgrep config, defaulting to auto.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"path":`+strProp("file or directory to scan")+`,"pattern":`+strProp("Semgrep config, e.g. auto or p/default"),
+			),
+		},
+		{
+			Name:        "joern_scan",
+			Description: "Run a heavyweight Joern code-property-graph vulnerability scan. Requires joern-scan on PATH.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"path":`+strProp("file or directory to scan"),
 			),
 		},
 		{

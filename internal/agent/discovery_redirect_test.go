@@ -63,6 +63,21 @@ func newGoTestWorkspace(t *testing.T) *workspace.Manager {
 	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
 }
 
+func newTestWorkspaceWithFiles(t *testing.T, files map[string]string) *workspace.Manager {
+	t.Helper()
+	root := t.TempDir()
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
+}
+
 // TestSearchContentRoutesByPathScope locks in the decision: when the
 // model already scoped the search to a path, index-backed find_symbol
 // should win; with no path, workspace_symbol (gopls-backed) should.
@@ -290,6 +305,96 @@ func TestSearchContentRedirectsCppSyntaxPattern(t *testing.T) {
 	}
 }
 
+func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
+	cases := []struct {
+		name    string
+		files   map[string]string
+		pattern string
+		want    string
+	}{
+		{
+			name: "python_class",
+			files: map[string]string{
+				"pyproject.toml": "[project]\nname='x'\n",
+				"pkg/model.py":   "class Widget:\n    pass\n",
+			},
+			pattern: "class Widget",
+			want:    "python",
+		},
+		{
+			name: "typescript_interface",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export interface Widget {}\n",
+			},
+			pattern: "export interface Widget",
+			want:    "typescript",
+		},
+		{
+			name: "rust_struct",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "pub struct Widget;\n",
+			},
+			pattern: "pub struct Widget",
+			want:    "rust",
+		},
+		{
+			name: "java_record",
+			files: map[string]string{
+				"pom.xml":              "<project></project>\n",
+				"src/main/Widget.java": "public record Widget() {}\n",
+			},
+			pattern: "public record Widget",
+			want:    "java",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := newTestWorkspaceWithFiles(t, tc.files)
+			d := NewDiscoveryRedirect()
+			decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: tc.pattern}, ws)
+			if !decision.ShouldRedirect {
+				t.Fatalf("pattern %q should redirect", tc.pattern)
+			}
+			if decision.Language != tc.want {
+				t.Fatalf("language: want %s, got %s", tc.want, decision.Language)
+			}
+		})
+	}
+}
+
+func TestSearchContentSkipsAmbiguousSyntaxInPolyglotWorkspace(t *testing.T) {
+	ws := newTestWorkspaceWithFiles(t, map[string]string{
+		"compile_commands.json": "[]\n",
+		"src/widget.cpp":        "class Widget {};\n",
+		"pom.xml":               "<project></project>\n",
+		"src/Widget.java":       "public class Widget {}\n",
+	})
+	d := NewDiscoveryRedirect()
+	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "class Widget"}, ws)
+	if decision.ShouldRedirect {
+		t.Fatalf("ambiguous class syntax should not redirect, got %s", decision.Language)
+	}
+}
+
+func TestSearchContentPathDisambiguatesAmbiguousSyntax(t *testing.T) {
+	ws := newTestWorkspaceWithFiles(t, map[string]string{
+		"compile_commands.json": "[]\n",
+		"src/widget.cpp":        "class Widget {};\n",
+		"pom.xml":               "<project></project>\n",
+		"src/Widget.java":       "public class Widget {}\n",
+	})
+	d := NewDiscoveryRedirect()
+	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "class Widget", Path: "src/Widget.java"}, ws)
+	if !decision.ShouldRedirect {
+		t.Fatalf("path-scoped Java class search should redirect")
+	}
+	if decision.Language != "java" {
+		t.Fatalf("language: want java, got %s", decision.Language)
+	}
+}
+
 // TestShellGrepIdentifierRedirectsInCppWorkspace confirms the shell-grep
 // rewrite fires with cpp_references / cpp_workspace_symbol when the
 // active language is C++.
@@ -413,17 +518,60 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 func TestShellGrepSkipsRegexAndPipes(t *testing.T) {
 	ws := newGoTestWorkspace(t)
 	for _, cmd := range []string{
-		`grep -rn "func.*Run"`,           // regex
-		`grep -rn "Run" | head -20`,      // pipe
-		`grep -rn "Run" > out.txt`,       // redirect
-		`grep -rn "$VAR"`,                // variable
-		`grep -E '^(foo|bar)$' main.go`,  // regex alternation
+		`grep -rn "func.*Run"`,          // regex
+		`grep -rn "Run" | head -20`,     // pipe
+		`grep -rn "Run" > out.txt`,      // redirect
+		`grep -rn "$VAR"`,               // variable
+		`grep -E '^(foo|bar)$' main.go`, // regex alternation
 	} {
 		t.Run(cmd, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: cmd}, ws)
 			if decision.ShouldRedirect {
 				t.Fatalf("shell command %q should not redirect", cmd)
+			}
+		})
+	}
+}
+
+func TestShellGrepSkipsAmbiguousUnscopedPolyglotSearch(t *testing.T) {
+	ws := newTestWorkspaceWithFiles(t, map[string]string{
+		"go.mod":                "module example.test\n",
+		"main.go":               "package main\nfunc Widget() {}\n",
+		"pyproject.toml":        "[project]\nname='x'\n",
+		"pkg/widget.py":         "def Widget():\n    pass\n",
+		"compile_commands.json": "[]\n",
+		"src/widget.cpp":        "class Widget {};\n",
+	})
+	d := NewDiscoveryRedirect()
+	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -rn Widget`}, ws)
+	if decision.ShouldRedirect {
+		t.Fatalf("unscoped grep in polyglot workspace should not pick %s", decision.Language)
+	}
+}
+
+func TestShellGrepUsesIncludeGlobForLanguage(t *testing.T) {
+	ws := newTestWorkspaceWithFiles(t, map[string]string{
+		"go.mod":         "module example.test\n",
+		"main.go":        "package main\nfunc Widget() {}\n",
+		"pyproject.toml": "[project]\nname='x'\n",
+		"pkg/widget.py":  "def Widget():\n    pass\n",
+	})
+	d := NewDiscoveryRedirect()
+	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -rn --include=*.py Widget`}, ws)
+	if !decision.ShouldRedirect {
+		t.Fatalf("include-scoped grep should redirect")
+	}
+	if decision.Language != "python" {
+		t.Fatalf("language: want python, got %s", decision.Language)
+	}
+}
+
+func TestStructuredToolDetectionUsesLanguageRegistry(t *testing.T) {
+	for _, tool := range []string{"python_overview", "ts_workspace_symbol", "rust_read_symbol", "java_references"} {
+		t.Run(tool, func(t *testing.T) {
+			if !isStructuredTool(tool) {
+				t.Fatalf("%s should be classified as a structured language tool", tool)
 			}
 		})
 	}

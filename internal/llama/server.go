@@ -144,6 +144,13 @@ func (s *ServerController) IsRunning() bool {
 }
 
 func (s *ServerController) buildArgs() []string {
+	if s.cfg.IsMLX() {
+		return s.buildMLXArgs()
+	}
+	return s.buildLlamaArgs()
+}
+
+func (s *ServerController) buildLlamaArgs() []string {
 	args := []string{
 		"-m", s.cfg.Model,
 		"--host", s.cfg.Host,
@@ -167,6 +174,21 @@ func (s *ServerController) buildArgs() []string {
 		args = append(args, "--reasoning-format", s.cfg.ReasoningFormat)
 	}
 	args = append(args, "--reasoning-budget", strconv.Itoa(s.cfg.ReasoningBudget))
+	args = append(args, s.cfg.ExtraArgs...)
+	return args
+}
+
+// buildMLXArgs builds the argv for `mlx_lm.server`, which exposes an
+// OpenAI-compatible HTTP API backed by Apple MLX. mlx_lm.server has no
+// equivalents for llama.cpp-specific flags (jinja, flash-attn, reasoning
+// mode, cache-type quantization), so those are dropped here. Model is
+// treated as a Hugging Face ID or local MLX directory, not a file path.
+func (s *ServerController) buildMLXArgs() []string {
+	args := []string{
+		"--model", s.cfg.Model,
+		"--host", s.cfg.Host,
+		"--port", strconv.Itoa(s.cfg.Port),
+	}
 	args = append(args, s.cfg.ExtraArgs...)
 	return args
 }

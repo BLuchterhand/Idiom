@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/discovery"
 	"idiom/internal/semantic"
 )
 
@@ -49,7 +50,7 @@ func (m *Manager) isTsWorkspace() bool {
 			return nil
 		}
 		if d.IsDir() {
-			if _, skip := exploreSkippedDirNames[d.Name()]; skip && path != m.cfg.Root {
+			if discovery.ShouldSkipDirName(d.Name()) && path != m.cfg.Root {
 				return filepath.SkipDir
 			}
 			if name := d.Name(); name == ".next" || name == "node_modules" {

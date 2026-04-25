@@ -71,6 +71,27 @@ func TestBuildIncludesOpenCodeStylePromptGuidance(t *testing.T) {
 	}
 }
 
+func TestBuildAutoIncludesGeneratedProjectContext(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "project")
+	if err := os.MkdirAll(filepath.Join(project, ".idiom", "discovery"), 0o755); err != nil {
+		t.Fatalf("MkdirAll discovery: %v", err)
+	}
+	writeFile(t, filepath.Join(project, "AGENTS.md"), "Human guidance")
+	writeFile(t, filepath.Join(project, ".idiom", "discovery", "context.md"), "Generated guidance")
+
+	stack, err := Build(config.Chat{ProjectRoot: project}, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(stack.Text, "[project behavior: .idiom/discovery/context.md]") {
+		t.Fatalf("expected stack text to include generated context, got:\n%s", stack.Text)
+	}
+	if got := countSource(stack.Sources, filepath.Join(project, ".idiom", "discovery", "context.md")); got != 1 {
+		t.Fatalf("expected generated context source once, got %d", got)
+	}
+}
+
 func TestBuildRejectsMissingRequiredPrompt(t *testing.T) {
 	_, err := Build(config.Chat{SystemPromptFiles: []string{filepath.Join(t.TempDir(), "missing.md")}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "load baseline prompt") {

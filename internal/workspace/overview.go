@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"idiom/internal/discovery"
 )
 
 // Fix 4 (workspace overview) — cheap one-level directory listing that gets
@@ -43,6 +45,12 @@ func OverviewSystemPrompt(root string) string {
 	notable := make([]string, 0, 8)
 	for _, e := range entries {
 		name := e.Name()
+		if e.IsDir() && discovery.ShouldSkipDirName(name) {
+			continue
+		}
+		if !e.IsDir() && discovery.ShouldSkipRelFile(name) {
+			continue
+		}
 		if strings.HasPrefix(name, ".") {
 			if isNotableDotfile(name) {
 				notable = append(notable, name)
@@ -50,9 +58,6 @@ func OverviewSystemPrompt(root string) string {
 			continue
 		}
 		if e.IsDir() {
-			if shouldSkipOverviewDir(name) {
-				continue
-			}
 			dirs = append(dirs, e)
 			continue
 		}
@@ -86,7 +91,7 @@ func OverviewSystemPrompt(root string) string {
 				break
 			}
 			sub := filepath.Join(cleaned, d.Name())
-			count, sample := summarizeSubdir(sub)
+			count, sample := summarizeSubdir(sub, d.Name()+"/")
 			fmt.Fprintf(&b, "  %s/ (%d files)", d.Name(), count)
 			if len(sample) > 0 {
 				fmt.Fprintf(&b, " — e.g. %s", strings.Join(sample, ", "))
@@ -104,7 +109,7 @@ func OverviewSystemPrompt(root string) string {
 
 func isNotableDotfile(name string) bool {
 	switch name {
-	case ".claude", ".opencode", ".github", ".vscode", ".gitignore",
+	case ".opencode", ".github", ".vscode", ".gitignore",
 		".golangci.yml", ".golangci.yaml", ".editorconfig", ".env.example",
 		".tool-versions", ".python-version", ".nvmrc":
 		return true
@@ -112,17 +117,8 @@ func isNotableDotfile(name string) bool {
 	return false
 }
 
-func shouldSkipOverviewDir(name string) bool {
-	switch name {
-	case "node_modules", "vendor", "dist", "build", "target", "coverage",
-		"__pycache__", ".git":
-		return true
-	}
-	return false
-}
-
-func summarizeSubdir(path string) (int, []string) {
-	count, sample := collectDirSample(path, "")
+func summarizeSubdir(path string, prefix string) (int, []string) {
+	count, sample := collectDirSample(path, prefix)
 	if count == 0 {
 		// Descend one more level — dirs that only contain nested packages
 		// (the common Go layout like internal/app/…) should still surface a
@@ -136,11 +132,11 @@ func summarizeSubdir(path string) (int, []string) {
 				continue
 			}
 			name := e.Name()
-			if strings.HasPrefix(name, ".") || shouldSkipOverviewDir(name) {
+			if strings.HasPrefix(name, ".") || discovery.ShouldSkipDirName(name) {
 				continue
 			}
 			sub := filepath.Join(path, e.Name())
-			c, s := collectDirSample(sub, e.Name()+"/")
+			c, s := collectDirSample(sub, prefix+e.Name()+"/")
 			count += c
 			sample = append(sample, s...)
 			if len(sample) >= workspaceOverviewMaxFilesPerDir {
@@ -164,7 +160,11 @@ func collectDirSample(path string, prefix string) (int, []string) {
 	sample := make([]string, 0, workspaceOverviewMaxFilesPerDir)
 	for _, e := range entries {
 		name := e.Name()
+		rel := prefix + name
 		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if discovery.ShouldSkipRelFile(rel) {
 			continue
 		}
 		if e.IsDir() {

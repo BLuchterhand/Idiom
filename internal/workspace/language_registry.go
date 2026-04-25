@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"idiom/internal/discovery"
 )
 
 // Capability names the *kind* of question a tool answers, independent of
@@ -13,19 +15,19 @@ import (
 type Capability string
 
 const (
-	CapFileOutline      Capability = "file_outline"
-	CapFindSymbol       Capability = "find_symbol"
-	CapWorkspaceSymbol  Capability = "workspace_symbol"
-	CapDefinition       Capability = "definition"
-	CapReferences       Capability = "references"
-	CapCallsFrom        Capability = "calls_from"
-	CapCallsInto        Capability = "calls_into"
-	CapReadSymbol       Capability = "read_symbol"
-	CapRelatedFiles     Capability = "related_files"
-	CapImplementations  Capability = "implementations"
-	CapDiagnostics      Capability = "diagnostics"
-	CapOverview         Capability = "overview"
-	CapEntrypoints      Capability = "entrypoints"
+	CapFileOutline     Capability = "file_outline"
+	CapFindSymbol      Capability = "find_symbol"
+	CapWorkspaceSymbol Capability = "workspace_symbol"
+	CapDefinition      Capability = "definition"
+	CapReferences      Capability = "references"
+	CapCallsFrom       Capability = "calls_from"
+	CapCallsInto       Capability = "calls_into"
+	CapReadSymbol      Capability = "read_symbol"
+	CapRelatedFiles    Capability = "related_files"
+	CapImplementations Capability = "implementations"
+	CapDiagnostics     Capability = "diagnostics"
+	CapOverview        Capability = "overview"
+	CapEntrypoints     Capability = "entrypoints"
 )
 
 // LanguageSupport describes what deterministic tools are available for a
@@ -116,7 +118,7 @@ Fallback to read_file with an explicit start_line/end_line range only when a sem
 					return nil
 				}
 				if d.IsDir() {
-					if _, skip := exploreSkippedDirNames[d.Name()]; skip && path != root {
+					if discovery.ShouldSkipDirName(d.Name()) && path != root {
 						return filepath.SkipDir
 					}
 					return nil
@@ -184,7 +186,7 @@ Fallback to read_file with an explicit start_line/end_line range only when a sem
 					return nil
 				}
 				if d.IsDir() {
-					if _, skip := exploreSkippedDirNames[d.Name()]; skip && path != root {
+					if discovery.ShouldSkipDirName(d.Name()) && path != root {
 						return filepath.SkipDir
 					}
 					switch d.Name() {
@@ -251,7 +253,7 @@ The same toolset covers .js/.jsx/.mjs/.cjs — typescript-language-server handle
 					return nil
 				}
 				if d.IsDir() {
-					if _, skip := exploreSkippedDirNames[d.Name()]; skip && path != root {
+					if discovery.ShouldSkipDirName(d.Name()) && path != root {
 						return filepath.SkipDir
 					}
 					if name := d.Name(); name == ".next" || name == "node_modules" {
@@ -313,10 +315,7 @@ Fallback to read_file with an explicit start_line/end_line range only when a sem
 				}
 				if d.IsDir() {
 					name := d.Name()
-					if _, skip := exploreSkippedDirNames[name]; skip && path != root {
-						return filepath.SkipDir
-					}
-					if name == "target" && path != root {
+					if discovery.ShouldSkipDirName(name) && path != root {
 						return filepath.SkipDir
 					}
 					return nil
@@ -376,7 +375,7 @@ Fallback to read_file with an explicit start_line/end_line range only when a sem
 					return nil
 				}
 				if d.IsDir() {
-					if _, skip := exploreSkippedDirNames[d.Name()]; skip && path != root {
+					if discovery.ShouldSkipDirName(d.Name()) && path != root {
 						return filepath.SkipDir
 					}
 					switch d.Name() {

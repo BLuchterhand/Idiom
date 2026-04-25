@@ -57,7 +57,7 @@ func main() {
 		})
 	}
 
-	client := llama.NewClient(cfg.BaseURL(), 0)
+	client := llama.NewClient(cfg.BaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 

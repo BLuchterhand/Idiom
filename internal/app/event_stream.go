@@ -86,7 +86,7 @@ func (m *Model) emitJSONMessage(role, content string) {
 }
 
 func (m *Model) emitJSONToolRequest(event agent.ToolRequestEvent) {
-	m.emitJSONEvent(map[string]any{
+	record := map[string]any{
 		"type":      "tool_request",
 		"step":      event.Step,
 		"agent":     event.Agent,
@@ -96,7 +96,17 @@ func (m *Model) emitJSONToolRequest(event agent.ToolRequestEvent) {
 		"action":    event.Action,
 		"broad":     event.Broad,
 		"narrowing": event.Narrowing,
-	})
+	}
+	if event.DiscoveryClass != "" {
+		record["discovery_class"] = event.DiscoveryClass
+	}
+	if event.DiscoveryScope != "" {
+		record["discovery_scope"] = event.DiscoveryScope
+	}
+	if event.DiscoveryCost != "" {
+		record["discovery_cost"] = event.DiscoveryCost
+	}
+	m.emitJSONEvent(record)
 }
 
 func (m *Model) emitJSONToolResult(event agent.ToolResultEvent) {

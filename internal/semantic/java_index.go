@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"idiom/internal/discovery"
 )
 
 // JavaIndex is a lightweight, regex-based semantic index for a Java
@@ -27,35 +29,35 @@ type JavaIndex struct {
 }
 
 type JavaFile struct {
-	Path      string
-	Package   string
-	Imports   []string // fully-qualified imports
-	Symbols   []JavaSymbol
-	Classes   int
+	Path       string
+	Package    string
+	Imports    []string // fully-qualified imports
+	Symbols    []JavaSymbol
+	Classes    int
 	Interfaces int
-	Enums     int
-	Methods   int
-	Fields    int
-	HasMain   bool
-	IsTest    bool
-	SourceDir string
+	Enums      int
+	Methods    int
+	Fields     int
+	HasMain    bool
+	IsTest     bool
+	SourceDir  string
 }
 
 type JavaSymbol struct {
-	Name       string
-	Qualified  string // package.Outer.Inner or package.Class#method
-	Kind       string // class, interface, enum, record, annotation, method, constructor, field
-	Scope      string // enclosing class/package (for display)
-	Modifiers  []string
+	Name        string
+	Qualified   string // package.Outer.Inner or package.Class#method
+	Kind        string // class, interface, enum, record, annotation, method, constructor, field
+	Scope       string // enclosing class/package (for display)
+	Modifiers   []string
 	Annotations []string
-	Extends    string   // single superclass, for classes
-	Implements []string // implemented interfaces (for classes) or extended interfaces (for interfaces)
-	Line       int
-	Column     int
-	StartLine  int
-	EndLine    int
-	Calls      []JavaCall
-	SourceFile string
+	Extends     string   // single superclass, for classes
+	Implements  []string // implemented interfaces (for classes) or extended interfaces (for interfaces)
+	Line        int
+	Column      int
+	StartLine   int
+	EndLine     int
+	Calls       []JavaCall
+	SourceFile  string
 }
 
 type JavaCall struct {
@@ -64,17 +66,17 @@ type JavaCall struct {
 }
 
 var (
-	javaPackageRe   = regexp.MustCompile(`^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;`)
-	javaImportRe    = regexp.MustCompile(`^\s*import\s+(static\s+)?([A-Za-z_][A-Za-z0-9_.]*(?:\.\*)?)\s*;`)
+	javaPackageRe    = regexp.MustCompile(`^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;`)
+	javaImportRe     = regexp.MustCompile(`^\s*import\s+(static\s+)?([A-Za-z_][A-Za-z0-9_.]*(?:\.\*)?)\s*;`)
 	javaAnnotationRe = regexp.MustCompile(`^@([A-Za-z_][A-Za-z0-9_.]*)`)
 	// Matches a class/interface/enum/record/annotation header line. Captures:
 	// 1: kind, 2: name, 3: rest (extends/implements/permits ...)
 	javaTypeRe = regexp.MustCompile(`^\s*(?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+|sealed\s+|non-sealed\s+)*(class|interface|enum|record|@interface)\s+([A-Za-z_][A-Za-z0-9_]*)([^{]*)`)
 	// Method/constructor signature candidates — the parser below still
 	// verifies parentheses and rejects control-flow keywords.
-	javaMethodStartRe = regexp.MustCompile(`^\s*(?:public\s+|protected\s+|private\s+|abstract\s+|static\s+|final\s+|synchronized\s+|native\s+|default\s+|strictfp\s+)+.*\(`)
+	javaMethodStartRe   = regexp.MustCompile(`^\s*(?:public\s+|protected\s+|private\s+|abstract\s+|static\s+|final\s+|synchronized\s+|native\s+|default\s+|strictfp\s+)+.*\(`)
 	javaNameBeforeParen = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>\s*)?$`)
-	javaCallRe         = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	javaCallRe          = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
 )
 
 var javaFileExtensions = map[string]struct{}{
@@ -82,14 +84,14 @@ var javaFileExtensions = map[string]struct{}{
 }
 
 var javaSkippedDirNames = map[string]struct{}{
-	".git":        {},
-	".gradle":     {},
-	".idea":       {},
-	".mvn":        {},
-	"build":       {},
-	"target":      {},
-	"out":         {},
-	"bin":         {},
+	".git":         {},
+	".gradle":      {},
+	".idea":        {},
+	".mvn":         {},
+	"build":        {},
+	"target":       {},
+	"out":          {},
+	"bin":          {},
 	"node_modules": {},
 }
 
@@ -117,8 +119,7 @@ func BuildJavaIndex(root string) (*JavaIndex, error) {
 			if _, skip := javaSkippedDirNames[d.Name()]; skip && path != root {
 				return filepath.SkipDir
 			}
-			// Also honor the shared skippedDirNames used by other indexers.
-			if _, skip := skippedDirNames[d.Name()]; skip && path != root {
+			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
 			return nil
@@ -130,7 +131,11 @@ func BuildJavaIndex(root string) (*JavaIndex, error) {
 		if err != nil {
 			return nil
 		}
-		paths = append(paths, filepath.ToSlash(filepath.Clean(rel)))
+		rel = filepath.ToSlash(filepath.Clean(rel))
+		if discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
+		paths = append(paths, rel)
 		return nil
 	})
 	if err != nil {
@@ -376,6 +381,7 @@ func (idx *JavaIndex) uniqueRankedPaths(files []JavaFile, limit int) []string {
 //   - public static void main(String[])
 //   - methods annotated with @Test (JUnit 4/5)
 //   - classes annotated with @SpringBootApplication
+//
 // Result is the set of *file paths* containing any such entry, ranked.
 func (idx *JavaIndex) Entrypoints(limit int) []string {
 	if idx == nil {

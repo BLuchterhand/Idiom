@@ -132,6 +132,66 @@ func TestDebugLoggerLogsPhaseEvents(t *testing.T) {
 	}
 }
 
+func TestDebugLoggerRecordsDiscoveryBalanceMetadata(t *testing.T) {
+	logger, err := NewDebugLogger(DebugLoggerOptions{
+		Dir:  t.TempDir(),
+		Mode: DebugLogModeFull,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	if err := logger.LogToolRequestDetail(ToolRequestDetail{
+		Step:           1,
+		Agent:          "main",
+		Raw:            `{"tool":"structural_search","pattern":"if $X { $Y }"}`,
+		Tool:           "structural_search",
+		WorkspaceMode:  "normal",
+		Narrowing:      true,
+		Action:         "structural_search:.:if $x { $y }:go",
+		DiscoveryClass: "ast_search",
+		DiscoveryScope: "targeted",
+		DiscoveryCost:  "medium",
+	}); err != nil {
+		t.Fatalf("LogToolRequestDetail: %v", err)
+	}
+	if err := logger.LogToolResultDetail(ToolResultDetail{
+		Step:           1,
+		Agent:          "main",
+		Tool:           "structural_search",
+		Summary:        "Ran structural search",
+		DiscoveryClass: "ast_search",
+		DiscoveryScope: "targeted",
+		DiscoveryCost:  "medium",
+	}); err != nil {
+		t.Fatalf("LogToolResultDetail: %v", err)
+	}
+	if err := logger.LogSessionSummary(SessionSummary{
+		Turns:            1,
+		ModelCalls:       1,
+		ToolCalls:        1,
+		DiscoveryByClass: []DiscoveryAggregate{{Name: "ast_search", Calls: 1}},
+		DiscoveryByCost:  []DiscoveryAggregate{{Name: "medium", Calls: 1}},
+	}); err != nil {
+		t.Fatalf("LogSessionSummary: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	records := readDebugLogRecords(t, logger.Path())
+	if records[0]["discovery_class"] != "ast_search" || records[0]["discovery_scope"] != "targeted" || records[0]["discovery_cost"] != "medium" {
+		t.Fatalf("tool_request missing discovery metadata: %#v", records[0])
+	}
+	if records[1]["discovery_class"] != "ast_search" || records[1]["discovery_scope"] != "targeted" || records[1]["discovery_cost"] != "medium" {
+		t.Fatalf("tool_result missing discovery metadata: %#v", records[1])
+	}
+	if records[2]["discovery_by_class"] == nil || records[2]["discovery_by_cost"] == nil {
+		t.Fatalf("session_summary missing discovery aggregates: %#v", records[2])
+	}
+}
+
 func TestDebugLoggerSuppressesDuplicateAssistantSummaryMessages(t *testing.T) {
 	logger, err := NewDebugLogger(DebugLoggerOptions{
 		Dir:  t.TempDir(),
@@ -188,7 +248,7 @@ func TestDebugLoggerLogsContextFillTelemetry(t *testing.T) {
 	if err := logger.LogSessionStart(SessionStart{
 		AppName:       "Idiom",
 		WorkspaceRoot: "/tmp/workspace",
-		CtxSize:       65536,
+		CtxSize:       196608,
 	}); err != nil {
 		t.Fatalf("LogSessionStart: %v", err)
 	}
@@ -211,7 +271,7 @@ func TestDebugLoggerLogsContextFillTelemetry(t *testing.T) {
 		PromptTokens:     12000,
 		CompletionTokens: 350,
 		TotalTokens:      12350,
-		CtxSize:          65536,
+		CtxSize:          196608,
 		MessageCount:     14,
 		RoleChars:        map[string]int{"system": 4500, "user": 800, "assistant": 1200, "tool": 9000},
 		ChosenTool:       "edit_file",
@@ -239,8 +299,8 @@ func TestDebugLoggerLogsContextFillTelemetry(t *testing.T) {
 		CompletionTokens: 1200,
 		TotalTokens:      41200,
 		PeakPromptTokens: 22000,
-		CtxSize:          65536,
-		PeakCtxPct:       float64(22000) / float64(65536),
+		CtxSize:          196608,
+		PeakCtxPct:       float64(22000) / float64(196608),
 		Compactions:      1,
 		TopToolsByOutput: []ToolOutputAggregate{{Tool: "read_file", Calls: 8, OutputChars: 60000}},
 		DurationMillis:   30000,
@@ -257,8 +317,8 @@ func TestDebugLoggerLogsContextFillTelemetry(t *testing.T) {
 		t, _ := rec["type"].(string)
 		byType[t] = rec
 	}
-	if got, _ := byType["session_start"]["ctx_size"].(float64); got != 65536 {
-		t.Fatalf("session_start.ctx_size = %v, want 65536", byType["session_start"]["ctx_size"])
+	if got, _ := byType["session_start"]["ctx_size"].(float64); got != 196608 {
+		t.Fatalf("session_start.ctx_size = %v, want 196608", byType["session_start"]["ctx_size"])
 	}
 	tr := byType["tool_result"]
 	if tr["output_chars"] == nil || tr["output_lines"] == nil || tr["path"] == nil || tr["start_line"] == nil {

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,7 +10,9 @@ import (
 	"go/token"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +20,7 @@ import (
 	"time"
 
 	"idiom/internal/config"
+	"idiom/internal/discovery"
 	"idiom/internal/semantic"
 )
 
@@ -69,6 +73,9 @@ type ToolRequest struct {
 	StartLine    int                 `json:"start_line,omitempty"`
 	EndLine      int                 `json:"end_line,omitempty"`
 	Pattern      string              `json:"pattern,omitempty"`
+	Query        string              `json:"query,omitempty"`
+	Purpose      string              `json:"purpose,omitempty"`
+	Language     string              `json:"language,omitempty"`
 	Glob         string              `json:"glob,omitempty"`
 	Workdir      string              `json:"workdir,omitempty"`
 	Command      string              `json:"command,omitempty"`
@@ -119,10 +126,11 @@ type TaskLedgerItem struct {
 }
 
 type ToolResult struct {
-	Tool    string
-	Summary string
-	Output  string
-	Error   string
+	Tool          string
+	Summary       string
+	Output        string
+	Error         string
+	PrecisionTier string `json:"precision_tier,omitempty"`
 }
 
 type listedEntry struct {
@@ -130,22 +138,8 @@ type listedEntry struct {
 	isDir bool
 }
 
-var exploreSkippedDirNames = map[string]struct{}{
-	".cache":       {},
-	".git":         {},
-	".hg":          {},
-	".svn":         {},
-	"bin":          {},
-	"build":        {},
-	"dist":         {},
-	"logs":         {},
-	"models":       {},
-	"node_modules": {},
-	"tmp":          {},
-	"transcripts":  {},
-}
-
 const searchContentLineCap = 240
+const listFilesDisplayCap = 80
 
 func NewManager(cfg config.Workspace) *Manager {
 	return &Manager{
@@ -348,7 +342,11 @@ func (m *Manager) AllowedTools() []string {
 	return m.toolManifestTools(readOnly)
 }
 
-func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
+func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResult) {
+	defer func() {
+		result = annotateLanguagePrecisionTier(result)
+	}()
+
 	tool := strings.TrimSpace(req.Tool)
 	mode := m.Mode()
 	switch tool {
@@ -366,6 +364,24 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
 		return m.searchContent(ctx, req, tool)
 	case "read_file":
 		return m.readFile(req)
+	case "discovery_query":
+		return m.discoveryQuery(ctx, req)
+	case "structural_search":
+		return m.structuralSearch(ctx, req)
+	case "dependency_graph":
+		return m.dependencyGraph(ctx, req)
+	case "history_range":
+		return m.historyRange(ctx, req)
+	case "history_symbol":
+		return m.historySymbol(ctx, req)
+	case "blame_range":
+		return m.blameRange(ctx, req)
+	case "ctags_symbols":
+		return m.ctagsSymbols(ctx, req)
+	case "semgrep_scan":
+		return m.semgrepScan(ctx, req)
+	case "joern_scan":
+		return m.joernScan(ctx, req)
 	case "go_overview":
 		return m.goOverview()
 	case "go_entrypoints":
@@ -579,6 +595,86 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) ToolResult {
 	}
 }
 
+const (
+	PrecisionTierLSP         = "lsp"
+	PrecisionTierSyntaxIndex = "syntax-index"
+	PrecisionTierRGFallback  = "rg-fallback"
+	PrecisionTierUnavailable = "unavailable"
+)
+
+func annotateLanguagePrecisionTier(result ToolResult) ToolResult {
+	if strings.TrimSpace(result.PrecisionTier) != "" || !isLanguageToolName(result.Tool) {
+		return result
+	}
+	result.PrecisionTier = inferLanguagePrecisionTier(result)
+	return result
+}
+
+func inferLanguagePrecisionTier(result ToolResult) string {
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output + "\n" + result.Error))
+	if strings.TrimSpace(result.Error) != "" {
+		return PrecisionTierUnavailable
+	}
+	if strings.Contains(text, "unavailable") ||
+		strings.Contains(text, "not installed") ||
+		strings.Contains(text, " is required") ||
+		strings.Contains(text, "requires ") {
+		return PrecisionTierUnavailable
+	}
+	if strings.Contains(text, "rg fallback") || strings.Contains(text, "semantic/rg fallback") {
+		return PrecisionTierRGFallback
+	}
+	for _, token := range []string{
+		"gopls",
+		"clangd",
+		"python lsp",
+		"pyright",
+		"pylsp",
+		"typescript-language-server",
+		"rust-analyzer",
+		"jdtls",
+	} {
+		if strings.Contains(text, token) {
+			return PrecisionTierLSP
+		}
+	}
+	return PrecisionTierSyntaxIndex
+}
+
+func isLanguageToolName(tool string) bool {
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	if tool == "" {
+		return false
+	}
+	for _, lang := range LanguageRegistry() {
+		for _, candidate := range lang.Tools {
+			if strings.EqualFold(tool, strings.TrimSpace(candidate)) {
+				return true
+			}
+		}
+	}
+	if _, ok := supplementalLanguageDiscoveryTools[tool]; ok {
+		return true
+	}
+	return false
+}
+
+var supplementalLanguageDiscoveryTools = map[string]struct{}{
+	"go_find_function": {},
+	"go_find_type":     {},
+	"go_find_const":    {},
+	"go_find_package":  {},
+	"go_extract_body":  {},
+	"go_importers":     {},
+
+	"cpp_declaration":  {},
+	"cpp_extract_body": {},
+	"cpp_includes":     {},
+	"cpp_who_includes": {},
+	"cpp_blast_radius": {},
+	"cpp_dead_symbol":  {},
+}
+
 func (m *Manager) gitStatus(ctx context.Context, req ToolRequest) ToolResult {
 	workdir, err := m.resolveWorkdir(req.Workdir)
 	if err != nil {
@@ -678,6 +774,9 @@ func FormatToolResultForModel(result ToolResult) string {
 	b.WriteString("[workspace tool result]\n")
 	b.WriteString("tool: " + result.Tool + "\n")
 	b.WriteString("summary: " + result.Summary + "\n")
+	if strings.TrimSpace(result.PrecisionTier) != "" {
+		b.WriteString("precision_tier: " + result.PrecisionTier + "\n")
+	}
 	if result.Error != "" {
 		b.WriteString("status: error\n")
 		b.WriteString("error:\n" + result.Error + "\n")
@@ -697,6 +796,9 @@ func FormatToolTrace(result ToolResult) string {
 	b.WriteString(result.Tool)
 	if result.Summary != "" {
 		b.WriteString(" | " + result.Summary)
+	}
+	if strings.TrimSpace(result.PrecisionTier) != "" {
+		b.WriteString(" | precision_tier=" + result.PrecisionTier)
 	}
 	if result.Error != "" {
 		b.WriteString("\nerror:\n" + result.Error)
@@ -799,6 +901,8 @@ func IsNarrowingRequest(req ToolRequest) bool {
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg", "read_file",
+		"discovery_query",
+		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
 		"go_definition", "go_references", "go_implementations",
@@ -835,6 +939,8 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg",
+		"discovery_query",
+		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
 		"go_definition", "go_references", "go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
@@ -1034,14 +1140,30 @@ func (m *Manager) listFiles(req ToolRequest) ToolResult {
 
 	m.sortExploreListEntries(entries)
 
-	formatted := make([]string, 0, len(entries))
-	for _, entry := range entries {
+	totalEntries := len(entries)
+	displayEntries := entries
+	capped := false
+	if len(displayEntries) > listFilesDisplayCap {
+		displayEntries = displayEntries[:listFilesDisplayCap]
+		capped = true
+	}
+	formatted := make([]string, 0, len(displayEntries)+1)
+	for _, entry := range displayEntries {
 		formatted = append(formatted, m.formatListedEntry(entry))
 	}
+	if capped {
+		formatted = append(formatted, fmt.Sprintf("... and %d more path(s) omitted; narrow path/max_depth or use search_files/search_content.", totalEntries-listFilesDisplayCap))
+	}
 
-	summary := fmt.Sprintf("Listed %d path(s). Files include stable handles. Next step: use search_content/search_files or read_file on a returned handle.", len(formatted))
+	summary := fmt.Sprintf("Listed %d path(s). Files include stable handles. Next step: use search_content/search_files or read_file on a returned handle.", totalEntries)
+	if capped {
+		summary = fmt.Sprintf("Listed %d path(s) (showing first %d). Files include stable handles. Narrow path/max_depth or use search_content/search_files before reading.", totalEntries, listFilesDisplayCap)
+	}
 	if m.IsExploreMode() {
-		summary = fmt.Sprintf("Listed %d likely path(s), prioritized toward source files. Files include stable handles. Next step: use search_content/search_files or read_file on a returned handle.", len(formatted))
+		summary = fmt.Sprintf("Listed %d likely path(s), prioritized toward source files. Files include stable handles. Next step: use search_content/search_files or read_file on a returned handle.", totalEntries)
+		if capped {
+			summary = fmt.Sprintf("Listed %d likely path(s), prioritized toward source files (showing first %d). Files include stable handles. Narrow path/max_depth or search before reading.", totalEntries, listFilesDisplayCap)
+		}
 	}
 
 	return ToolResult{
@@ -1063,17 +1185,24 @@ func (m *Manager) formatListedEntry(entry listedEntry) string {
 }
 
 func (m *Manager) shouldSkipListEntry(base string, path string, isDir bool) bool {
-	if !isDir || filepath.Clean(path) == filepath.Clean(base) {
+	if filepath.Clean(path) == filepath.Clean(base) {
 		return false
 	}
 
-	rel := m.displayPath(path)
-	if rel == "." {
+	return discovery.ShouldSkipPath(base, path, isDir)
+}
+
+func (m *Manager) shouldSkipSearchEntry(base string, path string, isDir bool, includeLogDirs bool) bool {
+	if includeLogDirs && isDir && filepath.Base(path) == "logs" {
 		return false
 	}
-
-	_, skip := exploreSkippedDirNames[filepath.Base(rel)]
-	return skip
+	if includeLogDirs && !isDir {
+		rel, err := filepath.Rel(base, path)
+		if err == nil && strings.HasPrefix(filepath.ToSlash(filepath.Clean(rel)), "logs/") {
+			return discovery.ShouldSkipRelFile(rel)
+		}
+	}
+	return m.shouldSkipListEntry(base, path, isDir)
 }
 
 func (m *Manager) sortExploreListEntries(entries []listedEntry) {
@@ -1145,28 +1274,49 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 	}
 
 	query := strings.ToLower(pattern)
+	includeLogDirs := searchIntentTargetsLogs(req.Path, pattern, req.Glob)
 	rootDepth := strings.Count(filepath.Clean(base), string(filepath.Separator))
-	var matches []string
+	type searchFileMatch struct {
+		path    string
+		display string
+		modTime time.Time
+		size    int64
+	}
+	var matches []searchFileMatch
 
 	_ = filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
+			if m.shouldSkipSearchEntry(base, path, true, includeLogDirs) {
+				return filepath.SkipDir
+			}
 			depth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - rootDepth
 			if depth > maxDepth {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-
-		rel := strings.ToLower(m.displayPath(path))
-		name := strings.ToLower(filepath.Base(path))
-		if !strings.Contains(rel, query) && !strings.Contains(name, query) {
+		if m.shouldSkipSearchEntry(base, path, false, includeLogDirs) {
 			return nil
 		}
 
-		matches = append(matches, m.handleDisplay(path))
+		rel := strings.ToLower(m.displayPath(path))
+		name := strings.ToLower(filepath.Base(path))
+		if !matchesSearchFilePattern(rel, name, query) {
+			return nil
+		}
+
+		match := searchFileMatch{
+			path:    path,
+			display: m.handleDisplay(path),
+		}
+		if info, err := d.Info(); err == nil {
+			match.modTime = info.ModTime()
+			match.size = info.Size()
+		}
+		matches = append(matches, match)
 		if len(matches) >= m.cfg.MaxDirectoryEntries {
 			return filepath.SkipAll
 		}
@@ -1228,11 +1378,41 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		}
 	}
 
-	sort.Strings(matches)
+	if includeLogDirs {
+		sort.SliceStable(matches, func(i, j int) bool {
+			if !matches[i].modTime.Equal(matches[j].modTime) {
+				return matches[i].modTime.After(matches[j].modTime)
+			}
+			return matches[i].display < matches[j].display
+		})
+	} else {
+		sort.Slice(matches, func(i, j int) bool { return matches[i].display < matches[j].display })
+	}
+	displayLimit := len(matches)
+	if includeLogDirs && displayLimit > 24 {
+		displayLimit = 24
+	}
+	output := make([]string, 0, displayLimit+1)
+	for _, match := range matches[:displayLimit] {
+		if includeLogDirs && !match.modTime.IsZero() {
+			output = append(output, fmt.Sprintf("%s (modified %s; size %s)", match.display, match.modTime.Format(time.RFC3339), formatBytes(match.size)))
+			continue
+		}
+		output = append(output, match.display)
+	}
+	summary := fmt.Sprintf("Found %d matching file(s). Open a returned handle with read_file.", len(matches))
+	if includeLogDirs {
+		if displayLimit < len(matches) {
+			output = append(output, fmt.Sprintf("... omitted %d older log-like match(es)", len(matches)-displayLimit))
+			summary = fmt.Sprintf("Found %d matching log-like file(s), newest first with modified time and size (showing first %d). For recent-failure questions, read the newest relevant tail first.", len(matches), displayLimit)
+		} else {
+			summary = fmt.Sprintf("Found %d matching log-like file(s), newest first with modified time and size. For recent-failure questions, read the newest relevant tail first.", len(matches))
+		}
+	}
 	return ToolResult{
 		Tool:    "search_files",
-		Summary: fmt.Sprintf("Found %d matching file(s). Open a returned handle with read_file.", len(matches)),
-		Output:  strings.Join(matches, "\n"),
+		Summary: summary,
+		Output:  strings.Join(output, "\n"),
 	}
 }
 
@@ -1290,20 +1470,41 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		}
 		return result
 	}
-	if len(data) > m.cfg.MaxFileBytes {
+	logLike := isLogLikePath(m.displayPath(path))
+	userRequestedRange := req.StartLine > 0 || req.EndLine > 0
+	openEndedLogRange := logLike && userRequestedRange && req.EndLine <= 0
+	if !userRequestedRange && logLike {
+		if result, ok := m.readLogTail(path, description, defaultLogReadLineCap); ok {
+			return result
+		}
+	}
+	if len(data) > m.cfg.MaxFileBytes && !(logLike && userRequestedRange) {
 		data = data[:m.cfg.MaxFileBytes]
 	}
 
 	lines := strings.Split(string(data), "\n")
 	start := req.StartLine
 	end := req.EndLine
-	userRequestedRange := start > 0 || end > 0
+	requestedStart := start
+	requestedEnd := end
 	if start <= 0 {
 		start = 1
 	}
-	if end <= 0 || end > len(lines) {
+	if logLike && start > len(lines) {
+		start = len(lines) - defaultLogReadLineCap + 1
+		if start < 1 {
+			start = 1
+		}
+	}
+	if openEndedLogRange && end <= 0 {
+		end = start + defaultLogReadLineCap - 1
+		if end > len(lines) {
+			end = len(lines)
+		}
+	} else if end <= 0 || end > len(lines) {
 		end = len(lines)
 	}
+	start, end, clampedToFileBounds := clampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
 	if start > end {
 		return ToolResult{Tool: "read_file", Summary: "Invalid line range", Error: "start_line must be <= end_line"}
 	}
@@ -1314,22 +1515,43 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	// blowing most of the turn's context budget when an outline-first
 	// approach would have been cheaper.
 	truncated := false
-	if !userRequestedRange && end > defaultLargeReadLineCap && end-start+1 > defaultLargeReadLineCap {
+	tailRead := false
+	if !userRequestedRange && isLogLikePath(m.displayPath(path)) && len(lines) > defaultLogReadLineCap {
+		start = len(lines) - defaultLogReadLineCap + 1
+		if start < 1 {
+			start = 1
+		}
+		end = len(lines)
+		tailRead = true
+		truncated = true
+	} else if !userRequestedRange && end > defaultLargeReadLineCap && end-start+1 > defaultLargeReadLineCap {
 		end = start + defaultLargeReadLineCap - 1
 		if end > len(lines) {
 			end = len(lines)
 		}
 		truncated = true
+	} else if openEndedLogRange {
+		truncated = true
 	}
 
 	var b strings.Builder
 	for i := start - 1; i < end && i < len(lines); i++ {
-		fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
+		line := lines[i]
+		if logLike {
+			line = truncateSearchContentLine(line, defaultLogLineCharCap)
+		}
+		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
 	}
 
 	m.MarkPathObserved(m.displayPath(path))
 	summary := fmt.Sprintf("Read %s lines %d-%d", description, start, end)
-	if truncated {
+	if tailRead {
+		summary += fmt.Sprintf(" (file has %d lines total; defaulted to recent log tail; pass start_line/end_line for a different window)", len(lines))
+	} else if openEndedLogRange {
+		summary += fmt.Sprintf(" (file has %d lines total; open-ended log range capped to %d lines; pass an explicit end_line for a different bounded window)", len(lines), defaultLogReadLineCap)
+	} else if clampedToFileBounds {
+		summary += fmt.Sprintf(" (requested range %d-%d was clamped to file bounds; file has %d lines total)", displayRequestedLine(requestedStart, start), displayRequestedLine(requestedEnd, end), len(lines))
+	} else if truncated {
 		summary += fmt.Sprintf(" (file has %d lines total; pass start_line/end_line for a different range or call go_file_outline first)", len(lines))
 	}
 	return ToolResult{
@@ -1337,6 +1559,62 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
 	}
+}
+
+func (m *Manager) readLogTail(path string, description string, lineCap int) (ToolResult, bool) {
+	if lineCap <= 0 {
+		lineCap = defaultLogReadLineCap
+	}
+	lines, totalLines, err := readLastLines(path, lineCap)
+	if err != nil || len(lines) == 0 {
+		return ToolResult{}, false
+	}
+	start := totalLines - len(lines) + 1
+	if start < 1 {
+		start = 1
+	}
+	var b strings.Builder
+	for i, line := range lines {
+		line = truncateSearchContentLine(line, defaultLogLineCharCap)
+		fmt.Fprintf(&b, "%d:%s\n", start+i, line)
+	}
+	m.MarkPathObserved(m.displayPath(path))
+	return ToolResult{
+		Tool:    "read_file",
+		Summary: fmt.Sprintf("Read %s lines %d-%d (file has %d lines total; defaulted to recent log tail; pass start_line/end_line for a different window)", description, start, start+len(lines)-1, totalLines),
+		Output:  strings.TrimRight(b.String(), "\n"),
+	}, true
+}
+
+func readLastLines(path string, lineCap int) ([]string, int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	text := strings.TrimRight(string(data), "\n")
+	if text == "" {
+		return nil, 0, nil
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > lineCap {
+		lines = lines[len(lines)-lineCap:]
+	}
+	return lines, countFileLinesFromData(data), nil
+}
+
+func countFileLinesFromData(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	count := 0
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		count++
+	}
+	if count == 0 {
+		return 1
+	}
+	return count
 }
 
 func (m *Manager) goOverview() ToolResult {
@@ -1951,7 +2229,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	if req.Glob != "" {
 		args = append(args, "-g", req.Glob)
 	}
-	for _, glob := range m.defaultSearchExcludeGlobs(req.Path) {
+	for _, glob := range m.defaultSearchExcludeGlobs(req.Path, req.Pattern, req.Glob) {
 		args = append(args, "-g", glob)
 	}
 	args = append(args, pattern, defaultString(req.Path, "."))
@@ -1999,32 +2277,39 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	// Capping the rendered view at 50 lets the model scan the top hits,
 	// see the total, and narrow on demand.
 	const searchContentDisplayCap = 50
-	formatted := make([]string, 0, len(lines))
+	type searchContentMatch struct {
+		formatted string
+		display   string
+		line      int
+		termScore int
+		pathScore int
+	}
+	matches := make([]searchContentMatch, 0, len(lines))
 	singlePath := ""
 	singleLine := 0
 	totalMatches := 0
-	capped := false
+	rankingTerms := searchPatternRankingTerms(pattern)
 	for _, line := range lines {
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) < 3 {
-			if !capped {
-				formatted = append(formatted, truncateSearchContentLine(line, searchContentLineCap))
-			}
 			continue
 		}
 
 		totalMatches++
-		if len(formatted) >= searchContentDisplayCap {
-			capped = true
-			continue
-		}
 
 		absPath := filepath.Clean(filepath.Join(workdir, parts[0]))
 		handle := m.rememberPath(absPath)
 		display := m.displayPath(absPath)
-		formatted = append(formatted, fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], truncateSearchContentLine(parts[2], searchContentLineCap)))
+		lineNumber, _ := strconv.Atoi(parts[1])
+		matches = append(matches, searchContentMatch{
+			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], truncateSearchContentLine(parts[2], searchContentLineCap)),
+			display:   display,
+			line:      lineNumber,
+			termScore: searchContentTermScore(display, parts[2], rankingTerms),
+			pathScore: searchContentPathPriority(display),
+		})
 		if len(lines) == 1 {
-			if lineNumber, convErr := strconv.Atoi(parts[1]); convErr == nil {
+			if lineNumber > 0 {
 				singlePath = display
 				singleLine = lineNumber
 			}
@@ -2032,6 +2317,27 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		if totalMatches >= m.cfg.MaxDirectoryEntries {
 			break
 		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].termScore != matches[j].termScore {
+			return matches[i].termScore > matches[j].termScore
+		}
+		if matches[i].pathScore != matches[j].pathScore {
+			return matches[i].pathScore < matches[j].pathScore
+		}
+		if matches[i].display != matches[j].display {
+			return matches[i].display < matches[j].display
+		}
+		return matches[i].line < matches[j].line
+	})
+	formatted := make([]string, 0, min(len(matches), searchContentDisplayCap)+1)
+	capped := false
+	for _, match := range matches {
+		if len(formatted) >= searchContentDisplayCap {
+			capped = true
+			break
+		}
+		formatted = append(formatted, match.formatted)
 	}
 	if capped {
 		remaining := totalMatches - searchContentDisplayCap
@@ -2057,25 +2363,94 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	}
 }
 
-func (m *Manager) defaultSearchExcludeGlobs(path string) []string {
+func searchPatternRankingTerms(pattern string) []*regexp.Regexp {
+	parts := strings.Split(pattern, "|")
+	out := make([]*regexp.Regexp, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		re, err := regexp.Compile("(?i)" + part)
+		if err == nil {
+			out = append(out, re)
+		}
+	}
+	return out
+}
+
+func searchContentTermScore(path string, line string, terms []*regexp.Regexp) int {
+	score := 0
+	target := path + "\n" + line
+	for _, term := range terms {
+		if term != nil && term.MatchString(target) {
+			score++
+		}
+	}
+	return score
+}
+
+func searchContentPathPriority(path string) int {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	switch {
+	case strings.HasSuffix(lower, "_test.go"):
+		return 3
+	case strings.Contains(lower, "/testdata/"):
+		return 4
+	case strings.HasSuffix(lower, ".md") || strings.HasPrefix(lower, "docs/") || strings.Contains(lower, "/docs/"):
+		return 5
+	case strings.HasPrefix(lower, "internal/agent/"), strings.HasPrefix(lower, "internal/workspace/"), strings.HasPrefix(lower, "cmd/"):
+		return 0
+	case strings.HasPrefix(lower, "internal/"), strings.HasPrefix(lower, "pkg/"), strings.HasPrefix(lower, "src/"):
+		return 1
+	default:
+		return 2
+	}
+}
+
+func (m *Manager) defaultSearchExcludeGlobs(path string, pattern string, glob string) []string {
 	if searchPathTargetsSkippedDir(path) {
 		return nil
 	}
-	return []string{
-		"!**/.cache/**",
-		"!**/.git/**",
-		"!**/.hg/**",
-		"!**/.svn/**",
-		"!**/bin/**",
-		"!**/build/**",
-		"!**/dist/**",
-		"!**/logs/**",
-		"!**/models/**",
-		"!**/node_modules/**",
-		"!**/tmp/**",
-		"!**/transcripts/**",
-		"!**/.claude/worktrees/**",
+	excludes := discovery.RipgrepExcludeGlobs()
+	if searchIntentTargetsLogs(path, pattern, glob) {
+		filtered := excludes[:0]
+		for _, exclude := range excludes {
+			if exclude == "!**/logs/**" {
+				continue
+			}
+			filtered = append(filtered, exclude)
+		}
+		excludes = filtered
 	}
+	return excludes
+}
+
+func searchIntentTargetsLogs(path string, pattern string, glob string) bool {
+	combined := strings.ToLower(strings.TrimSpace(path) + " " + strings.TrimSpace(pattern) + " " + strings.TrimSpace(glob))
+	if strings.Contains(combined, "logs") || strings.Contains(combined, "log/") || strings.Contains(combined, ".log") || strings.Contains(combined, "jsonl") {
+		return true
+	}
+	return false
+}
+
+func matchesSearchFilePattern(rel string, name string, query string) bool {
+	if strings.Contains(rel, query) || strings.Contains(name, query) {
+		return true
+	}
+	if strings.ContainsAny(query, "*?[") {
+		if ok, err := path.Match(query, name); err == nil && ok {
+			return true
+		}
+		if ok, err := path.Match(query, rel); err == nil && ok {
+			return true
+		}
+		trimmed := strings.Trim(query, "*?")
+		if trimmed != "" && (strings.Contains(rel, trimmed) || strings.Contains(name, trimmed)) {
+			return true
+		}
+	}
+	return false
 }
 
 func searchPathTargetsSkippedDir(path string) bool {
@@ -2087,11 +2462,7 @@ func searchPathTargetsSkippedDir(path string) bool {
 	if first == "" || first == "." {
 		return false
 	}
-	if first == ".claude" && strings.Contains(cleaned, "/worktrees") {
-		return true
-	}
-	_, skip := exploreSkippedDirNames[first]
-	return skip
+	return discovery.RelTargetsNoisyDir(cleaned) || discovery.ShouldSkipRelFile(cleaned)
 }
 
 func truncateSearchContentLine(line string, max int) string {
@@ -2291,6 +2662,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 	if end <= 0 || end > len(lines) {
 		end = len(lines)
 	}
+	start, end, _ = clampRequestedLineRange(len(lines), start, end, start, end)
 	if start > end {
 		return "", fmt.Errorf("start_line must be <= end_line")
 	}
@@ -2300,6 +2672,42 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 		fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+func clampRequestedLineRange(totalLines int, start int, end int, requestedStart int, requestedEnd int) (int, int, bool) {
+	if totalLines <= 0 {
+		return start, end, false
+	}
+	clamped := false
+	if end > totalLines {
+		end = totalLines
+		clamped = true
+	}
+	if start > totalLines {
+		span := 0
+		if requestedStart > 0 && requestedEnd >= requestedStart {
+			span = requestedEnd - requestedStart
+		} else if end >= start {
+			span = end - start
+		}
+		start = totalLines - span
+		if start < 1 {
+			start = 1
+		}
+		clamped = true
+	}
+	if start > end {
+		start = end
+		clamped = true
+	}
+	return start, end, clamped
+}
+
+func displayRequestedLine(requested int, fallback int) int {
+	if requested > 0 {
+		return requested
+	}
+	return fallback
 }
 
 func (m *Manager) goPathFilter(path string) string {
@@ -3130,11 +3538,8 @@ func (m *Manager) isRelevantExplorationPath(path string) bool {
 		return false
 	}
 
-	parts := strings.Split(rel, string(filepath.Separator))
-	if len(parts) > 0 {
-		if _, skip := exploreSkippedDirNames[parts[0]]; skip {
-			return false
-		}
+	if discovery.RelTargetsNoisyDir(rel) || discovery.ShouldSkipRelFile(rel) {
+		return false
 	}
 
 	switch strings.ToLower(filepath.Ext(rel)) {
@@ -3230,6 +3635,13 @@ func (m *Manager) pathForHandle(handle string) (string, error) {
 	return path, nil
 }
 
+func (m *Manager) ResolveHandlePath(handle string) (string, error) {
+	if m == nil {
+		return "", fmt.Errorf("workspace manager is nil")
+	}
+	return m.pathForHandle(handle)
+}
+
 func (m *Manager) findPathSuggestions(query string, limit int) []string {
 	if !m.Enabled() || limit <= 0 {
 		return nil
@@ -3270,6 +3682,9 @@ func (m *Manager) findPathSuggestions(query string, limit int) []string {
 			if m.shouldSkipListEntry(m.cfg.Root, path, true) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if m.shouldSkipListEntry(m.cfg.Root, path, false) {
 			return nil
 		}
 
@@ -3432,6 +3847,9 @@ func (m *Manager) tokenMatchedPaths(pattern string, limit int) []string {
 			}
 			return nil
 		}
+		if m.shouldSkipListEntry(m.cfg.Root, path, false) {
+			return nil
+		}
 		scanned++
 		if scanned > scanCap {
 			return filepath.SkipAll
@@ -3516,6 +3934,32 @@ func looksLikeBareIdentifier(pattern string) bool {
 // enough to see most real functions end-to-end. The cap is easily bypassed
 // by passing explicit start_line/end_line in the request.
 const defaultLargeReadLineCap = 400
+const defaultLogReadLineCap = 80
+const defaultLogLineCharCap = 240
+
+func isLogLikePath(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(path))
+	return strings.Contains(lower, "/logs/") ||
+		strings.HasPrefix(lower, "logs/") ||
+		strings.HasSuffix(lower, ".log") ||
+		strings.HasSuffix(lower, ".jsonl") ||
+		strings.Contains(filepath.Base(lower), "log")
+}
+
+func formatBytes(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	value := float64(size)
+	for _, suffix := range []string{"KB", "MB", "GB", "TB"} {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f PB", value/unit)
+}
 
 // formatPathSuggestions wraps a suggestion list into a consistent
 // "Did you mean:" block the model can parse at a glance. Returns the empty
