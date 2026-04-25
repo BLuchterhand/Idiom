@@ -3391,6 +3391,24 @@ func TestDelegatedDiscoveryQueryEvidencePathsFeedSynthesizedAnswer(t *testing.T)
 	}
 }
 
+func TestDelegatedDiscoveryQueryEvidencePathsPreferCoreRunnerFiles(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Ran architecture_boundary discovery query with 10 layer(s); artifact: .idiom/discovery/queries/query.json",
+		Output:  `{"purpose":"architecture_boundary","artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found discovery implementation paths.","output_excerpt":"internal/agent/modes.go:1: package agent\ninternal/agent/instructions.go:1: package agent\ninternal/agent/debug_log_analysis.go:1: package agent\ninternal/agent/final_answer_decorator.go:1: package agent\ninternal/agent/answer_composer.go:18: func (AnswerComposer) Compose\ninternal/agent/runner.go:128: finish := func\ninternal/agent/runner_lane_policy.go:637: delegatedReadOnlyAnswerReadyAfterResult\ninternal/agent/discovery_redirect.go:1: package agent\ninternal/agent/runner_test.go:1: package agent"}]}`,
+	}}
+
+	paths := delegatedDiscoveryQueryEvidencePaths(results, 5)
+	for _, want := range []string{"internal/agent/answer_composer.go", "internal/agent/runner.go", "internal/agent/runner_lane_policy.go"} {
+		if !containsRunnerString(paths, want) {
+			t.Fatalf("expected core path %q in top evidence paths, got %#v", want, paths)
+		}
+	}
+	if containsRunnerString(paths, "internal/agent/modes.go") {
+		t.Fatalf("incidental path displaced core runner evidence: %#v", paths)
+	}
+}
+
 func TestDelegatedDiscoveryAnswerExplainsDebugLogRedactedMode(t *testing.T) {
 	results := []workspace.ToolResult{
 		{
@@ -3528,6 +3546,95 @@ func TestAnswerComposerGenericFallbackDecoratesDiscoveryLayers(t *testing.T) {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("generic answer leaked raw discovery wording %q:\n%s", forbidden, answer)
 		}
+	}
+}
+
+func TestRunnerFinalBoundaryDecoratesModelFinalDiscoveryAnswer(t *testing.T) {
+	root := t.TempDir()
+	reply := "What I found:\n- text_anchor_search: Found 178 matching line(s) (showing first 50). Use read_file on a returned handle, or narrow the pattern to see more.\n\nDiscovery packet: `.idiom/discovery/queries/query.json`.\nConfidence: high"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var roles []string
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, 2*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 2, MaxNoProgressTurns: 2},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "architecture",
+			Contract:          "architecture_assessment",
+			Objective:         "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+			PermissionProfile: "read_only_workspace",
+		},
+		SeedResults: []workspace.ToolResult{{
+			Tool:    "discovery_query",
+			Summary: "Ran architecture_boundary discovery query with 10 layer(s); artifact: .idiom/discovery/queries/query.json",
+			Output:  `{"purpose":"architecture_boundary","artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found discovery tool implementation paths.","output_excerpt":"internal/agent/answer_composer.go:18: func (AnswerComposer) Compose\ninternal/agent/runner.go:128: finish := func\ninternal/agent/runner_lane_policy.go:637: delegatedReadOnlyAnswerReadyAfterResult"},{"name":"dependency_graph","summary":"Collected Go dependency graph with go list -deps"}]}`,
+		}},
+	}
+	runner.OnEvent = func(event RunEvent) {
+		roles = append(roles, event.Role)
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "What can we add to our discovery tools in an effort at increasing their overall usefulness?"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one model request, got %d", requests)
+	}
+	for _, want := range []string{"## Discovery Tool Improvements", "Purpose-specific answer blueprints", "`internal/agent/answer_composer.go`", "`internal/agent/runner.go`"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected decorated final answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"What I found:", "text_anchor_search:", "Discovery packet", "Confidence:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("final boundary leaked raw answer section %q:\n%s", forbidden, answer)
+		}
+	}
+	if !slices.Contains(roles, "answer_decorated") {
+		t.Fatalf("expected answer_decorated event, got roles %v", roles)
+	}
+}
+
+func TestFinalAnswerDecoratorSkipsChildInternalOutput(t *testing.T) {
+	raw := "What I found:\n- text_anchor_search: Found paths.\n\nDiscovery packet: `.idiom/discovery/queries/query.json`."
+	runner := &Runner{AgentName: "child:explorer"}
+	answer := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     raw,
+		StopReason: "model_final",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "delegated_read_only",
+			Objective:  "What can we add to discovery tools?",
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "discovery_query",
+			Summary: "Ran discovery query",
+			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found paths.","output_excerpt":"internal/agent/runner.go:128: finish"}]}`,
+		}},
+		UserFacing: runner.userFacingFinalAnswer(),
+	})
+	if answer != raw {
+		t.Fatalf("expected child/internal answer to remain compact and undecorated, got:\n%s", answer)
 	}
 }
 

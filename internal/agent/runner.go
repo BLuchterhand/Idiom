@@ -122,6 +122,7 @@ func (r *Runner) Run(
 	metrics := runnerMetrics{startedAt: time.Now()}
 	stopReason := "completed"
 	budgetExhausted := false
+	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
 	defer func() {
 		r.emitBudgetLedger(policy, metrics, stopReason, budgetExhausted)
 	}()
@@ -130,6 +131,23 @@ func (r *Runner) Run(
 			stopReason = reason
 		}
 		budgetExhausted = exhausted
+		if finishErr == nil {
+			decorated := r.decorateFinalAnswer(FinalAnswerDecorateInput{
+				Answer:     value,
+				StopReason: stopReason,
+				Brief:      r.RuntimeBrief,
+				Results:    collectedResults,
+				UserFacing: r.userFacingFinalAnswer(),
+			})
+			if strings.TrimSpace(decorated) != strings.TrimSpace(value) {
+				r.emitFinalAnswerDecorationEvent(stopReason, value, decorated)
+				r.emitAcceptedAnswerSignals(decorated, collectedResults)
+				if strings.TrimSpace(r.LastAssistantMessage.Role) != "" || strings.TrimSpace(r.LastAssistantMessage.Content) != "" {
+					r.LastAssistantMessage.Content = decorated
+				}
+			}
+			value = decorated
+		}
 		return value, finishErr
 	}
 	var lastToolKey string
@@ -140,7 +158,6 @@ func (r *Runner) Run(
 	// role:"system" text. Reset to nil at the top of every iteration.
 	var activeToolCall *llama.ToolCall
 	replayedToolRequests := make(map[string]int)
-	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
 	declarationMovesForbidden := declarationMovesForbiddenByMessages(turnMessages)
 	rejectedActions := make(map[string]int)
 	consecutiveRejectedActions := 0
@@ -2596,6 +2613,16 @@ func delegatedDiscoveryLayerPriority(name string) int {
 func delegatedDiscoveryPathPriority(path string) int {
 	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
 	switch {
+	case path == "internal/agent/answer_composer.go":
+		return -5
+	case path == "internal/agent/runner.go":
+		return -4
+	case path == "internal/agent/runner_child_tasks.go":
+		return -3
+	case path == "internal/agent/runner_lane_policy.go":
+		return -2
+	case path == "internal/agent/discovery_redirect.go":
+		return -1
 	case strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") && strings.HasPrefix(path, "internal/"):
 		return 0
 	case strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go"):
