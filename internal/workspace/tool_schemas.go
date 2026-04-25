@@ -95,7 +95,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "list_files",
-			Description: "List files in a directory. Use once for orientation, then narrow with search_files/search_content or read_file on discovered handles.",
+			Description: "List files in a directory.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
 				`"path":`+strProp("relative or absolute workspace path")+`,"recursive":`+boolProp("walk subdirectories")+`,"max_depth":`+intProp("recursion depth limit"),
@@ -111,7 +111,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "search_content",
-			Description: "Find text matches in files (prose, config, comments, strings). For symbol discovery in code, prefer the active language's workspace_symbol / find_symbol tools — they return file, line, kind, and qualified name.",
+			Description: "Find text matches in files (prose, config, comments, strings).",
 			ParametersJSON: schemaObj(
 				[]string{"pattern"},
 				`"pattern":`+strProp("regex or plain text")+`,"path":`+strProp("root to search under")+`,"glob":`+strProp("file-name glob filter"),
@@ -119,7 +119,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "read_file",
-			Description: "Read a file or a line range. For code in a supported language, prefer file_outline + read_symbol over reading whole files; use read_file with start_line/end_line only when a range a single declaration cannot cover (imports, headers, cross-declaration spans). Prefer the handle form {id:\"fN\"} after a search.",
+			Description: "Read a file or a line range.",
 			ParametersJSON: schemaObj(
 				nil,
 				`"path":`+strProp("relative or absolute path")+`,"id":`+strProp("discovered-file handle like f3")+`,"start_line":`+intProp("1-based start")+`,"end_line":`+intProp("1-based end"),

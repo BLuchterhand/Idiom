@@ -99,8 +99,7 @@ func TestRunnerRequestBudgetExplorationDecisionNudgesWithoutForcingDelegation(t 
 
 func TestRunnerRequestBudgetReadBudgetBlocksAfterPostChildBudget(t *testing.T) {
 	state := newRunnerRequestBudgetState(1)
-	state.broadEvidenceDelegationRequired = true
-	state.broadEvidenceDelegationSatisfied = true
+	state.readOnlyChildTaskSatisfied = true
 	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
 	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
 
@@ -115,8 +114,7 @@ func TestRunnerRequestBudgetReadBudgetBlocksAfterPostChildBudget(t *testing.T) {
 
 func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
-	state.broadEvidenceDelegationRequired = true
-	state.broadEvidenceDelegationSatisfied = true
+	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/agent/discovery_redirect.go"})
 
 	decision := state.explorationDecision(
@@ -134,8 +132,7 @@ func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
 
 func TestRunnerRequestBudgetAllowsPacketAnchoredPostChildDiscovery(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
-	state.broadEvidenceDelegationRequired = true
-	state.broadEvidenceDelegationSatisfied = true
+	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/workspace/discovery_query.go"})
 
 	decision := state.explorationDecision(
@@ -150,8 +147,7 @@ func TestRunnerRequestBudgetAllowsPacketAnchoredPostChildDiscovery(t *testing.T)
 
 func TestRunnerRequestBudgetNudgesThenBlocksPostChildRereads(t *testing.T) {
 	state := newRunnerRequestBudgetState(4)
-	state.broadEvidenceDelegationRequired = true
-	state.broadEvidenceDelegationSatisfied = true
+	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/agent/discovery_redirect.go"})
 	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/discovery_redirect.go"}
 

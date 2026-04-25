@@ -59,6 +59,7 @@ type ActionGuidanceInput struct {
 	Constraints                []string
 	DeclarationMovesForbidden  bool
 	ApprovedTargetScopePresent bool
+	WriteCapable               bool
 	// Objective is the current user ask for this turn, pulled verbatim
 	// from the latest user message. When it contains relational verbs
 	// like "calls"/"uses"/"references"/"delegates", BuildActionGuidance
@@ -123,6 +124,7 @@ type RecoveryInput struct {
 	Constraints               []string
 	DeclarationMovesForbidden bool
 	Objective                 string
+	WriteCapable              bool
 }
 
 type RecoveryPlan struct {
@@ -139,12 +141,13 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	statusCombined := combinedLower(input.Reason, input.Result.Summary, input.Result.Error)
 	tool := strings.TrimSpace(input.Request.Tool)
 	closureScope := closureGuidanceScope(input.Constraints, statusCombined)
+	closureActive := closureScope != ""
 	guidance := ActionGuidance{}
 	if input.DeclarationMovesForbidden {
 		guidance.Constraints = appendUnique(guidance.Constraints, "declaration_moves_forbidden")
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "go_move_declarations")
 	}
-	if input.ApprovedTargetScopePresent || containsAny(statusCombined, "implementation target packet", "approved editable target") {
+	if input.WriteCapable && (input.ApprovedTargetScopePresent || containsAny(statusCombined, "implementation target packet", "approved editable target")) {
 		guidance.Constraints = appendUnique(guidance.Constraints, "approved_target_scope_enforced")
 	}
 	if strings.Contains(statusCombined, "write approval required") {
@@ -156,7 +159,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	if strings.Contains(statusCombined, "bootstrap already inspected") {
 		guidance.Constraints = appendUnique(guidance.Constraints, "bootstrap_evidence_available")
 	}
-	if closureScope != "" {
+	if closureActive {
 		guidance.Constraints = appendUnique(guidance.Constraints, closureScope)
 	}
 
@@ -192,11 +195,11 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "search_content scoped to the approved target")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with a concrete blocker or no-op reason")
 	}
-	if containsAny(statusCombined, "repeated dead-end", "already failed earlier", "replayed same blocker", "replayed prior evidence") {
+	if !closureActive && containsAny(statusCombined, "repeated dead-end", "already failed earlier", "replayed same blocker", "replayed prior evidence") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "choose a materially different tool or target")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the explicit blocker and evidence")
 	}
-	if strings.Contains(statusCombined, "broad inspection") {
+	if !closureActive && strings.Contains(statusCombined, "broad inspection") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "use one structured symbol, call/reference, or file-outline probe on a named target")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "use one discovery_query for a broad architecture, tracing, or impact question")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "use search_content for one exact phrase only when a semantic probe or discovered handle does not land")
@@ -220,7 +223,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger if the gate requires ledger state")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer only after the gate condition is satisfied")
 	}
-	if closureScope != "" {
+	if closureActive {
 		for _, next := range closureGuidanceNext(scopeSpecificClosureLabel(closureScope)) {
 			guidance.ValidNext = appendUnique(guidance.ValidNext, next)
 		}
@@ -231,63 +234,69 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "use edit_file instead of go_move_declarations")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "run verification or report the concrete blocker")
 	}
-	switch tool {
-	case "go_file_outline", "cpp_overview":
-		if strings.TrimSpace(input.Result.Error) == "" {
-			if objectiveImpliesRefactor(input.Objective) {
-				// Refactoring objective — outline's built-in
-				// go_move_declarations hint is the right next step.
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "go_move_declarations to relocate a tagged group of declarations")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "go_read_symbol if you still need to inspect one declaration before moving")
-			} else {
-				// Default (explanatory/relational/unknown): reading a
-				// specific declaration is the high-value next step.
-				// The outline summary itself may suggest
-				// go_move_declarations — that advice only lands for
-				// refactor objectives, so we override here.
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "go_read_symbol with one of the outlined declaration names to inspect its body")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "go_references or go_calls_into on a named declaration to trace how it's used")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "ignore the outline's go_move_declarations suggestion unless the objective is actually a refactor")
+	if !closureActive {
+		switch tool {
+		case "go_file_outline", "cpp_overview":
+			if strings.TrimSpace(input.Result.Error) == "" {
+				if objectiveImpliesRefactor(input.Objective) {
+					// Refactoring objective — outline's built-in
+					// go_move_declarations hint is the right next step.
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "go_move_declarations to relocate a tagged group of declarations")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "go_read_symbol if you still need to inspect one declaration before moving")
+				} else {
+					// Default (explanatory/relational/unknown): reading a
+					// specific declaration is the high-value next step.
+					// The outline summary itself may suggest
+					// go_move_declarations — that advice only lands for
+					// refactor objectives, so we override here.
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "go_read_symbol with one of the outlined declaration names to inspect its body")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "go_references or go_calls_into on a named declaration to trace how it's used")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "ignore the outline's go_move_declarations suggestion unless the objective is actually a refactor")
+				}
 			}
-		}
-	case "read_file", "go_extract_body", "go_read_symbol":
-		if strings.TrimSpace(input.Result.Error) == "" {
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the inspected body already resolves the question")
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "if one exact missing claim remains, use one exact symbol, reference, or narrow range probe that would resolve it")
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file using the inspected evidence")
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "use one narrow read_file or exact text search only if a specific anchor is still missing")
-		}
-	case "search_files", "search_content", "rg", "go_find_symbol", "go_find_type", "go_find_const", "go_references", "go_definition":
-		if strings.TrimSpace(input.Result.Error) == "" {
-			if IsZeroHitSearchResult(input.Result) {
-				// The default "read the highest-confidence hit" nudge is
-				// meaningless when there are no hits. Point the model at
-				// a different search shape instead — its common failure
-				// after a zero-hit search_files is to invent more
-				// filenames to search for.
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "use a language-specific symbol tool before guessing filenames or repeating the same search")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow to one exact term or scope from the user's question")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the evidence you already have if the target may not exist")
-			} else {
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "read one exact symbol body, discovered handle, or narrow range from the highest-confidence hit")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the best hit already resolves the question")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file if the target is already clear")
+		case "read_file", "go_extract_body", "go_read_symbol":
+			if strings.TrimSpace(input.Result.Error) == "" {
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the inspected body already resolves the question")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "if one exact missing claim remains, use one exact symbol, reference, or narrow range probe that would resolve it")
+				if input.WriteCapable && (input.ApprovedTargetScopePresent || objectiveImpliesRefactor(input.Objective)) {
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file using the inspected evidence")
+				}
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "use one narrow read_file or exact text search only if a specific anchor is still missing")
 			}
+		case "search_files", "search_content", "rg", "go_find_symbol", "go_find_type", "go_find_const", "go_references", "go_definition":
+			if strings.TrimSpace(input.Result.Error) == "" {
+				if IsZeroHitSearchResult(input.Result) {
+					// The default "read the highest-confidence hit" nudge is
+					// meaningless when there are no hits. Point the model at
+					// a different search shape instead — its common failure
+					// after a zero-hit search_files is to invent more
+					// filenames to search for.
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "use a language-specific symbol tool before guessing filenames or repeating the same search")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow to one exact term or scope from the user's question")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the evidence you already have if the target may not exist")
+				} else {
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "read one exact symbol body, discovered handle, or narrow range from the highest-confidence hit")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the best hit already resolves the question")
+					if input.WriteCapable {
+						guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file if the target is already clear")
+					}
+				}
+			}
+		case "edit_file", "write_file", "append_file", "go_move_declarations":
+			if strings.TrimSpace(input.Result.Error) == "" {
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "run targeted verification")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger or answer with the change summary")
+			}
+		case "task_ledger":
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "continue with the next incomplete ledger item")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if all required ledger items are complete")
 		}
-	case "edit_file", "write_file", "append_file", "go_move_declarations":
-		if strings.TrimSpace(input.Result.Error) == "" {
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "run targeted verification")
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger or answer with the change summary")
-		}
-	case "task_ledger":
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "continue with the next incomplete ledger item")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if all required ledger items are complete")
 	}
 	if len(guidance.ValidNext) == 0 {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer from the current evidence if it already resolves the task")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "otherwise take one exact tool-shaped follow-up tied to a concrete missing claim")
 	}
-	if objectiveImpliesRelation(input.Objective) && isDiscoveryTool(tool) {
+	if !closureActive && objectiveImpliesRelation(input.Objective) && isDiscoveryTool(tool) {
 		// Promote the semantic symbol tools ahead of the generic
 		// "read a hit" advice. The generic nudges are tuned for "find a
 		// file and read it"; a relational question ("how does X call Y")
@@ -368,6 +377,8 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 		case strings.Contains(lower, "search_files"),
 			strings.Contains(lower, "todo|fixme"),
 			strings.Contains(lower, "panic\\("),
+			strings.Contains(lower, "exact text search"),
+			strings.Contains(lower, "narrow to one exact term or scope"),
 			strings.Contains(lower, "continue from the latest evidence with a targeted tool"),
 			strings.Contains(lower, "choose a materially different tool or target"),
 			strings.Contains(lower, "use a targeted read-only shell search"),
@@ -377,7 +388,15 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 			strings.Contains(lower, "verification"),
 			strings.Contains(lower, "changed file"),
 			strings.Contains(lower, "target-scope update"),
-			strings.Contains(lower, "go_move_declarations"):
+			strings.Contains(lower, "go_move_declarations"),
+			strings.Contains(lower, "choose a materially different tool or target"),
+			strings.Contains(lower, "use one structured symbol, call/reference, or file-outline probe"),
+			strings.Contains(lower, "use one discovery_query"),
+			strings.Contains(lower, "use search_content for one exact phrase"),
+			strings.Contains(lower, "go_read_symbol with one of the outlined declaration names"),
+			strings.Contains(lower, "go_references or go_calls_into on a named declaration"),
+			strings.Contains(lower, "ignore the outline"),
+			strings.Contains(lower, "read one exact symbol body, discovered handle, or narrow range from the highest-confidence hit"):
 			continue
 		}
 		filtered = appendUnique(filtered, value)
@@ -461,6 +480,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		Constraints:               input.Constraints,
 		DeclarationMovesForbidden: input.DeclarationMovesForbidden,
 		Objective:                 input.Objective,
+		WriteCapable:              input.WriteCapable,
 	})
 	tool := strings.TrimSpace(input.Request.Tool)
 	if tool == "" {
@@ -783,9 +803,9 @@ func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeB
 	}
 	brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
 		`Use one discovery_query before ad hoc list/search/read for broad architecture, impact, tracing, security, or history questions; follow with targeted reads only for named gaps.`,
-		`architecture_boundary: {"tool":"discovery_query","purpose":"architecture_boundary","path":"internal/agent","pattern":"subagent|task|delegate","language":"go","max_depth":2}`,
-		`impact_analysis: {"tool":"discovery_query","purpose":"impact_analysis","path":"internal/app/turn_planner.go","pattern":"classifyTurnRoute","language":"go","max_depth":2}`,
-		`function_tracing: {"tool":"discovery_query","purpose":"function_tracing","path":"internal","pattern":"runChildTask","language":"go","max_depth":2}`,
+		`architecture_boundary shape: {"tool":"discovery_query","purpose":"architecture_boundary","path":"<narrow-root>","pattern":"<component-term>|<boundary-term>","max_depth":2}`,
+		`impact_analysis shape: {"tool":"discovery_query","purpose":"impact_analysis","path":"<target-file-or-dir>","pattern":"<changed-symbol-or-feature-term>","max_depth":2}`,
+		`function_tracing shape: {"tool":"discovery_query","purpose":"function_tracing","path":"<target-file-or-dir>","pattern":"<function-or-call-term>","max_depth":2}`,
 		`security_review: {"tool":"discovery_query","purpose":"security_review","path":".","pattern":"auth|token|secret","max_depth":2}`,
 	))
 	return brief

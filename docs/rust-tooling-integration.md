@@ -317,7 +317,7 @@ In `RenderSemanticToolRules`, to match Go/C++ parity, add:
 		lines = append(lines,
 			"Rust semantic-tool rules:",
 			"- Prefer Rust semantic tools over raw shell/grep for symbol, trait-impl, call-graph, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 			"- rust-analyzer backs the precise queries when installed; fallbacks use the syntactic index.",
 		)
 	}

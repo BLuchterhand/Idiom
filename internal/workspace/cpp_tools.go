@@ -113,7 +113,7 @@ func (m *Manager) cppEntrypoints(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, line)
 	}
-	return ToolResult{Tool: "cpp_entrypoints", Summary: fmt.Sprintf("Found %d likely C++ anchor file(s). Open a returned handle with read_file.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "cpp_entrypoints", Summary: fmt.Sprintf("Found %d likely C++ anchor file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 func (m *Manager) cppFindSymbol(req ToolRequest) ToolResult {
@@ -137,7 +137,7 @@ func (m *Manager) cppFindSymbol(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, cppDisplayName(match.Qualified, match.Name)))
 	}
-	return ToolResult{Tool: "cpp_find_symbol", Summary: fmt.Sprintf("Found %d matching C++ symbol(s). Use read_file on a returned handle or cpp_read_symbol for a focused snippet.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "cpp_find_symbol", Summary: fmt.Sprintf("Found %d matching C++ symbol(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 func (m *Manager) cppReadSymbol(req ToolRequest) ToolResult {
@@ -187,7 +187,7 @@ func (m *Manager) cppRelatedFiles(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, display)
 	}
-	return ToolResult{Tool: "cpp_related_files", Summary: fmt.Sprintf("Found %d related C++ file(s). Open a returned handle with read_file.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "cpp_related_files", Summary: fmt.Sprintf("Found %d related C++ file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 func (m *Manager) cppWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolResult {
@@ -547,7 +547,7 @@ func (m *Manager) cppFileOutline(req ToolRequest) ToolResult {
 	if len(file.Symbols) == 0 {
 		b.WriteString("declarations: (none indexed)\n")
 	} else if len(file.Symbols) > 200 {
-		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols); query a specific symbol with cpp_read_symbol or cpp_find_symbol.\n", len(file.Symbols))
+		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
 		symbols := append([]semantic.CppSymbol(nil), file.Symbols...)
 		sort.SliceStable(symbols, func(i, j int) bool {

@@ -345,11 +345,11 @@ func RenderSemanticToolRules(allowedTools []string, readOnly bool) string {
 		lines = append(lines,
 			"Go semantic-tool rules:",
 			"- Prefer Go semantic tools over raw shell/grep for package, symbol, entrypoint, reference, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 		)
 		if !readOnly && manifestHasTool(manifest, "go_move_declarations") {
 			lines = append(lines,
-				"- For large Go refactors, inspect declaration boundaries with go_file_outline, then use go_move_declarations for model-chosen responsibility batches instead of rewriting giant files by hand.",
+				"- go_file_outline reports declaration boundaries and any structural move batches when relevant.",
 			)
 		}
 	}
@@ -357,14 +357,14 @@ func RenderSemanticToolRules(allowedTools []string, readOnly bool) string {
 		lines = append(lines,
 			"C/C++ semantic-tool rules:",
 			"- Prefer C/C++ semantic tools over raw shell/grep for symbol, include-graph, call-graph, blast-radius, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 		)
 	}
 	if hasPython {
 		lines = append(lines,
 			"Python semantic-tool rules:",
 			"- Prefer Python semantic tools over raw shell/grep for module, symbol, entrypoint, reference, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 			"- python_diagnostics requires pyright or pylsp; if neither is installed, fall back to shell (`python -m py_compile`, `ruff check`) explicitly.",
 		)
 	}
@@ -372,7 +372,7 @@ func RenderSemanticToolRules(allowedTools []string, readOnly bool) string {
 		lines = append(lines,
 			"TypeScript/JavaScript semantic-tool rules:",
 			"- Prefer TypeScript/JavaScript semantic tools over raw shell/grep for symbol, definition, reference, call-graph, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 			"- The same toolset covers .ts/.tsx and .js/.jsx/.mjs/.cjs — typescript-language-server handles both from one process.",
 		)
 	}
@@ -380,7 +380,7 @@ func RenderSemanticToolRules(allowedTools []string, readOnly bool) string {
 		lines = append(lines,
 			"Rust semantic-tool rules:",
 			"- Prefer Rust semantic tools over raw shell/grep for symbol, trait-impl, call-graph, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 			"- rust-analyzer backs the precise queries when installed; fallbacks use the syntactic index.",
 		)
 	}
@@ -388,7 +388,7 @@ func RenderSemanticToolRules(allowedTools []string, readOnly bool) string {
 		lines = append(lines,
 			"Java semantic-tool rules:",
 			"- Prefer Java semantic tools over raw shell/grep for package, symbol, reference, implementation, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 		)
 	}
 	return strings.Join(lines, "\n")

@@ -130,7 +130,7 @@ func (m *Manager) pythonEntrypoints(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, line)
 	}
-	return ToolResult{Tool: "python_entrypoints", Summary: fmt.Sprintf("Found %d likely Python anchor file(s). Open a returned handle with read_file.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "python_entrypoints", Summary: fmt.Sprintf("Found %d likely Python anchor file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 func (m *Manager) pythonFindSymbol(req ToolRequest) ToolResult {
@@ -154,7 +154,7 @@ func (m *Manager) pythonFindSymbol(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, pythonDisplayName(match.Qualified, match.Name)))
 	}
-	return ToolResult{Tool: "python_find_symbol", Summary: fmt.Sprintf("Found %d matching Python symbol(s). Use read_file on a returned handle or python_read_symbol for a focused snippet.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "python_find_symbol", Summary: fmt.Sprintf("Found %d matching Python symbol(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 func (m *Manager) pythonReadSymbol(req ToolRequest) ToolResult {
@@ -207,7 +207,7 @@ func (m *Manager) pythonRelatedFiles(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, display)
 	}
-	return ToolResult{Tool: "python_related_files", Summary: fmt.Sprintf("Found %d related Python file(s). Open a returned handle with read_file.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "python_related_files", Summary: fmt.Sprintf("Found %d related Python file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 func (m *Manager) pythonWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolResult {
@@ -433,7 +433,7 @@ func (m *Manager) pythonFileOutline(req ToolRequest) ToolResult {
 	if len(file.Symbols) == 0 {
 		b.WriteString("declarations: (none indexed)\n")
 	} else if len(file.Symbols) > 200 {
-		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols); query a specific symbol with python_read_symbol or python_find_symbol.\n", len(file.Symbols))
+		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
 		symbols := append([]semantic.PythonSymbol(nil), file.Symbols...)
 		sort.SliceStable(symbols, func(i, j int) bool {

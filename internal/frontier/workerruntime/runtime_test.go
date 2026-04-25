@@ -137,6 +137,99 @@ func TestBuildRecoveryPlanDoesNotPromoteEveryValidNextToRequiredNext(t *testing.
 	}
 }
 
+func TestBuildActionGuidanceClosureOmitsTextSearchFallbackAfterReadSuccess(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:      "tool_result",
+		Request:     workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner_child_tasks.go"},
+		Constraints: []string{"child_packet_available"},
+		Result: workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Read 80 line(s) from internal/agent/runner_child_tasks.go",
+			Output:  "func runChildTask(...) {}\n",
+		},
+	})
+	joined := strings.Join(guidance.ValidNext, "\n")
+	for _, forbidden := range []string{
+		"edit_file using the inspected evidence",
+		"exact text search",
+		"answer if the inspected body already resolves the question",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("closure guidance should omit %q, got %#v", forbidden, guidance.ValidNext)
+		}
+	}
+	for _, want := range []string{"answer now from the child packet evidence", "one exact packet-named path, symbol, discovered handle, or narrow range"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected closure guidance to keep %q, got %#v", want, guidance.ValidNext)
+		}
+	}
+}
+
+func TestBuildActionGuidanceClosureOmitsOutlineFollowupMenu(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:      "tool_result",
+		Request:     workspace.ToolRequest{Tool: "go_file_outline", Path: "internal/agent/runner.go"},
+		Constraints: []string{"child_packet_available"},
+		Objective:   "Explain how this harness uses subagents.",
+		Result: workspace.ToolResult{
+			Tool:    "go_file_outline",
+			Summary: "Outlined 12 top-level declaration(s) in internal/agent/runner.go.",
+			Output:  "package agent\ndeclarations:\n- runChildTask lines 640-700",
+		},
+	})
+	joined := strings.Join(guidance.ValidNext, "\n")
+	for _, forbidden := range []string{
+		"go_read_symbol with one of the outlined declaration names",
+		"go_references or go_calls_into on a named declaration",
+		"go_move_declarations",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("closure guidance should omit %q, got %#v", forbidden, guidance.ValidNext)
+		}
+	}
+	for _, want := range []string{
+		"answer now from the child packet evidence",
+		"one exact packet-named path, symbol, discovered handle, or narrow range",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected closure guidance to keep %q, got %#v", want, guidance.ValidNext)
+		}
+	}
+}
+
+func TestBuildActionGuidanceReadSuccessOmitsEditSuggestionForExplanationObjective(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:    "tool_result",
+		Request:   workspace.ToolRequest{Tool: "go_read_symbol", Path: "internal/agent/runner_child_tasks.go", Pattern: "Runner.runChildTask"},
+		Objective: "Explain how this harness utilizes sub-agents.",
+		Result: workspace.ToolResult{
+			Tool:    "go_read_symbol",
+			Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-131",
+			Output:  "func (r *Runner) runChildTask(...) {}",
+		},
+	})
+	joined := strings.Join(guidance.ValidNext, "\n")
+	if strings.Contains(joined, "edit_file using the inspected evidence") {
+		t.Fatalf("explanatory read guidance should not suggest edits, got %#v", guidance.ValidNext)
+	}
+}
+
+func TestBuildActionGuidanceSearchSuccessOmitsEditSuggestionWhenReadOnly(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:  "tool_result",
+		Request: workspace.ToolRequest{Tool: "search_files", Path: "internal", Pattern: "*.go"},
+		Result: workspace.ToolResult{
+			Tool:    "search_files",
+			Summary: "Found 157 matching file(s).",
+			Output:  "internal/agent/runner.go\ninternal/agent/runner_child_tasks.go\n",
+		},
+	})
+	joined := strings.Join(guidance.ValidNext, "\n")
+	if strings.Contains(joined, "edit_file if the target is already clear") {
+		t.Fatalf("read-only search guidance should not suggest edits, got %#v", guidance.ValidNext)
+	}
+}
+
 func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 	cases := []struct {
 		name   string

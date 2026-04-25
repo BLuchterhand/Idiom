@@ -29,6 +29,10 @@ type runnerRequestBudgetState struct {
 	rejectedFingerprints             map[string]string
 }
 
+func (s runnerRequestBudgetState) postChildActive() bool {
+	return s.readOnlyChildTaskSatisfied || s.broadEvidenceDelegationSatisfied
+}
+
 type runnerRequestBudgetDecision struct {
 	Handled           bool
 	RejectSummary     string
@@ -146,7 +150,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			RejectStopReason: "exploration_broad_inspection_after_nudge_blocked",
 		}
 	}
-	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied && workspace.IsBroadInspectionRequest(req) {
+	if s.postChildActive() && workspace.IsBroadInspectionRequest(req) {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Post-child broad inspection blocked",
@@ -162,7 +166,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			RejectStopReason: "duplicate_read_only_child_task_blocked",
 		}
 	}
-	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied {
+	if s.postChildActive() {
 		if decision := s.postChildGuidanceDecision(req); decision.Handled {
 			return decision
 		}
@@ -185,7 +189,7 @@ func (s *runnerRequestBudgetState) synthesisDecision(policy RunPolicy, toolCalls
 func (s *runnerRequestBudgetState) noteReadClassRequest(req workspace.ToolRequest) {
 	s.readCallCount++
 	s.readCallsSinceWrite++
-	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied {
+	if s.postChildActive() {
 		s.postChildReadCalls++
 		if family := postChildRequestFamilyKey(req); family != "" {
 			s.postChildReadFamilies[family]++
@@ -194,7 +198,7 @@ func (s *runnerRequestBudgetState) noteReadClassRequest(req workspace.ToolReques
 }
 
 func (s *runnerRequestBudgetState) readBudgetDecision(policy RunPolicy, req workspace.ToolRequest) runnerRequestBudgetDecision {
-	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied && s.postChildReadCalls > s.postChildReadBudget {
+	if s.postChildActive() && s.postChildReadCalls > s.postChildReadBudget {
 		return runnerRequestBudgetDecision{
 			Handled:           true,
 			EventRole:         "post_child_read_budget_block",

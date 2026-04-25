@@ -340,7 +340,7 @@ Anchor — the existing `if hasCpp { ... }` block. Add a sibling block:
         lines = append(lines,
             "Java semantic-tool rules:",
             "- Prefer Java semantic tools over raw shell/grep for package, symbol, reference, implementation, and diagnostics questions.",
-            "- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+            "- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
         )
     }
 ```

@@ -282,7 +282,7 @@ func (m *Manager) javaEntrypoints(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, line)
 	}
-	return ToolResult{Tool: "java_entrypoints", Summary: fmt.Sprintf("Found %d likely Java anchor file(s). Open a returned handle with read_file.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "java_entrypoints", Summary: fmt.Sprintf("Found %d likely Java anchor file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 // -- Tools: find / read symbol ---------------------------------------------
@@ -308,7 +308,7 @@ func (m *Manager) javaFindSymbol(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, javaDisplayName(match.Qualified, match.Name)))
 	}
-	return ToolResult{Tool: "java_find_symbol", Summary: fmt.Sprintf("Found %d matching Java symbol(s). Use read_file on a returned handle or java_read_symbol for a focused snippet.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "java_find_symbol", Summary: fmt.Sprintf("Found %d matching Java symbol(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 func (m *Manager) javaReadSymbol(req ToolRequest) ToolResult {
@@ -366,7 +366,7 @@ func (m *Manager) javaRelatedFiles(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, display)
 	}
-	return ToolResult{Tool: "java_related_files", Summary: fmt.Sprintf("Found %d related Java file(s). Open a returned handle with read_file.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "java_related_files", Summary: fmt.Sprintf("Found %d related Java file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 func (m *Manager) javaWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolResult {
@@ -599,7 +599,7 @@ func (m *Manager) javaFileOutline(req ToolRequest) ToolResult {
 	if len(file.Symbols) == 0 {
 		b.WriteString("declarations: (none indexed)\n")
 	} else if len(file.Symbols) > 200 {
-		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols); query a specific symbol with java_read_symbol or java_find_symbol.\n", len(file.Symbols))
+		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
 		symbols := append([]semantic.JavaSymbol(nil), file.Symbols...)
 		sort.SliceStable(symbols, func(i, j int) bool {

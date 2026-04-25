@@ -76,6 +76,8 @@ func WorkspacePathFieldCandidates(text string) []string {
 
 func NormalizeWorkspacePathToken(token string) (string, bool) {
 	candidate := strings.TrimSpace(token)
+	candidate = strings.NewReplacer(`\n`, "\n", `\r`, "\r", `\t`, "\t").Replace(candidate)
+	candidate = strings.TrimSpace(candidate)
 	candidate = strings.Trim(candidate, "`'\"\\()[]{}<>,:;!?")
 	candidate = strings.TrimPrefix(candidate, "@")
 	candidate = strings.TrimSpace(strings.TrimPrefix(candidate, "./"))

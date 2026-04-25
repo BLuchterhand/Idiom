@@ -99,7 +99,7 @@ func OverviewSystemPrompt(root string) string {
 			b.WriteString("\n")
 		}
 	}
-	b.WriteString("\nUse this only as a starting map; verify paths with search_files / list_files / read_file before editing.")
+	b.WriteString("\nUse this only as a starting map; verify current workspace contents before editing.")
 	out := b.String()
 	if len(out) > workspaceOverviewMaxContentBytes {
 		out = out[:workspaceOverviewMaxContentBytes] + "\n... (overview truncated)"

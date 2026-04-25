@@ -107,7 +107,7 @@ func TestRunnerExecutionStateTracksPendingSearchInspection(t *testing.T) {
 	searchReq := workspace.ToolRequest{Tool: "search_files", Path: "internal", Pattern: "*runner*"}
 	searchResult := workspace.ToolResult{
 		Tool:    "search_files",
-		Summary: "Found 2 matching file(s). Open a returned handle with read_file.",
+		Summary: "Found 2 matching file(s).",
 		Output:  "f1 internal/agent/runner.go\nf2 internal/agent/runner_child_tasks.go",
 	}
 	state.applyResult(searchReq, searchResult, "", nil, nil)

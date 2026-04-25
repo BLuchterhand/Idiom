@@ -83,5 +83,9 @@ Prompt layers should agree on the same shape:
 - answer once the evidence is sufficient
 - after readiness, continue only for one exact missing claim and one exact probe
 - treat search policies and examples as ranked guidance, not mandatory scripts
+- evidence tools should describe findings, counts, paths, handles, and symbols without prescribing the next tool call
+- strategy guidance belongs in runtime briefs and control rails, not in evidence summaries or result payloads
+- do not hardcode strategy around one recurring scenario or question class; if a rule is real, express it in generic evidence/contract terms rather than domain-specific terms
+- answer composition must be evidence-shaped, not topic-template-shaped; repeated live-test topics should become generic contracts or eval fixtures, not special final-answer branches
 
 The goal is frontier-style behavior: open-ended model decisioning constrained by explicit, observable harness contracts.

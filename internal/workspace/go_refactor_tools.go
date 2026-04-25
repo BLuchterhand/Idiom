@@ -64,19 +64,14 @@ func (m *Manager) goFileOutline(req ToolRequest) ToolResult {
 	}
 	batches := goOutlineMoveBatches(parsed)
 	if len(batches) > 0 {
-		b.WriteString("recommended structural move batches:\n")
+		b.WriteString("structural move batches:\n")
 		for _, batch := range batches {
 			fmt.Fprintf(&b, "- tag: %s destination: %s\n", batch.tag, batch.destination)
 			fmt.Fprintf(&b, "  preview declarations: [%s]\n", strings.Join(limitedGoDeclarationNames(batch.declarations, 24), ", "))
-			fmt.Fprintf(&b, "  tool: {\"tool\":\"go_move_declarations\",\"path\":%q,\"destination\":%q,\"pattern\":%q}\n",
-				parsed.display,
-				batch.destination,
-				"tag:"+batch.tag,
-			)
 		}
 	}
 	if len(parsed.decls) > 200 {
-		b.WriteString("declarations: omitted for large file; use the recommended tag-based go_move_declarations calls above, or query a specific symbol with go_read_symbol.\n")
+		fmt.Fprintf(&b, "declarations: omitted for large file (%d top-level declarations).\n", len(parsed.decls))
 	} else {
 		b.WriteString("declarations:\n")
 		for _, decl := range parsed.decls {
@@ -93,10 +88,7 @@ func (m *Manager) goFileOutline(req ToolRequest) ToolResult {
 
 	summary := fmt.Sprintf("Outlined %d top-level declaration(s) in %s.", len(parsed.decls), parsed.display)
 	if len(batches) > 0 {
-		first := batches[0]
-		summary += fmt.Sprintf(" Next action: call go_move_declarations with pattern:%q destination:%q; do not repeat go_file_outline.", "tag:"+first.tag, first.destination)
-	} else {
-		summary += " Use go_move_declarations to move selected declarations mechanically."
+		summary += " Includes declaration tags and suggested move batches in the output."
 	}
 	return ToolResult{
 		Tool:    "go_file_outline",

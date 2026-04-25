@@ -293,13 +293,13 @@ func (m *Manager) Instructions() string {
 	return fmt.Sprintf(
 		"Workspace root: %s\nWorking directory: %s\n\n"+
 			"Rules:\n"+
-			"- Do not invent file paths from memory. Use search_files, search_content, or list_files to discover real files first.\n"+
-			"- After an orientation call, narrow with search_files / search_content / read_file instead of repeating broad listings.\n"+
+			"- Do not invent file paths from memory. Use list_files, search_files, discovered handles, or language-specific symbol tools to discover real files first.\n"+
+			"- After an orientation call, narrow with structured language tools or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
 			"- Paths are relative to the working directory unless absolute.\n"+
 			"- Prefer edit_file for small localized changes; write_file overwrites.\n"+
 			"%s"+
 			"- shell runs with the same OS permissions as this process. Prefer the dedicated tools where one exists.\n"+
-			"- After tool results, either call another tool or answer directly.%s",
+			"- After tool results, either answer directly or take one exact next tool step.%s",
 		m.cfg.Root,
 		m.cfg.CWD,
 		m.writePolicyInstructions(),
@@ -321,10 +321,10 @@ func (m *Manager) exploreInstructions() string {
 		"You are in EXPLORE mode — a READ-ONLY investigation session. Do not change files or system state.\n\n"+
 			"Workspace root: %s\nWorking directory: %s\nThoroughness: %s\n\n"+
 			"Rules:\n"+
-			"- Start broad once, then narrow with search_files / search_content / read_file on discovered handles.\n"+
+			"- Start broad once, then narrow with structured language tools or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
 			"- Do not invent file paths. Use search tools first.\n"+
 			"- shell is limited to read-only utilities (ls, find, rg, grep, awk, sed, cat, head, tail, wc, file, pwd, git status/log/diff/show/grep).\n"+
-			"- When you have enough evidence, answer directly.%s",
+			"- When you have enough evidence, answer directly. Continue only for one exact missing claim and one exact probe.%s",
 		m.cfg.Root,
 		m.cfg.CWD,
 		m.ExploreThoroughness(),
@@ -1166,17 +1166,17 @@ func (m *Manager) listFiles(req ToolRequest) ToolResult {
 		formatted = append(formatted, m.formatListedEntry(entry))
 	}
 	if capped {
-		formatted = append(formatted, fmt.Sprintf("... and %d more path(s) omitted; narrow path/max_depth or use search_files/search_content.", totalEntries-listFilesDisplayCap))
+		formatted = append(formatted, fmt.Sprintf("... and %d more path(s) omitted.", totalEntries-listFilesDisplayCap))
 	}
 
-	summary := fmt.Sprintf("Listed %d path(s). Files include stable handles. Next step: use search_content/search_files or read_file on a returned handle.", totalEntries)
+	summary := fmt.Sprintf("Listed %d path(s).", totalEntries)
 	if capped {
-		summary = fmt.Sprintf("Listed %d path(s) (showing first %d). Files include stable handles. Narrow path/max_depth or use search_content/search_files before reading.", totalEntries, listFilesDisplayCap)
+		summary = fmt.Sprintf("Listed %d path(s) (showing first %d).", totalEntries, listFilesDisplayCap)
 	}
 	if m.IsExploreMode() {
-		summary = fmt.Sprintf("Listed %d likely path(s), prioritized toward source files. Files include stable handles. Next step: use search_content/search_files or read_file on a returned handle.", totalEntries)
+		summary = fmt.Sprintf("Listed %d likely path(s), prioritized toward source files.", totalEntries)
 		if capped {
-			summary = fmt.Sprintf("Listed %d likely path(s), prioritized toward source files (showing first %d). Files include stable handles. Narrow path/max_depth or search before reading.", totalEntries, listFilesDisplayCap)
+			summary = fmt.Sprintf("Listed %d likely path(s), prioritized toward source files (showing first %d).", totalEntries, listFilesDisplayCap)
 		}
 	}
 
@@ -1368,7 +1368,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		summary := fmt.Sprintf("No file matches for %q", pattern)
 		if len(suggestions) > 0 {
 			summary = fmt.Sprintf("No file matches for %q. Closest paths in this workspace: %s.", pattern, strings.Join(suggestions, ", "))
-			output = "Closest real paths (use read_file, do not re-run search_files on these):\n" + strings.Join(suggestions, "\n")
+			output = "Closest real paths:\n" + strings.Join(suggestions, "\n")
 		}
 		// When the pattern looks like a symbol (bare identifier) and
 		// the workspace has a language index, the model was likely
@@ -1382,7 +1382,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 				} else {
 					output = output + "\n\n" + symHint
 				}
-				summary += " If you're looking for a symbol (not a filename), use the language's workspace_symbol tool."
+				summary += " The pattern also looks like a symbol name rather than a filename."
 			}
 		}
 		return ToolResult{
@@ -1414,13 +1414,13 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		}
 		output = append(output, match.display)
 	}
-	summary := fmt.Sprintf("Found %d matching file(s). Open a returned handle with read_file.", len(matches))
+	summary := fmt.Sprintf("Found %d matching file(s).", len(matches))
 	if includeLogDirs {
 		if displayLimit < len(matches) {
 			output = append(output, fmt.Sprintf("... omitted %d older log-like match(es)", len(matches)-displayLimit))
-			summary = fmt.Sprintf("Found %d matching log-like file(s), newest first with modified time and size (showing first %d). For recent-failure questions, read the newest relevant tail first.", len(matches), displayLimit)
+			summary = fmt.Sprintf("Found %d matching log-like file(s), newest first with modified time and size (showing first %d).", len(matches), displayLimit)
 		} else {
-			summary = fmt.Sprintf("Found %d matching log-like file(s), newest first with modified time and size. For recent-failure questions, read the newest relevant tail first.", len(matches))
+			summary = fmt.Sprintf("Found %d matching log-like file(s), newest first with modified time and size.", len(matches))
 		}
 	}
 	return ToolResult{
@@ -1463,7 +1463,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		// say so explicitly instead of letting the bare "no such file"
 		// repeat across sibling probes. The Did-you-mean output already
 		// surfaces real siblings of the closest-existing ancestor.
-		errMsg := err.Error() + ". Verify the path with search_files or search_content before retrying read_file."
+		errMsg := err.Error() + ". Verify the path with search_files, a language-specific symbol tool, or search_content before retrying read_file."
 		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
 			parent := filepath.Dir(strings.ReplaceAll(strings.TrimSpace(req.Path), "\\", "/"))
 			if parent != "." && parent != "/" && parent != "" {
@@ -1566,7 +1566,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	} else if clampedToFileBounds {
 		summary += fmt.Sprintf(" (requested range %d-%d was clamped to file bounds; file has %d lines total)", displayRequestedLine(requestedStart, start), displayRequestedLine(requestedEnd, end), len(lines))
 	} else if truncated {
-		summary += fmt.Sprintf(" (file has %d lines total; pass start_line/end_line for a different range or call go_file_outline first)", len(lines))
+		summary += fmt.Sprintf(" (file has %d lines total; output was capped; pass start_line/end_line for a different range)", len(lines))
 	}
 	return ToolResult{
 		Tool:    "read_file",
@@ -1676,7 +1676,7 @@ func (m *Manager) goEntrypoints(req ToolRequest) ToolResult {
 	}
 	return ToolResult{
 		Tool:    "go_entrypoints",
-		Summary: fmt.Sprintf("Found %d likely Go entrypoint file(s). Open a returned handle with read_file.", len(lines)),
+		Summary: fmt.Sprintf("Found %d likely Go entrypoint file(s).", len(lines)),
 		Output:  strings.Join(lines, "\n"),
 	}
 }
@@ -1707,7 +1707,7 @@ func (m *Manager) goFindSymbol(req ToolRequest) ToolResult {
 	}
 	return ToolResult{
 		Tool:    "go_find_symbol",
-		Summary: fmt.Sprintf("Found %d matching Go symbol(s). Use read_file on a returned handle or go_read_symbol for a focused snippet.", len(lines)),
+		Summary: fmt.Sprintf("Found %d matching Go symbol(s).", len(lines)),
 		Output:  strings.Join(lines, "\n"),
 	}
 }
@@ -1852,7 +1852,7 @@ func (m *Manager) goRelatedFiles(req ToolRequest) ToolResult {
 	}
 	return ToolResult{
 		Tool:    "go_related_files",
-		Summary: fmt.Sprintf("Found %d related Go file(s). Open a returned handle with read_file.", len(lines)),
+		Summary: fmt.Sprintf("Found %d related Go file(s).", len(lines)),
 		Output:  strings.Join(lines, "\n"),
 	}
 }
@@ -2239,16 +2239,17 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		return ToolResult{Tool: toolName, Summary: "Content search rejected", Error: "pattern is required"}
 	}
 
-	args := []string{"-n", "-H", "--hidden", "--no-heading", "--color", "never"}
-	if req.Glob != "" {
-		args = append(args, "-g", req.Glob)
+	backend, err := resolveContentSearchBackend()
+	if err != nil {
+		return ToolResult{
+			Tool:    toolName,
+			Summary: "Content search unavailable",
+			Error:   err.Error(),
+		}
 	}
-	for _, glob := range m.defaultSearchExcludeGlobs(req.Path, req.Pattern, req.Glob) {
-		args = append(args, "-g", glob)
-	}
-	args = append(args, pattern, defaultString(req.Path, "."))
+	args := backend.args(req, m.defaultSearchExcludeGlobs(req.Path, req.Pattern, req.Glob))
 
-	stdout, stderr, err := m.runCommandDetailed(parent, workdir, "rg", args...)
+	stdout, stderr, err := m.runCommandDetailed(parent, workdir, backend.bin, args...)
 	if err != nil && !isNoMatchExit(err) {
 		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
 		return ToolResult{
@@ -2275,7 +2276,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 			suggestions := m.findPathSuggestions(pattern, 5)
 			if len(suggestions) > 0 {
 				summary = fmt.Sprintf("No content matches for %q, but these paths contain it as part of their name — the symbol may be defined there: %s.", pattern, strings.Join(suggestions, ", "))
-				output = "Paths whose name contains the pattern (try read_file or a language-specific symbol tool on these instead of re-searching content):\n" + strings.Join(suggestions, "\n")
+				output = "Paths whose name contains the pattern:\n" + strings.Join(suggestions, "\n")
 			}
 		}
 		return ToolResult{
@@ -2355,19 +2356,18 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	}
 	if capped {
 		remaining := totalMatches - searchContentDisplayCap
-		formatted = append(formatted, fmt.Sprintf("... and %d more; narrow the pattern (add a more specific term, restrict with path or glob) to see them", remaining))
+		formatted = append(formatted, fmt.Sprintf("... and %d more matching line(s) omitted.", remaining))
 	}
 
-	summary := fmt.Sprintf("Found %d matching line(s). Use read_file on a returned handle to inspect a file.", totalMatches)
+	summary := fmt.Sprintf("Found %d matching line(s).", totalMatches)
 	if capped {
-		summary = fmt.Sprintf("Found %d matching line(s) (showing first %d). Use read_file on a returned handle, or narrow the pattern to see more.", totalMatches, searchContentDisplayCap)
+		summary = fmt.Sprintf("Found %d matching line(s) (showing first %d).", totalMatches, searchContentDisplayCap)
 	}
 	if len(formatted) == 1 && singlePath != "" && singleLine > 0 {
-		summary = fmt.Sprintf("Found 1 matching line at %s:%d. For a targeted change, prefer edit_file with start_line/end_line/content.", singlePath, singleLine)
+		summary = fmt.Sprintf("Found 1 matching line at %s:%d.", singlePath, singleLine)
 		if snippet := m.searchContextSnippet(filepath.Join(m.cfg.Root, singlePath), singleLine, 2); snippet != "" {
 			formatted = append(formatted, "context:\n"+snippet)
 		}
-		formatted = append(formatted, fmt.Sprintf("targeted edit template:\n{\"tool\":\"edit_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d,\"content\":\"replacement line(s)\"}", singlePath, singleLine, singleLine))
 	}
 
 	return ToolResult{
@@ -3536,7 +3536,7 @@ func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 	if !m.hasDiscoveredPath(path) {
 		info, statErr := os.Stat(path)
 		if statErr != nil {
-			return "", "", fmt.Errorf("path %q was not found; use search_files or search_content and then read a returned handle", m.displayPath(path))
+			return "", "", fmt.Errorf("path %q was not found; use search_files, a language-specific symbol tool, or search_content and then read a returned handle", m.displayPath(path))
 		}
 		if info.IsDir() {
 			return "", "", fmt.Errorf("path %q is a directory; use list_files or search_files to choose a file", m.displayPath(path))
@@ -3800,11 +3800,10 @@ func (m *Manager) findPathSuggestions(query string, limit int) []string {
 	return suggestions
 }
 
-// symbolSearchSuggestion returns a copy-paste-ready symbol search hint
-// for each active language whose workspace-symbol capability is
-// available. Empty string when no language index would help (e.g. no
-// active languages). Used by search_files zero-hit enrichment so the
-// model switches to the right tool when its query was a symbol.
+// symbolSearchSuggestion returns a neutral note when a search_files
+// zero-hit query looks more like a symbol name than a filename. It is
+// descriptive rather than copy-paste-ready so evidence tools do not
+// prescribe the next action directly.
 func (m *Manager) symbolSearchSuggestion(pattern string) string {
 	if m == nil {
 		return ""
@@ -3813,8 +3812,7 @@ func (m *Manager) symbolSearchSuggestion(pattern string) string {
 	if len(active) == 0 {
 		return ""
 	}
-	var lines []string
-	lines = append(lines, "If you're looking for a symbol definition (not a filename), try a language symbol tool:")
+	var langs []string
 	for _, lang := range active {
 		tool := lang.Tool(CapWorkspaceSymbol)
 		if tool == "" {
@@ -3823,12 +3821,13 @@ func (m *Manager) symbolSearchSuggestion(pattern string) string {
 		if tool == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("  %s: {\"tool\":%q,\"pattern\":%q}", lang.Name, tool, pattern))
+		langs = append(langs, lang.Name)
 	}
-	if len(lines) == 1 {
+	if len(langs) == 0 {
 		return ""
 	}
-	return strings.Join(lines, "\n")
+	sort.Strings(langs)
+	return fmt.Sprintf("Pattern shape: bare identifier; this may refer to a symbol rather than a filename. Active language indexes: %s.", strings.Join(langs, ", "))
 }
 
 // tokenMatchedPaths splits a compound pattern like "task_tool" on
@@ -4169,7 +4168,7 @@ func (m *Manager) discoveryInstructions() string {
 	return "\n\nRepo-local discovery commands available in this workspace:\n" +
 		strings.Join(lines, "\n") +
 		"\nThese repo-local shell commands have the same native CLI capability surface here that Codex has when it runs them from the terminal." +
-		"\nDo not treat them as the default path. Prefer generic workspace tools such as search_files, search_content, read_file, and ordinary shell commands first." +
+		"\nDo not treat them as the default path. Prefer structured language tools, discovered handles, and narrow generic workspace reads/searches before these repo-local discovery commands." +
 		"\nUse these repo-local discovery commands only when the user explicitly asks for them, when a repo workflow clearly depends on them, or when they are the most direct way to answer a repository-specific question."
 }
 

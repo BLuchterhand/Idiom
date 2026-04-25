@@ -156,7 +156,7 @@ func (m *Manager) rustEntrypoints(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, line)
 	}
-	return ToolResult{Tool: "rust_entrypoints", Summary: fmt.Sprintf("Found %d likely Rust anchor file(s). Open a returned handle with read_file.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "rust_entrypoints", Summary: fmt.Sprintf("Found %d likely Rust anchor file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 // -- Tool: rust_find_symbol -------------------------------------------------
@@ -182,7 +182,7 @@ func (m *Manager) rustFindSymbol(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, rustDisplayName(match.Qualified, match.Name)))
 	}
-	return ToolResult{Tool: "rust_find_symbol", Summary: fmt.Sprintf("Found %d matching Rust symbol(s). Use read_file on a returned handle or rust_read_symbol for a focused snippet.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "rust_find_symbol", Summary: fmt.Sprintf("Found %d matching Rust symbol(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 // -- Tool: rust_workspace_symbol --------------------------------------------
@@ -277,7 +277,7 @@ func (m *Manager) rustRelatedFiles(req ToolRequest) ToolResult {
 		}
 		lines = append(lines, display)
 	}
-	return ToolResult{Tool: "rust_related_files", Summary: fmt.Sprintf("Found %d related Rust file(s). Open a returned handle with read_file.", len(lines)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "rust_related_files", Summary: fmt.Sprintf("Found %d related Rust file(s).", len(lines)), Output: strings.Join(lines, "\n")}
 }
 
 // -- Tool: rust_file_outline ------------------------------------------------
@@ -339,7 +339,7 @@ func (m *Manager) rustFileOutline(req ToolRequest) ToolResult {
 	if len(file.Symbols) == 0 {
 		b.WriteString("declarations: (none indexed)\n")
 	} else if len(file.Symbols) > 200 {
-		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols); query a specific symbol with rust_read_symbol or rust_find_symbol.\n", len(file.Symbols))
+		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
 		symbols := append([]semantic.RustSymbol(nil), file.Symbols...)
 		sort.SliceStable(symbols, func(i, j int) bool {

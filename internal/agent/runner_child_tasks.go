@@ -84,6 +84,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			r.emitEvent(RunEvent{Role: "child_" + event.Role, Content: event.Content})
 		},
 	}
+	childResults := make([]workspace.ToolResult, 0, 8)
 	answer, err := child.Run(
 		ctx,
 		[]llama.ChatMessage{
@@ -94,7 +95,9 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 					"Answer the delegated question directly using concise grounded evidence.",
 					"For broad architecture, impact, tracing, security, or history questions, prefer one discovery_query first; it returns a layered evidence packet.",
 					"After one sufficient packet or exact probe, answer instead of reopening search.",
+					"Prefer the minimal implementation surface needed to answer the question. Do not expand into side-path comparison, mode-by-mode breakdowns, or policy tables unless the question explicitly requires that detail.",
 					"If you continue, name one exact missing claim, one exact probe that would resolve it, and what would be materially incomplete if you answered now.",
+					"After readiness, stay inside packet-named files or symbols. Do not switch to README, docs, or repo-wide search unless that exact artifact is the named gap.",
 					"Prefer structured symbol tools, discovered handles, outlines, or narrow line ranges over raw path-wide rereads.",
 					"Do not edit files, create files, install packages, push, publish, deploy, or spawn more tasks.",
 					"Use repository-relative paths and cite the files you inspected.",
@@ -108,6 +111,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			r.emitEvent(marshalRunEvent("child_tool_request", event))
 		},
 		func(event ToolResultEvent) {
+			childResults = append(childResults, event.Result)
 			r.emitEvent(marshalRunEvent("child_tool_result", event))
 		},
 	)
@@ -118,6 +122,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			Error:   err.Error(),
 		}
 	}
+	answer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)
 	answer = normalizeDelegatedReadOnlyPacket(answer)
 	return workspace.ToolResult{
 		Tool:    "task",
@@ -144,10 +149,7 @@ func normalizeReadOnlyChildPrompt(prompt string) string {
 			continue
 		}
 		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "focus on") ||
-			strings.HasPrefix(lower, "specifically") ||
-			strings.HasPrefix(lower, "emphasize") ||
-			strings.HasPrefix(lower, "answer ") ||
+		if strings.HasPrefix(lower, "answer ") ||
 			strings.HasPrefix(lower, "named workspace scope:") ||
 			strings.HasPrefix(lower, "key terms:") {
 			kept = appendUniqueString(kept, line)
@@ -182,7 +184,71 @@ func normalizeReadOnlyChildLead(line string) string {
 			return strings.ToUpper(remainder[:1]) + remainder[1:]
 		}
 	}
+	if idx := strings.Index(line, "?"); idx >= 0 {
+		question := strings.TrimSpace(line[:idx+1])
+		if question != "" {
+			return question
+		}
+	}
+	if narrowed := rewriteBroadReadOnlyChildLead(line); narrowed != "" {
+		return narrowed
+	}
+	if trimmed := trimReadOnlyChildLeadAtBroadMarker(line); trimmed != "" {
+		return trimmed
+	}
 	return line
+}
+
+func rewriteBroadReadOnlyChildLead(line string) string {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if !containsAny(lower,
+		"cmd directory",
+		"entry point",
+		"entrypoint",
+		"main entry",
+		"look for pattern",
+		"focus on ",
+		"explore ",
+	) {
+		return ""
+	}
+	for _, marker := range []string{"explain ", "describe ", "summarize ", "how ", "what ", "why "} {
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			rewritten := strings.TrimSpace(line[idx:])
+			if rewritten == "" {
+				continue
+			}
+			return strings.ToUpper(rewritten[:1]) + rewritten[1:]
+		}
+	}
+	return ""
+}
+
+func trimReadOnlyChildLeadAtBroadMarker(line string) string {
+	lower := strings.ToLower(line)
+	cut := -1
+	for _, marker := range []string{
+		" explore the ",
+		" explore ",
+		" look for ",
+		" focus on ",
+		" specifically ",
+		" emphasize ",
+		" start from ",
+		" trace through ",
+	} {
+		if idx := strings.Index(lower, marker); idx > 0 && (cut == -1 || idx < cut) {
+			cut = idx
+		}
+	}
+	if cut <= 0 {
+		return ""
+	}
+	trimmed := strings.TrimSpace(strings.TrimRight(line[:cut], ",;:- "))
+	if trimmed == "" {
+		return ""
+	}
+	return trimmed
 }
 
 func readOnlyChildKeyTerms(prompt string) []string {
@@ -193,21 +259,18 @@ func readOnlyChildKeyTerms(prompt string) []string {
 			continue
 		}
 		lower := strings.ToLower(fragment)
-		switch lower {
-		case "agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main":
+		if readOnlyChildKeyTermStopWord(lower) {
 			continue
 		}
 		terms = appendUniqueString(terms, fragment)
 	}
-	firstLine := strings.TrimSpace(strings.Split(prompt, "\n")[0])
-	for _, candidate := range strings.Fields(firstLine) {
+	for _, candidate := range strings.Fields(prompt) {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" || frontier.LooksLikeWorkspacePathToken(candidate) {
 			continue
 		}
-		lower := strings.ToLower(strings.Trim(candidate, "`'\"()[]{}<>,:;!?"))
-		switch lower {
-		case "", "how", "does", "this", "explain", "inspect", "explore", "look", "overall", "return", "focus", "files", "file", "codebase", "architecture", "config", "configuration", "agent", "agents", "harness", "start", "source", "truth", "implementation", "before", "tests", "test", "readme", "docs":
+		lower := strings.ToLower(strings.Trim(candidate, "`'\"()[]{}<>,.:;!?"))
+		if readOnlyChildKeyTermStopWord(lower) {
 			continue
 		}
 		if len(lower) < 5 {
@@ -218,13 +281,23 @@ func readOnlyChildKeyTerms(prompt string) []string {
 			break
 		}
 	}
-	lowerPrompt := strings.ToLower(firstLine)
-	if strings.Contains(lowerPrompt, "sub-agent") || strings.Contains(lowerPrompt, "subagent") || strings.Contains(lowerPrompt, "delegate") {
-		for _, term := range []string{"task", "delegate"} {
-			terms = appendUniqueString(terms, term)
-		}
-	}
 	return terms
+}
+
+func readOnlyChildKeyTermStopWord(lower string) bool {
+	switch lower {
+	case "",
+		"how", "does", "this", "explain", "inspect", "explore", "look", "overall", "return", "focus", "specifically", "emphasize",
+		"use", "uses", "used", "using", "utilize", "utilizes", "utilized", "utilise", "utilises", "make", "makes", "made",
+		"files", "file", "paths", "path", "findings", "finding", "confidence", "gap", "gaps",
+		"codebase", "architecture", "config", "configuration", "agent", "agents", "harness",
+		"start", "source", "truth", "implementation", "before", "tests", "test", "readme", "docs",
+		"named", "workspace", "scope", "key", "terms", "question", "questions", "directly", "materially", "incomplete",
+		"exact", "probe", "sufficient", "evidence", "entry", "entrypoint", "entrypoints", "directory", "directories":
+		return true
+	default:
+		return false
+	}
 }
 
 func appendUniqueString(values []string, value string) []string {

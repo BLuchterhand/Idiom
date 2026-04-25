@@ -365,7 +365,7 @@ rules. After the `if hasCpp { ... }` block, before the final
 		lines = append(lines,
 			"TypeScript/JavaScript semantic-tool rules:",
 			"- Prefer TypeScript/JavaScript semantic tools over raw shell/grep for symbol, definition, reference, call-graph, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 			"- The same toolset covers .ts/.tsx and .js/.jsx/.mjs/.cjs — typescript-language-server handles both from one process.",
 		)
 	}

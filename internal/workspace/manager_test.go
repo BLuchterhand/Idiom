@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,6 +32,83 @@ func TestGoDiagnosticTargetsIncludesWorkspaceRootFiles(t *testing.T) {
 	}
 	if len(files) == 0 {
 		t.Fatal("expected workspace-root Go diagnostics to include indexed files")
+	}
+}
+
+func TestInstructionsPreferStructuredNarrowing(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+	instructions := mgr.Instructions()
+	for _, want := range []string{
+		"Use list_files, search_files, discovered handles, or language-specific symbol tools",
+		"narrow with structured language tools or discovered handles first",
+		"either answer directly or take one exact next tool step",
+	} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("expected instructions to contain %q, got:\n%s", want, instructions)
+		}
+	}
+	if strings.Contains(instructions, "search_files / search_content / read_file instead of repeating broad listings") {
+		t.Fatalf("instructions should not prefer generic text tools after orientation:\n%s", instructions)
+	}
+}
+
+func TestExploreInstructionsPreferStructuredNarrowing(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+	if err := mgr.SetMode(ModeExplore); err != nil {
+		t.Fatalf("SetMode: %v", err)
+	}
+	instructions := mgr.Instructions()
+	for _, want := range []string{
+		"narrow with structured language tools or discovered handles first",
+		"Continue only for one exact missing claim and one exact probe",
+	} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("expected explore instructions to contain %q, got:\n%s", want, instructions)
+		}
+	}
+	if strings.Contains(instructions, "search_files / search_content / read_file on discovered handles") {
+		t.Fatalf("explore instructions should not prefer generic text tools first:\n%s", instructions)
+	}
+}
+
+func TestDiscoveryInstructionsDoNotPreferGenericTextTools(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "scripts", "lookup.sh")
+	writeTestFile(t, scriptPath, "#!/bin/sh\n")
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+	instructions := mgr.discoveryInstructions()
+	if !strings.Contains(instructions, "Prefer structured language tools, discovered handles, and narrow generic workspace reads/searches before these repo-local discovery commands.") {
+		t.Fatalf("expected discovery instructions to prefer structured tools first, got:\n%s", instructions)
+	}
+	if strings.Contains(instructions, "Prefer generic workspace tools such as search_files, search_content, read_file") {
+		t.Fatalf("discovery instructions should not prefer generic text tools first:\n%s", instructions)
+	}
+}
+
+func TestResolveReadPathMissingFileSuggestsStructuredDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+	_, _, err := mgr.resolveReadTarget(ToolRequest{Tool: "read_file", Path: "missing.go"})
+	if err == nil {
+		t.Fatal("expected missing read path error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "language-specific symbol tool") {
+		t.Fatalf("expected missing path error to mention language-specific symbol tools, got %q", msg)
 	}
 }
 
@@ -186,6 +262,9 @@ func helper() {}
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_file_outline", Path: "widget.go"})
 	if result.Error != "" {
 		t.Fatalf("go_file_outline failed: %#v", result)
+	}
+	if strings.Contains(result.Summary, "go_move_declarations") {
+		t.Fatalf("outline summary should stay neutral for explanatory flows, got: %s", result.Summary)
 	}
 	for _, want := range []string{"Model.View", "helper", "imports:", "tags: rendering"} {
 		if !strings.Contains(result.Output, want) {
@@ -820,8 +899,8 @@ func TestSearchFilesZeroHitSurfacesClosestPaths(t *testing.T) {
 	if !strings.Contains(result.Output, "internal/agent/tools.go") {
 		t.Fatalf("expected closest-path suggestion to surface tools.go, got output: %q", result.Output)
 	}
-	if !strings.Contains(strings.ToLower(result.Output), "read_file") {
-		t.Fatalf("expected output to tell the model to use read_file next, got: %q", result.Output)
+	if strings.Contains(strings.ToLower(result.Output), "read_file") {
+		t.Fatalf("expected zero-hit output to stay descriptive rather than prescribing read_file, got: %q", result.Output)
 	}
 }
 
@@ -831,8 +910,8 @@ func TestSearchFilesZeroHitSurfacesClosestPaths(t *testing.T) {
 // model often confuses "find the symbol" with "grep the symbol" and
 // the symbol's name lives in the filename.
 func TestSearchContentZeroHitSuggestsPathsWhenPatternLooksLikeSymbol(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not installed on this machine")
+	if !hasContentSearchBackend() {
+		t.Skip("no supported content search backend installed on this machine")
 	}
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/app/prompt_routing.go"), "package app\nfunc unrelated() {}\n")
@@ -855,8 +934,8 @@ func TestSearchContentZeroHitSuggestsPathsWhenPatternLooksLikeSymbol(t *testing.
 }
 
 func TestSearchContentSkipsNoisyDirsByDefault(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not installed on this machine")
+	if !hasContentSearchBackend() {
+		t.Skip("no supported content search backend installed on this machine")
 	}
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/app/plan.go"), "package app\nfunc planPanel() {}\n")
@@ -897,8 +976,8 @@ func TestSearchContentSkipsNoisyDirsByDefault(t *testing.T) {
 }
 
 func TestSearchContentPrioritizesSourceFilesOverTests(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not installed on this machine")
+	if !hasContentSearchBackend() {
+		t.Skip("no supported content search backend installed on this machine")
 	}
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal", "agent", "runner.go"), "package agent\nfunc runChildTask() { /* delegate child spawn */ }\n")
@@ -926,8 +1005,8 @@ func TestSearchContentPrioritizesSourceFilesOverTests(t *testing.T) {
 }
 
 func TestSearchContentSkipsSuiteManifestByDefaultButAllowsExplicitPath(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not installed on this machine")
+	if !hasContentSearchBackend() {
+		t.Skip("no supported content search backend installed on this machine")
 	}
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "testdata", "swe", "representative-suite.json"), `{"needle":"SuiteManifestOnlyWidget"}`+"\n")
@@ -965,8 +1044,8 @@ func TestSearchContentSkipsSuiteManifestByDefaultButAllowsExplicitPath(t *testin
 }
 
 func TestSearchContentTruncatesLongMatchingLines(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not installed on this machine")
+	if !hasContentSearchBackend() {
+		t.Skip("no supported content search backend installed on this machine")
 	}
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/app/huge.go"), "package app\nvar huge = \"needle "+strings.Repeat("x", 800)+"\"\n")

@@ -20,6 +20,8 @@ type runnerLanePreflightInput struct {
 }
 
 type runnerLanePreflightDecision struct {
+	OriginalRequest  workspace.ToolRequest
+	OriginalRaw      string
 	Request          workspace.ToolRequest
 	Raw              string
 	RejectSummary    string
@@ -35,8 +37,10 @@ type runnerForcedAnswer struct {
 
 func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePreflightDecision {
 	decision := runnerLanePreflightDecision{
-		Request: input.Request,
-		Raw:     input.Raw,
+		OriginalRequest: input.Request,
+		OriginalRaw:     input.Raw,
+		Request:         input.Request,
+		Raw:             input.Raw,
 	}
 
 	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
@@ -213,6 +217,9 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 	if !containsRunnerTool(r.RuntimeBrief.AllowedTools, "discovery_query") {
 		return workspace.ToolRequest{}, false
 	}
+	if delegatedReadOnlyBootstrapHasExactStructuredProbe(r.RuntimeBrief.Objective, r.RuntimeBrief.AllowedTools) {
+		return workspace.ToolRequest{}, false
+	}
 	for _, path := range frontier.PromptMentionedWorkspacePaths(r.RuntimeBrief.Objective) {
 		if frontier.HasWorkspaceFileExtension(path) {
 			return workspace.ToolRequest{}, false
@@ -279,10 +286,28 @@ func delegatedReadOnlyLikelySourceScope(objective string, workspaceRoot string) 
 }
 
 func delegatedReadOnlyLikelySourceCandidates(objective string) []string {
-	if delegatedObjectiveLooksLikeDebugLogRedaction(objective) {
-		return []string{"internal/transcript", "internal/app", "internal/agent", "internal/workspace", "cmd", "internal", "pkg", "src"}
+	if delegatedObjectiveNeedsEntrypointScope(objective) {
+		return []string{"internal/agent", "internal/workspace", "cmd", "internal", "pkg", "src"}
 	}
-	return []string{"internal/agent", "internal/workspace", "cmd", "internal", "pkg", "src"}
+	return []string{"internal/agent", "internal/workspace", "internal", "pkg", "src"}
+}
+
+func delegatedObjectiveNeedsEntrypointScope(objective string) bool {
+	lower := strings.ToLower(objective)
+	return containsAny(lower,
+		"entrypoint",
+		"entry point",
+		"main entry",
+		"main function",
+		"cli",
+		"command",
+		"startup",
+		"boot sequence",
+		"bootstrap path",
+		"program start",
+		"cmd directory",
+		"cmd/",
+	)
 }
 
 func delegatedReadOnlyBootstrapSearchRequest(objective string) (workspace.ToolRequest, bool) {
@@ -309,6 +334,11 @@ func delegatedReadOnlyBootstrapStructuredRequest(objective string, allowedTools 
 		return workspace.ToolRequest{}, false
 	}
 	return workspace.ToolRequest{Tool: "go_workspace_symbol", Pattern: pattern}, true
+}
+
+func delegatedReadOnlyBootstrapHasExactStructuredProbe(objective string, allowedTools []string) bool {
+	_, ok := delegatedReadOnlyBootstrapStructuredRequest(objective, allowedTools)
+	return ok
 }
 
 func delegatedReadOnlyBootstrapScope(objective string) string {
@@ -400,14 +430,6 @@ func delegatedReadOnlyBootstrapSymbolPattern(objective string) string {
 			candidates = appendUniqueSearchTerm(candidates, symbol)
 		}
 	}
-	for _, candidate := range strings.Fields(objective) {
-		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(candidate); ok {
-			candidates = appendUniqueSearchTerm(candidates, symbol)
-		}
-		if len(candidates) >= 2 {
-			break
-		}
-	}
 	if len(candidates) == 0 {
 		return ""
 	}
@@ -416,7 +438,7 @@ func delegatedReadOnlyBootstrapSymbolPattern(objective string) string {
 
 func delegatedReadOnlySearchTerm(raw string) (string, bool) {
 	value := strings.ToLower(strings.TrimSpace(raw))
-	value = strings.Trim(value, "`'\"()[]{}<>,:;!?")
+	value = strings.Trim(value, "`'\"()[]{}<>,.:;!?")
 	value = strings.TrimSpace(strings.TrimPrefix(value, "./"))
 	if value == "" || frontier.LooksLikeWorkspacePathToken(value) {
 		return "", false
@@ -446,7 +468,7 @@ func delegatedReadOnlySearchTerm(raw string) (string, bool) {
 
 func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
 	value := strings.TrimSpace(raw)
-	value = strings.Trim(value, "`'\"()[]{}<>,:;!?")
+	value = strings.Trim(value, "`'\"()[]{}<>,.:;!?")
 	value = strings.TrimSpace(strings.TrimPrefix(value, "./"))
 	if value == "" || frontier.LooksLikeWorkspacePathToken(strings.ToLower(value)) {
 		return "", false
@@ -467,12 +489,33 @@ func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
 	if !hasLetter {
 		return "", false
 	}
+	if !delegatedReadOnlyLooksCodeShapedSymbol(value) {
+		return "", false
+	}
 	lower := strings.ToLower(value)
 	switch lower {
-	case "agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main", "files", "file", "directory", "directories", "entry", "entrypoints", "line", "lines", "harness", "implementation", "source", "truth", "before", "tests", "test", "readme", "docs", "start", "subagent", "subagents", "delegate", "delegated", "task", "runner":
+	case "agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main", "files", "file", "directory", "directories", "entry", "entrypoints", "line", "lines", "harness", "implementation", "source", "truth", "before", "tests", "test", "readme", "docs", "start", "subagent", "subagents", "delegate", "delegated", "task", "runner", "package", "import", "const", "type", "func", "return", "use", "uses", "using", "utilize", "utilizes", "utilise", "utilises", "make", "makes":
 		return "", false
 	}
 	return value, true
+}
+
+func delegatedReadOnlyLooksCodeShapedSymbol(value string) bool {
+	if strings.Contains(value, "_") {
+		return true
+	}
+	hasLower := false
+	for i, r := range value {
+		switch {
+		case unicode.IsDigit(r):
+			return true
+		case unicode.IsLower(r):
+			hasLower = true
+		case i > 0 && unicode.IsUpper(r) && hasLower:
+			return true
+		}
+	}
+	return false
 }
 
 func appendUniqueSearchTerm(values []string, value string) []string {
@@ -580,11 +623,6 @@ func delegatedReadOnlyImplementationPattern(objective string, targetPath string)
 func delegatedReadOnlyMechanismTerms(objective string) []string {
 	lower := strings.ToLower(delegatedDisplayQuestion(objective))
 	terms := make([]string, 0, 6)
-	if containsAny(lower, "sub-agent", "subagent", "sub agent", "delegate", "delegated", "child agent", "child task") {
-		for _, term := range []string{"delegate", "task", "runner_child_tasks", "run child task"} {
-			terms = appendUniqueSearchTerm(terms, term)
-		}
-	}
 	if containsAny(lower, "invoke", "invoked", "execute", "executed", "run", "runner", "workflow", "wired") {
 		for _, term := range []string{"invoke", "execute"} {
 			terms = appendUniqueSearchTerm(terms, term)
@@ -621,7 +659,12 @@ func (r *Runner) delegatedReadOnlyIntegrationPivotRedirect(results []workspace.T
 	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
 		return workspace.ToolRequest{}, false
 	}
-	if !isReadClassTool(req) {
+	switch strings.TrimSpace(req.Tool) {
+	case "read_file", "search_content":
+	default:
+		return workspace.ToolRequest{}, false
+	}
+	if delegatedReadOnlyClosureReady(r.agentName(), r.RuntimeBrief, results) {
 		return workspace.ToolRequest{}, false
 	}
 	currentPath := r.delegatedReadOnlyRequestPath(req)
@@ -731,7 +774,13 @@ func delegatedReadOnlyInspectedImplementationPaths(results []workspace.ToolResul
 			continue
 		}
 		switch strings.TrimSpace(result.Tool) {
-		case "read_file", "go_read_symbol", "go_file_outline":
+		case "read_file",
+			"go_read_symbol", "go_file_outline", "go_extract_body",
+			"cpp_read_symbol", "cpp_file_outline", "cpp_extract_body",
+			"python_read_symbol", "python_file_outline",
+			"ts_read_symbol", "ts_file_outline",
+			"rust_read_symbol", "rust_file_outline",
+			"java_read_symbol", "java_file_outline":
 		default:
 			continue
 		}

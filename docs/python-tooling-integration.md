@@ -429,7 +429,7 @@ Then add a new block after the existing `hasCpp` block, before the final
 		lines = append(lines,
 			"Python semantic-tool rules:",
 			"- Prefer Python semantic tools over raw shell/grep for module, symbol, entrypoint, reference, and diagnostics questions.",
-			"- Use returned handles with read_file when you need surrounding source after a semantic lookup.",
+			"- Semantic lookups return paths, symbol kinds, and handles for follow-up inspection.",
 			"- python_diagnostics requires pyright or pylsp; if neither is installed, fall back to shell (`python -m py_compile`, `ruff check`) explicitly.",
 		)
 	}
