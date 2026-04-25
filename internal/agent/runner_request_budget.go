@@ -98,7 +98,7 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 				EventRole:         "fingerprint_hard_block",
 				EventContent:      fmt.Sprintf("%s repeated %d times; hard-blocking", req.Tool, count),
 				ForceAnswerReason: "fingerprint_hard_block_exhausted",
-				ForceAnswerPrompt: fmt.Sprintf("You called %s with identical arguments %d times after being warned. Do not call any more tools. Summarize the blocker and the narrowest remaining next action using the evidence you have.", req.Tool, count),
+				ForceAnswerPrompt: fmt.Sprintf("You called %s with identical arguments %d times after being warned. Tools are now disabled. Write the normal final answer from the evidence already gathered. If the repeated request reflects one unsupported claim, state that uncertainty after the supported answer with the smallest useful next action.", req.Tool, count),
 			}
 		}
 	}
@@ -120,7 +120,7 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 			EventRole:         "rejection_retry_blocked",
 			EventContent:      fmt.Sprintf("model retried a previously rejected %s call (%s) — forcing answer with the evidence already gathered", req.Tool, priorSummary),
 			ForceAnswerReason: "rejection_retry_blocked",
-			ForceAnswerPrompt: fmt.Sprintf("You retried a %s request that was already rejected this turn (\"%s\"). Do not call any more tools. Summarize the blocker and the narrowest remaining next action using the evidence you already have.", req.Tool, priorSummary),
+			ForceAnswerPrompt: fmt.Sprintf("You retried a %s request that was already rejected this turn (\"%s\"). Tools are now disabled. Treat the rejected request as adding no new evidence, and write the normal final answer from the evidence already gathered. Mention the rejected probe only if it leaves one user-relevant claim unsupported.", req.Tool, priorSummary),
 		}
 	}
 	return runnerRequestBudgetDecision{}
@@ -211,10 +211,10 @@ func (s *runnerRequestBudgetState) readBudgetDecision(policy RunPolicy, req work
 			EventRole:         "post_child_read_budget_block",
 			EventContent:      fmt.Sprintf("post-child read budget exhausted after %d targeted reads", s.postChildReadBudget),
 			RejectSummary:     "Post-child read budget exhausted",
-			RejectError:       fmt.Sprintf("the child evidence packet has already been gathered and the parent used %d targeted follow-up reads. Synthesize from the child packet and targeted follow-up evidence, take the next non-read action, or state the concrete blocker.", s.postChildReadBudget),
+			RejectError:       fmt.Sprintf("the child evidence packet has already been gathered and the parent used %d targeted follow-up reads. Synthesize from the child packet and targeted follow-up evidence; mention only one unsupported claim if the answer still needs it.", s.postChildReadBudget),
 			RejectStopReason:  "post_child_read_budget_exhausted",
 			ForceAnswerReason: "post_child_read_budget_exhausted",
-			ForceAnswerPrompt: "Post-child read budget is exhausted. Tools are now disabled — do NOT emit another tool call. Use the child packet and targeted follow-up evidence to answer directly or report the blocker.",
+			ForceAnswerPrompt: "Post-child read budget is exhausted. Tools are now disabled. Use the child packet and targeted follow-up evidence to write the normal final answer. If one exact claim remains unsupported, state that uncertainty after the answer.",
 		}
 	}
 	if policy.ReadBudgetSoft > 0 && s.readCallCount >= policy.ReadBudgetSoft && !s.readBudgetNudgeFired {
@@ -231,10 +231,10 @@ func (s *runnerRequestBudgetState) readBudgetDecision(policy RunPolicy, req work
 			EventRole:         "read_budget_hard_block",
 			EventContent:      fmt.Sprintf("read-class budget exhausted after %d read/search calls without a write", s.readCallsSinceWrite-1),
 			RejectSummary:     "Read budget exhausted",
-			RejectError:       fmt.Sprintf("you already used %d read/search tool calls without making a write. Summarize the concrete evidence gathered, unresolved gaps, and the narrowest next action.", s.readCallsSinceWrite-1),
+			RejectError:       fmt.Sprintf("you already used %d read/search tool calls without making a write. Use the gathered evidence to answer or proceed; mention only one unsupported claim if the answer cannot be completed.", s.readCallsSinceWrite-1),
 			RejectStopReason:  "read_budget_exhausted",
 			ForceAnswerReason: "read_budget_exhausted",
-			ForceAnswerPrompt: "Read/search budget is exhausted. Tools are now disabled — do NOT emit another tool call. Summarize the evidence already gathered, identify unresolved gaps, and name the narrowest next action. If enough evidence is present, answer directly.",
+			ForceAnswerPrompt: "Read/search budget is exhausted. Tools are now disabled. Write the normal final answer from the evidence already gathered. If the evidence is insufficient for one exact claim, state that uncertainty after the supported answer with the smallest useful next action.",
 		}
 	}
 	return runnerRequestBudgetDecision{}

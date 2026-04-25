@@ -274,11 +274,11 @@ func (r *Runner) Run(
 	for step := 0; policy.unbounded() || step < policy.MaxToolSteps; step++ {
 		stepNumber := step + 1
 		if policy.shouldStopForDuration(metrics.startedAt) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Run duration budget is exhausted. Do not request any more tools. Summarize the work completed, unresolved gaps, and the narrowest next action.")
+			answer, err := controller.completeWithoutMoreToolsWithReason("Run duration budget is exhausted. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 			return finish(answer, err, "duration_budget_exhausted", true)
 		}
 		if policy.shouldStopForModelCalls(metrics.ModelCalls) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Model-call budget is exhausted. Do not request any more tools. Summarize the work completed, unresolved gaps, and the narrowest next action.")
+			answer, err := controller.completeWithoutMoreToolsWithReason("Model-call budget is exhausted. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 			return finish(answer, err, "model_call_budget_exhausted", true)
 		}
 		if r.compactTurnMessagesIfNeeded(&turnMessages, policy, taskLedger, collectedResults) {
@@ -326,12 +326,12 @@ func (r *Runner) Run(
 		if !ok {
 			if result, rejected := r.completionGateRejection(reply, collectedResults, stepNumber, taskLedger, declarationMovesForbidden); rejected {
 				if completionGateRejections >= 3 {
-					answer, err := controller.completeWithoutMoreToolsWithReason("Completion gate has rejected the final answer repeatedly. Do not request any more tools. Summarize the concrete blocker and the next action required.")
+					answer, err := controller.completeWithoutMoreToolsWithReason("Completion gate has rejected the final answer repeatedly. Tools are now disabled. Rewrite the final answer so it satisfies the active task contract using the gathered evidence. Mention a blocker only if the task cannot be completed from that evidence.")
 					return finish(answer, err, "completion_gate_repeated_rejection", true)
 				}
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
 				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-					answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Do not request any more tools. Summarize the work completed, the last blocker, and the narrowest remaining next action.")
+					answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 					return finish(answer, err, "no_progress_budget_exhausted", true)
 				}
 				continue
@@ -430,7 +430,7 @@ func (r *Runner) Run(
 						activeToolCall,
 						req,
 						"Doom-loop guard: user denied continuation",
-						fmt.Sprintf("the model repeated %s with the same arguments %d turns in a row; user denied continuation. Summarize the evidence already gathered and the concrete blocker.", req.Tool, identicalCallRun),
+						fmt.Sprintf("the model repeated %s with the same arguments %d turns in a row; user denied continuation. Answer from the evidence already gathered, and mention only one unsupported claim if that repetition prevented completion.", req.Tool, identicalCallRun),
 					)
 					return finish(answer, err, "doom_loop_guard", true)
 				}
@@ -440,7 +440,7 @@ func (r *Runner) Run(
 					activeToolCall,
 					req,
 					"Doom-loop guard tripped",
-					fmt.Sprintf("the model repeated %s with the same arguments %d turns in a row — stopping to prevent budget exhaustion. Summarize the evidence already gathered and the concrete blocker.", req.Tool, identicalCallRun),
+					fmt.Sprintf("the model repeated %s with the same arguments %d turns in a row; stopping to prevent budget exhaustion. Answer from the evidence already gathered, and mention only one unsupported claim if that repetition prevented completion.", req.Tool, identicalCallRun),
 				)
 				return finish(answer, err, "doom_loop_guard", true)
 			}
@@ -473,7 +473,7 @@ func (r *Runner) Run(
 				// teach it. Force-answer instead of letting the rejection
 				// ladder burn the rest of the step budget.
 				if requestBudget.postReadinessNoGapRejections >= 2 {
-					prompt := "You have repeatedly issued post-readiness reads without `named_gap`. Tools are now disabled. Synthesize a direct answer from the evidence already gathered; if a real gap remains, name it in prose rather than calling another tool."
+					prompt := "You have repeatedly issued post-readiness reads without `named_gap`. Tools are now disabled. Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
 					answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
 					return finish(answer, err, "post_readiness_no_gap_repeated", true)
 				}
@@ -668,7 +668,7 @@ func (r *Runner) Run(
 						SetLastToolKey:      false,
 					})
 					if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-						answer, err := controller.completeWithoutMoreToolsWithReason("Repeated tool request reused prior evidence, but the no-progress budget is exhausted. Do not request any more tools. Summarize the blocker and the narrowest remaining next action.")
+						answer, err := controller.completeWithoutMoreToolsWithReason("Repeated tool request reused prior evidence, but the no-progress budget is exhausted. Tools are now disabled. Write the normal final answer from the evidence already gathered. If the repeated request leaves one exact claim unsupported, state that uncertainty after the supported answer.")
 						return finish(answer, err, "no_progress_budget_exhausted", true)
 					}
 					continue
@@ -750,7 +750,7 @@ func (r *Runner) Run(
 			}
 			recorder.record(stepNumber, req, result, "child_task_result", true, true)
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the child task. Do not request any more tools. Summarize the work completed, the child-task result, and the narrowest remaining next action.")
+				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the child task. Tools are now disabled. Use the child-task result and gathered evidence to write the normal final answer. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
 			}
 			continue
@@ -760,7 +760,7 @@ func (r *Runner) Run(
 			recorder.activeToolCall = activeToolCall
 			recorder.record(stepNumber, req, result, "task_ledger_result", true, true)
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Do not request any more tools. Summarize the work completed, the last blocker, and the narrowest remaining next action.")
+				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
 			}
 			continue
@@ -832,7 +832,7 @@ func (r *Runner) Run(
 					return finish(answer, err, "guard_rejection_budget_exhausted", true)
 				}
 				if bootstrapReadReminder && policy.shouldStopForNoProgress(consecutiveNoProgress) {
-					answer, err := controller.completeWithoutMoreToolsWithReason("The implementation target was already available from bootstrap evidence, but progress stalled on duplicate reads. Do not request more tools. Summarize the blocker and the narrowest remaining action.")
+					answer, err := controller.completeWithoutMoreToolsWithReason("The implementation target was already available from bootstrap evidence, but progress stalled on duplicate reads. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 					return finish(answer, err, "no_progress_budget_exhausted", true)
 				}
 				continue
@@ -986,7 +986,7 @@ func (r *Runner) Run(
 					// Soft nudge already fired. Another 3-failure streak
 					// on the same stem means the model isn't absorbing
 					// the recovery hint. Terminate with what we have.
-					answer, err := controller.completeWithoutMoreToolsWithReason(fmt.Sprintf("Three more %s failures on %s after the recovery nudge - the model is not recovering. Do not request any more tools. Summarize the blocker and the narrowest remaining next action using the evidence you already have.", req.Tool, stem))
+					answer, err := controller.completeWithoutMoreToolsWithReason(fmt.Sprintf("Three more %s failures on %s after the recovery nudge. Tools are now disabled. Write the normal final answer from the evidence already gathered. If those failures leave one exact claim unsupported, state that uncertainty after the supported answer.", req.Tool, stem))
 					return finish(answer, err, "tool_failure_streak_exhausted", true)
 				}
 			}
@@ -994,11 +994,11 @@ func (r *Runner) Run(
 			executionState.noteToolFailure(req, result)
 		}
 		if executionState.noteMissingPathListFailure(r.Workspace.IsExploreMode(), req, result) >= 2 {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Exploration is probing conventional paths that do not exist in this repository. Do not request any more tools. Answer from the bootstrapped evidence and state the narrowest remaining validation step.")
+			answer, err := controller.completeWithoutMoreToolsWithReason("Exploration is probing conventional paths that do not exist in this repository. Tools are now disabled. Answer from the bootstrapped evidence; if one exact claim remains unsupported, state that uncertainty after the supported answer.")
 			return finish(answer, err, "missing_path_probe_budget_exhausted", true)
 		}
 		if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Do not request any more tools. Summarize the work completed, the last blocker, and the narrowest remaining next action.")
+			answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 			return finish(answer, err, "no_progress_budget_exhausted", true)
 		}
 	}
@@ -1015,7 +1015,7 @@ func (r *Runner) Run(
 // "keep probing" loop that produced the empty-answer failure in
 // logs/conversations/20260421-053044.479.jsonl.
 func maxToolStepsExhaustedReason() string {
-	return "Maximum tool steps for this turn have been reached. Tools are now disabled — do NOT emit another tool block. Respond with a concise, direct, text-only answer synthesized from the evidence already gathered. If a concrete answer is not yet possible, state the narrowest remaining blocker and the next action you would take. Do not leave the response blank."
+	return "Maximum tool steps for this turn have been reached. Tools are now disabled. Respond with a concise, direct, text-only final answer synthesized from the evidence already gathered. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action. Do not leave the response blank."
 }
 
 func replayRepeatedToolRequest(req workspace.ToolRequest, source workspace.ToolResult) workspace.ToolResult {
@@ -1686,7 +1686,7 @@ func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopR
 	}
 	if exhausted {
 		ledger.NextAllowedActions = []string{"answer_with_explicit_uncertainty", "ask_user_for_narrower_scope", "resume_with_fresh_budget"}
-		ledger.UserVisibleUncertainty = "state that a runner safety budget was exhausted and identify unresolved gaps"
+		ledger.UserVisibleUncertainty = "answer from gathered evidence and mention only unsupported claims that remain material"
 	}
 	data, err := json.Marshal(ledger)
 	if err != nil {
@@ -2421,14 +2421,14 @@ func postReadinessContinuationContract(scope string, budget int) string {
 	if strings.TrimSpace(scope) == "child_packet_available" {
 		anchor = "be anchored to a packet-named path or symbol (repo-wide search will be rejected) and target a symbol, branch, body, or narrow line range — file-level raw reads will be rejected as too broad"
 	}
-	probeBudgetLine := "  • use at most one targeted probe before answering or reporting the concrete blocker;"
+	probeBudgetLine := "  • use at most one targeted probe before answering or naming one unsupported claim;"
 	switch {
 	case budget <= 0:
-		probeBudgetLine = "  • no further reads are budgeted — answer now or report the concrete blocker;"
+		probeBudgetLine = "  • no further reads are budgeted — answer now or name one unsupported claim;"
 	case budget == 1:
 		// keep the default phrasing
 	default:
-		probeBudgetLine = fmt.Sprintf("  • use at most %d targeted probes before answering or reporting the concrete blocker;", budget)
+		probeBudgetLine = fmt.Sprintf("  • use at most %d targeted probes before answering or naming one unsupported claim;", budget)
 	}
 	lines := []string{
 		"Continuation contract — any further read or search after this point must:",
@@ -3321,6 +3321,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.ToolResult) (string, bool) {
 	useful := make([]workspace.ToolResult, 0, len(results))
 	for _, result := range results {
+		result = normalizeFallbackResult(result)
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" || !isResultUsefulForFallback(result) {
 			continue
 		}
@@ -3331,12 +3332,9 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 	}
 
 	paths := delegatedReadOnlyInspectedImplementationPaths(results)
-	if len(paths) == 0 {
-		paths = delegatedDiscoveryQueryEvidencePaths(results, 8)
-	}
-	if len(paths) == 0 {
-		paths = pinnedPathsFromToolResults(results, 4)
-	}
+	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, 8)...)
+	paths = append(paths, pinnedPathsFromToolResults(results, 8)...)
+	paths = prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), results, 8)
 	if len(paths) == 0 {
 		return "", false
 	}
@@ -5105,7 +5103,19 @@ func (r *Runner) completeWithoutMoreTools(
 	collectedResults []workspace.ToolResult,
 	metrics *runnerMetrics,
 ) (string, error) {
-	return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Tool budget is exhausted. Tools are now disabled — do NOT emit another tool block. Reply with a concise, direct, text-only answer from the evidence you already have. If a concrete answer is not yet possible, state the narrowest remaining blocker and the next action. Do not leave the response blank.", metrics)
+	return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Tool budget is exhausted. Tools are now disabled.", metrics)
+}
+
+func answerFirstNoToolsPrompt(reason string) string {
+	reason = strings.TrimSpace(reason)
+	contract := "Final answer contract: tools are unavailable now. Write the normal final answer from the evidence already gathered. If the evidence supports a concrete answer, answer directly and do not lead with budget, blocker, partial-findings, or recommended-next-step framing. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action."
+	if reason == "" {
+		return contract
+	}
+	if strings.Contains(reason, "Final answer contract:") {
+		return reason
+	}
+	return strings.TrimSpace(reason + "\n\n" + contract)
 }
 
 func (r *Runner) completeWithoutMoreToolsWithReason(
@@ -5118,8 +5128,9 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 ) (string, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
-		reason = "Do not request any more tools. Answer with the evidence you already have and explain any remaining blocker clearly."
+		reason = "Tools are now disabled."
 	}
+	reason = answerFirstNoToolsPrompt(reason)
 	preferModelSynthesis := shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults)
 	if !preferModelSynthesis {
 		if answer, ok := immediateBudgetFallbackAnswer(r.agentName(), r.RuntimeBrief, reason, collectedResults); ok {
@@ -5160,27 +5171,107 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	r.emitThinkingTrace(0, "forced_completion_reply", assistantMessage, textOnlyOpts, false)
 
 	if len(assistantMessage.ToolCalls) > 0 {
-		if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
+		if retry, ok, err := r.retryInvalidFinalAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics, "native tool call"); err != nil {
+			return "", err
+		} else if ok {
+			return retry, nil
+		}
+		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("tool loop exhausted and model still requested another tool instead of answering")
 	}
 	if looksLikeTextualToolCall(reply) {
-		if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
+		if retry, ok, err := r.retryInvalidFinalAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics, "textual tool call"); err != nil {
+			return "", err
+		} else if ok {
+			return retry, nil
+		}
+		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("tool loop exhausted and model still emitted textual tool call markup instead of answering")
 	}
 	if _, _, ok, parseErr := workspace.ParseToolRequest(reply); parseErr != nil {
+		if retry, retryOK, err := r.retryInvalidFinalAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics, "malformed tool request"); err != nil {
+			return "", err
+		} else if retryOK {
+			return retry, nil
+		}
+		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+			return fallback, nil
+		}
 		return "", parseErr
 	} else if ok {
-		if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
+		if retry, retryOK, err := r.retryInvalidFinalAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics, "tool request"); err != nil {
+			return "", err
+		} else if retryOK {
+			return retry, nil
+		}
+		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("tool loop exhausted and model still requested another tool instead of answering")
 	}
 
 	return r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics)
+}
+
+func (r *Runner) retryInvalidFinalAnswer(
+	ctx context.Context,
+	turnMessages []llama.ChatMessage,
+	reply llama.ChatMessage,
+	opts llama.ChatOptions,
+	collectedResults []workspace.ToolResult,
+	metrics *runnerMetrics,
+	reason string,
+) (string, bool, error) {
+	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
+	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
+		retryMessages = append(retryMessages, llama.ChatMessage{
+			Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+			Content:          reply.Content,
+			ReasoningContent: reply.ReasoningContent,
+		})
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "tool request"
+	}
+	retryMessages = append(retryMessages, llama.ChatMessage{
+		Role: "system",
+		Content: "Your previous final response was a " + reason + ", but tools are disabled for final synthesis. " +
+			"Do not emit tool JSON, XML, tool blocks, or another probe. Reply in normal prose from the evidence already gathered. " +
+			"If the evidence is sufficient, answer directly; if one exact claim remains unsupported, add that uncertainty after the supported answer in one sentence. " +
+			"Do not list internal tool traces, exact probes, or inspected-path inventories unless they are necessary to explain the answer.",
+	})
+
+	if metrics != nil {
+		metrics.ModelCalls++
+	}
+	modelStart := time.Now()
+	retryMessage, err := r.Client.CompleteChatMessage(ctx, retryMessages, opts)
+	if err != nil {
+		return "", false, err
+	}
+	if metrics != nil {
+		metrics.addUsage(retryMessage.Usage)
+	}
+	r.emitModelCallTrace(0, "invalid_final_answer_retry", retryMessages, retryMessage, time.Since(modelStart).Milliseconds())
+	r.emitThinkingTrace(0, "invalid_final_answer_retry_reply", retryMessage, opts, false)
+
+	if len(retryMessage.ToolCalls) > 0 {
+		return "", false, nil
+	}
+	content := strings.TrimSpace(retryMessage.Content)
+	if content == "" || looksLikeTextualToolCall(content) {
+		return "", false, nil
+	}
+	if _, _, ok, parseErr := workspace.ParseToolRequest(content); ok || parseErr != nil {
+		return "", false, nil
+	}
+	r.LastAssistantMessage = retryMessage
+	return content, true, nil
 }
 
 func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -5468,7 +5559,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 	trimmed := strings.TrimSpace(reply.Content)
 	if trimmed != "" {
 		if looksLikeTextualToolCall(trimmed) {
-			if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
+			if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 				return fallback, nil
 			}
 			return "", fmt.Errorf("%s agent emitted textual tool call markup instead of a non-empty answer", r.agentName())
@@ -5490,7 +5581,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 		Content: "Your previous response was empty. Tools are disabled now — do NOT emit a tool block. " +
 			"Reply with a direct, non-empty answer based on the evidence already gathered. Keep it short " +
 			"(a few sentences or a brief list). No preamble like \"Based on...\" or \"Here is...\" — just the answer. " +
-			"If a concrete answer is not yet possible, state the narrowest remaining blocker in one sentence.",
+			"If one exact claim remains unsupported, state that uncertainty after the supported answer in one sentence.",
 	})
 
 	if metrics != nil {
@@ -5509,13 +5600,13 @@ func (r *Runner) ensureNonEmptyAnswer(
 	retryReply := retryMessage.Content
 	r.emitThinkingTrace(0, "empty_answer_retry_reply", retryMessage, textOnlyOpts, false)
 	if len(retryMessage.ToolCalls) > 0 {
-		if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
+		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("%s agent emitted a tool request instead of a non-empty answer", r.agentName())
 	}
 	if looksLikeTextualToolCall(retryReply) {
-		if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
+		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("%s agent emitted textual tool call markup instead of a non-empty answer", r.agentName())
@@ -5523,7 +5614,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 	if _, _, ok, parseErr := workspace.ParseToolRequest(retryReply); parseErr != nil {
 		return "", parseErr
 	} else if ok {
-		if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
+		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("%s agent emitted a tool request instead of a non-empty answer", r.agentName())
@@ -5531,7 +5622,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 
 	retryTrimmed := strings.TrimSpace(retryReply)
 	if retryTrimmed == "" {
-		if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
+		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("%s agent returned an empty response", r.agentName())
@@ -5568,6 +5659,23 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	}
 	if usefulFallbackResultCount(results) < 2 {
 		return "", false
+	}
+	return synthesizeFallbackAnswer(agentName, results)
+}
+
+func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if len(results) == 0 {
+		return "", false
+	}
+	if !runnerBriefRequiresMutation(brief) && !runnerVerificationRequired(brief) {
+		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
+			return answer, true
+		}
+		if output, ok := bestTaskResultOutput(results); ok && childPacketContainsGroundedAnswerEvidence(output) {
+			if normalized := normalizeDelegatedReadOnlyPacket(output); strings.TrimSpace(normalized) != "" {
+				return normalized, true
+			}
+		}
 	}
 	return synthesizeFallbackAnswer(agentName, results)
 }
@@ -5665,7 +5773,7 @@ func annotateBudgetLimitedAnswer(answer string) string {
 	if answer == "" {
 		return ""
 	}
-	return "Best grounded answer from the gathered evidence (the turn hit a safety budget before broader synthesis):\n\n" + answer
+	return answer
 }
 
 // inferFallbackObservations turns a handful of read_file / outline results

@@ -27,6 +27,9 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	if !finalAnswerNeedsDecoration(answer) {
 		return answer
 	}
+	if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
+		return cleaned
+	}
 	if composed, ok := r.composedFinalAnswerFromEvidence(input); ok {
 		return composed
 	}
@@ -34,11 +37,21 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 }
 
 func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput) (string, bool) {
-	if answer, ok := synthesizeDelegatedReadOnlyAnswer(input.Brief.Objective, input.Results); ok && !finalAnswerNeedsDecoration(answer) {
-		return answer, true
+	if output, ok := bestTaskResultOutput(input.Results); ok {
+		if cleaned, ok := cleanedSubstantiveFinalAnswer(output); ok {
+			return cleaned, true
+		}
+		if !finalAnswerNeedsDecoration(output) {
+			return output, true
+		}
 	}
-	if output, ok := bestTaskResultOutput(input.Results); ok && !finalAnswerNeedsDecoration(output) {
-		return output, true
+	if answer, ok := synthesizeDelegatedReadOnlyAnswer(input.Brief.Objective, input.Results); ok {
+		if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
+			return cleaned, true
+		}
+		if !finalAnswerNeedsDecoration(answer) {
+			return answer, true
+		}
 	}
 	return "", false
 }
@@ -65,13 +78,23 @@ func finalAnswerNeedsDecoration(answer string) bool {
 	}
 	if strings.HasPrefix(lower, "what i found:") ||
 		strings.HasPrefix(lower, "partial findings from this turn") ||
-		strings.HasPrefix(lower, "question:") {
+		strings.HasPrefix(lower, "## grounded answer") ||
+		strings.HasPrefix(lower, "question:") ||
+		strings.Contains(lower, "source: delegated read-only evidence packet") ||
+		strings.Contains(lower, "the gathered evidence points to these implementation surfaces") ||
+		strings.Contains(lower, "additional inspected paths:") ||
+		strings.Contains(lower, "exact probes already inspected:") {
 		return true
 	}
 	return containsAny(lower,
+		"\nevidence:\n- text anchors:",
+		"### evidence highlights",
+		"### decision guidance",
 		"discovery packet",
 		"relevant source hits",
 		"evidence used:",
+		"inspected paths:",
+		"key findings:",
 		"text_anchor_search:",
 		"go_read_symbol:",
 		"go_workspace_symbol:",
@@ -92,10 +115,55 @@ func finalAnswerStopReasonPrefersDecoration(stopReason string) bool {
 
 func finalAnswerStopReasonPreservesUncertainty(stopReason string) bool {
 	switch strings.TrimSpace(stopReason) {
-	case "post_child_read_budget_exhausted", "closure_synthesis_after_ignored_nudge":
+	case "post_child_read_budget_exhausted",
+		"post_readiness_probe_budget_exhausted",
+		"post_readiness_no_gap_repeated",
+		"closure_synthesis_after_ignored_nudge":
 		return false
 	}
 	return strings.HasSuffix(strings.TrimSpace(stopReason), "_budget_exhausted")
+}
+
+func cleanedSubstantiveFinalAnswer(answer string) (string, bool) {
+	cleaned := stripInternalEvidenceAppendix(answer)
+	if !looksLikeSubstantiveFinalAnswer(cleaned) || finalAnswerNeedsDecoration(cleaned) {
+		return "", false
+	}
+	return cleaned, true
+}
+
+func stripInternalEvidenceAppendix(answer string) string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return ""
+	}
+	cut := len(answer)
+	for _, marker := range []string{
+		"\n\nAdditional inspected paths:",
+		"\nAdditional inspected paths:",
+		"\n\nExact probes already inspected:",
+		"\nExact probes already inspected:",
+	} {
+		if idx := strings.Index(answer, marker); idx >= 0 && idx < cut {
+			cut = idx
+		}
+	}
+	return strings.TrimSpace(answer[:cut])
+}
+
+func looksLikeSubstantiveFinalAnswer(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if len(answer) < 80 {
+		return false
+	}
+	lower := strings.ToLower(answer)
+	if strings.HasPrefix(lower, "for `") && strings.Contains(lower, "the gathered evidence points to these implementation surfaces") {
+		return false
+	}
+	if strings.Contains(lower, "\nevidence:\n- text anchors:") {
+		return false
+	}
+	return strings.Contains(answer, ".") || strings.Contains(answer, "\n- ")
 }
 
 func (r *Runner) userFacingFinalAnswer() bool {

@@ -26,29 +26,26 @@ func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool) {
 
 func composeGenericEvidenceAnswer(question string, summaries []delegatedDiscoverySummary, paths []string) string {
 	var b strings.Builder
-	b.WriteString("## Grounded Answer\n\n")
-	if strings.TrimSpace(question) != "" {
-		b.WriteString("For `")
-		b.WriteString(strings.TrimSpace(question))
-		b.WriteString("`, the inspected evidence points to the following implementation surfaces and findings.\n\n")
+	if len(paths) > 0 {
+		b.WriteString("The strongest implementation evidence is in ")
+		b.WriteString(formatInlinePathList(paths, 4))
+		b.WriteString(".")
 	} else {
-		b.WriteString("The inspected evidence points to the following implementation surfaces and findings.\n\n")
+		b.WriteString("The inspected implementation evidence is enough to give a bounded answer.")
 	}
+	if strings.TrimSpace(question) != "" {
+		b.WriteString(" Use those findings as the source of truth for `")
+		b.WriteString(strings.TrimSpace(question))
+		b.WriteString("`.")
+	}
+	b.WriteString("\n\n")
 	if lines := decoratedDiscoveryFindingLines(summaries, 4); len(lines) > 0 {
-		b.WriteString("### Evidence Highlights\n")
+		b.WriteString("What this establishes:\n")
 		for _, line := range lines {
 			b.WriteString("- ")
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
-		b.WriteString("\n")
-	}
-	b.WriteString("### Decision Guidance\n")
-	b.WriteString("- Answer from the strongest evidence already gathered; continue only if one exact missing claim remains and one exact follow-up probe would materially change the answer.\n")
-	if len(paths) > 0 {
-		b.WriteString("\nPrimary files: ")
-		b.WriteString(formatInlinePathList(paths, 4))
-		b.WriteString(".")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -125,7 +122,17 @@ func formatInlinePathList(paths []string, max int) string {
 	}
 	parts := make([]string, 0, len(paths))
 	for _, path := range paths {
+		path = cleanInlineEvidencePath(path)
+		if path == "" {
+			continue
+		}
 		parts = append(parts, "`"+path+"`")
 	}
 	return strings.Join(parts, ", ")
+}
+
+func cleanInlineEvidencePath(path string) string {
+	path = strings.TrimSpace(strings.ReplaceAll(path, "`", ""))
+	path = strings.TrimRight(path, ".,;:")
+	return strings.TrimSpace(path)
 }

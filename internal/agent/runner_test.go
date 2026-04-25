@@ -1213,6 +1213,7 @@ func TestForcedCompletionTreatsXMLToolMarkupAsToolRequest(t *testing.T) {
 	replies := []string{
 		`{"tool":"read_file","path":"README.md"}`,
 		"<tool_call>\n<function=read_file>\n<parameter=path>README.md</parameter>\n</function>\n</tool_call>",
+		"README.md was inspected and contains the gathered evidence needed for this answer.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1248,8 +1249,67 @@ func TestForcedCompletionTreatsXMLToolMarkupAsToolRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if strings.Contains(answer, "<tool_call>") || !strings.Contains(answer, "Partial findings") {
-		t.Fatalf("expected synthesized fallback instead of XML tool markup, got:\n%s", answer)
+	if strings.Contains(answer, "<tool_call>") || !strings.Contains(answer, "README.md was inspected") {
+		t.Fatalf("expected repaired prose answer instead of XML tool markup, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "Partial findings") {
+		t.Fatalf("expected normal evidence answer without partial-findings banner, got:\n%s", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected invalid final answer retry, got %d requests", requests)
+	}
+}
+
+func TestForcedCompletionRepairsTextualJSONToolRequestBeforeFallback(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"README.md"}`,
+		`{"tool":"read_file","path":"README.md","named_gap":"read more before answering"}`,
+		"The harness should answer from the evidence already gathered instead of requesting another tool.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 2},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "inspect once then answer"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != replies[2] {
+		t.Fatalf("expected repaired prose answer before deterministic fallback, got:\n%s", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected invalid final answer retry, got %d requests", requests)
 	}
 }
 
@@ -3109,10 +3169,13 @@ func TestImmediateBudgetFallbackAnswerUsesExistingEvidence(t *testing.T) {
 	if !ok {
 		t.Fatal("expected immediate fallback answer")
 	}
-	for _, want := range []string{"Best grounded answer from the gathered evidence", "Source: delegated read-only evidence packet.", "`internal/agent/runner.go`"} {
+	for _, want := range []string{"Source: delegated read-only evidence packet.", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected fallback to include %q, got:\n%s", want, answer)
 		}
+	}
+	if strings.Contains(answer, "Best grounded answer from the gathered evidence") {
+		t.Fatalf("expected evidence answer without fallback banner, got:\n%s", answer)
 	}
 }
 
@@ -3587,11 +3650,9 @@ func TestDelegatedDiscoveryQueryEvidencePathsFeedSynthesizedAnswer(t *testing.T)
 		}
 	}
 	for _, want := range []string{
-		"## Grounded Answer",
-		"### Evidence Highlights",
+		"The strongest implementation evidence is in",
+		"What this establishes:",
 		"Text anchors:",
-		"### Decision Guidance",
-		"Primary files:",
 	} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected human-readable discovery synthesis to contain %q, got:\n%s", want, answer)
@@ -3636,10 +3697,9 @@ func TestDelegatedDiscoveryAnswerStaysGenericForDebugLogRedactedMode(t *testing.
 		t.Fatal("expected synthesized answer from debug log evidence")
 	}
 	for _, want := range []string{
-		"## Grounded Answer",
-		"### Evidence Highlights",
+		"The strongest implementation evidence is in",
+		"What this establishes:",
 		"Text anchors:",
-		"### Decision Guidance",
 		"`internal/transcript/debuglog.go`",
 		"`internal/app/model_state.go`",
 	} {
@@ -3657,7 +3717,7 @@ func TestDelegatedDiscoveryAnswerStaysGenericForDebugLogRedactedMode(t *testing.
 func TestAnswerComposerDoesNotLeakTelemetrySections(t *testing.T) {
 	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
 		Question:      "Can you tell me how this harness uses subagents?",
-		EvidencePaths: []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"},
+		EvidencePaths: []string{"`internal/agent/runner.go`,", "internal/agent/runner_child_tasks.go"},
 		Summaries: []delegatedDiscoverySummary{{
 			Purpose:      "architecture_boundary",
 			ArtifactPath: ".idiom/discovery/queries/query.json",
@@ -3671,9 +3731,17 @@ func TestAnswerComposerDoesNotLeakTelemetrySections(t *testing.T) {
 			t.Fatalf("answer composer leaked telemetry section %q:\n%s", forbidden, answer)
 		}
 	}
-	for _, want := range []string{"## Grounded Answer", "### Evidence Highlights", "### Decision Guidance", "Primary files:"} {
+	for _, want := range []string{"The strongest implementation evidence is in", "Use those findings as the source of truth"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer composer missing polished section %q:\n%s", want, answer)
+		}
+	}
+	if !strings.Contains(answer, "`internal/agent/runner.go`, `internal/agent/runner_child_tasks.go`") {
+		t.Fatalf("answer composer should format inline evidence paths cleanly:\n%s", answer)
+	}
+	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer composer leaked internal heading %q:\n%s", forbidden, answer)
 		}
 	}
 }
@@ -3734,11 +3802,10 @@ func TestAnswerComposerDecoratesDiscoveryToolEvidenceGenerically(t *testing.T) {
 		t.Fatal("expected generic discovery-tool evidence answer")
 	}
 	for _, want := range []string{
-		"## Grounded Answer",
-		"### Evidence Highlights",
+		"The strongest implementation evidence is in",
+		"What this establishes:",
 		"Text anchors:",
 		"Dependency graph:",
-		"### Decision Guidance",
 		"`internal/agent/answer_composer.go`",
 		"`internal/agent/runner.go`",
 		"`internal/agent/runner_lane_policy.go`",
@@ -3747,7 +3814,7 @@ func TestAnswerComposerDecoratesDiscoveryToolEvidenceGenerically(t *testing.T) {
 			t.Fatalf("expected generic discovery evidence answer to contain %q, got:\n%s", want, answer)
 		}
 	}
-	for _, forbidden := range []string{"## Discovery Tool Improvements", "Purpose-specific answer blueprints", "What I found:", "text_anchor_search:", "Open a returned handle", "Discovery packet:", "discovery packet", "Evidence used:", "Confidence:"} {
+	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "## Discovery Tool Improvements", "Purpose-specific answer blueprints", "What I found:", "text_anchor_search:", "Open a returned handle", "Discovery packet:", "discovery packet", "Evidence used:", "Confidence:"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("generic discovery evidence answer leaked template/raw section %q:\n%s", forbidden, answer)
 		}
@@ -3776,12 +3843,12 @@ func TestAnswerComposerGenericFallbackDecoratesDiscoveryLayers(t *testing.T) {
 	if !ok {
 		t.Fatal("expected generic composed answer")
 	}
-	for _, want := range []string{"## Grounded Answer", "### Evidence Highlights", "Text anchors:", "Symbol read:", "### Decision Guidance"} {
+	for _, want := range []string{"The strongest implementation evidence is in", "What this establishes:", "Text anchors:", "Symbol read:"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected decorated generic answer to contain %q, got:\n%s", want, answer)
 		}
 	}
-	for _, forbidden := range []string{"What I found:", "text_anchor_search:", "go_read_symbol:", "Use read_file on a returned handle", "Discovery packet:", "discovery packet", "Confidence:"} {
+	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "What I found:", "text_anchor_search:", "go_read_symbol:", "Use read_file on a returned handle", "Discovery packet:", "discovery packet", "Confidence:"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("generic answer leaked raw discovery wording %q:\n%s", forbidden, answer)
 		}
@@ -3840,12 +3907,12 @@ func TestRunnerFinalBoundaryDecoratesModelFinalDiscoveryAnswer(t *testing.T) {
 	if requests != 1 {
 		t.Fatalf("expected one model request, got %d", requests)
 	}
-	for _, want := range []string{"## Grounded Answer", "### Evidence Highlights", "Text anchors:", "`internal/agent/answer_composer.go`", "`internal/agent/runner.go`"} {
+	for _, want := range []string{"The strongest implementation evidence is in", "What this establishes:", "Text anchors:", "`internal/agent/answer_composer.go`", "`internal/agent/runner.go`"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected decorated final answer to contain %q, got:\n%s", want, answer)
 		}
 	}
-	for _, forbidden := range []string{"## Discovery Tool Improvements", "Purpose-specific answer blueprints", "What I found:", "text_anchor_search:", "Discovery packet", "Confidence:"} {
+	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "## Discovery Tool Improvements", "Purpose-specific answer blueprints", "What I found:", "text_anchor_search:", "Discovery packet", "Confidence:"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("final boundary leaked raw answer section %q:\n%s", forbidden, answer)
 		}
@@ -3896,6 +3963,60 @@ func TestFinalAnswerDecoratorPreservesBudgetExhaustionUncertainty(t *testing.T) 
 	})
 	if answer != raw {
 		t.Fatalf("expected budget-exhausted answer to preserve raw uncertainty, got:\n%s", answer)
+	}
+}
+
+func TestFinalAnswerDecoratorDecoratesPostReadinessBudgetClosure(t *testing.T) {
+	raw := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Ran discovery query\n"
+	runner := &Runner{}
+	answer := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     raw,
+		StopReason: "post_readiness_probe_budget_exhausted",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "delegated_read_only",
+			Objective:  "Explain how discovery tools are routed.",
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "discovery_query",
+			Summary: "Ran discovery query",
+			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found routed implementation paths.","output_excerpt":"internal/agent/runner.go:128: finish"}]}`,
+		}},
+		UserFacing: true,
+	})
+	if strings.Contains(answer, "Partial findings from this turn") {
+		t.Fatalf("expected post-readiness closure to use composed answer, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "## Grounded Answer") || strings.Contains(answer, "### Decision Guidance") {
+		t.Fatalf("expected composed answer without internal composer headings, got:\n%s", answer)
+	}
+	if !strings.Contains(answer, "The strongest implementation evidence is in") || !strings.Contains(answer, "internal/agent/runner.go") {
+		t.Fatalf("expected composed grounded answer, got:\n%s", answer)
+	}
+}
+
+func TestFinalAnswerDecoratorPreservesSubstantiveModelAnswerOverEvidencePacket(t *testing.T) {
+	raw := "The harness uses sub-agents through the `task` tool. The parent runner delegates broad read-only questions to a bounded child runner, and `Runner.runChildTask` creates that child with its own prompt, policy, tool budget, and read-only permissions before returning the child result as the parent's evidence packet.\n\nAdditional inspected paths:\n- `internal/agent/answer_composer.go`\n\nExact probes already inspected:\n- `runChildTask`"
+	runner := &Runner{}
+	answer := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     raw,
+		StopReason: "post_readiness_probe_budget_exhausted",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "architecture",
+			Objective:  "how does this harness utilize sub-agents?",
+		},
+		Results: []workspace.ToolResult{{
+			Tool:   "task",
+			Output: "For `how does this harness utilize sub-agents?`, the gathered evidence points to these implementation surfaces and findings.\n\nEvidence:\n- Text anchors: Found 25 matching line(s).\n\nPrimary files: `internal/agent/runner.go`, `internal/agent/runner_child_tasks.go`.",
+		}},
+		UserFacing: true,
+	})
+	if !strings.Contains(answer, "The harness uses sub-agents through the `task` tool") {
+		t.Fatalf("expected substantive model answer to be preserved, got:\n%s", answer)
+	}
+	for _, forbidden := range []string{"Additional inspected paths:", "Exact probes already inspected:", "the gathered evidence points to these implementation surfaces", "Evidence:\n- Text anchors:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("expected internal evidence packet/appendix %q to be removed, got:\n%s", forbidden, answer)
+		}
 	}
 }
 
