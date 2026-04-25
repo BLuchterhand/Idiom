@@ -568,32 +568,36 @@ func (r *Runner) Run(
 		}
 		if toolKey != "" && toolKey == lastToolKey && strings.TrimSpace(req.Tool) != "go_file_outline" {
 			if lastToolResult != nil {
-				if replayedToolRequests[toolKey] > 0 {
-					answer, err, done := controller.rejectTool(
-						stepNumber,
-						activeToolCall,
-						req,
-						"Repeated tool request rejected",
-						"this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker.",
-					)
-					if done {
-						return finish(answer, err, "repeated_tool_budget_exhausted", true)
+				if allowRecoverablePostReadinessRepairExecution(req, *lastToolResult) {
+					delete(replayedToolRequests, toolKey)
+				} else {
+					if replayedToolRequests[toolKey] > 0 {
+						answer, err, done := controller.rejectTool(
+							stepNumber,
+							activeToolCall,
+							req,
+							"Repeated tool request rejected",
+							"this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker.",
+						)
+						if done {
+							return finish(answer, err, "repeated_tool_budget_exhausted", true)
+						}
+						continue
+					}
+					replayed := replayRepeatedToolRequest(req, *lastToolResult)
+					replayedToolRequests[toolKey]++
+					recorder.activeToolCall = activeToolCall
+					recorder.recordWithOptions(stepNumber, req, replayed, "tool_replayed", runnerRecordOptions{
+						ResetRejected:       true,
+						IncrementNoProgress: true,
+						SetLastToolKey:      false,
+					})
+					if policy.shouldStopForNoProgress(consecutiveNoProgress) {
+						answer, err := controller.completeWithoutMoreToolsWithReason("Repeated tool request reused prior evidence, but the no-progress budget is exhausted. Do not request any more tools. Summarize the blocker and the narrowest remaining next action.")
+						return finish(answer, err, "no_progress_budget_exhausted", true)
 					}
 					continue
 				}
-				replayed := replayRepeatedToolRequest(req, *lastToolResult)
-				replayedToolRequests[toolKey]++
-				recorder.activeToolCall = activeToolCall
-				recorder.recordWithOptions(stepNumber, req, replayed, "tool_replayed", runnerRecordOptions{
-					ResetRejected:       true,
-					IncrementNoProgress: true,
-					SetLastToolKey:      false,
-				})
-				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-					answer, err := controller.completeWithoutMoreToolsWithReason("Repeated tool request reused prior evidence, but the no-progress budget is exhausted. Do not request any more tools. Summarize the blocker and the narrowest remaining next action.")
-					return finish(answer, err, "no_progress_budget_exhausted", true)
-				}
-				continue
 			}
 			errorText := "you just ran the same tool request. Do not loop on broad inspection. Use search_files, search_content, read_file on a discovered handle, or a targeted shell search/read command to narrow, or answer with what you already know."
 			if strings.TrimSpace(req.Tool) == "go_move_declarations" {
@@ -915,6 +919,10 @@ func replayRepeatedToolRequest(req workspace.ToolRequest, source workspace.ToolR
 		Output:  source.Output,
 		Error:   source.Error,
 	}
+}
+
+func allowRecoverablePostReadinessRepairExecution(req workspace.ToolRequest, lastToolResult workspace.ToolResult) bool {
+	return postReadinessGap(req) != "" && isRecoverablePostReadinessGapRejection(lastToolResult.Summary)
 }
 
 func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMessage, opts llama.ChatOptions, preservedInHistory bool) {

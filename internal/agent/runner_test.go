@@ -4952,6 +4952,7 @@ func TestCorrectedNamedGapRetryIsAllowedOnce(t *testing.T) {
 	}
 	foundMissingGapRejection := false
 	foundRepeatedDeadEnd := false
+	foundToolReplayed := false
 	for _, ev := range events {
 		if strings.Contains(ev.Content, "Post-readiness follow-up missing named gap") {
 			foundMissingGapRejection = true
@@ -4959,12 +4960,18 @@ func TestCorrectedNamedGapRetryIsAllowedOnce(t *testing.T) {
 		if strings.Contains(ev.Content, "Repeated dead-end action rejected") {
 			foundRepeatedDeadEnd = true
 		}
+		if ev.Role == "tool_replayed" || strings.Contains(ev.Content, "replayed same blocker") {
+			foundToolReplayed = true
+		}
 	}
 	if !foundMissingGapRejection {
 		t.Fatalf("expected repaired-retry scenario to first hit the missing named-gap rejection, roles=%v", eventRolesFor(events))
 	}
 	if foundRepeatedDeadEnd {
 		t.Fatalf("corrected named-gap retry should not be reclassified as a repeated dead end, roles=%v", eventRolesFor(events))
+	}
+	if foundToolReplayed {
+		t.Fatalf("corrected named-gap retry should execute, not replay the prior missing-gap blocker, roles=%v", eventRolesFor(events))
 	}
 	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
 		t.Fatalf("expected no rejection_retry_blocked after corrected named-gap retry, got %d; roles=%v", got, eventRolesFor(events))

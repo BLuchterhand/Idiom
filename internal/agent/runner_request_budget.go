@@ -116,7 +116,9 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 }
 
 func isRecoverablePostReadinessGapRejection(summary string) bool {
-	switch strings.TrimSpace(summary) {
+	summary = strings.TrimSpace(summary)
+	summary = strings.TrimSuffix(summary, " (replayed same blocker)")
+	switch summary {
 	case "Post-readiness follow-up missing named gap", "Post-child follow-up missing named gap":
 		return true
 	default:
