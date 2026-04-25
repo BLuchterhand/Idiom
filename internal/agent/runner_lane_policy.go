@@ -74,15 +74,6 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
-	if prompt, ok := r.delegatedReadOnlyAnswerReadyPrompt(input.Results, decision.Request); ok {
-		decision.RejectSummary = "Delegated child evidence is sufficient for a grounded answer"
-		decision.RejectError = "you already inspected the key implementation surfaces needed for this delegated read-only question. Do not request more tools; answer directly from the evidence you already have."
-		decision.ForceAnswer = &runnerForcedAnswer{
-			Reason: "delegated_read_only_answer_ready",
-			Prompt: prompt,
-		}
-		return decision
-	}
 
 	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "read_only_verification_shell") &&
 		!isVerificationRequest(decision.Request) {
@@ -607,64 +598,30 @@ func (r *Runner) delegatedReadOnlySearchHitReadRedirect(results []workspace.Tool
 	}, true
 }
 
-func (r *Runner) delegatedReadOnlyAnswerReadyPrompt(results []workspace.ToolResult, req workspace.ToolRequest) (string, bool) {
-	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
-		return "", false
-	}
-	if !isReadClassTool(req) {
-		return "", false
-	}
-	if delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
-		return strings.Join([]string{
-			"You already have a deterministic discovery_query evidence packet for this delegated read-only question.",
-			"Do not request more broad discovery.",
-			"Answer directly from the packet's layer summaries and compact evidence excerpts.",
-			"Cite the artifact path plus any repository-relative paths visible in the evidence, and give a concise confidence level.",
-		}, "\n"), true
-	}
-	paths := delegatedReadOnlyInspectedImplementationPaths(results)
-	if len(paths) < 2 {
-		return "", false
-	}
-	return strings.Join([]string{
-		"You already inspected enough implementation evidence for this delegated read-only question.",
-		"Do not request more tools.",
-		"Answer directly from the inspected code.",
-		"State the mechanism, cite the inspected repository-relative paths, and give a concise confidence level.",
-	}, "\n"), true
-}
-
-func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) (*runnerForcedAnswer, bool) {
+func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) bool {
 	if r == nil || strings.TrimSpace(result.Error) != "" {
-		return nil, false
+		return false
 	}
 	if !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
-		return nil, false
+		return false
 	}
 	if runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
-		return nil, false
+		return false
 	}
 	tool := strings.TrimSpace(firstNonEmpty(result.Tool, req.Tool))
 	switch {
 	case tool == "discovery_query":
 		if !delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
-			return nil, false
+			return false
 		}
 	case isReadClassTool(workspace.ToolRequest{Tool: tool}):
 		if len(delegatedReadOnlyInspectedImplementationPaths(results)) < 2 {
-			return nil, false
+			return false
 		}
 	default:
-		return nil, false
+		return false
 	}
-	prompt, ok := r.delegatedReadOnlyAnswerReadyPrompt(results, workspace.ToolRequest{Tool: "read_file"})
-	if !ok {
-		return nil, false
-	}
-	return &runnerForcedAnswer{
-		Reason: "delegated_read_only_answer_ready",
-		Prompt: prompt,
-	}, true
+	return true
 }
 
 func delegatedReadOnlyHasCompositeDiscoveryPacket(results []workspace.ToolResult) bool {

@@ -71,13 +71,13 @@ func (r *Runner) Run(
 ) (answer string, err error) {
 	turnMessages := append([]llama.ChatMessage(nil), messages...)
 	executionState := newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects)
+	delegatedReadOnlyAnswerReadyNudged := false
 	// turnHiddenTools tracks tools that have been gated enough times this
 	// turn that we should stop advertising them in the manifest. Removes
 	// a class of waste outright: if list_files is chained past the gate,
 	// hiding it for the rest of the turn prevents another round of token
 	// spend on calls we're going to reject anyway.
 	turnHiddenTools := make(map[string]bool)
-	forceOnlyTaskTool := false
 	rebuildTools := func() {
 		if r.Workspace == nil {
 			return
@@ -87,15 +87,6 @@ func (r *Runner) Run(
 			filtered := make([]string, 0, 1)
 			for _, t := range allowed {
 				if t == "shell" {
-					filtered = append(filtered, t)
-				}
-			}
-			allowed = filtered
-		}
-		if forceOnlyTaskTool {
-			filtered := make([]string, 0, 2)
-			for _, t := range allowed {
-				if t == "task" {
 					filtered = append(filtered, t)
 				}
 			}
@@ -330,10 +321,6 @@ func (r *Runner) Run(
 					Error:   preflight.RejectError,
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
-				if answer, ok := r.directForcedAnswer(preflight.ForceAnswer, collectedResults); ok {
-					r.emitAcceptedAnswerSignals(answer, collectedResults)
-					return finish(answer, nil, preflight.ForceAnswer.Reason, true)
-				}
 				answer, err := controller.completeWithoutMoreToolsWithReason(preflight.ForceAnswer.Prompt)
 				return finish(answer, err, preflight.ForceAnswer.Reason, true)
 			}
@@ -426,8 +413,6 @@ func (r *Runner) Run(
 		}
 		if decision := requestBudget.explorationDecision(r, req, collectedResults); decision.Handled {
 			if decision.Nudge != "" {
-				forceOnlyTaskTool = true
-				rebuildTools()
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
 			}
 			if decision.EventRole != "" {
@@ -644,7 +629,6 @@ func (r *Runner) Run(
 			if strings.TrimSpace(result.Error) == "" && !isWriteChildMode(req.Mode) {
 				requestBudget.broadEvidenceDelegationSatisfied = true
 				requestBudget.readOnlyChildTaskSatisfied = true
-				forceOnlyTaskTool = false
 				hideBroadDiscoveryTools(turnHiddenTools)
 				turnHiddenTools["task"] = true
 				rebuildTools()
@@ -654,31 +638,6 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "child_packet_boundary", Content: nudge})
 			}
 			recorder.record(stepNumber, req, result, "child_task_result", true, true)
-			if shouldAnswerDirectlyFromChildPacket(r.RuntimeBrief, result) {
-				answer := strings.TrimSpace(result.Output)
-				if answer == "" {
-					if fallback, ok := synthesizeFallbackAnswer(r.agentName(), collectedResults); ok {
-						answer = fallback
-					}
-				}
-				if answer != "" {
-					answer = annotateScopedFallbackAnswer(answer, r.RuntimeBrief.Objective)
-					r.emitAcceptedAnswerSignals(answer, collectedResults)
-					return finish(answer, nil, "child_packet_answered", false)
-				}
-			}
-			if strings.TrimSpace(result.Error) == "" && strings.TrimSpace(result.Output) != "" &&
-				!runnerBriefRequiresMutation(r.RuntimeBrief) && !runnerVerificationRequired(r.RuntimeBrief) {
-				answer, err := controller.completeWithoutMoreToolsWithReason(strings.Join([]string{
-					"Use the delegated child packet as the evidence source.",
-					"Do not request any more tools.",
-					"Answer the user's question directly with the mechanism, inspected repository-relative paths, and confidence.",
-					"Do not use a partial-findings template.",
-					"Do not mention budget exhaustion unless the packet explicitly leaves a named unresolved gap.",
-				}, "\n"))
-				r.emitAcceptedAnswerSignals(answer, collectedResults)
-				return finish(answer, err, "child_packet_synthesized_answer", false)
-			}
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the child task. Do not request any more tools. Summarize the work completed, the child-task result, and the narrowest remaining next action.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
@@ -831,11 +790,17 @@ func (r *Runner) Run(
 		}
 		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
 		r.attachInstructionsForTouchedPaths(&turnMessages, req, result)
-		if forced, ok := r.delegatedReadOnlyAnswerReadyAfterResult(req, result, collectedResults); ok {
-			if answer, ok := r.directForcedAnswer(forced, collectedResults); ok {
-				r.emitDelegatedReadOnlyAnswerReadyEvent(req, collectedResults)
-				r.emitAcceptedAnswerSignals(answer, collectedResults)
-				return finish(answer, nil, forced.Reason, false)
+		if r.delegatedReadOnlyAnswerReadyAfterResult(req, result, collectedResults) {
+			r.emitDelegatedReadOnlyAnswerReadyEvent(req, collectedResults)
+			if !delegatedReadOnlyAnswerReadyNudged {
+				delegatedReadOnlyAnswerReadyNudged = true
+				nudge := strings.Join([]string{
+					"You likely have enough delegated read-only evidence to answer this question.",
+					"Do not restart broad discovery.",
+					"If a specific gap remains, use one targeted follow-up read or search; otherwise answer directly from the evidence gathered so far.",
+				}, "\n")
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+				r.emitEvent(RunEvent{Role: "delegated_read_only_answer_ready_nudge", Content: nudge})
 			}
 		}
 		if strings.TrimSpace(result.Error) != "" {
@@ -2063,19 +2028,6 @@ func filterOutRunnerTools(values []string, disallowed ...string) []string {
 	return filtered
 }
 
-func shouldAnswerDirectlyFromChildPacket(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Tool) != "task" || strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
-		return false
-	}
-	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
-		return false
-	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(result.Output)), "partial findings from this turn") {
-		return false
-	}
-	return childPacketContainsGroundedAnswerEvidence(result.Output)
-}
-
 func childPacketContainsGroundedAnswerEvidence(output string) bool {
 	output = strings.TrimSpace(output)
 	if output == "" {
@@ -2127,18 +2079,6 @@ func normalizeDelegatedReadOnlyPacket(answer string) string {
 	answer = stableHandlePathLinePattern.ReplaceAllString(answer, "$1")
 	answer = stableHandleInlinePattern.ReplaceAllString(answer, "$1")
 	return answer
-}
-
-func (r *Runner) directForcedAnswer(forced *runnerForcedAnswer, results []workspace.ToolResult) (string, bool) {
-	if r == nil || forced == nil {
-		return "", false
-	}
-	switch strings.TrimSpace(forced.Reason) {
-	case "delegated_read_only_answer_ready":
-		return synthesizeDelegatedReadOnlyAnswer(r.RuntimeBrief.Objective, results)
-	default:
-		return "", false
-	}
 }
 
 func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.ToolResult) (string, bool) {

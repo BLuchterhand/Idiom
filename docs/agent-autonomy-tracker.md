@@ -14,9 +14,13 @@ Move the harness from fixed-step completion to model-decided completion with har
 
 - Completion is model-owned: a no-tool answer is the agent's claim that it is done.
 - Acceptance is harness-owned: the lane done gate decides whether that final answer satisfies the task contract.
+- Strategy is model-owned: when multiple safe next steps are available, the harness should nudge rather than choose the exact step for the model.
+- Force is harness-owned only for invariants: permissions, safety boundaries, verification contracts, completion contracts, protocol correctness, and exhausted loop/budget fuses.
 - Step limits are safety fuses, not task sizing. Large implementation work can run without a fixed step cap while still respecting no-progress, permission, timeout, and context controls.
 - Progress is measured by useful evidence, edits, verification, or narrower state. Repeated failures and repeated identical actions count against a stall budget.
 - Complex tasks should maintain an explicit task ledger and should not finish while required work remains pending.
+
+See [decisioning-north-star.md](decisioning-north-star.md) for the repo-wide decisioning standard.
 
 ## Implementation Plan
 

@@ -4,6 +4,8 @@
 
 Bring idiom closer to frontier coding-agent harness behavior: the model decides how to work and when it is done, while the harness verifies readiness, preserves state across long runs, enforces safety, and produces auditable logs.
 
+North star: prefer nudges over strategy-forcing when the model still has multiple safe, contract-compliant next steps; reserve hard force for invariants and exhausted recovery paths. See [decisioning-north-star.md](decisioning-north-star.md).
+
 This plan is grounded in the current repo state and the public behavior patterns documented by OpenCode and Claude Code:
 
 - OpenCode supports agents with role-specific prompts, models, permissions, subagents, automatic compaction, and optional max steps. If steps are unset, the agent continues until the model stops or the user interrupts.

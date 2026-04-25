@@ -5,11 +5,15 @@ This tracker captures the explicit deterministic scaffold required for frontier-
 ## Control-Rail Principles
 
 - Use model judgment inside deterministic host policies, not instead of them.
+- Prefer nudges over strategy-forcing when the model still has multiple safe, contract-compliant next steps.
+- Reserve hard force for invariants: permissions, safety boundaries, verification, completion contracts, protocol correctness, and exhausted recovery paths.
 - Classify every user turn into an auditable lane and task family before generation.
 - Require lane-specific evidence/tool preconditions before finalization.
 - Treat low confidence as a control-flow state that triggers deepening, fallback, or explicit uncertainty.
 - Separate read-only analysis from guarded implementation.
 - Persist failures into eval-ready regression contracts.
+
+See [decisioning-north-star.md](decisioning-north-star.md) for the decisioning standard these rails should follow.
 
 ## Phase 48: First-Class Control-Rails Contract
 

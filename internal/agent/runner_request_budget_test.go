@@ -28,7 +28,7 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 	}
 }
 
-func TestRunnerRequestBudgetExplorationDecisionRequiresDelegationAfterReadLoop(t *testing.T) {
+func TestRunnerRequestBudgetExplorationDecisionNudgesWithoutForcingDelegation(t *testing.T) {
 	root := t.TempDir()
 	runner := &Runner{
 		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
@@ -53,8 +53,13 @@ func TestRunnerRequestBudgetExplorationDecisionRequiresDelegationAfterReadLoop(t
 	}
 
 	decision = state.explorationDecision(runner, workspace.ToolRequest{Tool: "read_file", Path: "README.md"}, results)
-	if !decision.Handled || decision.RejectSummary != "Exploration delegation required" {
-		t.Fatalf("expected read to be blocked until child delegation, got %#v", decision)
+	if decision.Handled {
+		t.Fatalf("expected targeted follow-up read to remain model-directed after nudge, got %#v", decision)
+	}
+
+	decision = state.explorationDecision(runner, workspace.ToolRequest{Tool: "list_files", Path: "."}, results)
+	if !decision.Handled || decision.RejectSummary != "Broad exploration after delegation nudge blocked" {
+		t.Fatalf("expected only broad exploration to be blocked after nudge, got %#v", decision)
 	}
 }
 

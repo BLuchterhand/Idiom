@@ -117,12 +117,13 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			}
 		}
 	}
-	if s.broadEvidenceDelegationRequired && !s.broadEvidenceDelegationSatisfied && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) {
-		decision.Handled = true
-		decision.RejectSummary = "Exploration delegation required"
-		decision.RejectError = "this turn is spending too many read/search steps without converging. Delegate one focused read_only task with inspected paths, key findings, confidence, and named gaps before continuing main-loop reads."
-		decision.RejectStopReason = "exploration_task_delegation_required"
-		return decision
+	if s.broadEvidenceDelegationRequired && !s.broadEvidenceDelegationSatisfied && workspace.IsBroadInspectionRequest(req) {
+		return runnerRequestBudgetDecision{
+			Handled:          true,
+			RejectSummary:    "Broad exploration after delegation nudge blocked",
+			RejectError:      "this turn has already been nudged to either delegate one focused read_only task, answer from the evidence already gathered, or continue with a materially narrower follow-up. Do not keep spending broad inspection calls.",
+			RejectStopReason: "exploration_broad_inspection_after_nudge_blocked",
+		}
 	}
 	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied && workspace.IsBroadInspectionRequest(req) {
 		return runnerRequestBudgetDecision{

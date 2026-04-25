@@ -3056,28 +3056,18 @@ func TestAnnotateScopedFallbackAnswerAddsObjectiveForChildPacketFallback(t *test
 	}
 }
 
-func TestShouldAnswerDirectlyFromChildPacketRequiresGroundedEvidence(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{Contract: "architecture_assessment", PermissionProfile: "read_only_workspace"}
-	good := workspace.ToolResult{
-		Tool:   "task",
-		Output: "Inspected paths: internal/agent/runner.go, internal/agent/runner_child_tasks.go\nKey findings: the harness uses the task tool to launch an isolated read-only child runner.\nConfidence: high\n",
+func TestChildPacketContainsGroundedAnswerEvidenceRequiresRealEvidence(t *testing.T) {
+	good := "Inspected paths: internal/agent/runner.go, internal/agent/runner_child_tasks.go\nKey findings: the harness uses the task tool to launch an isolated read-only child runner.\nConfidence: high\n"
+	if !childPacketContainsGroundedAnswerEvidence(good) {
+		t.Fatal("expected grounded child packet evidence to be recognized")
 	}
-	if !shouldAnswerDirectlyFromChildPacket(brief, good) {
-		t.Fatal("expected grounded child packet to be answerable directly")
+	partial := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Read internal/agent/runner.go lines 100-140\n- Found internal/app/turn_planner.go references\n"
+	if !childPacketContainsGroundedAnswerEvidence(partial) {
+		t.Fatal("expected partial packet with grounded file evidence to be recognized")
 	}
-	partial := workspace.ToolResult{
-		Tool:   "task",
-		Output: "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Read internal/agent/runner.go lines 100-140\n- Found internal/app/turn_planner.go references\n",
-	}
-	if shouldAnswerDirectlyFromChildPacket(brief, partial) {
-		t.Fatal("expected partial child packet to require parent synthesis")
-	}
-	bad := workspace.ToolResult{
-		Tool:   "task",
-		Output: "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Redirected to go_file_outline\nTry: {\"tool\":\"go_file_outline\",\"path\":\"internal/workspace/tool_schemas.go\"}\nNext step: use go_read_symbol.\n",
-	}
-	if shouldAnswerDirectlyFromChildPacket(brief, bad) {
-		t.Fatal("expected tool-redirect child packet to require parent follow-up")
+	bad := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Redirected to go_file_outline\nTry: {\"tool\":\"go_file_outline\",\"path\":\"internal/workspace/tool_schemas.go\"}\nNext step: use go_read_symbol.\n"
+	if childPacketContainsGroundedAnswerEvidence(bad) {
+		t.Fatal("expected redirect packet without grounded evidence to be rejected")
 	}
 }
 
@@ -3257,7 +3247,7 @@ func TestDelegatedReadOnlyIntegrationPivotRedirectsToSiblingImplementation(t *te
 	}
 }
 
-func TestDelegatedReadOnlyAnswerReadyForcesSynthesisAfterTwoImplementationReads(t *testing.T) {
+func TestDelegatedReadOnlyAnswerReadyDoesNotForceSynthesisAfterTwoImplementationReads(t *testing.T) {
 	runner := &Runner{
 		AgentName: "child:explorer",
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -3281,14 +3271,8 @@ func TestDelegatedReadOnlyAnswerReadyForcesSynthesisAfterTwoImplementationReads(
 		Request: workspace.ToolRequest{Tool: "search_content", Path: "internal/agent", Pattern: "delegate|task"},
 		Results: results,
 	})
-	if decision.RejectSummary == "" {
-		t.Fatalf("expected delegated child to reject extra exploration after two implementation reads, got %#v", decision)
-	}
-	if !strings.Contains(decision.RejectError, "Do not request more tools") {
-		t.Fatalf("expected answer-ready rejection to stop tool use, got %q", decision.RejectError)
-	}
-	if decision.ForceAnswer == nil || decision.ForceAnswer.Reason != "delegated_read_only_answer_ready" {
-		t.Fatalf("expected answer-ready path to force direct synthesis, got %#v", decision.ForceAnswer)
+	if decision.RejectSummary != "" || decision.ForceAnswer != nil {
+		t.Fatalf("expected delegated child evidence to remain model-directed, got %#v", decision)
 	}
 }
 
@@ -3790,8 +3774,10 @@ func TestRunnerRequiresChildTaskForBroadEvidenceReads(t *testing.T) {
 		`{"tool":"read_file","path":"README.md","start_line":1,"end_line":1}`,
 		`{"tool":"list_files","path":"."}`,
 		`{"tool":"read_file","path":"README.md"}`,
+		`{"tool":"list_files","path":"."}`,
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect README for performance evidence and report paths."}`,
 		"Inspected paths: README.md. No performance issue found.",
+		"No performance risk stands out in README.md from the delegated evidence. Confidence: medium.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3825,7 +3811,7 @@ func TestRunnerRequiresChildTaskForBroadEvidenceReads(t *testing.T) {
 		nil,
 		nil,
 		func(event ToolResultEvent) {
-			if event.Request.Tool == "read_file" && strings.Contains(event.Result.Summary, "Exploration delegation required") {
+			if strings.Contains(event.Result.Summary, "Broad exploration after delegation nudge blocked") {
 				rejected = true
 			}
 		},
@@ -3833,14 +3819,14 @@ func TestRunnerRequiresChildTaskForBroadEvidenceReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if answer != "Inspected paths: README.md. No performance issue found." {
+	if answer != "No performance risk stands out in README.md from the delegated evidence. Confidence: medium." {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 	if !rejected {
-		t.Fatal("expected first read to be rejected until a read_only task is delegated")
+		t.Fatal("expected broad exploration to be rejected after the delegation nudge")
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected parent to stop after first usable child packet, used %d/%d replies", requests, len(replies))
+		t.Fatalf("expected parent to take one post-child decision turn, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -3857,6 +3843,7 @@ func TestRunnerReturnsChildPacketBeforeBroadRediscovery(t *testing.T) {
 		`{"tool":"list_files","path":"."}`,
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect performance evidence and report paths."}`,
 		"Inspected paths: README.md. No performance issue found.",
+		"No performance risk stands out in README.md from the delegated evidence. Confidence: medium.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3893,11 +3880,11 @@ func TestRunnerReturnsChildPacketBeforeBroadRediscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if answer != "Inspected paths: README.md. No performance issue found." {
+	if answer != "No performance risk stands out in README.md from the delegated evidence. Confidence: medium." {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected parent to stop at first usable child packet, used %d/%d replies", requests, len(replies))
+		t.Fatalf("expected parent to take one post-child decision turn, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -3910,6 +3897,7 @@ func TestRunnerReturnsFirstReadOnlyChildPacketWithoutSecondDelegation(t *testing
 	replies := []string{
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect README and summarize."}`,
 		"Inspected paths: README.md. Key findings: child packet ready.",
+		"README.md is the inspected path and the delegated child packet did not surface a deeper issue. Confidence: medium.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3945,11 +3933,11 @@ func TestRunnerReturnsFirstReadOnlyChildPacketWithoutSecondDelegation(t *testing
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if answer != "Inspected paths: README.md. Key findings: child packet ready." {
+	if answer != "README.md is the inspected path and the delegated child packet did not surface a deeper issue. Confidence: medium." {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected parent to stop after first usable child packet, used %d/%d replies", requests, len(replies))
+		t.Fatalf("expected parent to decide after the child packet, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -4118,7 +4106,7 @@ func TestRunnerArchitectureReturnsChildPacketWithoutParentFollowups(t *testing.T
 	}
 }
 
-func TestRunnerChildDiscoveryPacketAutoSynthesizesFinalAnswer(t *testing.T) {
+func TestRunnerChildDiscoveryPacketLetsChildDecideFollowupAfterDiscovery(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "agent"), 0o755); err != nil {
 		t.Fatalf("mkdir agent dir: %v", err)
@@ -4133,9 +4121,8 @@ func TestRunnerChildDiscoveryPacketAutoSynthesizesFinalAnswer(t *testing.T) {
 	replies := []string{
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Explain how this harness uses subagents."}`,
 		`{"tool":"search_content","path":"internal/agent","pattern":"subagents|task|delegate","glob":"*.go"}`,
-		`{"tool":"read_file","path":"internal/agent/runner_child_tasks.go"}`,
-		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1993,"end_line":2093}`,
-		`{"tool":"go_file_outline","path":"internal/agent/runner_child_tasks.go"}`,
+		"## Subagent Handoff Architecture\n\nThe harness uses subagents through the `task` tool.\n\n### Two Modes\n\nCore files: `internal/agent/runner.go`, `internal/agent/runner_child_tasks.go`.",
+		"The harness uses subagents through the task tool, primarily in internal/agent/runner.go and internal/agent/runner_child_tasks.go. Confidence: high.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -4184,10 +4171,7 @@ func TestRunnerChildDiscoveryPacketAutoSynthesizesFinalAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(answer, "## Subagent Handoff Architecture") {
-		t.Fatalf("unexpected answer: %q", answer)
-	}
-	if !strings.Contains(answer, "### Two Modes") || !strings.Contains(answer, "Core files:") {
+	if !strings.Contains(answer, "task tool") {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 	for _, forbidden := range []string{`"layers_run"`, "Partial findings from this turn", "Discovery packet:", "Relevant source hits:", "Evidence used:"} {
@@ -4198,8 +4182,11 @@ func TestRunnerChildDiscoveryPacketAutoSynthesizesFinalAnswer(t *testing.T) {
 	if !slices.Contains(roles, "child_delegated_read_only_answer_ready") {
 		t.Fatalf("expected child answer-ready event, got roles %v", roles)
 	}
-	if requests != 2 {
-		t.Fatalf("expected parent task call plus one child discovery call, used %d requests", requests)
+	if !slices.Contains(roles, "child_delegated_read_only_answer_ready_nudge") {
+		t.Fatalf("expected delegated read-only answer-ready nudge, got roles %v", roles)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected child follow-up plus parent decision turn, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -4218,27 +4205,24 @@ func TestDelegatedReadOnlyAnswerReadyAfterDiscoveryQuery(t *testing.T) {
 		},
 	}
 
-	forced, ok := runner.delegatedReadOnlyAnswerReadyAfterResult(
+	ready := runner.delegatedReadOnlyAnswerReadyAfterResult(
 		workspace.ToolRequest{Tool: "discovery_query"},
 		results[0],
 		results,
 	)
-	if !ok || forced == nil {
-		t.Fatalf("expected sufficient discovery_query packet to force a delegated read-only answer")
-	}
-	if forced.Reason != "delegated_read_only_answer_ready" {
-		t.Fatalf("unexpected forced reason: %q", forced.Reason)
+	if !ready {
+		t.Fatalf("expected sufficient discovery_query packet to mark delegated read-only evidence as answer-ready")
 	}
 
 	mutationRunner := *runner
 	mutationRunner.RuntimeBrief.Contract = "implementation"
-	if forced, ok := mutationRunner.delegatedReadOnlyAnswerReadyAfterResult(workspace.ToolRequest{Tool: "discovery_query"}, results[0], results); ok || forced != nil {
+	if mutationRunner.delegatedReadOnlyAnswerReadyAfterResult(workspace.ToolRequest{Tool: "discovery_query"}, results[0], results) {
 		t.Fatalf("did not expect answer-ready shortcut for mutation-required child")
 	}
 
 	failingResult := results[0]
 	failingResult.Error = "discovery failed"
-	if forced, ok := runner.delegatedReadOnlyAnswerReadyAfterResult(workspace.ToolRequest{Tool: "discovery_query"}, failingResult, []workspace.ToolResult{failingResult}); ok || forced != nil {
+	if runner.delegatedReadOnlyAnswerReadyAfterResult(workspace.ToolRequest{Tool: "discovery_query"}, failingResult, []workspace.ToolResult{failingResult}) {
 		t.Fatalf("did not expect answer-ready shortcut after failed discovery")
 	}
 }
