@@ -83,6 +83,69 @@ func TestRunnerTurnControllerRejectToolRecordsRejectionState(t *testing.T) {
 	}
 }
 
+func TestRunnerTurnControllerRejectToolDoesNotMarkMissingNamedGapAsDeadEnd(t *testing.T) {
+	collected := []workspace.ToolResult{}
+	turnMessages := []llama.ChatMessage{}
+	lastToolKey := ""
+	var lastToolResult *workspace.ToolResult
+	consecutiveRejected := 0
+	consecutiveNoProgress := 0
+	rejectionRecoveryNudgeUsed := false
+	completionGateRejections := 0
+	metrics := &runnerMetrics{}
+	requestBudget := newRunnerRequestBudgetState(2)
+	currentFingerprint := "read_file|internal/agent/runner.go"
+	rejectedActions := map[string]int{}
+	recorder := runnerTurnRecorder{
+		collectedResults:          &collected,
+		turnMessages:              &turnMessages,
+		lastToolKey:               &lastToolKey,
+		lastToolResult:            &lastToolResult,
+		consecutiveRejectedAction: &consecutiveRejected,
+		consecutiveNoProgress:     &consecutiveNoProgress,
+		metrics:                   metrics,
+	}
+	controller := runnerTurnController{
+		runner:                     &Runner{},
+		ctx:                        context.Background(),
+		metrics:                    metrics,
+		requestBudget:              &requestBudget,
+		recorder:                   &recorder,
+		turnMessages:               &turnMessages,
+		collectedResults:           &collected,
+		rejectedActions:            rejectedActions,
+		rejectionRecoveryNudgeUsed: &rejectionRecoveryNudgeUsed,
+		completionGateRejections:   &completionGateRejections,
+		consecutiveRejected:        &consecutiveRejected,
+		consecutiveNoProgress:      &consecutiveNoProgress,
+		currentFingerprint:         &currentFingerprint,
+	}
+
+	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"}
+	answer, err, done := controller.rejectTool(2, nil, req, "Post-readiness follow-up missing named gap", "name the exact unresolved gap first")
+	if err != nil {
+		t.Fatalf("rejectTool err = %v", err)
+	}
+	if done {
+		t.Fatalf("rejectTool done = true, want false")
+	}
+	if answer != "" {
+		t.Fatalf("rejectTool answer = %q, want empty", answer)
+	}
+	if got := metrics.RejectedActions; got != 1 {
+		t.Fatalf("RejectedActions = %d, want 1", got)
+	}
+	if got := consecutiveRejected; got != 0 {
+		t.Fatalf("consecutiveRejected = %d, want 0 for recoverable legibility rejection", got)
+	}
+	if got := rejectedActions[toolActionClass(req)]; got != 0 {
+		t.Fatalf("rejectedActions[%q] = %d, want 0 for recoverable legibility rejection", toolActionClass(req), got)
+	}
+	if got := requestBudget.rejectedFingerprints[currentFingerprint]; got != "Post-readiness follow-up missing named gap" {
+		t.Fatalf("rejected fingerprint = %q, want %q", got, "Post-readiness follow-up missing named gap")
+	}
+}
+
 func TestRunnerTurnControllerRejectCompletionPreservesReplyAndRecordsGate(t *testing.T) {
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}

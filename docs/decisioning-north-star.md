@@ -53,6 +53,8 @@ If it is choosing a strategy, the default should be:
 Good:
 
 - “Do not restart broad discovery. Either answer now or do one targeted follow-up read.”
+- “After a child packet, block unrelated broad rediscovery, but leave packet-anchored follow-up reads open.”
+- “If a follow-up is rejected only because it failed to name the gap it is closing, require the named gap and allow one corrected retry.”
 - “Use the structured tool instead; if it returns nothing, retry the original request.”
 - “You have already used many read calls. Pause, summarize, and commit to the minimal next step.”
 

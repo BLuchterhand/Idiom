@@ -42,6 +42,10 @@ func BuildToolDefinitions(allowedTools []string) []ToolDefinition {
 
 // schemaStr is a tiny helper to keep the parameter JSON readable.
 func schemaObj(required []string, properties string) string {
+	if properties != "" {
+		properties += ","
+	}
+	properties += `"named_gap":` + strProp("optional: after answer-readiness or a child packet, name the exact unresolved gap this follow-up will close") + `,"why_not_answering":` + strProp("optional: short reason you are not answering yet despite the current evidence")
 	req := ""
 	if len(required) > 0 {
 		req = `,"required":[`

@@ -134,79 +134,79 @@ type RecoveryPlan struct {
 }
 
 func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
-	combined := combinedLower(input.Reason, input.Result.Summary, input.Result.Error, input.Result.Output)
+	statusCombined := combinedLower(input.Reason, input.Result.Summary, input.Result.Error)
 	tool := strings.TrimSpace(input.Request.Tool)
 	guidance := ActionGuidance{}
 	if input.DeclarationMovesForbidden {
 		guidance.Constraints = appendUnique(guidance.Constraints, "declaration_moves_forbidden")
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "go_move_declarations")
 	}
-	if input.ApprovedTargetScopePresent || containsAny(combined, "implementation target packet", "approved editable target") {
+	if input.ApprovedTargetScopePresent || containsAny(statusCombined, "implementation target packet", "approved editable target") {
 		guidance.Constraints = appendUnique(guidance.Constraints, "approved_target_scope_enforced")
 	}
-	if strings.Contains(combined, "write approval required") {
+	if strings.Contains(statusCombined, "write approval required") {
 		guidance.Constraints = appendUnique(guidance.Constraints, "write_approval_required")
 	}
-	if strings.Contains(combined, "completion gate") {
+	if strings.Contains(statusCombined, "completion gate") {
 		guidance.Constraints = appendUnique(guidance.Constraints, "completion_gate_active")
 	}
-	if strings.Contains(combined, "bootstrap already inspected") {
+	if strings.Contains(statusCombined, "bootstrap already inspected") {
 		guidance.Constraints = appendUnique(guidance.Constraints, "bootstrap_evidence_available")
 	}
 
-	if containsAny(combined, "malformed tool request", "tool_parse") {
+	if containsAny(statusCombined, "malformed tool request", "tool_parse") {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "malformed_json_tool_request")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "emit exactly one valid JSON tool object")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer normally only if the task is complete")
 		return guidance
 	}
-	if containsAny(combined, "repeated", "replayed", "already failed earlier") {
+	if containsAny(statusCombined, "repeated", "replayed", "already failed earlier") {
 		if tool != "" {
 			guidance.InvalidNext = appendUnique(guidance.InvalidNext, "repeat_exact_"+tool+"_request")
 		} else {
 			guidance.InvalidNext = appendUnique(guidance.InvalidNext, "repeat_exact_tool_request")
 		}
 	}
-	if strings.Contains(combined, "broad inspection") {
+	if strings.Contains(statusCombined, "broad inspection") {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "additional_broad_workspace_inspection")
 	}
-	if strings.Contains(combined, "bootstrap already inspected") && tool == "read_file" {
+	if strings.Contains(statusCombined, "bootstrap already inspected") && tool == "read_file" {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "duplicate_read_file_on_bootstrapped_target")
 	}
-	if containsAny(combined, "completion gate", "final answer rejected") {
+	if containsAny(statusCombined, "completion gate", "final answer rejected") {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "final_answer_without_satisfying_completion_gate")
 	}
 
-	if strings.Contains(combined, "bootstrap already inspected") {
+	if strings.Contains(statusCombined, "bootstrap already inspected") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file on the approved target using bootstrapped evidence")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow read_file with start_line/end_line only if exact lines are missing")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "search_content scoped to the approved target")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with a concrete blocker or no-op reason")
 	}
-	if containsAny(combined, "repeated dead-end", "already failed earlier", "replayed same blocker", "replayed prior evidence") {
+	if containsAny(statusCombined, "repeated dead-end", "already failed earlier", "replayed same blocker", "replayed prior evidence") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "choose a materially different tool or target")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the explicit blocker and evidence")
 	}
-	if strings.Contains(combined, "broad inspection") {
+	if strings.Contains(statusCombined, "broad inspection") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "search_files on a discovered path or pattern")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "search_content for a specific symbol or phrase")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "read_file on a discovered handle or narrow line range")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "use a targeted read-only shell search")
 	}
-	if containsAny(combined, "post-edit", "workspace edit already landed") {
+	if containsAny(statusCombined, "post-edit", "workspace edit already landed") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "run targeted verification")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "read the changed file if exact failure lines are needed")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger or answer with the concrete blocker")
 	}
-	if containsAny(combined, "approved editable target", "implementation target packet") {
+	if containsAny(statusCombined, "approved editable target", "implementation target packet") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file inside approved target paths")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "request a target-scope update if the approved target is wrong")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "report the guard as a concrete blocker")
 	}
-	if strings.Contains(combined, "write approval required") {
+	if strings.Contains(statusCombined, "write approval required") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "stop and report that write approval is required")
 	}
-	if containsAny(combined, "completion gate", "final answer rejected") {
+	if containsAny(statusCombined, "completion gate", "final answer rejected") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "use a tool to gather or edit the missing evidence")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger if the gate requires ledger state")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer only after the gate condition is satisfied")

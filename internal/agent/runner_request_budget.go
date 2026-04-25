@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"idiom/internal/workspace"
@@ -21,6 +22,9 @@ type runnerRequestBudgetState struct {
 	readCallsSinceWrite              int
 	postChildReadCalls               int
 	postChildReadBudget              int
+	postChildEvidencePaths           []string
+	postChildReadFamilies            map[string]int
+	postChildReadFamilyNudgeFired    map[string]bool
 	zeroHitFingerprints              map[string]string
 	rejectedFingerprints             map[string]string
 }
@@ -39,11 +43,13 @@ type runnerRequestBudgetDecision struct {
 
 func newRunnerRequestBudgetState(postChildReadBudget int) runnerRequestBudgetState {
 	return runnerRequestBudgetState{
-		fingerprintCounts:     make(map[string]int),
-		fingerprintNudgeFired: make(map[string]bool),
-		postChildReadBudget:   postChildReadBudget,
-		zeroHitFingerprints:   make(map[string]string),
-		rejectedFingerprints:  make(map[string]string),
+		fingerprintCounts:             make(map[string]int),
+		fingerprintNudgeFired:         make(map[string]bool),
+		postChildReadBudget:           postChildReadBudget,
+		postChildReadFamilies:         make(map[string]int),
+		postChildReadFamilyNudgeFired: make(map[string]bool),
+		zeroHitFingerprints:           make(map[string]string),
+		rejectedFingerprints:          make(map[string]string),
 	}
 }
 
@@ -94,6 +100,10 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 		}
 	}
 	if priorSummary, seen := s.rejectedFingerprints[currentFingerprint]; seen {
+		if isRecoverablePostReadinessGapRejection(priorSummary) && postReadinessGap(req) != "" {
+			delete(s.rejectedFingerprints, currentFingerprint)
+			return runnerRequestBudgetDecision{}
+		}
 		return runnerRequestBudgetDecision{
 			Handled:           true,
 			EventRole:         "rejection_retry_blocked",
@@ -103,6 +113,15 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 		}
 	}
 	return runnerRequestBudgetDecision{}
+}
+
+func isRecoverablePostReadinessGapRejection(summary string) bool {
+	switch strings.TrimSpace(summary) {
+	case "Post-readiness follow-up missing named gap", "Post-child follow-up missing named gap":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.ToolRequest, results []workspace.ToolResult) runnerRequestBudgetDecision {
@@ -141,6 +160,11 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			RejectStopReason: "duplicate_read_only_child_task_blocked",
 		}
 	}
+	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied {
+		if decision := s.postChildGuidanceDecision(req); decision.Handled {
+			return decision
+		}
+	}
 	return decision
 }
 
@@ -156,11 +180,14 @@ func (s *runnerRequestBudgetState) synthesisDecision(policy RunPolicy, toolCalls
 	return runnerRequestBudgetDecision{}
 }
 
-func (s *runnerRequestBudgetState) noteReadClassRequest() {
+func (s *runnerRequestBudgetState) noteReadClassRequest(req workspace.ToolRequest) {
 	s.readCallCount++
 	s.readCallsSinceWrite++
 	if s.broadEvidenceDelegationRequired && s.broadEvidenceDelegationSatisfied {
 		s.postChildReadCalls++
+		if family := postChildRequestFamilyKey(req); family != "" {
+			s.postChildReadFamilies[family]++
+		}
 	}
 }
 
@@ -206,4 +233,191 @@ func (s *runnerRequestBudgetState) noteVerification() {
 
 func (s *runnerRequestBudgetState) noteWriteProgress() {
 	s.readCallsSinceWrite = 0
+}
+
+func (s *runnerRequestBudgetState) noteReadOnlyChildPacket(paths []string) {
+	s.postChildEvidencePaths = normalizePostChildEvidencePaths(paths)
+	s.postChildReadFamilies = make(map[string]int)
+	s.postChildReadFamilyNudgeFired = make(map[string]bool)
+}
+
+func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolRequest) runnerRequestBudgetDecision {
+	if postChildUnrelatedDiscovery(req, s.postChildEvidencePaths) {
+		return runnerRequestBudgetDecision{
+			Handled:          true,
+			RejectSummary:    "Post-child unrelated discovery blocked",
+			RejectError:      fmt.Sprintf("the delegated read_only child already named the relevant evidence paths (%s). Answer now, or inspect one of those paths directly for a named gap. Do not search for unrelated filenames first.", summarizePostChildEvidencePaths(s.postChildEvidencePaths, 3)),
+			RejectStopReason: "post_child_unrelated_discovery_blocked",
+		}
+	}
+	family := postChildRequestFamilyKey(req)
+	if family == "" {
+		return runnerRequestBudgetDecision{}
+	}
+	label := postChildRequestFamilyLabel(req)
+	if label == "" {
+		label = "the same evidence path"
+	}
+	if count := s.postChildReadFamilies[family]; count >= 2 && s.postChildReadFamilyNudgeFired[family] {
+		return runnerRequestBudgetDecision{
+			Handled:          true,
+			RejectSummary:    "Post-child reread blocked",
+			RejectError:      fmt.Sprintf("you already revisited %s multiple times after the child packet. Answer now, or inspect a different evidence path for a named gap.", label),
+			RejectStopReason: "post_child_reread_blocked",
+		}
+	}
+	if count := s.postChildReadFamilies[family]; count >= 1 && !s.postChildReadFamilyNudgeFired[family] {
+		s.postChildReadFamilyNudgeFired[family] = true
+		return runnerRequestBudgetDecision{
+			Handled:   true,
+			Nudge:     fmt.Sprintf("You already inspected %s after the child packet. Unless one specific missing line remains, answer now or inspect a different evidence path. Do not keep rereading the same file family.", label),
+			EventRole: "post_child_reread_nudge",
+		}
+	}
+	return runnerRequestBudgetDecision{}
+}
+
+func postChildUnrelatedDiscovery(req workspace.ToolRequest, evidencePaths []string) bool {
+	switch strings.TrimSpace(req.Tool) {
+	case "search_files", "search_content", "rg", "grep":
+		return len(evidencePaths) > 0 && !requestAnchoredToEvidencePaths(req, evidencePaths)
+	default:
+		return false
+	}
+}
+
+func requestAnchoredToEvidencePaths(req workspace.ToolRequest, evidencePaths []string) bool {
+	reqPath := normalizePostChildPath(req.Path)
+	queryText := strings.ToLower(strings.Join([]string{
+		req.Path,
+		req.Pattern,
+		req.Query,
+		req.Command,
+	}, "\n"))
+	for _, evidencePath := range evidencePaths {
+		if evidencePath == "" {
+			continue
+		}
+		if reqPath != "" && postChildPathsOverlap(reqPath, evidencePath) {
+			return true
+		}
+		for _, token := range evidenceAnchorTokens(evidencePath) {
+			if token != "" && strings.Contains(queryText, token) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func postChildRequestFamilyKey(req workspace.ToolRequest) string {
+	switch strings.TrimSpace(req.Tool) {
+	case "read_file", "go_read_symbol", "go_file_outline", "python_read_symbol", "python_file_outline",
+		"ts_read_symbol", "ts_file_outline", "rust_read_symbol", "rust_file_outline",
+		"java_read_symbol", "java_file_outline", "cpp_read_symbol":
+		if path := normalizePostChildPath(req.Path); path != "" {
+			return strings.TrimSpace(req.Tool) + ":" + path
+		}
+	case "search_content", "search_files", "rg", "grep":
+		if path := normalizePostChildPath(req.Path); path != "" && path != "." {
+			return strings.TrimSpace(req.Tool) + ":" + path
+		}
+	}
+	return ""
+}
+
+func postChildRequestFamilyLabel(req workspace.ToolRequest) string {
+	if path := normalizePostChildPath(req.Path); path != "" && path != "." {
+		return path
+	}
+	return strings.TrimSpace(req.Tool)
+}
+
+func normalizePostChildEvidencePaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	normalized := make([]string, 0, len(paths))
+	for _, path := range paths {
+		cleaned := normalizePostChildPath(path)
+		if cleaned == "" {
+			continue
+		}
+		if _, ok := seen[cleaned]; ok {
+			continue
+		}
+		seen[cleaned] = struct{}{}
+		normalized = append(normalized, cleaned)
+	}
+	return normalized
+}
+
+func summarizePostChildEvidencePaths(paths []string, max int) string {
+	if len(paths) == 0 {
+		return "the child packet paths"
+	}
+	limit := len(paths)
+	if max > 0 && limit > max {
+		limit = max
+	}
+	quoted := make([]string, 0, limit+1)
+	for _, path := range paths[:limit] {
+		quoted = append(quoted, "`"+path+"`")
+	}
+	if len(paths) > limit {
+		quoted = append(quoted, "and related nearby files")
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func normalizePostChildPath(path string) string {
+	cleaned := strings.TrimSpace(path)
+	if cleaned == "" {
+		return ""
+	}
+	cleaned = filepath.ToSlash(filepath.Clean(cleaned))
+	cleaned = strings.TrimPrefix(cleaned, "./")
+	if cleaned == "" {
+		return ""
+	}
+	return cleaned
+}
+
+func postChildPathsOverlap(reqPath string, evidencePath string) bool {
+	if reqPath == evidencePath {
+		return true
+	}
+	if strings.HasPrefix(reqPath+"/", evidencePath+"/") || strings.HasPrefix(evidencePath+"/", reqPath+"/") {
+		return true
+	}
+	return filepath.ToSlash(filepath.Dir(evidencePath)) == reqPath
+}
+
+func evidenceAnchorTokens(path string) []string {
+	seen := make(map[string]struct{})
+	add := func(tokens []string, token string) []string {
+		token = strings.ToLower(strings.TrimSpace(token))
+		if len(token) < 4 {
+			return tokens
+		}
+		switch token {
+		case "internal", "scripts", "script", "tests", "docs", "vendor":
+			return tokens
+		}
+		if _, ok := seen[token]; ok {
+			return tokens
+		}
+		seen[token] = struct{}{}
+		return append(tokens, token)
+	}
+
+	var tokens []string
+	base := filepath.Base(path)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	for _, candidate := range []string{base, stem} {
+		tokens = add(tokens, candidate)
+	}
+	replacer := strings.NewReplacer("/", " ", "_", " ", "-", " ", ".", " ")
+	for _, part := range strings.Fields(replacer.Replace(path)) {
+		tokens = add(tokens, part)
+	}
+	return tokens
 }

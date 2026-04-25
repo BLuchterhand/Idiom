@@ -28,6 +28,40 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 	}
 }
 
+func TestRunnerRequestBudgetAllowsOneCorrectedRetryAfterMissingNamedGap(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	req := workspace.ToolRequest{
+		Tool:     "read_file",
+		Path:     "internal/agent/runner.go",
+		NamedGap: "inspect the exact branch that delegates the child task",
+	}
+	fingerprint := "read_file|internal/agent/runner.go"
+	state.rejectedFingerprints[fingerprint] = "Post-readiness follow-up missing named gap"
+
+	decision := state.fingerprintDecision(RunPolicy{}, req, fingerprint)
+	if decision.Handled {
+		t.Fatalf("expected corrected retry to be allowed, got %#v", decision)
+	}
+	if _, ok := state.rejectedFingerprints[fingerprint]; ok {
+		t.Fatalf("expected recoverable rejection fingerprint to be cleared after corrected retry")
+	}
+}
+
+func TestRunnerRequestBudgetStillBlocksRejectedRetryWithoutNamedGap(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	req := workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/agent/runner.go",
+	}
+	fingerprint := "read_file|internal/agent/runner.go"
+	state.rejectedFingerprints[fingerprint] = "Post-readiness follow-up missing named gap"
+
+	decision := state.fingerprintDecision(RunPolicy{}, req, fingerprint)
+	if !decision.Handled || decision.ForceAnswerReason != "rejection_retry_blocked" {
+		t.Fatalf("expected unchanged retry to stay blocked, got %#v", decision)
+	}
+}
+
 func TestRunnerRequestBudgetExplorationDecisionNudgesWithoutForcingDelegation(t *testing.T) {
 	root := t.TempDir()
 	runner := &Runner{
@@ -67,8 +101,8 @@ func TestRunnerRequestBudgetReadBudgetBlocksAfterPostChildBudget(t *testing.T) {
 	state := newRunnerRequestBudgetState(1)
 	state.broadEvidenceDelegationRequired = true
 	state.broadEvidenceDelegationSatisfied = true
-	state.noteReadClassRequest()
-	state.noteReadClassRequest()
+	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
+	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
 
 	decision := state.readBudgetDecision(RunPolicy{}, workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
 	if !decision.Handled || decision.RejectSummary != "Post-child read budget exhausted" {
@@ -76,5 +110,62 @@ func TestRunnerRequestBudgetReadBudgetBlocksAfterPostChildBudget(t *testing.T) {
 	}
 	if !strings.Contains(decision.ForceAnswerPrompt, "child packet") {
 		t.Fatalf("expected forced-answer guidance to mention child packet, got %#v", decision)
+	}
+}
+
+func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	state.broadEvidenceDelegationRequired = true
+	state.broadEvidenceDelegationSatisfied = true
+	state.noteReadOnlyChildPacket([]string{"internal/agent/discovery_redirect.go"})
+
+	decision := state.explorationDecision(
+		&Runner{},
+		workspace.ToolRequest{Tool: "search_files", Pattern: "*harness*", Path: "."},
+		nil,
+	)
+	if !decision.Handled || decision.RejectSummary != "Post-child unrelated discovery blocked" {
+		t.Fatalf("expected unrelated post-child search to be blocked, got %#v", decision)
+	}
+	if !strings.Contains(decision.RejectError, "discovery_redirect.go") {
+		t.Fatalf("expected rejection to mention packet evidence paths, got %#v", decision)
+	}
+}
+
+func TestRunnerRequestBudgetAllowsPacketAnchoredPostChildDiscovery(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	state.broadEvidenceDelegationRequired = true
+	state.broadEvidenceDelegationSatisfied = true
+	state.noteReadOnlyChildPacket([]string{"internal/workspace/discovery_query.go"})
+
+	decision := state.explorationDecision(
+		&Runner{},
+		workspace.ToolRequest{Tool: "search_files", Pattern: "*discovery*", Path: "."},
+		nil,
+	)
+	if decision.Handled {
+		t.Fatalf("expected packet-anchored post-child discovery to remain allowed, got %#v", decision)
+	}
+}
+
+func TestRunnerRequestBudgetNudgesThenBlocksPostChildRereads(t *testing.T) {
+	state := newRunnerRequestBudgetState(4)
+	state.broadEvidenceDelegationRequired = true
+	state.broadEvidenceDelegationSatisfied = true
+	state.noteReadOnlyChildPacket([]string{"internal/agent/discovery_redirect.go"})
+	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/discovery_redirect.go"}
+
+	state.noteReadClassRequest(req)
+
+	decision := state.explorationDecision(&Runner{}, req, nil)
+	if !decision.Handled || decision.Nudge == "" || decision.EventRole != "post_child_reread_nudge" {
+		t.Fatalf("expected first post-child reread to nudge, got %#v", decision)
+	}
+
+	state.noteReadClassRequest(req)
+
+	decision = state.explorationDecision(&Runner{}, req, nil)
+	if !decision.Handled || decision.RejectSummary != "Post-child reread blocked" {
+		t.Fatalf("expected repeated post-child reread to be blocked, got %#v", decision)
 	}
 }

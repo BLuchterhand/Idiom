@@ -72,6 +72,12 @@ func (r *Runner) Run(
 	turnMessages := append([]llama.ChatMessage(nil), messages...)
 	executionState := newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects)
 	delegatedReadOnlyAnswerReadyNudged := false
+	delegatedReadOnlyAnswerReady := false
+	delegatedReadOnlyPostReadyFollowups := 0
+	delegatedReadOnlyDiminishingNudgeStage := 0
+	postChildPacketActive := false
+	postChildFollowupReads := 0
+	postChildDiminishingNudgeStage := 0
 	// turnHiddenTools tracks tools that have been gated enough times this
 	// turn that we should stop advertising them in the manifest. Removes
 	// a class of waste outright: if list_files is chained past the gate,
@@ -411,6 +417,17 @@ func (r *Runner) Run(
 				continue
 			}
 		}
+		if scope := postReadinessGapScope(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req); scope != "" {
+			if gap := postReadinessGap(req); gap == "" {
+				summary, errorText := missingPostReadinessGapMessage(scope)
+				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+				if done {
+					return finish(answer, err, "post_readiness_gap_required", true)
+				}
+				continue
+			}
+			r.emitPostReadinessGapDeclared(scope, req)
+		}
 		if decision := requestBudget.explorationDecision(r, req, collectedResults); decision.Handled {
 			if decision.Nudge != "" {
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
@@ -435,7 +452,7 @@ func (r *Runner) Run(
 			}
 		}
 		if isReadClassTool(req) {
-			requestBudget.noteReadClassRequest()
+			requestBudget.noteReadClassRequest(req)
 			metrics.ReadClassCalls++
 			if decision := requestBudget.readBudgetDecision(policy, req); decision.Handled {
 				if decision.EventRole != "" {
@@ -629,11 +646,16 @@ func (r *Runner) Run(
 			if strings.TrimSpace(result.Error) == "" && !isWriteChildMode(req.Mode) {
 				requestBudget.broadEvidenceDelegationSatisfied = true
 				requestBudget.readOnlyChildTaskSatisfied = true
+				postChildPacketActive = true
+				postChildFollowupReads = 0
+				postChildDiminishingNudgeStage = 0
+				evidencePaths := pinnedPathsFromToolResults([]workspace.ToolResult{result}, 4)
+				requestBudget.noteReadOnlyChildPacket(evidencePaths)
 				hideBroadDiscoveryTools(turnHiddenTools)
 				turnHiddenTools["task"] = true
 				rebuildTools()
 				requestBudget.postChildReadCalls = 0
-				nudge := "The delegated read_only child result is now the evidence packet. Treat it as inspected evidence; do not restart broad discovery in the parent. Use only a few targeted reads for named gaps, then answer, write, verify, or report the blocker."
+				nudge := childPacketBoundaryNudge(evidencePaths)
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 				r.emitEvent(RunEvent{Role: "child_packet_boundary", Content: nudge})
 			}
@@ -790,17 +812,35 @@ func (r *Runner) Run(
 		}
 		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
 		r.attachInstructionsForTouchedPaths(&turnMessages, req, result)
+		childReadyBeforeResult := delegatedReadOnlyAnswerReady
 		if r.delegatedReadOnlyAnswerReadyAfterResult(req, result, collectedResults) {
+			delegatedReadOnlyAnswerReady = true
 			r.emitDelegatedReadOnlyAnswerReadyEvent(req, collectedResults)
 			if !delegatedReadOnlyAnswerReadyNudged {
 				delegatedReadOnlyAnswerReadyNudged = true
-				nudge := strings.Join([]string{
-					"You likely have enough delegated read-only evidence to answer this question.",
-					"Do not restart broad discovery.",
-					"If a specific gap remains, use one targeted follow-up read or search; otherwise answer directly from the evidence gathered so far.",
-				}, "\n")
+				nudge := delegatedReadOnlyAnswerReadyNudge(r.RuntimeBrief.Objective, collectedResults)
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 				r.emitEvent(RunEvent{Role: "delegated_read_only_answer_ready_nudge", Content: nudge})
+			}
+		}
+		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
+			delegatedReadOnlyPostReadyFollowups++
+			if delegatedReadOnlyPostReadyFollowups > delegatedReadOnlyDiminishingNudgeStage {
+				if nudge := delegatedReadOnlyDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, delegatedReadOnlyPostReadyFollowups); nudge != "" {
+					delegatedReadOnlyDiminishingNudgeStage = delegatedReadOnlyPostReadyFollowups
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					r.emitEvent(RunEvent{Role: "delegated_read_only_diminishing_returns_nudge", Content: nudge})
+				}
+			}
+		}
+		if postChildPacketActive && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
+			postChildFollowupReads++
+			if postChildFollowupReads > postChildDiminishingNudgeStage {
+				if nudge := postChildDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, postChildFollowupReads); nudge != "" {
+					postChildDiminishingNudgeStage = postChildFollowupReads
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					r.emitEvent(RunEvent{Role: "child_packet_diminishing_returns_nudge", Content: nudge})
+				}
 			}
 		}
 		if strings.TrimSpace(result.Error) != "" {
@@ -1179,6 +1219,8 @@ func buildRunnerNextActionState(agent string, step int, reason string, req works
 	state.Constraints = mergeRunnerStateStrings(brief.Constraints, guidance.Constraints)
 	state.InvalidNextActions = mergeRunnerStateStrings(brief.InvalidActions, guidance.InvalidNext)
 	state.NextValidActions = mergeRunnerStateStrings(brief.RequiredNext, guidance.ValidNext)
+	state = applyDelegatedReadOnlyClosureBias(state, agent, brief, results)
+	state = applyPostChildClosureBias(state, req, result)
 	state.StateSummary = runnerStateSummary(state)
 	return state
 }
@@ -1256,6 +1298,81 @@ func appendUniqueRunnerState(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
+}
+
+func prependRunnerStateStrings(preferred []string, existing []string) []string {
+	out := make([]string, 0, len(preferred)+len(existing))
+	for _, value := range preferred {
+		out = appendUniqueRunnerState(out, value)
+	}
+	for _, value := range existing {
+		out = appendUniqueRunnerState(out, value)
+	}
+	return out
+}
+
+func filterRunnerStateStrings(values []string, drop func(string) bool) []string {
+	if len(values) == 0 {
+		return values
+	}
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || drop(trimmed) {
+			continue
+		}
+		filtered = append(filtered, trimmed)
+	}
+	return filtered
+}
+
+func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) runnerNextActionState {
+	if !delegatedReadOnlyClosureReady(agent, brief, results) {
+		return state
+	}
+	state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{"answer_readiness_reached"})
+	state.InvalidNextActions = filterRunnerStateStrings(state.InvalidNextActions, func(value string) bool {
+		return value == "final_answer_without_satisfying_completion_gate"
+	})
+	state.NextValidActions = filterRunnerStateStrings(state.NextValidActions, func(value string) bool {
+		lower := strings.ToLower(value)
+		return strings.Contains(lower, "gate") || strings.Contains(lower, "gather or edit the missing evidence")
+	})
+	state.NextValidActions = prependRunnerStateStrings([]string{
+		"answer directly from the evidence already gathered",
+		"if one named gap remains, use exactly one targeted follow-up read or search",
+		"state the specific missing gap if you still cannot answer",
+	}, state.NextValidActions)
+	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+		"open-ended discovery after answer readiness without naming a concrete gap",
+	})
+	return state
+}
+
+func delegatedReadOnlyClosureReady(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") || strings.TrimSpace(brief.TaskFamily) != "delegated_read_only" {
+		return false
+	}
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return false
+	}
+	return delegatedReadOnlyHasCompositeDiscoveryPacket(results) || len(delegatedReadOnlyInspectedImplementationPaths(results)) >= 2
+}
+
+func applyPostChildClosureBias(state runnerNextActionState, req workspace.ToolRequest, result workspace.ToolResult) runnerNextActionState {
+	if strings.TrimSpace(req.Tool) != "task" || isWriteChildMode(req.Mode) || strings.TrimSpace(result.Error) != "" {
+		return state
+	}
+	state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{"child_packet_available"})
+	state.NextValidActions = prependRunnerStateStrings([]string{
+		"answer directly from the child packet if it already resolves the question",
+		"if one named gap remains, inspect a packet-named path or symbol",
+		"state the exact unresolved gap instead of reopening broad discovery",
+	}, state.NextValidActions)
+	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+		"open-ended discovery after a child packet without naming a concrete gap",
+	})
+	return state
 }
 
 func truncateRunnerStateText(value string, max int) string {
@@ -1373,6 +1490,25 @@ func (r *Runner) emitDelegatedReadOnlyAnswerReadyEvent(req workspace.ToolRequest
 		return
 	}
 	r.OnEvent(RunEvent{Role: "delegated_read_only_answer_ready", Content: string(data)})
+}
+
+func (r *Runner) emitPostReadinessGapDeclared(scope string, req workspace.ToolRequest) {
+	if r == nil || r.OnEvent == nil {
+		return
+	}
+	payload := map[string]any{
+		"agent":             r.agentName(),
+		"scope":             strings.TrimSpace(scope),
+		"tool":              strings.TrimSpace(req.Tool),
+		"target":            workerruntime.ToolRequestTarget(req),
+		"named_gap":         strings.TrimSpace(req.NamedGap),
+		"why_not_answering": strings.TrimSpace(req.WhyNotAnswering),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	r.OnEvent(RunEvent{Role: "post_readiness_gap_declared", Content: string(data)})
 }
 
 func (r *Runner) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage, policy RunPolicy, ledger *taskLedgerState, results []workspace.ToolResult) bool {
@@ -1550,6 +1686,159 @@ func pinnedPathsFromToolResults(results []workspace.ToolResult, max int) []strin
 	return paths
 }
 
+func childPacketBoundaryNudge(evidencePaths []string) string {
+	base := "The delegated read_only child result is now the evidence packet. Treat it as inspected evidence; do not restart broad discovery in the parent."
+	validity, diminishing := closureDecisionRationale("", nil, evidencePaths)
+	lines := []string{base}
+	if validity != "" {
+		lines = append(lines, "Why answer now is valid: "+validity)
+	}
+	if len(evidencePaths) > 0 {
+		lines = append(lines, "Packet-named paths: "+summarizePostChildEvidencePaths(evidencePaths, 3))
+	}
+	if diminishing != "" {
+		lines = append(lines, "Lower-value next steps: "+diminishing)
+	}
+	lines = append(lines, "Answer now, or inspect one specific packet-named path or symbol for a named gap. Do not search for unrelated filenames first.")
+	return strings.Join(lines, "\n")
+}
+
+func postReadinessGapScope(agent string, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool, req workspace.ToolRequest) string {
+	if !isReadClassTool(req) {
+		return ""
+	}
+	if delegatedReadOnlyAnswerReady && strings.HasPrefix(strings.TrimSpace(agent), "child:") {
+		return "delegated_read_only_answer_ready"
+	}
+	if postChildPacketActive && strings.TrimSpace(req.Tool) != "task" {
+		return "child_packet_available"
+	}
+	return ""
+}
+
+func postReadinessGap(req workspace.ToolRequest) string {
+	return firstNonEmpty(req.NamedGap, req.WhyNotAnswering)
+}
+
+func missingPostReadinessGapMessage(scope string) (string, string) {
+	switch strings.TrimSpace(scope) {
+	case "delegated_read_only_answer_ready":
+		return "Post-readiness follow-up missing named gap",
+			"answer readiness has already been reached for this delegated read_only lane. Before any additional read/search call, include `named_gap` describing the exact unresolved question this follow-up will close. Optionally add `why_not_answering`. If no concrete gap remains, answer now."
+	case "child_packet_available":
+		return "Post-child follow-up missing named gap",
+			"the child packet already contains sufficient evidence to bias toward answering. Before any additional read/search call, include `named_gap` describing the exact unresolved question this follow-up will close. Optionally add `why_not_answering`. If no concrete gap remains, answer now from the child packet."
+	default:
+		return "Post-readiness follow-up missing named gap",
+			"before any additional read/search call after readiness, include `named_gap` describing the exact unresolved question this follow-up will close."
+	}
+}
+
+func delegatedReadOnlyAnswerReadyNudge(objective string, results []workspace.ToolResult) string {
+	paths := delegatedClosureEvidencePaths(objective, results, 4)
+	validity, diminishing := closureDecisionRationale(objective, results, paths)
+	lines := []string{
+		"You likely have enough delegated read-only evidence to answer this question.",
+	}
+	if validity != "" {
+		lines = append(lines, "Why answer now is valid: "+validity)
+	}
+	if len(paths) > 0 {
+		lines = append(lines, "Core evidence paths: "+summarizePostChildEvidencePaths(paths, 3))
+	}
+	if diminishing != "" {
+		lines = append(lines, "Lower-value next steps: "+diminishing)
+	}
+	lines = append(lines,
+		"Do not restart broad discovery.",
+		"If a specific gap remains, use one targeted follow-up read or search; otherwise answer directly from the evidence gathered so far.",
+	)
+	return strings.Join(lines, "\n")
+}
+
+func delegatedReadOnlyDiminishingReturnsNudge(objective string, results []workspace.ToolResult, followups int) string {
+	if followups <= 0 || followups > 2 {
+		return ""
+	}
+	paths := delegatedClosureEvidencePaths(objective, results, 4)
+	validity, diminishing := closureDecisionRationale(objective, results, paths)
+	lines := []string{
+		fmt.Sprintf("You have already spent %d targeted follow-up %s after answer readiness.", followups, pluralizeRunnerFollowup(followups)),
+	}
+	if validity != "" {
+		lines = append(lines, "Why answering is still valid: "+validity)
+	}
+	if diminishing != "" {
+		lines = append(lines, "Diminishing returns warning: "+diminishing)
+	}
+	if followups == 1 {
+		lines = append(lines, "If this did not close a named gap, the highest-value next move is to answer from the current evidence.")
+	} else {
+		lines = append(lines, "A further read is now likely to repeat known context. Answer now unless you can name one exact missing branch, function body, or boundary.")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func postChildDiminishingReturnsNudge(objective string, results []workspace.ToolResult, followups int) string {
+	if followups <= 0 || followups > 2 {
+		return ""
+	}
+	paths := limitRunnerStrings(pinnedPathsFromToolResults(results, 4), 4)
+	validity, diminishing := closureDecisionRationale(objective, results, paths)
+	lines := []string{
+		fmt.Sprintf("You have already spent %d targeted follow-up %s after the child packet.", followups, pluralizeRunnerFollowup(followups)),
+	}
+	if validity != "" {
+		lines = append(lines, "Why answering is already justified: "+validity)
+	}
+	if diminishing != "" {
+		lines = append(lines, "Diminishing returns warning: "+diminishing)
+	}
+	if len(paths) > 0 {
+		lines = append(lines, "Current evidence still centers on: "+summarizePostChildEvidencePaths(paths, 3))
+	}
+	if followups == 1 {
+		lines = append(lines, "If the first follow-up did not reveal a named gap, prefer answering now over another discovery step.")
+	} else {
+		lines = append(lines, "Another follow-up is now lower value than answering unless you can name one exact unresolved gap.")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func delegatedClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
+	paths := delegatedReadOnlyInspectedImplementationPaths(results)
+	if len(paths) == 0 {
+		paths = delegatedDiscoveryQueryEvidencePaths(results, max)
+	}
+	if len(paths) == 0 {
+		paths = pinnedPathsFromToolResults(results, max)
+	}
+	paths = delegatedDiscoveryAnswerEvidencePaths(objective, paths)
+	return limitRunnerStrings(paths, max)
+}
+
+func closureDecisionRationale(objective string, results []workspace.ToolResult, fallbackPaths []string) (string, string) {
+	paths := delegatedClosureEvidencePaths(objective, results, 4)
+	if len(paths) == 0 {
+		paths = limitRunnerStrings(fallbackPaths, 4)
+	}
+	switch {
+	case delegatedObjectiveLooksLikeSubagents(objective):
+		return "the current evidence already spans the handoff classifier, the child-runner implementation, and the answer-composer path that turns delegated packets into final answers", "another follow-up is only likely to help if it isolates one exact function body or branch condition; repeated reads usually restate the same handoff flow"
+	case len(paths) > 0:
+		return "the current evidence already names the core implementation paths " + summarizePostChildEvidencePaths(paths, 3), "another follow-up is only likely to help if it closes one named gap; otherwise additional reads mostly restate the same core files"
+	default:
+		return "the current evidence already covers the named scope well enough to support a grounded answer", "another follow-up is only likely to help if it closes one named gap"
+	}
+}
+
+func pluralizeRunnerFollowup(count int) string {
+	if count == 1 {
+		return "read/search"
+	}
+	return "reads/searches"
+}
+
 func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
 	if taskLedger != nil {
 		if result, rejected := taskLedger.completionRejection(reply); rejected {
@@ -1693,6 +1982,8 @@ func normalizeRunnerToolRequest(req workspace.ToolRequest) workspace.ToolRequest
 	req.Path = normalizeRunnerPath(req.Path)
 	req.Destination = normalizeRunnerPath(req.Destination)
 	req.Workdir = normalizeRunnerPath(req.Workdir)
+	req.NamedGap = ""
+	req.WhyNotAnswering = ""
 	for i := range req.Moves {
 		req.Moves[i].Destination = normalizeRunnerPath(req.Moves[i].Destination)
 	}

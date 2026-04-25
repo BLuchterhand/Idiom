@@ -21,6 +21,9 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	if answer == "" || !input.UserFacing {
 		return answer
 	}
+	if finalAnswerStopReasonPreservesUncertainty(input.StopReason) {
+		return answer
+	}
 	if !finalAnswerNeedsDecoration(answer) {
 		return answer
 	}
@@ -85,6 +88,10 @@ func finalAnswerStopReasonPrefersDecoration(stopReason string) bool {
 	default:
 		return false
 	}
+}
+
+func finalAnswerStopReasonPreservesUncertainty(stopReason string) bool {
+	return strings.HasSuffix(strings.TrimSpace(stopReason), "_budget_exhausted")
 }
 
 func (r *Runner) userFacingFinalAnswer() bool {

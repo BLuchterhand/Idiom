@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,34 @@ func TestGenericDiscoveryToolsAreAdvertised(t *testing.T) {
 	for _, want := range []string{"discovery_query", "structural_search", "dependency_graph", "history_range", "blame_range"} {
 		if !slices.Contains(names, want) {
 			t.Fatalf("expected tool definitions to include %q, got %#v", want, names)
+		}
+	}
+}
+
+func TestReadToolSchemasAdvertisePostReadinessGapFields(t *testing.T) {
+	defs := BuildToolDefinitions([]string{"search_content", "read_file"})
+	for _, want := range []string{"search_content", "read_file"} {
+		var matched bool
+		for _, def := range defs {
+			if def.Name != want {
+				continue
+			}
+			matched = true
+			var schema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if err := json.Unmarshal([]byte(def.ParametersJSON), &schema); err != nil {
+				t.Fatalf("unmarshal schema for %s: %v", want, err)
+			}
+			if _, ok := schema.Properties["named_gap"]; !ok {
+				t.Fatalf("expected %s schema to advertise named_gap, got %#v", want, schema.Properties)
+			}
+			if _, ok := schema.Properties["why_not_answering"]; !ok {
+				t.Fatalf("expected %s schema to advertise why_not_answering, got %#v", want, schema.Properties)
+			}
+		}
+		if !matched {
+			t.Fatalf("missing tool definition for %s", want)
 		}
 	}
 }

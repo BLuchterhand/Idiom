@@ -21,6 +21,22 @@ func TestParseToolRequestExtractsFirstJSONObjectFromToolFence(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestPreservesPostReadinessGapFields(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"search_content\",\"pattern\":\"runner\",\"path\":\"internal\",\"named_gap\":\"find the exact stop-condition branch\",\"why_not_answering\":\"I still need the deciding condition\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.NamedGap != "find the exact stop-condition branch" {
+		t.Fatalf("unexpected named gap: %#v", req)
+	}
+	if req.WhyNotAnswering != "I still need the deciding condition" {
+		t.Fatalf("unexpected why_not_answering: %#v", req)
+	}
+}
+
 func TestParseToolRequestRejectsMalformedOrMissingTool(t *testing.T) {
 	_, _, ok, err := ParseToolRequest("no tool here")
 	if err != nil || ok {

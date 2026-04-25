@@ -36,6 +36,27 @@ func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
 	}
 }
 
+func TestBuildActionGuidanceIgnoresCompletionGatePhrasesInSearchOutput(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:  "tool_result",
+		Request: workspace.ToolRequest{Tool: "search_content", Path: "internal/agent/runner.go"},
+		Result: workspace.ToolResult{
+			Tool:    "search_content",
+			Summary: "Found 20 matching line(s)",
+			Output:  "internal/agent/runner.go:123: completion gate\ninternal/agent/runner.go:124: final answer rejected\n",
+		},
+	})
+	if containsString(guidance.Constraints, "completion_gate_active") {
+		t.Fatalf("search output should not fabricate completion-gate state: %#v", guidance)
+	}
+	if containsString(guidance.InvalidNext, "final_answer_without_satisfying_completion_gate") {
+		t.Fatalf("search output should not block answers as if a gate fired: %#v", guidance)
+	}
+	if strings.Contains(strings.Join(guidance.ValidNext, "\n"), "gate") {
+		t.Fatalf("search output should not inject gate-specific follow-up guidance: %#v", guidance)
+	}
+}
+
 func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 	cases := []struct {
 		name   string
