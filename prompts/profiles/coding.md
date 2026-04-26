@@ -4,7 +4,7 @@ When the session is about code:
 - Inspect relevant files before proposing or making changes.
 - Treat explicit user boundaries as hard constraints; do not write, run destructive actions, or expand scope unless the task requires it.
 - For broad or uncertain tasks, map the area first, then use separate focused passes or subagents for discovery, implementation, and review.
-- Once the evidence is sufficient, answer or act immediately. Do not continue reading for completeness.
+- Once the evidence is sufficient, answer or act. If one exact missing claim still matters, take one exact follow-up instead of continuing to read for completeness.
 - After a delegated child packet or explicit readiness cue, either answer or stay inside the packet-named files or symbols. Do not jump to README/docs or repo-wide search unless that artifact is the exact named gap.
 - Keep a short task ledger: current hypothesis, files checked, verification done, and next action.
 - After one broad directory listing, narrow with structured tools or discovered handles first; use `search_content` / `read_file` only when the semantic probe did not land or when you need prose / exact ranges.

@@ -1632,6 +1632,82 @@ func TestBudgetClosureRunEmitsAcceptanceSignals(t *testing.T) {
 	}
 }
 
+func TestRunnerForcesSynthesisOnFirstPostReadinessNoGapFollowup(t *testing.T) {
+	root := t.TempDir()
+	source := `package agent
+
+type Runner struct{}
+
+func (r *Runner) runChildTask() string {
+	child := "child"
+	return child
+}
+`
+	if err := writeTestFile(root, "internal/agent/runner_child_tasks.go", source); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"go_read_symbol","path":"internal/agent/runner_child_tasks.go","pattern":"Runner.runChildTask"}`,
+		`{"tool":"go_read_symbol","path":"internal/agent/runner_child_tasks.go","pattern":"Runner.runWorkbranchChildTask"}`,
+		"`Runner.runChildTask` creates the child runner path in `internal/agent/runner_child_tasks.go` and returns its result.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var roles []string
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 2},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "architecture",
+			Contract:          "architecture_assessment",
+			Objective:         "Explain how `Runner.runChildTask` works.",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"go_read_symbol"},
+		},
+		OnEvent: func(event RunEvent) {
+			roles = append(roles, event.Role)
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Explain how `Runner.runChildTask` works."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "runChildTask") {
+		t.Fatalf("expected forced synthesis answer, got %q", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected first no-gap follow-up to force synthesis immediately, used %d/%d replies", requests, len(replies))
+	}
+	if slices.Contains(roles, "tool_rejected") {
+		t.Fatalf("did not expect a rejected-tool turn before forced synthesis, got roles %v", roles)
+	}
+}
+
 func TestRunnerRequiresVerificationAfterRepeatedWrites(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "one\ntwo\nthree\n"); err != nil {
@@ -5807,6 +5883,106 @@ func TestEmitAcceptedAnswerSignalsSanitizesEvidencePaths(t *testing.T) {
 		if containsRunnerString(got, forbidden) {
 			t.Fatalf("did not expect sanitized readiness paths to retain %q, got %#v", forbidden, got)
 		}
+	}
+}
+
+func TestEmitAcceptedAnswerSignalsPrefersExactProbePathsOverNoisyPinnedPaths(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "architecture",
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			Objective:         "Explain how this harness uses subagents.",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	var readiness map[string]any
+	runner.OnEvent = func(event RunEvent) {
+		if event.Role != "readiness_check" {
+			return
+		}
+		_ = json.Unmarshal([]byte(event.Content), &readiness)
+	}
+	runner.emitAcceptedAnswerSignals(
+		"`Runner.runChildTask` creates the bounded child runner in `internal/agent/runner_child_tasks.go` and returns the child result to the parent as evidence.",
+		[]workspace.ToolResult{
+			{
+				Tool:    "task",
+				Summary: "Child task completed",
+				Output:  "Primary files: `internal/agent/instructions.go`, `internal/agent/modes.go`.",
+			},
+			{
+				Tool:    "go_read_symbol",
+				Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-132",
+				Output:  "func (r *Runner) runChildTask(...) workspace.ToolResult { return workspace.ToolResult{} }",
+			},
+		},
+	)
+	rawPaths, _ := readiness["evidence_paths"].([]any)
+	got := make([]string, 0, len(rawPaths))
+	for _, raw := range rawPaths {
+		if value, ok := raw.(string); ok {
+			got = append(got, value)
+		}
+	}
+	if !containsRunnerString(got, "internal/agent/runner_child_tasks.go") {
+		t.Fatalf("expected exact probe path in readiness paths, got %#v", got)
+	}
+	for _, forbidden := range []string{"internal/agent/instructions.go", "internal/agent/modes.go"} {
+		if containsRunnerString(got, forbidden) {
+			t.Fatalf("did not expect noisy pinned path %q in readiness paths, got %#v", forbidden, got)
+		}
+	}
+}
+
+func TestReadOnlyExplanationCompletionRejectionRejectsMetaScopeSummary(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	result, rejected := runner.completionGateRejection(
+		"I have sufficient evidence to answer. The strongest implementation evidence is in `internal/agent/runner.go`.",
+		nil,
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatalf("expected meta scope summary to be rejected")
+	}
+	if !strings.Contains(result.Error, "implementation surface") && !strings.Contains(result.Error, "concrete behavior") {
+		t.Fatalf("expected explanatory rejection, got %#v", result)
+	}
+}
+
+func TestReadOnlyExplanationCompletionRejectionRejectsUnsupportedExtraDetail(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "go_read_symbol",
+		Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-132",
+		Output:  "func (r *Runner) runChildTask(...) workspace.ToolResult { return workspace.ToolResult{} }",
+	}}
+	result, rejected := runner.completionGateRejection(
+		"`Runner.runChildTask` creates the read-only child runner, and `Runner.runWorkbranchChildTask` applies the write-enabled variant.",
+		results,
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatalf("expected unsupported extra symbol detail to be rejected")
+	}
+	if !strings.Contains(result.Error, "runWorkbranchChildTask") {
+		t.Fatalf("expected rejection to name unsupported detail, got %#v", result)
 	}
 }
 

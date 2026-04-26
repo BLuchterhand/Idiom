@@ -28,6 +28,8 @@ var (
 	closurePathScopedSymbolPattern  = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
 	closurePathCallPattern          = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?:[^\n]*?\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
 	callLikeIdentifierPattern       = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
+	qualifiedIdentifierPattern      = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{1,}\.[A-Za-z_][A-Za-z0-9_]{3,})\b`)
+	backtickedTokenPattern          = regexp.MustCompile("`([^`]+)`")
 	goFuncDeclPattern               = regexp.MustCompile(`(?m)^func\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
 	codeShapedTokenPattern          = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
 	codeShapedSnakeCasePattern      = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
@@ -476,26 +478,26 @@ func (r *Runner) Run(
 		if scope := postReadinessGapScope(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
 				requestBudget.postReadinessNoGapRejections++
-				// If the model has already been told once this turn that
-				// post-readiness reads require named_gap, and it's still
-				// emitting no-gap reads, reading another rejection won't
-				// teach it. Force-answer instead of letting the rejection
-				// ladder burn the rest of the step budget.
-				if requestBudget.postReadinessNoGapRejections >= 2 {
-					prompt := "You have repeatedly issued post-readiness reads without `named_gap`. Tools are now disabled. Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
-					answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
-					return finish(answer, err, "post_readiness_no_gap_repeated", true)
+				if strings.HasPrefix(r.agentName(), "child:") {
+					if requestBudget.postReadinessNoGapRejections >= 2 {
+						prompt := "You have repeatedly issued post-readiness reads without `named_gap`. Tools are now disabled. Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
+						answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
+						return finish(answer, err, "post_readiness_no_gap_repeated", true)
+					}
+					if prompt, exhausted := consumeRejectedPostReadinessProbe(scope, req, &delegatedReadOnlyPostReadyFollowups, &postChildFollowupReads, delegatedReadOnlyProbeBudget, postChildReadBudget); exhausted {
+						answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
+						return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
+					}
+					summary, errorText := missingPostReadinessGapMessage(scope)
+					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+					if done {
+						return finish(answer, err, "post_readiness_gap_required", true)
+					}
+					continue
 				}
-				if prompt, exhausted := consumeRejectedPostReadinessProbe(scope, req, &delegatedReadOnlyPostReadyFollowups, &postChildFollowupReads, delegatedReadOnlyProbeBudget, postChildReadBudget); exhausted {
-					answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
-					return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
-				}
-				summary, errorText := missingPostReadinessGapMessage(scope)
-				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
-				if done {
-					return finish(answer, err, "post_readiness_gap_required", true)
-				}
-				continue
+				prompt := "You issued a post-readiness read without `named_gap`. Tools are now disabled. Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
+				answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
+				return finish(answer, err, "post_readiness_no_gap", true)
 			}
 			if summary, errorText, rejected := invalidPostReadinessGap(scope, r.RuntimeBrief.Objective, req, collectedResults); rejected {
 				if prompt, exhausted := consumeRejectedPostReadinessProbe(scope, req, &delegatedReadOnlyPostReadyFollowups, &postChildFollowupReads, delegatedReadOnlyProbeBudget, postChildReadBudget); exhausted {
@@ -2919,6 +2921,9 @@ func (r *Runner) completionGateRejection(reply string, results []workspace.ToolR
 	if result, rejected := r.mutationCompletionRejection(reply, results); rejected {
 		return result, true
 	}
+	if result, rejected := r.readOnlyExplanationCompletionRejection(reply, results); rejected {
+		return result, true
+	}
 	if r.CompletionGate == nil {
 		return workspace.ToolResult{}, false
 	}
@@ -2944,6 +2949,27 @@ func (r *Runner) completionGateRejection(reply string, results []workspace.ToolR
 		Summary: summary,
 		Error:   errorText,
 	}, true
+}
+
+func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if r == nil || !readOnlyExplanationGateApplies(r.RuntimeBrief) {
+		return workspace.ToolResult{}, false
+	}
+	if reason := readOnlyExplanationMetaRejectionReason(reply); reason != "" {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Read-only explanation gate rejected meta final answer",
+			Error:   reason,
+		}, true
+	}
+	if unsupported := architectureUnsupportedExactDetail(reply, results); len(unsupported) > 0 {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Architecture completion gate rejected unsupported detail",
+			Error:   "the answer names additional implementation detail " + quotedRunnerStrings(unsupported) + " without an exact inspected probe or explicit uncertainty. Either anchor that detail with one exact read, or qualify it as unverified.",
+		}, true
+	}
+	return workspace.ToolResult{}, false
 }
 
 func (r *Runner) mutationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -2972,6 +2998,173 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		}, true
 	}
 	return workspace.ToolResult{}, false
+}
+
+func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
+	switch strings.TrimSpace(brief.Contract) {
+	case "architecture_assessment", "review_findings":
+		return true
+	}
+	if strings.TrimSpace(brief.PermissionProfile) != "read_only_workspace" {
+		return false
+	}
+	switch strings.TrimSpace(brief.TaskFamily) {
+	case "architecture", "review":
+		return true
+	default:
+		return false
+	}
+}
+
+func readOnlyExplanationMetaRejectionReason(reply string) string {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	for _, phrase := range []string{
+		"i have sufficient evidence",
+		"the strongest implementation evidence is in",
+		"the inspected implementation evidence is enough",
+		"the retained source context identifies",
+		"the gathered evidence points to these implementation surfaces",
+		"enough for a bounded answer",
+		"implementation surface",
+	} {
+		if strings.Contains(lower, phrase) {
+			return "the answer describes evidence sufficiency or implementation surface instead of explaining the concrete behavior from the inspected code. State the mechanism or findings directly."
+		}
+	}
+	if len(pathparse.MentionedWorkspacePaths(trimmed)) > 0 && !readOnlyExplanationHasMechanismVerb(lower) {
+		return "the answer mostly inventories paths or scope and does not explain what the inspected code does. State the concrete behavior those files establish."
+	}
+	return ""
+}
+
+func readOnlyExplanationHasMechanismVerb(lower string) bool {
+	for _, phrase := range []string{
+		" uses ", " use ", " used ", " delegates ", " delegate ", " delegated ",
+		" creates ", " create ", " created ", " calls ", " call ", " called ",
+		" invokes ", " invoke ", " invoked ", " routes ", " route ", " routed ",
+		" runs ", " run ", " ran ", " returns ", " return ", " returned ",
+		" passes ", " pass ", " passed ", " enforces ", " enforce ", " enforced ",
+		" spawns ", " spawn ", " spawned ", " builds ", " build ", " built ",
+		" wires ", " wire ", " wired ", " folds ", " fold ", " folded ",
+		" hands ", " hand ", " handed ", " launches ", " launch ", " launched ",
+	} {
+		if strings.Contains(" "+lower+" ", phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func architectureUnsupportedExactDetail(reply string, results []workspace.ToolResult) []string {
+	exactSymbols := exactEvidenceSymbolSet(results)
+	if len(exactSymbols) == 0 || answerHasExplicitUncertainty(reply) {
+		return nil
+	}
+	mentioned := explicitAnswerCodeSymbols(reply)
+	if len(mentioned) == 0 {
+		return nil
+	}
+	var unsupported []string
+	for _, symbol := range mentioned {
+		key := normalizedAnswerSymbol(symbol)
+		if key == "" {
+			continue
+		}
+		if _, ok := exactSymbols[key]; ok {
+			continue
+		}
+		unsupported = appendUniqueSearchTerm(unsupported, symbol)
+	}
+	return unsupported
+}
+
+func exactEvidenceSymbolSet(results []workspace.ToolResult) map[string]struct{} {
+	symbols := make(map[string]struct{})
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+		switch strings.TrimSpace(result.Tool) {
+		case "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_extract_body", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+		default:
+			continue
+		}
+		_, symbol := extractExactProbeAnchor(result)
+		key := normalizedAnswerSymbol(symbol)
+		if key != "" {
+			symbols[key] = struct{}{}
+		}
+		for _, call := range exactProbeCallNames(symbol, result.Output, 8) {
+			key := normalizedAnswerSymbol(call)
+			if key != "" {
+				symbols[key] = struct{}{}
+			}
+		}
+	}
+	return symbols
+}
+
+func explicitAnswerCodeSymbols(reply string) []string {
+	symbols := make([]string, 0, 6)
+	add := func(raw string) {
+		key := normalizedAnswerSymbol(raw)
+		if key == "" {
+			return
+		}
+		symbols = appendUniqueSearchTerm(symbols, raw)
+	}
+	for _, match := range backtickedTokenPattern.FindAllStringSubmatch(reply, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	for _, match := range qualifiedIdentifierPattern.FindAllStringSubmatch(reply, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(reply, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	return symbols
+}
+
+func normalizedAnswerSymbol(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, "`'\"()[]{}<>,.:;!?")
+	if dot := strings.LastIndex(raw, "."); dot >= 0 {
+		raw = strings.TrimSpace(raw[dot+1:])
+	}
+	candidate, ok := delegatedReadOnlyLiteralSymbolCandidate(raw)
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(candidate)
+}
+
+func answerHasExplicitUncertainty(reply string) bool {
+	lower := strings.ToLower(strings.TrimSpace(reply))
+	return containsAny(lower,
+		"not directly inspected",
+		"not directly read",
+		"not confirmed",
+		"not verified",
+		"did not inspect",
+		"didn't inspect",
+		"uncertain",
+		"may ",
+		"might ",
+		"appears ",
+		"suggests ",
+		"likely ",
+		"seems ",
+	)
 }
 
 func runnerBriefRequiresMutation(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -4212,9 +4405,7 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	}
 	lane := firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
 	contract := firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer")
-	evidencePaths := mergeRunnerStateStrings(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
-	evidencePaths = delegatedDiscoveryAnswerEvidencePaths(r.RuntimeBrief.Objective, evidencePaths)
-	evidencePaths = closurePromptEvidencePaths(evidencePaths, 8)
+	evidencePaths := acceptedAnswerEvidencePaths(answer, results, r.RuntimeBrief)
 	confidence := "medium"
 	if len(evidencePaths) >= 2 && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(answer)), "partial findings from this turn") {
 		confidence = "high"
@@ -4242,6 +4433,47 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 		"action":         "accept",
 		"evidence_paths": evidencePaths,
 	}))
+}
+
+func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) []string {
+	if readOnlyExplanationGateApplies(brief) {
+		paths := mergeRunnerStateStrings(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
+		paths = mergeRunnerStateStrings(paths, delegatedReadOnlyInspectedImplementationPaths(results))
+		paths = prioritizedClosureEvidencePaths(paths, results, 8)
+		paths = closurePromptEvidencePaths(paths, 8)
+		if len(paths) > 0 {
+			return paths
+		}
+	}
+	paths := mergeRunnerStateStrings(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
+	paths = delegatedDiscoveryAnswerEvidencePaths(brief.Objective, paths)
+	return closurePromptEvidencePaths(paths, 8)
+}
+
+func exactProbeEvidencePaths(results []workspace.ToolResult) []string {
+	seen := make(map[string]struct{})
+	paths := make([]string, 0, 4)
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+		switch strings.TrimSpace(result.Tool) {
+		case "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_extract_body", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+		default:
+			continue
+		}
+		path, _ := extractExactProbeAnchor(result)
+		path = normalizeDelegatedDiscoveryEvidencePath(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return preferNonTestEvidencePaths(paths)
 }
 
 func (r *Runner) agentName() string {
