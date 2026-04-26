@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -91,11 +92,31 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 // and returns its decision. A missing tool or empty rule set returns
 // ToolRuleNone — callers should treat that as "defer to the legacy
 // binary gate" so behavior is unchanged when the config omits this section.
+//
+// For `mcp:<server>/<tool>` calls there is a glob fallback: if no rules
+// are registered under the literal qualified name, MatchToolRule retries
+// against the catch-all key `mcp:*`. This lets users write a single
+// "every MCP tool asks" rule without enumerating each server.
 func MatchToolRule(tool string, req ToolRequest, rules map[string][]ToolRule) ToolRuleDecision {
 	if len(rules) == 0 {
 		return ToolRuleNone
 	}
-	toolRules, ok := rules[tool]
+	if decision := matchToolRuleByKey(tool, req, rules, tool); decision != ToolRuleNone {
+		return decision
+	}
+	if strings.HasPrefix(tool, "mcp:") && tool != "mcp:*" {
+		if decision := matchToolRuleByKey(tool, req, rules, "mcp:*"); decision != ToolRuleNone {
+			return decision
+		}
+	}
+	return ToolRuleNone
+}
+
+// matchToolRuleByKey looks up rules under the given key and applies the
+// pattern matcher. tool is still the original tool name — used by the
+// pattern matcher to pick shell vs. path semantics.
+func matchToolRuleByKey(tool string, req ToolRequest, rules map[string][]ToolRule, key string) ToolRuleDecision {
+	toolRules, ok := rules[key]
 	if !ok || len(toolRules) == 0 {
 		return ToolRuleNone
 	}
@@ -112,12 +133,47 @@ func MatchToolRule(tool string, req ToolRequest, rules map[string][]ToolRule) To
 }
 
 func extractToolRuleTarget(tool string, req ToolRequest) string {
-	switch tool {
-	case "shell", "bash":
+	switch {
+	case tool == "shell" || tool == "bash":
 		return strings.TrimSpace(req.Command)
+	case strings.HasPrefix(tool, "mcp:"):
+		// MCP tools have arbitrary args; we cannot type-match. Use the
+		// most human-meaningful field present — `query` for search-shaped
+		// tools, `url` for fetch-shaped ones — so users can still write
+		// patterns like "https://github.com/*" or "go 1.24*".
+		if q := stringFieldFromRawJSON(req.Args, "query"); q != "" {
+			return q
+		}
+		if u := stringFieldFromRawJSON(req.Args, "url"); u != "" {
+			return u
+		}
+		return ""
 	default:
 		return strings.TrimSpace(req.Path)
 	}
+}
+
+// stringFieldFromRawJSON extracts one top-level string field from raw
+// JSON bytes without unmarshaling the whole blob into a typed struct.
+// Returns "" when the field is missing, non-string, or the bytes are
+// not a JSON object.
+func stringFieldFromRawJSON(raw json.RawMessage, key string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return ""
+	}
+	rawVal, ok := probe[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(rawVal, &s); err != nil {
+		return ""
+	}
+	return s
 }
 
 func matchToolRulePattern(tool string, pattern string, target string) bool {

@@ -126,7 +126,7 @@ func (r *Runner) Run(
 			}
 			allowed = filtered
 		}
-		tools := buildLlamaTools(workspace.BuildToolDefinitions(allowed))
+		tools := buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
 		// Schema-level enforcement of the post-readiness contract: once
 		// the lane has reached answer readiness or received a child
 		// packet, mark named_gap and why_not_answering as required on

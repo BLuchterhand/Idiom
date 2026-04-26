@@ -351,14 +351,26 @@ func toolResultTouchedPaths(req workspace.ToolRequest, _ workspace.ToolResult) [
 
 // parseToolCall unmarshals the arguments JSON the model produced in a
 // ToolCall into a typed ToolRequest. The function name is the tool;
-// arguments JSON decodes directly into ToolRequest's field set (they
-// overlap by design). Returns ok=false for unsupported tool names so the
-// runner can surface an error back to the model.
+// for built-in tools the arguments JSON decodes directly into
+// ToolRequest's field set (they overlap by design). For
+// `mcp:<server>/<tool>` calls the raw JSON is preserved verbatim in
+// ToolRequest.Args — MCP tools have arbitrary JSON-Schema parameters
+// that do not map onto this struct's typed fields, and forcing them
+// through the typed unmarshaller would silently drop fields. Returns
+// ok=false when the call has no function name.
 func parseToolCall(call llama.ToolCall) (workspace.ToolRequest, bool, error) {
 	if call.Function.Name == "" {
 		return workspace.ToolRequest{}, false, nil
 	}
 	req := workspace.ToolRequest{Tool: call.Function.Name}
+	if strings.HasPrefix(call.Function.Name, "mcp:") {
+		if call.Function.Arguments != "" {
+			req.Args = json.RawMessage(call.Function.Arguments)
+		} else {
+			req.Args = json.RawMessage(`{}`)
+		}
+		return req, true, nil
+	}
 	if call.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &req); err != nil {
 			return workspace.ToolRequest{}, false, err

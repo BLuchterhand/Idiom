@@ -25,6 +25,11 @@ type Mode struct {
 
 // BuildMode is the default: full tool capability with a light deny-list
 // for known-dangerous shell patterns. Matches OpenCode's `build` agent.
+//
+// MCP-discovered tools (`mcp:<server>/<tool>`) default to "ask" — network
+// egress and per-call cost warrant a confirmation step. Users override
+// per-server in config (e.g. `mcp:exa/web_search_exa: allow`). See
+// docs/web-search-tool-design.md §6 W5.
 func BuildMode() Mode {
 	return Mode{
 		Name:              "build",
@@ -37,6 +42,7 @@ func BuildMode() Mode {
 				{Pattern: "rm -rf *", Decision: workspace.ToolRuleAsk},
 				{Pattern: "sudo *", Decision: workspace.ToolRuleAsk},
 			},
+			"mcp:*": {{Pattern: "*", Decision: workspace.ToolRuleAsk}},
 		},
 		StepCap: 0,
 	}
@@ -45,6 +51,11 @@ func BuildMode() Mode {
 // PlanMode is read-only: edits and shell mutations are denied. The user
 // picks this when they want reasoning + exploration without risk of
 // changes. Matches OpenCode's `plan` agent.
+//
+// MCP-discovered tools default to "allow" here — plan mode is the
+// friction-light reasoning lane, and MCP tools (web_search, web_fetch
+// via the community fetch server, etc.) are reads. Asking on each one
+// would defeat the mode's purpose. See docs/web-search-tool-design.md §6 W5.
 func PlanMode() Mode {
 	return Mode{
 		Name:              "plan",
@@ -63,6 +74,7 @@ func PlanMode() Mode {
 				{Pattern: "rg *", Decision: workspace.ToolRuleAllow},
 				{Pattern: "*", Decision: workspace.ToolRuleDeny},
 			},
+			"mcp:*": {{Pattern: "*", Decision: workspace.ToolRuleAllow}},
 		},
 		StepCap: 64,
 	}
@@ -70,7 +82,7 @@ func PlanMode() Mode {
 
 // GeneralMode is a middle ground: reads and safe shell are allowed, but
 // writes require confirmation. A conservative default for ambiguous
-// sessions.
+// sessions. MCP tools default to "ask" — same posture as the write tools.
 func GeneralMode() Mode {
 	return Mode{
 		Name:              "general",
@@ -86,6 +98,7 @@ func GeneralMode() Mode {
 				{Pattern: "sudo *", Decision: workspace.ToolRuleDeny},
 				{Pattern: "*", Decision: workspace.ToolRuleAsk},
 			},
+			"mcp:*": {{Pattern: "*", Decision: workspace.ToolRuleAsk}},
 		},
 		StepCap: 32,
 	}

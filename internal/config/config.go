@@ -68,12 +68,37 @@ func (r RouteClassifier) LlamaServerSpec() LlamaServer {
 	}
 }
 
-// MCPServer describes one stdio MCP server.
+// MCPServer describes one MCP server. Two transports are supported and
+// they are mutually exclusive on a per-entry basis:
+//
+//   - **stdio**: set Command (+ optional Args, Env). The harness spawns the
+//     process and speaks JSON-RPC over its stdio pair.
+//   - **http**: set URL (+ optional Headers). The harness POSTs JSON-RPC
+//     to the endpoint and reads the response as either application/json
+//     or text/event-stream. Used for hosted MCP servers like Exa AI's
+//     https://mcp.exa.ai/mcp.
+//
+// TimeoutSeconds is optional and applies only to the http transport;
+// it sets the per-request HTTP client timeout. Zero falls back to the
+// transport default (30 s).
 type MCPServer struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
-	Env     []string `json:"env,omitempty"`
+	Name           string            `json:"name"`
+	Command        string            `json:"command,omitempty"`
+	Args           []string          `json:"args,omitempty"`
+	Env            []string          `json:"env,omitempty"`
+	URL            string            `json:"url,omitempty"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+}
+
+// IsHTTP reports whether the server is configured for HTTP transport.
+func (m MCPServer) IsHTTP() bool {
+	return strings.TrimSpace(m.URL) != ""
+}
+
+// IsStdio reports whether the server is configured for stdio transport.
+func (m MCPServer) IsStdio() bool {
+	return strings.TrimSpace(m.Command) != ""
 }
 
 // Backend kinds accepted by LlamaServer.Kind.
@@ -163,6 +188,11 @@ type Workspace struct {
 	// (or the whole section) preserves the legacy EnableShell/EnableWrites
 	// behavior. See docs/opencode-fixes-design.md §6.
 	ToolRules map[string][]ToolRule `json:"tool_rules,omitempty"`
+	// AllowPrivateNetwork lets HTTP-transport MCP servers connect to
+	// loopback, link-local, and RFC1918 addresses. Off by default; flip
+	// only when registering an MCP server inside a corp intranet you
+	// know is yours. See docs/web-search-tool-design.md §6 W6.
+	AllowPrivateNetwork bool `json:"allow_private_network,omitempty"`
 }
 
 // ToolRule is a glob-style permission rule for a specific tool. Pattern
@@ -352,6 +382,35 @@ func (c Config) Validate() error {
 		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("workspace.cwd must be inside workspace.root")
 		}
+	}
+	for i, srv := range c.MCP {
+		if err := srv.Validate(); err != nil {
+			return fmt.Errorf("mcp[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// Validate enforces the stdio-XOR-http invariant on a single MCP server
+// entry. Both unset or both set is a config error; we do not silently
+// pick one transport over the other.
+func (m MCPServer) Validate() error {
+	if strings.TrimSpace(m.Name) == "" {
+		return fmt.Errorf("name is required")
+	}
+	hasStdio := m.IsStdio()
+	hasHTTP := m.IsHTTP()
+	switch {
+	case hasStdio && hasHTTP:
+		return fmt.Errorf("server %q sets both command and url; pick one", m.Name)
+	case !hasStdio && !hasHTTP:
+		return fmt.Errorf("server %q must set either command (stdio) or url (http)", m.Name)
+	}
+	if hasHTTP && m.TimeoutSeconds < 0 {
+		return fmt.Errorf("server %q: timeout_seconds must be non-negative", m.Name)
+	}
+	if hasStdio && (len(m.Headers) > 0) {
+		return fmt.Errorf("server %q: headers only apply to http transport", m.Name)
 	}
 	return nil
 }

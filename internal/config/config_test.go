@@ -194,6 +194,93 @@ func TestValidateRejectsUnknownBackendKind(t *testing.T) {
 	}
 }
 
+func TestMCPServerValidate(t *testing.T) {
+	cases := []struct {
+		name       string
+		server     MCPServer
+		wantErrSub string // empty = expect success
+	}{
+		{
+			name:   "stdio ok",
+			server: MCPServer{Name: "exa", Command: "npx", Args: []string{"-y", "x"}},
+		},
+		{
+			name:   "http ok",
+			server: MCPServer{Name: "exa", URL: "https://mcp.exa.ai/mcp"},
+		},
+		{
+			name:   "http with headers and timeout ok",
+			server: MCPServer{Name: "exa", URL: "https://mcp.exa.ai/mcp", Headers: map[string]string{"X-Api-Key": "x"}, TimeoutSeconds: 25},
+		},
+		{
+			name:       "missing name",
+			server:     MCPServer{URL: "https://example.com/"},
+			wantErrSub: "name is required",
+		},
+		{
+			name:       "both stdio and http",
+			server:     MCPServer{Name: "x", Command: "foo", URL: "https://example.com/"},
+			wantErrSub: "both command and url",
+		},
+		{
+			name:       "neither stdio nor http",
+			server:     MCPServer{Name: "x"},
+			wantErrSub: "either command (stdio) or url (http)",
+		},
+		{
+			name:       "negative timeout",
+			server:     MCPServer{Name: "x", URL: "https://example.com/", TimeoutSeconds: -1},
+			wantErrSub: "timeout_seconds",
+		},
+		{
+			name:       "stdio with headers",
+			server:     MCPServer{Name: "x", Command: "foo", Headers: map[string]string{"k": "v"}},
+			wantErrSub: "headers only apply to http",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.server.Validate()
+			if tc.wantErrSub == "" {
+				if err != nil {
+					t.Fatalf("expected success, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErrSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Fatalf("expected error containing %q, got %q", tc.wantErrSub, err.Error())
+			}
+		})
+	}
+}
+
+func TestConfigValidatePropagatesMCPError(t *testing.T) {
+	cfg := Default()
+	cfg.Chat.SaveDir = t.TempDir()
+	cfg.MCP = []MCPServer{{Name: "broken"}} // neither command nor url
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "mcp[0]") {
+		t.Fatalf("expected error to mention mcp[0], got %q", err.Error())
+	}
+}
+
+func TestMCPServerHelpers(t *testing.T) {
+	stdio := MCPServer{Name: "x", Command: "foo"}
+	http := MCPServer{Name: "y", URL: "https://example.com/"}
+	if !stdio.IsStdio() || stdio.IsHTTP() {
+		t.Fatalf("stdio classification wrong: stdio=%v http=%v", stdio.IsStdio(), stdio.IsHTTP())
+	}
+	if http.IsStdio() || !http.IsHTTP() {
+		t.Fatalf("http classification wrong: stdio=%v http=%v", http.IsStdio(), http.IsHTTP())
+	}
+}
+
 func TestDefaultConfigPreservesQwenThinking(t *testing.T) {
 	cfg := Default()
 	if cfg.Chat.Preset != "qwen3-coding-preserve" {

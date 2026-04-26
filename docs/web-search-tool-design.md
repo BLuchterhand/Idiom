@@ -11,7 +11,17 @@ This replaces the v1 of this doc that proposed a parallel
 we already have. The right shape is: bridge MCP through, and the Exa
 endpoint becomes one line of JSON.
 
-Status: **proposed — pending user sign-off**.
+Status: **landed — W1–W6 implemented as 10-step plan in §11**.
+
+Test surface: 5 mcp packages green —
+- `internal/mcp` (12 HTTPTransport + 18 SSRF/redaction tests + existing stdio)
+- `internal/config` (10 MCPServer/Workspace tests)
+- `internal/workspace` (10 fan-in + dispatch + permission-target tests)
+- `internal/agent` (5 parseToolCall + 3 mode-default + lane-classifier tests)
+- `internal/app` (4 setupMCPRegistry tests)
+
+To enable: copy the `mcp` block from `config.example.json` into your
+`config.json` (drop the leading underscore). No code changes required.
 
 ---
 
@@ -628,27 +638,29 @@ honors these; no extra code needed unless it doesn't work in practice.
 ## 7. Once W1–W6 land, web search and web fetch are config
 
 ```jsonc
-// config.json — two entries, no new Go code
+// config.json — one entry, two tools, no new Go code
 {
   "mcp": [
     {
       "name": "exa",
-      "url": "https://mcp.exa.ai/mcp"
+      "url": "https://mcp.exa.ai/mcp",
+      "timeout_seconds": 25
       // optional: "headers": {"X-Api-Key": "..."}  if Exa adds auth later
-    },
-    {
-      "name": "fetch",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-fetch"]
     }
   ]
 }
 ```
 
-The fetch server runs over stdio (existing transport, no W1 dependency)
-and exposes a single `fetch` tool the model invokes as
-`mcp:fetch/fetch`. It handles HTML→text/markdown conversion and
-respects `robots.txt`. Per-Mode rules in §6 W5 apply identically.
+The live smoke test (`IDIOM_LIVE_MCP=1 go test -tags=integration ./internal/app/`)
+confirms Exa's endpoint exposes **two** tools today:
+
+- `mcp:exa/web_search_exa` — search-the-web (the headline feature)
+- `mcp:exa/web_fetch_exa` — URL-as-clean-markdown (covers the
+  webfetch use case for free)
+
+Original §13 plan was to register a separate community MCP fetch
+server alongside Exa. Empirically, Exa already provides both — the
+fetch entry is unnecessary. See §13 for the updated stance.
 
 With `EXA_API_KEY` set in the environment, the user can pass it
 through via the URL query string in the same shape OpenCode uses:
@@ -799,14 +811,31 @@ disappear from `BuildToolDefinitions`; the model can't call them.
 
 ---
 
-## 13. `web_fetch` via the community MCP fetch server
+## 13. `web_fetch` — covered by Exa, no separate server needed
 
-OpenCode bundles `webfetch` — a Go-internal HTTP fetcher with
-HTML→Markdown, Cloudflare retry, and image-as-attachment. We do not
-mirror that shape. Instead (decision 5), we register
-[`@modelcontextprotocol/server-fetch`](https://github.com/modelcontextprotocol/servers/tree/main/src/fetch)
-as a stdio MCP server in `cfg.MCP`. The model invokes `mcp:fetch/fetch`
-the same way it invokes `mcp:exa/web_search_exa`.
+Original plan (decision 5): register a stdio community MCP fetch
+server (`@modelcontextprotocol/server-fetch`) alongside Exa.
+
+What we actually found at integration-test time:
+
+1. The npm package `@modelcontextprotocol/server-fetch` doesn't exist —
+   the reference fetch server is a **Python** package (`mcp-server-fetch`
+   on PyPI), not a Node one.
+2. **Exa's hosted MCP endpoint already exposes a fetch tool**:
+   `mcp:exa/web_fetch_exa`, described upstream as "Read a webpage's
+   full content as clean markdown. Use after web_search_exa…".
+
+So the right move is just **don't register a separate fetch server**.
+Exa's single `cfg.MCP` entry gives us search + fetch with one HTTP
+endpoint, no Node runtime required, no second SSRF surface, and the
+same per-Mode rules apply uniformly.
+
+OpenCode's standalone Go-internal `webfetch` (with HTML→Markdown,
+Cloudflare retry, image-as-attachment) is genuinely a different
+capability, but neither qwen-bubbles nor Exa's fetch tool is
+attempting to replicate every feature. If the eval evidence later
+shows Exa's fetch is inadequate (paywalls, JS-rendered content,
+non-HTML), W11 in §15 covers shipping a Go fetcher then.
 
 What we get for free:
 

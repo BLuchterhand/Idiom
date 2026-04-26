@@ -97,6 +97,16 @@ func New(cfg config.Config) *Model {
 	m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
 	mode := agent.ModeOrDefault(m.agentModeName)
 	m.workspace.SetPermissionRules(mode.PermissionRules)
+	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	registry, mcpFailures := setupMCPRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
+	mcpCancel()
+	if registry != nil {
+		m.workspace.SetMCPRegistry(registry)
+		m.mcpRegistry = registry
+	}
+	if len(mcpFailures) > 0 {
+		m.setContextError("MCP setup: " + strings.Join(mcpFailures, "; "))
+	}
 	m.runner = &agent.Runner{
 		Client:            m.client,
 		ImplementerClient: m.implementerClient,

@@ -21,6 +21,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/discovery"
+	"idiom/internal/mcp"
 	"idiom/internal/semantic"
 )
 
@@ -37,6 +38,7 @@ import (
 	handleToPath          map[string]string
 	observedPaths         map[string]struct{}
 	permissionRules       map[string][]ToolRule
+	mcpRegistry           *mcp.Registry
 	goIndex         *semantic.GoIndex
 	goIndexToken    string
 	cppIndex        *semantic.CppIndex
@@ -119,6 +121,13 @@ type ToolRequest struct {
 	// task_ledger entry didn't list `paths`. Optional; falls back to
 	// path-matching and a single-pending heuristic when empty.
 	TaskID string `json:"task_id,omitempty"`
+	// Args carries the raw, model-emitted argument JSON for
+	// `mcp:<server>/<tool>` calls. MCP-discovered tools have arbitrary
+	// JSON-Schema parameters that do not map onto this struct's typed
+	// fields, so the agent layer routes the raw bytes through unchanged
+	// and Manager.Execute hands them to mcp.Registry.Call. Empty for
+	// every built-in tool — they keep using the typed fields above.
+	Args json.RawMessage `json:"-"`
 }
 
 type GoDeclarationMove struct {
@@ -227,6 +236,32 @@ func (m *Manager) Mode() Mode {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.mode
+}
+
+// SetMCPRegistry installs the registry of MCP-discovered tools so that
+// (1) BuildToolDefinitions can fan them into the LLM tool spec and
+// (2) Manager.Execute can dispatch `mcp:<server>/<tool>` calls.
+// Called once at session startup from the app layer; passing nil is a
+// no-op. Safe to call from any goroutine.
+func (m *Manager) SetMCPRegistry(registry *mcp.Registry) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mcpRegistry = registry
+}
+
+// MCPRegistry returns the currently-installed MCP registry, or nil when
+// none has been wired in. Reads are cheap; the returned pointer is the
+// shared instance — do not mutate it.
+func (m *Manager) MCPRegistry() *mcp.Registry {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.mcpRegistry
 }
 
 func (m *Manager) IsExploreMode() bool {
@@ -355,10 +390,81 @@ func (m *Manager) toolManifestTools(readOnly bool) []string {
 // to call. Used by the agent package to build OpenAI function-calling
 // schemas for the request. Read-only is keyed off the workspace Mode
 // (ModeExplore) so the model doesn't see write tools when the session
-// can't use them.
+// can't use them. Names from the attached MCP registry (if any) are
+// appended in deterministic order using their qualified `mcp:<server>/<tool>`
+// form, matching what the model will see in the tool spec.
 func (m *Manager) AllowedTools() []string {
 	readOnly := m.Mode() == ModeExplore
-	return m.toolManifestTools(readOnly)
+	tools := m.toolManifestTools(readOnly)
+	if registry := m.MCPRegistry(); registry != nil {
+		names := make([]string, 0)
+		for qualified := range registry.Tools() {
+			names = append(names, qualified)
+		}
+		sort.Strings(names)
+		tools = append(tools, names...)
+	}
+	return tools
+}
+
+// BuildToolDefinitions returns the OpenAI-shaped function specs the
+// agent sends to the LLM. Built-in tools come from the package-level
+// BuildToolDefinitions (hand-authored schemas under tool_schemas.go);
+// MCP-discovered tools (when an MCP registry is wired in via
+// SetMCPRegistry) are appended with the qualified name
+// `mcp:<server>/<tool>`, the upstream description prefixed with
+// `[mcp:<server>] ` for provenance, and the upstream JSON-Schema
+// inputSchema passed through unchanged.
+//
+// allowed filters by name; an empty allowed slice means "every
+// available tool". MCP tools respect the same allow-list.
+func (m *Manager) BuildToolDefinitions(allowed []string) []ToolDefinition {
+	defs := BuildToolDefinitions(allowed)
+	registry := m.MCPRegistry()
+	if registry == nil {
+		return defs
+	}
+	var allowedSet map[string]struct{}
+	if len(allowed) > 0 {
+		allowedSet = make(map[string]struct{}, len(allowed))
+		for _, name := range allowed {
+			if name != "" {
+				allowedSet[name] = struct{}{}
+			}
+		}
+	}
+	tools := registry.Tools()
+	names := make([]string, 0, len(tools))
+	for qualified := range tools {
+		if allowedSet != nil {
+			if _, ok := allowedSet[qualified]; !ok {
+				continue
+			}
+		}
+		names = append(names, qualified)
+	}
+	sort.Strings(names)
+	for _, qualified := range names {
+		tool := tools[qualified]
+		server, _, _ := mcp.ParseQualifiedToolName(qualified)
+		description := tool.Description
+		if description == "" {
+			description = "MCP tool from " + server
+		}
+		if server != "" {
+			description = "[mcp:" + server + "] " + description
+		}
+		params := string(tool.InputSchema)
+		if params == "" {
+			params = `{"type":"object","properties":{}}`
+		}
+		defs = append(defs, ToolDefinition{
+			Name:           qualified,
+			Description:    description,
+			ParametersJSON: params,
+		})
+	}
+	return defs
 }
 
 func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResult) {
@@ -606,12 +712,75 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 	case "git_diff":
 		return m.gitDiff(ctx, req)
 	default:
+		if strings.HasPrefix(tool, "mcp:") {
+			return m.executeMCP(ctx, req)
+		}
 		return ToolResult{
 			Tool:    tool,
 			Summary: "Tool request rejected",
 			Error:   fmt.Sprintf("unsupported tool %q", tool),
 		}
 	}
+}
+
+// executeMCP dispatches a `mcp:<server>/<tool>` call through the
+// attached registry. Args are passed verbatim — they were captured raw
+// in parseToolCall so the upstream JSON-Schema parameters survive
+// round-trip without forced-typing through ToolRequest's fields. The
+// returned content is flattened: text-typed parts contribute their
+// .text directly, anything else is re-encoded as JSON so the model
+// still sees something sensible.
+func (m *Manager) executeMCP(ctx context.Context, req ToolRequest) ToolResult {
+	registry := m.MCPRegistry()
+	if registry == nil {
+		return ToolResult{Tool: req.Tool, Summary: "MCP unavailable", Error: "mcp registry not configured"}
+	}
+	if !registry.Has(req.Tool) {
+		return ToolResult{Tool: req.Tool, Summary: "Unknown MCP tool", Error: "mcp tool not registered: " + req.Tool}
+	}
+	args := req.Args
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	result, err := registry.Call(ctx, req.Tool, args)
+	if err != nil {
+		return ToolResult{Tool: req.Tool, Summary: "MCP call failed", Error: err.Error()}
+	}
+	output := joinMCPContent(result.Content)
+	summary := "MCP " + req.Tool
+	out := ToolResult{Tool: req.Tool, Summary: summary, Output: output}
+	if result.IsError {
+		out.Error = output
+		out.Output = ""
+		out.Summary = "MCP tool reported an error"
+	}
+	return out
+}
+
+// joinMCPContent flattens the [{type,text}] content array MCP servers
+// return. Text entries contribute their .text verbatim, separated by
+// newlines. Non-text entries are passed through as JSON so callers can
+// still see their shape rather than silently dropping them.
+func joinMCPContent(parts []json.RawMessage) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, raw := range parts {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		var probe struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(raw, &probe); err == nil && probe.Type == "text" {
+			b.WriteString(probe.Text)
+			continue
+		}
+		b.Write(raw)
+	}
+	return b.String()
 }
 
 const (

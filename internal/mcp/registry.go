@@ -19,10 +19,19 @@ type ServerConfig struct {
 
 // Registry owns a set of running MCP clients and exposes their tools via a
 // flattened namespace (mcp:<server>/<tool>).
+//
+// The registry holds its own background context (cancelled by Close)
+// that is passed to transport startup and the per-client readLoop. The
+// caller's setup context is used only for the handshake calls
+// (Initialize, ListTools) so a short setup timeout does not later kill
+// the long-lived reader.
 type Registry struct {
 	mu      sync.RWMutex
 	clients map[string]*Client
 	tools   map[string]registeredTool
+
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
 }
 
 type registeredTool struct {
@@ -33,9 +42,12 @@ type registeredTool struct {
 // NewRegistry returns an empty registry. Call Spawn for each server, then
 // ListTools / CallTool to use them.
 func NewRegistry() *Registry {
+	bg, cancel := context.WithCancel(context.Background())
 	return &Registry{
-		clients: make(map[string]*Client),
-		tools:   make(map[string]registeredTool),
+		clients:  make(map[string]*Client),
+		tools:    make(map[string]registeredTool),
+		bgCtx:    bg,
+		bgCancel: cancel,
 	}
 }
 
@@ -43,6 +55,10 @@ func NewRegistry() *Registry {
 // fails to start or initialize, the error is returned and no tools are
 // registered. Callers may ignore the error to keep the app running with
 // fewer MCP tools rather than bailing out entirely.
+//
+// ctx scopes the handshake (initialize, tools/list); the underlying
+// child process and reader use the registry's own background context so
+// they outlive any short-lived setup timeout the caller passes here.
 func (r *Registry) Spawn(ctx context.Context, cfg ServerConfig) error {
 	name := strings.TrimSpace(cfg.Name)
 	if name == "" {
@@ -51,12 +67,12 @@ func (r *Registry) Spawn(ctx context.Context, cfg ServerConfig) error {
 	if strings.TrimSpace(cfg.Command) == "" {
 		return fmt.Errorf("mcp server %q command is required", name)
 	}
-	transport, err := StartStdio(ctx, cfg.Command, cfg.Args, cfg.Env)
+	transport, err := StartStdio(r.bgCtx, cfg.Command, cfg.Args, cfg.Env)
 	if err != nil {
 		return fmt.Errorf("mcp %s start: %w", name, err)
 	}
 	client := NewClient(transport)
-	if err := client.Start(ctx); err != nil {
+	if err := client.Start(r.bgCtx); err != nil {
 		_ = transport.Close()
 		return fmt.Errorf("mcp %s reader: %w", name, err)
 	}
@@ -74,12 +90,13 @@ func (r *Registry) Spawn(ctx context.Context, cfg ServerConfig) error {
 }
 
 // RegisterExisting lets tests or non-stdio transports attach a pre-built
-// Client directly.
+// Client directly. ctx applies only to the handshake; the client's
+// readLoop is bound to the registry's background context.
 func (r *Registry) RegisterExisting(ctx context.Context, name string, client *Client) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
-	if err := client.Start(ctx); err != nil {
+	if err := client.Start(r.bgCtx); err != nil {
 		return err
 	}
 	if err := client.Initialize(ctx, "idiom"); err != nil {
@@ -157,11 +174,14 @@ func (r *Registry) Call(ctx context.Context, qualified string, arguments json.Ra
 	return client.CallTool(ctx, tool, arguments)
 }
 
-// Close tears down every registered client. Safe to call with a nil
-// Registry.
+// Close tears down every registered client and cancels the registry's
+// background context. Safe to call with a nil Registry. Idempotent.
 func (r *Registry) Close() error {
 	if r == nil {
 		return nil
+	}
+	if r.bgCancel != nil {
+		r.bgCancel()
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

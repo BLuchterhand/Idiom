@@ -20,6 +20,7 @@ import (
 	"idiom/internal/agent"
 	"idiom/internal/config"
 	"idiom/internal/llama"
+	"idiom/internal/mcp"
 	"idiom/internal/promptstack"
 	"idiom/internal/transcript"
 	"idiom/internal/workspace"
@@ -139,6 +140,7 @@ type Model struct {
 	implementerClient     *llama.Client
 	implementerController *llama.ServerController
 	workspace             *workspace.Manager
+	mcpRegistry           *mcp.Registry
 	runner                *agent.Runner
 	events                chan tea.Msg
 
@@ -322,6 +324,10 @@ func (m *Model) Close() {
 	m.writeSessionSummary()
 	if m.debugLogger != nil {
 		_ = m.debugLogger.Close()
+	}
+	if m.mcpRegistry != nil {
+		_ = m.mcpRegistry.Close()
+		m.mcpRegistry = nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
