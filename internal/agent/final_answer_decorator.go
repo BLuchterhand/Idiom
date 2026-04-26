@@ -70,6 +70,9 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	if cleaned, ok := cleanedSubstantiveFinalAnswer(internalAnswer); ok {
 		return cleaned, true
 	}
+	if exact, ok := presentableExactProbeAnswer(brief, results); ok {
+		return exact, true
+	}
 
 	paths := delegatedClosureEvidencePaths(brief.Objective, results, 4)
 	if len(paths) == 0 {
@@ -105,6 +108,220 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		b.WriteString(" It does not retain enough exact body-level detail to give a fully grounded implementation explanation.")
 	}
 	return strings.TrimSpace(b.String()), true
+}
+
+func presentableExactProbeAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return "", false
+	}
+	anchor, ok := bestPresentableExactProbeAnchor(results)
+	if !ok {
+		return "", false
+	}
+	facts := exactProbeObservations(anchor.symbol, anchor.output)
+	if len(facts) == 0 {
+		return "", false
+	}
+
+	var b strings.Builder
+	switch {
+	case anchor.symbol != "" && anchor.path != "":
+		b.WriteString("`")
+		b.WriteString(anchor.symbol)
+		b.WriteString("` in `")
+		b.WriteString(anchor.path)
+		b.WriteString("` is the clearest inspected implementation anchor.")
+	case anchor.path != "":
+		b.WriteString("`")
+		b.WriteString(anchor.path)
+		b.WriteString("` is the clearest inspected implementation anchor.")
+	default:
+		b.WriteString("The clearest inspected implementation anchor is the exact probe that was already read.")
+	}
+	b.WriteString(" The inspected body shows that it ")
+	b.WriteString(joinFallbackFacts(facts))
+	b.WriteString(".")
+	return strings.TrimSpace(b.String()), true
+}
+
+type presentableExactProbeAnchor struct {
+	path   string
+	symbol string
+	output string
+}
+
+func bestPresentableExactProbeAnchor(results []workspace.ToolResult) (presentableExactProbeAnchor, bool) {
+	candidates := make([]presentableExactProbeAnchor, 0, len(results))
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+		switch strings.TrimSpace(result.Tool) {
+		case "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_extract_body", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+			path, symbol := extractExactProbeAnchor(result)
+			candidates = append(candidates, presentableExactProbeAnchor{
+				path:   path,
+				symbol: symbol,
+				output: strings.TrimSpace(result.Output),
+			})
+		}
+	}
+	for _, candidate := range candidates {
+		if len(exactProbeObservations(candidate.symbol, candidate.output)) > 0 {
+			return candidate, true
+		}
+	}
+	if len(candidates) == 0 {
+		return presentableExactProbeAnchor{}, false
+	}
+	return candidates[0], true
+}
+
+func extractExactProbeAnchor(result workspace.ToolResult) (string, string) {
+	summary := strings.TrimSpace(result.Summary)
+	switch strings.TrimSpace(result.Tool) {
+	case "go_read_symbol", "cpp_read_symbol", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+		if rest, ok := strings.CutPrefix(summary, "Read "); ok {
+			if symbol, remainder, found := strings.Cut(rest, " in "); found {
+				return extractExactProbePath(remainder), strings.TrimSpace(symbol)
+			}
+		}
+	case "go_extract_body", "cpp_extract_body":
+		if rest, ok := strings.CutPrefix(summary, "Extracted "); ok {
+			if symbol, remainder, found := strings.Cut(rest, " in "); found {
+				return extractExactProbePath(remainder), strings.TrimSpace(symbol)
+			}
+		}
+	}
+	return "", ""
+}
+
+func extractExactProbePath(remainder string) string {
+	remainder = strings.TrimSpace(remainder)
+	for _, marker := range []string{" lines ", " bytes ", " (", ":"} {
+		if head, _, ok := strings.Cut(remainder, marker); ok {
+			return strings.TrimSpace(head)
+		}
+	}
+	return strings.TrimSpace(remainder)
+}
+
+func exactProbeObservations(symbol string, output string) []string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return nil
+	}
+	observations := make([]string, 0, 5)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || containsRunnerString(observations, value) {
+			return
+		}
+		observations = append(observations, value)
+	}
+
+	lower := strings.ToLower(output)
+	if strings.Contains(output, "normalizeReadOnlyChildPrompt(") || strings.Contains(output, "augmentReadOnlyChildPrompt(") {
+		add("rewrites the delegated prompt before handing work to the child runner")
+	}
+	if strings.Contains(output, "RunPolicy{") || strings.Contains(output, "MaxToolSteps:") || strings.Contains(output, "MaxModelCalls:") || strings.Contains(output, "MaxDuration:") {
+		add("gives that child its own bounded execution policy")
+	}
+	if strings.Contains(output, "RuntimeBriefForRole(") || strings.Contains(output, "RuntimeBrief:") {
+		add("creates child-scoped runtime context for the delegated task")
+	}
+	if strings.Contains(output, "PermissionPolicy:") || strings.Contains(output, "readOnlyChildTaskPermissionPolicy(") || strings.Contains(output, "workbranchChildTaskPermissionPolicy(") {
+		add("applies a child-scoped permission policy instead of inheriting unrestricted access")
+	}
+	if strings.Contains(output, "DisableTaskTool: true") || strings.Contains(output, "DisableTaskTool:  true") {
+		add("disables nested task delegation inside the child run")
+	}
+	if strings.Contains(output, "child.Run(") {
+		add("executes the delegated question through a nested child runner")
+	}
+	if strings.Contains(output, "augmentDelegatedReadOnlyPacket(") || strings.Contains(output, "normalizeDelegatedReadOnlyPacket(") || strings.Contains(lower, `summary: "child task completed"`) || strings.Contains(lower, `tool: "task"`) {
+		add("folds the child answer and tool results back into the parent task-result/evidence flow")
+	}
+	if len(observations) > 0 {
+		return observations
+	}
+
+	calls := exactProbeCallNames(symbol, output, 4)
+	if len(calls) == 0 {
+		return nil
+	}
+	add("calls " + quotedFallbackCallNames(calls))
+	return observations
+}
+
+func exactProbeCallNames(symbol string, output string, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+	skip := strings.TrimSpace(symbol)
+	if dot := strings.LastIndex(skip, "."); dot >= 0 {
+		skip = strings.TrimSpace(skip[dot+1:])
+	}
+	calls := make([]string, 0, max)
+	for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(output, -1) {
+		if len(match) <= 1 {
+			continue
+		}
+		candidate, ok := delegatedReadOnlyLiteralSymbolCandidate(match[1])
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(candidate, skip) || strings.EqualFold(candidate, "String") || strings.EqualFold(candidate, "Error") {
+			continue
+		}
+		calls = appendUniqueSearchTerm(calls, candidate)
+		if len(calls) >= max {
+			return calls
+		}
+	}
+	return calls
+}
+
+func quotedFallbackCallNames(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		quoted = append(quoted, "`"+value+"`")
+	}
+	switch len(quoted) {
+	case 0:
+		return ""
+	case 1:
+		return quoted[0]
+	case 2:
+		return quoted[0] + " and " + quoted[1]
+	default:
+		return strings.Join(quoted[:len(quoted)-1], ", ") + ", and " + quoted[len(quoted)-1]
+	}
+}
+
+func joinFallbackFacts(facts []string) string {
+	filtered := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		fact = strings.TrimSpace(fact)
+		if fact == "" {
+			continue
+		}
+		filtered = append(filtered, fact)
+	}
+	switch len(filtered) {
+	case 0:
+		return ""
+	case 1:
+		return filtered[0]
+	case 2:
+		return filtered[0] + " and " + filtered[1]
+	default:
+		return strings.Join(filtered[:len(filtered)-1], ", ") + ", and " + filtered[len(filtered)-1]
+	}
 }
 
 func presentableFindingsFromInternalAnswer(answer string, max int) []string {
@@ -181,6 +398,9 @@ func finalAnswerNeedsDecoration(answer string) bool {
 		strings.HasPrefix(lower, "partial findings from this turn") ||
 		strings.HasPrefix(lower, "## grounded answer") ||
 		strings.HasPrefix(lower, "question:") ||
+		strings.Contains(lower, "the strongest implementation evidence is in") ||
+		strings.Contains(lower, "use those findings as the source of truth") ||
+		strings.Contains(lower, "what this establishes:") ||
 		strings.Contains(lower, "source: delegated read-only evidence packet") ||
 		strings.Contains(lower, "the gathered evidence points to these implementation surfaces") ||
 		strings.Contains(lower, "additional inspected paths:") ||

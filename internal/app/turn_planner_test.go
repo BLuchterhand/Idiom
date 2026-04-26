@@ -73,6 +73,16 @@ func TestCorrectTurnRoutePlanDowngradesImplementationLikeExplanationQuestion(t *
 	}
 }
 
+func TestCorrectTurnRoutePlanKeepsAnalysisContinuationReadOnly(t *testing.T) {
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Continue your investigation until you have a confident response.", agent.BuildMode())
+	if plan.Family != "architecture" {
+		t.Fatalf("family = %q, want architecture", plan.Family)
+	}
+	if plan.InitialLane != "architecture" || plan.FollowupLane != "" || plan.Contract != "architecture_assessment" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
 func TestShouldPreferFallbackRoutePreventsModelDowngradeToDirectQuestion(t *testing.T) {
 	fallback := fallbackTurnRoute("Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?", agent.BuildMode())
 	if fallback.Family != "debug_logs" {
@@ -164,8 +174,8 @@ func TestTurnRoutePlanRuntimeBriefForArchitectureUsesShapingOnly(t *testing.T) {
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
-	if len(brief.ReadinessGate) != 0 || len(brief.FinalCritic) != 0 {
-		t.Fatalf("expected architecture analysis to avoid readiness/final critic scaffolding, got %#v", brief)
+	if len(brief.ReadinessGate) == 0 || len(brief.FinalCritic) == 0 {
+		t.Fatalf("expected architecture analysis to keep a closure gate and final critic, got %#v", brief)
 	}
 }
 

@@ -78,6 +78,10 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
+	if redirected, ok := postReadinessSymbolBodyUpgradeRequest(input.Results, decision.Request); ok {
+		decision.Request = redirected
+		decision.Raw = marshalToolRequestRaw(redirected)
+	}
 
 	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "read_only_verification_shell") &&
 		!isVerificationRequest(decision.Request) {
@@ -162,6 +166,9 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 	if len(results) > 0 || !prefersEarlyReadOnlyDelegation(r.RuntimeBrief) || strings.TrimSpace(req.Tool) == "task" || !isReadClassTool(req) {
 		return workspace.ToolRequest{}, false
 	}
+	if !shouldDelegateMainReadOnlyBootstrapRequest(req) {
+		return workspace.ToolRequest{}, false
+	}
 	if r.Workspace == nil || !containsRunnerTool(r.advertisedAllowedTools(r.Workspace.AllowedTools()), "task") {
 		return workspace.ToolRequest{}, false
 	}
@@ -175,6 +182,53 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 		Mode:   "read_only",
 		Prompt: prompt,
 	}, true
+}
+
+func shouldDelegateMainReadOnlyBootstrapRequest(req workspace.ToolRequest) bool {
+	switch strings.TrimSpace(req.Tool) {
+	case "list_files":
+		return true
+	case "search_files":
+		pattern := strings.TrimSpace(req.Pattern)
+		return pattern == "" || pattern == "*" || pattern == "*.go" || strings.HasPrefix(pattern, "*")
+	case "search_content":
+		path := strings.TrimSpace(req.Path)
+		return path == "" || path == "." || !frontier.HasWorkspaceFileExtension(path)
+	default:
+		return workspace.IsBroadInspectionRequest(req)
+	}
+}
+
+func postReadinessSymbolBodyUpgradeRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+	if strings.TrimSpace(req.Tool) != "go_read_symbol" || req.StartLine > 0 || req.EndLine > 0 {
+		return workspace.ToolRequest{}, false
+	}
+	path := normalizeDelegatedDiscoveryEvidencePath(strings.TrimSpace(req.Path))
+	if path == "" {
+		return workspace.ToolRequest{}, false
+	}
+	if !hasTruncatedGoReadSymbolResult(results, path) {
+		return workspace.ToolRequest{}, false
+	}
+	upgraded := req
+	upgraded.Tool = "go_extract_body"
+	return upgraded, true
+}
+
+func hasTruncatedGoReadSymbolResult(results []workspace.ToolResult, path string) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "go_read_symbol" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		summary := normalizeWorkspacePathScanText(result.Summary)
+		if !strings.Contains(summary, path) {
+			continue
+		}
+		if strings.Contains(strings.ToLower(summary), "use go_extract_body for the full body") {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) delegatedReadOnlyBootstrapRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
@@ -777,6 +831,68 @@ func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolReque
 		return false
 	}
 	return true
+}
+
+func (r *Runner) readOnlyAnalysisAnswerReadyAfterResult(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) bool {
+	_ = req
+	if r == nil || strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+	if strings.HasPrefix(r.agentName(), "child:") || strings.HasPrefix(r.agentName(), "child_write:") {
+		return false
+	}
+	if runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+		return false
+	}
+	switch strings.TrimSpace(r.RuntimeBrief.Contract) {
+	case "architecture_assessment", "review_findings":
+	default:
+		return false
+	}
+	exactProbes := readOnlyAnalysisExactProbeCount(results)
+	evidencePaths := promptEvidencePathsFromToolResults(results, 6)
+	if delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
+		return exactProbes >= 1 && len(evidencePaths) >= 2
+	}
+	return exactProbes >= 2 && len(evidencePaths) >= 1
+}
+
+func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
+	count := 0
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		switch strings.TrimSpace(result.Tool) {
+		case "read_file":
+			if span := toolResultReadSpan(result); span > 0 && span <= 120 {
+				count++
+			}
+		case "go_read_symbol", "go_extract_body",
+			"go_calls_from", "go_calls_into", "go_references", "go_definition", "go_workspace_symbol",
+			"cpp_read_symbol", "cpp_extract_body",
+			"cpp_calls_from", "cpp_calls_into", "cpp_references", "cpp_definition", "cpp_workspace_symbol",
+			"python_read_symbol", "python_calls_from", "python_calls_into", "python_references", "python_definition", "python_workspace_symbol",
+			"ts_read_symbol", "ts_calls_from", "ts_calls_into", "ts_references", "ts_definition", "ts_workspace_symbol",
+			"rust_read_symbol", "rust_calls_from", "rust_calls_into", "rust_references", "rust_definition", "rust_workspace_symbol",
+			"java_read_symbol", "java_calls_from", "java_calls_into", "java_references", "java_definition", "java_workspace_symbol":
+			count++
+		}
+	}
+	return count
+}
+
+func toolResultReadSpan(result workspace.ToolResult) int {
+	match := regexp.MustCompile(`lines (\d+)-(\d+)`).FindStringSubmatch(result.Summary)
+	if len(match) != 3 {
+		return 0
+	}
+	start, errStart := strconv.Atoi(match[1])
+	end, errEnd := strconv.Atoi(match[2])
+	if errStart != nil || errEnd != nil || end < start {
+		return 0
+	}
+	return end - start + 1
 }
 
 func delegatedReadOnlyHasCompositeDiscoveryPacket(results []workspace.ToolResult) bool {

@@ -1,8 +1,11 @@
 // Package mcp implements the smallest viable subset of the Model Context
-// Protocol client surface that idiom needs: stdio transport, tool
-// discovery via tools/list, and tool execution via tools/call. No SSE/HTTP
-// transport, no resources, no prompts, no sampling, no notifications. This
-// lands Fix 8 from docs/opencode-fixes-design.md §8.
+// Protocol client surface that idiom needs: stdio and HTTP/SSE transports,
+// tool discovery via tools/list, and tool execution via tools/call. No
+// resources, no prompts, no sampling, no notifications. Fix 8 from
+// docs/opencode-fixes-design.md §8 landed the stdio piece; the HTTP
+// transport (StartHTTP, see http.go) is documented in
+// docs/web-search-tool-design.md and is what hosted servers like
+// https://mcp.exa.ai/mcp use.
 package mcp
 
 import (

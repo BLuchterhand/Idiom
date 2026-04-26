@@ -103,7 +103,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			FinalCritic:          []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"},
 		}
 	case "security_review", "performance_review":
-		searchPolicy := []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_composite_review", "rank_candidates", "answer_when_bounded_finding_or_no_finding_is_supported", "if_continuing_name_one_exact_missing_claim_and_probe", "deepen_if_no_bounded_finding", "use_structural_search_for_syntax_shapes", "use_dependency_graph_for_boundary_or_import_questions"}
+		searchPolicy := []string{"prefer_discovery_query_for_composite_review", "rank_candidates", "answer_when_bounded_finding_or_no_finding_is_supported", "if_continuing_name_one_exact_missing_claim_and_probe", "deepen_if_no_bounded_finding", "use_structural_search_for_syntax_shapes", "use_dependency_graph_for_boundary_or_import_questions"}
 		if strings.TrimSpace(family) == "security_review" {
 			searchPolicy = append(searchPolicy, "prefer_discovery_query_security_review_before_raw_scans", "prefer_semgrep_scan_for_security_patterns", "reserve_joern_scan_for_heavy_dataflow_questions")
 		}
@@ -114,9 +114,11 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			ToolProfile:          CapabilityReadOnlyDiscovery,
 			RequiredEvidence:     []string{"inspected_paths", "bounded_findings_or_no_finding", "confidence"},
 			RequiredTools:        []string{"workspace_inspection"},
+			ReadinessGate:        []string{"inspected_paths_reported", "bounded_findings_or_no_finding_supported"},
 			SearchPolicy:         searchPolicy,
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"required_evidence_satisfied", "budget_exhausted_with_uncertainty_declared"},
+			FinalCritic:          []string{"answers_actual_user_request", "required_evidence_cited"},
 		}
 	case "architecture":
 		return RuntimeContractSpec{
@@ -126,9 +128,11 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			ToolProfile:          CapabilityReadOnlyDiscovery,
 			RequiredEvidence:     []string{"inspected_paths", "architecture_boundary_evidence", "confidence"},
 			RequiredTools:        []string{"workspace_inspection"},
-			SearchPolicy:         []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components", "answer_when_boundary_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "use_dependency_graph_for_boundary_or_import_questions", "use_history_only_for_evolution_questions"},
+			ReadinessGate:        []string{"inspected_paths_reported", "architecture_boundary_evidence_supported_or_uncertainty_declared"},
+			SearchPolicy:         []string{"prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components", "answer_when_boundary_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "use_dependency_graph_for_boundary_or_import_questions", "use_history_only_for_evolution_questions"},
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"required_evidence_satisfied", "budget_exhausted_with_uncertainty_declared"},
+			FinalCritic:          []string{"answers_actual_user_request", "required_evidence_cited"},
 		}
 	case "implementation", "test_authoring", "config_edit", "script_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		return RuntimeContractSpec{

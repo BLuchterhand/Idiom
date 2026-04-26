@@ -281,11 +281,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Route mouse events to whichever viewport is under the cursor.
 		// When the panel is open, anything past the main viewport's width
 		// (plus the 1-col divider) belongs to the history panel.
+		// Return early so scroll/click events do not reach the textarea
+		// via the fall-through m.input.Update at the bottom of Update.
 		if m.historyPanelOpen && msg.X >= m.viewport.Width+1 {
 			m.historyViewport, _ = m.historyViewport.Update(msg)
 		} else {
 			m.updateViewport(msg)
 		}
+		return m, waitForEvent(m.events)
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)

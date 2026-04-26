@@ -14,8 +14,8 @@ import (
 
 func TestGoReadSymbolWindowUsesSymbolExtentWhenAvailable(t *testing.T) {
 	// Symbol declared at lines 16-132 (e.g. Runner.runChildTask): the
-	// returned window should start at 16 and run for the full body
-	// (capped). Previous bug used match.Line - 12 / +20, which returned
+	// returned window should start at 16 and run for the full body when
+	// it fits under the cap. Previous bug used match.Line - 12 / +20, which returned
 	// imports for any function declared past line 12. Live run
 	// 20260425-161904 exposed this when go_read_symbol on
 	// `Runner.runChildTask` returned lines 4-36 — the imports.
@@ -23,8 +23,8 @@ func TestGoReadSymbolWindowUsesSymbolExtentWhenAvailable(t *testing.T) {
 	if start != 16 {
 		t.Fatalf("expected start=16, got %d", start)
 	}
-	if end <= start || end > 16+59 {
-		t.Fatalf("expected end to be capped at 60-line window from start, got %d (start=%d)", end, start)
+	if end != 132 {
+		t.Fatalf("expected end to include the full symbol body, got %d (start=%d)", end, start)
 	}
 }
 
@@ -48,13 +48,53 @@ func TestGoReadSymbolWindowFallsBackToCenteredWindow(t *testing.T) {
 }
 
 func TestGoReadSymbolWindowCapsAtMaxLines(t *testing.T) {
-	// A 500-line function should be capped at 60 lines.
+	// A 500-line function should still be capped.
 	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 16, StartLine: 16, EndLine: 516}, 0, 0)
 	if start != 16 {
 		t.Fatalf("expected start=16, got %d", start)
 	}
-	if end != 75 {
-		t.Fatalf("expected end capped at 60-line window (16+59), got %d", end)
+	if end != 135 {
+		t.Fatalf("expected end capped at 120-line window (16+119), got %d", end)
+	}
+}
+
+func TestGoWorkspaceSymbolFallsBackAfterGoplsFailure(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(dir, "worker.go"), "package test\n\nfunc ExampleWorker() {}\n")
+	gopls := filepath.Join(dir, "fake-gopls.sh")
+	writeTestFile(t, gopls, "#!/bin/sh\necho simulated gopls failure >&2\nexit 1\n")
+	if err := os.Chmod(gopls, 0o755); err != nil {
+		t.Fatalf("chmod fake gopls: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
+	mgr.goplsChecked = true
+	mgr.goplsPath = gopls
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_workspace_symbol", Pattern: "ExampleWorker"})
+	if result.Error != "" {
+		t.Fatalf("expected semantic fallback, got %#v", result)
+	}
+	if !strings.Contains(result.Summary, "semantic fallback after gopls failure") {
+		t.Fatalf("expected fallback summary, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "ExampleWorker") {
+		t.Fatalf("expected fallback output to mention symbol, got %#v", result)
+	}
+}
+
+func TestSearchContentMissingScopeReturnsGracefulMiss(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "internal", "agent", "runner.go"), "package agent\n\nfunc ExampleWorker() {}\n")
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "search_content", Pattern: "ExampleWorker", Path: "missing/runner.go"})
+	if result.Error != "" {
+		t.Fatalf("expected graceful missing-scope miss, got %#v", result)
+	}
+	if !strings.Contains(result.Summary, "Search scope not found") {
+		t.Fatalf("expected missing-scope summary, got %#v", result)
 	}
 }
 

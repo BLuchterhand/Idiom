@@ -19,6 +19,7 @@ import (
 	"idiom/internal/app"
 	"idiom/internal/config"
 	"idiom/internal/llama"
+	"idiom/internal/workspace"
 )
 
 type runOptions struct {
@@ -32,6 +33,9 @@ type modeRunner func(config.Config, runOptions) error
 type listSessionsRunner func(config.Config, io.Writer) error
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "tool" {
+		os.Exit(runToolMain(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions))
 }
 
@@ -158,6 +162,132 @@ func cleanPromptTurns(prompts []string) ([]string, error) {
 		return nil, fmt.Errorf("turns file did not contain any prompts")
 	}
 	return cleaned, nil
+}
+
+func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		printToolUsage(stderr)
+		return 0
+	}
+	if args[0] == "list" {
+		return runToolList(stdout)
+	}
+
+	toolName := args[0]
+	toolFs := flag.NewFlagSet("idiom tool "+toolName, flag.ContinueOnError)
+	toolFs.SetOutput(stderr)
+	configPath := toolFs.String("config", "config.json", "path to config file")
+	inputJSON := toolFs.String("input", "", "JSON object with tool request parameters (reads from stdin if omitted and not a terminal)")
+	if err := toolFs.Parse(args[1:]); err != nil {
+		return 2
+	}
+
+	cfg, err := loadToolConfig(*configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	req := workspace.ToolRequest{Tool: toolName}
+	if *inputJSON != "" {
+		if err := json.Unmarshal([]byte(*inputJSON), &req); err != nil {
+			fmt.Fprintf(stderr, "invalid input JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				fmt.Fprintf(stderr, "read stdin: %v\n", err)
+				return 1
+			}
+			if len(data) > 0 {
+				if err := json.Unmarshal(data, &req); err != nil {
+					fmt.Fprintf(stderr, "invalid stdin JSON: %v\n", err)
+					return 1
+				}
+			}
+		}
+	}
+	req.Tool = toolName
+
+	mgr := workspace.NewManager(cfg.Workspace)
+	mgr.SetBypassReadBeforeEdit(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	result := mgr.Execute(ctx, req)
+
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(result); err != nil {
+		fmt.Fprintf(stderr, "encode result: %v\n", err)
+		return 1
+	}
+
+	if result.Error != "" {
+		return 1
+	}
+	return 0
+}
+
+func runToolList(stdout io.Writer) int {
+	allTools := workspace.ToolManifestTools(workspace.ToolManifestToolOptions{
+		IncludeTaskLedger: true,
+		IncludeTask:       true,
+		IncludeWriteTools: true,
+		IncludeGo:         true,
+		IncludeCpp:        true,
+		IncludePython:     true,
+		IncludeTypescript: true,
+		IncludeRust:       true,
+		IncludeJava:       true,
+	})
+	for _, t := range allTools {
+		fmt.Fprintln(stdout, t)
+	}
+	return 0
+}
+
+func loadToolConfig(path string) (config.Config, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		cfg := config.Default()
+		if wd, e := os.Getwd(); e == nil {
+			cfg.Workspace.Root = wd
+			cfg.Workspace.CWD = wd
+		}
+		return cfg, nil
+	}
+	return config.Load(path)
+}
+
+func printToolUsage(stderr io.Writer) {
+	fmt.Fprintln(stderr, "Usage:")
+	fmt.Fprintln(stderr, "  idiom tool <tool-name> [--input '<json>']")
+	fmt.Fprintln(stderr, "  idiom tool <tool-name> [flags]  # reads JSON from stdin when piped")
+	fmt.Fprintln(stderr, "  idiom tool list")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "Run a single workspace tool and print its result as JSON.")
+	fmt.Fprintln(stderr, "Does not require llama-server.")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "Discovery tools:")
+	fmt.Fprintln(stderr, "  discovery_query     Multi-layer analysis (impact, tracing, architecture, security, history)")
+	fmt.Fprintln(stderr, "  structural_search   AST-aware pattern search (requires ast-grep)")
+	fmt.Fprintln(stderr, "  dependency_graph    Language-aware dependency analysis")
+	fmt.Fprintln(stderr, "  history_range       Git log for a line range")
+	fmt.Fprintln(stderr, "  history_symbol      Git log for a symbol")
+	fmt.Fprintln(stderr, "  blame_range         Git blame for a line range")
+	fmt.Fprintln(stderr, "  ctags_symbols       Symbol indexing (requires ctags)")
+	fmt.Fprintln(stderr, "  semgrep_scan        Semgrep security/pattern scan")
+	fmt.Fprintln(stderr, "  joern_scan          Joern code property graph scan")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "Use \"idiom tool list\" to see all available tools.")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "Flags:")
+	fmt.Fprintln(stderr, "  -config string  path to config file (default \"config.json\")")
+	fmt.Fprintln(stderr, "  -input string   JSON object with tool request parameters")
 }
 
 func runTUI(cfg config.Config, opts runOptions) error {

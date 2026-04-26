@@ -24,18 +24,19 @@ import (
 	"idiom/internal/semantic"
 )
 
-type Manager struct {
+	type Manager struct {
 	cfg config.Workspace
 
-	mode            Mode
-	thoroughness    ExploreThoroughness
-	writePolicy     WritePolicy
-	mu              sync.Mutex
-	nextHandle      int
-	pathToHandle    map[string]string
-	handleToPath    map[string]string
-	observedPaths   map[string]struct{}
-	permissionRules map[string][]ToolRule
+	mode                  Mode
+	thoroughness          ExploreThoroughness
+	writePolicy           WritePolicy
+	bypassReadBeforeEdit  bool
+	mu                    sync.Mutex
+	nextHandle            int
+	pathToHandle          map[string]string
+	handleToPath          map[string]string
+	observedPaths         map[string]struct{}
+	permissionRules       map[string][]ToolRule
 	goIndex         *semantic.GoIndex
 	goIndexToken    string
 	cppIndex        *semantic.CppIndex
@@ -204,6 +205,10 @@ func (m *Manager) HasObservedPath(path string) bool {
 func normalizePathKey(path string) string {
 	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
 	return strings.ToLower(cleaned)
+}
+
+func (m *Manager) SetBypassReadBeforeEdit(bypass bool) {
+	m.bypassReadBeforeEdit = bypass
 }
 
 func (m *Manager) Root() string {
@@ -1770,6 +1775,10 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 	m.rememberPath(abs)
 
 	start, end := goReadSymbolWindow(match, req.StartLine, req.EndLine)
+	summary := fmt.Sprintf("Read %s in %s lines %d-%d", goQualifiedSymbol(match), m.displayPath(abs), start, end)
+	if req.StartLine == 0 && req.EndLine == 0 && match.EndLine > 0 && end < match.EndLine {
+		summary = fmt.Sprintf("%s (truncated from lines %d-%d; use go_extract_body for the full body)", summary, match.StartLine, match.EndLine)
+	}
 
 	snippet, err := m.readFileLines(abs, start, end)
 	if err != nil {
@@ -1777,7 +1786,7 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 	}
 	return ToolResult{
 		Tool:    "go_read_symbol",
-		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", goQualifiedSymbol(match), m.displayPath(abs), start, end),
+		Summary: summary,
 		Output:  snippet,
 	}
 }
@@ -1803,7 +1812,7 @@ func goReadSymbolWindow(match semantic.SymbolMatch, requestedStart, requestedEnd
 	if requestedStart > 0 && requestedEnd >= requestedStart {
 		return requestedStart, requestedEnd
 	}
-	const goReadSymbolMaxLines = 60
+	const goReadSymbolMaxLines = 120
 	if match.StartLine > 0 {
 		start := match.StartLine
 		end := match.EndLine
@@ -1892,12 +1901,19 @@ func (m *Manager) goWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolRe
 
 	if gopls := m.goplsBinary(); gopls != "" {
 		output, err := m.runGoPLSCommand(ctx, "workspace_symbol", pattern)
+		formatted := m.formatGoplsWorkspaceSymbolOutput(output)
 		result := ToolResult{
 			Tool:    "go_workspace_symbol",
 			Summary: "Resolved Go workspace symbols with gopls",
-			Output:  m.formatGoplsWorkspaceSymbolOutput(output),
+			Output:  formatted,
 		}
 		if err != nil {
+			fallback := m.goFindSymbol(req)
+			fallback.Tool = "go_workspace_symbol"
+			if fallback.Error == "" {
+				fallback.Summary = "Resolved Go workspace symbols via semantic fallback after gopls failure"
+				return fallback
+			}
 			result.Summary = "gopls workspace-symbol search failed"
 			result.Error = err.Error()
 		}
@@ -2264,6 +2280,22 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
 		return ToolResult{Tool: toolName, Summary: "Content search rejected", Error: "pattern is required"}
+	}
+	if scope := strings.TrimSpace(req.Path); scope != "" && scope != "." {
+		resolvedScope, err := m.resolvePath(scope, req.Workdir)
+		if err != nil {
+			return ToolResult{Tool: toolName, Summary: "Search scope not found", Output: formatPathSuggestions(m.findPathSuggestions(scope, 5))}
+		}
+		if _, err := os.Stat(resolvedScope); err != nil {
+			result := ToolResult{Tool: toolName, Summary: "Search scope not found"}
+			if !os.IsNotExist(err) {
+				result.Summary = "Search scope unavailable"
+				result.Error = err.Error()
+				return result
+			}
+			result.Output = formatPathSuggestions(m.findPathSuggestions(scope, 5))
+			return result
+		}
 	}
 
 	backend, err := resolveContentSearchBackend()
@@ -3195,7 +3227,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 	// path during the session (via a successful read_file, search hit, or
 	// listing) before edit_file will touch it. Prevents the hallucinated-path
 	// retry loops documented in docs/opencode-fixes-design.md §1.
-	if !m.HasObservedPath(m.displayPath(path)) && !m.HasObservedPath(req.Path) {
+	if !m.bypassReadBeforeEdit && !m.HasObservedPath(m.displayPath(path)) && !m.HasObservedPath(req.Path) {
 		return ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",

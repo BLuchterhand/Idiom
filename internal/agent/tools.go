@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 
 	"idiom/internal/llama"
 	"idiom/internal/workspace"
@@ -77,11 +78,46 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 			if narrowed, narrowOK := mutateSchemaRequireLineRange(mutated); narrowOK {
 				mutated = narrowed
 			}
+		} else if isPostReadinessLineRangeTool(tool.Function.Name) {
+			if exposed, exposeOK := mutateSchemaExposeLineRange(mutated); exposeOK {
+				mutated = exposed
+			}
 		}
 		tool.Function.Parameters = mutated
 		out[i] = tool
 	}
 	return out
+}
+
+func mutateSchemaExposeLineRange(raw json.RawMessage) (json.RawMessage, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, false
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		props = make(map[string]any)
+	}
+	for _, name := range []string{"start_line", "end_line"} {
+		entry, _ := props[name].(map[string]any)
+		if entry == nil {
+			entry = map[string]any{
+				"type":        "integer",
+				"description": "optional 1-indexed line number for an exact follow-up range after readiness",
+			}
+		}
+		entry["minimum"] = 1
+		props[name] = entry
+	}
+	schema["properties"] = props
+	updated, err := json.Marshal(schema)
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(updated), true
 }
 
 func mutateSchemaRequireLineRange(raw json.RawMessage) (json.RawMessage, bool) {
@@ -184,6 +220,11 @@ func isPostReadinessGapTool(name string) bool {
 	default:
 		return false
 	}
+}
+
+func isPostReadinessLineRangeTool(name string) bool {
+	name = strings.TrimSpace(name)
+	return strings.HasSuffix(name, "_read_symbol") || strings.HasSuffix(name, "_extract_body")
 }
 
 // mutateSchemaRequireFields takes a raw JSON Schema (object) and adds the

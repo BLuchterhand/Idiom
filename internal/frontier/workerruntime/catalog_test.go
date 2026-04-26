@@ -81,6 +81,9 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 			t.Fatalf("architecture missing %q in %#v", expected, arch.AllowedTools)
 		}
 	}
+	if containsString(arch.SearchPolicy, "delegate_broad_discovery_when_needed") {
+		t.Fatalf("architecture should not bias toward delegated broad discovery, got %#v", arch.SearchPolicy)
+	}
 	if !containsString(arch.SearchPolicy, "prefer_discovery_query_for_architecture_boundary") || !containsString(arch.SearchPolicy, "use_dependency_graph_for_boundary_or_import_questions") || !containsString(arch.SearchPolicy, "use_history_only_for_evolution_questions") {
 		t.Fatalf("architecture search policy should steer generic discovery tools, got %#v", arch.SearchPolicy)
 	}
@@ -89,8 +92,14 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 			t.Fatalf("architecture missing %q in %#v", expected, arch.SearchPolicy)
 		}
 	}
+	if len(arch.ReadinessGate) == 0 || len(arch.FinalCritic) == 0 {
+		t.Fatalf("architecture should keep closure gates and final critic, got %#v", arch)
+	}
 
 	security := RuntimeBriefForTaskFamily("security_review", "main", archAvailable)
+	if containsString(security.SearchPolicy, "delegate_broad_discovery_when_needed") {
+		t.Fatalf("security review should not bias toward delegated broad discovery, got %#v", security.SearchPolicy)
+	}
 	if !containsString(security.SearchPolicy, "prefer_semgrep_scan_for_security_patterns") || !containsString(security.SearchPolicy, "reserve_joern_scan_for_heavy_dataflow_questions") {
 		t.Fatalf("security review should explicitly balance semgrep/joern usage, got %#v", security.SearchPolicy)
 	}
@@ -98,6 +107,9 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 		if !containsString(security.SearchPolicy, expected) {
 			t.Fatalf("security review missing %q in %#v", expected, security.SearchPolicy)
 		}
+	}
+	if len(security.ReadinessGate) == 0 || len(security.FinalCritic) == 0 {
+		t.Fatalf("security review should keep closure gates and final critic, got %#v", security)
 	}
 }
 

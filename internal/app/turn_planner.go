@@ -60,6 +60,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
 				"Prefer implementation-like families when the user is asking for file changes, tests, docs, config, scripts, prompts, or repairs.",
 				"Prefer architecture for explanation-only questions about how a repo, harness, runner, tool, agent, workflow, or component works. Do not choose an implementation family unless the user is asking for edits.",
+				"If the prompt is a continuation like 'continue investigating', 'go deeper', or 'be more confident', keep the turn read-only unless the user now asks for edits.",
 				"Prefer performance_review, security_review, or architecture when the user asks for that style of analysis without edits.",
 				"Use contracts from this enum: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
 				"Use lanes from this enum: main, explore, verification, locate, review, architecture, implement.",
@@ -230,10 +231,42 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent
 	if plan.Family == "debug_logs" && !containsAny(words, " latest ", " recent ", " most recent ", " failed ", " failure ", " why this failed ", " why it failed ", " why ") {
 		return fallbackTurnRoute(prompt, mode)
 	}
+	if isImplementationLikeFamily(plan.Family) && isAnalysisContinuationPrompt(words) {
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
+	}
 	if isImplementationLikeFamily(plan.Family) && isExplanationOnlyCodeQuestion(words) {
 		return fallbackTurnRoute(prompt, mode)
 	}
 	return normalizeTurnRoutePlan(plan, mode)
+}
+
+func isAnalysisContinuationPrompt(words string) bool {
+	if hasEditIntent(words) {
+		return false
+	}
+	if !containsAny(words,
+		" continue ",
+		" continue your investigation ",
+		" continue investigating ",
+		" keep investigating ",
+		" investigate further ",
+		" go deeper ",
+		" dig deeper ",
+		" more confident ",
+		" confident response ",
+		" keep looking ",
+	) {
+		return false
+	}
+	return containsAny(words,
+		" investigate ",
+		" investigation ",
+		" deeper ",
+		" confidence ",
+		" confident ",
+		" response ",
+		" explore ",
+	)
 }
 
 func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan) bool {
