@@ -33,6 +33,9 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	if composed, ok := r.composedFinalAnswerFromEvidence(input); ok {
 		return composed
 	}
+	if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
+		return presentable
+	}
 	return answer
 }
 
@@ -54,6 +57,104 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 		}
 	}
 	return "", false
+}
+
+func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, internalAnswer string) (string, bool) {
+	internalAnswer = strings.TrimSpace(internalAnswer)
+	if internalAnswer == "" {
+		return "", false
+	}
+	if !finalAnswerNeedsDecoration(internalAnswer) && !looksLikeGenericEvidenceComposerAnswer(internalAnswer) {
+		return "", false
+	}
+	if cleaned, ok := cleanedSubstantiveFinalAnswer(internalAnswer); ok {
+		return cleaned, true
+	}
+
+	paths := delegatedClosureEvidencePaths(brief.Objective, results, 4)
+	if len(paths) == 0 {
+		paths = postChildClosureEvidencePaths(brief.Objective, results, 4)
+	}
+	if len(paths) == 0 {
+		paths = promptEvidencePathsFromToolResults(results, 4)
+	}
+	paths = closurePromptEvidencePaths(paths, 4)
+
+	findings := presentableFindingsFromInternalAnswer(internalAnswer, 2)
+	if len(findings) > 0 {
+		var b strings.Builder
+		b.WriteString(strings.Join(findings, " "))
+		if len(paths) > 0 {
+			b.WriteString(" The relevant source files are ")
+			b.WriteString(formatInlinePathList(paths, 4))
+			b.WriteString(".")
+		}
+		return strings.TrimSpace(b.String()), true
+	}
+
+	if len(paths) == 0 {
+		return "", false
+	}
+	var b strings.Builder
+	b.WriteString("The retained source context identifies the relevant implementation surface as ")
+	b.WriteString(formatInlinePathList(paths, 4))
+	b.WriteString(".")
+	if closureHasExactProbeEvidence(results) {
+		b.WriteString(" They are enough for a bounded answer, but not enough to safely expand beyond the inspected anchors.")
+	} else {
+		b.WriteString(" It does not retain enough exact body-level detail to give a fully grounded implementation explanation.")
+	}
+	return strings.TrimSpace(b.String()), true
+}
+
+func presentableFindingsFromInternalAnswer(answer string, max int) []string {
+	if max <= 0 {
+		max = 2
+	}
+	inKeyFindings := false
+	findings := make([]string, 0, max)
+	for _, raw := range strings.Split(answer, "\n") {
+		line := strings.TrimSpace(raw)
+		lower := strings.ToLower(line)
+		switch {
+		case lower == "key findings:":
+			inKeyFindings = true
+			continue
+		case inKeyFindings && strings.HasSuffix(line, ":") && !strings.HasPrefix(line, "- "):
+			return findings
+		case !inKeyFindings || !strings.HasPrefix(line, "- "):
+			continue
+		}
+		finding := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if !presentableInternalFinding(finding) {
+			continue
+		}
+		findings = append(findings, finding)
+		if len(findings) >= max {
+			return findings
+		}
+	}
+	return findings
+}
+
+func presentableInternalFinding(finding string) bool {
+	finding = strings.TrimSpace(finding)
+	if len(finding) < 40 {
+		return false
+	}
+	lower := strings.ToLower(finding)
+	return !containsAny(lower,
+		"child task completed",
+		"outlined ",
+		"ran ",
+		"read ",
+		"found ",
+		"text anchors:",
+		"symbol read:",
+		"related files:",
+		"strongest implementation evidence",
+		"what this establishes",
+	)
 }
 
 func bestTaskResultOutput(results []workspace.ToolResult) (string, bool) {
@@ -104,6 +205,16 @@ func finalAnswerNeedsDecoration(answer string) bool {
 	)
 }
 
+func looksLikeGenericEvidenceComposerAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "the strongest implementation evidence is in") ||
+		strings.Contains(lower, "use those findings as the source of truth") ||
+		strings.Contains(lower, "what this establishes:")
+}
+
 func finalAnswerStopReasonPrefersDecoration(stopReason string) bool {
 	switch strings.TrimSpace(stopReason) {
 	case "child_packet_answered", "child_packet_synthesized_answer", "delegated_read_only_answer_ready":
@@ -143,6 +254,12 @@ func stripInternalEvidenceAppendix(answer string) string {
 		"\nAdditional inspected paths:",
 		"\n\nExact probes already inspected:",
 		"\nExact probes already inspected:",
+		"\n\nInspected paths:",
+		"\nInspected paths:",
+		"\n\nKey findings:",
+		"\nKey findings:",
+		"\n\nConfidence:",
+		"\nConfidence:",
 	} {
 		if idx := strings.Index(answer, marker); idx >= 0 && idx < cut {
 			cut = idx

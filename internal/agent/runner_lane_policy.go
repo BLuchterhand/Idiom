@@ -394,7 +394,7 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 		}
 	}
 	if len(terms) == 0 {
-		for _, candidate := range strings.Fields(objective) {
+		for _, candidate := range strings.Fields(delegatedReadOnlyQuestionText(objective)) {
 			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
 				terms = appendUniqueSearchTerm(terms, term)
 			}
@@ -409,6 +409,30 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 		}
 	}
 	return strings.Join(terms, "|")
+}
+
+func delegatedReadOnlyQuestionText(objective string) string {
+	lines := make([]string, 0, 2)
+	for _, raw := range strings.Split(objective, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "named workspace scope:") ||
+			strings.HasPrefix(lower, "key terms:") ||
+			strings.HasPrefix(lower, "scope guidance:") ||
+			strings.HasPrefix(lower, "start from ") ||
+			strings.HasPrefix(lower, "return ") ||
+			strings.HasPrefix(lower, "- ") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return objective
+	}
+	return strings.Join(lines, " ")
 }
 
 func delegatedReadOnlyBootstrapSymbolPattern(objective string) string {
@@ -444,7 +468,8 @@ func delegatedReadOnlySearchTerm(raw string) (string, bool) {
 		return "", false
 	}
 	switch value {
-	case "agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main", "files", "file", "directory", "directories", "entry", "entrypoints", "line", "lines", "harness", "implementation", "source", "truth", "before", "tests", "test", "readme", "docs", "start":
+	case "agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main", "files", "file", "directory", "directories", "entry", "entrypoints", "line", "lines", "harness", "implementation", "source", "truth", "source-of-truth", "source_of_truth", "before", "tests", "test", "readme", "docs", "start",
+		"internal", "workspace", "named", "scope", "question", "questions", "direct", "directly", "delegated", "repository", "relative", "evidence", "sufficient", "inspected", "guidance", "prefer", "targeted", "symbol", "symbols", "bounded", "read", "reads", "overview", "overviews", "continue", "readiness", "claim", "claims", "probe", "probes", "resolve", "materially", "incomplete":
 		return "", false
 	}
 	if len(value) < 4 {

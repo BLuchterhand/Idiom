@@ -49,6 +49,12 @@ var postReadinessRequiredFields = []string{"named_gap", "why_not_answering"}
 // tools — anything that is_read_class returns true for picks up the same
 // schema constraint. Non-read-class tools are returned unchanged.
 //
+// For `read_file`, also require a concrete path and line range. After
+// readiness, an unanchored or path-wide file read is nearly always an
+// inefficient substitute for either answering or choosing a symbol/range probe,
+// so push that choice into the tool contract instead of spending a model turn
+// on a runtime rejection.
+//
 // Called from the runner's rebuildTools when delegatedReadOnlyAnswerReady
 // or postChildPacketActive is true. Idempotent: calling twice in a row
 // produces the same schema.
@@ -67,10 +73,83 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 			out[i] = tool
 			continue
 		}
+		if tool.Function.Name == "read_file" {
+			if narrowed, narrowOK := mutateSchemaRequireLineRange(mutated); narrowOK {
+				mutated = narrowed
+			}
+		}
 		tool.Function.Parameters = mutated
 		out[i] = tool
 	}
 	return out
+}
+
+func mutateSchemaRequireLineRange(raw json.RawMessage) (json.RawMessage, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, false
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		props = make(map[string]any)
+	}
+	if _, ok := props["path"]; !ok {
+		props["path"] = map[string]any{
+			"type":        "string",
+			"description": "repository-relative file path; required after readiness so read_file has a concrete target",
+		}
+	}
+	for _, name := range []string{"start_line", "end_line"} {
+		entry, _ := props[name].(map[string]any)
+		if entry == nil {
+			entry = map[string]any{
+				"type":        "integer",
+				"description": "1-indexed line number; required after readiness so read_file remains a narrow probe",
+			}
+		}
+		entry["minimum"] = 1
+		props[name] = entry
+	}
+	schema["properties"] = props
+
+	requiredSet := make(map[string]struct{})
+	if existing, ok := schema["required"].([]any); ok {
+		for _, v := range existing {
+			if s, ok := v.(string); ok {
+				requiredSet[s] = struct{}{}
+			}
+		}
+	}
+	for _, name := range []string{"path", "start_line", "end_line"} {
+		requiredSet[name] = struct{}{}
+	}
+	required := make([]string, 0, len(requiredSet))
+	if existing, ok := schema["required"].([]any); ok {
+		for _, v := range existing {
+			if s, ok := v.(string); ok {
+				if _, seen := requiredSet[s]; seen {
+					required = append(required, s)
+					delete(requiredSet, s)
+				}
+			}
+		}
+	}
+	for _, name := range []string{"path", "start_line", "end_line"} {
+		if _, ok := requiredSet[name]; ok {
+			required = append(required, name)
+			delete(requiredSet, name)
+		}
+	}
+	schema["required"] = required
+
+	updated, err := json.Marshal(schema)
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(updated), true
 }
 
 // isPostReadinessGapTool reports whether a tool name is read-class — i.e.

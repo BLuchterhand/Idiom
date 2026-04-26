@@ -98,7 +98,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 					"Prefer the minimal implementation surface needed to answer the question. Do not expand into side-path comparison, mode-by-mode breakdowns, or policy tables unless the question explicitly requires that detail.",
 					"If you continue, name one exact missing claim, one exact probe that would resolve it, and what would be materially incomplete if you answered now.",
 					"After readiness, stay inside packet-named files or symbols. Do not switch to README, docs, or repo-wide search unless that exact artifact is the named gap.",
-					"Prefer structured symbol tools, discovered handles, outlines, or narrow line ranges over raw path-wide rereads.",
+					"Prefer structured symbol/body tools, discovered handles, or narrow line ranges over raw path-wide rereads.",
 					"Do not edit files, create files, install packages, push, publish, deploy, or spawn more tasks.",
 					"Use repository-relative paths and cite the files you inspected.",
 				}, "\n"),
@@ -291,9 +291,10 @@ func readOnlyChildKeyTermStopWord(lower string) bool {
 		"use", "uses", "used", "using", "utilize", "utilizes", "utilized", "utilise", "utilises", "make", "makes", "made",
 		"files", "file", "paths", "path", "findings", "finding", "confidence", "gap", "gaps",
 		"codebase", "architecture", "config", "configuration", "agent", "agents", "harness",
-		"start", "source", "truth", "implementation", "before", "tests", "test", "readme", "docs",
+		"start", "source", "truth", "source-of-truth", "source_of_truth", "implementation", "before", "tests", "test", "readme", "docs",
 		"named", "workspace", "scope", "key", "terms", "question", "questions", "directly", "materially", "incomplete",
-		"exact", "probe", "sufficient", "evidence", "entry", "entrypoint", "entrypoints", "directory", "directories":
+		"exact", "probe", "sufficient", "evidence", "entry", "entrypoint", "entrypoints", "directory", "directories",
+		"internal", "repository", "relative", "delegated", "guidance", "prefer", "targeted", "symbol", "symbols", "bounded", "read", "reads", "overview", "overviews", "inspected":
 		return true
 	default:
 		return false

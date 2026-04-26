@@ -98,13 +98,13 @@ func TestBuildRecoveryPlanPreservesClosureScopeOnRepeatedAction(t *testing.T) {
 		Result: workspace.ToolResult{
 			Tool:    "read_file",
 			Summary: "Repeated tool request rejected",
-			Error:   "you just retried the same post-readiness follow-up. Do not reopen broad discovery. Either answer from the current evidence, or choose one exact symbol, discovered handle, outline, or narrow line range that resolves a still-material missing claim.",
+			Error:   "you just retried the same post-readiness follow-up. Do not reopen broad discovery. Either answer from the current evidence, or choose one exact symbol, discovered handle, or narrow line range that resolves a still-material missing claim.",
 		},
 	})
 	joined := strings.Join(append(append([]string{}, plan.RequiredNext...), plan.ValidNext...), "\n")
 	for _, want := range []string{
 		"answer now from the evidence already gathered",
-		"one exact symbol, discovered handle, outline, or narrow range",
+		"one exact symbol, discovered handle, or narrow range",
 		"materially wrong or missing if you answered now",
 	} {
 		if !strings.Contains(joined, want) {
@@ -126,7 +126,7 @@ func TestBuildRecoveryPlanDoesNotPromoteEveryValidNextToRequiredNext(t *testing.
 		Result: workspace.ToolResult{
 			Tool:    "read_file",
 			Summary: "Repeated tool request rejected",
-			Error:   "you just retried the same post-readiness follow-up. Do not reopen broad discovery. Either answer from the current evidence, or choose one exact symbol, discovered handle, outline, or narrow line range that resolves a still-material missing claim.",
+			Error:   "you just retried the same post-readiness follow-up. Do not reopen broad discovery. Either answer from the current evidence, or choose one exact symbol, discovered handle, or narrow line range that resolves a still-material missing claim.",
 		},
 	})
 	if len(plan.RequiredNext) != 0 {

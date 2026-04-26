@@ -364,7 +364,7 @@ func closureGuidanceNext(subject string) []string {
 	}
 	return []string{
 		"answer now from the evidence already gathered",
-		"if one exact missing claim remains, choose one exact symbol, discovered handle, outline, or narrow range that would resolve it",
+		"if one exact missing claim remains, choose one exact symbol, discovered handle, or narrow range that would resolve it",
 		"state what would be materially wrong or missing if you answered now",
 	}
 }

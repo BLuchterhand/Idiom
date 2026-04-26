@@ -2018,21 +2018,20 @@ func invalidPostReadinessGap(scope string, objective string, req workspace.ToolR
 	if summary, errorText, rejected := invalidPostReadinessGapContent(scope, objective, req); rejected {
 		return summary, errorText, true
 	}
+	if strings.TrimSpace(scope) == "child_packet_available" {
+		if postChildGapContradictsKnownEvidence(req, evidencePaths) {
+			return "Post-child follow-up gap is contradicted by current evidence",
+				"the child packet already surfaced grounded source evidence " + summarizePostChildEvidencePaths(evidencePaths, 3) + ". Do not claim that source files or harness code are still unseen when they are already in the packet. If a real gap remains, name the exact unresolved claim and anchor it to one packet-named path or symbol; otherwise answer now from the child packet.",
+				true
+		}
+		if postChildFollowupNeedsPacketAnchor(req) && !postChildFollowupIsPacketAnchored(req, evidencePaths) {
+			return "Post-child follow-up gap is not packet-anchored",
+				"the child packet already surfaced relevant source paths " + summarizePostChildEvidencePaths(evidencePaths, 3) + ". If you continue, anchor the follow-up to one packet-named path, discovered handle, or packet-derived symbol and state the exact claim it would resolve. Do not restart repo-wide filename or content search.",
+				true
+		}
+	}
 	if summary, errorText, rejected := invalidPostReadinessProbeShape(scope, req, results, evidencePaths); rejected {
 		return summary, errorText, true
-	}
-	if strings.TrimSpace(scope) != "child_packet_available" {
-		return "", "", false
-	}
-	if postChildGapContradictsKnownEvidence(req, evidencePaths) {
-		return "Post-child follow-up gap is contradicted by current evidence",
-			"the child packet already surfaced grounded source evidence " + summarizePostChildEvidencePaths(evidencePaths, 3) + ". Do not claim that source files or harness code are still unseen when they are already in the packet. If a real gap remains, name the exact unresolved claim and anchor it to one packet-named path or symbol; otherwise answer now from the child packet.",
-			true
-	}
-	if postChildFollowupNeedsPacketAnchor(req) && !postChildFollowupIsPacketAnchored(req, evidencePaths) {
-		return "Post-child follow-up gap is not packet-anchored",
-			"the child packet already surfaced relevant source paths " + summarizePostChildEvidencePaths(evidencePaths, 3) + ". If you continue, anchor the follow-up to one packet-named path, discovered handle, or packet-derived symbol and state the exact claim it would resolve. Do not restart repo-wide filename or content search.",
-			true
 	}
 	return "", "", false
 }
@@ -2050,6 +2049,9 @@ func closureEvidencePathsForScope(scope string, results []workspace.ToolResult) 
 
 func invalidPostReadinessProbeShape(scope string, req workspace.ToolRequest, results []workspace.ToolResult, evidencePaths []string) (string, string, bool) {
 	if summary, errorText, rejected := invalidPostReadinessSemanticProbe(scope, req, results, evidencePaths); rejected {
+		return summary, errorText, true
+	}
+	if summary, errorText, rejected := invalidPostReadinessSearchProbe(scope, req, evidencePaths); rejected {
 		return summary, errorText, true
 	}
 	if strings.TrimSpace(req.Tool) != "read_file" {
@@ -2099,6 +2101,42 @@ func invalidPostReadinessProbeShape(scope string, req workspace.ToolRequest, res
 	return "Post-readiness follow-up is not an exact probe", strings.Join(lines, " "), true
 }
 
+func invalidPostReadinessSearchProbe(scope string, req workspace.ToolRequest, evidencePaths []string) (string, string, bool) {
+	if strings.TrimSpace(req.Tool) != "search_content" {
+		return "", "", false
+	}
+	pattern := strings.TrimSpace(req.Pattern)
+	if !postReadinessSearchPatternLooksBroad(pattern) {
+		return "", "", false
+	}
+	scopeLabel := "readiness"
+	answerLabel := "current evidence"
+	if strings.TrimSpace(scope) == "child_packet_available" {
+		scopeLabel = "the child packet"
+		answerLabel = "child packet"
+	}
+	lines := []string{
+		fmt.Sprintf("after %s, `search_content` must be one exact probe, not a broad rediscovery pattern.", scopeLabel),
+		"Use a concrete symbol/literal or narrow range whose result would change the answer, or answer now from the evidence already gathered.",
+	}
+	if len(evidencePaths) > 0 {
+		lines = append(lines, "Current evidence already centers on "+summarizePostChildEvidencePaths(evidencePaths, 3)+".")
+	}
+	lines = append(lines, fmt.Sprintf("Choose one evidence-grounded exact probe or answer now from the %s.", answerLabel))
+	return "Post-readiness search is broader than the current evidence requires", strings.Join(lines, " "), true
+}
+
+func postReadinessSearchPatternLooksBroad(pattern string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return true
+	}
+	if strings.Contains(pattern, "|") || strings.Contains(pattern, ".*") || (strings.Contains(pattern, "[") && strings.Contains(pattern, "]")) {
+		return true
+	}
+	return len(postReadinessTokenSet(pattern)) == 0 && !codeShapedTokenPattern.MatchString(pattern) && !codeShapedSnakeCasePattern.MatchString(pattern)
+}
+
 func invalidPostReadinessSemanticProbe(scope string, req workspace.ToolRequest, results []workspace.ToolResult, evidencePaths []string) (string, string, bool) {
 	tool := strings.TrimSpace(req.Tool)
 	path := normalizeDelegatedDiscoveryEvidencePath(strings.TrimSpace(req.Path))
@@ -2113,11 +2151,13 @@ func invalidPostReadinessSemanticProbe(scope string, req workspace.ToolRequest, 
 	}
 	pathCandidates := closureProbeCandidatesByPath(results, 4)
 	candidates := pathCandidates[path]
-	if isClosureOverviewTool(tool) && len(candidates) > 0 {
+	if isClosureOverviewTool(tool) {
 		lines := []string{
-			fmt.Sprintf("after %s, a file-level outline is too broad once the current evidence already surfaced exact probes for `%s`.", scopeLabel, path),
-			"Use one exact symbol/body probe that would change the answer, or answer now from the evidence already gathered.",
-			"Known exact probes for this path: " + quotedRunnerStrings(candidates) + ".",
+			fmt.Sprintf("after %s, a file-level outline is broad orientation, not one exact probe for `%s`.", scopeLabel, path),
+			"Use one exact symbol/body/range probe whose result would change the answer, or answer now from the evidence already gathered.",
+		}
+		if len(candidates) > 0 {
+			lines = append(lines, "Known exact probes for this path: "+quotedRunnerStrings(candidates)+".")
 		}
 		if len(evidencePaths) > 0 {
 			lines = append(lines, "Current evidence already centers on "+summarizePostChildEvidencePaths(evidencePaths, 3)+".")
@@ -2366,7 +2406,7 @@ func missingPostReadinessGapMessage(scope string) (string, string) {
 	switch strings.TrimSpace(scope) {
 	case "delegated_read_only_answer_ready":
 		return "Post-readiness follow-up missing named gap",
-			"answer readiness has already been reached for this delegated read_only lane. Before any additional read/search call, include `named_gap` describing one exact unresolved claim this follow-up will verify or falsify. Use `why_not_answering` to state what would be materially wrong or missing if you answered now. Prefer one specific symbol read, discovered handle, outline, or narrow line range over repeating a raw path request. If no concrete gap remains, answer now."
+			"answer readiness has already been reached for this delegated read_only lane. Before any additional read/search call, include `named_gap` describing one exact unresolved claim this follow-up will verify or falsify. Use `why_not_answering` to state what would be materially wrong or missing if you answered now. Prefer one specific symbol read, discovered handle, or narrow line range over repeating a raw path request. If no concrete gap remains, answer now."
 	case "child_packet_available":
 		return "Post-child follow-up missing named gap",
 			"the child packet already contains sufficient evidence to bias toward answering. Before any additional read/search call, include `named_gap` describing one exact unresolved claim this follow-up will verify or falsify. Use `why_not_answering` to state what would be materially wrong or missing if you answered now. Prefer one specific packet-named path, symbol, discovered handle, or narrow line range over repeating a raw path request. Ignore packet artifacts that are not real repository file paths. If no concrete gap remains, answer now from the child packet."
@@ -2381,7 +2421,7 @@ func repeatedClosureRequestErrorText(scope string) string {
 	case "child_packet_available":
 		return "you just retried the same follow-up after the child packet. Do not reopen broad discovery. Either answer from the child packet, or choose one exact packet-named symbol, discovered handle, or narrow line range that resolves a still-material missing claim."
 	default:
-		return "you just retried the same post-readiness follow-up. Do not reopen broad discovery. Either answer from the current evidence, or choose one exact symbol, discovered handle, outline, or narrow line range that resolves a still-material missing claim."
+		return "you just retried the same post-readiness follow-up. Do not reopen broad discovery. Either answer from the current evidence, or choose one exact symbol, discovered handle, or narrow line range that resolves a still-material missing claim."
 	}
 }
 
@@ -2711,7 +2751,7 @@ func closurePromptNextActions(scope string) []string {
 	default:
 		return []string{
 			"answer directly from the evidence already gathered",
-			"if one exact missing claim remains, choose one exact symbol, discovered handle, outline, or narrow range that would resolve it",
+			"if one exact missing claim remains, choose one exact symbol, discovered handle, or narrow range that would resolve it",
 			"state the exact missing claim and what would be materially incomplete if you answered now",
 		}
 	}
@@ -2838,7 +2878,21 @@ func postChildReadBudgetForBrief(brief workerruntime.WorkerRuntimeBrief) int {
 	if strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
 		return 0
 	}
+	if runnerBriefThoroughness(brief) == "standard" {
+		return 1
+	}
 	return 2
+}
+
+func runnerBriefThoroughness(brief workerruntime.WorkerRuntimeBrief) string {
+	for _, constraint := range brief.Constraints {
+		key, value, ok := strings.Cut(strings.TrimSpace(constraint), "=")
+		if !ok || strings.TrimSpace(key) != "thoroughness" {
+			continue
+		}
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+	return ""
 }
 
 func successfulReadClassResultCount(results []workspace.ToolResult) int {
@@ -5176,7 +5230,9 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		} else if ok {
 			return retry, nil
 		}
-		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
+			return "", err
+		} else if ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("tool loop exhausted and model still requested another tool instead of answering")
@@ -5187,7 +5243,9 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		} else if ok {
 			return retry, nil
 		}
-		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
+			return "", err
+		} else if ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("tool loop exhausted and model still emitted textual tool call markup instead of answering")
@@ -5198,7 +5256,9 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		} else if retryOK {
 			return retry, nil
 		}
-		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
+			return "", err
+		} else if ok {
 			return fallback, nil
 		}
 		return "", parseErr
@@ -5208,13 +5268,103 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		} else if retryOK {
 			return retry, nil
 		}
-		if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
+			return "", err
+		} else if ok {
 			return fallback, nil
 		}
 		return "", fmt.Errorf("tool loop exhausted and model still requested another tool instead of answering")
 	}
 
-	return r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics)
+	answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics)
+	if err != nil {
+		return "", err
+	}
+	if finalAnswerNeedsDecoration(answer) {
+		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, textOnlyOpts, answer, metrics); err != nil {
+			return "", err
+		} else if ok {
+			return repaired, nil
+		}
+		if presentable, ok := presentableNoToolsFallbackAnswer(r.RuntimeBrief, collectedResults, answer); ok {
+			return presentable, nil
+		}
+	}
+	return answer, nil
+}
+
+func (r *Runner) repairOrFallbackFinalAnswer(
+	ctx context.Context,
+	turnMessages []llama.ChatMessage,
+	opts llama.ChatOptions,
+	collectedResults []workspace.ToolResult,
+	metrics *runnerMetrics,
+) (string, bool, error) {
+	fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults)
+	if !ok {
+		return "", false, nil
+	}
+	if repaired, repairOK, err := r.repairInternalFinalAnswer(ctx, turnMessages, opts, fallback, metrics); err != nil {
+		return "", false, err
+	} else if repairOK {
+		return repaired, true, nil
+	}
+	if presentable, presentableOK := presentableNoToolsFallbackAnswer(r.RuntimeBrief, collectedResults, fallback); presentableOK {
+		return presentable, true, nil
+	}
+	return fallback, true, nil
+}
+
+func (r *Runner) repairInternalFinalAnswer(
+	ctx context.Context,
+	turnMessages []llama.ChatMessage,
+	opts llama.ChatOptions,
+	internalAnswer string,
+	metrics *runnerMetrics,
+) (string, bool, error) {
+	internalAnswer = strings.TrimSpace(internalAnswer)
+	if internalAnswer == "" {
+		return "", false, nil
+	}
+	repairMessages := append([]llama.ChatMessage(nil), turnMessages...)
+	repairMessages = append(repairMessages, llama.ChatMessage{
+		Role: "system",
+		Content: "The previous final synthesis still did not produce a usable user-facing answer. Tools remain disabled. " +
+			"The text below is an internal evidence summary, not a final-answer template. Rewrite it into the normal final answer to the user's request using only claims supported by that evidence and the prior tool results. " +
+			"Do not mention evidence packets, probes, tool calls, budgets, fallback behavior, or internal sections. If one exact claim is unsupported, state that uncertainty at the end.\n\nInternal evidence summary:\n" + internalAnswer,
+	})
+	if metrics != nil {
+		metrics.ModelCalls++
+	}
+	modelStart := time.Now()
+	repairMessage, err := r.Client.CompleteChatMessage(ctx, repairMessages, opts)
+	if err != nil {
+		return "", false, err
+	}
+	if metrics != nil {
+		metrics.addUsage(repairMessage.Usage)
+	}
+	r.emitModelCallTrace(0, "fallback_final_answer_retry", repairMessages, repairMessage, time.Since(modelStart).Milliseconds())
+	r.emitThinkingTrace(0, "fallback_final_answer_retry_reply", repairMessage, opts, false)
+
+	if len(repairMessage.ToolCalls) > 0 {
+		return "", false, nil
+	}
+	content := strings.TrimSpace(repairMessage.Content)
+	if content == "" || looksLikeTextualToolCall(content) {
+		return "", false, nil
+	}
+	if _, _, ok, parseErr := workspace.ParseToolRequest(content); ok || parseErr != nil {
+		return "", false, nil
+	}
+	if cleaned, ok := cleanedSubstantiveFinalAnswer(content); ok {
+		content = cleaned
+	}
+	if finalAnswerNeedsDecoration(content) {
+		return "", false, nil
+	}
+	r.LastAssistantMessage = repairMessage
+	return content, true, nil
 }
 
 func (r *Runner) retryInvalidFinalAnswer(
@@ -6017,7 +6167,7 @@ func isHarnessRejectionErrorText(text string) bool {
 		"already contains sufficient evidence to bias toward answering",
 		"answer readiness has already been reached",
 		"file-level raw read is too broad",
-		"file-level outline is too broad",
+		"file-level outline is broad orientation",
 		"do not restart broad discovery",
 	)
 }
