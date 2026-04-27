@@ -13,9 +13,31 @@ import (
 var autoProjectPromptCandidates = []string{
 	".qwen.md",
 	"QWEN.md",
+	"IDIOM.md",
 	"AGENTS.md",
 	"CLAUDE.md",
 	".idiom/discovery/context.md",
+}
+
+var userGlobalPromptCandidates = []string{
+	"IDIOM.md",
+	"AGENTS.md",
+	"CLAUDE.md",
+}
+
+// userConfigDir returns the directory scanned for user-global prompts.
+// Defaults to ~/.config/idiom; overridable via IDIOM_CONFIG_DIR for
+// tests and unusual installs. Returns "" when the home dir is unknown
+// and no override is set, in which case the user-global tier is skipped.
+func userConfigDir() string {
+	if dir := strings.TrimSpace(os.Getenv("IDIOM_CONFIG_DIR")); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".config", "idiom")
 }
 
 type Source struct {
@@ -52,6 +74,15 @@ func Build(chat config.Chat, profiles []string) (Stack, error) {
 		profilePath := filepath.Join(chat.ProfilesDir, profile+".md")
 		if err := builder.addFile("profile", "profile:"+profile, profilePath, true); err != nil {
 			return Stack{}, err
+		}
+	}
+
+	if dir := userConfigDir(); dir != "" {
+		for _, name := range userGlobalPromptCandidates {
+			path := filepath.Join(dir, name)
+			if err := builder.addFile("user_global", name, path, false); err != nil {
+				return Stack{}, err
+			}
 		}
 	}
 
@@ -165,6 +196,8 @@ func renderSection(kind, name, body string) string {
 		label = "behavior profile"
 	case "project":
 		label = "project behavior"
+	case "user_global":
+		label = "user behavior"
 	case "inline":
 		label = "inline behavior"
 	}

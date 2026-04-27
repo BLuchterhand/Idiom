@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	projectPromptCandidates = []string{".qwen.md", "QWEN.md", "AGENTS.md", "CLAUDE.md", "README.md"}
+	projectPromptCandidates = []string{".qwen.md", "QWEN.md", "IDIOM.md", "AGENTS.md", "CLAUDE.md", "README.md"}
 	headingPattern          = regexp.MustCompile(`(?m)^#{1,3}\s+(.+?)\s*$`)
 	acronymPattern          = regexp.MustCompile(`\b[A-Z]{2,}(?:/[A-Z]{2,})?\b`)
 	camelPattern            = regexp.MustCompile(`\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b`)

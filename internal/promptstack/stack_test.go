@@ -10,6 +10,7 @@ import (
 )
 
 func TestBuildComposesPromptSourcesAndDeduplicatesFiles(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
 	dir := t.TempDir()
 	baseline := filepath.Join(dir, "base.md")
 	profiles := filepath.Join(dir, "profiles")
@@ -48,6 +49,7 @@ func TestBuildComposesPromptSourcesAndDeduplicatesFiles(t *testing.T) {
 }
 
 func TestBuildIncludesOpenCodeStylePromptGuidance(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
 	baseline := filepath.Join("..", "..", "prompts", "base.md")
 	profiles := filepath.Join("..", "..", "prompts", "profiles")
 
@@ -72,6 +74,7 @@ func TestBuildIncludesOpenCodeStylePromptGuidance(t *testing.T) {
 }
 
 func TestBuildAutoIncludesGeneratedProjectContext(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
 	dir := t.TempDir()
 	project := filepath.Join(dir, "project")
 	if err := os.MkdirAll(filepath.Join(project, ".idiom", "discovery"), 0o755); err != nil {
@@ -89,6 +92,60 @@ func TestBuildAutoIncludesGeneratedProjectContext(t *testing.T) {
 	}
 	if got := countSource(stack.Sources, filepath.Join(project, ".idiom", "discovery", "context.md")); got != 1 {
 		t.Fatalf("expected generated context source once, got %d", got)
+	}
+}
+
+func TestBuildAutoIncludesProjectIdiomFile(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	project := t.TempDir()
+	writeFile(t, filepath.Join(project, "IDIOM.md"), "Project idiom guidance")
+
+	stack, err := Build(config.Chat{ProjectRoot: project}, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(stack.Text, "[project behavior: IDIOM.md]") {
+		t.Fatalf("expected stack text to include project IDIOM.md section, got:\n%s", stack.Text)
+	}
+	if !strings.Contains(stack.Text, "Project idiom guidance") {
+		t.Fatalf("expected stack text to include project IDIOM.md body, got:\n%s", stack.Text)
+	}
+}
+
+func TestBuildLoadsUserGlobalPromptsFromConfigDir(t *testing.T) {
+	configDir := t.TempDir()
+	writeFile(t, filepath.Join(configDir, "IDIOM.md"), "Cross-project idiom rules")
+	t.Setenv("IDIOM_CONFIG_DIR", configDir)
+
+	project := t.TempDir()
+	writeFile(t, filepath.Join(project, "IDIOM.md"), "Project idiom guidance")
+
+	stack, err := Build(config.Chat{ProjectRoot: project}, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(stack.Text, "[user behavior: IDIOM.md]") {
+		t.Fatalf("expected stack text to include user-global IDIOM.md section, got:\n%s", stack.Text)
+	}
+	if !strings.Contains(stack.Text, "Cross-project idiom rules") {
+		t.Fatalf("expected stack text to include user-global body, got:\n%s", stack.Text)
+	}
+	userIdx := strings.Index(stack.Text, "[user behavior: IDIOM.md]")
+	projectIdx := strings.Index(stack.Text, "[project behavior: IDIOM.md]")
+	if userIdx < 0 || projectIdx < 0 || userIdx >= projectIdx {
+		t.Fatalf("expected user-global section to precede project section, got user=%d project=%d", userIdx, projectIdx)
+	}
+}
+
+func TestBuildSkipsUserGlobalWhenConfigDirEmpty(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "missing"))
+
+	stack, err := Build(config.Chat{}, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Contains(stack.Text, "[user behavior:") {
+		t.Fatalf("expected no user-global section when config dir is empty, got:\n%s", stack.Text)
 	}
 }
 
