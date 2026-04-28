@@ -1,16 +1,10 @@
 package app
 
 import (
-	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"idiom/internal/agent"
-	"idiom/internal/llama"
 )
 
 func TestFallbackTurnRouteRecognizesDebugLogs(t *testing.T) {
@@ -23,95 +17,12 @@ func TestFallbackTurnRouteRecognizesDebugLogs(t *testing.T) {
 	}
 }
 
-func TestCorrectTurnRoutePlanRoutesNonForensicDebugLogFeatureQuestionToArchitecture(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "What does the debug log redacted mode do?", agent.BuildMode())
-	if plan.Family != "architecture" {
-		t.Fatalf("family = %q, want architecture", plan.Family)
-	}
-	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
-		t.Fatalf("unexpected plan: %#v", plan)
-	}
-}
-
-func TestCorrectTurnRoutePlanKeepsArchitectureForProjectFeatureQuestion(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "architecture"}, "What does the debug log redacted mode do?", agent.BuildMode())
-	if plan.Family != "architecture" {
-		t.Fatalf("family = %q, want architecture", plan.Family)
-	}
-	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
-		t.Fatalf("unexpected plan: %#v", plan)
-	}
-}
-
-func TestCorrectTurnRoutePlanUsesFallbackInsteadOfHardcodedDirectQuestion(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "Run the tests and report failures.", agent.BuildMode())
-	if plan.Family != "verification_only" {
-		t.Fatalf("family = %q, want verification_only", plan.Family)
-	}
-	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
-		t.Fatalf("unexpected plan: %#v", plan)
-	}
-}
-
 func TestFallbackTurnRouteRecognizesCodeExplanationAsArchitecture(t *testing.T) {
 	plan := fallbackTurnRoute("How does this harness use sub-agents?", agent.BuildMode())
 	if plan.Family != "architecture" {
 		t.Fatalf("family = %q, want architecture", plan.Family)
 	}
 	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
-		t.Fatalf("unexpected plan: %#v", plan)
-	}
-}
-
-func TestCorrectTurnRoutePlanDowngradesImplementationLikeExplanationQuestion(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Explain how this harness uses sub-agents.", agent.BuildMode())
-	if plan.Family != "architecture" {
-		t.Fatalf("family = %q, want architecture", plan.Family)
-	}
-	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
-		t.Fatalf("unexpected plan: %#v", plan)
-	}
-}
-
-func TestCorrectTurnRoutePlanKeepsAnalysisContinuationReadOnly(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Continue your investigation until you have a confident response.", agent.BuildMode())
-	if plan.Family != "architecture" {
-		t.Fatalf("family = %q, want architecture", plan.Family)
-	}
-	if plan.InitialLane != "architecture" || plan.FollowupLane != "" || plan.Contract != "architecture_assessment" {
-		t.Fatalf("unexpected plan: %#v", plan)
-	}
-}
-
-func TestShouldPreferFallbackRoutePreventsModelDowngradeToDirectQuestion(t *testing.T) {
-	fallback := fallbackTurnRoute("Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?", agent.BuildMode())
-	if fallback.Family != "debug_logs" {
-		t.Fatalf("fallback family = %q, want debug_logs", fallback.Family)
-	}
-	planned := normalizeTurnRoutePlan(turnRoutePlan{Family: "direct_question"}, agent.BuildMode())
-	if !shouldPreferFallbackRoute(fallback, planned) {
-		t.Fatal("expected specialized fallback to override a generic direct-question model route")
-	}
-}
-
-func TestClassifyTurnRouteLetsModelUpgradeDirectQuestionFallback(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": `{"family":"verification_only","initial_lane":"main","reason":"verification_request","contract":"direct_answer"}`},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	m := &Model{
-		client: llama.NewClient(server.URL, time.Second),
-	}
-	plan := m.classifyTurnRoute(context.Background(), "Can you verify that this still builds?", agent.BuildMode())
-	if plan.Family != "verification_only" {
-		t.Fatalf("family = %q, want verification_only", plan.Family)
-	}
-	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }

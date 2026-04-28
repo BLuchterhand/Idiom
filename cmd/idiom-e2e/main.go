@@ -72,16 +72,20 @@ func main() {
 	}
 
 	ws := workspace.NewManager(cfg.Workspace)
-	mode := agent.ModeOrDefault(*modeName)
+	mode := agent.ModeOrDefault(*modeName).WithModel(cfg.LlamaServer.Model)
 	ws.SetPermissionRules(mode.PermissionRules)
 
 	// Build a minimal system prompt — same composition as lifecycle.go:
-	// base.md + mode prompt files. NO workspace.Instructions() (the
-	// post-parity shape).
-	system := loadFile("prompts/base.md")
+	// the per-model OpenCode base + the mode fragment. WithModel above
+	// rewrites SystemPromptFiles to the OpenCode-shaped pair.
+	system := ""
 	for _, f := range mode.SystemPromptFiles {
 		if s := loadFile(f); s != "" {
-			system = system + "\n\n" + s
+			if system == "" {
+				system = s
+			} else {
+				system = system + "\n\n" + s
+			}
 		}
 	}
 

@@ -513,6 +513,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 				m.status = "Usage: /mode [build|plan|general]"
 				return false
 			}
+			mode = mode.WithModel(m.cfg.LlamaServer.Model)
 			m.agentModeName = mode.Name
 			m.applyModePermissions(mode)
 			m.status = "Agent mode set to " + mode.Name + "."

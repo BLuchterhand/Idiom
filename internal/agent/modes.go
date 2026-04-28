@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"idiom/internal/promptstack"
 	"idiom/internal/workspace"
 )
 
@@ -129,6 +130,32 @@ func ModeOrDefault(name string) Mode {
 		return mode
 	}
 	return BuildMode()
+}
+
+// WithModel returns a copy of the Mode with SystemPromptFiles rewritten
+// to the OpenCode-style per-model base prompt and per-mode fragment.
+// Mirrors OpenCode's session/system.ts assembly: the base is chosen by
+// model-id fingerprint (qwen → qwen.md, claude → anthropic.md, etc.),
+// and the mode contributes a short fragment on top (plan → plan.md,
+// build → build-switch.md). Other modes contribute no fragment.
+//
+// Callers that have access to config.LlamaServer.Model should apply
+// WithModel before handing the Mode to the runner so the system prompt
+// matches the active backend. Modes that pre-set SystemPromptFiles in
+// their constructor (e.g. the legacy prompts/base.md path) are
+// overwritten — WithModel is the source of truth for which prompt files
+// participate in the OpenCode-shaped path.
+func (m Mode) WithModel(modelID string) Mode {
+	out := m
+	files := make([]string, 0, 2)
+	if base := promptstack.SelectModelPrompt(modelID); base != "" {
+		files = append(files, base)
+	}
+	if fragment := promptstack.SelectModeFragmentForModel(m.Name, modelID); fragment != "" {
+		files = append(files, fragment)
+	}
+	out.SystemPromptFiles = files
+	return out
 }
 
 // ModeNames returns the sorted list of built-in Mode names, suitable

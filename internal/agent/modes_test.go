@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"idiom/internal/workspace"
@@ -39,6 +40,73 @@ func TestModeOrDefaultFallsBackToBuild(t *testing.T) {
 	}
 	if got := ModeOrDefault("nonsense"); got.Name != "build" {
 		t.Errorf("ModeOrDefault nonsense = %q, want build fallback", got.Name)
+	}
+}
+
+func TestWithModelRewritesSystemPromptFilesByModelAndMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		modeName   string
+		modelID    string
+		wantBase   string
+		wantFrag   string
+		wantNoFrag bool
+	}{
+		{"qwen + build", "build", "qwen3.6-35b", "qwen.md", "build-switch.md", false},
+		{"qwen + plan", "plan", "qwen3.6-35b", "qwen.md", "plan.md", false},
+		{"qwen + general (no fragment)", "general", "qwen3.6-35b", "qwen.md", "", true},
+		{"claude + plan → anthropic plan reminder", "plan", "claude-opus-4-5", "anthropic.md", "plan-reminder-anthropic.md", false},
+		{"gpt-4o → beast + build", "build", "gpt-4o", "beast.md", "build-switch.md", false},
+		{"gpt-3.5 → gpt + build", "build", "gpt-3.5-turbo", "gpt.md", "build-switch.md", false},
+		{"gemini + plan", "plan", "gemini-2.0-pro", "gemini.md", "plan.md", false},
+		{"unknown + build → default base", "build", "some-future-model", "default.md", "build-switch.md", false},
+		{"empty model id → default base", "build", "", "default.md", "build-switch.md", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mode, ok := ModeByName(tc.modeName)
+			if !ok {
+				t.Fatalf("ModeByName(%q) not found", tc.modeName)
+			}
+			got := mode.WithModel(tc.modelID)
+			if got.Name != tc.modeName {
+				t.Fatalf("WithModel preserved Name = %q, want %q", got.Name, tc.modeName)
+			}
+			if len(got.SystemPromptFiles) == 0 {
+				t.Fatalf("WithModel returned empty SystemPromptFiles")
+			}
+			if !strings.HasSuffix(got.SystemPromptFiles[0], tc.wantBase) {
+				t.Fatalf("base prompt = %q, want suffix %q", got.SystemPromptFiles[0], tc.wantBase)
+			}
+			if tc.wantNoFrag {
+				if len(got.SystemPromptFiles) != 1 {
+					t.Fatalf("expected only base prompt for general mode, got %v", got.SystemPromptFiles)
+				}
+				return
+			}
+			if len(got.SystemPromptFiles) < 2 {
+				t.Fatalf("expected base + fragment, got %v", got.SystemPromptFiles)
+			}
+			if !strings.HasSuffix(got.SystemPromptFiles[1], tc.wantFrag) {
+				t.Fatalf("fragment = %q, want suffix %q", got.SystemPromptFiles[1], tc.wantFrag)
+			}
+		})
+	}
+}
+
+func TestWithModelPreservesPermissionsAndStepCap(t *testing.T) {
+	original := PlanMode()
+	rewritten := original.WithModel("qwen3.6-35b")
+	if rewritten.StepCap != original.StepCap {
+		t.Fatalf("StepCap drifted: got %d, want %d", rewritten.StepCap, original.StepCap)
+	}
+	if len(rewritten.PermissionRules) != len(original.PermissionRules) {
+		t.Fatalf("permission rule count drifted: got %d, want %d", len(rewritten.PermissionRules), len(original.PermissionRules))
+	}
+	for tool := range original.PermissionRules {
+		if _, ok := rewritten.PermissionRules[tool]; !ok {
+			t.Fatalf("permission rule for %q missing after WithModel", tool)
+		}
 	}
 }
 

@@ -2,15 +2,11 @@ package app
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
-	"time"
 	"unicode"
 
 	"idiom/internal/agent"
 	"idiom/internal/frontier/workerruntime"
-	"idiom/internal/llama"
 )
 
 type turnRoutePlan struct {
@@ -22,127 +18,18 @@ type turnRoutePlan struct {
 	Thoroughness string `json:"thoroughness,omitempty"`
 }
 
-func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent.Mode) turnRoutePlan {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return fallbackTurnRoute(prompt, mode)
-	}
-	fallback := fallbackTurnRoute(prompt, mode)
-	if planned, ok := m.classifyTurnRouteWithModel(ctx, prompt, mode); ok {
-		planned = correctTurnRoutePlanForPrompt(planned, prompt, mode)
-		if shouldPreferFallbackRoute(fallback, planned) {
-			return fallback
-		}
-		return planned
-	}
-	return fallback
-}
-
-func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, mode agent.Mode) (turnRoutePlan, bool) {
-	if m == nil {
-		return turnRoutePlan{}, false
-	}
-	_ = m.ensureSummaryServer()
-	history := renderRecentConversationForRouting(m.messages, 6)
-	messages := []llama.ChatMessage{
-		{
-			Role: "system",
-			Content: strings.Join([]string{
-				"You classify coding-agent turns into one workflow family before execution.",
-				"Return strict JSON only.",
-				"Choose the best family from this enum:",
-				"direct_question, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, test_authoring, config_edit, script_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
-				"Also return initial_lane, optional followup_lane, reason, contract, and optional thoroughness.",
-				"Use coarse OpenCode-shaped routing: read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
-				"Prefer debug_logs for requests about recent logs or explaining a failure from logs.",
-				"Prefer direct_question only for questions answerable from conversation alone. If the user names a project feature, mode, runner, tool, or behavior and asks what it does, prefer architecture so the answer is grounded in code.",
-				"Prefer verification_only for requests to run checks/tests and report results without editing.",
-				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
-				"Prefer implementation-like families when the user is asking for file changes, tests, docs, config, scripts, prompts, or repairs.",
-				"Prefer architecture for explanation-only questions about how a repo, harness, runner, tool, agent, workflow, or component works. Do not choose an implementation family unless the user is asking for edits.",
-				"If the prompt is a continuation like 'continue investigating', 'go deeper', or 'be more confident', keep the turn read-only unless the user now asks for edits.",
-				"Prefer performance_review, security_review, or architecture when the user asks for that style of analysis without edits.",
-				"Use contracts from this enum: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
-				"Use lanes from this enum: main, explore, verification, locate, review, architecture, implement.",
-			}, "\n"),
-		},
-		{
-			Role:    "user",
-			Content: fmt.Sprintf("Mode: %s\nRecent conversation:\n%s\nCurrent user prompt:\n%s\n\nReturn JSON now.", mode.Name, history, prompt),
-		},
-	}
-	timeout := 10 * time.Second
-	if m.cfg.RouteClassifier.TimeoutSeconds > 0 {
-		timeout = time.Duration(m.cfg.RouteClassifier.TimeoutSeconds) * time.Second
-	}
-	classifyCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	thinkingOff := false
-	text, err := m.completeChatWithFallback(classifyCtx, messages, llama.ChatOptions{
-		MaxTokens:      256,
-		Temperature:    0.1,
-		EnableThinking: &thinkingOff,
-	})
-	if err != nil {
-		return turnRoutePlan{}, false
-	}
-	plan, err := parseTurnRoutePlan(text)
-	if err != nil {
-		return turnRoutePlan{}, false
-	}
-	plan = normalizeTurnRoutePlan(plan, mode)
-	return plan, plan.Family != ""
-}
-
-func parseTurnRoutePlan(text string) (turnRoutePlan, error) {
-	text = strings.TrimSpace(text)
-	text = strings.TrimPrefix(text, "```json")
-	text = strings.TrimPrefix(text, "```")
-	text = strings.TrimSuffix(text, "```")
-	text = strings.TrimSpace(text)
-	start := strings.IndexByte(text, '{')
-	end := strings.LastIndexByte(text, '}')
-	if start >= 0 && end > start {
-		text = text[start : end+1]
-	}
-	var plan turnRoutePlan
-	if err := json.Unmarshal([]byte(text), &plan); err != nil {
-		return turnRoutePlan{}, err
-	}
-	return plan, nil
-}
-
-func renderRecentConversationForRouting(messages []llama.ChatMessage, max int) string {
-	if max <= 0 {
-		max = 6
-	}
-	var filtered []llama.ChatMessage
-	for _, msg := range messages {
-		role := strings.TrimSpace(strings.ToLower(msg.Role))
-		if role != "user" && role != "assistant" {
-			continue
-		}
-		content := strings.TrimSpace(msg.Content)
-		if content == "" {
-			continue
-		}
-		filtered = append(filtered, llama.ChatMessage{Role: role, Content: content})
-	}
-	if len(filtered) > max {
-		filtered = filtered[len(filtered)-max:]
-	}
-	if len(filtered) == 0 {
-		return "(none)"
-	}
-	var b strings.Builder
-	for _, msg := range filtered {
-		content := collapseWhitespace(msg.Content)
-		if len(content) > 240 {
-			content = content[:240] + "..."
-		}
-		fmt.Fprintf(&b, "[%s] %s\n", msg.Role, content)
-	}
-	return strings.TrimSpace(b.String())
+// classifyTurnRoute routes a turn to a workflow family using the
+// deterministic prompt-shape fallback. The previous OpenCode-shaped
+// shape included an LLM-classifier call that proposed a family and was
+// corrected against the fallback; that path was deleted because the
+// fallback was authoritative in every corrective branch and the extra
+// model call only added latency, an extra failure mode, and a
+// route_classifier server dependency.
+//
+// Callers still pass ctx so the signature can grow back if a future
+// router needs network access.
+func (m *Model) classifyTurnRoute(_ context.Context, prompt string, mode agent.Mode) turnRoutePlan {
+	return fallbackTurnRoute(strings.TrimSpace(prompt), mode)
 }
 
 func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
@@ -224,58 +111,6 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		return fallbackTurnRoute("", mode)
 	}
 	return plan
-}
-
-func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
-	words := plannerWordText(prompt)
-	if plan.Family == "debug_logs" && !containsAny(words, " latest ", " recent ", " most recent ", " failed ", " failure ", " why this failed ", " why it failed ", " why ") {
-		return fallbackTurnRoute(prompt, mode)
-	}
-	if isImplementationLikeFamily(plan.Family) && isAnalysisContinuationPrompt(words) {
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
-	}
-	if isImplementationLikeFamily(plan.Family) && isExplanationOnlyCodeQuestion(words) {
-		return fallbackTurnRoute(prompt, mode)
-	}
-	return normalizeTurnRoutePlan(plan, mode)
-}
-
-func isAnalysisContinuationPrompt(words string) bool {
-	if hasEditIntent(words) {
-		return false
-	}
-	if !containsAny(words,
-		" continue ",
-		" continue your investigation ",
-		" continue investigating ",
-		" keep investigating ",
-		" investigate further ",
-		" go deeper ",
-		" dig deeper ",
-		" more confident ",
-		" confident response ",
-		" keep looking ",
-	) {
-		return false
-	}
-	return containsAny(words,
-		" investigate ",
-		" investigation ",
-		" deeper ",
-		" confidence ",
-		" confident ",
-		" response ",
-		" explore ",
-	)
-}
-
-func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan) bool {
-	fallbackFamily := strings.TrimSpace(fallback.Family)
-	plannedFamily := strings.TrimSpace(planned.Family)
-	if fallbackFamily == "" || plannedFamily == "" || fallbackFamily == plannedFamily {
-		return false
-	}
-	return fallbackFamily != "direct_question" && plannedFamily == "direct_question"
 }
 
 func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {

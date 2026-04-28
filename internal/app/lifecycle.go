@@ -95,7 +95,7 @@ func New(cfg config.Config) *Model {
 	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
 	m.workspace = workspace.NewManager(cfg.Workspace)
 	m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
-	mode := agent.ModeOrDefault(m.agentModeName)
+	mode := agent.ModeOrDefault(m.agentModeName).WithModel(cfg.LlamaServer.Model)
 	m.workspace.SetPermissionRules(mode.PermissionRules)
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	registry, mcpFailures := setupMCPRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
