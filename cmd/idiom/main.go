@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -170,7 +171,12 @@ func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 	if args[0] == "list" {
-		return runToolList(stdout)
+		// Allow `--config` after `list` to honour project-local externals.
+		listFs := flag.NewFlagSet("idiom tool list", flag.ContinueOnError)
+		listFs.SetOutput(stderr)
+		listConfigPath := listFs.String("config", "config.json", "path to config file")
+		_ = listFs.Parse(args[1:])
+		return runToolListWithConfig(stdout, *listConfigPath)
 	}
 
 	toolName := args[0]
@@ -243,6 +249,10 @@ func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func runToolList(stdout io.Writer) int {
+	return runToolListWithConfig(stdout, "config.json")
+}
+
+func runToolListWithConfig(stdout io.Writer, configPath string) int {
 	allTools := workspace.ToolManifestTools(workspace.ToolManifestToolOptions{
 		IncludeTaskLedger: true,
 		IncludeTask:       true,
@@ -256,6 +266,19 @@ func runToolList(stdout io.Writer) int {
 	})
 	for _, t := range allTools {
 		fmt.Fprintln(stdout, t)
+	}
+	// Append project-defined external tools when a config is loadable.
+	// Silent on errors — `idiom tool list` is informational; if the
+	// config is missing or malformed the user will see the same error
+	// the moment they invoke any tool.
+	if cfg, err := loadToolConfig(configPath); err == nil {
+		if reg, regErr := loadExternalToolsRegistry(cfg.Workspace); regErr == nil && reg != nil {
+			names := reg.Names()
+			sort.Strings(names)
+			for _, name := range names {
+				fmt.Fprintln(stdout, name)
+			}
+		}
 	}
 	return 0
 }
