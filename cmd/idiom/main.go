@@ -48,6 +48,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	var jsonEvents bool
 	var resume string
 	var listSessionsFlag bool
+	var modelOverride string
 
 	fs := flag.NewFlagSet("idiom", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -58,6 +59,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	fs.BoolVar(&jsonEvents, "json", false, "emit structured JSONL events to stdout (only with --prompt)")
 	fs.StringVar(&resume, "resume", "", "resume a prior session by id (filename without .jsonl) before running")
 	fs.BoolVar(&listSessionsFlag, "list-sessions", false, "print recent session ids from the debug log directory and exit")
+	fs.StringVar(&modelOverride, "model", "", "override llama_server.model from config (e.g. an alias the proxy resolves)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -66,6 +68,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if strings.TrimSpace(modelOverride) != "" {
+		cfg.LlamaServer.Model = modelOverride
 	}
 
 	if listSessionsFlag {
