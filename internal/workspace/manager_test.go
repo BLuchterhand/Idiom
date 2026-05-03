@@ -166,23 +166,6 @@ func TestExploreInstructionsPreferStructuredNarrowing(t *testing.T) {
 	}
 }
 
-func TestDiscoveryInstructionsDoNotPreferGenericTextTools(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "scripts", "lookup.sh")
-	writeTestFile(t, scriptPath, "#!/bin/sh\n")
-	mgr := NewManager(config.Workspace{
-		Root: dir,
-		CWD:  dir,
-	})
-	instructions := mgr.discoveryInstructions()
-	if !strings.Contains(instructions, "Prefer structured language tools, discovered handles, and narrow generic workspace reads/searches before these repo-local discovery commands.") {
-		t.Fatalf("expected discovery instructions to prefer structured tools first, got:\n%s", instructions)
-	}
-	if strings.Contains(instructions, "Prefer generic workspace tools such as search_files, search_content, read_file") {
-		t.Fatalf("discovery instructions should not prefer generic text tools first:\n%s", instructions)
-	}
-}
-
 func TestResolveReadPathMissingFileSuggestsStructuredDiscovery(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(config.Workspace{

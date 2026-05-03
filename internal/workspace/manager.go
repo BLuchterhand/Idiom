@@ -365,11 +365,10 @@ func (m *Manager) Instructions() string {
 			"- Prefer edit_file for small localized changes; write_file overwrites.\n"+
 			"%s"+
 			"- shell runs with the same OS permissions as this process. Prefer the dedicated tools where one exists.\n"+
-			"- After tool results, either answer directly or take one exact next tool step.%s",
+			"- After tool results, either answer directly or take one exact next tool step.",
 		m.cfg.Root,
 		m.cfg.CWD,
 		m.writePolicyInstructions(),
-		m.discoveryInstructions(),
 	)
 }
 
@@ -390,11 +389,10 @@ func (m *Manager) exploreInstructions() string {
 			"- Start broad once, then narrow with structured language tools or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
 			"- Do not invent file paths. Use search tools first.\n"+
 			"- shell is limited to read-only utilities (ls, find, rg, grep, awk, sed, cat, head, tail, wc, file, pwd, git status/log/diff/show/grep).\n"+
-			"- When you have enough evidence, answer directly. Continue only for one exact missing claim and one exact probe.%s",
+			"- When you have enough evidence, answer directly. Continue only for one exact missing claim and one exact probe.",
 		m.cfg.Root,
 		m.cfg.CWD,
 		m.ExploreThoroughness(),
-		m.discoveryInstructions(),
 	)
 }
 
@@ -4431,64 +4429,3 @@ func isNoMatchExit(err error) bool {
 	return strings.Contains(err.Error(), "exit status 1")
 }
 
-func (m *Manager) discoveryInstructions() string {
-	type discoveryTool struct {
-		Path        string
-		Description string
-		Example     string
-	}
-
-	tools := []discoveryTool{
-		{
-			Path:        "scripts/lookup.sh",
-			Description: "enum and constant lookup",
-			Example:     `./scripts/lookup.sh --enum AnimalState`,
-		},
-		{
-			Path:        "scripts/trace_code.sh",
-			Description: "code tracing for callers, refs, systems, jobs, and overrides",
-			Example:     `./scripts/trace_code.sh --callers kill_animal`,
-		},
-		{
-			Path:        "scripts/gdscript_trace.sh",
-			Description: "GDScript wiring, refs, callers, and dependencies",
-			Example:     `./scripts/gdscript_trace.sh --wiring scripts/world/thought_bubble_overlay.gd`,
-		},
-		{
-			Path:        "scripts/boundary.sh",
-			Description: "Godot/native boundary inventory",
-			Example:     `./scripts/boundary.sh --inventory --json`,
-		},
-		{
-			Path:        "scripts/validate_discovery_tools.py",
-			Description: "discovery tool inventory and test-lane lookup",
-			Example:     `python3 scripts/validate_discovery_tools.py --inventory`,
-		},
-	}
-
-	var lines []string
-	for _, tool := range tools {
-		if !m.fileExists(tool.Path) {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("- %s: %s. Example: `%s`", tool.Path, tool.Description, tool.Example))
-	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-
-	return "\n\nRepo-local discovery commands available in this workspace:\n" +
-		strings.Join(lines, "\n") +
-		"\nThese repo-local shell commands have the same native CLI capability surface here that Codex has when it runs them from the terminal." +
-		"\nDo not treat them as the default path. Prefer structured language tools, discovered handles, and narrow generic workspace reads/searches before these repo-local discovery commands." +
-		"\nUse these repo-local discovery commands only when the user explicitly asks for them, when a repo workflow clearly depends on them, or when they are the most direct way to answer a repository-specific question."
-}
-
-func (m *Manager) fileExists(rel string) bool {
-	if !m.Enabled() {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(m.cfg.Root, rel))
-	return err == nil
-}

@@ -8,10 +8,11 @@ import (
 )
 
 func TestParseToolCall_BuiltinTypedFields(t *testing.T) {
+	rawArgs := `{"pattern":"foo","path":"src","glob":"*.go"}`
 	call := llama.ToolCall{
 		Function: llama.ToolCallFunc{
 			Name:      "search_content",
-			Arguments: `{"pattern":"foo","path":"src","glob":"*.go"}`,
+			Arguments: rawArgs,
 		},
 	}
 	req, ok, err := parseToolCall(call)
@@ -27,8 +28,13 @@ func TestParseToolCall_BuiltinTypedFields(t *testing.T) {
 	if req.Pattern != "foo" || req.Path != "src" || req.Glob != "*.go" {
 		t.Fatalf("typed fields = pattern=%q path=%q glob=%q", req.Pattern, req.Path, req.Glob)
 	}
-	if len(req.Args) != 0 {
-		t.Fatalf("expected Args empty for built-in tool, got %s", string(req.Args))
+	// Args is also preserved verbatim for non-MCP tools so it can feed the
+	// dedup key (toolRequestKey) — external tools have empty typed fields
+	// and need Args to distinguish materially-different calls. Built-ins
+	// don't need it for dedup (their typed fields differ), but populating
+	// uniformly keeps the contract simple.
+	if string(req.Args) != rawArgs {
+		t.Fatalf("expected Args to be raw arguments verbatim, got %q", string(req.Args))
 	}
 }
 
