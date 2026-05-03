@@ -360,6 +360,11 @@ func (r *Runner) Run(
 					answer, err := controller.completeWithoutMoreToolsWithReason("Completion gate has rejected the final answer repeatedly. Tools are now disabled. Rewrite the final answer so it satisfies the active task contract using the gathered evidence. Mention a blocker only if the task cannot be completed from that evidence.")
 					return finish(answer, err, "completion_gate_repeated_rejection", true)
 				}
+				// Escalate the gate's directive with each retry so the
+				// model gets progressively-clearer guidance instead of
+				// the same message N times. Generic — independent of
+				// task family or project.
+				result.Error = escalateCompletionGateMessage(result.Error, completionGateRejections)
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
 				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 					answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
@@ -3010,7 +3015,7 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 			Error:   "this task asks for a workspace change, but no successful write tool result is present. Make the smallest necessary edit, or state a concrete blocker/no-op reason.",
 		}, true
 	}
-	if mutationFamilySkipsVerification(r.RuntimeBrief.TaskFamily) {
+	if verificationContractSkipsGate(r.RuntimeBrief.VerificationContract) {
 		return workspace.ToolResult{}, false
 	}
 	if !hasSuccessfulVerificationResult(results) {
@@ -3023,17 +3028,67 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 	return workspace.ToolResult{}, false
 }
 
-// mutationFamilySkipsVerification reports whether a mutation task
-// family has nothing to verify after the file write itself. docs_edit
-// changes a markdown file — there's no test/build to run; the file
-// IS the deliverable. prompt_edit_security similarly edits prompt
-// text. Forcing these through the verification gate adds 2-4 minutes
-// of pointless retry-loop while the model figures out the escape
-// phrase. The model can still opt-in to verification by running a
-// shell command, but the gate won't demand it.
-func mutationFamilySkipsVerification(family string) bool {
-	switch strings.TrimSpace(family) {
-	case "docs_edit", "prompt_edit_security":
+// escalateCompletionGateMessage prefixes the gate's existing error
+// text with progressively-firmer instructions so the model gets
+// clearer guidance on each retry instead of the same message N times.
+// priorRejections is the number of completion-gate rejections this
+// turn BEFORE the current one (so 0 = first rejection). Generic — no
+// task-family or project assumptions.
+//
+// Tier 0 (first rejection): pass through unchanged. Most rejections
+//   resolve on first retry; extra prefix would be noise.
+// Tier 1 (second rejection): mark it explicitly + remind the model
+//   the gate already fired once and the next move must address the
+//   stated blocker.
+// Tier 2 (third rejection, last before tools disable): demand a
+//   concrete tool call by name OR an explicit blocker statement.
+func escalateCompletionGateMessage(base string, priorRejections int) string {
+	trimmed := strings.TrimSpace(base)
+	if trimmed == "" {
+		return base
+	}
+	switch {
+	case priorRejections <= 0:
+		return base
+	case priorRejections == 1:
+		return "[gate retry 2/3] " + trimmed +
+			" — the gate already rejected one prior attempt with this error;" +
+			" your next move MUST resolve the stated blocker (use a different tool" +
+			" call or state a concrete reason this cannot proceed)."
+	default:
+		return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
+			" — repeated rejections indicate the active reply does not satisfy" +
+			" the contract. Either issue ONE concrete tool call that produces the" +
+			" missing evidence, or write a final answer that explicitly names the" +
+			" blocker. Do not narrate; act."
+	}
+}
+
+// verificationContractSkipsGate reports whether the brief's
+// VerificationContract value declares the post-mutation verification
+// gate inapplicable. The gate is the right shape for atoms that
+// produce code requiring tests/builds to confirm correctness; it's
+// the wrong shape for atoms that only edit prose, prompts, or other
+// text where the file write IS the deliverable.
+//
+// Generic mechanism — task-family declarations choose the value:
+//   - "tests_passed_or_failed_or_skipped_with_blocker": gate fires
+//     (current default for code-producing families).
+//   - "not_required_for_text_mutations": gate skips (text-only
+//     families like docs_edit, prompt_edit_security).
+//   - any "not_required_for_*_lane" suffix: gate skips (read-only
+//     lanes, by definition).
+//
+// The host project picks the right verification_contract per family
+// in its workerruntime catalog; the runner enforces consistently.
+// Adding a new "no verification needed" task family is now a one-line
+// catalog change instead of a runner patch.
+func verificationContractSkipsGate(contract string) bool {
+	c := strings.TrimSpace(contract)
+	if c == "" {
+		return false
+	}
+	if strings.HasPrefix(c, "not_required_for_") {
 		return true
 	}
 	return false

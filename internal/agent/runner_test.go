@@ -19,6 +19,55 @@ import (
 	"idiom/internal/workspace"
 )
 
+func TestVerificationContractSkipsGate(t *testing.T) {
+	cases := []struct {
+		contract string
+		want     bool
+	}{
+		{"", false},
+		{"tests_passed_or_failed_or_skipped_with_blocker", false},
+		{"not_required_for_text_mutations", true},
+		{"not_required_for_read_only_lane", true},
+		{"not_required_for_anything_at_all", true},
+		{"  not_required_for_x  ", true}, // whitespace tolerated
+	}
+	for _, tc := range cases {
+		if got := verificationContractSkipsGate(tc.contract); got != tc.want {
+			t.Errorf("verificationContractSkipsGate(%q) = %v, want %v", tc.contract, got, tc.want)
+		}
+	}
+}
+
+func TestEscalateCompletionGateMessageTiers(t *testing.T) {
+	base := "workspace changes are present, but no successful verification result is present."
+
+	// Tier 0 (first rejection): pass through unchanged.
+	if got := escalateCompletionGateMessage(base, 0); got != base {
+		t.Errorf("first rejection should pass through; got: %s", got)
+	}
+
+	// Tier 1 (second rejection): mention "[gate retry 2/3]" + the base.
+	got := escalateCompletionGateMessage(base, 1)
+	for _, want := range []string{"[gate retry 2/3]", "no successful verification result", "MUST resolve"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tier 1 expected to contain %q, got: %s", want, got)
+		}
+	}
+
+	// Tier 2 (third rejection): mention "[gate retry 3/3]" + escalation language.
+	got = escalateCompletionGateMessage(base, 2)
+	for _, want := range []string{"[gate retry 3/3", "tools disable", "ONE concrete tool call", "Do not narrate"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tier 2 expected to contain %q, got: %s", want, got)
+		}
+	}
+
+	// Empty base: no escalation (defensive).
+	if got := escalateCompletionGateMessage("", 5); got != "" {
+		t.Errorf("empty base should pass through unchanged, got: %q", got)
+	}
+}
+
 func TestToolActionClassNormalizesRepeatedDeadEndKeys(t *testing.T) {
 	cases := []struct {
 		req  workspace.ToolRequest

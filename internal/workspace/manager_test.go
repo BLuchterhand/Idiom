@@ -224,6 +224,56 @@ func TestExecuteReadWriteAndExploreWriteRejection(t *testing.T) {
 	}
 }
 
+func TestUnsupportedToolErrorSuggestsClosestNames(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+
+	// Typo of "edit_file" — error should suggest the right name back.
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "edit_files",
+		Path: "anything.md",
+	})
+	if result.Error == "" {
+		t.Fatalf("expected unsupported-tool error, got %#v", result)
+	}
+	for _, want := range []string{"unsupported tool", "edit_file"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected error to contain %q, got: %s", want, result.Error)
+		}
+	}
+}
+
+func TestNotFoundRecoveryHintMentionsParentEntries(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+	// Create a real file in a subdir so the hint has something to suggest.
+	subdir := filepath.Join(dir, "notes")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeTestFile(t, filepath.Join(subdir, "real.md"), "ok\n")
+
+	// Ask to read a NEAR-MISS path — error should mention the real file.
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "read_file",
+		Path: "notes/reel.md", // typo of real.md
+	})
+	if result.Error == "" {
+		t.Fatalf("expected read_file not-found error, got %#v", result)
+	}
+	for _, want := range []string{"was not found", "real.md"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected error to mention %q, got: %s", want, result.Error)
+		}
+	}
+}
+
 func TestEditFileRejectsEmptyContentLineRange(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notes.md")

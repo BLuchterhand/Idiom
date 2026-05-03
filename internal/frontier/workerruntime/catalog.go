@@ -135,8 +135,22 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			FinalCritic:          []string{"answers_actual_user_request", "required_evidence_cited"},
 		}
 	case "implementation", "test_authoring", "config_edit", "script_edit", "docs_edit", "prompt_edit_security", "failure_injection":
+		family = strings.TrimSpace(family)
+		// Verification contract differs by family: code-producing
+		// families (implementation, test_authoring, config_edit,
+		// script_edit, failure_injection) need tests/builds run after
+		// the mutation. Pure-text families (docs_edit,
+		// prompt_edit_security) have nothing to verify — the file IS
+		// the deliverable. The runner reads VerificationContract to
+		// decide whether the post-mutation gate fires; the prefix
+		// "not_required_for_*" short-circuits it.
+		verificationContract := "tests_passed_or_failed_or_skipped_with_blocker"
+		switch family {
+		case "docs_edit", "prompt_edit_security":
+			verificationContract = "not_required_for_text_mutations"
+		}
 		return RuntimeContractSpec{
-			TaskFamily:           strings.TrimSpace(family),
+			TaskFamily:           family,
 			Contract:             "implementation_result",
 			PermissionProfile:    "guarded_workspace_write",
 			ToolProfile:          CapabilityGuardedWrite,
@@ -144,7 +158,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredTools:        []string{"edit_file_or_apply_patch", "verification_shell"},
 			ReadinessGate:        []string{"changed_paths_reported", "verification_contract_resolved"},
 			SearchPolicy:         []string{"consume_target_packet_first", "prefer_small_bounded_edits", "verify_changed_surface"},
-			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			VerificationContract: verificationContract,
 			StopConditions:       []string{"implementation_verified_or_failure_reported", "blocked_by_missing_permission_or_information"},
 			FinalCritic:          []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"},
 		}

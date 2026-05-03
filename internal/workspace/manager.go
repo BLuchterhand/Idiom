@@ -771,12 +771,158 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		if extReg := m.ExternalToolsRegistry(); extReg != nil && extReg.Has(tool) {
 			return m.executeExternal(ctx, req)
 		}
+		// Generic recovery message: list nearby-named tools so the
+		// model can self-correct after a typo or hallucinated name.
+		// Helpful across any project — the suggestion list is built
+		// from the live tool surface (built-ins + external + MCP).
 		return ToolResult{
 			Tool:    tool,
 			Summary: "Tool request rejected",
-			Error:   fmt.Sprintf("unsupported tool %q", tool),
+			Error:   m.unsupportedToolError(tool),
 		}
 	}
+}
+
+// unsupportedToolError returns a model-actionable error for an
+// unknown tool name. Lists up to N nearby-named tools (Levenshtein
+// or substring) so the model can self-correct without further
+// orchestrator intervention. Generic — the suggestion list is built
+// from the live tool surface (built-ins + external + MCP), no
+// project-specific assumptions.
+func (m *Manager) unsupportedToolError(tool string) string {
+	candidates := m.knownToolNames()
+	suggestions := closestToolNames(tool, candidates, 5)
+	if len(suggestions) == 0 {
+		return fmt.Sprintf(
+			"unsupported tool %q. No registered tools match this name; check the runtime brief's allowed_tools list.",
+			tool,
+		)
+	}
+	quoted := make([]string, 0, len(suggestions))
+	for _, s := range suggestions {
+		quoted = append(quoted, fmt.Sprintf("%q", s))
+	}
+	return fmt.Sprintf(
+		"unsupported tool %q. Did you mean one of: %s? If none match, check the runtime brief's allowed_tools list.",
+		tool, strings.Join(quoted, ", "),
+	)
+}
+
+// knownToolNames returns the union of built-in, external, and MCP
+// tool names known to this manager. Used by error messages to
+// suggest corrections.
+func (m *Manager) knownToolNames() []string {
+	names := append([]string(nil), builtinToolNamesForSuggest()...)
+	if reg := m.ExternalToolsRegistry(); reg != nil {
+		names = append(names, reg.Names()...)
+	}
+	if mcpReg := m.MCPRegistry(); mcpReg != nil {
+		for name := range mcpReg.Tools() {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// builtinToolNamesForSuggest enumerates the built-in tools in the
+// dispatch switch above. Kept in sync with the case clauses; new
+// built-ins should be added here so error suggestions can find them.
+func builtinToolNamesForSuggest() []string {
+	return []string{
+		"task_ledger", "task", "pwd", "list_files", "search_files",
+		"search_content", "read_file", "discovery_query",
+		"structural_search", "dependency_graph", "history_range",
+		"history_symbol", "blame_range", "ctags_symbols",
+		"semgrep_scan", "joern_scan", "git_status", "git_diff",
+		"shell", "mkdir", "edit_file", "write_file", "append_file",
+		"apply_patch", "go_move_declarations", "go_file_outline",
+	}
+}
+
+// closestToolNames returns up to maxN candidates closest to target by
+// case-insensitive prefix match first, then substring containment,
+// then short Levenshtein distance. Generic string-similarity — no
+// project-specific tool naming assumptions.
+func closestToolNames(target string, candidates []string, maxN int) []string {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" || len(candidates) == 0 {
+		return nil
+	}
+	type scored struct {
+		name string
+		rank int
+	}
+	scoredList := make([]scored, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		lc := strings.ToLower(c)
+		switch {
+		case lc == target:
+			scoredList = append(scoredList, scored{c, 0})
+		case strings.HasPrefix(lc, target) || strings.HasPrefix(target, lc):
+			scoredList = append(scoredList, scored{c, 1})
+		case strings.Contains(lc, target) || strings.Contains(target, lc):
+			scoredList = append(scoredList, scored{c, 2})
+		default:
+			d := levenshteinDistance(target, lc)
+			// Only suggest if edit distance is reasonable for the
+			// target length — avoids spurious "did you mean ls?" on a
+			// long fabricated name.
+			cap := len(target) / 2
+			if cap < 3 {
+				cap = 3
+			}
+			if d <= cap {
+				scoredList = append(scoredList, scored{c, 10 + d})
+			}
+		}
+	}
+	sort.SliceStable(scoredList, func(i, j int) bool {
+		return scoredList[i].rank < scoredList[j].rank
+	})
+	out := make([]string, 0, maxN)
+	for _, s := range scoredList {
+		out = append(out, s.name)
+		if len(out) >= maxN {
+			break
+		}
+	}
+	return out
+}
+
+// levenshteinDistance — standard iterative two-row implementation,
+// case-insensitive (callers pre-lowercase). Used by closestToolNames.
+func levenshteinDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := 0; j <= len(b); j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = minInt3(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
 }
 
 // executeExternal dispatches a project-defined external tool registered
@@ -3867,7 +4013,11 @@ func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 	if !m.hasDiscoveredPath(path) {
 		info, statErr := os.Stat(path)
 		if statErr != nil {
-			return "", "", fmt.Errorf("path %q was not found; use search_files, a language-specific symbol tool, or search_content and then read a returned handle", m.displayPath(path))
+			return "", "", fmt.Errorf(
+				"path %q was not found. %s Use search_files, a language-specific symbol tool, or search_content and then read a returned handle.",
+				m.displayPath(path),
+				m.notFoundRecoveryHint(path),
+			)
 		}
 		if info.IsDir() {
 			return "", "", fmt.Errorf("path %q is a directory; use list_files or search_files to choose a file", m.displayPath(path))
@@ -3875,6 +4025,51 @@ func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 		m.rememberPath(path)
 	}
 	return path, m.handleDisplay(path), nil
+}
+
+// notFoundRecoveryHint inspects the parent directory of a missing
+// path and returns a one-line hint pointing at the closest
+// existing entries by name (case-insensitive substring match).
+// Generic — purely string-similarity over directory entries; no
+// project-specific assumptions about path layout.
+//
+// Returns "" when the parent doesn't exist or has no useful
+// suggestions, so callers can concatenate the hint without worrying
+// about empty messages dangling.
+func (m *Manager) notFoundRecoveryHint(path string) string {
+	if path == "" {
+		return ""
+	}
+	parent := filepath.Dir(path)
+	if parent == "" || parent == "." || parent == path {
+		return ""
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		// Parent itself doesn't exist — suggest exploring further up.
+		grandparent := filepath.Dir(parent)
+		if grandparent != "" && grandparent != parent {
+			return fmt.Sprintf("Parent directory %q does not exist either; try list_files %q first.", m.displayPath(parent), m.displayPath(grandparent))
+		}
+		return ""
+	}
+	target := strings.ToLower(filepath.Base(path))
+	if target == "" {
+		return ""
+	}
+	candidates := make([]string, 0, len(entries))
+	for _, e := range entries {
+		candidates = append(candidates, e.Name())
+	}
+	suggestions := closestToolNames(target, candidates, 3)
+	if len(suggestions) == 0 {
+		return fmt.Sprintf("Parent directory %q exists but contains no matching name; try list_files %q to see what's there.", m.displayPath(parent), m.displayPath(parent))
+	}
+	quoted := make([]string, 0, len(suggestions))
+	for _, s := range suggestions {
+		quoted = append(quoted, fmt.Sprintf("%q", filepath.Join(m.displayPath(parent), s)))
+	}
+	return fmt.Sprintf("Closest existing entries in %q: %s.", m.displayPath(parent), strings.Join(quoted, ", "))
 }
 
 func (m *Manager) isRelevantExplorationPath(path string) bool {

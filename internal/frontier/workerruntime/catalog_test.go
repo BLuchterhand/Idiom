@@ -45,6 +45,27 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 			t.Fatalf("permission = %q, want conversation_only", spec.PermissionProfile)
 		}
 	})
+
+	t.Run("text-mutation families opt out of verification gate", func(t *testing.T) {
+		// docs_edit and prompt_edit_security produce text the gate
+		// can't verify (no tests/build to run); they should advertise
+		// that via the VerificationContract field so the runner skips
+		// the post-mutation gate cleanly.
+		for _, family := range []string{"docs_edit", "prompt_edit_security"} {
+			spec := RuntimeContractForTaskFamily(family)
+			if spec.VerificationContract != "not_required_for_text_mutations" {
+				t.Errorf("%s VerificationContract = %q, want not_required_for_text_mutations", family, spec.VerificationContract)
+			}
+		}
+
+		// Code-producing families keep the verification requirement.
+		for _, family := range []string{"implementation", "test_authoring", "config_edit", "script_edit", "failure_injection"} {
+			spec := RuntimeContractForTaskFamily(family)
+			if spec.VerificationContract != "tests_passed_or_failed_or_skipped_with_blocker" {
+				t.Errorf("%s VerificationContract = %q, want tests_passed_or_failed_or_skipped_with_blocker", family, spec.VerificationContract)
+			}
+		}
+	})
 }
 
 func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
