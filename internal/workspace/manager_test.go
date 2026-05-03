@@ -224,6 +224,42 @@ func TestExecuteReadWriteAndExploreWriteRejection(t *testing.T) {
 	}
 }
 
+func TestEditFileRejectsEmptyContentLineRange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	original := "line one\nline two\nline three\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+	mgr.MarkPathObserved("notes.md")
+
+	// Most common edit_file footgun: model intends "insert after line N"
+	// but uses the line-range form with empty content, which actually
+	// REPLACES (and thus deletes) lines start-end. The guard should catch
+	// this and direct the model to the substring-anchored form.
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "edit_file",
+		Path:      "notes.md",
+		StartLine: 2,
+		EndLine:   2,
+		Content:   "",
+	})
+	if result.Error == "" {
+		t.Fatalf("expected guard to reject empty-content line-range edit, got %#v", result)
+	}
+	for _, want := range []string{"would DELETE", "old_text", "new_text"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected guard error to mention %q, got: %s", want, result.Error)
+		}
+	}
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("rejected edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
 func TestEditFileRejectsInvalidGoBeforeWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "analysis_agents.go")
@@ -236,12 +272,15 @@ func TestEditFileRejectsInvalidGoBeforeWrite(t *testing.T) {
 	})
 	mgr.MarkPathObserved("analysis_agents.go")
 
+	// Content "\n" replaces the package declaration with a blank line —
+	// produces invalid Go but bypasses the empty-content footgun guard
+	// (which would reject before the Go preflight gets a chance).
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "edit_file",
 		Path:      "analysis_agents.go",
 		StartLine: 1,
 		EndLine:   1,
-		Content:   "",
+		Content:   "\n",
 	})
 	if result.Error == "" || !strings.Contains(result.Error, "preflight syntax validation failed") {
 		t.Fatalf("expected Go syntax preflight rejection, got %#v", result)

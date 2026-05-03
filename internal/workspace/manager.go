@@ -3596,6 +3596,26 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: fmt.Sprintf("end_line (%d) must be >= start_line (%d). Swap them if you meant the other direction, or set end_line=start_line for a single-line edit.", endLine, startLine)}
 	}
 
+	// Empty content with a line range is the most common edit_file footgun.
+	// The model often calls edit_file with a line range thinking "insert
+	// after line N" — but the line-range form REPLACES those lines with
+	// content, so empty content silently DELETES them. Reject this combo
+	// with a directive pointing at the substring-anchored form.
+	if req.Content == "" && req.NewText == "" {
+		return ToolResult{
+			Tool:    "edit_file",
+			Summary: "Edit request rejected",
+			Error: fmt.Sprintf(
+				"empty content with line range %d-%d would DELETE those lines from %s. "+
+					"If you intended to INSERT new content, use the substring-anchored form instead: "+
+					"set old_text to a unique existing snippet (no line numbers needed) and set new_text to "+
+					"old_text + your additions. The substring form is safer because it cannot accidentally "+
+					"delete content. If you genuinely intended deletion, set content explicitly to a single newline.",
+				startLine, endLine, m.displayPath(path),
+			),
+		}
+	}
+
 	spans := lineSpans(current)
 	if len(spans) == 0 {
 		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "cannot apply a line edit to an empty file"}
