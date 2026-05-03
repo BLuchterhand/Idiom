@@ -189,11 +189,9 @@ func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	req := workspace.ToolRequest{Tool: toolName}
+	var rawInput []byte
 	if *inputJSON != "" {
-		if err := json.Unmarshal([]byte(*inputJSON), &req); err != nil {
-			fmt.Fprintf(stderr, "invalid input JSON: %v\n", err)
-			return 1
-		}
+		rawInput = []byte(*inputJSON)
 	} else {
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
@@ -202,18 +200,29 @@ func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
 				fmt.Fprintf(stderr, "read stdin: %v\n", err)
 				return 1
 			}
-			if len(data) > 0 {
-				if err := json.Unmarshal(data, &req); err != nil {
-					fmt.Fprintf(stderr, "invalid stdin JSON: %v\n", err)
-					return 1
-				}
-			}
+			rawInput = data
 		}
+	}
+	if len(rawInput) > 0 {
+		if err := json.Unmarshal(rawInput, &req); err != nil {
+			fmt.Fprintf(stderr, "invalid input JSON: %v\n", err)
+			return 1
+		}
+		// Preserve the full input as Args so external tools (and any
+		// future MCP-shaped tools) can pull arbitrary fields, not just
+		// the ones declared on ToolRequest.
+		req.Args = json.RawMessage(rawInput)
 	}
 	req.Tool = toolName
 
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
+	if extReg, extErr := loadExternalToolsRegistry(cfg.Workspace); extErr != nil {
+		fmt.Fprintf(stderr, "external tools setup: %v\n", extErr)
+		return 1
+	} else if extReg != nil {
+		mgr.SetExternalToolsRegistry(extReg)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -388,6 +397,62 @@ func runListSessions(cfg config.Config, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "%s\tmsgs=%d/%d\t%s\n", s.ID, s.UserMessages, s.AssistMessage, summary)
 	}
 	return nil
+}
+
+// loadExternalToolsRegistry mirrors internal/app/external_tools_setup.go's
+// setup function for the standalone `idiom tool` CLI path. Kept here as a
+// thin local helper so cmd/ stays decoupled from internal/app — the
+// shared semantics are documented in workspace.NewExternalToolRegistry.
+func loadExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolRegistry, error) {
+	tools := make([]workspace.ExternalTool, 0, len(ws.ExternalTools))
+	for _, def := range ws.ExternalTools {
+		tools = append(tools, workspace.ExternalTool{
+			Name:           def.Name,
+			Description:    def.Description,
+			Command:        def.Command,
+			Args:           append([]string(nil), def.Args...),
+			Cwd:            def.Cwd,
+			TimeoutSeconds: def.TimeoutSeconds,
+			InputSchema:    def.InputSchema,
+		})
+	}
+	if dir := ws.ExternalToolsDir; dir != "" {
+		dirPath := dir
+		if !filepath.IsAbs(dirPath) && ws.Root != "" {
+			dirPath = filepath.Join(ws.Root, dirPath)
+		}
+		entries, err := os.ReadDir(dirPath)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("external_tools_dir %q: %w", dirPath, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			path := filepath.Join(dirPath, entry.Name())
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("external tool file %q: %w", path, err)
+			}
+			var def config.ExternalToolDef
+			if err := json.Unmarshal(raw, &def); err != nil {
+				return nil, fmt.Errorf("external tool file %q: parse: %w", path, err)
+			}
+			tools = append(tools, workspace.ExternalTool{
+				Name:           def.Name,
+				Description:    def.Description,
+				Command:        def.Command,
+				Args:           append([]string(nil), def.Args...),
+				Cwd:            def.Cwd,
+				TimeoutSeconds: def.TimeoutSeconds,
+				InputSchema:    def.InputSchema,
+			})
+		}
+	}
+	if len(tools) == 0 {
+		return nil, nil
+	}
+	return workspace.NewExternalToolRegistry(tools)
 }
 
 func runServerOnly(cfg config.Config, _ runOptions) error {

@@ -107,6 +107,11 @@ func New(cfg config.Config) *Model {
 	if len(mcpFailures) > 0 {
 		m.setContextError("MCP setup: " + strings.Join(mcpFailures, "; "))
 	}
+	if extReg, extErr := setupExternalToolsRegistry(cfg.Workspace); extErr != nil {
+		m.setContextError("External tools setup: " + extErr.Error())
+	} else if extReg != nil {
+		m.workspace.SetExternalToolsRegistry(extReg)
+	}
 	m.runner = &agent.Runner{
 		Client:            m.client,
 		ImplementerClient: m.implementerClient,
@@ -396,8 +401,8 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
 		m.serverUp = true
-		m.modelID = models[0].ID
-		m.logServerEvent(serverStatusMsg{running: true, modelID: models[0].ID})
+		m.modelID = resolveModelID(m.cfg.LlamaServer, models[0].ID)
+		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID})
 		return nil
 	}
 	if !m.cfg.Chat.AutoStartServer {
@@ -415,13 +420,13 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	models, err = m.client.ListModels(ctx)
 	if err != nil || len(models) == 0 {
 		m.serverUp = true
-		m.modelID = "local-model"
+		m.modelID = resolveModelID(m.cfg.LlamaServer, "local-model")
 		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, owned: true})
 		return nil
 	}
 	m.serverUp = true
-	m.modelID = models[0].ID
-	m.logServerEvent(serverStatusMsg{running: true, modelID: models[0].ID, owned: true})
+	m.modelID = resolveModelID(m.cfg.LlamaServer, models[0].ID)
+	m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, owned: true})
 	return nil
 }
 

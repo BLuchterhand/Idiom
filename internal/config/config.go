@@ -193,6 +193,38 @@ type Workspace struct {
 	// only when registering an MCP server inside a corp intranet you
 	// know is yours. See docs/web-search-tool-design.md §6 W6.
 	AllowPrivateNetwork bool `json:"allow_private_network,omitempty"`
+
+	// ExternalTools registers project-specific shell-invokable tools
+	// the model can call by name (alongside built-ins and MCP). Each
+	// entry has a Name, Description, Command, optional templated Args,
+	// optional Cwd, optional TimeoutSeconds, and a JSON Schema for
+	// the model's input parameters. See internal/workspace/external_tool.go
+	// for invocation semantics + template syntax.
+	//
+	// Idiom is generic — these definitions live in the host project's
+	// config. Nothing about idiom hard-codes a specific tool, command,
+	// or project.
+	ExternalTools []ExternalToolDef `json:"external_tools,omitempty"`
+
+	// ExternalToolsDir, when non-empty, is scanned at startup for
+	// per-tool JSON files (one ExternalToolDef per file). Loaded in
+	// addition to ExternalTools. Path is resolved against the
+	// workspace root if relative.
+	ExternalToolsDir string `json:"external_tools_dir,omitempty"`
+}
+
+// ExternalToolDef mirrors workspace.ExternalTool at the config layer.
+// Kept in this package to avoid import cycles between config and
+// workspace; the manager copies these into workspace.ExternalTool at
+// init time.
+type ExternalToolDef struct {
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	Command        string          `json:"command"`
+	Args           []string        `json:"args,omitempty"`
+	Cwd            string          `json:"cwd,omitempty"`
+	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
+	InputSchema    json.RawMessage `json:"input_schema,omitempty"`
 }
 
 // ToolRule is a glob-style permission rule for a specific tool. Pattern

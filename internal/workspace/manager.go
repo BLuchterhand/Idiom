@@ -39,6 +39,7 @@ import (
 	observedPaths         map[string]struct{}
 	permissionRules       map[string][]ToolRule
 	mcpRegistry           *mcp.Registry
+	externalToolsRegistry *ExternalToolRegistry
 	goIndex         *semantic.GoIndex
 	goIndexToken    string
 	cppIndex        *semantic.CppIndex
@@ -264,6 +265,31 @@ func (m *Manager) MCPRegistry() *mcp.Registry {
 	return m.mcpRegistry
 }
 
+// SetExternalToolsRegistry installs the registry of project-defined
+// external shell tools so that (1) BuildToolDefinitions can fan them
+// into the LLM tool spec and (2) Manager.Execute can dispatch them.
+// Called once at session startup from the app layer; passing nil is a
+// no-op. Safe to call from any goroutine.
+func (m *Manager) SetExternalToolsRegistry(registry *ExternalToolRegistry) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.externalToolsRegistry = registry
+}
+
+// ExternalToolsRegistry returns the currently-installed external tools
+// registry, or nil if none.
+func (m *Manager) ExternalToolsRegistry() *ExternalToolRegistry {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.externalToolsRegistry
+}
+
 func (m *Manager) IsExploreMode() bool {
 	return m.Mode() == ModeExplore
 }
@@ -404,6 +430,11 @@ func (m *Manager) AllowedTools() []string {
 		sort.Strings(names)
 		tools = append(tools, names...)
 	}
+	if registry := m.ExternalToolsRegistry(); registry != nil {
+		names := registry.Names()
+		sort.Strings(names)
+		tools = append(tools, names...)
+	}
 	return tools
 }
 
@@ -463,6 +494,19 @@ func (m *Manager) BuildToolDefinitions(allowed []string) []ToolDefinition {
 			Description:    description,
 			ParametersJSON: params,
 		})
+	}
+	if extReg := m.ExternalToolsRegistry(); extReg != nil {
+		extDefs := extReg.Definitions()
+		// Sort for deterministic order in the tool spec.
+		sort.Slice(extDefs, func(i, j int) bool { return extDefs[i].Name < extDefs[j].Name })
+		for _, ed := range extDefs {
+			if allowedSet != nil {
+				if _, ok := allowedSet[ed.Name]; !ok {
+					continue
+				}
+			}
+			defs = append(defs, ed)
+		}
 	}
 	return defs
 }
@@ -715,12 +759,43 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		if strings.HasPrefix(tool, "mcp:") {
 			return m.executeMCP(ctx, req)
 		}
+		if extReg := m.ExternalToolsRegistry(); extReg != nil && extReg.Has(tool) {
+			return m.executeExternal(ctx, req)
+		}
 		return ToolResult{
 			Tool:    tool,
 			Summary: "Tool request rejected",
 			Error:   fmt.Sprintf("unsupported tool %q", tool),
 		}
 	}
+}
+
+// executeExternal dispatches a project-defined external tool registered
+// via SetExternalToolsRegistry. The registered command is invoked via
+// exec.Command (no shell expansion); each Args entry is template-rendered
+// against req.Args before invocation. See external_tool.go for the
+// template syntax.
+func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResult {
+	registry := m.ExternalToolsRegistry()
+	if registry == nil {
+		return ToolResult{Tool: req.Tool, Summary: "External tools unavailable", Error: "external tools registry not configured"}
+	}
+	if !registry.Has(req.Tool) {
+		return ToolResult{Tool: req.Tool, Summary: "Unknown external tool", Error: "external tool not registered: " + req.Tool}
+	}
+	args := req.Args
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	output, err := registry.Invoke(ctx, req.Tool, args, m.cfg.CWD)
+	out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Output: output}
+	if err != nil {
+		out.Error = err.Error()
+		if output == "" {
+			out.Output = ""
+		}
+	}
+	return out
 }
 
 // executeMCP dispatches a `mcp:<server>/<tool>` call through the
