@@ -3283,6 +3283,16 @@ func normalizedToolRequestRaw(req workspace.ToolRequest) string {
 	if err != nil {
 		return ""
 	}
+	// Mirror the toolRequestKey suffix: Args is `json:"-"` on
+	// ToolRequest so the marshal above misses it. The doom_loop_guard
+	// and other fingerprint-based heuristics need to distinguish
+	// external/MCP calls that carry their entire request shape in
+	// Args; without this, three different lookup({enum:X}),
+	// lookup({enum:Y}), lookup({enum:Z}) calls all collapse to one
+	// fingerprint and trip the doom_loop_guard at threshold 3.
+	if len(req.Args) > 0 {
+		return string(data) + "|args=" + string(req.Args)
+	}
 	return string(data)
 }
 
