@@ -47,11 +47,11 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 	})
 
 	t.Run("text-mutation families opt out of verification gate", func(t *testing.T) {
-		// docs_edit and prompt_edit_security produce text the gate
-		// can't verify (no tests/build to run); they should advertise
-		// that via the VerificationContract field so the runner skips
-		// the post-mutation gate cleanly.
-		for _, family := range []string{"docs_edit", "prompt_edit_security"} {
+		// These families produce artifacts the generic verification gate
+		// can't usefully verify; they should advertise that via the
+		// VerificationContract field so the runner skips the
+		// post-mutation gate cleanly.
+		for _, family := range []string{"docs_edit", "prompt_edit_security", "gdscript_edit"} {
 			spec := RuntimeContractForTaskFamily(family)
 			if spec.VerificationContract != "not_required_for_text_mutations" {
 				t.Errorf("%s VerificationContract = %q, want not_required_for_text_mutations", family, spec.VerificationContract)

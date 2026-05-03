@@ -63,6 +63,16 @@ func TestFallbackTurnRouteRecognizesCodeExplanationAsArchitecture(t *testing.T) 
 	}
 }
 
+func TestFallbackTurnRouteRecognizesGDScriptEdits(t *testing.T) {
+	plan := fallbackTurnRoute("Update the panel script in ui/status_panel.gd.", agent.BuildMode())
+	if plan.Family != "gdscript_edit" {
+		t.Fatalf("family = %q, want gdscript_edit", plan.Family)
+	}
+	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
 func TestCorrectTurnRoutePlanDowngradesImplementationLikeExplanationQuestion(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Explain how this harness uses sub-agents.", agent.BuildMode())
 	if plan.Family != "architecture" {

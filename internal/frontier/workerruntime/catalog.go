@@ -134,19 +134,19 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []string{"required_evidence_satisfied", "budget_exhausted_with_uncertainty_declared"},
 			FinalCritic:          []string{"answers_actual_user_request", "required_evidence_cited"},
 		}
-	case "implementation", "test_authoring", "config_edit", "script_edit", "docs_edit", "prompt_edit_security", "failure_injection":
+	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		family = strings.TrimSpace(family)
 		// Verification contract differs by family: code-producing
 		// families (implementation, test_authoring, config_edit,
 		// script_edit, failure_injection) need tests/builds run after
-		// the mutation. Pure-text families (docs_edit,
-		// prompt_edit_security) have nothing to verify — the file IS
-		// the deliverable. The runner reads VerificationContract to
-		// decide whether the post-mutation gate fires; the prefix
-		// "not_required_for_*" short-circuits it.
+		// the mutation. Families whose edited file is the practical
+		// deliverable for this atom (docs_edit, prompt_edit_security,
+		// gdscript_edit) opt out of the generic post-mutation gate. The
+		// runner reads VerificationContract to decide whether the gate
+		// fires; the prefix "not_required_for_*" short-circuits it.
 		verificationContract := "tests_passed_or_failed_or_skipped_with_blocker"
 		switch family {
-		case "docs_edit", "prompt_edit_security":
+		case "docs_edit", "prompt_edit_security", "gdscript_edit":
 			verificationContract = "not_required_for_text_mutations"
 		}
 		return RuntimeContractSpec{

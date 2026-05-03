@@ -51,7 +51,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"You classify coding-agent turns into one workflow family before execution.",
 				"Return strict JSON only.",
 				"Choose the best family from this enum:",
-				"direct_question, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, test_authoring, config_edit, script_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
+				"direct_question, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
 				"Also return initial_lane, optional followup_lane, reason, contract, and optional thoroughness.",
 				"Use coarse OpenCode-shaped routing: read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
 				"Prefer debug_logs for requests about recent logs or explaining a failure from logs.",
@@ -59,6 +59,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Prefer verification_only for requests to run checks/tests and report results without editing.",
 				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
 				"Prefer implementation-like families when the user is asking for file changes, tests, docs, config, scripts, prompts, or repairs.",
+				"Prefer gdscript_edit for edits limited to .gd GDScript files.",
 				"Prefer architecture for explanation-only questions about how a repo, harness, runner, tool, agent, workflow, or component works. Do not choose an implementation family unless the user is asking for edits.",
 				"If the prompt is a continuation like 'continue investigating', 'go deeper', or 'be more confident', keep the turn read-only unless the user now asks for edits.",
 				"Prefer performance_review, security_review, or architecture when the user asks for that style of analysis without edits.",
@@ -211,7 +212,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.FollowupLane = "implement"
 		plan.Contract = "implementation_result"
 		plan.Reason = firstNonEmptyString(plan.Reason, "architecture_request")
-	case "implementation", "test_authoring", "config_edit", "script_edit", "docs_edit", "prompt_edit_security", "failure_injection":
+	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
@@ -319,6 +320,10 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 		if containsAny(words, " update ", " edit ", " change ", " add ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "config_edit"}, mode)
 		}
+	case strings.Contains(lower, ".gd"):
+		if containsAny(words, " update ", " edit ", " change ", " add ", " fix ", " remove ", " delete ", " rename ", " replace ") {
+			return normalizeTurnRoutePlan(turnRoutePlan{Family: "gdscript_edit"}, mode)
+		}
 	case containsAny(lower, " script ", ".sh", " shell "):
 		if containsAny(words, " update ", " edit ", " change ", " add ", " fix ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "script_edit"}, mode)
@@ -342,6 +347,7 @@ func isImplementationLikeFamily(family string) bool {
 		"test_authoring",
 		"config_edit",
 		"script_edit",
+		"gdscript_edit",
 		"docs_edit",
 		"prompt_edit_security",
 		"failure_injection",
