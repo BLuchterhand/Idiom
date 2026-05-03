@@ -397,6 +397,36 @@ func TestRenderInitialRuntimeBriefIncludesPolicyManifestAndTargets(t *testing.T)
 	}
 }
 
+func TestRenderInitialRuntimeBriefAddsGuardedWriteFirstActionContract(t *testing.T) {
+	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "implement",
+		TaskFamily:        "docs_edit",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "edit_file"},
+	})
+	for _, want := range []string{
+		"first assistant response must be either exactly one tool call",
+		"explicit blocker/no-op answer",
+		"narrative-only implementation summaries are invalid",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected guarded-write first-action directive %q in:\n%s", want, rendered)
+		}
+	}
+
+	readOnly := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "architecture",
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"search_content", "read_file"},
+	})
+	if strings.Contains(readOnly, "first assistant response must be either exactly one tool call") {
+		t.Fatalf("read-only runtime brief should not include guarded-write first-action directive:\n%s", readOnly)
+	}
+}
+
 func TestRenderFailureFeedbackPacketExplainsRequiredVsValid(t *testing.T) {
 	rendered := RenderFailureFeedbackPacket(map[string]any{
 		"required_next": []string{"emit exactly one valid JSON tool object"},

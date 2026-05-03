@@ -38,6 +38,29 @@ func TestVerificationContractSkipsGate(t *testing.T) {
 	}
 }
 
+func TestLanguageDiagnosticsCountAsVerification(t *testing.T) {
+	diagnosticsTools := []string{
+		"go_diagnostics",
+		"cpp_diagnostics",
+		"python_diagnostics",
+		"ts_diagnostics",
+		"rust_diagnostics",
+		"java_diagnostics",
+	}
+	for _, tool := range diagnosticsTools {
+		req := workspace.ToolRequest{Tool: tool}
+		if !isVerificationRequest(req) {
+			t.Errorf("%s should count as a verification request", tool)
+		}
+		if !hasSuccessfulVerificationResult([]workspace.ToolResult{{Tool: tool, Summary: "Collected diagnostics"}}) {
+			t.Errorf("%s should count as successful verification when it has no error", tool)
+		}
+		if hasSuccessfulVerificationResult([]workspace.ToolResult{{Tool: tool, Summary: "Diagnostics failed", Error: "failed"}}) {
+			t.Errorf("%s with an error should not count as successful verification", tool)
+		}
+	}
+}
+
 func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	base := "workspace changes are present, but no successful verification result is present."
 
@@ -1896,6 +1919,25 @@ func TestApplyLanePreflightForcesAnswerAfterBlindDebugLogReread(t *testing.T) {
 	}
 	if !strings.Contains(decision.ForceAnswer.Prompt, "Evidence is sufficient") {
 		t.Fatalf("expected generic evidence-sufficient forced-answer prompt, got %#v", decision.ForceAnswer)
+	}
+}
+
+func TestInFlightVerificationGateRespectsSkippedVerificationContract(t *testing.T) {
+	state := newRunnerExecutionState(false, 0)
+	state.writesSinceVerification = 2
+	readReq := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
+
+	if !state.shouldRequireVerification(readReq, "tests_passed_or_failed_or_skipped_with_blocker") {
+		t.Fatal("expected normal mutation contract to require verification after repeated writes")
+	}
+	if state.shouldRequireVerification(readReq, "not_required_for_text_mutations") {
+		t.Fatal("text-mutation verification contract should skip in-flight verification gate")
+	}
+	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "task_ledger"}, "tests_passed_or_failed_or_skipped_with_blocker") {
+		t.Fatal("task_ledger should remain allowed while verification is pending")
+	}
+	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "cpp_diagnostics"}, "tests_passed_or_failed_or_skipped_with_blocker") {
+		t.Fatal("diagnostics tools should remain allowed as verification requests")
 	}
 }
 

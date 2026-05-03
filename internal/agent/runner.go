@@ -918,7 +918,7 @@ func (r *Runner) Run(
 			r.emitEvent(marshalRunEvent("checkpoint", checkpoint))
 		}
 
-		if executionState.shouldRequireVerification(req) {
+		if executionState.shouldRequireVerification(req, r.RuntimeBrief.VerificationContract) {
 			answer, err, done := controller.rejectTool(
 				stepNumber,
 				activeToolCall,
@@ -3036,12 +3036,17 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 // task-family or project assumptions.
 //
 // Tier 0 (first rejection): pass through unchanged. Most rejections
-//   resolve on first retry; extra prefix would be noise.
+//
+//	resolve on first retry; extra prefix would be noise.
+//
 // Tier 1 (second rejection): mark it explicitly + remind the model
-//   the gate already fired once and the next move must address the
-//   stated blocker.
+//
+//	the gate already fired once and the next move must address the
+//	stated blocker.
+//
 // Tier 2 (third rejection, last before tools disable): demand a
-//   concrete tool call by name OR an explicit blocker statement.
+//
+//	concrete tool call by name OR an explicit blocker statement.
 func escalateCompletionGateMessage(base string, priorRejections int) string {
 	trimmed := strings.TrimSpace(base)
 	if trimmed == "" {
@@ -3276,8 +3281,8 @@ func hasSuccessfulVerificationResult(results []workspace.ToolResult) bool {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		switch strings.TrimSpace(result.Tool) {
-		case "shell", "go_diagnostics":
+		tool := strings.TrimSpace(result.Tool)
+		if tool == "shell" || isDiagnosticsVerificationTool(tool) {
 			return true
 		}
 	}
@@ -6331,9 +6336,10 @@ func isWriteTool(req workspace.ToolRequest) bool {
 
 func isVerificationRequest(req workspace.ToolRequest) bool {
 	tool := strings.TrimSpace(req.Tool)
-	switch tool {
-	case "go_diagnostics":
+	if isDiagnosticsVerificationTool(tool) {
 		return true
+	}
+	switch tool {
 	case "shell":
 		command := strings.ToLower(strings.TrimSpace(req.Command))
 		if command == "" {
@@ -6357,6 +6363,20 @@ func isVerificationRequest(req workspace.ToolRequest) bool {
 		}
 	}
 	return false
+}
+
+func isDiagnosticsVerificationTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "go_diagnostics",
+		"cpp_diagnostics",
+		"python_diagnostics",
+		"ts_diagnostics",
+		"rust_diagnostics",
+		"java_diagnostics":
+		return true
+	default:
+		return false
+	}
 }
 
 func clearVerificationGateFingerprints(fingerprints map[string]string) {

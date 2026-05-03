@@ -634,10 +634,24 @@ func BuildStepInstruction(state RunState) StepInstruction {
 
 func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	state := MergeRuntimeBriefIntoState(brief, RunState{Phase: "start", Step: 1})
+	directive := "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them. Treat the search policy and examples as guidance, not a fixed script."
+	if initialActionContractApplies(state) {
+		directive += " For guarded workspace write tasks, the first assistant response must be either exactly one tool call or an explicit blocker/no-op answer; narrative-only implementation summaries are invalid before a successful write, no-op, or blocker."
+	}
 	return StepInstruction{
 		CurrentState: state,
-		Directive:    "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them. Treat the search policy and examples as guidance, not a fixed script.",
+		Directive:    directive,
 	}
+}
+
+func initialActionContractApplies(state RunState) bool {
+	permission := strings.ToLower(strings.TrimSpace(state.Permission))
+	contract := strings.ToLower(strings.TrimSpace(state.Contract))
+	family := strings.ToLower(strings.TrimSpace(state.TaskFamily))
+	return strings.Contains(permission, "write") ||
+		strings.Contains(contract, "implementation") ||
+		strings.Contains(family, "implement") ||
+		strings.Contains(family, "edit")
 }
 
 // MergeRuntimeBriefIntoStateDelta is a slimmed-down variant of

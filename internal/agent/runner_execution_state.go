@@ -39,8 +39,11 @@ func newRunnerExecutionState(initialNeedsNarrowing bool, initialBroadInspects in
 	}
 }
 
-func (s *runnerExecutionState) shouldRequireVerification(req workspace.ToolRequest) bool {
+func (s *runnerExecutionState) shouldRequireVerification(req workspace.ToolRequest, verificationContract string) bool {
 	if s == nil {
+		return false
+	}
+	if verificationContractSkipsGate(verificationContract) {
 		return false
 	}
 	return s.writesSinceVerification >= 2 && !isVerificationRequest(req) && strings.TrimSpace(req.Tool) != "task_ledger"
