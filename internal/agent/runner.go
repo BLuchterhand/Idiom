@@ -3265,6 +3265,16 @@ func toolRequestKey(req workspace.ToolRequest) string {
 	if err != nil {
 		return ""
 	}
+	// Args is `json:"-"` on ToolRequest (it intentionally stays out of
+	// log/event serialization), so it would NOT contribute to this key
+	// otherwise. For MCP tools and external tools the typed fields are
+	// empty and Args carries the entire request shape — without this
+	// suffix two materially-different calls (e.g. `lookup` with
+	// {"enum":"JobType"} vs {"enum":"ColonistState"}) would collapse to
+	// the same key and trip the "replayed prior evidence" guard.
+	if len(req.Args) > 0 {
+		return string(data) + "|args=" + string(req.Args)
+	}
 	return string(data)
 }
 
