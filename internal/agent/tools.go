@@ -375,6 +375,9 @@ func parseToolCall(call llama.ToolCall) (workspace.ToolRequest, bool, error) {
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &req); err != nil {
 			return workspace.ToolRequest{}, false, err
 		}
+		req.Args = json.RawMessage(call.Function.Arguments)
+	} else {
+		req.Args = json.RawMessage(`{}`)
 	}
 	req.Tool = call.Function.Name
 	return req, true, nil

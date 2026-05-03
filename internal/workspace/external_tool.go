@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -155,6 +156,9 @@ func (r *ExternalToolRegistry) Invoke(ctx context.Context, name string, input js
 		cmd.Dir = baseDir
 	}
 	cmd.Stdin = strings.NewReader(string(input))
+	if os.Getenv("IDIOM_DEBUG_TOOLS") != "" {
+		fmt.Fprintf(os.Stderr, "[idiom-debug] external tool=%s argv=%v cwd=%s\n", name, args, cmd.Dir)
+	}
 
 	out, err := cmd.CombinedOutput()
 	output := string(out)
@@ -210,6 +214,23 @@ func substituteArg(template string, input map[string]any) (string, bool) {
 	// string left-to-right, replacing `{...}` segments. Unmatched braces
 	// are left literal so non-template content (e.g. paths with curly
 	// braces) is preserved.
+	//
+	// Empty-render-drops-token rule: if the template is a SINGLE `{key}`
+	// (no prefix/suffix, no default) and the input key is missing,
+	// drop the whole token. This keeps args clean when the model omits
+	// optional fields — without this, you get empty-string args which
+	// most CLIs interpret as "an actual empty argument" and reject.
+	// Templates like `prefix{key}` always keep the token (rendering as
+	// "prefix" if key is missing) since the prefix indicates intent.
+	if strings.HasPrefix(t, "{") && strings.HasSuffix(t, "}") && !strings.HasPrefix(t, "{?") {
+		inner := t[1 : len(t)-1]
+		// Plain `{key}` with no default and missing key → drop token.
+		if !strings.Contains(inner, "|") {
+			if _, ok := input[inner]; !ok {
+				return "", false
+			}
+		}
+	}
 	var b strings.Builder
 	i := 0
 	for i < len(t) {
