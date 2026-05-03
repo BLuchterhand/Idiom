@@ -119,6 +119,26 @@ func (r *Runner) Run(
 			}
 			allowed = filtered
 		}
+		// Always include project-defined external tools, regardless of
+		// the route's capability profile or the runtime brief's
+		// AllowedTools narrowing. Externals are opaque shell invocations
+		// the host project owns; idiom doesn't know whether a given
+		// external is read-class or write-class, and the project's
+		// intent in registering it is "make this callable from any
+		// agent turn". MCP tools follow the same logic — once the user
+		// configured an MCP server, its tools should remain reachable.
+		if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
+			seen := make(map[string]struct{}, len(allowed))
+			for _, name := range allowed {
+				seen[name] = struct{}{}
+			}
+			for _, name := range extReg.Names() {
+				if _, ok := seen[name]; !ok {
+					allowed = append(allowed, name)
+					seen[name] = struct{}{}
+				}
+			}
+		}
 		if len(turnHiddenTools) > 0 {
 			filtered := make([]string, 0, len(allowed))
 			for _, t := range allowed {

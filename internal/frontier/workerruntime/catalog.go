@@ -354,9 +354,92 @@ func filterAllowedTools(available []string, names ...string) []string {
 	}
 	var out []string
 	for _, tool := range available {
-		if _, ok := allowed[strings.TrimSpace(tool)]; ok {
+		trimmed := strings.TrimSpace(tool)
+		if _, ok := allowed[trimmed]; ok {
+			out = append(out, tool)
+			continue
+		}
+		// Pass project-defined external tools through every capability
+		// profile. Built-ins are gated by the hardcoded allow-lists
+		// because their semantics (read vs write, mutating vs not) are
+		// known to idiom; externals are opaque shell invocations whose
+		// safety the host project owns. Always-passing-through means
+		// `external_tools` registered in the workspace config remain
+		// callable from any turn route, which is the contract host
+		// projects expect when registering project-specific discovery
+		// tools (trace_code, lookup, etc.).
+		//
+		// MCP tools (`mcp:<server>/<tool>`) are also pass-through here
+		// to preserve their existing behavior; the qualifier lets the
+		// dispatcher route them through executeMCP regardless of the
+		// turn's capability profile.
+		if isExternalToolName(trimmed) {
 			out = append(out, tool)
 		}
 	}
 	return out
+}
+
+// isExternalToolName reports whether a tool name belongs to a host-project
+// external tool or an MCP-discovered tool, as opposed to a built-in
+// idiom tool. Built-ins are enumerated in the workspace's tool manifest;
+// anything that isn't a built-in (and isn't reserved by the runner) is
+// treated as a registered external/MCP tool the project owns.
+//
+// Implementation: built-ins follow a small set of stable name patterns
+// (`go_*`, `python_*`, `ts_*`, `rust_*`, `java_*`, `cpp_*`, plus the
+// hardcoded utility names like `pwd`, `read_file`, `discovery_query`,
+// etc.). MCP tools always carry the `mcp:` prefix. Anything that doesn't
+// match either is assumed to be a project external.
+func isExternalToolName(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.HasPrefix(name, "mcp:") {
+		return true
+	}
+	if _, ok := builtinToolNames[name]; ok {
+		return false
+	}
+	// Language-prefixed built-ins (kept here, not in the map, because
+	// their full set is large and updated in lock-step with language
+	// support additions in workspace/).
+	for _, prefix := range []string{"go_", "python_", "py_", "ts_", "rust_", "java_", "cpp_"} {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// builtinToolNames enumerates non-language-prefixed built-in tools.
+// Kept in lock-step with the dispatch switch in workspace/manager.go's
+// Manager.Execute. New built-ins must be added here so external-tool
+// pass-through doesn't accidentally include them.
+var builtinToolNames = map[string]struct{}{
+	"task_ledger":        {},
+	"task":               {},
+	"pwd":                {},
+	"list_files":         {},
+	"search_files":       {},
+	"search_content":     {},
+	"rg":                 {},
+	"read_file":          {},
+	"discovery_query":    {},
+	"structural_search":  {},
+	"dependency_graph":   {},
+	"history_range":      {},
+	"history_symbol":     {},
+	"blame_range":        {},
+	"ctags_symbols":      {},
+	"semgrep_scan":       {},
+	"joern_scan":         {},
+	"git_status":         {},
+	"git_diff":           {},
+	"shell":              {},
+	"mkdir":              {},
+	"edit_file":          {},
+	"write_file":         {},
+	"append_file":        {},
+	"apply_patch":        {},
 }
