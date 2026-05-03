@@ -182,7 +182,20 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		FinalCritic:          append([]string(nil), spec.FinalCritic...),
 	}
 	if spec.PermissionProfile == "conversation_only" {
-		brief.AllowedTools = nil
+		// Built-in tools are stripped (no edit/shell/discovery_query in
+		// conversation mode) but project-defined external tools survive.
+		// Externals are read-only by intent — host projects register
+		// them so the agent can answer questions about the codebase
+		// without entering full implementation mode. The CLI/prompt
+		// path now picks up externals like trace_code, lookup, and
+		// api_access even for direct-question routes.
+		preserved := make([]string, 0)
+		for _, name := range brief.AllowedTools {
+			if isExternalToolName(strings.TrimSpace(name)) {
+				preserved = append(preserved, name)
+			}
+		}
+		brief.AllowedTools = preserved
 		brief.ToolManifest = nil
 	}
 	if spec.PermissionProfile == "read_only_workspace" {

@@ -44,10 +44,26 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 	}
 
 	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
-		decision.RejectSummary = "Tool request rejected by conversation-only contract"
-		decision.RejectError = "this turn is conversation-only. Do not call any tools; answer directly from the prompt and prior visible context."
-		decision.RejectStopReason = "conversation_only_tool_rejected"
-		return decision
+		// Project-defined external tools are allowed even in conversation
+		// mode — they're opaque shell invocations the host project
+		// registered specifically so the agent could use them. Built-in
+		// workspace tools (edit, shell, discovery_query, etc.) remain
+		// rejected because conversation_only's contract is "no workspace
+		// state change, no idiom-internal exploration." Externals
+		// satisfy that contract by being host-controlled.
+		toolName := strings.TrimSpace(decision.Request.Tool)
+		isExternal := false
+		if r.Workspace != nil {
+			if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
+				isExternal = extReg.Has(toolName)
+			}
+		}
+		if !isExternal {
+			decision.RejectSummary = "Tool request rejected by conversation-only contract"
+			decision.RejectError = "this turn is conversation-only. Do not call built-in tools; project-defined external tools (registered via workspace.external_tools) are allowed if any are configured. Otherwise answer directly from the prompt and prior visible context."
+			decision.RejectStopReason = "conversation_only_tool_rejected"
+			return decision
+		}
 	}
 
 	if redirected, ok := r.mainReadOnlyDelegationBootstrapRequest(input.Results, decision.Request); ok {

@@ -5987,7 +5987,37 @@ func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.Work
 
 func (r *Runner) advertisedAllowedTools(base []string) []string {
 	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
-		return nil
+		// Even in conversation_only mode, expose project-defined external
+		// tools so the model can call host-registered discovery commands
+		// (e.g. trace_code, lookup, api_access). Built-in mutating tools
+		// stay hidden — that's what conversation_only is for.
+		if r.Workspace == nil {
+			return nil
+		}
+		extReg := r.Workspace.ExternalToolsRegistry()
+		if extReg == nil {
+			return nil
+		}
+		names := extReg.Names()
+		// Preserve order by filtering base to only externals; this also
+		// drops any non-external entry that snuck into base via prior
+		// pipeline mutations.
+		known := make(map[string]struct{}, len(names))
+		for _, n := range names {
+			known[n] = struct{}{}
+		}
+		var out []string
+		for _, name := range base {
+			if _, ok := known[strings.TrimSpace(name)]; ok {
+				out = append(out, name)
+			}
+		}
+		// If base was empty (e.g. brief AllowedTools = nil), append
+		// directly from the registry so the externals still surface.
+		if len(out) == 0 {
+			out = append(out, names...)
+		}
+		return out
 	}
 	allowed := append([]string(nil), base...)
 	if len(r.RuntimeBrief.AllowedTools) > 0 {

@@ -451,10 +451,6 @@ func (m *Manager) AllowedTools() []string {
 // available tool". MCP tools respect the same allow-list.
 func (m *Manager) BuildToolDefinitions(allowed []string) []ToolDefinition {
 	defs := BuildToolDefinitions(allowed)
-	registry := m.MCPRegistry()
-	if registry == nil {
-		return defs
-	}
 	var allowedSet map[string]struct{}
 	if len(allowed) > 0 {
 		allowedSet = make(map[string]struct{}, len(allowed))
@@ -463,6 +459,13 @@ func (m *Manager) BuildToolDefinitions(allowed []string) []ToolDefinition {
 				allowedSet[name] = struct{}{}
 			}
 		}
+	}
+	// Add project-defined external tools BEFORE the MCP early-return so
+	// they reach the LLM tool spec even when no MCP servers are wired in.
+	defs = appendExternalToolDefinitions(defs, m.ExternalToolsRegistry(), allowedSet)
+	registry := m.MCPRegistry()
+	if registry == nil {
+		return defs
 	}
 	tools := registry.Tools()
 	names := make([]string, 0, len(tools))
@@ -495,18 +498,26 @@ func (m *Manager) BuildToolDefinitions(allowed []string) []ToolDefinition {
 			ParametersJSON: params,
 		})
 	}
-	if extReg := m.ExternalToolsRegistry(); extReg != nil {
-		extDefs := extReg.Definitions()
-		// Sort for deterministic order in the tool spec.
-		sort.Slice(extDefs, func(i, j int) bool { return extDefs[i].Name < extDefs[j].Name })
-		for _, ed := range extDefs {
-			if allowedSet != nil {
-				if _, ok := allowedSet[ed.Name]; !ok {
-					continue
-				}
+	return defs
+}
+
+// appendExternalToolDefinitions appends ToolDefinitions for every entry
+// in the registry, filtered by allowedSet (when non-empty). Sorted for
+// deterministic tool-spec order. Pulled out of BuildToolDefinitions so
+// the externals merge runs whether or not an MCP registry is attached.
+func appendExternalToolDefinitions(defs []ToolDefinition, extReg *ExternalToolRegistry, allowedSet map[string]struct{}) []ToolDefinition {
+	if extReg == nil {
+		return defs
+	}
+	extDefs := extReg.Definitions()
+	sort.Slice(extDefs, func(i, j int) bool { return extDefs[i].Name < extDefs[j].Name })
+	for _, ed := range extDefs {
+		if allowedSet != nil {
+			if _, ok := allowedSet[ed.Name]; !ok {
+				continue
 			}
-			defs = append(defs, ed)
 		}
+		defs = append(defs, ed)
 	}
 	return defs
 }
