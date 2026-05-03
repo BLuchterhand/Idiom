@@ -37,6 +37,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "tool" {
 		os.Exit(runToolMain(os.Args[2:], os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "artifact" {
+		os.Exit(runArtifactMain(os.Args[2:], os.Stdout, os.Stderr, runPromptOnce))
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions))
 }
 

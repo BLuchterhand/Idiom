@@ -38,6 +38,23 @@ Headless one-shot prompt with structured JSONL events on stdout:
 ./idiom --prompt "summarize internal/agent/runner.go" --json
 ```
 
+Generate a standalone artifact while keeping the event stream separate:
+
+```bash
+./idiom artifact \
+  --prompt-file /tmp/spec-draft-prompt.md \
+  --output /tmp/spec.md \
+  --json-out /tmp/spec-events.jsonl \
+  --no-tools \
+  --validator 'markdownlint "$IDIOM_ARTIFACT"'
+```
+
+`artifact` is a generic drafting mode: idiom runs one model turn, writes the
+final answer as the artifact, optionally fails if the model used tools, and
+optionally runs a project-provided validator with `IDIOM_ARTIFACT` set to the
+artifact path. Project-specific rules belong in the prompt and validator, not
+in idiom core.
+
 List or resume prior sessions (sessions are the JSONL files in `chat.debug_log_dir`):
 
 ```bash
