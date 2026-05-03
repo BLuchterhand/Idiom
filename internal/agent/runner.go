@@ -3010,6 +3010,9 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 			Error:   "this task asks for a workspace change, but no successful write tool result is present. Make the smallest necessary edit, or state a concrete blocker/no-op reason.",
 		}, true
 	}
+	if mutationFamilySkipsVerification(r.RuntimeBrief.TaskFamily) {
+		return workspace.ToolResult{}, false
+	}
 	if !hasSuccessfulVerificationResult(results) {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
@@ -3018,6 +3021,22 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		}, true
 	}
 	return workspace.ToolResult{}, false
+}
+
+// mutationFamilySkipsVerification reports whether a mutation task
+// family has nothing to verify after the file write itself. docs_edit
+// changes a markdown file — there's no test/build to run; the file
+// IS the deliverable. prompt_edit_security similarly edits prompt
+// text. Forcing these through the verification gate adds 2-4 minutes
+// of pointless retry-loop while the model figures out the escape
+// phrase. The model can still opt-in to verification by running a
+// shell command, but the gate won't demand it.
+func mutationFamilySkipsVerification(family string) bool {
+	switch strings.TrimSpace(family) {
+	case "docs_edit", "prompt_edit_security":
+		return true
+	}
+	return false
 }
 
 func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
