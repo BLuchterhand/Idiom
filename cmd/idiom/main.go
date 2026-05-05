@@ -26,6 +26,7 @@ import (
 type runOptions struct {
 	JSONEvents bool
 	Resume     string
+	TaskFamily string
 }
 
 type promptRunner func(config.Config, string, runOptions, io.Writer) (string, error)
@@ -39,6 +40,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "artifact" {
 		os.Exit(runArtifactMain(os.Args[2:], os.Stdout, os.Stderr, runPromptOnce))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "implement" {
+		os.Exit(runImplementMain(os.Args[2:], os.Stdout, os.Stderr, runPromptOnce))
 	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions))
 }
@@ -350,6 +354,7 @@ func runTUI(cfg config.Config, opts runOptions) error {
 func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.Writer) (string, error) {
 	model := app.New(cfg)
 	defer model.Close()
+	model.SetForcedTaskFamily(opts.TaskFamily)
 
 	if opts.Resume != "" {
 		path := app.ResolveSessionLogPath(cfg, opts.Resume)
@@ -374,6 +379,7 @@ func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.
 func runPromptsOnce(cfg config.Config, prompts []string, opts runOptions, stdout io.Writer) ([]string, error) {
 	model := app.New(cfg)
 	defer model.Close()
+	model.SetForcedTaskFamily(opts.TaskFamily)
 
 	if opts.Resume != "" {
 		path := app.ResolveSessionLogPath(cfg, opts.Resume)

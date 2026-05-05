@@ -33,6 +33,25 @@ Hard enforcement is still required for invariants. These are not strategy sugges
 - Repeated identical-call loop breaks after warnings.
 - Post-budget “no more tools” cutoffs.
 
+## No Prompt-Magic Contract Triggers
+
+Contract selection must not depend on magic phrases in atom specs or strategy
+prompts. Do not encode a harness contract through wording such as
+"Contract: implementation_result", "first action must be edit_file", or any
+other ad hoc string that a caller is expected to sprinkle into prose to force a
+particular run mode.
+
+Contract selection belongs in run metadata, typed route plans, runtime briefs,
+roles, or command modes — not in the model's strategy text. When a harness
+feature exists (for example, `idiom implement` sets
+`runOptions{TaskFamily: "implementation"}`), use it. If generic prompt routing
+misclassifies a write task, fix the structured routing or brief construction
+rather than adding magic phrases to atom specs.
+
+Good: run metadata or a command mode declares the contract; the model receives a clean strategy brief.
+
+Bad: a strategy prompt or atom spec includes a magic phrase that a harness component parses to override route classification.
+
 ## Audit Rule
 
 For every host-side decision point, ask:

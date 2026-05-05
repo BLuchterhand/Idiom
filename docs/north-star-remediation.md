@@ -421,6 +421,41 @@ The change is small but real: the original frames the three options as a menu th
 
 ---
 
+## 15. Contract selection through prompt magic *(new, 2026-05-05)*
+
+**Why:** North-star §Core Split: "the model owns strategy; the harness owns
+contracts." A prompt phrase such as `Contract: implementation_result`,
+`Task family: implementation`, or `first action must be edit_file` is not a
+contract surface; it is strategy text being parsed as if it were structured
+state. That is brittle and creates wrapper/router coupling that agents cannot
+reason about.
+
+**Bad shape:**
+
+```text
+Generic prompt runner -> route classifier -> prompt contains magic phrase ->
+host upgrades route
+```
+
+**Good shape:**
+
+```text
+Dedicated command or typed run option -> runtime brief contract -> model sees a
+normal strategy brief
+```
+
+**Remediation rule:** When a caller already knows the task contract, carry it
+through structured run metadata, a typed route plan, a role, or a command mode.
+For implementation atoms, use `idiom implement` so the harness sets
+`TaskFamily: implementation` directly. If generic routing misclassifies a write
+task, fix the structured routing path or wrapper command, not the atom wording.
+
+**Regression check:** Add tests that the structured path bypasses the route
+classifier and emits the expected runtime brief. Avoid tests that require magic
+prompt phrases to trigger a contract.
+
+---
+
 ## Out-of-scope (intentionally left alone)
 
 - **`tool_schemas.go:130` (discovery_query)** — user-confirmed: discovery tools have an intentional hard requirement. The "Use when X instead of choosing tools ad hoc" framing is contract guidance, not strategy steering. The load-bearing enforcement should live in `discovery_redirect.go`; verify that side fires for the listed intents.

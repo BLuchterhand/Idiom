@@ -229,6 +229,12 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
 	words := plannerWordText(prompt)
+	if plan.Family == "verification_only" && hasEditIntent(words) {
+		return normalizeTurnRoutePlan(turnRoutePlan{
+			Family: "implementation",
+			Reason: "edit_intent_overrides_verification",
+		}, mode)
+	}
 	if plan.Family == "debug_logs" && !containsAny(words, " latest ", " recent ", " most recent ", " failed ", " failure ", " why this failed ", " why it failed ", " why ") {
 		return fallbackTurnRoute(prompt, mode)
 	}
@@ -285,7 +291,7 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	switch {
 	case containsAny(words, " log ", " logs ", " jsonl ", " trace ") && containsAny(words, " fail ", " failed ", " error ", " why ", " latest ", " recent "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "debug_logs"}, mode)
-	case containsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
+	case !hasEditIntent(words) && containsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
 	case containsAny(words, " find where ", " locate ", " where is ", " where the ") && containsAny(words, " remove ", " fix ", " update ", " edit ", " change ", " add "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "locate_then_implement"}, mode)
@@ -332,7 +338,7 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 		if containsAny(words, " update ", " edit ", " change ", " add ", " fix ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "prompt_edit_security"}, mode)
 		}
-	case containsAny(words, " fix ", " change ", " update ", " edit ", " add ", " remove ", " delete ", " implement ", " refactor ", " rename ", " replace ", " create "):
+	case hasEditIntent(words):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
 	}
 	if strings.EqualFold(mode.Name, "plan") {
@@ -420,6 +426,7 @@ func hasEditIntent(words string) bool {
 		" change ",
 		" update ",
 		" edit ",
+		" modify ",
 		" add ",
 		" remove ",
 		" delete ",

@@ -78,7 +78,29 @@ func (m *Model) currentMode() agent.Mode {
 
 func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) promptExecutionPlan {
 	mode := m.currentMode()
+	if family := strings.TrimSpace(m.forcedTaskFamily); family != "" {
+		route := normalizeTurnRoutePlan(turnRoutePlan{
+			Family: family,
+			Reason: "explicit_task_family",
+		}, mode)
+		brief := m.runtimeBriefForRoute(route, prompt)
+		return promptExecutionPlan{
+			mode:         mode,
+			route:        route,
+			runtimeBrief: brief,
+		}
+	}
 	route := m.classifyTurnRoute(ctx, prompt, mode)
+	brief := m.runtimeBriefForRoute(route, prompt)
+	return promptExecutionPlan{
+		mode:         mode,
+		route:        route,
+		runtimeBrief: brief,
+	}
+}
+
+func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerruntime.WorkerRuntimeBrief {
+	mode := m.currentMode()
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
 	brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, pathparse.MentionedWorkspacePaths(prompt)...)
 	if plan := defaultVerificationPlan(m.projectRoot()); len(brief.VerificationPlan) == 0 {
@@ -107,11 +129,7 @@ func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) pro
 			"large read_file on named target refs before source evidence",
 		)
 	}
-	return promptExecutionPlan{
-		mode:         mode,
-		route:        route,
-		runtimeBrief: brief,
-	}
+	return brief
 }
 
 func defaultVerificationPlan(root string) []string {

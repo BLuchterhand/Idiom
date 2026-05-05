@@ -2,11 +2,15 @@ package app
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
@@ -98,6 +102,42 @@ func TestBuildPromptExecutionPlanCapturesEvidenceFirstTargetRefs(t *testing.T) {
 	}
 	if !slices.Contains(plan.runtimeBrief.InvalidActions, "large read_file on named target refs before source evidence") {
 		t.Fatalf("expected target-read invalid action in runtime brief, got %#v", plan.runtimeBrief.InvalidActions)
+	}
+}
+
+func TestBuildPromptExecutionPlanHonorsForcedTaskFamily(t *testing.T) {
+	model := &Model{}
+	model.SetForcedTaskFamily("implementation")
+
+	plan := model.buildPromptExecutionPlan(context.Background(), "Do not run tests; just inspect this.")
+	if plan.route.Family != "implementation" {
+		t.Fatalf("family = %q, want implementation", plan.route.Family)
+	}
+	if plan.route.InitialLane != "implement" || plan.runtimeBrief.Contract != "implementation_result" {
+		t.Fatalf("unexpected forced implementation plan: %#v brief=%#v", plan.route, plan.runtimeBrief)
+	}
+}
+
+func TestBuildPromptExecutionPlanSkipsClassifierWhenTaskFamilyForced(t *testing.T) {
+	var classifierCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&classifierCalls, 1)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"family\":\"architecture\"}"}}]}`))
+	}))
+	defer server.Close()
+
+	model := &Model{
+		cfg:    config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	plan := model.buildPromptExecutionPlan(context.Background(), "Run tests and only report results.")
+	if plan.route.Family != "implementation" || plan.route.InitialLane != "implement" {
+		t.Fatalf("unexpected forced implementation plan: %#v", plan.route)
+	}
+	if got := atomic.LoadInt32(&classifierCalls); got != 0 {
+		t.Fatalf("forced task family should bypass classifier, got %d classifier calls", got)
 	}
 }
 

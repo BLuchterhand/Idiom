@@ -170,6 +170,7 @@ type Model struct {
 	eventStream                   *jsonEventStream
 	lastAssistantReasoningContent string
 	agentModeName                 string
+	forcedTaskFamily              string
 	traceMode                     traceDisplayMode
 
 	workspaceOverviewInjected bool
@@ -1457,6 +1458,10 @@ func (m *Model) setContextError(message string) {
 	m.contextError = message
 	m.status = message
 	m.logError("context", message)
+}
+
+func (m *Model) SetForcedTaskFamily(family string) {
+	m.forcedTaskFamily = strings.TrimSpace(family)
 }
 
 func (m *Model) clearContextError() {
