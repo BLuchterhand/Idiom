@@ -1809,6 +1809,62 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 	}
 }
 
+func TestImplementationBudgetFallbackReportsPartialEditBlocker(t *testing.T) {
+	root := t.TempDir()
+	var completion runnerCompletionStatus
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "Update the target file.",
+			PermissionProfile: "guarded_workspace_write",
+			TargetRefs:        []string{"target.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_status" {
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion status: %v", err)
+				}
+			}
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited target.txt lines 1-1"},
+		{Tool: "read_file", Summary: "Verification required after workspace edits", Error: "run verification before more inspection"},
+	}
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update the target file."}},
+		llama.ChatOptions{},
+		results,
+		"Maximum tool steps for this turn have been reached. Tools are now disabled.",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") ||
+		!strings.Contains(answer, "partial workspace edits") ||
+		!strings.Contains(answer, "target.txt") ||
+		!strings.Contains(answer, "Verification was not completed") {
+		t.Fatalf("expected implementation partial-edit blocker, got %q", answer)
+	}
+	if completion.Status != "blocked" ||
+		completion.BlockerKind != "implementation_budget_exhausted_after_write" ||
+		!completion.EditAttempted ||
+		!completion.RequiresEdit ||
+		!completion.UserVisibleBlocker {
+		t.Fatalf("unexpected completion status: %#v", completion)
+	}
+	if !slices.Contains(completion.ChangedPaths, "target.txt") {
+		t.Fatalf("expected changed path in completion status: %#v", completion)
+	}
+}
+
 func TestRunnerForcesSynthesisOnFirstPostReadinessNoGapFollowup(t *testing.T) {
 	root := t.TempDir()
 	source := `package agent

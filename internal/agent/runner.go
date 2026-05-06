@@ -5846,6 +5846,10 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		reason = "Tools are now disabled."
 	}
 	reason = answerFirstNoToolsPrompt(reason)
+	if answer, blockerKind, ok := r.implementationBudgetFallbackAnswer(reason, collectedResults); ok {
+		r.emitCompletionStatus("blocked", "implementation_budget_exhausted", blockerKind, collectedResults, true)
+		return answer, nil
+	}
 	preferModelSynthesis := shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults)
 	if !preferModelSynthesis {
 		if answer, ok := immediateBudgetFallbackAnswer(r.agentName(), r.RuntimeBrief, reason, collectedResults); ok {
@@ -5973,6 +5977,51 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		}
 	}
 	return answer, nil
+}
+
+func (r *Runner) implementationBudgetFallbackAnswer(reason string, results []workspace.ToolResult) (string, string, bool) {
+	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || len(results) == 0 {
+		return "", "", false
+	}
+	lowerReason := strings.ToLower(strings.TrimSpace(reason))
+	if !containsAny(lowerReason,
+		"budget",
+		"maximum tool steps",
+		"tools are now disabled",
+		"progress appears stalled",
+	) {
+		return "", "", false
+	}
+	changedPaths := mapKeys(changedPathsFromToolResults(results))
+	if len(changedPaths) == 0 {
+		if !hasNonCompletionGateToolResult(results) {
+			return "", "", false
+		}
+		target := "the requested implementation target"
+		if refs := nonEmptyRunnerStrings(r.RuntimeBrief.TargetRefs, 3); len(refs) > 0 {
+			target = strings.Join(refs, ", ")
+		}
+		return fmt.Sprintf("<<QUESTION>>: Tool budget exhausted before any edit attempt in this implementation lane. Provide a narrower target packet or preloaded current-state anchor for %s; no workspace change was made.", target),
+			"implementation_budget_exhausted_before_write",
+			true
+	}
+	if !hasSuccessfulVerificationResult(results) {
+		return fmt.Sprintf("<<QUESTION>>: Tool budget exhausted after partial workspace edits. Changed paths: %s. Verification was not completed; inspect the diff and run focused verification before continuing.", strings.Join(changedPaths, ", ")),
+			"implementation_budget_exhausted_after_write",
+			true
+	}
+	return fmt.Sprintf("<<QUESTION>>: Tool budget exhausted after workspace edits. Changed paths: %s. Verification evidence is present, but the implementation lane did not complete its closeout; inspect the diff before continuing.", strings.Join(changedPaths, ", ")),
+		"implementation_budget_exhausted_after_verification",
+		true
+}
+
+func hasNonCompletionGateToolResult(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "" && strings.TrimSpace(result.Tool) != "completion_gate" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) repairOrFallbackFinalAnswer(
