@@ -46,7 +46,7 @@ func (s *runnerExecutionState) shouldRequireVerification(req workspace.ToolReque
 	if verificationContractSkipsGate(verificationContract) {
 		return false
 	}
-	return s.writesSinceVerification >= 2 && !isVerificationRequest(req) && strings.TrimSpace(req.Tool) != "task_ledger"
+	return s.writesSinceVerification >= 1 && !isVerificationRequest(req) && strings.TrimSpace(req.Tool) != "task_ledger"
 }
 
 func (s *runnerExecutionState) needsCheckpoint(policy CheckpointPolicy, req workspace.ToolRequest) bool {

@@ -72,7 +72,7 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 	}
 
 	state := newRunnerExecutionState(false, 0)
-	state.writesSinceVerification = 2
+	state.writesSinceVerification = 1
 	if state.shouldRequireVerification(req, "tests_passed_or_failed_or_skipped_with_blocker") {
 		t.Fatal("post-write verification gate should allow git diff --check")
 	}
@@ -1885,7 +1885,7 @@ func (r *Runner) runChildTask() string {
 	}
 }
 
-func TestRunnerRequiresVerificationAfterRepeatedWrites(t *testing.T) {
+func TestRunnerRequiresVerificationAfterEachWrite(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "one\ntwo\nthree\n"); err != nil {
 		t.Fatalf("write seed file: %v", err)
@@ -1895,9 +1895,9 @@ func TestRunnerRequiresVerificationAfterRepeatedWrites(t *testing.T) {
 		`{"tool":"read_file","path":"README.md","start_line":1,"end_line":3}`,
 		`{"tool":"edit_file","path":"README.md","start_line":1,"end_line":1,"content":"ONE\n","description":"update first line"}`,
 		`{"tool":"edit_file","path":"README.md","start_line":2,"end_line":2,"content":"TWO\n","description":"update second line"}`,
-		`{"tool":"read_file","path":"README.md"}`,
 		`{"tool":"shell","command":"go test ./...","workdir":"."}`,
-		`{"tool":"read_file","path":"README.md"}`,
+		`{"tool":"edit_file","path":"README.md","start_line":2,"end_line":2,"content":"TWO\n","description":"update second line after verification"}`,
+		`{"tool":"shell","command":"go test ./...","workdir":"."}`,
 		"Verified after edits.",
 	}
 	requests := 0
@@ -1916,7 +1916,7 @@ func TestRunnerRequiresVerificationAfterRepeatedWrites(t *testing.T) {
 	defer server.Close()
 
 	var sawVerificationGate bool
-	var sawPostVerificationRead bool
+	var sawPostVerificationWrite bool
 	var resultSummaries []string
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
@@ -1940,8 +1940,8 @@ func TestRunnerRequiresVerificationAfterRepeatedWrites(t *testing.T) {
 			if event.Result.Summary == "Verification required after workspace edits" {
 				sawVerificationGate = true
 			}
-			if event.Request.Tool == "read_file" && strings.HasPrefix(event.Result.Summary, "Read ") {
-				sawPostVerificationRead = sawVerificationGate
+			if event.Request.Tool == "edit_file" && strings.HasPrefix(event.Result.Summary, "Edited ") {
+				sawPostVerificationWrite = sawVerificationGate
 			}
 		},
 	)
@@ -1949,10 +1949,10 @@ func TestRunnerRequiresVerificationAfterRepeatedWrites(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if !sawVerificationGate {
-		t.Fatalf("expected non-verification read to be rejected after repeated writes; results=%v", resultSummaries)
+		t.Fatalf("expected second write to be rejected before verification; results=%v", resultSummaries)
 	}
-	if !sawPostVerificationRead {
-		t.Fatalf("expected same read to be allowed after verification attempt; results=%v", resultSummaries)
+	if !sawPostVerificationWrite {
+		t.Fatalf("expected same write to be allowed after verification attempt; results=%v", resultSummaries)
 	}
 	if answer != "Verified after edits." {
 		t.Fatalf("unexpected answer: %q", answer)
@@ -2029,11 +2029,11 @@ func TestApplyLanePreflightForcesAnswerAfterBlindDebugLogReread(t *testing.T) {
 
 func TestInFlightVerificationGateRespectsSkippedVerificationContract(t *testing.T) {
 	state := newRunnerExecutionState(false, 0)
-	state.writesSinceVerification = 2
+	state.writesSinceVerification = 1
 	readReq := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
 
 	if !state.shouldRequireVerification(readReq, "tests_passed_or_failed_or_skipped_with_blocker") {
-		t.Fatal("expected normal mutation contract to require verification after repeated writes")
+		t.Fatal("expected normal mutation contract to require verification after a write")
 	}
 	if state.shouldRequireVerification(readReq, "not_required_for_text_mutations") {
 		t.Fatal("text-mutation verification contract should skip in-flight verification gate")

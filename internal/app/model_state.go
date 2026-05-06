@@ -386,6 +386,15 @@ func samplingSummaryForOptions(opts llama.ChatOptions) string {
 	)
 }
 
+func resolveModelID(spec config.LlamaServer, reported string) string {
+	if spec.IsMLX() {
+		if name := strings.TrimSpace(spec.Model); name != "" {
+			return name
+		}
+	}
+	return reported
+}
+
 func (m *Model) bootstrap() {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
