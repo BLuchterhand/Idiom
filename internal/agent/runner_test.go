@@ -89,6 +89,22 @@ func TestSuccessfulVerificationResultIgnoresNonVerificationShell(t *testing.T) {
 	}
 }
 
+func TestSuccessfulVerificationMustFollowLatestWrite(t *testing.T) {
+	firstWrite := workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.txt lines 1-1"}
+	diffCheck := workspace.ToolResult{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\n"}
+	secondWrite := workspace.ToolResult{Tool: "edit_file", Summary: "Edited b.txt lines 1-1"}
+
+	if !hasSuccessfulVerificationAfterLastWrite([]workspace.ToolResult{firstWrite, diffCheck}) {
+		t.Fatal("verification after the only write should satisfy post-write verification")
+	}
+	if hasSuccessfulVerificationAfterLastWrite([]workspace.ToolResult{firstWrite, diffCheck, secondWrite}) {
+		t.Fatal("verification before the latest write must not satisfy post-write verification")
+	}
+	if !hasSuccessfulVerificationAfterLastWrite([]workspace.ToolResult{firstWrite, diffCheck, secondWrite, diffCheck}) {
+		t.Fatal("verification after the latest write should satisfy post-write verification")
+	}
+}
+
 func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	base := "workspace changes are present, but no successful verification result is present."
 

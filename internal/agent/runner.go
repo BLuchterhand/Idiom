@@ -3041,7 +3041,7 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 	if verificationContractSkipsGate(r.RuntimeBrief.VerificationContract) {
 		return workspace.ToolResult{}, false
 	}
-	if !hasSuccessfulVerificationResult(results) {
+	if !hasSuccessfulVerificationAfterLastWrite(results) {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
@@ -3333,22 +3333,45 @@ func nonEmptyRunnerStrings(values []string, max int) []string {
 
 func hasSuccessfulVerificationResult(results []workspace.ToolResult) bool {
 	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		tool := strings.TrimSpace(result.Tool)
-		if isDiagnosticsVerificationTool(tool) {
+		if isSuccessfulVerificationResult(result) {
 			return true
 		}
-		if tool == "shell" {
-			command := shellCommandFromToolResult(result)
-			if command == "" {
-				continue
-			}
-			if isVerificationRequest(workspace.ToolRequest{Tool: "shell", Command: command}) {
-				return true
-			}
+	}
+	return false
+}
+
+func hasSuccessfulVerificationAfterLastWrite(results []workspace.ToolResult) bool {
+	verificationAfterLastWrite := false
+	sawWrite := false
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) == "" &&
+			isWriteTool(workspace.ToolRequest{Tool: strings.TrimSpace(result.Tool)}) &&
+			len(changedPathsFromToolResult(result)) > 0 {
+			sawWrite = true
+			verificationAfterLastWrite = false
+			continue
 		}
+		if sawWrite && isSuccessfulVerificationResult(result) {
+			verificationAfterLastWrite = true
+		}
+	}
+	return sawWrite && verificationAfterLastWrite
+}
+
+func isSuccessfulVerificationResult(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+	tool := strings.TrimSpace(result.Tool)
+	if isDiagnosticsVerificationTool(tool) {
+		return true
+	}
+	if tool == "shell" {
+		command := shellCommandFromToolResult(result)
+		if command == "" {
+			return false
+		}
+		return isVerificationRequest(workspace.ToolRequest{Tool: "shell", Command: command})
 	}
 	return false
 }
@@ -6005,7 +6028,7 @@ func (r *Runner) implementationBudgetFallbackAnswer(reason string, results []wor
 			"implementation_budget_exhausted_before_write",
 			true
 	}
-	if !hasSuccessfulVerificationResult(results) {
+	if !hasSuccessfulVerificationAfterLastWrite(results) {
 		return fmt.Sprintf("<<QUESTION>>: Tool budget exhausted after partial workspace edits. Changed paths: %s. Verification was not completed; inspect the diff and run focused verification before continuing.", strings.Join(changedPaths, ", ")),
 			"implementation_budget_exhausted_after_write",
 			true
