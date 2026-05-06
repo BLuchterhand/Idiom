@@ -25,7 +25,7 @@ import (
 	"idiom/internal/semantic"
 )
 
-	type Manager struct {
+type Manager struct {
 	cfg config.Workspace
 
 	mode                  Mode
@@ -40,12 +40,12 @@ import (
 	permissionRules       map[string][]ToolRule
 	mcpRegistry           *mcp.Registry
 	externalToolsRegistry *ExternalToolRegistry
-	goIndex         *semantic.GoIndex
-	goIndexToken    string
-	cppIndex        *semantic.CppIndex
-	cppIndexToken   string
-	goplsPath       string
-	goplsChecked    bool
+	goIndex               *semantic.GoIndex
+	goIndexToken          string
+	cppIndex              *semantic.CppIndex
+	cppIndexToken         string
+	goplsPath             string
+	goplsChecked          bool
 }
 
 type Mode string
@@ -3776,7 +3776,11 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 
 	startOffset := spans[startLine-1].start
 	endOffset := spans[endLine-1].end
-	updated := current[:startOffset] + req.Content + current[endOffset:]
+	replacement := req.Content
+	if current[endOffset:] != "" && !strings.HasSuffix(replacement, "\n") {
+		replacement += "\n"
+	}
+	updated := current[:startOffset] + replacement + current[endOffset:]
 	if updated == current {
 		return ToolResult{
 			Tool:    "edit_file",
@@ -4643,4 +4647,3 @@ func isNoMatchExit(err error) bool {
 	}
 	return strings.Contains(err.Error(), "exit status 1")
 }
-

@@ -310,6 +310,34 @@ func TestEditFileRejectsEmptyContentLineRange(t *testing.T) {
 	}
 }
 
+func TestEditFileLineRangePreservesBoundaryWithoutTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	writeTestFile(t, path, "line one\nline two\nline three\n")
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+	mgr.MarkPathObserved("notes.md")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "edit_file",
+		Path:      "notes.md",
+		StartLine: 2,
+		EndLine:   2,
+		Content:   "replacement without final newline",
+	})
+	if result.Error != "" {
+		t.Fatalf("expected line edit to succeed, got %#v", result)
+	}
+	got := readTestFile(t, path)
+	want := "line one\nreplacement without final newline\nline three\n"
+	if got != want {
+		t.Fatalf("line-range edit merged line boundaries\ngot:\n%q\nwant:\n%q", got, want)
+	}
+}
+
 func TestEditFileRejectsInvalidGoBeforeWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "analysis_agents.go")
