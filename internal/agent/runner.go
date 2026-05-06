@@ -573,6 +573,43 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: decision.EventRole, Content: firstNonEmpty(decision.EventContent, decision.Nudge)})
 			}
 		}
+		if decision := discoveryRedirect.Consider(req, r.Workspace); decision.ShouldRedirect {
+			// Hard-reject path: the model has been nudged enough times
+			// on this redirect class. Route through rejectTool so the
+			// fingerprint is recorded in rejectedFingerprints and a
+			// repeat terminates the turn. The soft-redirect path stays
+			// as a result append with no rejection counters bumped.
+			if decision.HardReject {
+				if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
+					r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
+				}
+				r.emitEvent(RunEvent{Role: "discovery_redirect", Content: fmt.Sprintf("%s → %s (%s) HARD_REJECT", req.Tool, decision.Language, decision.Capability)})
+				// Hide the source tool from the manifest for the rest
+				// of the turn. If shell was redirected to a structured
+				// tool N times and now hard-rejected, the model has
+				// shown it won't self-correct — remove the tool.
+				if tool := strings.TrimSpace(req.Tool); tool != "" && !turnHiddenTools[tool] {
+					turnHiddenTools[tool] = true
+					rebuildTools()
+					r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after hard-redirect", tool)})
+				}
+				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.Result.Summary, decision.Result.Error)
+				if done {
+					return finish(answer, err, "redirect_hard_block_exhausted", true)
+				}
+				continue
+			}
+			result := decision.Result
+			recorder.activeToolCall = activeToolCall
+			recorder.record(stepNumber, req, result, "discovery_redirect", false, false)
+			if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
+				r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
+			}
+			r.emitEvent(RunEvent{Role: "discovery_redirect", Content: fmt.Sprintf("%s → %s (%s)", req.Tool, decision.Language, decision.Capability)})
+			continue
+		}
 		if isReadClassTool(req) {
 			requestBudget.noteReadClassRequest(req)
 			metrics.ReadClassCalls++
@@ -813,44 +850,6 @@ func (r *Runner) Run(
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
 			}
-			continue
-		}
-
-		if decision := discoveryRedirect.Consider(req, r.Workspace); decision.ShouldRedirect {
-			// Hard-reject path: the model has been nudged enough times
-			// on this redirect class. Route through rejectTool so the
-			// fingerprint is recorded in rejectedFingerprints and a
-			// repeat terminates the turn. The soft-redirect path stays
-			// as a result append with no rejection counters bumped.
-			if decision.HardReject {
-				if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
-					r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
-				}
-				r.emitEvent(RunEvent{Role: "discovery_redirect", Content: fmt.Sprintf("%s → %s (%s) HARD_REJECT", req.Tool, decision.Language, decision.Capability)})
-				// Hide the source tool from the manifest for the rest
-				// of the turn. If shell was redirected to a structured
-				// tool N times and now hard-rejected, the model has
-				// shown it won't self-correct — remove the tool.
-				if tool := strings.TrimSpace(req.Tool); tool != "" && !turnHiddenTools[tool] {
-					turnHiddenTools[tool] = true
-					rebuildTools()
-					r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after hard-redirect", tool)})
-				}
-				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.Result.Summary, decision.Result.Error)
-				if done {
-					return finish(answer, err, "redirect_hard_block_exhausted", true)
-				}
-				continue
-			}
-			result := decision.Result
-			recorder.activeToolCall = activeToolCall
-			recorder.record(stepNumber, req, result, "discovery_redirect", false, false)
-			if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
-				r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
-			}
-			r.emitEvent(RunEvent{Role: "discovery_redirect", Content: fmt.Sprintf("%s → %s (%s)", req.Tool, decision.Language, decision.Capability)})
 			continue
 		}
 
