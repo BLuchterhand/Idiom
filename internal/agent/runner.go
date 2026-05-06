@@ -3536,8 +3536,8 @@ func isConcreteInspectionTool(tool string) bool {
 
 // isReadClassTool reports whether a tool request is read-only / inspection.
 // Used to drive the plan-mode read-budget nudge. Kept explicit (allow-list)
-// so mutating tools can never be miscounted. Shell is excluded because it
-// can mutate even when the command looks benign.
+// so mutating tools can never be miscounted. Shell is counted only for
+// commands whose pipeline is made entirely of known read/discovery programs.
 func isReadClassTool(req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case "list_files", "read_file",
@@ -3566,6 +3566,8 @@ func isReadClassTool(req workspace.ToolRequest) bool {
 		"java_definition", "java_references", "java_implementations", "java_calls_from", "java_calls_into",
 		"java_workspace_symbol", "java_diagnostics", "java_file_outline":
 		return true
+	case "shell":
+		return shellCommandIsReadClass(req.Command)
 	default:
 		return false
 	}
@@ -3717,6 +3719,43 @@ func shellActionClass(command string) string {
 		return "shell_narrow:" + normalizeActionToken(command)
 	default:
 		return "shell:" + normalizeActionToken(fields[0])
+	}
+}
+
+func shellCommandIsReadClass(command string) bool {
+	command = strings.TrimSpace(command)
+	if command == "" || strings.Contains(command, ";") ||
+		strings.Contains(command, ">") || strings.Contains(command, "<") ||
+		strings.Contains(command, "`") || strings.Contains(command, "$(") {
+		return false
+	}
+
+	sawRead := false
+	for _, chain := range strings.Split(command, "&&") {
+		for _, segment := range strings.Split(chain, "|") {
+			fields := strings.Fields(strings.TrimSpace(segment))
+			if len(fields) == 0 {
+				continue
+			}
+			name := filepath.Base(fields[0])
+			if name == "cd" {
+				continue
+			}
+			if !shellProgramIsReadClass(name) {
+				return false
+			}
+			sawRead = true
+		}
+	}
+	return sawRead
+}
+
+func shellProgramIsReadClass(name string) bool {
+	switch name {
+	case "awk", "cat", "fd", "find", "grep", "head", "ls", "rg", "sed", "tail", "tree", "wc":
+		return true
+	default:
+		return false
 	}
 }
 

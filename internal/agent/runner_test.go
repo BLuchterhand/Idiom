@@ -89,6 +89,33 @@ func TestSuccessfulVerificationResultIgnoresNonVerificationShell(t *testing.T) {
 	}
 }
 
+func TestShellDiscoveryCommandsCountAsReadClass(t *testing.T) {
+	readCommands := []string{
+		`grep -r "itemquality" native/src --include="*.h" | head -10`,
+		`rg ItemSlot native/src`,
+		`sed -n '1,20p' native/src/core/components.h`,
+		`cd native && grep -r ItemSlot src | head -5`,
+	}
+	for _, command := range readCommands {
+		req := workspace.ToolRequest{Tool: "shell", Command: command}
+		if !isReadClassTool(req) {
+			t.Fatalf("shell discovery command should count as read-class: %q", command)
+		}
+	}
+
+	nonReadCommands := []string{
+		`git diff --check`,
+		`go test ./...`,
+		`grep ItemSlot native/src | xargs rm`,
+	}
+	for _, command := range nonReadCommands {
+		req := workspace.ToolRequest{Tool: "shell", Command: command}
+		if isReadClassTool(req) {
+			t.Fatalf("shell command should not count as read-class: %q", command)
+		}
+	}
+}
+
 func TestSuccessfulVerificationMustFollowLatestWrite(t *testing.T) {
 	firstWrite := workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.txt lines 1-1"}
 	diffCheck := workspace.ToolResult{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\n"}
