@@ -1,4 +1,4 @@
-# Qwen Bubbles
+# Idiom
 
 A small Bubble Tea harness for running `Qwen3.6-35B-A3B` locally through `llama.cpp`.
 
