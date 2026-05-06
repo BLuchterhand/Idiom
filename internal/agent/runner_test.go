@@ -67,11 +67,25 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 	if !isVerificationRequest(req) {
 		t.Fatal("git diff --check should count as a verification request after writes")
 	}
+	if !hasSuccessfulVerificationResult([]workspace.ToolResult{{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\n"}}) {
+		t.Fatal("git diff --check shell result should count as successful verification")
+	}
 
 	state := newRunnerExecutionState(false, 0)
 	state.writesSinceVerification = 2
 	if state.shouldRequireVerification(req, "tests_passed_or_failed_or_skipped_with_blocker") {
 		t.Fatal("post-write verification gate should allow git diff --check")
+	}
+}
+
+func TestSuccessfulVerificationResultIgnoresNonVerificationShell(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "shell",
+		Summary: "Ran shell command",
+		Output:  "$ cd\n",
+	}}
+	if hasSuccessfulVerificationResult(results) {
+		t.Fatal("non-verification shell command must not satisfy mutation verification gate")
 	}
 }
 
@@ -2245,7 +2259,7 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write}); !rejected || !strings.Contains(result.Error, "verification") {
 		t.Fatalf("expected missing-verification rejection, got rejected=%v result=%#v", rejected, result)
 	}
-	verify := workspace.ToolResult{Tool: "shell", Summary: "Ran shell command"}
+	verify := workspace.ToolResult{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\n"}
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write, verify}); rejected {
 		t.Fatalf("expected verified mutation to pass, got %#v", result)
 	}

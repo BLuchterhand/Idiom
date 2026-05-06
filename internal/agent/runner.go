@@ -3337,11 +3337,33 @@ func hasSuccessfulVerificationResult(results []workspace.ToolResult) bool {
 			continue
 		}
 		tool := strings.TrimSpace(result.Tool)
-		if tool == "shell" || isDiagnosticsVerificationTool(tool) {
+		if isDiagnosticsVerificationTool(tool) {
 			return true
+		}
+		if tool == "shell" {
+			command := shellCommandFromToolResult(result)
+			if command == "" {
+				continue
+			}
+			if isVerificationRequest(workspace.ToolRequest{Tool: "shell", Command: command}) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func shellCommandFromToolResult(result workspace.ToolResult) string {
+	for _, line := range strings.Split(strings.TrimSpace(result.Output), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "$ ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "$ "))
+		}
+		if line != "" {
+			return ""
+		}
+	}
+	return ""
 }
 
 func hasSuccessfulTaskResult(results []workspace.ToolResult) bool {
