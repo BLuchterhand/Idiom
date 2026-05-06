@@ -620,6 +620,15 @@ func (r *Runner) Run(
 				if decision.Nudge != "" {
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
 				}
+				if summary, errorText, prompt, ok := r.implementationReadBudgetEditRecovery(decision, collectedResults, &requestBudget); ok {
+					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+					if done {
+						return finish(answer, err, decision.RejectStopReason, true)
+					}
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+					r.emitEvent(RunEvent{Role: "implementation_read_budget_recovery", Content: prompt})
+					continue
+				}
 				if decision.RejectSummary != "" {
 					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.RejectSummary, decision.RejectError)
 					if done {
@@ -3311,6 +3320,30 @@ func (r *Runner) implementationReadBudgetBlockerAnswer(decision runnerRequestBud
 		target = strings.Join(refs, ", ")
 	}
 	return fmt.Sprintf("<<QUESTION>>: Read/search budget exhausted before any edit attempt in this implementation lane. Provide a narrower target packet or preloaded current-state anchor for %s; no workspace change was made.", target), true
+}
+
+func (r *Runner) implementationReadBudgetEditRecovery(decision runnerRequestBudgetDecision, results []workspace.ToolResult, budget *runnerRequestBudgetState) (summary string, errorText string, prompt string, ok bool) {
+	if r == nil || budget == nil || budget.readBudgetEditRecoveryFired {
+		return "", "", "", false
+	}
+	if decision.ForceAnswerReason != "read_budget_exhausted" || !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return "", "", "", false
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
+		return "", "", "", false
+	}
+	budget.readBudgetEditRecoveryFired = true
+	target := "the requested implementation target"
+	if refs := nonEmptyRunnerStrings(r.RuntimeBrief.TargetRefs, 3); len(refs) > 0 {
+		target = strings.Join(refs, ", ")
+	}
+	summary = "Read budget exhausted; implementation edit required"
+	errorText = "read/search budget is exhausted for this implementation lane. Do not request more read/search tools. Use the gathered target evidence to make the smallest in-scope edit, or answer with <<QUESTION>> naming the exact missing current-state anchor."
+	prompt = fmt.Sprintf(
+		"Implementation read/search budget is exhausted for %s. Do not request more read/search tools in this turn. Use the target packet and gathered evidence to make the smallest in-scope edit now with an available write tool. If the evidence is genuinely insufficient to edit safely, answer with <<QUESTION>> naming the exact missing current-state anchor. After any edit, run the focused verification named by the task or report the concrete verification blocker.",
+		target,
+	)
+	return summary, errorText, prompt, true
 }
 
 func nonEmptyRunnerStrings(values []string, max int) []string {

@@ -1786,6 +1786,7 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":%q,"start_line":1,"end_line":1}`, path))
 	}
 	replies = append(replies, `{"tool":"search_content","path":".","pattern":"still looking"}`)
+	replies = append(replies, `{"tool":"search_content","path":".","pattern":"still looking elsewhere"}`)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
@@ -1848,7 +1849,93 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 		t.Fatalf("completion status missing implementation contract: %#v", completion)
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected %d executed reads plus one blocked read request, used %d/%d replies", mutationReadBudgetHard, requests, len(replies))
+		t.Fatalf("expected one recovery turn then blocker, used %d/%d replies", requests, len(replies))
+	}
+}
+
+func TestMutationReadBudgetExhaustionAllowsImplementationEditRecovery(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	var replies []string
+	replies = append(replies, `{"tool":"read_file","path":"target.txt","start_line":1,"end_line":1}`)
+	for i := 1; i < mutationReadBudgetHard; i++ {
+		path := fmt.Sprintf("%c.txt", 'a'+rune(i))
+		if err := writeTestFile(root, path, "seed\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":%q,"start_line":1,"end_line":1}`, path))
+	}
+	replies = append(replies,
+		`{"tool":"search_content","path":".","pattern":"still looking"}`,
+		`{"tool":"edit_file","path":"target.txt","old_text":"old\n","new_text":"new\n","description":"apply gathered target edit"}`,
+		"Changed target.txt.",
+	)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawRecovery bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			Objective:            "Update the target file.",
+			PermissionProfile:    "guarded_workspace_write",
+			TargetRefs:           []string{"target.txt"},
+			VerificationContract: "not_required_for_text_mutations",
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_read_budget_recovery" {
+				sawRecovery = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update the target file."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Changed target.txt." {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if !sawRecovery {
+		t.Fatal("expected implementation read-budget recovery event")
+	}
+	content, err := os.ReadFile(filepath.Join(root, "target.txt"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(content) != "new\n" {
+		t.Fatalf("target content = %q, want new line", string(content))
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected recovery edit flow to use all replies, used %d/%d", requests, len(replies))
 	}
 }
 

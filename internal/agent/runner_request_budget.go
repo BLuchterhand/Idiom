@@ -18,6 +18,7 @@ type runnerRequestBudgetState struct {
 	readOnlyChildTaskSatisfied       bool
 	synthesisNudgeFired              bool
 	readBudgetNudgeFired             bool
+	readBudgetEditRecoveryFired      bool
 	readCallCount                    int
 	readCallsSinceWrite              int
 	postChildReadCalls               int
