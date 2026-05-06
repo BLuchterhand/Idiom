@@ -7575,6 +7575,40 @@ func TestModePolicyPlanModeHasReadBudget(t *testing.T) {
 	}
 }
 
+func TestEffectivePolicyClampsMutationReadBudget(t *testing.T) {
+	runner := &Runner{
+		Policy: RunPolicy{ReadBudgetHard: 16},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "implementation",
+			Contract:   "implementation_result",
+		},
+	}
+	if got := runner.effectivePolicy().ReadBudgetHard; got != mutationReadBudgetHard {
+		t.Fatalf("mutation ReadBudgetHard: want %d, got %d", mutationReadBudgetHard, got)
+	}
+
+	runner.Policy = RunPolicy{ReadBudgetHard: 2}
+	if got := runner.effectivePolicy().ReadBudgetHard; got != 2 {
+		t.Fatalf("stricter mutation ReadBudgetHard should be preserved, got %d", got)
+	}
+
+	runner.Policy = RunPolicy{}
+	if got := runner.effectivePolicy().ReadBudgetHard; got != mutationReadBudgetHard {
+		t.Fatalf("disabled mutation ReadBudgetHard should default to %d, got %d", mutationReadBudgetHard, got)
+	}
+
+	readOnly := &Runner{
+		Policy: RunPolicy{ReadBudgetHard: 16},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "architecture",
+			Contract:   "architecture_assessment",
+		},
+	}
+	if got := readOnly.effectivePolicy().ReadBudgetHard; got != 16 {
+		t.Fatalf("read-only ReadBudgetHard should keep base policy, got %d", got)
+	}
+}
+
 // runRedirectScenario stands up a tiny Go workspace (go.mod + one .go file)
 // so the language detector activates, then drives a canned transcript.
 func runRedirectScenario(t *testing.T, replies []string) (events []RunEvent, requests int) {

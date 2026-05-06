@@ -107,6 +107,18 @@ func (r *Runner) effectivePolicy() RunPolicy {
 	if policy.MaxNoProgressTurns <= 0 {
 		policy.MaxNoProgressTurns = 6
 	}
+	if runnerBriefRequiresMutation(r.RuntimeBrief) {
+		policy = clampMutationReadBudget(policy)
+	}
+	return policy
+}
+
+const mutationReadBudgetHard = 4
+
+func clampMutationReadBudget(policy RunPolicy) RunPolicy {
+	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > mutationReadBudgetHard {
+		policy.ReadBudgetHard = mutationReadBudgetHard
+	}
 	return policy
 }
 
