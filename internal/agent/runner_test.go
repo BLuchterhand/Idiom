@@ -2176,6 +2176,9 @@ func TestExplorationDelegationNudgeUsesReadLoopState(t *testing.T) {
 	if !isReadClassTool(workspace.ToolRequest{Tool: "discovery_query", Purpose: "impact_analysis"}) {
 		t.Fatal("discovery_query should count as read-class discovery")
 	}
+	if !isReadClassTool(workspace.ToolRequest{Tool: "cpp_file_outline", Path: "native/tests/test_save_load_integration.cpp"}) {
+		t.Fatal("cpp_file_outline should count as read-class inspection")
+	}
 
 	runner.RuntimeBrief = workerruntime.WorkerRuntimeBrief{
 		Contract:     "direct_answer",

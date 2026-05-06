@@ -3529,7 +3529,7 @@ func isReadClassTool(req workspace.ToolRequest) bool {
 		"cpp_related_files", "cpp_definition", "cpp_declaration", "cpp_implementations",
 		"cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body",
 		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol",
-		"cpp_workspace_symbol", "cpp_diagnostics",
+		"cpp_workspace_symbol", "cpp_diagnostics", "cpp_file_outline",
 		"python_overview", "python_entrypoints", "python_find_symbol", "python_read_symbol",
 		"python_related_files", "python_definition", "python_references", "python_implementations",
 		"python_calls_from", "python_calls_into", "python_workspace_symbol", "python_diagnostics", "python_file_outline",
