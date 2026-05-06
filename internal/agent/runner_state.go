@@ -174,6 +174,19 @@ type runnerBudgetLedger struct {
 	UserVisibleUncertainty   string   `json:"user_visible_uncertainty,omitempty"`
 }
 
+type runnerCompletionStatus struct {
+	Lane               string   `json:"lane"`
+	TaskFamily         string   `json:"task_family,omitempty"`
+	Contract           string   `json:"contract,omitempty"`
+	Status             string   `json:"status"`
+	Reason             string   `json:"reason,omitempty"`
+	BlockerKind        string   `json:"blocker_kind,omitempty"`
+	RequiresEdit       bool     `json:"requires_edit,omitempty"`
+	EditAttempted      bool     `json:"edit_attempted"`
+	ChangedPaths       []string `json:"changed_paths,omitempty"`
+	UserVisibleBlocker bool     `json:"user_visible_blocker,omitempty"`
+}
+
 func (m *runnerMetrics) addUsage(usage llama.Usage) {
 	if m == nil {
 		return

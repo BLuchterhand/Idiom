@@ -1704,6 +1704,87 @@ func TestBudgetClosureRunEmitsAcceptanceSignals(t *testing.T) {
 	}
 }
 
+func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+		if err := writeTestFile(root, path, "seed\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"c.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"d.txt","start_line":1,"end_line":1}`,
+		`{"tool":"search_content","path":".","pattern":"still looking"}`,
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var completion runnerCompletionStatus
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "Update the target file.",
+			PermissionProfile: "guarded_workspace_write",
+			TargetRefs:        []string{"target.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_status" {
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion status: %v", err)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update the target file."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") {
+		t.Fatalf("expected implementation blocker marker, got %q", answer)
+	}
+	if !strings.Contains(answer, "Read/search budget exhausted") || !strings.Contains(answer, "target.txt") {
+		t.Fatalf("expected budget blocker with target context, got %q", answer)
+	}
+	if completion.Status != "blocked" || completion.BlockerKind != "read_budget_exhausted_before_write" || completion.EditAttempted {
+		t.Fatalf("unexpected completion status: %#v", completion)
+	}
+	if !completion.RequiresEdit || !completion.UserVisibleBlocker || completion.Contract != "implementation_result" {
+		t.Fatalf("completion status missing implementation contract: %#v", completion)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected four executed reads plus one blocked read request, used %d/%d replies", requests, len(replies))
+	}
+}
+
 func TestRunnerForcesSynthesisOnFirstPostReadinessNoGapFollowup(t *testing.T) {
 	root := t.TempDir()
 	source := `package agent

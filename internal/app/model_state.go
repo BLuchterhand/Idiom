@@ -1253,6 +1253,16 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 		}
 		// Skip the legacy LogMessage path; the typed record replaces it.
 		return
+	case "completion_status":
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
+			payload["type"] = "completion_status"
+			m.emitJSONEvent(payload)
+		}
+		if m.debugLogger != nil {
+			_ = m.debugLogger.LogMessage(event.Role, event.Content)
+		}
+		return
 	case "budget_ledger":
 		var payload struct {
 			Lane                     string `json:"lane"`

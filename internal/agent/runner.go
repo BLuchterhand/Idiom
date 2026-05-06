@@ -590,6 +590,10 @@ func (r *Runner) Run(
 					}
 				}
 				if decision.ForceAnswerPrompt != "" {
+					if answer, ok := r.implementationReadBudgetBlockerAnswer(decision, collectedResults); ok {
+						r.emitCompletionStatus("blocked", decision.ForceAnswerReason, "read_budget_exhausted_before_write", collectedResults, true)
+						return finish(answer, nil, decision.ForceAnswerReason, true)
+					}
 					answer, err = controller.completeWithoutMoreToolsWithReason(decision.ForceAnswerPrompt)
 					return finish(answer, err, decision.ForceAnswerReason, true)
 				}
@@ -1800,6 +1804,26 @@ func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopR
 		return
 	}
 	r.OnEvent(RunEvent{Role: "budget_ledger", Content: string(data)})
+}
+
+func (r *Runner) emitCompletionStatus(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
+	if r == nil || r.OnEvent == nil {
+		return
+	}
+	changedPaths := mapKeys(changedPathsFromToolResults(results))
+	payload := runnerCompletionStatus{
+		Lane:               r.agentName(),
+		TaskFamily:         strings.TrimSpace(r.RuntimeBrief.TaskFamily),
+		Contract:           strings.TrimSpace(r.RuntimeBrief.Contract),
+		Status:             strings.TrimSpace(status),
+		Reason:             strings.TrimSpace(reason),
+		BlockerKind:        strings.TrimSpace(blockerKind),
+		RequiresEdit:       runnerBriefRequiresMutation(r.RuntimeBrief),
+		EditAttempted:      len(changedPaths) > 0,
+		ChangedPaths:       changedPaths,
+		UserVisibleBlocker: userVisibleBlocker,
+	}
+	r.emitEvent(marshalRunEvent("completion_status", payload))
 }
 
 func (r *Runner) emitModelCallTrace(step int, label string, prompt []llama.ChatMessage, reply llama.ChatMessage, durationMs int64) {
@@ -3274,6 +3298,38 @@ func runnerBriefRequiresMutation(brief workerruntime.WorkerRuntimeBrief) bool {
 		strings.Contains(family, "edit") ||
 		strings.Contains(contract, "implementation") ||
 		strings.Contains(permission, "write")
+}
+
+func (r *Runner) implementationReadBudgetBlockerAnswer(decision runnerRequestBudgetDecision, results []workspace.ToolResult) (string, bool) {
+	if r == nil || decision.ForceAnswerReason != "read_budget_exhausted" {
+		return "", false
+	}
+	if !runnerBriefRequiresMutation(r.RuntimeBrief) || len(changedPathsFromToolResults(results)) > 0 {
+		return "", false
+	}
+	target := "the requested implementation target"
+	if refs := nonEmptyRunnerStrings(r.RuntimeBrief.TargetRefs, 3); len(refs) > 0 {
+		target = strings.Join(refs, ", ")
+	}
+	return fmt.Sprintf("<<QUESTION>>: Read/search budget exhausted before any edit attempt in this implementation lane. Provide a narrower target packet or preloaded current-state anchor for %s; no workspace change was made.", target), true
+}
+
+func nonEmptyRunnerStrings(values []string, max int) []string {
+	if max <= 0 || len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, max)
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+		if len(out) >= max {
+			return out
+		}
+	}
+	return out
 }
 
 func hasSuccessfulVerificationResult(results []workspace.ToolResult) bool {
