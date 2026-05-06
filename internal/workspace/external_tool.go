@@ -135,11 +135,7 @@ func (r *ExternalToolRegistry) Invoke(ctx context.Context, name string, input js
 
 	args := make([]string, 0, len(tool.Args))
 	for _, raw := range tool.Args {
-		expanded, keep := substituteArg(raw, parsed)
-		if !keep {
-			continue
-		}
-		args = append(args, expanded)
+		args = append(args, substituteArgs(raw, parsed)...)
 	}
 
 	timeout := time.Duration(tool.TimeoutSeconds) * time.Second
@@ -171,16 +167,17 @@ func (r *ExternalToolRegistry) Invoke(ctx context.Context, name string, input js
 	return output, nil
 }
 
-// substituteArg expands one argv template token. Returns (value, keep).
-// If keep is false, the token is dropped entirely (used by `{?key:flag}`
-// when the conditional evaluates false).
+// substituteArgs expands one argv template token into zero, one, or many
+// argv tokens.
 //
 // Supported syntax:
 //   - `{key}`           → input[key] as string (anywhere in the token).
-//                         Missing key → empty string.
+//     Missing whole-token key → drop token; missing embedded key → empty string.
+//     Whole-token array values expand to multiple argv
+//     tokens, which supports CLIs like `--files FILES...`.
 //   - `{key|default}`   → input[key] as string, else literal `default`.
 //   - `{?key:value}`    → ONLY valid as a whole-token form. `value` if
-//                         input[key] is truthy, else drop the token.
+//     input[key] is truthy, else drop the token.
 //
 // Plain `{key}` and `{key|default}` substitute IN PLACE so prefixed
 // flag forms like `--{mode}` work. The conditional `{?…}` stays
@@ -189,7 +186,7 @@ func (r *ExternalToolRegistry) Invoke(ctx context.Context, name string, input js
 //
 // Truthy means: bool true, non-empty string, non-zero number. Maps and
 // arrays are always treated as truthy if present.
-func substituteArg(template string, input map[string]any) (string, bool) {
+func substituteArgs(template string, input map[string]any) []string {
 	t := template
 
 	// Whole-token conditional first: `{?key:flag}` either becomes `flag`
@@ -200,14 +197,14 @@ func substituteArg(template string, input map[string]any) (string, bool) {
 		inner := t[2 : len(t)-1]
 		colon := strings.Index(inner, ":")
 		if colon < 0 {
-			return template, true // malformed; pass through literal
+			return []string{template} // malformed; pass through literal
 		}
 		key := inner[:colon]
 		flag := inner[colon+1:]
 		if isTruthy(input[key]) {
-			return flag, true
+			return []string{flag}
 		}
-		return "", false
+		return nil
 	}
 
 	// In-string substitution for `{key}` and `{key|default}`. Walks the
@@ -215,22 +212,19 @@ func substituteArg(template string, input map[string]any) (string, bool) {
 	// are left literal so non-template content (e.g. paths with curly
 	// braces) is preserved.
 	//
-	// Empty-render-drops-token rule: if the template is a SINGLE `{key}`
-	// (no prefix/suffix, no default) and the input key is missing,
-	// drop the whole token. This keeps args clean when the model omits
-	// optional fields — without this, you get empty-string args which
-	// most CLIs interpret as "an actual empty argument" and reject.
-	// Templates like `prefix{key}` always keep the token (rendering as
-	// "prefix" if key is missing) since the prefix indicates intent.
 	if strings.HasPrefix(t, "{") && strings.HasSuffix(t, "}") && !strings.HasPrefix(t, "{?") {
 		inner := t[1 : len(t)-1]
-		// Plain `{key}` with no default and missing key → drop token.
 		if !strings.Contains(inner, "|") {
-			if _, ok := input[inner]; !ok {
-				return "", false
+			value, ok := input[inner]
+			if !ok {
+				return nil
+			}
+			if parts, ok := expandArrayValue(value); ok {
+				return parts
 			}
 		}
 	}
+
 	var b strings.Builder
 	i := 0
 	for i < len(t) {
@@ -260,7 +254,7 @@ func substituteArg(template string, input map[string]any) (string, bool) {
 		b.WriteString(expanded)
 		i = i + 1 + end + 1
 	}
-	return b.String(), true
+	return []string{b.String()}
 }
 
 // expandSingle handles `{key}` and `{key|default}` semantics for one
@@ -279,6 +273,21 @@ func expandSingle(inner string, input map[string]any) string {
 		return toString(v)
 	}
 	return ""
+}
+
+func expandArrayValue(v any) ([]string, bool) {
+	switch x := v.(type) {
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			out = append(out, toString(item))
+		}
+		return out, true
+	case []string:
+		return append([]string(nil), x...), true
+	default:
+		return nil, false
+	}
 }
 
 func isTruthy(v any) bool {
