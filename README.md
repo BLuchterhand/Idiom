@@ -339,7 +339,8 @@ The harness now gives Qwen a tool loop for workspace operations. When needed, th
 - inspect Go repos semantically with `go_overview`, `go_entrypoints`, `go_find_symbol`, `go_find_type`, `go_find_const`, `go_read_symbol`, `go_find_package`, `go_related_files`, `go_definition`, `go_references`, `go_implementations`, `go_calls_from`, `go_calls_into`, `go_extract_body`, `go_importers`, `go_diagnostics`, and `go_workspace_symbol`
 - inspect C/C++ repos semantically with `cpp_overview`, `cpp_entrypoints`, `cpp_find_symbol`, `cpp_read_symbol`, `cpp_related_files`, `cpp_definition`, `cpp_declaration`, `cpp_implementations`, `cpp_references`, `cpp_calls_from`, `cpp_calls_into`, `cpp_extract_body`, `cpp_includes`, `cpp_who_includes`, `cpp_blast_radius`, `cpp_dead_symbol`, `cpp_diagnostics`, and `cpp_workspace_symbol`
 - create directories with `mkdir`
-- make targeted in-place edits with `edit_file`
+- make targeted in-place edits with `edit_file` using either `old_text` +
+  `new_text` or `start_line` + `end_line` + `content`
 - overwrite or append files with `write_file` and `append_file`
 - apply multi-file unified-diff patches with `apply_patch` (Codex-style `*** Begin Patch / *** Update File / @@ / *** End Patch` envelope; supports `*** Add File`, `*** Update File` with optional `*** Move to:`, and `*** Delete File`)
 - inspect git state with `git_status` and `git_diff` (read-only; `git_diff` accepts an optional `path`)

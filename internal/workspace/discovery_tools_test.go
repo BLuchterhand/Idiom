@@ -71,6 +71,46 @@ func TestReadToolSchemasAdvertisePostReadinessGapFields(t *testing.T) {
 	}
 }
 
+func TestEditFileSchemaDoesNotRequireContentAlone(t *testing.T) {
+	defs := BuildToolDefinitions([]string{"edit_file"})
+	if len(defs) != 1 {
+		t.Fatalf("expected one edit_file definition, got %#v", defs)
+	}
+	def := defs[0]
+	if !strings.Contains(def.Description, "old_text+new_text") ||
+		!strings.Contains(def.Description, "start_line+end_line+content") {
+		t.Fatalf("edit_file description should name both valid shapes, got %q", def.Description)
+	}
+
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal([]byte(def.ParametersJSON), &schema); err != nil {
+		t.Fatalf("unmarshal edit_file schema: %v", err)
+	}
+
+	required := map[string]bool{}
+	for _, field := range schema.Required {
+		required[field] = true
+	}
+	for _, want := range []string{"path", "description"} {
+		if !required[want] {
+			t.Fatalf("expected edit_file required to include %q, got %#v", want, schema.Required)
+		}
+	}
+	for _, notRequired := range []string{"content", "old_text", "new_text", "start_line", "end_line"} {
+		if required[notRequired] {
+			t.Fatalf("edit_file should not require %q by itself, got %#v", notRequired, schema.Required)
+		}
+	}
+	for _, want := range []string{"old_text", "new_text", "start_line", "end_line", "content"} {
+		if _, ok := schema.Properties[want]; !ok {
+			t.Fatalf("expected edit_file property %q, got %#v", want, schema.Properties)
+		}
+	}
+}
+
 func TestDependencyGraphExtractsTypeScriptImportsWithoutMadge(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, filepath.Join(root, "src", "main.ts"), `import {x} from "./lib";

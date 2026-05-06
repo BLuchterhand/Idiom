@@ -363,6 +363,7 @@ func (m *Manager) Instructions() string {
 			"- After an orientation call, narrow with structured language tools or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
 			"- Paths are relative to the working directory unless absolute.\n"+
 			"- Prefer edit_file for small localized changes; write_file overwrites.\n"+
+			"- edit_file has two valid shapes: old_text+new_text, or start_line+end_line+content. content without line numbers is invalid.\n"+
 			"%s"+
 			"- shell runs with the same OS permissions as this process. Prefer the dedicated tools where one exists.\n"+
 			"- After tool results, either answer directly or take one exact next tool step.",
