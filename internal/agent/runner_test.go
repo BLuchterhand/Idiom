@@ -62,6 +62,19 @@ func TestLanguageDiagnosticsCountAsVerification(t *testing.T) {
 	}
 }
 
+func TestShellSanityCommandsCountAsVerification(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "shell", Command: "git diff --check"}
+	if !isVerificationRequest(req) {
+		t.Fatal("git diff --check should count as a verification request after writes")
+	}
+
+	state := newRunnerExecutionState(false, 0)
+	state.writesSinceVerification = 2
+	if state.shouldRequireVerification(req, "tests_passed_or_failed_or_skipped_with_blocker") {
+		t.Fatal("post-write verification gate should allow git diff --check")
+	}
+}
+
 func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	base := "workspace changes are present, but no successful verification result is present."
 

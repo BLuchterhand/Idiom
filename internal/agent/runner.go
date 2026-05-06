@@ -6402,6 +6402,7 @@ func isVerificationRequest(req workspace.ToolRequest) bool {
 		}
 		verificationSnippets := []string{
 			"go test", "go vet", "go build",
+			"git diff --check",
 			"npm test", "npm run test", "npm run build",
 			"pnpm test", "pnpm run test", "pnpm build",
 			"yarn test", "yarn build",
