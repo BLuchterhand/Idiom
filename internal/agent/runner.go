@@ -936,7 +936,7 @@ func (r *Runner) Run(
 				activeToolCall,
 				req,
 				"Verification required after workspace edits",
-				fmt.Sprintf("the workspace has %d successful write(s) since the last verification. Run a focused verification command (for example go test ./..., package tests, diagnostics, or the relevant build/test command) before more inspection or edits, or answer with the concrete blocker.", executionState.writesSinceVerification),
+				fmt.Sprintf("the workspace has %d successful write(s) since the last verification. Finish any remaining in-scope edits, then run a focused verification command (for example go test ./..., package tests, diagnostics, or the relevant build/test command) before more inspection or final answer, or answer with the concrete blocker.", executionState.writesSinceVerification),
 			)
 			if done {
 				return finish(answer, err, "verification_required_after_writes", true)

@@ -2071,7 +2071,7 @@ func (r *Runner) runChildTask() string {
 	}
 }
 
-func TestRunnerRequiresVerificationAfterEachWrite(t *testing.T) {
+func TestRunnerAllowsConsecutiveWritesBeforeVerification(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "one\ntwo\nthree\n"); err != nil {
 		t.Fatalf("write seed file: %v", err)
@@ -2102,7 +2102,7 @@ func TestRunnerRequiresVerificationAfterEachWrite(t *testing.T) {
 	defer server.Close()
 
 	var sawVerificationGate bool
-	var sawPostVerificationWrite bool
+	var successfulWrites int
 	var resultSummaries []string
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
@@ -2126,19 +2126,19 @@ func TestRunnerRequiresVerificationAfterEachWrite(t *testing.T) {
 			if event.Result.Summary == "Verification required after workspace edits" {
 				sawVerificationGate = true
 			}
-			if event.Request.Tool == "edit_file" && strings.HasPrefix(event.Result.Summary, "Edited ") {
-				sawPostVerificationWrite = sawVerificationGate
+			if event.Request.Tool == "edit_file" && (strings.HasPrefix(event.Result.Summary, "Edited ") || strings.HasPrefix(event.Result.Summary, "No-op edit")) {
+				successfulWrites++
 			}
 		},
 	)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !sawVerificationGate {
-		t.Fatalf("expected second write to be rejected before verification; results=%v", resultSummaries)
+	if sawVerificationGate {
+		t.Fatalf("did not expect consecutive in-scope writes to require interleaved verification; results=%v", resultSummaries)
 	}
-	if !sawPostVerificationWrite {
-		t.Fatalf("expected same write to be allowed after verification attempt; results=%v", resultSummaries)
+	if successfulWrites != 3 {
+		t.Fatalf("expected all in-scope writes to be allowed around verification, saw %d; results=%v", successfulWrites, resultSummaries)
 	}
 	if answer != "Verified after edits." {
 		t.Fatalf("unexpected answer: %q", answer)
@@ -2226,6 +2226,9 @@ func TestInFlightVerificationGateRespectsSkippedVerificationContract(t *testing.
 	}
 	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "task_ledger"}, "tests_passed_or_failed_or_skipped_with_blocker") {
 		t.Fatal("task_ledger should remain allowed while verification is pending")
+	}
+	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "edit_file", Path: "README.md"}, "tests_passed_or_failed_or_skipped_with_blocker") {
+		t.Fatal("in-scope write tools should remain allowed while verification is pending")
 	}
 	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "cpp_diagnostics"}, "tests_passed_or_failed_or_skipped_with_blocker") {
 		t.Fatal("diagnostics tools should remain allowed as verification requests")

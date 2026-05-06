@@ -46,6 +46,9 @@ func (s *runnerExecutionState) shouldRequireVerification(req workspace.ToolReque
 	if verificationContractSkipsGate(verificationContract) {
 		return false
 	}
+	if isWriteTool(req) {
+		return false
+	}
 	return s.writesSinceVerification >= 1 && !isVerificationRequest(req) && strings.TrimSpace(req.Tool) != "task_ledger"
 }
 
