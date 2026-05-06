@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1706,19 +1707,15 @@ func TestBudgetClosureRunEmitsAcceptanceSignals(t *testing.T) {
 
 func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) {
 	root := t.TempDir()
-	for _, path := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+	var replies []string
+	for i := 0; i < mutationReadBudgetHard; i++ {
+		path := fmt.Sprintf("%c.txt", 'a'+rune(i))
 		if err := writeTestFile(root, path, "seed\n"); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
+		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":%q,"start_line":1,"end_line":1}`, path))
 	}
-
-	replies := []string{
-		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
-		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1}`,
-		`{"tool":"read_file","path":"c.txt","start_line":1,"end_line":1}`,
-		`{"tool":"read_file","path":"d.txt","start_line":1,"end_line":1}`,
-		`{"tool":"search_content","path":".","pattern":"still looking"}`,
-	}
+	replies = append(replies, `{"tool":"search_content","path":".","pattern":"still looking"}`)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
@@ -1781,7 +1778,7 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 		t.Fatalf("completion status missing implementation contract: %#v", completion)
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected four executed reads plus one blocked read request, used %d/%d replies", requests, len(replies))
+		t.Fatalf("expected %d executed reads plus one blocked read request, used %d/%d replies", mutationReadBudgetHard, requests, len(replies))
 	}
 }
 
