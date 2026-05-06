@@ -890,5 +890,17 @@ func (m *Model) reloadPromptStackWithProfiles(profiles []string) error {
 		return err
 	}
 	m.promptStack = stack
+	m.seedInstructionAttacherFromPromptStack(stack)
 	return nil
+}
+
+func (m *Model) seedInstructionAttacherFromPromptStack(stack promptstack.Stack) {
+	if m == nil || m.instructionAttacher == nil {
+		return
+	}
+	for _, source := range stack.Sources {
+		if path := strings.TrimSpace(source.Path); path != "" {
+			m.instructionAttacher.MarkAttached(path)
+		}
+	}
 }

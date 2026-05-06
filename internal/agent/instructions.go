@@ -29,8 +29,8 @@ type InstructionAttacher struct {
 	root      string
 	candidate []string
 
-	mu        sync.Mutex
-	attached  map[string]struct{}
+	mu       sync.Mutex
+	attached map[string]struct{}
 }
 
 // NewInstructionAttacher constructs an attacher rooted at the given
@@ -46,6 +46,23 @@ func NewInstructionAttacher(root string, candidates ...string) *InstructionAttac
 		candidate: candidates,
 		attached:  make(map[string]struct{}),
 	}
+}
+
+// MarkAttached records an instruction file as already present in the
+// session prompt. Prompt-stack loading can include project AGENTS.md /
+// CLAUDE.md at startup; without this seed, the file-touch attacher repeats
+// the same guidance mid-turn and can drown out the active task packet.
+func (a *InstructionAttacher) MarkAttached(path string) {
+	if a == nil {
+		return
+	}
+	cleaned := a.cleanInstructionPath(path)
+	if cleaned == "" {
+		return
+	}
+	a.mu.Lock()
+	a.attached[cleaned] = struct{}{}
+	a.mu.Unlock()
 }
 
 // OnFileTouch is called whenever a tool result references a file path
@@ -108,6 +125,23 @@ func (a *InstructionAttacher) OnFileTouch(touchedPath string) *InstructionAttach
 		}
 		dir = parent
 	}
+}
+
+func (a *InstructionAttacher) cleanInstructionPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	root := a.root
+	if root == "" {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		}
+	}
+	if !filepath.IsAbs(path) && root != "" {
+		path = filepath.Join(root, path)
+	}
+	return filepath.Clean(path)
 }
 
 // Render produces the system-message content for an attachment. Mirrors
