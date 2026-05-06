@@ -137,34 +137,37 @@ func (l LlamaServer) IsMLX() bool {
 }
 
 type Chat struct {
-	AutoStartServer        bool     `json:"auto_start_server"`
-	SaveDir                string   `json:"save_dir"`
-	DebugLogDir            string   `json:"debug_log_dir"`
-	DebugLogMode           string   `json:"debug_log_mode"`
-	SystemPrompt           string   `json:"system_prompt"`
-	SystemPromptFiles      []string `json:"system_prompt_files"`
-	ProfilesDir            string   `json:"profiles_dir"`
-	DefaultProfiles        []string `json:"default_profiles"`
-	ProjectRoot            string   `json:"project_root"`
-	ProjectPromptFiles     []string `json:"project_prompt_files"`
-	Preset                 string   `json:"preset"`
-	Temperature            float64  `json:"temperature"`
-	TopP                   float64  `json:"top_p"`
-	TopK                   int      `json:"top_k"`
-	MinP                   float64  `json:"min_p"`
-	PresencePenalty        float64  `json:"presence_penalty"`
-	RepetitionPenalty      float64  `json:"repetition_penalty"`
-	EnableThinking         *bool    `json:"enable_thinking,omitempty"`
-	PreserveThinking       bool     `json:"preserve_thinking"`
-	MaxTokens              int      `json:"max_tokens"`
-	MaxHistory             int      `json:"max_history"`
-	MaxToolSteps           int      `json:"max_tool_steps"`
-	MaxContextMessages     int      `json:"max_context_messages"`
-	MaxContextChars        int      `json:"max_context_chars"`
-	MaxModelCalls          int      `json:"max_model_calls"`
-	MaxDurationSeconds     int      `json:"max_duration_seconds"`
-	RequestTimeoutSeconds  int      `json:"request_timeout_seconds"`
-	ServerStartTimeoutSecs int      `json:"server_start_timeout_seconds"`
+	AutoStartServer         bool     `json:"auto_start_server"`
+	SaveDir                 string   `json:"save_dir"`
+	DebugLogDir             string   `json:"debug_log_dir"`
+	DebugLogMode            string   `json:"debug_log_mode"`
+	SystemPrompt            string   `json:"system_prompt"`
+	SystemPromptFiles       []string `json:"system_prompt_files"`
+	ProfilesDir             string   `json:"profiles_dir"`
+	DefaultProfiles         []string `json:"default_profiles"`
+	ProjectRoot             string   `json:"project_root"`
+	ProjectPromptCandidates []string `json:"project_prompt_candidates,omitempty"`
+	ProjectPromptFiles      []string `json:"project_prompt_files"`
+	AttachInstructionFiles  *bool    `json:"attach_instruction_files,omitempty"`
+	InstructionFiles        []string `json:"instruction_files,omitempty"`
+	Preset                  string   `json:"preset"`
+	Temperature             float64  `json:"temperature"`
+	TopP                    float64  `json:"top_p"`
+	TopK                    int      `json:"top_k"`
+	MinP                    float64  `json:"min_p"`
+	PresencePenalty         float64  `json:"presence_penalty"`
+	RepetitionPenalty       float64  `json:"repetition_penalty"`
+	EnableThinking          *bool    `json:"enable_thinking,omitempty"`
+	PreserveThinking        bool     `json:"preserve_thinking"`
+	MaxTokens               int      `json:"max_tokens"`
+	MaxHistory              int      `json:"max_history"`
+	MaxToolSteps            int      `json:"max_tool_steps"`
+	MaxContextMessages      int      `json:"max_context_messages"`
+	MaxContextChars         int      `json:"max_context_chars"`
+	MaxModelCalls           int      `json:"max_model_calls"`
+	MaxDurationSeconds      int      `json:"max_duration_seconds"`
+	RequestTimeoutSeconds   int      `json:"request_timeout_seconds"`
+	ServerStartTimeoutSecs  int      `json:"server_start_timeout_seconds"`
 	// AgentMode selects which built-in agent profile drives the session.
 	// OpenCode-shaped: the user picks build/plan/general; the harness
 	// never classifies a prompt to pick one on their behalf. Empty falls

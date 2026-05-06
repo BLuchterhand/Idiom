@@ -47,6 +47,27 @@ func TestSystemPromptSkipsModePromptFilesAlreadyInPromptStack(t *testing.T) {
 	}
 }
 
+func TestNewInstructionAttacherCanBeDisabledByConfig(t *testing.T) {
+	disabled := false
+	if got := newInstructionAttacher(config.Chat{AttachInstructionFiles: &disabled}, t.TempDir()); got != nil {
+		t.Fatalf("expected nil instruction attacher when disabled, got %#v", got)
+	}
+}
+
+func TestNewInstructionAttacherUsesCustomInstructionFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "IDIOM.md", "Project-specific guidance")
+
+	attacher := newInstructionAttacher(config.Chat{InstructionFiles: []string{"IDIOM.md"}}, root)
+	if attacher == nil {
+		t.Fatal("expected instruction attacher")
+	}
+	attachment := attacher.OnFileTouch(filepath.Join(root, "src", "file.go"))
+	if attachment == nil || !strings.Contains(attachment.Content, "Project-specific guidance") {
+		t.Fatalf("expected custom instruction attachment, got %#v", attachment)
+	}
+}
+
 func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.T) {
 	thinkingOn := true
 	opts := llama.ChatOptions{

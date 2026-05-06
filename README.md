@@ -191,6 +191,11 @@ The harness builds a hidden `system` prompt on every request from four layers:
 3. `chat.default_profiles` loaded from `chat.profiles_dir`
 4. project prompt files from `chat.project_root`
 
+`chat.project_prompt_candidates` controls the automatic project-file scan. When
+omitted or `null`, idiom uses the default candidate list. Set it to a custom
+relative-path list for a lean project-specific stack, or to `[]` to disable
+automatic project prompts and rely only on `chat.project_prompt_files`.
+
 The current active prompt sources are shown in the TUI footer as `context: ...`.
 
 ## Debug Logging
@@ -396,10 +401,17 @@ If `project_root` is set, the app auto-discovers these files in order:
 
 - `.qwen.md`
 - `QWEN.md`
+- `IDIOM.md`
 - `AGENTS.md`
 - `CLAUDE.md`
+- `.idiom/discovery/context.md`
 
 You can also add explicit paths with `project_prompt_files`.
+
+By default, idiom also attaches the nearest `AGENTS.md` or `CLAUDE.md` once when
+tools touch files under that guidance. Set `chat.attach_instruction_files` to
+`false` for runs that already provide the relevant project guidance in the
+startup prompt, or set `chat.instruction_files` to a custom filename list.
 
 ## Notes
 

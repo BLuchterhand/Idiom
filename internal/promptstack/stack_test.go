@@ -95,6 +95,48 @@ func TestBuildAutoIncludesGeneratedProjectContext(t *testing.T) {
 	}
 }
 
+func TestBuildUsesCustomProjectPromptCandidates(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".idiom"), 0o755); err != nil {
+		t.Fatalf("MkdirAll .idiom: %v", err)
+	}
+	writeFile(t, filepath.Join(project, "AGENTS.md"), "Large root guidance")
+	writeFile(t, filepath.Join(project, "CLAUDE.md"), "Large alternate guidance")
+	writeFile(t, filepath.Join(project, ".idiom", "implementation.md"), "Compact implementation guidance")
+
+	stack, err := Build(config.Chat{
+		ProjectRoot:             project,
+		ProjectPromptCandidates: []string{".idiom/implementation.md"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(stack.Text, "Compact implementation guidance") {
+		t.Fatalf("expected compact implementation guidance, got:\n%s", stack.Text)
+	}
+	if strings.Contains(stack.Text, "Large root guidance") || strings.Contains(stack.Text, "Large alternate guidance") {
+		t.Fatalf("expected custom candidates to replace default AGENTS/CLAUDE scan, got:\n%s", stack.Text)
+	}
+}
+
+func TestBuildCanDisableAutoProjectPromptCandidates(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	project := t.TempDir()
+	writeFile(t, filepath.Join(project, "AGENTS.md"), "Project behavior")
+
+	stack, err := Build(config.Chat{
+		ProjectRoot:             project,
+		ProjectPromptCandidates: []string{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Contains(stack.Text, "Project behavior") {
+		t.Fatalf("expected empty candidate list to disable auto project prompts, got:\n%s", stack.Text)
+	}
+}
+
 func TestBuildAutoIncludesProjectIdiomFile(t *testing.T) {
 	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
 	project := t.TempDir()

@@ -94,7 +94,7 @@ func New(cfg config.Config) *Model {
 	}
 	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
 	m.workspace = workspace.NewManager(cfg.Workspace)
-	m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
+	m.instructionAttacher = newInstructionAttacher(cfg.Chat, m.workspace.Root())
 	mode := agent.ModeOrDefault(m.agentModeName)
 	m.workspace.SetPermissionRules(mode.PermissionRules)
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -124,6 +124,16 @@ func New(cfg config.Config) *Model {
 	}
 	m.initDebugLogger()
 	return m
+}
+
+func newInstructionAttacher(chat config.Chat, root string) *agent.InstructionAttacher {
+	if chat.AttachInstructionFiles != nil && !*chat.AttachInstructionFiles {
+		return nil
+	}
+	if len(chat.InstructionFiles) > 0 {
+		return agent.NewInstructionAttacher(root, chat.InstructionFiles...)
+	}
+	return agent.NewInstructionAttacher(root)
 }
 
 // modeStepCap applies the Mode's StepCap on top of the config.MaxToolSteps

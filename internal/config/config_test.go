@@ -23,7 +23,10 @@ func TestLoadAppliesDefaultsAndResolvesWorkspacePaths(t *testing.T) {
   },
   "chat": {
     "project_root": "project",
+    "project_prompt_candidates": [".idiom/context.md"],
     "project_prompt_files": ["AGENTS.md"],
+    "attach_instruction_files": false,
+    "instruction_files": ["IDIOM.md"],
     "preset": "custom",
     "max_tokens": 16
   },
@@ -50,6 +53,15 @@ func TestLoadAppliesDefaultsAndResolvesWorkspacePaths(t *testing.T) {
 	}
 	if got := cfg.Chat.ProjectPromptFiles[0]; got != filepath.Join(projectRoot, "AGENTS.md") {
 		t.Fatalf("expected project prompt under project root, got %q", got)
+	}
+	if got := cfg.Chat.ProjectPromptCandidates; len(got) != 1 || got[0] != ".idiom/context.md" {
+		t.Fatalf("expected custom project prompt candidate, got %#v", got)
+	}
+	if cfg.Chat.AttachInstructionFiles == nil || *cfg.Chat.AttachInstructionFiles {
+		t.Fatalf("expected instruction attachment to be disabled, got %#v", cfg.Chat.AttachInstructionFiles)
+	}
+	if got := cfg.Chat.InstructionFiles; len(got) != 1 || got[0] != "IDIOM.md" {
+		t.Fatalf("expected custom instruction file candidates, got %#v", got)
 	}
 	if cfg.Chat.DebugLogMode != "redacted" || cfg.Chat.MaxToolSteps != 16 {
 		t.Fatalf("expected chat defaults, got mode=%q steps=%d", cfg.Chat.DebugLogMode, cfg.Chat.MaxToolSteps)

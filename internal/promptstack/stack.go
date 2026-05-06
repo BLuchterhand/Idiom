@@ -87,7 +87,15 @@ func Build(chat config.Chat, profiles []string) (Stack, error) {
 	}
 
 	if chat.ProjectRoot != "" {
-		for _, name := range autoProjectPromptCandidates {
+		candidates := autoProjectPromptCandidates
+		if chat.ProjectPromptCandidates != nil {
+			candidates = chat.ProjectPromptCandidates
+		}
+		for _, name := range candidates {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
 			path := filepath.Join(chat.ProjectRoot, name)
 			if err := builder.addFile("project", name, path, false); err != nil {
 				return Stack{}, err
