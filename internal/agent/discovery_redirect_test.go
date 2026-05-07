@@ -374,6 +374,24 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			want:    "python",
 		},
 		{
+			name: "python_function",
+			files: map[string]string{
+				"pyproject.toml": "[project]\nname='x'\n",
+				"pkg/model.py":   "def build_widget():\n    pass\n",
+			},
+			pattern: "def build_widget",
+			want:    "python",
+		},
+		{
+			name: "python_async_function",
+			files: map[string]string{
+				"pyproject.toml": "[project]\nname='x'\n",
+				"pkg/model.py":   "async def load_widget():\n    pass\n",
+			},
+			pattern: "async def load_widget",
+			want:    "python",
+		},
+		{
 			name: "typescript_interface",
 			files: map[string]string{
 				"package.json": `{"type":"module"}`,
