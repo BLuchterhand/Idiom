@@ -81,6 +81,10 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	if !strings.Contains(read.Output, "Helper") && !strings.Contains(read.Output, "run") {
 		t.Fatalf("unexpected javaReadSymbol result: %#v", read)
 	}
+	readDecl := mgr.javaReadSymbol(ToolRequest{Tool: "java_read_symbol", Pattern: "public class Helper"})
+	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "public class Helper") {
+		t.Fatalf("expected declaration-shaped javaReadSymbol to return Helper class, got %#v", readDecl)
+	}
 
 	callsFrom := mgr.javaCallsFrom(context.Background(), ToolRequest{Tool: "java_calls_from", Pattern: "main"})
 	if callsFrom.Error != "" {
