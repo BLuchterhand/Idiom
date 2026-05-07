@@ -119,6 +119,7 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	if !ok {
 		return RedirectDecision{}
 	}
+	req = normalizeRedirectRequest(req, lang, cap)
 	replacement := lang.Tool(cap)
 	if replacement == "" {
 		return RedirectDecision{}
@@ -245,6 +246,16 @@ func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, 
 	}
 	b.WriteString("If the deterministic tool returns nothing, retry your original request and it will execute.")
 	return strings.TrimSpace(b.String())
+}
+
+func normalizeRedirectRequest(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability) workspace.ToolRequest {
+	switch cap {
+	case workspace.CapWorkspaceSymbol, workspace.CapFindSymbol, workspace.CapReferences:
+		if ident, ok := extractSyntaxIdentifierForLanguage(lang.Name, req.Pattern); ok {
+			req.Pattern = ident
+		}
+	}
+	return req
 }
 
 func redirectFingerprint(req workspace.ToolRequest) string {
@@ -851,12 +862,17 @@ func stripShellQuotes(s string) string {
 }
 
 func languageSyntaxMatches(language string, pattern string) bool {
+	_, ok := extractSyntaxIdentifierForLanguage(language, pattern)
+	return ok
+}
+
+func extractSyntaxIdentifierForLanguage(language string, pattern string) (string, bool) {
 	for _, re := range syntaxExtractors[strings.ToLower(strings.TrimSpace(language))] {
 		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
-			return true
+			return m[1], true
 		}
 	}
-	return false
+	return "", false
 }
 
 var syntaxExtractors = map[string][]*regexp.Regexp{

@@ -285,6 +285,22 @@ func TestSearchContentRedirectsGoSyntaxPattern(t *testing.T) {
 	}
 }
 
+func TestSearchContentRedirectExtractsDeclarationIdentifier(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+
+	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "type ToolRequest struct", Path: "internal/workspace"}, ws)
+	if !decision.ShouldRedirect {
+		t.Fatalf("declaration search should redirect")
+	}
+	if !strings.Contains(decision.Result.Output, `"pattern":"ToolRequest"`) {
+		t.Fatalf("redirect should pass only the symbol identifier, got: %q", decision.Result.Output)
+	}
+	if strings.Contains(decision.Result.Output, `"type ToolRequest struct"`) {
+		t.Fatalf("redirect should not pass the whole declaration as the symbol pattern: %q", decision.Result.Output)
+	}
+}
+
 // TestSearchContentRedirectsCppSyntaxPattern mirrors the Go-syntax test
 // for C++: class/namespace/enum/template declaration shapes should
 // redirect without needing a glob hint.
