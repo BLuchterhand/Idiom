@@ -90,6 +90,10 @@ void WorkerSystem::process_cycle() {}
 	if find.Error != "" || !strings.Contains(find.Output, "entity_manager.cpp") {
 		t.Fatalf("unexpected cppFindSymbol result: %#v", find)
 	}
+	findDecl := mgr.cppFindSymbol(ToolRequest{Tool: "cpp_find_symbol", Pattern: "struct EntityManager"})
+	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "EntityManager") {
+		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityManager, got %#v", findDecl)
+	}
 	body := mgr.cppExtractBody(ToolRequest{Tool: "cpp_extract_body", Pattern: "EntityManager::tick"})
 	if body.Error != "" || !strings.Contains(body.Output, "helper();") {
 		t.Fatalf("unexpected cppExtractBody result: %#v", body)
