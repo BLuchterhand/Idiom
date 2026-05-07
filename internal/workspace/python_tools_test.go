@@ -89,6 +89,10 @@ def test_tick():
 	if find.Error != "" || !strings.Contains(find.Output, "engine.py") {
 		t.Fatalf("unexpected pythonFindSymbol result: %#v", find)
 	}
+	findDecl := mgr.pythonFindSymbol(ToolRequest{Tool: "python_find_symbol", Pattern: "class Engine"})
+	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "Engine") {
+		t.Fatalf("expected declaration-shaped pythonFindSymbol query to find Engine, got %#v", findDecl)
+	}
 
 	read := mgr.pythonReadSymbol(ToolRequest{Tool: "python_read_symbol", Pattern: "Engine.tick"})
 	if read.Error != "" || !strings.Contains(read.Output, "return self.name") {
