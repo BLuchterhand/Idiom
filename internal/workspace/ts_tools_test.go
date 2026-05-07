@@ -83,6 +83,10 @@ export function Panel(props) { return null; }
 	if read.Error != "" || !strings.Contains(read.Output, "toUpperCase") {
 		t.Fatalf("unexpected tsReadSymbol result: %#v", read)
 	}
+	readDecl := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export class Shouter"})
+	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "export class Shouter") {
+		t.Fatalf("expected declaration-shaped tsReadSymbol to return Shouter class, got %#v", readDecl)
+	}
 	entry := mgr.tsEntrypoints(ToolRequest{Tool: "ts_entrypoints"})
 	if entry.Error != "" || !strings.Contains(entry.Output, "index.ts") {
 		t.Fatalf("unexpected tsEntrypoints result: %#v", entry)
