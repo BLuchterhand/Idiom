@@ -71,6 +71,40 @@ func TestReadToolSchemasAdvertisePostReadinessGapFields(t *testing.T) {
 	}
 }
 
+func TestEditFileSchemaAdvertisesBothReplacementShapes(t *testing.T) {
+	defs := BuildToolDefinitions([]string{"edit_file"})
+	if len(defs) != 1 {
+		t.Fatalf("expected one edit_file definition, got %#v", defs)
+	}
+
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal([]byte(defs[0].ParametersJSON), &schema); err != nil {
+		t.Fatalf("unmarshal edit_file schema: %v", err)
+	}
+
+	for _, want := range []string{"path", "old_text", "new_text", "start_line", "end_line", "content", "description"} {
+		if _, ok := schema.Properties[want]; !ok {
+			t.Fatalf("expected edit_file schema to expose %q, got %#v", want, schema.Properties)
+		}
+	}
+	for _, want := range []string{"path", "description"} {
+		if !slices.Contains(schema.Required, want) {
+			t.Fatalf("expected edit_file schema to require %q, got %#v", want, schema.Required)
+		}
+	}
+	for _, invalid := range []string{"content", "old_text", "new_text", "start_line", "end_line"} {
+		if slices.Contains(schema.Required, invalid) {
+			t.Fatalf("edit_file schema should not require shape-specific field %q, got %#v", invalid, schema.Required)
+		}
+	}
+	if !strings.Contains(defs[0].Description, "old_text+new_text") || !strings.Contains(defs[0].Description, "start_line+end_line+content") {
+		t.Fatalf("edit_file description should name both valid shapes, got %q", defs[0].Description)
+	}
+}
+
 func TestDependencyGraphExtractsTypeScriptImportsWithoutMadge(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, filepath.Join(root, "src", "main.ts"), `import {x} from "./lib";

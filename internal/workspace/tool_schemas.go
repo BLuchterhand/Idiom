@@ -231,10 +231,10 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "edit_file",
-			Description: "Replace a line range (or old_text) in an existing file. Preferred for localized edits. Requires a one-sentence description of the change's intent.",
+			Description: "Replace a line range or exact old_text in an existing file. Preferred for localized edits. Use either old_text+new_text or start_line+end_line+content, plus a one-sentence description of the change's intent.",
 			ParametersJSON: schemaObj(
-				[]string{"path", "content", "description"},
-				`"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start")+`,"end_line":`+intProp("1-based end")+`,"old_text":`+strProp("exact text to replace")+`,"new_text":`+strProp("replacement")+`,"content":`+strProp("replacement content for the line range")+`,"description":`+strProp("one sentence on what this change is and why")+`,"task_id":`+strProp("optional: id of the planned task_ledger item this write fulfills, so the plan panel can check it off in place"),
+				[]string{"path", "description"},
+				`"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start for the line-range shape; use with end_line and content")+`,"end_line":`+intProp("1-based end for the line-range shape; use with start_line and content")+`,"old_text":`+strProp("exact text to replace for the exact-match shape; use with new_text and omit line range fields")+`,"new_text":`+strProp("replacement text for the exact-match shape; use with old_text")+`,"content":`+strProp("replacement content for the line-range shape; use with start_line and end_line")+`,"description":`+strProp("one sentence on what this change is and why")+`,"task_id":`+strProp("optional: id of the planned task_ledger item this write fulfills, so the plan panel can check it off in place"),
 			),
 		},
 		{
