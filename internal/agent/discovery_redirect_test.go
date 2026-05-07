@@ -439,6 +439,24 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			want:    "typescript",
 		},
 		{
+			name: "typescript_generator_function",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export function* loadWidgets() {}\n",
+			},
+			pattern: "export function* loadWidgets",
+			want:    "typescript",
+		},
+		{
+			name: "typescript_async_generator_function",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export async function* streamWidgets() {}\n",
+			},
+			pattern: "export async function* streamWidgets",
+			want:    "typescript",
+		},
+		{
 			name: "typescript_const",
 			files: map[string]string{
 				"package.json": `{"type":"module"}`,
