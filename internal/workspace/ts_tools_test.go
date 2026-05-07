@@ -39,6 +39,18 @@ export function main(): void {
 	writeTsTestFixture(t, filepath.Join(root, "src", "util.jsx"), `
 export function Panel(props) { return null; }
 `)
+	writeTsTestFixture(t, filepath.Join(root, "src", "default_class.ts"), `
+export default class DefaultGreeter {
+  greet(name: string): void {
+    console.log(name);
+  }
+}
+`)
+	writeTsTestFixture(t, filepath.Join(root, "src", "default_function.ts"), `
+export default function defaultGreet(name: string): void {
+  console.log(name.toUpperCase());
+}
+`)
 
 	mgr := NewManager(config.Workspace{
 		Root:                  root,
@@ -87,6 +99,24 @@ export function Panel(props) { return null; }
 	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "export class Shouter") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol to return Shouter class, got %#v", readDecl)
 	}
+	// Default-export declaration-shaped queries.
+	findDefaultClass := mgr.tsFindSymbol(ToolRequest{Tool: "ts_find_symbol", Pattern: "export default class DefaultGreeter"})
+	if findDefaultClass.Error != "" || !strings.Contains(findDefaultClass.Output, "default_class.ts") {
+		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export default class DefaultGreeter', got %#v", findDefaultClass)
+	}
+	findDefaultFunc := mgr.tsFindSymbol(ToolRequest{Tool: "ts_find_symbol", Pattern: "export default function defaultGreet"})
+	if findDefaultFunc.Error != "" || !strings.Contains(findDefaultFunc.Output, "default_function.ts") {
+		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export default function defaultGreet', got %#v", findDefaultFunc)
+	}
+	readDefaultClass := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export default class DefaultGreeter"})
+	if readDefaultClass.Error != "" || !strings.Contains(readDefaultClass.Output, "export default class DefaultGreeter") {
+		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export default class DefaultGreeter', got %#v", readDefaultClass)
+	}
+	readDefaultFunc := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export default function defaultGreet"})
+	if readDefaultFunc.Error != "" || !strings.Contains(readDefaultFunc.Output, "export default function defaultGreet") {
+		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export default function defaultGreet', got %#v", readDefaultFunc)
+	}
+
 	entry := mgr.tsEntrypoints(ToolRequest{Tool: "ts_entrypoints"})
 	if entry.Error != "" || !strings.Contains(entry.Output, "index.ts") {
 		t.Fatalf("unexpected tsEntrypoints result: %#v", entry)
