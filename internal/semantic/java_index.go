@@ -678,16 +678,13 @@ func parseJavaMethodSignature(signature string, pkg string, classStack []string)
 		return JavaSymbol{}, false
 	}
 	modifiers := extractJavaModifiers(before)
+	nonModifierFields := strings.Fields(stripJavaModifiers(before))
 	scope := strings.Join(classStack, ".")
 	kind := "method"
-	// Constructor: name matches the innermost enclosing class and has no return type token.
-	if len(classStack) > 0 && classStack[len(classStack)-1] == name {
-		// A constructor has no return type — i.e., the only non-modifier
-		// token before the name is the name itself.
-		nonModifiers := stripJavaModifiers(before)
-		if strings.TrimSpace(nonModifiers) == name {
-			kind = "constructor"
-		}
+	if len(classStack) > 0 && classStack[len(classStack)-1] == name && len(nonModifierFields) == 1 {
+		kind = "constructor"
+	} else if len(nonModifierFields) < 2 {
+		return JavaSymbol{}, false
 	}
 	qualified := javaMemberQualifiedName(pkg, classStack, name)
 	return JavaSymbol{

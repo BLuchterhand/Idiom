@@ -46,6 +46,14 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	if findSealed.Error != "" || !strings.Contains(findSealed.Output, "SealedService") {
 		t.Fatalf("expected declaration-shaped javaFindSymbol query to find SealedService interface, got %#v", findSealed)
 	}
+	findMethod := mgr.javaFindSymbol(ToolRequest{Tool: "java_find_symbol", Pattern: "public void run()"})
+	if findMethod.Error != "" || !strings.Contains(findMethod.Output, "run") {
+		t.Fatalf("expected declaration-shaped javaFindSymbol query to find run method, got %#v", findMethod)
+	}
+	findPrivateMethod := mgr.javaFindSymbol(ToolRequest{Tool: "java_find_symbol", Pattern: "private int compute()"})
+	if findPrivateMethod.Error != "" || !strings.Contains(findPrivateMethod.Output, "compute") {
+		t.Fatalf("expected declaration-shaped javaFindSymbol query to find compute method, got %#v", findPrivateMethod)
+	}
 
 	outline := mgr.javaFileOutline(ToolRequest{Tool: "java_file_outline", Path: filepath.Join("src", "main", "java", "com", "example", "App.java")})
 	if outline.Error != "" {
@@ -96,6 +104,14 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	readAnnotation := mgr.javaReadSymbol(ToolRequest{Tool: "java_read_symbol", Pattern: "public @interface FeatureFlag"})
 	if readAnnotation.Error != "" || !strings.Contains(readAnnotation.Output, "public @interface FeatureFlag") {
 		t.Fatalf("expected declaration-shaped javaReadSymbol to return FeatureFlag annotation, got %#v", readAnnotation)
+	}
+	readMethod := mgr.javaReadSymbol(ToolRequest{Tool: "java_read_symbol", Pattern: "public void run()"})
+	if readMethod.Error != "" || !strings.Contains(readMethod.Output, "public void run()") {
+		t.Fatalf("expected declaration-shaped javaReadSymbol to return run method, got %#v", readMethod)
+	}
+	readPrivateMethod := mgr.javaReadSymbol(ToolRequest{Tool: "java_read_symbol", Pattern: "private int compute()"})
+	if readPrivateMethod.Error != "" || !strings.Contains(readPrivateMethod.Output, "private int compute()") {
+		t.Fatalf("expected declaration-shaped javaReadSymbol to return compute method, got %#v", readPrivateMethod)
 	}
 
 	callsFrom := mgr.javaCallsFrom(context.Background(), ToolRequest{Tool: "java_calls_from", Pattern: "main"})
