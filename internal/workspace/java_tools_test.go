@@ -38,6 +38,14 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "Helper") {
 		t.Fatalf("expected declaration-shaped javaFindSymbol query to find Helper, got %#v", findDecl)
 	}
+	findAnnotation := mgr.javaFindSymbol(ToolRequest{Tool: "java_find_symbol", Pattern: "public @interface FeatureFlag"})
+	if findAnnotation.Error != "" || !strings.Contains(findAnnotation.Output, "FeatureFlag") {
+		t.Fatalf("expected declaration-shaped javaFindSymbol query to find FeatureFlag annotation, got %#v", findAnnotation)
+	}
+	findSealed := mgr.javaFindSymbol(ToolRequest{Tool: "java_find_symbol", Pattern: "public sealed interface SealedService"})
+	if findSealed.Error != "" || !strings.Contains(findSealed.Output, "SealedService") {
+		t.Fatalf("expected declaration-shaped javaFindSymbol query to find SealedService interface, got %#v", findSealed)
+	}
 
 	outline := mgr.javaFileOutline(ToolRequest{Tool: "java_file_outline", Path: filepath.Join("src", "main", "java", "com", "example", "App.java")})
 	if outline.Error != "" {
@@ -84,6 +92,10 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	readDecl := mgr.javaReadSymbol(ToolRequest{Tool: "java_read_symbol", Pattern: "public class Helper"})
 	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "public class Helper") {
 		t.Fatalf("expected declaration-shaped javaReadSymbol to return Helper class, got %#v", readDecl)
+	}
+	readAnnotation := mgr.javaReadSymbol(ToolRequest{Tool: "java_read_symbol", Pattern: "public @interface FeatureFlag"})
+	if readAnnotation.Error != "" || !strings.Contains(readAnnotation.Output, "public @interface FeatureFlag") {
+		t.Fatalf("expected declaration-shaped javaReadSymbol to return FeatureFlag annotation, got %#v", readAnnotation)
 	}
 
 	callsFrom := mgr.javaCallsFrom(context.Background(), ToolRequest{Tool: "java_calls_from", Pattern: "main"})
@@ -199,6 +211,25 @@ package com.example;
 
 public interface Service {
     void execute();
+}
+`)
+	writeJavaFile(t, filepath.Join(root, "src", "main", "java", "com", "example", "FeatureFlag.java"), `
+package com.example;
+
+public @interface FeatureFlag {
+    String value() default "";
+}
+`)
+	writeJavaFile(t, filepath.Join(root, "src", "main", "java", "com", "example", "SealedService.java"), `
+package com.example;
+
+public sealed interface SealedService permits SealedServiceImpl {
+    void close();
+}
+
+final class SealedServiceImpl implements SealedService {
+    public void close() {
+    }
 }
 `)
 	writeJavaFile(t, filepath.Join(root, "src", "main", "java", "com", "example", "ServiceImpl.java"), `
