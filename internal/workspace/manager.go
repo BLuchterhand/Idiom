@@ -1887,7 +1887,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			return result
 		}
 	}
-	if len(data) > m.cfg.MaxFileBytes && !(logLike && userRequestedRange) {
+	if len(data) > m.cfg.MaxFileBytes && !userRequestedRange {
 		data = data[:m.cfg.MaxFileBytes]
 	}
 

@@ -1307,6 +1307,27 @@ func TestReadFileHonorsExplicitRangeOverSoftCap(t *testing.T) {
 	}
 }
 
+func TestReadFileHonorsExplicitRangeBeyondMaxFileBytes(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i+1))
+	}
+	mustWriteOverview(t, filepath.Join(dir, "big.txt"), strings.Join(lines, "\n"))
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, MaxFileBytes: 80})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "big.txt", StartLine: 150, EndLine: 152})
+	if result.Error != "" {
+		t.Fatalf("read_file failed: %#v", result)
+	}
+	if !strings.Contains(result.Summary, "lines 150-152") {
+		t.Fatalf("explicit range should address lines beyond MaxFileBytes; summary=%q", result.Summary)
+	}
+	if !strings.Contains(result.Output, "150:line 150") || !strings.Contains(result.Output, "152:line 152") {
+		t.Fatalf("expected late explicit range, got:\n%s", result.Output)
+	}
+}
+
 func TestReadFileClampsExplicitRangeBeyondEOF(t *testing.T) {
 	dir := t.TempDir()
 	lines := make([]string, 0, 50)
