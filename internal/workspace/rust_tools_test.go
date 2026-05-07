@@ -143,6 +143,14 @@ func TestRustReadSymbol(t *testing.T) {
 	if !strings.Contains(result.Output, "spawn") {
 		t.Fatalf("expected output to include spawn, got: %q", result.Output)
 	}
+
+	decl := mgr.rustReadSymbol(ToolRequest{Tool: "rust_read_symbol", Pattern: "pub struct Worker", Path: filepath.Join("src", "worker.rs")})
+	if decl.Error != "" {
+		t.Fatalf("rustReadSymbol with declaration-shaped pattern returned error: %v", decl.Error)
+	}
+	if !strings.Contains(decl.Output, "pub struct Worker") {
+		t.Fatalf("expected declaration-shaped rustReadSymbol to return struct snippet, got: %q", decl.Output)
+	}
 }
 
 func TestRustFileOutline(t *testing.T) {
