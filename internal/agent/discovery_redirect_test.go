@@ -448,6 +448,33 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			want:    "typescript",
 		},
 		{
+			name: "typescript_declare_class",
+			files: map[string]string{
+				"package.json":        `{"type":"module"}`,
+				"types/external.d.ts": "export declare class ExternalClient {}\n",
+			},
+			pattern: "export declare class ExternalClient",
+			want:    "typescript",
+		},
+		{
+			name: "typescript_declare_function",
+			files: map[string]string{
+				"package.json":        `{"type":"module"}`,
+				"types/external.d.ts": "declare function connect(): void;\n",
+			},
+			pattern: "declare function connect",
+			want:    "typescript",
+		},
+		{
+			name: "typescript_declare_const",
+			files: map[string]string{
+				"package.json":        `{"type":"module"}`,
+				"types/external.d.ts": "export declare const defaultEndpoint: string;\n",
+			},
+			pattern: "export declare const defaultEndpoint",
+			want:    "typescript",
+		},
+		{
 			name: "rust_struct",
 			files: map[string]string{
 				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
