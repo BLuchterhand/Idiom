@@ -34,6 +34,10 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	if find.Error != "" || !strings.Contains(find.Output, "Helper.java") {
 		t.Fatalf("unexpected javaFindSymbol result: %#v", find)
 	}
+	findDecl := mgr.javaFindSymbol(ToolRequest{Tool: "java_find_symbol", Pattern: "public class Helper"})
+	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "Helper") {
+		t.Fatalf("expected declaration-shaped javaFindSymbol query to find Helper, got %#v", findDecl)
+	}
 
 	outline := mgr.javaFileOutline(ToolRequest{Tool: "java_file_outline", Path: filepath.Join("src", "main", "java", "com", "example", "App.java")})
 	if outline.Error != "" {
