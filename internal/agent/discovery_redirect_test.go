@@ -383,6 +383,33 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			want:    "typescript",
 		},
 		{
+			name: "typescript_class",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export class Widget {}\n",
+			},
+			pattern: "export class Widget",
+			want:    "typescript",
+		},
+		{
+			name: "typescript_async_function",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export async function loadWidget() {}\n",
+			},
+			pattern: "export async function loadWidget",
+			want:    "typescript",
+		},
+		{
+			name: "typescript_const",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export const widgetFactory = () => {};\n",
+			},
+			pattern: "export const widgetFactory",
+			want:    "typescript",
+		},
+		{
 			name: "rust_struct",
 			files: map[string]string{
 				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
