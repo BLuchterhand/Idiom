@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -26,7 +27,7 @@ type PythonCallMatch struct {
 }
 
 func (idx *PythonIndex) FindSymbols(pattern string, limit int) []PythonSymbolMatch {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	pattern = strings.ToLower(normalizePythonSymbolPattern(pattern))
 	if idx == nil || pattern == "" {
 		return nil
 	}
@@ -64,6 +65,21 @@ func (idx *PythonIndex) FindSymbols(pattern string, limit int) []PythonSymbolMat
 		matches = matches[:limit]
 	}
 	return matches
+}
+
+var pythonSymbolPatternExtractors = []*regexp.Regexp{
+	regexp.MustCompile(`^(?:async\s+)?def\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
+}
+
+func normalizePythonSymbolPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	for _, re := range pythonSymbolPatternExtractors {
+		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return pattern
 }
 
 func (idx *PythonIndex) FindCallsFrom(pattern string, limit int) []PythonCallMatch {
