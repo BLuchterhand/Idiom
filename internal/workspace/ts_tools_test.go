@@ -61,6 +61,10 @@ export function Panel(props) { return null; }
 	if find.Error != "" || !strings.Contains(find.Output, "greeter.ts") {
 		t.Fatalf("unexpected tsFindSymbol result: %#v", find)
 	}
+	findDecl := mgr.tsFindSymbol(ToolRequest{Tool: "ts_find_symbol", Pattern: "export interface Greeter"})
+	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "Greeter") {
+		t.Fatalf("expected declaration-shaped tsFindSymbol query to find Greeter, got %#v", findDecl)
+	}
 	related := mgr.tsRelatedFiles(ToolRequest{Tool: "ts_related_files", Pattern: "greeter"})
 	if related.Error != "" || !strings.Contains(related.Output, "greeter.ts") {
 		t.Fatalf("unexpected tsRelatedFiles result: %#v", related)
