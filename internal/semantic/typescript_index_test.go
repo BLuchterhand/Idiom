@@ -30,6 +30,12 @@ export class Shouter {
   }
 }
 `)
+	writeTsFixture(t, filepath.Join(root, "src", "default_class.ts"), `
+export default class DefaultShouter {}
+`)
+	writeTsFixture(t, filepath.Join(root, "src", "default_function.ts"), `
+export default function defaultGreet(): void {}
+`)
 
 	idx, err := BuildTsIndex(root)
 	if err != nil {
@@ -38,8 +44,8 @@ export class Shouter {
 	if idx == nil {
 		t.Fatal("expected non-nil index")
 	}
-	if len(idx.Files) != 2 {
-		t.Fatalf("expected 2 files, got %d", len(idx.Files))
+	if len(idx.Files) != 4 {
+		t.Fatalf("expected 4 files, got %d", len(idx.Files))
 	}
 
 	greeter := idx.FileByPath("src/greeter.ts")
@@ -65,6 +71,12 @@ export class Shouter {
 	}
 	if matches := idx.FindSymbols("export class Shouter", 8); len(matches) == 0 || matches[0].Name != "Shouter" {
 		t.Fatalf("expected declaration-shaped class search to find Shouter, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export default class DefaultShouter", 8); len(matches) == 0 || matches[0].Name != "DefaultShouter" {
+		t.Fatalf("expected default class search to find DefaultShouter, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export default function defaultGreet", 8); len(matches) == 0 || matches[0].Name != "defaultGreet" {
+		t.Fatalf("expected default function search to find defaultGreet, got %#v", matches)
 	}
 
 	// Call graph: main -> greet

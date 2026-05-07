@@ -70,8 +70,8 @@ func (idx *TsIndex) FindSymbols(pattern string, limit int) []TsSymbolMatch {
 }
 
 var tsSymbolPatternExtractors = []*regexp.Regexp{
-	regexp.MustCompile(`^(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)`),
-	regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)`),
+	regexp.MustCompile(`^(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)`),
+	regexp.MustCompile(`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)`),
 	regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)`),
 	regexp.MustCompile(`^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)`),
 	regexp.MustCompile(`^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)`),

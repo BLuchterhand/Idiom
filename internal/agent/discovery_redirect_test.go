@@ -410,12 +410,30 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			want:    "typescript",
 		},
 		{
+			name: "typescript_default_class",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export default class Widget {}\n",
+			},
+			pattern: "export default class Widget",
+			want:    "typescript",
+		},
+		{
 			name: "typescript_async_function",
 			files: map[string]string{
 				"package.json": `{"type":"module"}`,
 				"src/model.ts": "export async function loadWidget() {}\n",
 			},
 			pattern: "export async function loadWidget",
+			want:    "typescript",
+		},
+		{
+			name: "typescript_default_function",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export default function loadWidget() {}\n",
+			},
+			pattern: "export default function loadWidget",
 			want:    "typescript",
 		},
 		{

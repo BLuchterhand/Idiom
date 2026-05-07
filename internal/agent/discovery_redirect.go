@@ -902,8 +902,8 @@ var syntaxExtractors = map[string][]*regexp.Regexp{
 		regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
 	},
 	"typescript": {
-		regexp.MustCompile(`^(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)`),
-		regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)`),
+		regexp.MustCompile(`^(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)`),
+		regexp.MustCompile(`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)`),
 		regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)`),
 		regexp.MustCompile(`^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)`),
 		regexp.MustCompile(`^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)`),
