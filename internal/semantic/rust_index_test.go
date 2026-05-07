@@ -58,6 +58,12 @@ pub trait Runnable {
     fn run(&self);
 }
 
+pub unsafe trait UnsafeRunnable {
+    unsafe fn run_unchecked(&self);
+}
+
+pub type WorkerId = u32;
+
 impl Runnable for Worker {
     fn run(&self) {
         do_work(self.id);
@@ -76,6 +82,12 @@ fn do_work(id: u32) {
 `)
 	writeRustFixture(t, filepath.Join(root, "src", "lib_utils.rs"), `
 pub const DEFAULT_MAX: u32 = 64;
+
+pub static mut GLOBAL_MAX: u32 = 64;
+
+pub const fn default_worker_id() -> u32 {
+    0
+}
 
 macro_rules! bark {
     () => { println!("woof"); }
@@ -147,6 +159,21 @@ fn it_works() {
 	}
 	if matches := idx.FindSymbols("fn helper", 8); len(matches) == 0 || matches[0].Name != "helper" {
 		t.Fatalf("expected declaration-shaped function search to find helper, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("pub const fn default_worker_id", 8); len(matches) == 0 || matches[0].Name != "default_worker_id" {
+		t.Fatalf("expected declaration-shaped const fn search to find default_worker_id, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("pub unsafe trait UnsafeRunnable", 8); len(matches) == 0 || matches[0].Name != "UnsafeRunnable" {
+		t.Fatalf("expected declaration-shaped unsafe trait search to find UnsafeRunnable, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("pub type WorkerId", 8); len(matches) == 0 || matches[0].Name != "WorkerId" {
+		t.Fatalf("expected declaration-shaped type alias search to find WorkerId, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("pub static mut GLOBAL_MAX", 8); len(matches) == 0 || matches[0].Name != "GLOBAL_MAX" {
+		t.Fatalf("expected declaration-shaped static search to find GLOBAL_MAX, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("macro_rules! bark", 8); len(matches) == 0 || matches[0].Name != "bark" {
+		t.Fatalf("expected declaration-shaped macro search to find bark, got %#v", matches)
 	}
 
 	// Trait implementer lookup.
