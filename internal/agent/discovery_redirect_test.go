@@ -538,6 +538,51 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			want:    "rust",
 		},
 		{
+			name: "rust_const_function",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "pub const fn default_widget_id() -> u32 { 0 }\n",
+			},
+			pattern: "pub const fn default_widget_id",
+			want:    "rust",
+		},
+		{
+			name: "rust_unsafe_trait",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "pub unsafe trait Runnable {}\n",
+			},
+			pattern: "pub unsafe trait Runnable",
+			want:    "rust",
+		},
+		{
+			name: "rust_type_alias",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "pub type WidgetId = u32;\n",
+			},
+			pattern: "pub type WidgetId",
+			want:    "rust",
+		},
+		{
+			name: "rust_static_mut",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "pub static mut DEFAULT_ID: u32 = 0;\n",
+			},
+			pattern: "pub static mut DEFAULT_ID",
+			want:    "rust",
+		},
+		{
+			name: "rust_macro_rules",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "macro_rules! widget { () => {} }\n",
+			},
+			pattern: "macro_rules! widget",
+			want:    "rust",
+		},
+		{
 			name: "rust_impl",
 			files: map[string]string{
 				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
