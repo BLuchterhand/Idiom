@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -29,7 +30,7 @@ type RustCallMatch struct {
 }
 
 func (idx *RustIndex) FindSymbols(pattern string, limit int) []RustSymbolMatch {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	pattern = strings.ToLower(normalizeRustSymbolPattern(pattern))
 	if idx == nil || pattern == "" {
 		return nil
 	}
@@ -67,6 +68,23 @@ func (idx *RustIndex) FindSymbols(pattern string, limit int) []RustSymbolMatch {
 		matches = matches[:limit]
 	}
 	return matches
+}
+
+var rustSymbolPatternExtractors = []*regexp.Regexp{
+	regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait)\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*)`),
+}
+
+func normalizeRustSymbolPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	for _, re := range rustSymbolPatternExtractors {
+		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return pattern
 }
 
 func (idx *RustIndex) FindCallsFrom(pattern string, limit int) []RustCallMatch {

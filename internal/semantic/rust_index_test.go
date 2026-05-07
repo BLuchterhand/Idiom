@@ -142,6 +142,12 @@ fn it_works() {
 	if len(matches) == 0 {
 		t.Fatalf("expected FindSymbols to find Worker")
 	}
+	if matches := idx.FindSymbols("pub struct Worker", 8); len(matches) == 0 || matches[0].Name != "Worker" {
+		t.Fatalf("expected declaration-shaped struct search to find Worker, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("fn helper", 8); len(matches) == 0 || matches[0].Name != "helper" {
+		t.Fatalf("expected declaration-shaped function search to find helper, got %#v", matches)
+	}
 
 	// Trait implementer lookup.
 	impls := idx.TraitImplementers("Runnable", 8)
