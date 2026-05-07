@@ -50,7 +50,7 @@ type CppCall struct {
 
 var (
 	cppIncludeRe       = regexp.MustCompile(`^\s*#include\s+"([^"]+)"`)
-	cppTypeRe          = regexp.MustCompile(`^\s*(class|struct|enum(?:\s+class)?|namespace)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	cppTypeRe          = regexp.MustCompile(`^\s*(class|struct|enum(?:\s+class)?|union|namespace)\s+([A-Za-z_][A-Za-z0-9_]*)`)
 	cppNameBeforeParen = regexp.MustCompile(`([A-Za-z_~][A-Za-z0-9_:~]*)\s*$`)
 	cppCallRe          = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
 )
@@ -151,7 +151,7 @@ func BuildCppIndex(root string) (*CppIndex, error) {
 				file.Funcs++
 			case "method":
 				file.Methods++
-			case "class", "struct", "enum", "namespace":
+			case "class", "struct", "enum", "union", "namespace":
 				file.Types++
 			}
 			if symbol.Name == "main" {

@@ -14,6 +14,11 @@ func TestBuildCppIndexAndQueries(t *testing.T) {
 struct EntityManager {
     void tick();
 };
+
+union EntityValue {
+    int id;
+    double weight;
+};
 `)+"\n")
 	mustWriteFile(t, filepath.Join(root, "src", "entity_manager.cpp"), strings.TrimSpace(`
 #include "entity_manager.h"
@@ -53,6 +58,9 @@ int main() {
 	}
 	if matches := index.FindSymbols("struct EntityManager", 8); len(matches) == 0 || matches[0].Name != "EntityManager" {
 		t.Fatalf("expected declaration-shaped struct search to find EntityManager, got %#v", matches)
+	}
+	if matches := index.FindSymbols("union EntityValue", 8); len(matches) == 0 || matches[0].Name != "EntityValue" || matches[0].Kind != "union" {
+		t.Fatalf("expected declaration-shaped union search to find EntityValue, got %#v", matches)
 	}
 	if calls := index.FindCallsFrom("main", 8); len(calls) == 0 {
 		t.Fatal("expected outgoing calls from main")

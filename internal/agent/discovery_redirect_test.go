@@ -341,6 +341,7 @@ func TestSearchContentRedirectsCppSyntaxPattern(t *testing.T) {
 		{"namespace_decl", `namespace engine`},
 		{"enum_decl", `enum Color`},
 		{"enum_class_decl", `enum class Color`},
+		{"union_decl", `union EntityValue`},
 		{"template_class", `template<typename T> class Container`},
 	}
 	for _, tc := range cases {
