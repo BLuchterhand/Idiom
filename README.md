@@ -73,6 +73,11 @@ make build
 make eval LOG=logs/conversations/20260418-055543.504.jsonl
 ```
 
+Avoid the repo-root `./idiom` binary for development runs after source changes.
+It can lag behind the checked-out code and miss newer flags or subcommands. For
+source-current runs, prefer `go run ./cmd/idiom <subcommand> <flags>`, or run
+`make build` first and then use `bin/idiom` / `~/.local/bin/idiom`.
+
 ## In-app controls
 
 - `Enter`: send prompt
