@@ -41,6 +41,25 @@ public interface Service {
     void execute();
 }
 `)
+	writeJavaFixture(t, filepath.Join(root, "src", "main", "java", "com", "example", "FeatureFlag.java"), `
+package com.example;
+
+public @interface FeatureFlag {
+    String value() default "";
+}
+`)
+	writeJavaFixture(t, filepath.Join(root, "src", "main", "java", "com", "example", "SealedService.java"), `
+package com.example;
+
+public sealed interface SealedService permits SealedServiceImpl {
+    void close();
+}
+
+final class SealedServiceImpl implements SealedService {
+    public void close() {
+    }
+}
+`)
 	writeJavaFixture(t, filepath.Join(root, "src", "main", "java", "com", "example", "ServiceImpl.java"), `
 package com.example;
 
@@ -69,8 +88,8 @@ public class AppTest {
 	if index == nil {
 		t.Fatal("expected non-nil index")
 	}
-	if len(index.Files) != 5 {
-		t.Fatalf("expected 5 files, got %d", len(index.Files))
+	if len(index.Files) != 7 {
+		t.Fatalf("expected 7 files, got %d", len(index.Files))
 	}
 
 	app := index.FileByPath("src/main/java/com/example/App.java")
@@ -106,6 +125,12 @@ public class AppTest {
 	}
 	if matches := index.FindSymbols("public interface Service", 4); len(matches) == 0 || matches[0].Name != "Service" {
 		t.Fatalf("expected declaration-shaped interface search to find Service, got %#v", matches)
+	}
+	if matches := index.FindSymbols("public @interface FeatureFlag", 4); len(matches) == 0 || matches[0].Name != "FeatureFlag" {
+		t.Fatalf("expected declaration-shaped annotation search to find FeatureFlag, got %#v", matches)
+	}
+	if matches := index.FindSymbols("public sealed interface SealedService", 4); len(matches) == 0 || matches[0].Name != "SealedService" {
+		t.Fatalf("expected declaration-shaped sealed interface search to find SealedService, got %#v", matches)
 	}
 
 	impls := index.Implementations("Service", 8)
