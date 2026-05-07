@@ -367,3 +367,153 @@ func TestRunnerBailsAfterTwoConsecutiveMissingDescriptions(t *testing.T) {
 		t.Fatalf("expected budget_exhausted=true on write-description bail, got %#v", ledger)
 	}
 }
+
+// TestNoEllipsisInTryExamples verifies that no Try: example contains an
+// ellipsis placeholder — the model needs valid JSON to retry reliably.
+func TestWriteDescriptionNoEllipsisInTryExamples(t *testing.T) {
+	tools := []string{"edit_file", "write_file", "append_file", "apply_patch"}
+	for _, tool := range tools {
+		t.Run(tool, func(t *testing.T) {
+			req := workspace.ToolRequest{Tool: tool}
+			got := checkWriteDescription(req)
+			t.Log(got.Error)
+			if strings.Contains(got.Error, "...") {
+				t.Errorf("Try example should not contain ellipsis, got: %q", got.Error)
+			}
+		})
+	}
+}
+
+// TestEditFileTryIncludesOldTextNewText verifies that when edit_file is
+// called with old_text/new_text, those values appear in the Try example.
+func TestWriteDescriptionEditFileTryIncludesOldTextNewText(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:    "edit_file",
+		Path:    "foo.go",
+		OldText: "old stuff",
+		NewText: "new stuff",
+	}
+	got := checkWriteDescription(req)
+	t.Log(got.Error)
+	if !strings.Contains(got.Error, `"old_text"`) {
+		t.Errorf("edit_file Try: should include old_text key, got: %q", got.Error)
+	}
+	if !strings.Contains(got.Error, `"new_text"`) {
+		t.Errorf("edit_file Try: should include new_text key, got: %q", got.Error)
+	}
+	if !strings.Contains(got.Error, `"old stuff"`) {
+		t.Errorf("edit_file Try: should include old_text value, got: %q", got.Error)
+	}
+	if !strings.Contains(got.Error, `"new stuff"`) {
+		t.Errorf("edit_file Try: should include new_text value, got: %q", got.Error)
+	}
+}
+
+// TestEditFileTryIncludesLineRange verifies that when edit_file is called
+// with start_line/end_line, those values appear in the Try example.
+func TestWriteDescriptionEditFileTryIncludesLineRange(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:      "edit_file",
+		Path:      "foo.go",
+		StartLine: 10,
+		EndLine:   20,
+		Content:   "replacement",
+	}
+	got := checkWriteDescription(req)
+	t.Log(got.Error)
+	if !strings.Contains(got.Error, `"start_line"`) {
+		t.Errorf("edit_file Try: should include start_line key, got: %q", got.Error)
+	}
+	if !strings.Contains(got.Error, `"end_line"`) {
+		t.Errorf("edit_file Try: should include end_line key, got: %q", got.Error)
+	}
+	if !strings.Contains(got.Error, "start_line\":10") {
+		t.Errorf("edit_file Try: should include start_line value, got: %q", got.Error)
+	}
+	if !strings.Contains(got.Error, "end_line\":20") {
+		t.Errorf("edit_file Try: should include end_line value, got: %q", got.Error)
+	}
+}
+
+// TestWriteFileTryIncludesContent verifies that write_file includes its
+// content value in the Try example.
+func TestWriteDescriptionWriteFileTryIncludesContent(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:    "write_file",
+		Path:    "foo.go",
+		Content: "package foo\n",
+	}
+	got := checkWriteDescription(req)
+	t.Log(got.Error)
+	if !strings.Contains(got.Error, `"content"`) {
+		t.Errorf("write_file Try: should include content key, got: %q", got.Error)
+	}
+	if !strings.Contains(got.Error, "package foo") {
+		t.Errorf("write_file Try: should include content value, got: %q", got.Error)
+	}
+}
+
+// TestAppendFileTryIncludesContent verifies that append_file includes its
+// content value in the Try example.
+func TestWriteDescriptionAppendFileTryIncludesContent(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:    "append_file",
+		Path:    "foo.go",
+		Content: "// new line\n",
+	}
+	got := checkWriteDescription(req)
+	t.Log(got.Error)
+	if !strings.Contains(got.Error, `"content"`) {
+		t.Errorf("append_file Try: should include content key, got: %q", got.Error)
+	}
+	if !strings.Contains(got.Error, "// new line") {
+		t.Errorf("append_file Try: should include content value, got: %q", got.Error)
+	}
+}
+
+// TestTryExampleIsRetriableJSON verifies that the Try example for
+// edit_file with old_text/new_text is valid JSON when parsed.
+func TestWriteDescriptionTryExampleIsRetriableJSON(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:    "edit_file",
+		Path:    "foo.go",
+		OldText: "old",
+		NewText: "new",
+	}
+	got := checkWriteDescription(req)
+	t.Log(got.Error)
+
+	// Extract the JSON portion from the Try line.
+	const tryPrefix = "Try: "
+	const examplePrefix = "Example: "
+	lines := strings.Split(got.Error, "\n")
+	var tryLine string
+	for _, line := range lines {
+		if strings.HasPrefix(line, tryPrefix) {
+			// The Try line is: "Try: reissue... Example: {json}"
+			// Extract just the JSON after "Example: ".
+			if idx := strings.Index(line, examplePrefix); idx >= 0 {
+				tryLine = line[idx+len(examplePrefix):]
+			} else {
+				tryLine = strings.TrimPrefix(line, tryPrefix)
+			}
+			break
+		}
+	}
+	if tryLine == "" {
+		t.Fatalf("no Try line found in: %q", got.Error)
+	}
+
+	// Parse as JSON to confirm it's valid.
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(tryLine), &parsed); err != nil {
+		t.Errorf("Try example is not valid JSON: %v\nraw: %q", err, tryLine)
+	}
+
+	// Verify key fields are present.
+	for _, key := range []string{"tool", "path", "description", "old_text", "new_text"} {
+		if _, ok := parsed[key]; !ok {
+			t.Errorf("Try JSON missing key %q: %q", key, tryLine)
+		}
+	}
+}
