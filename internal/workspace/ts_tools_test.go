@@ -51,6 +51,13 @@ export default function defaultGreet(name: string): void {
   console.log(name.toUpperCase());
 }
 `)
+	writeTsTestFixture(t, filepath.Join(root, "types", "external.d.ts"), `
+export declare class ExternalClient {
+  connect(): void;
+}
+
+export declare const defaultEndpoint: string;
+`)
 
 	mgr := NewManager(config.Workspace{
 		Root:                  root,
@@ -115,6 +122,18 @@ export default function defaultGreet(name: string): void {
 	readDefaultFunc := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export default function defaultGreet"})
 	if readDefaultFunc.Error != "" || !strings.Contains(readDefaultFunc.Output, "export default function defaultGreet") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export default function defaultGreet', got %#v", readDefaultFunc)
+	}
+	findDeclareClass := mgr.tsFindSymbol(ToolRequest{Tool: "ts_find_symbol", Pattern: "export declare class ExternalClient"})
+	if findDeclareClass.Error != "" || !strings.Contains(findDeclareClass.Output, "external.d.ts") {
+		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export declare class ExternalClient', got %#v", findDeclareClass)
+	}
+	readDeclareClass := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export declare class ExternalClient"})
+	if readDeclareClass.Error != "" || !strings.Contains(readDeclareClass.Output, "export declare class ExternalClient") {
+		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export declare class ExternalClient', got %#v", readDeclareClass)
+	}
+	readDeclareConst := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export declare const defaultEndpoint"})
+	if readDeclareConst.Error != "" || !strings.Contains(readDeclareConst.Output, "export declare const defaultEndpoint") {
+		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export declare const defaultEndpoint', got %#v", readDeclareConst)
 	}
 
 	entry := mgr.tsEntrypoints(ToolRequest{Tool: "ts_entrypoints"})
