@@ -3124,7 +3124,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(data) > m.cfg.MaxFileBytes {
+	if m.cfg.MaxFileBytes > 0 && len(data) > m.cfg.MaxFileBytes {
 		data = data[:m.cfg.MaxFileBytes]
 	}
 	lines := strings.Split(string(data), "\n")
