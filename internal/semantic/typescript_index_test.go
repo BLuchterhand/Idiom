@@ -60,6 +60,12 @@ export class Shouter {
 	if len(matches) == 0 {
 		t.Fatal("expected FindSymbols to return greet")
 	}
+	if matches := idx.FindSymbols("export interface Greeter", 8); len(matches) == 0 || matches[0].Name != "Greeter" {
+		t.Fatalf("expected declaration-shaped interface search to find Greeter, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export class Shouter", 8); len(matches) == 0 || matches[0].Name != "Shouter" {
+		t.Fatalf("expected declaration-shaped class search to find Shouter, got %#v", matches)
+	}
 
 	// Call graph: main -> greet
 	outgoing := idx.FindCallsFrom("main", 8)

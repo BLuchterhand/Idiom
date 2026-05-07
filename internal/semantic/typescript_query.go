@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -27,7 +28,7 @@ type TsCallMatch struct {
 }
 
 func (idx *TsIndex) FindSymbols(pattern string, limit int) []TsSymbolMatch {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	pattern = strings.ToLower(normalizeTsSymbolPattern(pattern))
 	if idx == nil || pattern == "" {
 		return nil
 	}
@@ -66,6 +67,24 @@ func (idx *TsIndex) FindSymbols(pattern string, limit int) []TsSymbolMatch {
 		matches = matches[:limit]
 	}
 	return matches
+}
+
+var tsSymbolPatternExtractors = []*regexp.Regexp{
+	regexp.MustCompile(`^(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)`),
+	regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)`),
+	regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)`),
+	regexp.MustCompile(`^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)`),
+	regexp.MustCompile(`^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)`),
+}
+
+func normalizeTsSymbolPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	for _, re := range tsSymbolPatternExtractors {
+		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return pattern
 }
 
 func (idx *TsIndex) FindCallsFrom(pattern string, limit int) []TsCallMatch {
