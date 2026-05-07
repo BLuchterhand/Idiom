@@ -26,6 +26,17 @@ export class Shouter {
     console.log(name.toUpperCase());
   }
 }
+
+export enum GreetMode {
+  Loud,
+  Quiet,
+}
+
+export namespace GreeterTools {
+  export function label(name: string): string {
+    return name;
+  }
+}
 `)
 	writeTsTestFixture(t, filepath.Join(root, "src", "index.ts"), `
 import { greet, Shouter } from "./greeter";
@@ -134,6 +145,14 @@ export declare const defaultEndpoint: string;
 	readDeclareConst := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export declare const defaultEndpoint"})
 	if readDeclareConst.Error != "" || !strings.Contains(readDeclareConst.Output, "export declare const defaultEndpoint") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export declare const defaultEndpoint', got %#v", readDeclareConst)
+	}
+	findEnum := mgr.tsFindSymbol(ToolRequest{Tool: "ts_find_symbol", Pattern: "export enum GreetMode"})
+	if findEnum.Error != "" || !strings.Contains(findEnum.Output, "GreetMode") {
+		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export enum GreetMode', got %#v", findEnum)
+	}
+	readNamespace := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export namespace GreeterTools"})
+	if readNamespace.Error != "" || !strings.Contains(readNamespace.Output, "export namespace GreeterTools") {
+		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export namespace GreeterTools', got %#v", readNamespace)
 	}
 
 	entry := mgr.tsEntrypoints(ToolRequest{Tool: "ts_entrypoints"})
