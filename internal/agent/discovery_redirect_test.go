@@ -335,6 +335,7 @@ func TestSearchContentRedirectsCppSyntaxPattern(t *testing.T) {
 		{"class_decl", `class EntityManager`},
 		{"class_wildcard", `class.*EntityManager`},
 		{"struct_decl", `struct EntityManager`},
+		{"struct_wildcard", `struct.*EntityManager`},
 		{"namespace_decl", `namespace engine`},
 		{"enum_decl", `enum Color`},
 		{"enum_class_decl", `enum class Color`},
