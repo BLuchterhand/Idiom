@@ -475,6 +475,33 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			want:    "typescript",
 		},
 		{
+			name: "typescript_enum",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export enum WidgetKind { Primary }\n",
+			},
+			pattern: "export enum WidgetKind",
+			want:    "typescript",
+		},
+		{
+			name: "typescript_const_enum",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export const enum WireFormat { Json }\n",
+			},
+			pattern: "export const enum WireFormat",
+			want:    "typescript",
+		},
+		{
+			name: "typescript_namespace",
+			files: map[string]string{
+				"package.json": `{"type":"module"}`,
+				"src/model.ts": "export namespace WidgetTools {}\n",
+			},
+			pattern: "export namespace WidgetTools",
+			want:    "typescript",
+		},
+		{
 			name: "rust_struct",
 			files: map[string]string{
 				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
