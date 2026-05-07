@@ -221,7 +221,11 @@ func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, 
 		fmt.Fprintf(&b, "Next step: to read one declaration by name, use %s — that is the default follow-up and returns the body directly.\n", readSym)
 		b.WriteString("Use read_file with start_line/end_line only when you need a range a single declaration cannot cover (imports block, package/file header, or a span across multiple decls).\n")
 	case workspace.CapWorkspaceSymbol, workspace.CapFindSymbol:
-		fmt.Fprintf(&b, "Try: {\"tool\":%q,\"pattern\":%q}\n", replacement, req.Pattern)
+		if cap == workspace.CapFindSymbol && strings.TrimSpace(req.Path) != "" {
+			fmt.Fprintf(&b, "Try: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, req.Pattern, req.Path)
+		} else {
+			fmt.Fprintf(&b, "Try: {\"tool\":%q,\"pattern\":%q}\n", replacement, req.Pattern)
+		}
 		b.WriteString("The structured result includes file, line, kind, and qualified name.\n")
 		readSym := lang.Tool(workspace.CapReadSymbol)
 		if readSym != "" {

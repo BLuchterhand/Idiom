@@ -296,6 +296,9 @@ func TestSearchContentRedirectExtractsDeclarationIdentifier(t *testing.T) {
 	if !strings.Contains(decision.Result.Output, `"pattern":"ToolRequest"`) {
 		t.Fatalf("redirect should pass only the symbol identifier, got: %q", decision.Result.Output)
 	}
+	if !strings.Contains(decision.Result.Output, `"path":"internal/workspace"`) {
+		t.Fatalf("redirect should preserve path scope for find_symbol, got: %q", decision.Result.Output)
+	}
 	if strings.Contains(decision.Result.Output, `"type ToolRequest struct"`) {
 		t.Fatalf("redirect should not pass the whole declaration as the symbol pattern: %q", decision.Result.Output)
 	}
