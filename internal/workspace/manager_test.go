@@ -84,6 +84,32 @@ func TestGoWorkspaceSymbolFallsBackAfterGoplsFailure(t *testing.T) {
 	}
 }
 
+func TestGoWorkspaceSymbolFallsBackAfterEmptyGoplsResult(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(dir, "worker.go"), "package test\n\nfunc ExampleWorker() {}\n")
+	gopls := filepath.Join(dir, "fake-gopls.sh")
+	writeTestFile(t, gopls, "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(gopls, 0o755); err != nil {
+		t.Fatalf("chmod fake gopls: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, CommandTimeoutSeconds: 5})
+	mgr.goplsChecked = true
+	mgr.goplsPath = gopls
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_workspace_symbol", Pattern: "func ExampleWorker"})
+	if result.Error != "" {
+		t.Fatalf("expected semantic fallback, got %#v", result)
+	}
+	if !strings.Contains(result.Summary, "semantic fallback after empty gopls result") {
+		t.Fatalf("expected empty-result fallback summary, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "ExampleWorker") {
+		t.Fatalf("expected fallback output to mention symbol, got %#v", result)
+	}
+}
+
 func TestSearchContentMissingScopeReturnsGracefulMiss(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "internal", "agent", "runner.go"), "package agent\n\nfunc ExampleWorker() {}\n")

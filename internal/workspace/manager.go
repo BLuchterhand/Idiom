@@ -2317,6 +2317,12 @@ func (m *Manager) goWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolRe
 			result.Error = err.Error()
 		}
 		if strings.TrimSpace(result.Output) == "" && result.Error == "" {
+			fallback := m.goFindSymbol(req)
+			fallback.Tool = "go_workspace_symbol"
+			if fallback.Error == "" && strings.TrimSpace(fallback.Output) != "" {
+				fallback.Summary = "Resolved Go workspace symbols via semantic fallback after empty gopls result"
+				return fallback
+			}
 			result.Summary = fmt.Sprintf("No Go workspace symbols matched %q", pattern)
 		}
 		return result
