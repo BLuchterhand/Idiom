@@ -663,6 +663,24 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			pattern: "public sealed interface SealedService",
 			want:    "java",
 		},
+		{
+			name: "java_method",
+			files: map[string]string{
+				"pom.xml":               "<project></project>\n",
+				"src/main/Service.java": "public class Service { public void execute() {} }\n",
+			},
+			pattern: "public void execute()",
+			want:    "java",
+		},
+		{
+			name: "java_private_method",
+			files: map[string]string{
+				"pom.xml":               "<project></project>\n",
+				"src/main/Service.java": "public class Service { private int compute() { return 1; } }\n",
+			},
+			pattern: "private int compute()",
+			want:    "java",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
