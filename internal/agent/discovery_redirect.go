@@ -295,6 +295,9 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		if pattern == "" {
 			return workspace.LanguageSupport{}, "", false
 		}
+		if searchContentTargetsConcreteFile(req) && looksLikeIdentifier(pattern) {
+			return workspace.LanguageSupport{}, "", false
+		}
 		lang, ok := languageForSearchRequest(req, ws)
 		if !ok {
 			return workspace.LanguageSupport{}, "", false
@@ -324,6 +327,14 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		return lang, cap, true
 	}
 	return workspace.LanguageSupport{}, "", false
+}
+
+func searchContentTargetsConcreteFile(req workspace.ToolRequest) bool {
+	path := strings.TrimSpace(req.Path)
+	if path == "" || strings.ContainsAny(path, "*?[]{}") {
+		return false
+	}
+	return filepath.Ext(filepath.Base(path)) != ""
 }
 
 // languageForSearchRequest infers a language for a generic search_content

@@ -189,6 +189,16 @@ func TestRedirectSkipsGenericGlob(t *testing.T) {
 	}
 }
 
+func TestSearchContentSkipsConcreteFileIdentifier(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+
+	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "edit_file", Path: "main.go"}, ws)
+	if decision.ShouldRedirect {
+		t.Fatalf("exact-file identifier search should run as text search, got %s", decision.Capability)
+	}
+}
+
 // TestRedirectHandlesBraceExpansionGlob ensures `*.{cpp,h}` and
 // similar multi-extension globs resolve to the right language.
 func TestRedirectHandlesBraceExpansionGlob(t *testing.T) {
