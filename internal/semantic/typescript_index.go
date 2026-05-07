@@ -65,13 +65,14 @@ var (
 	tsImportSideRe = regexp.MustCompile(`(?:^|\s)import\s+['"]([^'"]+)['"]`)
 	tsRequireRe    = regexp.MustCompile(`\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)`)
 	tsDynImportRe  = regexp.MustCompile(`\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)`)
-	tsClassRe      = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsInterfaceRe  = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?interface\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsTypeAliasRe  = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?type\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=`)
-	tsEnumRe       = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:const\s+)?enum\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsNamespaceRe  = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:namespace|module)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsFunctionRe   = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)`)
-	tsArrowRe      = regexp.MustCompile(`^(?:\s*export\s+(?:default\s+)?)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=>`)
+	tsClassRe      = regexp.MustCompile(`^(?:\s*export\s+)?(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsInterfaceRe  = regexp.MustCompile(`^(?:\s*export\s+)?(?:declare\s+)?interface\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsTypeAliasRe  = regexp.MustCompile(`^(?:\s*export\s+)?(?:declare\s+)?type\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:<[^>]*>)?\s*=`)
+	tsEnumRe       = regexp.MustCompile(`^(?:\s*export\s+)?(?:declare\s+)?(?:const\s+)?enum\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsNamespaceRe  = regexp.MustCompile(`^(?:\s*export\s+)?(?:declare\s+)?(?:namespace|module)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsFunctionRe   = regexp.MustCompile(`^(?:\s*export\s+)?(?:declare\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)`)
+	tsArrowRe      = regexp.MustCompile(`^(?:\s*export\s+)?(?:default\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=>`)
+	tsDeclConstRe  = regexp.MustCompile(`^(?:\s*export\s+)?(?:declare\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^;]+)?;?\s*$`)
 	tsMethodRe     = regexp.MustCompile(`^\s*(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+|async\s+|override\s+|abstract\s+)*(?:get\s+|set\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
 	tsCallRe       = regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
 	tsIdentStart   = regexp.MustCompile(`^[A-Za-z_$]`)
@@ -533,6 +534,13 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 				Name: match[1], Qualified: match[1], Kind: "function",
 				Line: lineNo, Column: indexOfIdent(line, match[1]) + 1,
 				StartLine: lineNo, EndLine: end, Calls: calls,
+				Exported: strings.Contains(trimmed, "export"), SourceFile: rel,
+			})
+		} else if match := tsDeclConstRe.FindStringSubmatch(trimmed); len(match) == 2 && !inClass && (isTsDeclPath(rel) || strings.Contains(trimmed, "declare")) {
+			symbols = append(symbols, TsSymbol{
+				Name: match[1], Qualified: match[1], Kind: "const",
+				Line: lineNo, Column: indexOfIdent(line, match[1]) + 1,
+				StartLine: lineNo, EndLine: lineNo,
 				Exported: strings.Contains(trimmed, "export"), SourceFile: rel,
 			})
 		} else if inClass {

@@ -148,6 +148,100 @@ export class Foo {
 	}
 }
 
+func TestBuildTsIndexDeclarationSyntax(t *testing.T) {
+	root := t.TempDir()
+	writeTsFixture(t, filepath.Join(root, "tsconfig.json"), `{"compilerOptions":{"target":"es2020"}}`)
+	writeTsFixture(t, filepath.Join(root, "types", "external.d.ts"), `
+export declare class ExternalClient {
+  connect(): void;
+  disconnect(): void;
+}
+
+export declare function connect(endpoint: string): ExternalClient;
+
+export declare const defaultEndpoint: string;
+export const exportedEndpoint: string;
+declare const ambientEndpoint: string;
+
+export interface Config {
+  timeout: number;
+}
+
+export declare type Result<T> = T | Error;
+`)
+
+	idx, err := BuildTsIndex(root)
+	if err != nil {
+		t.Fatalf("BuildTsIndex: %v", err)
+	}
+	if idx == nil {
+		t.Fatal("expected non-nil index")
+	}
+
+	declFile := idx.FileByPath("types/external.d.ts")
+	if declFile == nil {
+		t.Fatal("missing types/external.d.ts")
+	}
+
+	// Verify symbols from declaration syntax are indexed
+	var foundClass, foundFunc, foundConst, foundExportConst, foundAmbientConst, foundInterface bool
+	var foundType bool
+	for _, sym := range declFile.Symbols {
+		switch sym.Name {
+		case "ExternalClient":
+			foundClass = sym.Kind == "class"
+		case "connect":
+			foundFunc = sym.Kind == "function"
+		case "defaultEndpoint":
+			foundConst = sym.Kind == "const"
+		case "exportedEndpoint":
+			foundExportConst = sym.Kind == "const"
+		case "ambientEndpoint":
+			foundAmbientConst = sym.Kind == "const"
+		case "Config":
+			foundInterface = sym.Kind == "interface"
+		case "Result":
+			foundType = sym.Kind == "type"
+		}
+	}
+
+	if !foundClass {
+		t.Error("expected to find ExternalClient class")
+	}
+	if !foundFunc {
+		t.Error("expected to find connect function")
+	}
+	if !foundConst {
+		t.Error("expected to find defaultEndpoint const")
+	}
+	if !foundExportConst {
+		t.Error("expected to find exportedEndpoint const")
+	}
+	if !foundAmbientConst {
+		t.Error("expected to find ambientEndpoint const")
+	}
+	if !foundInterface {
+		t.Error("expected to find Config interface")
+	}
+	if !foundType {
+		t.Error("expected to find Result type")
+	}
+
+	// Verify declaration-shaped search patterns work for declaration syntax
+	if matches := idx.FindSymbols("export declare class ExternalClient", 8); len(matches) == 0 || matches[0].Name != "ExternalClient" {
+		t.Fatalf("expected declaration-shaped class search to find ExternalClient, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export declare function connect", 8); len(matches) == 0 || matches[0].Name != "connect" {
+		t.Fatalf("expected declaration-shaped function search to find connect, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export declare const defaultEndpoint", 8); len(matches) == 0 || matches[0].Name != "defaultEndpoint" {
+		t.Fatalf("expected declaration-shaped const search to find defaultEndpoint, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("declare const ambientEndpoint", 8); len(matches) == 0 || matches[0].Name != "ambientEndpoint" {
+		t.Fatalf("expected bare declare const search to find ambientEndpoint, got %#v", matches)
+	}
+}
+
 func writeTsFixture(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
