@@ -120,6 +120,10 @@ func TestRustFindSymbol(t *testing.T) {
 	if !strings.Contains(result.Output, "worker.rs") {
 		t.Fatalf("expected worker.rs in output, got: %q", result.Output)
 	}
+	decl := mgr.rustFindSymbol(ToolRequest{Tool: "rust_find_symbol", Pattern: "pub struct Worker"})
+	if decl.Error != "" || !strings.Contains(decl.Output, "Worker") {
+		t.Fatalf("expected declaration-shaped rustFindSymbol query to find Worker, got %#v", decl)
+	}
 }
 
 func TestRustFindSymbolEmptyPattern(t *testing.T) {
