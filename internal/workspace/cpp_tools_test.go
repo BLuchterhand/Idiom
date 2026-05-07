@@ -24,6 +24,12 @@ union EntityValue {
     int id;
     double weight;
 };
+
+template <typename T>
+class EntityBox {
+public:
+    T value;
+};
 `)
 	writeCppFixture(t, filepath.Join(root, "src", "entity_manager.cpp"), `
 #include "entity_manager.h"
@@ -110,6 +116,14 @@ void WorkerSystem::process_cycle() {}
 	readUnion := mgr.cppReadSymbol(ToolRequest{Tool: "cpp_read_symbol", Pattern: "union EntityValue"})
 	if readUnion.Error != "" || !strings.Contains(readUnion.Output, "union EntityValue") {
 		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityValue union, got %#v", readUnion)
+	}
+	findTemplate := mgr.cppFindSymbol(ToolRequest{Tool: "cpp_find_symbol", Pattern: "template <typename T> class EntityBox"})
+	if findTemplate.Error != "" || !strings.Contains(findTemplate.Output, "EntityBox") {
+		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityBox template, got %#v", findTemplate)
+	}
+	readTemplate := mgr.cppReadSymbol(ToolRequest{Tool: "cpp_read_symbol", Pattern: "template <typename T> class EntityBox"})
+	if readTemplate.Error != "" || !strings.Contains(readTemplate.Output, "class EntityBox") {
+		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityBox template, got %#v", readTemplate)
 	}
 	body := mgr.cppExtractBody(ToolRequest{Tool: "cpp_extract_body", Pattern: "EntityManager::tick"})
 	if body.Error != "" || !strings.Contains(body.Output, "helper();") {
