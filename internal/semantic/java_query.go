@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -33,7 +34,7 @@ type JavaCallMatch struct {
 // or path contains `pattern`. Ranking is identical in spirit to the
 // C++ scorer: exact-name wins big, contains-qualified next, etc.
 func (idx *JavaIndex) FindSymbols(pattern string, limit int) []JavaSymbolMatch {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	pattern = strings.ToLower(normalizeJavaSymbolPattern(pattern))
 	if idx == nil || pattern == "" {
 		return nil
 	}
@@ -75,6 +76,23 @@ func (idx *JavaIndex) FindSymbols(pattern string, limit int) []JavaSymbolMatch {
 		matches = matches[:limit]
 	}
 	return matches
+}
+
+var javaSymbolPatternExtractors = []*regexp.Regexp{
+	regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*class\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*interface\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*enum\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*record\s+([A-Za-z_]\w*)`),
+}
+
+func normalizeJavaSymbolPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	for _, re := range javaSymbolPatternExtractors {
+		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return pattern
 }
 
 // FindCallsFrom returns outgoing call sites from methods matching

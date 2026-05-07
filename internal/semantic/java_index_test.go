@@ -101,6 +101,12 @@ public class AppTest {
 	if !foundHelper {
 		t.Fatalf("Helper class not among matches: %+v", matches)
 	}
+	if matches := index.FindSymbols("public class Helper", 4); len(matches) == 0 || matches[0].Name != "Helper" {
+		t.Fatalf("expected declaration-shaped class search to find Helper, got %#v", matches)
+	}
+	if matches := index.FindSymbols("public interface Service", 4); len(matches) == 0 || matches[0].Name != "Service" {
+		t.Fatalf("expected declaration-shaped interface search to find Service, got %#v", matches)
+	}
 
 	impls := index.Implementations("Service", 8)
 	if len(impls) == 0 {
