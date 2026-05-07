@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -29,7 +30,7 @@ type PackageMatch struct {
 }
 
 func (idx *GoIndex) FindSymbols(pattern string, limit int) []SymbolMatch {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	pattern = strings.ToLower(normalizeGoSymbolPattern(pattern))
 	if idx == nil || pattern == "" {
 		return nil
 	}
@@ -73,6 +74,23 @@ func (idx *GoIndex) FindSymbols(pattern string, limit int) []SymbolMatch {
 		matches = matches[:limit]
 	}
 	return matches
+}
+
+var goSymbolPatternExtractors = []*regexp.Regexp{
+	regexp.MustCompile(`^func\s*\([^)]*\)\s*([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^type\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^(?:const|var)\s+([A-Za-z_]\w*)`),
+}
+
+func normalizeGoSymbolPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	for _, re := range goSymbolPatternExtractors {
+		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return pattern
 }
 
 func (idx *GoIndex) FindSymbolsByKind(pattern string, kind string, limit int) []SymbolMatch {

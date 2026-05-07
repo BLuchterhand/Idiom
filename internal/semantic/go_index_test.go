@@ -62,6 +62,12 @@ func TestRun() {
 	if len(symbols) == 0 || symbols[0].Name != "Run" {
 		t.Fatalf("expected Run symbol first, got %#v", symbols)
 	}
+	if symbols := idx.FindSymbols("type Runner struct", 5); len(symbols) == 0 || symbols[0].Name != "Runner" {
+		t.Fatalf("expected declaration-shaped type search to find Runner, got %#v", symbols)
+	}
+	if symbols := idx.FindSymbols("func (Runner) Start", 5); len(symbols) == 0 || symbols[0].Name != "Start" {
+		t.Fatalf("expected declaration-shaped method search to find Start, got %#v", symbols)
+	}
 	if types := idx.FindSymbolsByKind("Runner", "type", 2); len(types) != 1 || types[0].Kind != "type" {
 		t.Fatalf("expected Runner type, got %#v", types)
 	}
