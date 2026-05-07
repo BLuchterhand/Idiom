@@ -9,7 +9,7 @@ A small Bubble Tea harness for running `Qwen3.6-35B-A3B` locally through `llama.
 - saves transcripts to Markdown
 - loads baseline behavior from prompt files and profiles every session
 - gives Qwen scoped workspace access for reads, search, writes, and shell commands
-- keeps the model and cache out of the `Colony` repo
+- keeps model weights, caches, and harness logs out of the target repository
 
 ## Layout
 
@@ -164,7 +164,11 @@ The blocks are independent, so mixed setups work — for example, main chat on M
 
 `route_classifier` runs a small structured classifier before execution so terse follow-ups and plan approvals can be reconciled against deterministic routing. It is enabled by default and returns JSON only; host-side control rails still own the final contract and tool permissions.
 
-The app can auto-start the installed local Qwen 9B helper classifier when `auto_start_server` is true. The checked-in local config serves `/Users/ben/models/qwen35-9b/Qwen3.5-9B-Q8_0.gguf` on `http://127.0.0.1:11437` and writes logs to `logs/route-classifier.log`.
+The app can auto-start a configured small helper classifier when
+`auto_start_server` is true. The checked-in config uses a repo-relative model
+path, serves it on `http://127.0.0.1:11437`, and writes logs to
+`logs/route-classifier.log`; override `server_model`, `base_url`, or the make
+variables for your local model layout.
 
 On first use, the harness checks that `server_model` is readable before spawning the helper. If the model path or binary is wrong, it reports a classifier-health error and falls back to host routing instead of blocking the conversation. The classifier prompt is intentionally schema-first and JSON-only, with examples for log inspection, log-fix requests, plan-only requests, durable-plan approvals, and user boundaries.
 
@@ -354,7 +358,14 @@ Shell access is intentionally powerful: it runs with the same OS permissions as 
 
 For Go workspaces, the semantic tools are preferred over raw grep/listing for package and symbol discovery. The local AST index covers overview, symbols, entrypoints, related files, importer lookup, and fallback call analysis. `go_workspace_symbol`, `go_definition`, `go_references`, `go_implementations`, `go_calls_from`, `go_calls_into`, and `go_diagnostics` will use `gopls` when it is installed and fall back to the local Go index or `go build` where possible.
 
-For C/C++ workspaces, the semantic tools are deterministic and genericized from Colony's own discovery stack: local symbol indexing, include-graph resolution, caller/callee tracing, body extraction, reverse include lookup, and blast-radius analysis. When `clangd` is installed, `cpp_workspace_symbol`, `cpp_definition`, `cpp_declaration`, `cpp_implementations`, `cpp_references`, and the call-tracing tools will prefer real LSP queries and fall back to the local C++ index when clangd cannot resolve the request from the available anchor. `cpp_diagnostics` will use `clangd --check` when `compile_commands.json` is available in the workspace.
+For C/C++ workspaces, the semantic tools provide generic local symbol indexing,
+include-graph resolution, caller/callee tracing, body extraction, reverse
+include lookup, and blast-radius analysis. When `clangd` is installed,
+`cpp_workspace_symbol`, `cpp_definition`, `cpp_declaration`,
+`cpp_implementations`, `cpp_references`, and the call-tracing tools will prefer
+real LSP queries and fall back to the local C++ index when clangd cannot resolve
+the request from the available anchor. `cpp_diagnostics` will use
+`clangd --check` when `compile_commands.json` is available in the workspace.
 
 Language `find_symbol` and `read_symbol` tools also accept declaration-shaped patterns such as `type Runner struct`, `class Engine`, `export interface Greeter`, `export declare class ExternalClient`, `pub struct Worker`, or `public class Helper`; idiom normalizes them to symbol names before searching.
 
@@ -376,18 +387,15 @@ Language `find_symbol` and `read_symbol` tools also accept declaration-shaped pa
 
 ### Repo-local discovery tool parity
 
-If the workspace contains repo-local discovery scripts, Qwen is now explicitly told to use them through the `shell` tool with their full native CLI flags.
+If the workspace contains repo-local discovery scripts, expose them through
+`workspace.external_tools` or `workspace.external_tools_dir` when they are part
+of that project's workflow. Idiom does not assume project script names or
+repository layouts; generic workspace tools remain the default discovery path.
 
-For `Colony`, that means Qwen can use the same repo-local terminal commands Codex uses, including:
-
-- `./scripts/lookup.sh`
-- `./scripts/trace_code.sh`
-- `./scripts/gdscript_trace.sh`
-- `./scripts/boundary.sh`
-- `python3 scripts/validate_discovery_tools.py`
-- standard shell tools like `rg`, `awk`, `sed`, `git`, and `python3`
-
-These are available capabilities, not defaults. The harness now biases Qwen toward generic workspace tools first, and the repo-local discovery scripts are meant to be used only when the user asks for them or when the repo workflow clearly calls for them.
+Repo-local discovery commands are available capabilities, not defaults. The
+harness biases Qwen toward generic workspace tools first, and project-specific
+commands are meant to be used only when the user asks for them or when the repo
+workflow clearly calls for them.
 
 This is parity for repo-local shell/discovery commands, not for Codex-only platform tools. Qwen still does not have native access to Codex features like web browsing, sub-agents, MCP connectors, or `apply_patch` semantics unless the harness implements equivalents itself.
 

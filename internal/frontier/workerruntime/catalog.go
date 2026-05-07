@@ -201,8 +201,8 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		// Externals are read-only by intent — host projects register
 		// them so the agent can answer questions about the codebase
 		// without entering full implementation mode. The CLI/prompt
-		// path now picks up externals like trace_code, lookup, and
-		// api_access even for direct-question routes.
+		// path now picks up host-registered external discovery tools
+		// even for direct-question routes.
 		preserved := make([]string, 0)
 		for _, name := range brief.AllowedTools {
 			if isExternalToolName(strings.TrimSpace(name)) {
@@ -394,7 +394,7 @@ func filterAllowedTools(available []string, names ...string) []string {
 		// `external_tools` registered in the workspace config remain
 		// callable from any turn route, which is the contract host
 		// projects expect when registering project-specific discovery
-		// tools (trace_code, lookup, etc.).
+		// tools.
 		//
 		// MCP tools (`mcp:<server>/<tool>`) are also pass-through here
 		// to preserve their existing behavior; the qualifier lets the

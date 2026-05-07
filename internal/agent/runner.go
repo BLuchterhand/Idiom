@@ -6165,7 +6165,7 @@ func (r *Runner) advertisedAllowedTools(base []string) []string {
 	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
 		// Even in conversation_only mode, expose project-defined external
 		// tools so the model can call host-registered discovery commands
-		// (e.g. trace_code, lookup, api_access). Built-in mutating tools
+		// (e.g. project_search, api_access). Built-in mutating tools
 		// stay hidden — that's what conversation_only is for.
 		if r.Workspace == nil {
 			return nil
