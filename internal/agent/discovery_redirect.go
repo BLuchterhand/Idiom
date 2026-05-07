@@ -896,6 +896,7 @@ var syntaxExtractors = map[string][]*regexp.Regexp{
 		regexp.MustCompile(`^namespace\s+([A-Za-z_]\w*)`),
 		regexp.MustCompile(`^enum(?:\s+class)?\s+([A-Za-z_]\w*)`),
 		regexp.MustCompile(`^union\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^union[.*\\\s]+([A-Za-z_]\w*)`),
 		regexp.MustCompile(`^template\s*<[^>]*>\s*(?:class|struct|typename)?\s*([A-Za-z_]\w*)`),
 	},
 	"python": {
