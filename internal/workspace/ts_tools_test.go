@@ -21,6 +21,14 @@ export function greet(name: string): void {
   console.log(name);
 }
 
+export function* greetNames(): Iterable<string> {
+  yield "world";
+}
+
+export async function* streamNames(): AsyncIterable<string> {
+  yield "world";
+}
+
 export class Shouter {
   shout(name: string): void {
     console.log(name.toUpperCase());
@@ -133,6 +141,14 @@ export declare const defaultEndpoint: string;
 	readDefaultFunc := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export default function defaultGreet"})
 	if readDefaultFunc.Error != "" || !strings.Contains(readDefaultFunc.Output, "export default function defaultGreet") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export default function defaultGreet', got %#v", readDefaultFunc)
+	}
+	findGenerator := mgr.tsFindSymbol(ToolRequest{Tool: "ts_find_symbol", Pattern: "export function* greetNames"})
+	if findGenerator.Error != "" || !strings.Contains(findGenerator.Output, "greetNames") {
+		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export function* greetNames', got %#v", findGenerator)
+	}
+	readAsyncGenerator := mgr.tsReadSymbol(ToolRequest{Tool: "ts_read_symbol", Pattern: "export async function* streamNames"})
+	if readAsyncGenerator.Error != "" || !strings.Contains(readAsyncGenerator.Output, "export async function* streamNames") {
+		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export async function* streamNames', got %#v", readAsyncGenerator)
 	}
 	findDeclareClass := mgr.tsFindSymbol(ToolRequest{Tool: "ts_find_symbol", Pattern: "export declare class ExternalClient"})
 	if findDeclareClass.Error != "" || !strings.Contains(findDeclareClass.Output, "external.d.ts") {
