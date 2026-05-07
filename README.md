@@ -356,6 +356,8 @@ For Go workspaces, the semantic tools are preferred over raw grep/listing for pa
 
 For C/C++ workspaces, the semantic tools are deterministic and genericized from Colony's own discovery stack: local symbol indexing, include-graph resolution, caller/callee tracing, body extraction, reverse include lookup, and blast-radius analysis. When `clangd` is installed, `cpp_workspace_symbol`, `cpp_definition`, `cpp_declaration`, `cpp_implementations`, `cpp_references`, and the call-tracing tools will prefer real LSP queries and fall back to the local C++ index when clangd cannot resolve the request from the available anchor. `cpp_diagnostics` will use `clangd --check` when `compile_commands.json` is available in the workspace.
 
+Language `find_symbol` tools also accept declaration-shaped patterns such as `type Runner struct`, `class Engine`, `export interface Greeter`, `pub struct Worker`, or `public class Helper`; idiom normalizes them to symbol names before searching.
+
 ### Workspace defaults
 
 - if `workspace.root` is empty, the app defaults it to the directory you launched the harness from
