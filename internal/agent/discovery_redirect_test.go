@@ -270,6 +270,8 @@ func TestSearchContentRedirectsGoSyntaxPattern(t *testing.T) {
 		{"func_wildcard", `func.*handleSlashCommand`},
 		{"func_regex_escape", `func\s+Run`},
 		{"type_decl", `type Runner`},
+		{"const_decl", `const DefaultLimit`},
+		{"var_decl", `var globalRunner`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

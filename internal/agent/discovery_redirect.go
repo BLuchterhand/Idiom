@@ -885,6 +885,8 @@ var syntaxExtractors = map[string][]*regexp.Regexp{
 		regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
 		regexp.MustCompile(`^func[.*\\\s]+([A-Za-z_]\w*)`),
 		regexp.MustCompile(`^type\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^const\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^var\s+([A-Za-z_]\w*)`),
 	},
 	"cpp": {
 		regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
