@@ -24,6 +24,14 @@ export function greet(name: string): void {
   console.log(name);
 }
 
+export function* greetNames(): Iterable<string> {
+  yield "world";
+}
+
+export async function* streamNames(): AsyncIterable<string> {
+  yield "world";
+}
+
 export class Shouter {
   shout(name: string): void {
     console.log(name.toUpperCase());
@@ -93,6 +101,12 @@ export default function defaultGreet(): void {}
 	}
 	if matches := idx.FindSymbols("export default function defaultGreet", 8); len(matches) == 0 || matches[0].Name != "defaultGreet" {
 		t.Fatalf("expected default function search to find defaultGreet, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export function* greetNames", 8); len(matches) == 0 || matches[0].Name != "greetNames" {
+		t.Fatalf("expected declaration-shaped generator function search to find greetNames, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export async function* streamNames", 8); len(matches) == 0 || matches[0].Name != "streamNames" {
+		t.Fatalf("expected declaration-shaped async generator search to find streamNames, got %#v", matches)
 	}
 	if matches := idx.FindSymbols("export enum GreetMode", 8); len(matches) == 0 || matches[0].Name != "GreetMode" {
 		t.Fatalf("expected declaration-shaped enum search to find GreetMode, got %#v", matches)
