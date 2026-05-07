@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -26,7 +27,7 @@ type CppCallMatch struct {
 }
 
 func (idx *CppIndex) FindSymbols(pattern string, limit int) []CppSymbolMatch {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	pattern = strings.ToLower(normalizeCppSymbolPattern(pattern))
 	if idx == nil || pattern == "" {
 		return nil
 	}
@@ -64,6 +65,24 @@ func (idx *CppIndex) FindSymbols(pattern string, limit int) []CppSymbolMatch {
 		matches = matches[:limit]
 	}
 	return matches
+}
+
+var cppSymbolPatternExtractors = []*regexp.Regexp{
+	regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^struct\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^namespace\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^enum(?:\s+class)?\s+([A-Za-z_]\w*)`),
+	regexp.MustCompile(`^template\s*<[^>]*>\s*(?:class|struct|typename)?\s*([A-Za-z_]\w*)`),
+}
+
+func normalizeCppSymbolPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	for _, re := range cppSymbolPatternExtractors {
+		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return pattern
 }
 
 func (idx *CppIndex) FindCallsFrom(pattern string, limit int) []CppCallMatch {

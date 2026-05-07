@@ -51,6 +51,9 @@ int main() {
 	if matches := index.FindSymbols("tick", 8); len(matches) == 0 {
 		t.Fatal("expected tick symbol match")
 	}
+	if matches := index.FindSymbols("struct EntityManager", 8); len(matches) == 0 || matches[0].Name != "EntityManager" {
+		t.Fatalf("expected declaration-shaped struct search to find EntityManager, got %#v", matches)
+	}
 	if calls := index.FindCallsFrom("main", 8); len(calls) == 0 {
 		t.Fatal("expected outgoing calls from main")
 	}
