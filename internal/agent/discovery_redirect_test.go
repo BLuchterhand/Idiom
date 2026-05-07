@@ -627,6 +627,24 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			pattern: "public enum WidgetKind",
 			want:    "java",
 		},
+		{
+			name: "java_annotation",
+			files: map[string]string{
+				"pom.xml":                   "<project></project>\n",
+				"src/main/FeatureFlag.java": "public @interface FeatureFlag {}\n",
+			},
+			pattern: "public @interface FeatureFlag",
+			want:    "java",
+		},
+		{
+			name: "java_sealed_interface",
+			files: map[string]string{
+				"pom.xml":                     "<project></project>\n",
+				"src/main/SealedService.java": "public sealed interface SealedService permits ServiceImpl {}\n",
+			},
+			pattern: "public sealed interface SealedService",
+			want:    "java",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

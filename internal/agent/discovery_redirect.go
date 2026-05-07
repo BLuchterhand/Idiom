@@ -923,10 +923,11 @@ var syntaxExtractors = map[string][]*regexp.Regexp{
 		regexp.MustCompile(`^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*)`),
 	},
 	"java": {
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*class\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*interface\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*enum\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|\s)*record\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*class\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*interface\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*enum\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*record\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*@interface\s+([A-Za-z_]\w*)`),
 	},
 }
 
