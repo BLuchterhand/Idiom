@@ -463,6 +463,33 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			pattern: "public record Widget",
 			want:    "java",
 		},
+		{
+			name: "java_class",
+			files: map[string]string{
+				"pom.xml":              "<project></project>\n",
+				"src/main/Widget.java": "public class Widget {}\n",
+			},
+			pattern: "public class Widget",
+			want:    "java",
+		},
+		{
+			name: "java_interface",
+			files: map[string]string{
+				"pom.xml":              "<project></project>\n",
+				"src/main/Service.java": "public interface Service {}\n",
+			},
+			pattern: "public interface Service",
+			want:    "java",
+		},
+		{
+			name: "java_enum",
+			files: map[string]string{
+				"pom.xml":                  "<project></project>\n",
+				"src/main/WidgetKind.java": "public enum WidgetKind { A, B }\n",
+			},
+			pattern: "public enum WidgetKind",
+			want:    "java",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
