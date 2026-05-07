@@ -419,6 +419,42 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			want:    "rust",
 		},
 		{
+			name: "rust_enum",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "pub enum WidgetKind { A, B }\n",
+			},
+			pattern: "pub enum WidgetKind",
+			want:    "rust",
+		},
+		{
+			name: "rust_trait",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "pub trait Runnable {\n    fn run(&self);\n}\n",
+			},
+			pattern: "pub trait Runnable",
+			want:    "rust",
+		},
+		{
+			name: "rust_async_function",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "pub async fn load_widget() {}\n",
+			},
+			pattern: "pub async fn load_widget",
+			want:    "rust",
+		},
+		{
+			name: "rust_impl",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname='x'\nversion='0.0.0'\n",
+				"src/lib.rs": "impl Widget {\n    fn new() -> Self { Widget }\n}\n",
+			},
+			pattern: "impl Widget",
+			want:    "rust",
+		},
+		{
 			name: "java_record",
 			files: map[string]string{
 				"pom.xml":              "<project></project>\n",
