@@ -55,6 +55,12 @@ pub trait Runnable {
     fn run(&self);
 }
 
+pub unsafe trait UnsafeRunnable {
+    unsafe fn run_unchecked(&self);
+}
+
+pub type WorkerId = u32;
+
 impl Runnable for Worker {
     fn run(&self) {
         do_work(self.id);
@@ -74,6 +80,16 @@ fn do_work(id: u32) {
 
 	writeRustFixture(t, filepath.Join(root, "src", "utils.rs"), `
 pub const DEFAULT_MAX: u32 = 64;
+
+pub static mut GLOBAL_MAX: u32 = 64;
+
+pub const fn default_worker_id() -> u32 {
+    0
+}
+
+macro_rules! helper_macro {
+    () => { 1 };
+}
 
 #[test]
 fn trivial() {
@@ -124,6 +140,14 @@ func TestRustFindSymbol(t *testing.T) {
 	if decl.Error != "" || !strings.Contains(decl.Output, "Worker") {
 		t.Fatalf("expected declaration-shaped rustFindSymbol query to find Worker, got %#v", decl)
 	}
+	typeAlias := mgr.rustFindSymbol(ToolRequest{Tool: "rust_find_symbol", Pattern: "pub type WorkerId"})
+	if typeAlias.Error != "" || !strings.Contains(typeAlias.Output, "WorkerId") {
+		t.Fatalf("expected declaration-shaped rustFindSymbol query to find WorkerId type alias, got %#v", typeAlias)
+	}
+	staticDecl := mgr.rustFindSymbol(ToolRequest{Tool: "rust_find_symbol", Pattern: "pub static mut GLOBAL_MAX"})
+	if staticDecl.Error != "" || !strings.Contains(staticDecl.Output, "GLOBAL_MAX") {
+		t.Fatalf("expected declaration-shaped rustFindSymbol query to find GLOBAL_MAX static, got %#v", staticDecl)
+	}
 }
 
 func TestRustFindSymbolEmptyPattern(t *testing.T) {
@@ -150,6 +174,15 @@ func TestRustReadSymbol(t *testing.T) {
 	}
 	if !strings.Contains(decl.Output, "pub struct Worker") {
 		t.Fatalf("expected declaration-shaped rustReadSymbol to return struct snippet, got: %q", decl.Output)
+	}
+
+	constFn := mgr.rustReadSymbol(ToolRequest{Tool: "rust_read_symbol", Pattern: "pub const fn default_worker_id", Path: filepath.Join("src", "utils.rs")})
+	if constFn.Error != "" || !strings.Contains(constFn.Output, "pub const fn default_worker_id") {
+		t.Fatalf("expected declaration-shaped rustReadSymbol to return const fn snippet, got %#v", constFn)
+	}
+	macroDecl := mgr.rustReadSymbol(ToolRequest{Tool: "rust_read_symbol", Pattern: "macro_rules! helper_macro", Path: filepath.Join("src", "utils.rs")})
+	if macroDecl.Error != "" || !strings.Contains(macroDecl.Output, "macro_rules! helper_macro") {
+		t.Fatalf("expected declaration-shaped rustReadSymbol to return macro snippet, got %#v", macroDecl)
 	}
 }
 
