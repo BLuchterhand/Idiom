@@ -99,6 +99,11 @@ def test_tick():
 		t.Fatalf("unexpected pythonReadSymbol result: %#v", read)
 	}
 
+	readDecl := mgr.pythonReadSymbol(ToolRequest{Tool: "python_read_symbol", Pattern: "class Engine"})
+	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "class Engine") {
+		t.Fatalf("expected declaration-shaped pythonReadSymbol to return class Engine snippet, got %#v", readDecl)
+	}
+
 	related := mgr.pythonRelatedFiles(ToolRequest{Tool: "python_related_files", Pattern: "engine"})
 	if related.Error != "" || !strings.Contains(related.Output, "engine.py") {
 		t.Fatalf("unexpected pythonRelatedFiles result: %#v", related)
