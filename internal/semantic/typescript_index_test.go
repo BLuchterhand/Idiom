@@ -29,6 +29,22 @@ export class Shouter {
     console.log(name.toUpperCase());
   }
 }
+
+export enum GreetMode {
+  Loud,
+  Quiet,
+}
+
+export const enum WireFormat {
+  Json,
+  Binary,
+}
+
+export namespace GreeterTools {
+  export function label(name: string): string {
+    return name;
+  }
+}
 `)
 	writeTsFixture(t, filepath.Join(root, "src", "default_class.ts"), `
 export default class DefaultShouter {}
@@ -77,6 +93,15 @@ export default function defaultGreet(): void {}
 	}
 	if matches := idx.FindSymbols("export default function defaultGreet", 8); len(matches) == 0 || matches[0].Name != "defaultGreet" {
 		t.Fatalf("expected default function search to find defaultGreet, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export enum GreetMode", 8); len(matches) == 0 || matches[0].Name != "GreetMode" {
+		t.Fatalf("expected declaration-shaped enum search to find GreetMode, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export const enum WireFormat", 8); len(matches) == 0 || matches[0].Name != "WireFormat" {
+		t.Fatalf("expected declaration-shaped const enum search to find WireFormat, got %#v", matches)
+	}
+	if matches := idx.FindSymbols("export namespace GreeterTools", 8); len(matches) == 0 || matches[0].Name != "GreeterTools" {
+		t.Fatalf("expected declaration-shaped namespace search to find GreeterTools, got %#v", matches)
 	}
 
 	// Call graph: main -> greet
