@@ -19,6 +19,11 @@ func TestCppWorkspaceTools(t *testing.T) {
 struct EntityManager {
     void tick();
 };
+
+union EntityValue {
+    int id;
+    double weight;
+};
 `)
 	writeCppFixture(t, filepath.Join(root, "src", "entity_manager.cpp"), `
 #include "entity_manager.h"
@@ -97,6 +102,14 @@ void WorkerSystem::process_cycle() {}
 	readDecl := mgr.cppReadSymbol(ToolRequest{Tool: "cpp_read_symbol", Pattern: "struct EntityManager"})
 	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "struct EntityManager") {
 		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityManager snippet, got %#v", readDecl)
+	}
+	findUnion := mgr.cppFindSymbol(ToolRequest{Tool: "cpp_find_symbol", Pattern: "union EntityValue"})
+	if findUnion.Error != "" || !strings.Contains(findUnion.Output, "EntityValue") {
+		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityValue union, got %#v", findUnion)
+	}
+	readUnion := mgr.cppReadSymbol(ToolRequest{Tool: "cpp_read_symbol", Pattern: "union EntityValue"})
+	if readUnion.Error != "" || !strings.Contains(readUnion.Output, "union EntityValue") {
+		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityValue union, got %#v", readUnion)
 	}
 	body := mgr.cppExtractBody(ToolRequest{Tool: "cpp_extract_body", Pattern: "EntityManager::tick"})
 	if body.Error != "" || !strings.Contains(body.Output, "helper();") {
