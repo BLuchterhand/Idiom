@@ -94,6 +94,10 @@ void WorkerSystem::process_cycle() {}
 	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "EntityManager") {
 		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityManager, got %#v", findDecl)
 	}
+	readDecl := mgr.cppReadSymbol(ToolRequest{Tool: "cpp_read_symbol", Pattern: "struct EntityManager"})
+	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "struct EntityManager") {
+		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityManager snippet, got %#v", readDecl)
+	}
 	body := mgr.cppExtractBody(ToolRequest{Tool: "cpp_extract_body", Pattern: "EntityManager::tick"})
 	if body.Error != "" || !strings.Contains(body.Output, "helper();") {
 		t.Fatalf("unexpected cppExtractBody result: %#v", body)
