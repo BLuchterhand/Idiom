@@ -132,6 +132,12 @@ public class AppTest {
 	if matches := index.FindSymbols("public sealed interface SealedService", 4); len(matches) == 0 || matches[0].Name != "SealedService" {
 		t.Fatalf("expected declaration-shaped sealed interface search to find SealedService, got %#v", matches)
 	}
+	if matches := index.FindSymbols("public void run()", 4); len(matches) == 0 || matches[0].Name != "run" {
+		t.Fatalf("expected declaration-shaped method search to find run, got %#v", matches)
+	}
+	if matches := index.FindSymbols("private int compute()", 4); len(matches) == 0 || matches[0].Name != "compute" {
+		t.Fatalf("expected declaration-shaped private method search to find compute, got %#v", matches)
+	}
 
 	impls := index.Implementations("Service", 8)
 	if len(impls) == 0 {
