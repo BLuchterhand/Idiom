@@ -511,7 +511,10 @@ If `project_root` is set, the app auto-discovers these files in order:
 - `AGENTS.md`
 - `CLAUDE.md`
 
-You can also add explicit paths with `project_prompt_files`.
+Use `project_prompt_candidates` to replace that auto-discovery list. Set it to
+`[]` when you want a compact prompt surface made only from
+`project_prompt_files`. You can also add explicit paths with
+`project_prompt_files`.
 
 ## Notes
 

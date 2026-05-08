@@ -207,7 +207,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "discovery_query",
-			Description: "Run a deterministic layered discovery recipe for a configured purpose and persist the full evidence packet under .idiom/discovery/queries. Uses a fresh context graph for orientation when available, then falls back to live probes for stale, missing, or too-coarse claims.",
+			Description: "Run a deterministic layered discovery recipe for a configured purpose and persist the full evidence packet under .idiom/discovery/queries. Uses context_pack orientation when the graph is fresh or a bounded stale scope can be refreshed, then falls back to live probes for stale, missing, or too-coarse claims.",
 			ParametersJSON: schemaObj(
 				[]string{"purpose"},
 				`"purpose":{"type":"string","enum":["impact_analysis","function_tracing","architecture_boundary","security_review","history_context"],"description":"deterministic recipe to run"},"path":`+strProp("optional target file/directory")+`,"pattern":`+strProp("optional symbol, function, type, package, or search pattern")+`,"language":`+strProp("optional language/ecosystem hint, e.g. go, typescript, python, cpp, rust, java")+`,"max_depth":`+intProp("optional relationship depth/budget; default 2"),

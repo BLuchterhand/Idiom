@@ -109,6 +109,7 @@ func (r *Runner) Run(
 	exactAnchorHiddenTools := make(map[string]bool)
 	exactAnchorWriteOnlyActive := exactAnchorImplementationActive(r.RuntimeBrief)
 	exactAnchorWriteFailures := 0
+	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
 	rebuildTools := func() {
 		if r.Workspace == nil {
 			return
@@ -153,14 +154,13 @@ func (r *Runner) Run(
 			allowed = filtered
 		}
 		tools := buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
-		// Schema-level enforcement of the post-readiness contract: once
-		// the lane has reached answer readiness or received a child
-		// packet, mark named_gap and why_not_answering as required on
-		// every read-class tool. Missing fields fail at the model's
-		// tool-call decoder instead of being chased through prose
-		// rejections that the model has been ignoring on the first
-		// post-readiness call.
-		if delegatedReadOnlyAnswerReady || postChildPacketActive {
+		// Schema-level enforcement of closure-biased contracts: once the
+		// lane has reached answer readiness, received a child packet, or
+		// is in a write-ready implementation packet, mark named_gap and
+		// why_not_answering as required on every read-class tool. Missing
+		// fields fail at the model's tool-call decoder instead of being
+		// chased only through prose rejections.
+		if delegatedReadOnlyAnswerReady || postChildPacketActive || writeReadyPacketReadContractActive(r.RuntimeBrief, collectedResults) {
 			tools = applyPostReadinessSchemaRequirements(tools)
 		}
 		opts.Tools = tools
@@ -178,7 +178,6 @@ func (r *Runner) Run(
 	metrics := runnerMetrics{startedAt: time.Now()}
 	stopReason := "completed"
 	budgetExhausted := false
-	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
 	acceptedAnswerSignalsEmitted := false
 	completionStatusEmitted := false
 	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
@@ -344,6 +343,10 @@ func (r *Runner) Run(
 		modelStart := time.Now()
 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, turnMessages, opts)
 		if err != nil {
+			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, collectedResults); ok {
+				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
+				return finish(answer, nil, "model_error_after_partial_edit", false)
+			}
 			return finish("", err, "model_error", false)
 		}
 		metrics.addUsage(assistantMessage.Usage)
@@ -438,6 +441,29 @@ func (r *Runner) Run(
 			}
 			continue
 		}
+		if summary, errorText, prompt, reject := r.writeReadyPacketReadWithoutGapRecovery(req, collectedResults); reject {
+			result := workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: summary,
+				Error:   errorText,
+			}
+			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+			implementationWriteOnlyRecoveryActive = true
+			markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
+			hideReadClassToolsForTurn(turnHiddenTools, r.Workspace)
+			rebuildTools()
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "implementation_write_only_recovery", Content: prompt})
+			continue
+		}
+		if implementationWriteOnlyRecoveryActive && isReadClassTool(req) {
+			decision := runnerRequestBudgetDecision{ForceAnswerReason: "read_budget_exhausted"}
+			if answer, ok := r.implementationReadBudgetBlockerAnswer(decision, collectedResults); ok {
+				blockerKind := r.implementationReadBudgetBlockerKind(collectedResults)
+				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+				return finish(answer, nil, blockerKind, true)
+			}
+		}
 		if turnHiddenTools[strings.TrimSpace(req.Tool)] {
 			hiddenSummary := "Tool hidden by active contract"
 			hiddenError := fmt.Sprintf("%s is hidden for the rest of this turn by the active runtime contract. Use an available tool, or answer with a concrete blocker if the contract prevents completion.", strings.TrimSpace(req.Tool))
@@ -451,14 +477,6 @@ func (r *Runner) Run(
 				if answer, ok := r.exactAnchorHiddenToolBlockerAnswer(req, collectedResults); ok {
 					emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", collectedResults, true)
 					return finish(answer, nil, "exact_anchor_prewrite_hidden_tool_repeated", true)
-				}
-			}
-			if implementationWriteOnlyRecoveryActive && isReadClassTool(req) {
-				decision := runnerRequestBudgetDecision{ForceAnswerReason: "read_budget_exhausted"}
-				if answer, ok := r.implementationReadBudgetBlockerAnswer(decision, collectedResults); ok {
-					blockerKind := r.implementationReadBudgetBlockerKind(collectedResults)
-					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
-					return finish(answer, nil, blockerKind, true)
 				}
 			}
 			answer, err, done := controller.rejectTool(
@@ -1351,7 +1369,150 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 	}
 	brief.EvidencePaths = mergeRunnerStateStrings(brief.EvidencePaths, promptEvidencePathsFromToolResults(results, 8))
 	brief.ChangedPaths = mergeRunnerStateStrings(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
-	return runnerBriefWithPhaseHints(brief, results)
+	brief = runnerBriefWithPhaseHints(brief, results)
+	brief.Readiness = runnerReadinessState(r.agentName(), brief, results)
+	return workerruntime.NormalizeRuntimeBrief(brief)
+}
+
+func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) *workerruntime.ReadinessState {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	readiness := &workerruntime.ReadinessState{}
+	addClosed := func(values ...string) {
+		readiness.ClosedClaims = mergeRunnerStateStrings(readiness.ClosedClaims, values)
+	}
+	addOpen := func(values ...string) {
+		readiness.OpenObligations = mergeRunnerStateStrings(readiness.OpenObligations, values)
+	}
+	addSource := func(values ...string) {
+		readiness.EvidenceSources = mergeRunnerStateStrings(readiness.EvidenceSources, values)
+	}
+
+	if len(brief.TargetRefs) > 0 {
+		addSource("prompt_target_refs")
+	}
+	if len(brief.TargetPacket) > 0 {
+		addSource("context_packet")
+		addClosed("context_packet_available")
+	}
+	if len(brief.EvidencePaths) > 0 {
+		addSource("evidence_paths")
+	}
+	if len(brief.RequiredEditPaths) > 0 {
+		addSource("required_edit_paths")
+		addClosed("required_edit_paths_define_write_scope")
+	}
+	if len(brief.RequiredEditSnippets) > 0 {
+		addSource("required_edit_snippets")
+		addClosed("required_edit_snippets_available")
+	}
+	if len(results) > 0 {
+		addSource("tool_results")
+	}
+	if delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
+		addSource("discovery_packet")
+		addClosed("composite_discovery_packet_available")
+	}
+	if delegatedReadOnlyClosureReady(agent, brief, results) {
+		readiness.ReadyToAnswer = true
+		addClosed("answer_readiness_reached")
+		readiness.FurtherReadsRequire = "one exact missing claim, one exact probe, and why the current evidence would be materially incomplete"
+	}
+	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
+		readiness.ReadyToAnswer = true
+		addClosed("child_packet_available")
+		readiness.FurtherReadsRequire = "one exact packet-anchored missing claim and one exact probe"
+	}
+
+	changed := changedPathsFromToolResults(results)
+	if len(changed) > 0 {
+		addSource("changed_paths")
+		addClosed("workspace_changes_present")
+	}
+	if hasSuccessfulVerificationResult(results) {
+		addSource("verification_result")
+		addClosed("verification_result_observed")
+	}
+	if sourceEditsAreSemanticallyVerified(brief, results) {
+		addClosed("source_aware_verification_after_source_edit")
+	}
+
+	if runnerBriefRequiresMutation(brief) {
+		missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
+		switch {
+		case len(brief.RequiredEditPaths) > 0 && len(changed) == 0:
+			readiness.ReadyToAnswer = false
+			readiness.ReadyToWrite = true
+			addOpen("required_edit_paths_not_changed")
+			readiness.FurtherReadsRequire = "one exact edit-safety gap named with named_gap; otherwise edit an in-scope required path or report <<QUESTION>>"
+		case len(missing) > 0:
+			readiness.ReadyToAnswer = false
+			readiness.ReadyToWrite = true
+			addOpen("required_edit_paths_remaining: " + strings.Join(missing, ", "))
+			readiness.FurtherReadsRequire = "one exact blocker or edit-safety gap for a remaining required path"
+		case len(brief.RequiredEditPaths) > 0:
+			addClosed("required_edit_paths_changed")
+		case len(changed) == 0 && targetPacketSupportsWrite(brief):
+			readiness.ReadyToWrite = true
+			addOpen("workspace_change_not_attempted")
+			readiness.FurtherReadsRequire = "one exact edit-safety gap grounded in the context packet"
+		}
+
+		switch {
+		case hasPendingVerificationAfterWrites(results, brief.VerificationContract):
+			readiness.ReadyToAnswer = false
+			if plannerOwnsVerification(brief) {
+				if sourceVerificationGateApplies(brief, results) {
+					addOpen("planner_owned_source_lane_sanity_pending")
+				} else {
+					addOpen("planner_owned_verification_status_pending")
+				}
+			} else {
+				readiness.ReadyToVerify = true
+				if sourceVerificationGateApplies(brief, results) {
+					addOpen("source_aware_verification_pending")
+				} else {
+					addOpen("verification_pending_after_write")
+				}
+			}
+		case sourceEditsNeedSemanticVerification(brief, results):
+			if plannerOwnsVerification(brief) {
+				readiness.ReadyToAnswer = true
+				addOpen("planner_owned_source_verification_status_required")
+				readiness.FurtherReadsRequire = "one exact diagnostics gap; otherwise answer with changed paths and the planner-owned verification status"
+			} else {
+				readiness.ReadyToAnswer = false
+				readiness.ReadyToVerify = true
+				addOpen("source_aware_verification_pending")
+			}
+		case len(changed) > 0 && len(missing) == 0:
+			readiness.ReadyToAnswer = true
+		}
+	} else if runnerVerificationRequired(brief) && !hasSuccessfulVerificationResult(results) {
+		readiness.ReadyToAnswer = false
+		readiness.ReadyToVerify = true
+		addOpen("verification_result_missing")
+	} else if readOnlyAnalysisReadyFromEvidence(results) {
+		readiness.ReadyToAnswer = true
+		addClosed("read_only_evidence_ready")
+		readiness.FurtherReadsRequire = "one exact missing claim and one exact bounded probe"
+	}
+
+	return workerruntime.NormalizeReadinessState(readiness)
+}
+
+func targetPacketSupportsWrite(brief workerruntime.WorkerRuntimeBrief) bool {
+	return len(brief.TargetPacket) > 0 &&
+		(len(brief.TargetRefs) > 0 ||
+			len(brief.EvidencePaths) > 0 ||
+			len(brief.RequiredEditPaths) > 0 ||
+			len(brief.RequiredEditSnippets) > 0)
+}
+
+func readOnlyAnalysisReadyFromEvidence(results []workspace.ToolResult) bool {
+	if delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
+		return readOnlyAnalysisExactProbeCount(results) >= 1 && len(promptEvidencePathsFromToolResults(results, 6)) >= 2
+	}
+	return readOnlyAnalysisExactProbeCount(results) >= 2 && len(promptEvidencePathsFromToolResults(results, 6)) >= 1
 }
 
 func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
@@ -3265,6 +3426,13 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 			Error:   "required edit path(s) were not changed: " + quotedRunnerStrings(missing) + ". Make the required edits, or state a concrete blocker/no-op reason for the skipped path(s).",
 		}, true
 	}
+	if removed := r.unreportedRemovedTestDeclarations(reply, results); len(removed) > 0 {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected silent test removal",
+			Error:   "git diff shows existing test declaration(s) removed without the final answer reporting them: " + quotedRunnerStrings(removed) + ". If the removal is intentional, report each removed test with verification status; otherwise restore the deleted test or fix the edit boundary.",
+		}, true
+	}
 	if missing := r.missingRequiredEditSnippets(results); len(missing) > 0 {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
@@ -3625,12 +3793,45 @@ func (r *Runner) readBudgetPolicyForCurrentState(policy RunPolicy, results []wor
 	}
 	changed := changedPathsFromToolResults(results)
 	if len(changed) == 0 {
+		if writeReadyPacketReadContractActive(r.RuntimeBrief, results) {
+			return clampReadBudgetHard(policy, writeReadyPacketPrewriteReadBudgetHard)
+		}
 		return clampReadBudgetHard(policy, requiredEditPathPrewriteReadBudgetHard)
 	}
 	if len(missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changed)) > 0 {
 		return clampReadBudgetHard(policy, requiredEditPathRemainderReadBudgetHard)
 	}
 	return policy
+}
+
+func writeReadyPacketReadContractActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !runnerBriefRequiresMutation(brief) || len(brief.RequiredEditPaths) == 0 {
+		return false
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
+		return false
+	}
+	return targetPacketSupportsWrite(brief) || len(brief.RequiredEditSnippets) > 0
+}
+
+func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+	if r == nil || !writeReadyPacketReadContractActive(r.RuntimeBrief, results) || !isReadClassTool(req) {
+		return "", "", "", false
+	}
+	if postReadinessGap(req) != "" {
+		return "", "", "", false
+	}
+	missing := r.remainingRequiredEditPaths(results)
+	target := "the required edit path(s)"
+	if len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
+		target = strings.Join(paths, ", ")
+	}
+	summary = "Write-ready implementation read rejected"
+	errorText = fmt.Sprintf("the target packet and required_edit_paths already establish the write scope for %s. A pre-write read/search must include named_gap describing one exact edit-safety fact; this request had no named_gap.", target)
+	prompt = fmt.Sprintf("The implementation packet is write-ready for %s, and the attempted read/search did not name an edit-safety gap. Read/search tools are now hidden for this turn. Use the packet and gathered evidence to make the smallest safe edit to each remaining required path with edit_file, write_file, append_file, or apply_patch. If a remaining path genuinely cannot be edited safely from the packet, answer with <<QUESTION>> and name the exact missing anchor or stale fact; do not perform additional discovery.", target)
+	return summary, errorText, prompt, true
 }
 
 func clampReadBudgetHard(policy RunPolicy, ceiling int) RunPolicy {
@@ -4099,7 +4300,7 @@ func isContentInspectionTool(tool string) bool {
 		"go_find_const", "go_workspace_symbol", "go_definition", "go_references",
 		"go_implementations", "go_calls_from", "go_calls_into", "go_extract_body",
 		"go_related_files", "go_find_package", "go_importers", "go_diagnostics",
-		"cpp_find_symbol", "cpp_read_symbol", "cpp_workspace_symbol",
+		"cpp_file_outline", "cpp_find_symbol", "cpp_read_symbol", "cpp_workspace_symbol",
 		"cpp_definition", "cpp_declaration", "cpp_implementations",
 		"cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body",
 		"cpp_related_files", "cpp_includes", "cpp_who_includes",
@@ -4138,7 +4339,7 @@ func isReadClassTool(req workspace.ToolRequest) bool {
 		"go_importers", "go_workspace_symbol",
 		"go_definition", "go_references", "go_implementations",
 		"go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
-		"cpp_overview", "cpp_entrypoints", "cpp_find_symbol", "cpp_read_symbol",
+		"cpp_overview", "cpp_entrypoints", "cpp_find_symbol", "cpp_file_outline", "cpp_read_symbol",
 		"cpp_related_files", "cpp_definition", "cpp_declaration", "cpp_implementations",
 		"cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body",
 		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol",
@@ -7124,6 +7325,169 @@ func (r *Runner) missingRequiredEditSnippets(results []workspace.ToolResult) []s
 	return missing
 }
 
+func (r *Runner) unreportedRemovedTestDeclarations(reply string, results []workspace.ToolResult) []string {
+	removed := r.removedTestDeclarations(results)
+	if len(removed) == 0 || replyReportsRemovedTests(reply, removed) {
+		return nil
+	}
+	return removed
+}
+
+func (r *Runner) removedTestDeclarations(results []workspace.ToolResult) []string {
+	if r == nil || r.Workspace == nil {
+		return nil
+	}
+	root := strings.TrimSpace(r.Workspace.Root())
+	if root == "" {
+		return nil
+	}
+	var paths []string
+	for _, path := range mapKeys(changedPathsFromToolResults(results)) {
+		if testSourcePathCanRemoveDeclarations(path) {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"diff", "--unified=0", "--"}, paths...)
+	diff, err := gitCombinedOutput(context.Background(), root, args...)
+	if err != nil || strings.TrimSpace(diff) == "" {
+		return nil
+	}
+	return removedTestDeclarationsFromDiff(diff)
+}
+
+func testSourcePathCanRemoveDeclarations(path string) bool {
+	if !sourcePathNeedsSemanticVerification(path) {
+		return false
+	}
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	base := filepath.Base(lower)
+	return strings.Contains(lower, "/test/") ||
+		strings.Contains(lower, "/tests/") ||
+		strings.Contains(base, "test") ||
+		strings.Contains(base, "spec")
+}
+
+func removedTestDeclarationsFromDiff(diff string) []string {
+	type testDecl struct {
+		display string
+		count   int
+	}
+	removed := make(map[string]testDecl)
+	added := make(map[string]int)
+	for _, rawLine := range strings.Split(diff, "\n") {
+		line := strings.TrimRight(rawLine, "\r")
+		switch {
+		case strings.HasPrefix(line, "---"):
+			continue
+		case strings.HasPrefix(line, "+++"):
+			continue
+		case strings.HasPrefix(line, "-"):
+			key, display, ok := testDeclarationFromLine(strings.TrimSpace(strings.TrimPrefix(line, "-")))
+			if !ok {
+				continue
+			}
+			entry := removed[key]
+			entry.display = display
+			entry.count++
+			removed[key] = entry
+		case strings.HasPrefix(line, "+"):
+			key, _, ok := testDeclarationFromLine(strings.TrimSpace(strings.TrimPrefix(line, "+")))
+			if ok {
+				added[key]++
+			}
+		}
+	}
+	var missing []string
+	for key, entry := range removed {
+		if added[key] >= entry.count {
+			continue
+		}
+		missing = append(missing, entry.display)
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+var (
+	cppCatchTestCasePattern = regexp.MustCompile(`\b(TEST_CASE|SCENARIO)\s*\(\s*"([^"]+)"`)
+	cppGTestPattern         = regexp.MustCompile(`\b(?:TEST|TEST_F|TEST_P)\s*\(\s*([A-Za-z_][\w:]*|"[^"]+")\s*,\s*([A-Za-z_][\w:]*|"[^"]+")`)
+	goTestFuncPattern       = regexp.MustCompile(`^func\s+(Test[A-Za-z0-9_]+)\s*\(`)
+	pythonTestFuncPattern   = regexp.MustCompile(`^def\s+(test_[A-Za-z0-9_]+)\s*\(`)
+	jsTestCallPattern       = regexp.MustCompile(`\b(?:describe|it|test)\s*\(\s*['"]([^'"]+)['"]`)
+	rustTestFuncPattern     = regexp.MustCompile(`^fn\s+(test_[A-Za-z0-9_]+)\s*\(`)
+)
+
+func testDeclarationFromLine(line string) (key string, display string, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", "", false
+	}
+	if match := cppCatchTestCasePattern.FindStringSubmatch(line); len(match) == 3 {
+		return "cpp:" + strings.ToLower(match[1]+":"+match[2]), match[1] + ` "` + match[2] + `"`, true
+	}
+	if match := cppGTestPattern.FindStringSubmatch(line); len(match) == 3 {
+		suite := strings.Trim(match[1], `"`)
+		name := strings.Trim(match[2], `"`)
+		return "gtest:" + strings.ToLower(suite+"."+name), "TEST " + suite + "." + name, true
+	}
+	if match := goTestFuncPattern.FindStringSubmatch(line); len(match) == 2 {
+		return "go:" + strings.ToLower(match[1]), "func " + match[1], true
+	}
+	if match := pythonTestFuncPattern.FindStringSubmatch(line); len(match) == 2 {
+		return "python:" + strings.ToLower(match[1]), "def " + match[1], true
+	}
+	if match := jsTestCallPattern.FindStringSubmatch(line); len(match) == 2 {
+		return "js:" + strings.ToLower(match[1]), `test "` + match[1] + `"`, true
+	}
+	if match := rustTestFuncPattern.FindStringSubmatch(line); len(match) == 2 {
+		return "rust:" + strings.ToLower(match[1]), "fn " + match[1], true
+	}
+	return "", "", false
+}
+
+func replyReportsRemovedTests(reply string, removed []string) bool {
+	lower := strings.ToLower(reply)
+	if !containsAny(lower, "removed test", "deleted test", "dropped test", "removed existing test", "test removal", "removed tests", "deleted tests", "dropped tests") {
+		return false
+	}
+	for _, declaration := range removed {
+		if !replyMentionsRemovedTestDeclaration(lower, declaration) {
+			return false
+		}
+	}
+	return true
+}
+
+func replyMentionsRemovedTestDeclaration(lowerReply string, declaration string) bool {
+	for _, term := range removedTestDeclarationTerms(declaration) {
+		if strings.Contains(lowerReply, strings.ToLower(term)) {
+			return true
+		}
+	}
+	return false
+}
+
+func removedTestDeclarationTerms(declaration string) []string {
+	declaration = strings.TrimSpace(declaration)
+	if declaration == "" {
+		return nil
+	}
+	terms := []string{declaration}
+	if start := strings.Index(declaration, `"`); start >= 0 {
+		if end := strings.LastIndex(declaration, `"`); end > start {
+			terms = append(terms, declaration[start+1:end])
+		}
+	}
+	fields := strings.Fields(declaration)
+	if len(fields) > 1 {
+		terms = append(terms, fields[len(fields)-1])
+	}
+	return terms
+}
+
 func requiredEditSnippetCandidatePaths(snippet workerruntime.RequiredEditSnippet, required []string, changed map[string]struct{}) []string {
 	if path := normalizeRunnerPath(snippet.Path); path != "" {
 		return []string{path}
@@ -8059,6 +8423,35 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func (r *Runner) modelErrorAfterPartialEditBlockerAnswer(modelErr error, results []workspace.ToolResult) (string, bool) {
+	if r == nil || modelErr == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return "", false
+	}
+	if len(changedPathsFromToolResults(results)) == 0 {
+		return "", false
+	}
+	detail := strings.TrimSpace(modelErr.Error())
+	if detail == "" {
+		detail = "model transport failed"
+	}
+	fallback := strings.TrimSpace(synthesizeMutationFallbackAnswer(r.RuntimeBrief, results))
+	if strings.HasPrefix(fallback, "<<QUESTION>>:") {
+		if _, remainder, ok := strings.Cut(fallback, "\n\n"); ok {
+			fallback = strings.TrimSpace(remainder)
+		} else {
+			fallback = ""
+		}
+	}
+	var b strings.Builder
+	b.WriteString("<<QUESTION>>: Local model endpoint failed after workspace edits before implementation closeout: ")
+	b.WriteString(detail)
+	b.WriteString("\n\n")
+	if fallback != "" {
+		b.WriteString(fallback)
+	}
+	return strings.TrimSpace(b.String()), true
 }
 
 func latestSuccessfulVerificationSummary(results []workspace.ToolResult) (string, bool) {

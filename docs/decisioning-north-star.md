@@ -35,6 +35,14 @@ semantics in model-readable language:
 - what counts as completion, verification, no-op, or blocker
 - which obligations are planner-owned, lane-owned, or host-owned
 
+Readiness state is harness-computed observable state, not a model self-grade.
+It should summarize closed claims, open obligations, evidence sources, and
+coarse readiness classes such as answer, write, or verify. It may be computed
+from tool results, prompt-provided context packets, architect packets,
+discovery packets, exact anchors, changed paths, and verification results. It
+must not prescribe the exact next tool unless a hard invariant is being
+enforced.
+
 Use deterministic checks for the invariant boundary:
 
 - required edit paths must be changed or explicitly blocked

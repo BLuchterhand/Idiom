@@ -212,6 +212,130 @@ func TestMutationCompletionGateRequiresRequiredEditSnippets(t *testing.T) {
 	}
 }
 
+func TestMutationCompletionGateRejectsSilentRemovedTestDeclaration(t *testing.T) {
+	root := t.TempDir()
+	target := "native/tests/test_transport_system.cpp"
+	initial := `#include <catch2/catch_test_macros.hpp>
+
+TEST_CASE("loader reserves assigned carts") {
+	CHECK(true);
+}
+
+TEST_CASE("loader job dedupes and reposts while cart still needs loading") {
+	CHECK(true);
+}
+`
+	modified := `#include <catch2/catch_test_macros.hpp>
+
+TEST_CASE("loader reserves assigned carts") {
+	CHECK(true);
+}
+`
+	writeRunnerTestFile(t, root, target, initial)
+	initRunnerTestGitRepo(t, root)
+	writeRunnerTestFile(t, root, target, modified)
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			RequiredEditPaths:    []string{target},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited " + target},
+		{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: target + ": no warnings or errors"},
+	}
+
+	answer := "Changed paths:\n- " + target + "\n\nVerification: cpp_diagnostics passed."
+	result, rejected := runner.mutationCompletionRejection(answer, results)
+	if !rejected || !strings.Contains(result.Summary, "silent test removal") || !strings.Contains(result.Error, "loader job dedupes") {
+		t.Fatalf("expected silent removed test declaration rejection, rejected=%v result=%#v", rejected, result)
+	}
+}
+
+func TestMutationCompletionGateAllowsReportedRemovedTestDeclaration(t *testing.T) {
+	root := t.TempDir()
+	target := "native/tests/test_transport_system.cpp"
+	initial := `#include <catch2/catch_test_macros.hpp>
+
+TEST_CASE("loader reserves assigned carts") {
+	CHECK(true);
+}
+
+TEST_CASE("loader job dedupes and reposts while cart still needs loading") {
+	CHECK(true);
+}
+`
+	modified := `#include <catch2/catch_test_macros.hpp>
+
+TEST_CASE("loader reserves assigned carts") {
+	CHECK(true);
+}
+`
+	writeRunnerTestFile(t, root, target, initial)
+	initRunnerTestGitRepo(t, root)
+	writeRunnerTestFile(t, root, target, modified)
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			RequiredEditPaths:    []string{target},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited " + target},
+		{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: target + ": no warnings or errors"},
+	}
+
+	answer := strings.Join([]string{
+		"Changed paths:",
+		"- " + target,
+		"",
+		"Removed tests:",
+		"- loader job dedupes and reposts while cart still needs loading",
+		"",
+		"Verification: cpp_diagnostics passed.",
+	}, "\n")
+	if result, rejected := runner.mutationCompletionRejection(answer, results); rejected {
+		t.Fatalf("expected reported test removal to pass mutation completion, got %#v", result)
+	}
+}
+
+func writeRunnerTestFile(t *testing.T, root string, path string, content string) {
+	t.Helper()
+	abs := filepath.Join(root, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(abs), err)
+	}
+	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", abs, err)
+	}
+}
+
+func initRunnerTestGitRepo(t *testing.T, root string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := gitCombinedOutput(ctx, root, "init"); err != nil {
+		t.Skipf("git unavailable for diff-backed completion gate test: %v", err)
+	}
+	for _, args := range [][]string{
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test User"},
+		{"add", "."},
+		{"commit", "-m", "initial"},
+	} {
+		if _, err := gitCombinedOutput(ctx, root, args...); err != nil {
+			t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+		}
+	}
+}
+
 func TestPatchHygieneAllowsNonSourceCompletion(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -2254,6 +2378,87 @@ func TestToolStepBudgetPartialRequiredEditsEmitsBlockedCompletion(t *testing.T) 
 	}
 }
 
+func TestModelErrorAfterPartialEditReturnsTypedBlocker(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt"} {
+		if err := writeTestFile(root, path, "before\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": `{"tool":"write_file","path":"a.txt","content":"after\n","description":"partial required edit"}`},
+				}},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	var completion runnerCompletionStatus
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "not_required_for_text_mutations",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.txt", "b.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_status" {
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion: %v", err)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update both required files."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run should return typed blocker instead of raw model error: %v", err)
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>: Local model endpoint failed after workspace edits") {
+		t.Fatalf("expected model-error typed blocker, got %q", answer)
+	}
+	for _, want := range []string{"a.txt", "b.txt", "Required edit paths not changed"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected blocker to mention %q, got %q", want, answer)
+		}
+	}
+	if completion.Status != "blocked" || completion.BlockerKind != "model_error_after_partial_edit" || !completion.EditAttempted {
+		t.Fatalf("unexpected completion status: %#v", completion)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a: %v", err)
+	}
+	if string(content) != "after\n" {
+		t.Fatalf("a.txt content = %q", string(content))
+	}
+	if requests != 2 {
+		t.Fatalf("expected write request then EOF model request, got %d requests", requests)
+	}
+}
+
 func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) {
 	root := t.TempDir()
 	var replies []string
@@ -2336,6 +2541,90 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected %d executed reads plus one blocked read request, used %d/%d replies", mutationReadBudgetHard, requests, len(replies))
+	}
+}
+
+func TestMutationReadBudgetRecoveryHidesCppFileOutline(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < mutationReadBudgetHard; i++ {
+		path := fmt.Sprintf("%c.txt", 'a'+rune(i))
+		if err := writeTestFile(root, path, "seed\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	replies := make([]string, 0, mutationReadBudgetHard+2)
+	for i := 0; i < mutationReadBudgetHard; i++ {
+		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":"%c.txt","start_line":1,"end_line":1}`, 'a'+rune(i)))
+	}
+	replies = append(replies,
+		`{"tool":"search_content","path":".","pattern":"still looking"}`,
+		`{"tool":"cpp_file_outline","path":"native/tests/test_energy.cpp"}`,
+	)
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawRecovery bool
+	var cppOutlineResults int
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 12, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "Update the target file.",
+			PermissionProfile: "guarded_workspace_write",
+			TargetRefs:        []string{"native/tests/test_energy.cpp"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_write_only_recovery" {
+				sawRecovery = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update the target file."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "cpp_file_outline" {
+				cppOutlineResults++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") || !strings.Contains(answer, "Read/search budget exhausted") {
+		t.Fatalf("expected implementation budget blocker, got %q", answer)
+	}
+	if !sawRecovery {
+		t.Fatalf("expected write-only recovery nudge")
+	}
+	if cppOutlineResults != 0 {
+		t.Fatalf("cpp_file_outline should be blocked by write-only recovery before execution, got %d result(s)", cppOutlineResults)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d requests, got %d answer=%q", len(replies), requests, answer)
 	}
 }
 
@@ -2639,6 +2928,178 @@ func TestRequiredEditPathPacketUsesTighterPrewriteReadBudget(t *testing.T) {
 	}
 	if string(content) != "changed\n" {
 		t.Fatalf("a.txt content = %q", string(content))
+	}
+}
+
+func TestWriteReadyPacketReadWithoutNamedGapSwitchesToWriteOnlyRecovery(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
+		`{"tool":"write_file","path":"a.txt","content":"after\n","description":"update from packet"}`,
+		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawRecovery bool
+	var successfulReads int
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"a.txt"},
+			TargetPacket:         []string{"prompt_context:verified_current_state"},
+			EvidencePaths:        []string{"a.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_write_only_recovery" {
+				sawRecovery = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt from the packet."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "read_file" && event.Result.Error == "" {
+				successfulReads++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sawRecovery {
+		t.Fatalf("expected write-only recovery after no-gap prewrite read")
+	}
+	if successfulReads != 0 {
+		t.Fatalf("no-gap read should be rejected before execution, got %d successful read(s)", successfulReads)
+	}
+	if !strings.Contains(answer, "a.txt") {
+		t.Fatalf("expected final answer to report changed path, got %q", answer)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a: %v", err)
+	}
+	if string(content) != "after\n" {
+		t.Fatalf("a.txt content = %q", string(content))
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	}
+}
+
+func TestWriteReadyPacketAllowsOneNamedGapProbeThenRecovery(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt"} {
+		if err := writeTestFile(root, path, "before\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1,"named_gap":"verify the replacement line in a.txt before editing","why_not_answering":"the edit would be unsafe if this anchor is stale"}`,
+		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1,"named_gap":"verify a second anchor before editing","why_not_answering":"the edit would be unsafe if this anchor is stale"}`,
+		`{"tool":"write_file","path":"a.txt","content":"after\n","description":"update from packet"}`,
+		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawRecovery bool
+	var successfulReads int
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"a.txt"},
+			TargetPacket:         []string{"prompt_context:verified_current_state"},
+			EvidencePaths:        []string{"a.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_write_only_recovery" {
+				sawRecovery = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt from the packet."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "read_file" && event.Result.Error == "" {
+				successfulReads++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sawRecovery {
+		t.Fatalf("expected write-only recovery after one named prewrite probe")
+	}
+	if successfulReads != 1 {
+		t.Fatalf("expected exactly one successful named prewrite read, got %d", successfulReads)
+	}
+	if !strings.Contains(answer, "a.txt") {
+		t.Fatalf("expected final answer to report changed path, got %q", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
 	}
 }
 
@@ -3144,6 +3605,138 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	}
 	if _, rejected := runner.mutationCompletionRejection("No change needed; already set.", nil); rejected {
 		t.Fatal("expected explicit no-op answer to pass mutation gate")
+	}
+}
+
+func TestRunnerReadinessStateTreatsContextPacketAsWriteReadyEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/tests/test_transport_system.cpp"},
+		TargetPacket:      []string{"prompt_context:context_packet", "prompt_context:verified_current_state"},
+		EvidencePaths:     []string{"native/src/simulation/transport/route_graph.cpp"},
+	}
+	readiness := runnerReadinessState("main", brief, nil)
+	if readiness == nil {
+		t.Fatal("expected readiness state")
+	}
+	if !readiness.ReadyToWrite || readiness.ReadyToAnswer || readiness.ReadyToVerify {
+		t.Fatalf("readiness flags = %#v, want write-ready only", readiness)
+	}
+	for _, want := range []string{"context_packet", "required_edit_paths", "evidence_paths"} {
+		if !slices.Contains(readiness.EvidenceSources, want) {
+			t.Fatalf("expected evidence source %q, got %#v", want, readiness.EvidenceSources)
+		}
+	}
+	if !slices.Contains(readiness.ClosedClaims, "context_packet_available") {
+		t.Fatalf("expected context packet closed claim, got %#v", readiness.ClosedClaims)
+	}
+	if !slices.Contains(readiness.OpenObligations, "required_edit_paths_not_changed") {
+		t.Fatalf("expected required-path open obligation, got %#v", readiness.OpenObligations)
+	}
+	if !strings.Contains(readiness.FurtherReadsRequire, "edit-safety gap") {
+		t.Fatalf("expected edit-safety gap requirement, got %q", readiness.FurtherReadsRequire)
+	}
+}
+
+func TestRunnerReadinessStateDoesNotTreatBarePacketMarkerAsWriteReady(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		TargetPacket:      []string{"prompt_context:current_state"},
+	}
+	readiness := runnerReadinessState("main", brief, nil)
+	if readiness == nil {
+		t.Fatal("expected readiness state to report packet presence")
+	}
+	if readiness.ReadyToWrite {
+		t.Fatalf("bare packet marker without target/evidence paths should not be write-ready: %#v", readiness)
+	}
+}
+
+func TestRunnerReadinessStateRequiresVerificationAfterSourceEdit(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		RequiredEditPaths:    []string{"internal/app/prompt_routing.go"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "edit_file",
+		Summary: "Edited internal/app/prompt_routing.go",
+		Output:  "Updated internal/app/prompt_routing.go",
+	}}
+
+	readiness := runnerReadinessState("main", brief, results)
+	if readiness == nil {
+		t.Fatal("expected readiness state")
+	}
+	if readiness.ReadyToAnswer || !readiness.ReadyToVerify {
+		t.Fatalf("readiness flags = %#v, want verification-ready and not answer-ready", readiness)
+	}
+	if !slices.Contains(readiness.ClosedClaims, "required_edit_paths_changed") {
+		t.Fatalf("expected required edit paths closed, got %#v", readiness.ClosedClaims)
+	}
+	if !slices.Contains(readiness.OpenObligations, "source_aware_verification_pending") {
+		t.Fatalf("expected source-aware verification obligation, got %#v", readiness.OpenObligations)
+	}
+}
+
+func TestRunnerReadinessStateRequiresPlannerOwnedLaneSanityAfterSourceEdit(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		RequiredEditPaths:    []string{"native/src/example.cpp"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Constraints:          []string{"planner_owned_verification"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "edit_file",
+		Summary: "Edited native/src/example.cpp",
+	}}
+
+	readiness := runnerReadinessState("main", brief, results)
+	if readiness == nil {
+		t.Fatal("expected readiness state")
+	}
+	if readiness.ReadyToAnswer || readiness.ReadyToVerify {
+		t.Fatalf("readiness flags = %#v, want pending planner-owned lane sanity", readiness)
+	}
+	if !slices.Contains(readiness.OpenObligations, "planner_owned_source_lane_sanity_pending") {
+		t.Fatalf("expected planner-owned source lane sanity obligation, got %#v", readiness.OpenObligations)
+	}
+}
+
+func TestRunnerReadinessStateAllowsPlannerOwnedSourceCloseoutAfterPatchHygiene(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		RequiredEditPaths:    []string{"native/src/example.cpp"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Constraints:          []string{"planner_owned_verification"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited native/src/example.cpp"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/example.cpp\n"},
+	}
+
+	readiness := runnerReadinessState("main", brief, results)
+	if readiness == nil {
+		t.Fatal("expected readiness state")
+	}
+	if !readiness.ReadyToAnswer || readiness.ReadyToVerify {
+		t.Fatalf("readiness flags = %#v, want answer-ready closeout with planner-owned status", readiness)
+	}
+	if !slices.Contains(readiness.OpenObligations, "planner_owned_source_verification_status_required") {
+		t.Fatalf("expected planner-owned source verification status obligation, got %#v", readiness.OpenObligations)
+	}
+	if !strings.Contains(readiness.FurtherReadsRequire, "diagnostics gap") {
+		t.Fatalf("expected diagnostics-gap follow-up boundary, got %q", readiness.FurtherReadsRequire)
 	}
 }
 

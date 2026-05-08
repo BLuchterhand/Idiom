@@ -151,6 +151,50 @@ func Target(v string) string {
 	}
 }
 
+func TestDiscoveryQueryAutoRefreshesBoundedStaleContext(t *testing.T) {
+	root := seedDiscoveryQueryGoRepo(t)
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		EnableShell:           true,
+		EnableWrites:          true,
+	})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	writeWorkspaceFile(t, filepath.Join(root, "service", "service.go"), `package service
+
+func Target(v string) string {
+	return v + "changed"
+}
+`)
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:     "discovery_query",
+		Purpose:  "impact_analysis",
+		Path:     "service",
+		Pattern:  "Target",
+		Language: "go",
+		MaxDepth: 2,
+	})
+	if result.Error != "" {
+		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
+	}
+	packet := readDiscoveryQueryPacket(t, root, result.Output)
+	if !packetHasLayer(packet, "context_pack") {
+		t.Fatalf("bounded stale context should attempt context_pack refresh, got layers %#v", packetLayerNames(packet))
+	}
+	if packetHasLayer(packet, "target_listing") {
+		t.Fatalf("bounded stale context should refresh and use context graph orientation, got layers %#v", packetLayerNames(packet))
+	}
+	if !packetGapsContain(packet, "fresh context graph supplied target orientation") {
+		t.Fatalf("expected refreshed context orientation gap, got %#v", packet.Gaps)
+	}
+}
+
 func TestDiscoveryQuerySecurityReviewRunsSecurityRecipeWithoutExternalTools(t *testing.T) {
 	root := seedDiscoveryQueryGoRepo(t)
 	mgr := NewManager(config.Workspace{

@@ -307,6 +307,248 @@ Add a new test that wires the existing systems together using local APIs.
 	}
 }
 
+func TestBuildPromptExecutionPlanCapturesRichContextPacketEvidence(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files You May Edit
+
+- native/tests/test_transport_system.cpp
+
+## Context Packet
+
+{
+  "schema": "planning_packet_v2",
+  "candidate_scope": [
+    {"path": "native/src/simulation/transport/route_graph.cpp", "confidence": "high"}
+  ],
+  "evidence": [
+    {"source": "native/src/simulation/transport/route_graph.h", "symbol": "RouteGraph"}
+  ],
+  "anchors": [
+    {"file": "native/tests/test_transport_system.cpp", "line": 42}
+  ]
+}
+
+## Verified Current State
+
+` + "```cpp" + `
+TEST_CASE("routes connect depots") {}
+` + "```" + `
+
+## Required Edits
+
+` + "```cpp" + `
+TEST_CASE("routes reject disconnected depots") {}
+` + "```" + `
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	for _, want := range []string{
+		"prompt_context:context_packet",
+		"prompt_context:verified_current_state",
+		"prompt_context:required_edits",
+		"prompt_context:structured_packet",
+	} {
+		if !slices.Contains(plan.runtimeBrief.TargetPacket, want) {
+			t.Fatalf("expected target packet marker %q, got %#v", want, plan.runtimeBrief.TargetPacket)
+		}
+	}
+	for _, want := range []string{
+		"native/src/simulation/transport/route_graph.cpp",
+		"native/src/simulation/transport/route_graph.h",
+		"native/tests/test_transport_system.cpp",
+	} {
+		if !slices.Contains(plan.runtimeBrief.EvidencePaths, want) {
+			t.Fatalf("expected context evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths)
+		}
+	}
+	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp") {
+		t.Fatalf("expected required edit path from rich packet prompt, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+}
+
+func TestBuildPromptExecutionPlanCapturesColonStyleContextPacketEvidence(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+Context Packet:
+- path: native/src/simulation/transport/route_graph.cpp
+- source: native/src/simulation/transport/route_graph.h
+
+Files To Modify:
+- native/tests/test_transport_system.cpp
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if !slices.Contains(plan.runtimeBrief.TargetPacket, "prompt_context:context_packet") {
+		t.Fatalf("expected colon-style context packet marker, got %#v", plan.runtimeBrief.TargetPacket)
+	}
+	for _, want := range []string{
+		"native/src/simulation/transport/route_graph.cpp",
+		"native/src/simulation/transport/route_graph.h",
+	} {
+		if !slices.Contains(plan.runtimeBrief.EvidencePaths, want) {
+			t.Fatalf("expected colon-style context evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths)
+		}
+	}
+	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp") {
+		t.Fatalf("expected colon-style required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+}
+
+func TestPromptStructuredPacketMarkerRequiresPacketShape(t *testing.T) {
+	if promptHasStructuredPacketMarker(`{"evidence":"one incidental field"}`) {
+		t.Fatal("single generic evidence field should not be enough to mark a structured packet")
+	}
+	if promptHasStructuredPacketMarker(`Document how planning_packet_v2 is named in prompts.`) {
+		t.Fatal("bare planning_packet prose should not mark a structured packet")
+	}
+	if promptHasStructuredPacketMarker(`Document the "schema" for planning_packet_v2 prompts.`) {
+		t.Fatal("planning_packet prose plus quoted schema should not mark a structured packet")
+	}
+	if !promptHasStructuredPacketMarker(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`) {
+		t.Fatal("candidate scope plus evidence should mark a structured packet")
+	}
+}
+
+func TestPromptContextPacketMarkerRequiresSectionContent(t *testing.T) {
+	prompt := `
+Context Packet:
+
+Required Behavior:
+- Explain the route.
+`
+	if markers := promptContextPacketMarkers(prompt); slices.Contains(markers, "prompt_context:context_packet") {
+		t.Fatalf("empty context packet heading should not create marker, got %#v", markers)
+	}
+}
+
+func TestPromptContextPacketMarkerAcceptsTrailingColonPathContent(t *testing.T) {
+	prompt := `
+Context Packet:
+- internal/app/prompt_routing.go:
+`
+	if markers := promptContextPacketMarkers(prompt); !slices.Contains(markers, "prompt_context:context_packet") {
+		t.Fatalf("path content ending in colon should create context packet marker, got %#v", markers)
+	}
+}
+
+func TestPromptContextPacketMarkerAcceptsNestedEvidenceSection(t *testing.T) {
+	prompt := `
+Context Packet:
+Evidence:
+- internal/app/prompt_routing.go
+`
+	if markers := promptContextPacketMarkers(prompt); !slices.Contains(markers, "prompt_context:context_packet") {
+		t.Fatalf("nested evidence should create context packet marker, got %#v", markers)
+	}
+}
+
+func TestBuildPromptExecutionPlanCapturesStructuredRequiredEditPaths(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `{
+  "schema": "planning_packet_v2",
+  "files_to_modify": ["native/tests/test_transport_system.cpp"],
+  "candidate_scope": [{"path": "native/src/simulation/transport/route_graph.cpp"}],
+  "evidence": [{"source": "native/src/simulation/transport/route_graph.h"}]
+}`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if !slices.Contains(plan.runtimeBrief.TargetPacket, "prompt_context:structured_packet") {
+		t.Fatalf("expected structured packet marker, got %#v", plan.runtimeBrief.TargetPacket)
+	}
+	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp") {
+		t.Fatalf("expected structured required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+}
+
+func TestStructuredRequiredEditPathsIgnoresNegativeAllowlistKeys(t *testing.T) {
+	prompt := `{
+  "not_allowed_files": ["native/src/secret.cpp"],
+  "candidate_scope": [{"path": "native/src/simulation/transport/route_graph.cpp"}],
+  "evidence": [{"source": "native/src/simulation/transport/route_graph.h"}]
+}`
+	if got := structuredRequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+		t.Fatalf("negative allowlist-like keys should not define required edit paths, got %#v", got)
+	}
+}
+
+func TestStructuredRequiredEditPathsCapturesYAMLStyleWriteScope(t *testing.T) {
+	prompt := `
+Write Scope:
+- native/tests/test_transport_system.cpp
+
+Evidence:
+- native/src/simulation/transport/route_graph.cpp
+`
+	got := structuredRequiredEditPathsFromPrompt(prompt)
+	if len(got) != 1 || got[0] != "native/tests/test_transport_system.cpp" {
+		t.Fatalf("expected YAML-style write_scope path only, got %#v", got)
+	}
+}
+
+func TestStructuredRequiredEditPathsInlineScalarDoesNotBleed(t *testing.T) {
+	prompt := `
+write_scope: native/tests/test_transport_system.cpp
+evidence: native/src/simulation/transport/route_graph.cpp
+`
+	got := structuredRequiredEditPathsFromPrompt(prompt)
+	if len(got) != 1 || got[0] != "native/tests/test_transport_system.cpp" {
+		t.Fatalf("expected inline write_scope path only, got %#v", got)
+	}
+}
+
+func TestRequiredEditPathsDoNotBleedFromFollowingEvidenceSection(t *testing.T) {
+	prompt := `
+Files To Modify:
+
+Evidence:
+- native/src/simulation/transport/route_graph.cpp
+`
+	if got := requiredEditPathsFromPrompt(prompt); len(got) != 0 {
+		t.Fatalf("empty edit section should not borrow evidence paths, got %#v", got)
+	}
+}
+
+func TestRequiredEditPathsCapturesTrailingColonPathLine(t *testing.T) {
+	prompt := `
+Files To Modify:
+- internal/app/prompt_routing.go:
+`
+	got := requiredEditPathsFromPrompt(prompt)
+	if !slices.Contains(got, "internal/app/prompt_routing.go") {
+		t.Fatalf("expected trailing-colon path to count as required edit path, got %#v", got)
+	}
+}
+
+func TestContextEvidenceDoesNotBleedFromEmptyPacketHeading(t *testing.T) {
+	prompt := `
+Context Packet:
+
+Required Behavior:
+- internal/app/prompt_routing.go
+`
+	if got := promptContextEvidencePaths(prompt); len(got) != 0 {
+		t.Fatalf("empty context packet should not borrow later behavior paths, got %#v", got)
+	}
+}
+
 func TestPromptContainsExactEditAnchorRecognizesStructuredJSONFields(t *testing.T) {
 	prompt := `Apply this exact edit:
 {

@@ -31,6 +31,7 @@
       "coding"
     ],
     "project_root": "",
+    "project_prompt_candidates": null,
     "project_prompt_files": [],
     "preset": "qwen3-coding-preserve",
     "temperature": 0.6,

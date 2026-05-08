@@ -51,6 +51,7 @@ type WorkerRuntimeBrief struct {
 	Constraints          []string              `json:"constraints,omitempty"`
 	RequiredNext         []string              `json:"required_next,omitempty"`
 	InvalidActions       []string              `json:"invalid_actions,omitempty"`
+	Readiness            *ReadinessState       `json:"readiness,omitempty"`
 	Budget               BudgetBrief           `json:"budget,omitempty"`
 }
 
@@ -58,6 +59,16 @@ type RequiredEditSnippet struct {
 	ID      string `json:"id,omitempty"`
 	Path    string `json:"path,omitempty"`
 	Content string `json:"content"`
+}
+
+type ReadinessState struct {
+	ReadyToAnswer       bool     `json:"ready_to_answer"`
+	ReadyToWrite        bool     `json:"ready_to_write"`
+	ReadyToVerify       bool     `json:"ready_to_verify"`
+	ClosedClaims        []string `json:"closed_claims,omitempty"`
+	OpenObligations     []string `json:"open_obligations,omitempty"`
+	EvidenceSources     []string `json:"evidence_sources,omitempty"`
+	FurtherReadsRequire string   `json:"further_reads_require,omitempty"`
 }
 
 type ActionGuidanceInput struct {
@@ -116,6 +127,7 @@ type RunState struct {
 	FailureClass         string              `json:"failure_class,omitempty"`
 	NextActions          []string            `json:"next_actions,omitempty"`
 	InvalidActions       []string            `json:"invalid_actions,omitempty"`
+	Readiness            *ReadinessState     `json:"readiness,omitempty"`
 }
 
 type StepInstruction struct {
@@ -718,13 +730,20 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state.UserBoundaries = uniqueNonEmpty(state.UserBoundaries)
 	state.NextActions = uniqueNonEmpty(state.NextActions)
 	state.InvalidActions = uniqueNonEmpty(state.InvalidActions)
+	state.Readiness = NormalizeReadinessState(state.Readiness)
 	directive := "Use this current-state packet for the next action. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
-	if containsStringValue(state.Constraints, "answer_readiness_reached") || containsStringValue(state.Constraints, "child_packet_available") {
-		directive = "Use this current-state packet for the next action. Prefer answering now; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
-	} else if implementationStateHasRequiredPathsForMutation(state) && len(state.ChangedPaths) == 0 {
+	if implementationStateHasRequiredPathsForMutation(state) && len(state.ChangedPaths) == 0 {
 		directive = "Use this current-state packet for the next action. Required edit paths make this a write-ready implementation packet: read only for one named fact that would make the edit unsafe. If that fact is already resolved, edit an in-scope required path or answer with <<QUESTION>>. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if implementationStateMissingRequiredPaths(state) {
 		directive = "Use this current-state packet for the next action. Required edit paths remain contractual until each one is changed or explicitly blocked. Prefer the remaining edit/blocker over new orientation reads. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+	} else if state.Readiness != nil && state.Readiness.ReadyToVerify {
+		directive = "Use this current-state packet for the next action. The readiness state says verification is the open obligation; resolve verification status or report the concrete blocker before claiming completion. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
+		directive = "Use this current-state packet for the next action. The readiness state says writing is supported by the current packet/evidence; read only for one exact edit-safety gap, otherwise edit or report <<QUESTION>>. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+	} else if state.Readiness != nil && state.Readiness.ReadyToAnswer {
+		directive = "Use this current-state packet for the next action. The readiness state says answering is supported; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+	} else if containsStringValue(state.Constraints, "answer_readiness_reached") || containsStringValue(state.Constraints, "child_packet_available") {
+		directive = "Use this current-state packet for the next action. Prefer answering now; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	}
 	return StepInstruction{
 		CurrentState: state,
@@ -740,6 +759,15 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	}
 	if implementationStateHasRequiredPathsForMutation(state) {
 		directive += " When required_edit_paths are present, treat the packet as the write scope and current source packet; read only for a named edit-safety fact, then edit or report <<QUESTION>>."
+	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
+		directive += " The readiness state says writing is supported by the current packet/evidence; continue only for one exact edit-safety gap, otherwise edit or report <<QUESTION>>."
+	}
+	if state.Readiness != nil &&
+		state.Readiness.ReadyToAnswer &&
+		!state.Readiness.ReadyToWrite &&
+		!state.Readiness.ReadyToVerify &&
+		!implementationStateHasRequiredPathsForMutation(state) {
+		directive += " The readiness state says answering is supported; continue only for one exact missing claim and one exact probe."
 	}
 	return StepInstruction{
 		CurrentState: state,
@@ -821,6 +849,9 @@ func MergeRuntimeBriefIntoStateDelta(brief WorkerRuntimeBrief, state RunState) R
 	state.EvidencePaths = mergeStrings(state.EvidencePaths, brief.EvidencePaths)
 	state.ChangedPaths = mergeStrings(state.ChangedPaths, brief.ChangedPaths)
 	state.Constraints = mergeStrings(state.Constraints, brief.Constraints)
+	if state.Readiness == nil {
+		state.Readiness = cloneReadinessState(brief.Readiness)
+	}
 	if state.Budget == (BudgetBrief{}) {
 		state.Budget = brief.Budget
 	}
@@ -855,6 +886,9 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 	state.EvidencePaths = mergeStrings(state.EvidencePaths, brief.EvidencePaths)
 	state.ChangedPaths = mergeStrings(state.ChangedPaths, brief.ChangedPaths)
 	state.Constraints = mergeStrings(state.Constraints, brief.Constraints)
+	if state.Readiness == nil {
+		state.Readiness = cloneReadinessState(brief.Readiness)
+	}
 	if len(state.AllowedTools) == 0 {
 		state.AllowedTools = append([]string(nil), brief.AllowedTools...)
 	}
@@ -932,6 +966,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.Constraints = uniqueNonEmpty(brief.Constraints)
 	brief.RequiredNext = uniqueNonEmpty(brief.RequiredNext)
 	brief.InvalidActions = uniqueNonEmpty(brief.InvalidActions)
+	brief.Readiness = NormalizeReadinessState(brief.Readiness)
 	if strings.EqualFold(brief.PermissionProfile, "conversation_only") {
 		brief.AllowedTools = nil
 		brief.RequiredTools = nil
@@ -970,6 +1005,47 @@ func normalizeRequiredEditSnippets(snippets []RequiredEditSnippet) []RequiredEdi
 		return nil
 	}
 	return out
+}
+
+func NormalizeReadinessState(readiness *ReadinessState) *ReadinessState {
+	if readiness == nil {
+		return nil
+	}
+	normalized := &ReadinessState{
+		ReadyToAnswer:       readiness.ReadyToAnswer,
+		ReadyToWrite:        readiness.ReadyToWrite,
+		ReadyToVerify:       readiness.ReadyToVerify,
+		ClosedClaims:        uniqueNonEmpty(readiness.ClosedClaims),
+		OpenObligations:     uniqueNonEmpty(readiness.OpenObligations),
+		EvidenceSources:     uniqueNonEmpty(readiness.EvidenceSources),
+		FurtherReadsRequire: strings.TrimSpace(readiness.FurtherReadsRequire),
+	}
+	if !normalized.ReadyToAnswer &&
+		!normalized.ReadyToWrite &&
+		!normalized.ReadyToVerify &&
+		len(normalized.ClosedClaims) == 0 &&
+		len(normalized.OpenObligations) == 0 &&
+		len(normalized.EvidenceSources) == 0 &&
+		normalized.FurtherReadsRequire == "" {
+		return nil
+	}
+	return normalized
+}
+
+func cloneReadinessState(readiness *ReadinessState) *ReadinessState {
+	readiness = NormalizeReadinessState(readiness)
+	if readiness == nil {
+		return nil
+	}
+	return &ReadinessState{
+		ReadyToAnswer:       readiness.ReadyToAnswer,
+		ReadyToWrite:        readiness.ReadyToWrite,
+		ReadyToVerify:       readiness.ReadyToVerify,
+		ClosedClaims:        append([]string(nil), readiness.ClosedClaims...),
+		OpenObligations:     append([]string(nil), readiness.OpenObligations...),
+		EvidenceSources:     append([]string(nil), readiness.EvidenceSources...),
+		FurtherReadsRequire: readiness.FurtherReadsRequire,
+	}
 }
 
 func RenderStepInstruction(instruction StepInstruction) string {
@@ -1058,7 +1134,8 @@ func RuntimeBriefHasContent(brief WorkerRuntimeBrief) bool {
 		len(brief.ReadinessGate) > 0 ||
 		len(brief.DiscoveryExamples) > 0 ||
 		len(brief.TargetPacket) > 0 ||
-		len(brief.VerificationPlan) > 0
+		len(brief.VerificationPlan) > 0 ||
+		NormalizeReadinessState(brief.Readiness) != nil
 }
 
 func RenderFailureFeedbackPacket(packet any) string {

@@ -104,6 +104,8 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 	mode := m.currentMode()
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
 	brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, pathparse.MentionedWorkspacePaths(prompt)...)
+	brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, promptContextEvidencePaths(prompt)...)
+	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptContextPacketMarkers(prompt)...)
 	if required := requiredEditPathsFromPrompt(prompt); len(required) > 0 {
 		brief.RequiredEditPaths = appendUniqueBriefStrings(brief.RequiredEditPaths, required...)
 		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, brief.RequiredEditPaths)...)
@@ -189,7 +191,337 @@ func requiredEditPathsFromPrompt(prompt string) []string {
 		"files allowlist",
 		"source allowlist",
 	}
-	return pathparse.MentionedWorkspacePathsUnderHeadings(prompt, headings...)
+	return appendUniqueBriefStrings(
+		requiredEditPathsUnderPromptHeadings(prompt, headings),
+		structuredRequiredEditPathsFromPrompt(prompt)...,
+	)
+}
+
+func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []string {
+	headingSet := promptHeadingSet(headings)
+	var paths []string
+	active := false
+	sawPath := false
+	for _, rawLine := range strings.Split(prompt, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if _, ok := headingSet[normalizePromptSectionHeading(line)]; ok {
+			active = true
+			sawPath = false
+			continue
+		}
+		if !active {
+			continue
+		}
+		if line == "" {
+			if sawPath {
+				active = false
+			}
+			continue
+		}
+		linePaths := promptPacketWorkspacePaths(line)
+		if len(linePaths) > 0 {
+			sawPath = true
+			paths = appendUniqueBriefStrings(paths, linePaths...)
+			continue
+		}
+		if looksLikePromptSectionBoundary(line) {
+			active = false
+			continue
+		}
+	}
+	return paths
+}
+
+func structuredRequiredEditPathsFromPrompt(prompt string) []string {
+	keys := []string{
+		"files_to_modify",
+		"files_to_edit",
+		"required_edit_paths",
+		"allowed_edit_paths",
+		"editable_files",
+		"allowed_files",
+		"write_scope",
+	}
+	var paths []string
+	active := false
+	activeArray := false
+	for _, rawLine := range strings.Split(prompt, "\n") {
+		line := strings.TrimSpace(rawLine)
+		started := false
+		if !active && structuredEditPathKeyLine(line, keys) {
+			active = true
+			started = true
+			activeArray = strings.Contains(line, "[") && !strings.Contains(line, "]")
+		}
+		if !active {
+			continue
+		}
+		linePaths := promptPacketWorkspacePaths(line)
+		if len(linePaths) > 0 {
+			paths = appendUniqueBriefStrings(paths, linePaths...)
+		}
+		if started && !activeArray {
+			if len(linePaths) > 0 || strings.Contains(line, "]") || strings.Contains(line, "}") {
+				active = false
+				activeArray = false
+			}
+			continue
+		}
+		if structuredEditPathBlockEnded(line, activeArray) {
+			active = false
+			activeArray = false
+		}
+	}
+	return paths
+}
+
+func structuredEditPathKeyLine(line string, keys []string) bool {
+	normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(strings.TrimSpace(line)))
+	for _, key := range keys {
+		switch {
+		case normalized == key:
+			return true
+		case strings.HasPrefix(normalized, key+":") || strings.HasPrefix(normalized, key+"="):
+			return true
+		case strings.Contains(normalized, `"`+key+`"`) || strings.Contains(normalized, `'`+key+`'`):
+			return true
+		}
+	}
+	return false
+}
+
+func structuredEditPathBlockEnded(line string, activeArray bool) bool {
+	trimmed := strings.TrimSpace(strings.TrimRight(line, ","))
+	if activeArray {
+		return trimmed == "" || strings.Contains(trimmed, "]") || looksLikePromptSectionBoundary(trimmed)
+	}
+	return trimmed == "" ||
+		strings.Contains(trimmed, "]") ||
+		strings.Contains(trimmed, "}") ||
+		looksLikePromptSectionBoundary(trimmed)
+}
+
+func looksLikePromptSectionBoundary(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "#") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "**") && strings.Contains(strings.TrimPrefix(trimmed, "**"), "**") {
+		return true
+	}
+	return strings.HasSuffix(trimmed, ":")
+}
+
+func promptHeadingSet(headings []string) map[string]struct{} {
+	headingSet := make(map[string]struct{}, len(headings))
+	for _, heading := range headings {
+		if normalized := normalizePromptSectionHeading(heading); normalized != "" {
+			headingSet[normalized] = struct{}{}
+		}
+	}
+	return headingSet
+}
+
+func workspacePathsUnderPromptHeadings(prompt string, headings []string) []string {
+	headingSet := promptHeadingSet(headings)
+	var paths []string
+	active := false
+	sawPath := false
+	for _, rawLine := range strings.Split(prompt, "\n") {
+		line := strings.TrimSpace(rawLine)
+		normalized := normalizePromptSectionHeading(line)
+		if _, ok := headingSet[normalized]; ok {
+			active = true
+			sawPath = false
+			continue
+		}
+		if !active {
+			continue
+		}
+		if line == "" {
+			if sawPath {
+				active = false
+			}
+			continue
+		}
+		linePaths := promptPacketWorkspacePaths(line)
+		if len(linePaths) > 0 {
+			sawPath = true
+			paths = appendUniqueBriefStrings(paths, linePaths...)
+			continue
+		}
+		if looksLikePromptSectionBoundary(line) {
+			active = false
+			continue
+		}
+	}
+	return paths
+}
+
+func promptPacketWorkspacePaths(text string) []string {
+	paths := appendUniqueBriefStrings(nil, pathparse.MentionedWorkspacePaths(text)...)
+	for _, fragment := range pathparse.QuotedFragments(text) {
+		path, ok := pathparse.NormalizeWorkspacePathToken(fragment)
+		if !ok {
+			continue
+		}
+		paths = appendUniqueBriefStrings(paths, path)
+	}
+	return paths
+}
+
+func promptContextEvidencePaths(prompt string) []string {
+	headings := []string{
+		"verified current state",
+		"current state",
+		"current-state anchors",
+		"source evidence",
+		"context packet",
+		"context pack",
+		"context view",
+		"provided context",
+		"implementation context",
+		"discovery evidence",
+		"evidence",
+		"relevant files",
+		"candidate scope",
+	}
+	paths := workspacePathsUnderPromptHeadings(prompt, headings)
+	for _, heading := range headings {
+		section := markdownSectionByHeading(prompt, heading)
+		if strings.TrimSpace(section) == "" {
+			continue
+		}
+		paths = appendUniqueBriefStrings(paths, promptPacketWorkspacePaths(section)...)
+	}
+	return paths
+}
+
+func promptHasSectionHeading(prompt string, heading string) bool {
+	if strings.TrimSpace(markdownSectionByHeading(prompt, heading)) != "" {
+		return true
+	}
+	want := normalizePromptSectionHeading(heading)
+	if want == "" {
+		return false
+	}
+	inFence := false
+	fence := ""
+	lines := strings.Split(prompt, "\n")
+	for i, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if marker, _, ok := markdownFenceOpen(line); ok {
+			if !inFence {
+				inFence = true
+				fence = marker
+			} else if strings.HasPrefix(line, fence) {
+				inFence = false
+				fence = ""
+			}
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if normalizePromptSectionHeading(line) == want {
+			if loosePromptSectionHasContent(lines, i+1) {
+				return true
+			}
+			continue
+		}
+	}
+	return false
+}
+
+func loosePromptSectionHasContent(lines []string, start int) bool {
+	if start < 0 || start >= len(lines) {
+		return false
+	}
+	for _, rawLine := range lines[start:] {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		if len(promptPacketWorkspacePaths(line)) > 0 {
+			return true
+		}
+		if looksLikePromptSectionBoundary(line) {
+			return isPromptPacketNestedSection(line)
+		}
+		return true
+	}
+	return false
+}
+
+func isPromptPacketNestedSection(line string) bool {
+	switch normalizePromptSectionHeading(line) {
+	case "anchors",
+		"candidate scope",
+		"context",
+		"context evidence",
+		"current state",
+		"evidence",
+		"files",
+		"source evidence",
+		"symbols",
+		"target refs",
+		"tests",
+		"verified current state":
+		return true
+	default:
+		return false
+	}
+}
+
+func promptContextPacketMarkers(prompt string) []string {
+	type packetSection struct {
+		heading string
+		marker  string
+	}
+	sections := []packetSection{
+		{heading: "verified current state", marker: "prompt_context:verified_current_state"},
+		{heading: "current state", marker: "prompt_context:current_state"},
+		{heading: "current-state anchors", marker: "prompt_context:current_state_anchors"},
+		{heading: "source evidence", marker: "prompt_context:source_evidence"},
+		{heading: "context packet", marker: "prompt_context:context_packet"},
+		{heading: "context pack", marker: "prompt_context:context_packet"},
+		{heading: "context view", marker: "prompt_context:context_view"},
+		{heading: "provided context", marker: "prompt_context:provided_context"},
+		{heading: "implementation context", marker: "prompt_context:implementation_context"},
+		{heading: "discovery evidence", marker: "prompt_context:discovery_evidence"},
+		{heading: "candidate scope", marker: "prompt_context:candidate_scope"},
+		{heading: "required edits", marker: "prompt_context:required_edits"},
+	}
+	var markers []string
+	for _, section := range sections {
+		if !promptHasSectionHeading(prompt, section.heading) {
+			continue
+		}
+		markers = appendUniqueBriefStrings(markers, section.marker)
+	}
+	if promptHasStructuredPacketMarker(prompt) {
+		markers = appendUniqueBriefStrings(markers, "prompt_context:structured_packet")
+	}
+	return markers
+}
+
+func promptHasStructuredPacketMarker(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	if containsAny(lower, `"context_packet"`, `"context_pack"`) ||
+		(strings.Contains(lower, `"planning_packet`) && strings.Contains(lower, `"schema"`)) {
+		return true
+	}
+	keys := []string{`"context_budget"`, `"candidate_scope"`, `"anchors"`, `"evidence"`, `"files_to_modify"`, `"required_edits"`}
+	count := 0
+	for _, key := range keys {
+		if strings.Contains(lower, key) {
+			count++
+		}
+	}
+	return count >= 2
 }
 
 func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []workerruntime.RequiredEditSnippet {
@@ -304,6 +636,15 @@ func markdownHeading(line string) (int, string, bool) {
 
 func normalizeMarkdownHeadingText(text string) string {
 	text = strings.Trim(strings.ToLower(strings.TrimSpace(text)), ": ")
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func normalizePromptSectionHeading(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.Trim(text, "#*: `\"'")
+	text = strings.TrimSuffix(text, ":")
+	text = strings.ToLower(text)
+	text = strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(text)
 	return strings.Join(strings.Fields(text), " ")
 }
 

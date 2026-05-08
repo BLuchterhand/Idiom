@@ -107,6 +107,56 @@ func TestBuildAutoIncludesGeneratedProjectContext(t *testing.T) {
 	}
 }
 
+func TestBuildEmptyProjectPromptCandidatesDisablesAutoProjectPrompts(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	project := t.TempDir()
+	contextPath := filepath.Join(project, ".idiom", "discovery", "context.md")
+	if err := os.MkdirAll(filepath.Dir(contextPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll discovery: %v", err)
+	}
+	writeFile(t, filepath.Join(project, "AGENTS.md"), "Agents guidance")
+	writeFile(t, filepath.Join(project, "CLAUDE.md"), "Claude guidance")
+	writeFile(t, contextPath, "Compact generated context")
+
+	stack, err := Build(config.Chat{
+		ProjectRoot:             project,
+		ProjectPromptCandidates: []string{},
+		ProjectPromptFiles:      []string{contextPath},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, forbidden := range []string{"Agents guidance", "Claude guidance", "[project behavior: AGENTS.md]", "[project behavior: CLAUDE.md]"} {
+		if strings.Contains(stack.Text, forbidden) {
+			t.Fatalf("expected empty project_prompt_candidates to suppress %q, got:\n%s", forbidden, stack.Text)
+		}
+	}
+	if !strings.Contains(stack.Text, "Compact generated context") {
+		t.Fatalf("expected explicit project prompt file to remain loaded, got:\n%s", stack.Text)
+	}
+}
+
+func TestBuildProjectPromptCandidatesOverrideDefaultAutoList(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	project := t.TempDir()
+	writeFile(t, filepath.Join(project, "IDIOM.md"), "Idiom guidance")
+	writeFile(t, filepath.Join(project, "CLAUDE.md"), "Claude guidance")
+
+	stack, err := Build(config.Chat{
+		ProjectRoot:             project,
+		ProjectPromptCandidates: []string{"IDIOM.md"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(stack.Text, "Idiom guidance") {
+		t.Fatalf("expected configured project prompt candidate to load, got:\n%s", stack.Text)
+	}
+	if strings.Contains(stack.Text, "Claude guidance") || strings.Contains(stack.Text, "[project behavior: CLAUDE.md]") {
+		t.Fatalf("expected configured candidates to exclude CLAUDE.md, got:\n%s", stack.Text)
+	}
+}
+
 func TestBuildAutoIncludesProjectIdiomFile(t *testing.T) {
 	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
 	project := t.TempDir()

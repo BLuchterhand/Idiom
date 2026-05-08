@@ -193,7 +193,7 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 	if status.IndexID != "" {
 		r.packet.ContextIndexID = status.IndexID
 	}
-	if !status.Fresh {
+	if !status.Fresh && boundedContextRefreshScope(ToolRequest{Path: path}) == "" {
 		r.packet.Gaps = append(r.packet.Gaps, "context index is stale; skipped context graph backing and used live discovery layers")
 		return false
 	}

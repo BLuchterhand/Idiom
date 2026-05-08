@@ -469,6 +469,73 @@ func TestRenderStepInstructionIncludesCurrentState(t *testing.T) {
 	}
 }
 
+func TestRenderStepInstructionIncludesReadinessState(t *testing.T) {
+	instruction := BuildStepInstruction(RunState{
+		Lane:  "implement",
+		Phase: "evidence",
+		Step:  2,
+		Readiness: &ReadinessState{
+			ReadyToWrite:        true,
+			ClosedClaims:        []string{"context_packet_available", "context_packet_available"},
+			OpenObligations:     []string{"required_edit_paths_not_changed"},
+			EvidenceSources:     []string{"context_packet", "required_edit_paths"},
+			FurtherReadsRequire: "one exact edit-safety gap",
+		},
+	})
+	rendered := RenderStepInstruction(instruction)
+	for _, want := range []string{
+		`"readiness":`,
+		`"ready_to_write":true`,
+		"context_packet_available",
+		"writing is supported by the current packet/evidence",
+		"one exact edit-safety gap",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected readiness field %q in:\n%s", want, rendered)
+		}
+	}
+	if strings.Count(rendered, "context_packet_available") != 1 {
+		t.Fatalf("expected readiness closed claims to be deduplicated:\n%s", rendered)
+	}
+}
+
+func TestBuildStepInstructionPrioritizesRequiredEditPathsOverAnswerReadiness(t *testing.T) {
+	instruction := BuildStepInstruction(RunState{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Permission:        "guarded_workspace_write",
+		RequiredEditPaths: []string{"internal/app/prompt_routing.go"},
+		Readiness: &ReadinessState{
+			ReadyToAnswer: true,
+		},
+	})
+	if !strings.Contains(instruction.Directive, "Required edit paths make this a write-ready implementation packet") {
+		t.Fatalf("expected required-edit-path directive to win, got %q", instruction.Directive)
+	}
+	if strings.Contains(instruction.Directive, "answering is supported") {
+		t.Fatalf("answer readiness should not override required edit paths: %q", instruction.Directive)
+	}
+}
+
+func TestBuildStepInstructionPrioritizesVerificationOverAnswerReadiness(t *testing.T) {
+	instruction := BuildStepInstruction(RunState{
+		Lane: "implement",
+		Readiness: &ReadinessState{
+			ReadyToAnswer: true,
+			ReadyToVerify: true,
+			OpenObligations: []string{
+				"source_aware_verification_pending",
+			},
+		},
+	})
+	if !strings.Contains(instruction.Directive, "verification is the open obligation") {
+		t.Fatalf("expected verification directive to win, got %q", instruction.Directive)
+	}
+	if strings.Contains(instruction.Directive, "answering is supported") {
+		t.Fatalf("answer readiness should not override verification: %q", instruction.Directive)
+	}
+}
+
 func TestBuildStepInstructionUsesClosureDirective(t *testing.T) {
 	instruction := BuildStepInstruction(RunState{
 		Lane:        "main",

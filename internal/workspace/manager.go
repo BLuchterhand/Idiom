@@ -1217,16 +1217,9 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 		return ToolRequest{}, "", false, nil
 	}
 
-	var req ToolRequest
-	if err := json.Unmarshal([]byte(payload), &req); err != nil {
-		if repaired, ok := repairNumericStringToolFields([]byte(payload)); ok {
-			if repairErr := json.Unmarshal(repaired, &req); repairErr == nil {
-				err = nil
-			}
-		}
-		if err != nil {
-			return ToolRequest{}, payload, true, fmt.Errorf("decode tool request: %w", err)
-		}
+	req, err := DecodeToolRequestJSON([]byte(payload))
+	if err != nil {
+		return ToolRequest{}, payload, true, fmt.Errorf("decode tool request: %w", err)
 	}
 	if strings.TrimSpace(req.Tool) == "" {
 		if repaired, ok := inferMissingToolRequest(req); ok {
@@ -1235,6 +1228,23 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 		return ToolRequest{}, payload, true, fmt.Errorf("tool request is missing tool")
 	}
 	return req, payload, true, nil
+}
+
+// DecodeToolRequestJSON decodes a built-in tool request payload. It accepts a
+// small, safe repair surface for common model JSON-schema slips: numeric fields
+// emitted as decimal strings. Native tool-calls and fenced JSON requests both
+// route through this helper so repair behavior stays consistent.
+func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
+	var req ToolRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		if repaired, ok := repairNumericStringToolFields(payload); ok {
+			if repairErr := json.Unmarshal(repaired, &req); repairErr == nil {
+				return req, nil
+			}
+		}
+		return ToolRequest{}, err
+	}
+	return req, nil
 }
 
 func repairNumericStringToolFields(payload []byte) ([]byte, bool) {

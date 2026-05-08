@@ -116,6 +116,7 @@ func (r *Runner) effectivePolicy() RunPolicy {
 const (
 	mutationReadBudgetHard                  = 8
 	requiredEditPathPrewriteReadBudgetHard  = 5
+	writeReadyPacketPrewriteReadBudgetHard  = 1
 	requiredEditPathRemainderReadBudgetHard = 2
 )
 

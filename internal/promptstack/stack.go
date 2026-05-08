@@ -96,7 +96,7 @@ func build(chat config.Chat, profiles []string, requireExplicit bool) (Stack, er
 	}
 
 	if chat.ProjectRoot != "" {
-		for _, name := range autoProjectPromptCandidates {
+		for _, name := range projectPromptCandidates(chat) {
 			path := filepath.Join(chat.ProjectRoot, name)
 			if err := builder.addFile("project", name, path, false, false); err != nil {
 				return Stack{}, err
@@ -115,6 +115,13 @@ func build(chat config.Chat, profiles []string, requireExplicit bool) (Stack, er
 		Sources:  builder.sources,
 		Warnings: builder.warnings,
 	}, nil
+}
+
+func projectPromptCandidates(chat config.Chat) []string {
+	if chat.ProjectPromptCandidates != nil {
+		return chat.ProjectPromptCandidates
+	}
+	return autoProjectPromptCandidates
 }
 
 func ListProfiles(dir string) ([]string, error) {

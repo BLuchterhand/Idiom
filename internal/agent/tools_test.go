@@ -38,6 +38,29 @@ func TestParseToolCall_BuiltinTypedFields(t *testing.T) {
 	}
 }
 
+func TestParseToolCall_BuiltinRepairsNumericStringFields(t *testing.T) {
+	rawArgs := `{"path":"README.md","start_line":"10","end_line":"12","content":"updated\n","description":"update range"}`
+	call := llama.ToolCall{
+		Function: llama.ToolCallFunc{
+			Name:      "edit_file",
+			Arguments: rawArgs,
+		},
+	}
+	req, ok, err := parseToolCall(call)
+	if err != nil {
+		t.Fatalf("parseToolCall: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected ok=true")
+	}
+	if req.Tool != "edit_file" || req.StartLine != 10 || req.EndLine != 12 {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if string(req.Args) != rawArgs {
+		t.Fatalf("Args should preserve raw model arguments, got %q", string(req.Args))
+	}
+}
+
 func TestParseToolCall_MCPRoutesArgsRaw(t *testing.T) {
 	rawArgs := `{"query":"go 1.24 release notes","numResults":5,"livecrawl":"preferred","customField":42}`
 	call := llama.ToolCall{
