@@ -4044,6 +4044,13 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 
 	matchCount := strings.Count(current, req.OldText)
 	if matchCount == 0 {
+		if containsCaseFoldedSubstring(current, req.OldText) {
+			return ToolResult{
+				Tool:    "edit_file",
+				Summary: "Edit request rejected",
+				Error:   fmt.Sprintf("old_text did not appear in %s, but a case-insensitive match exists. Preserve exact casing from the file when copying anchors, or switch to the start_line/end_line+content form.", m.displayPath(path)),
+			}
+		}
 		return ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
@@ -4226,6 +4233,14 @@ func equalStringSlices(a []string, b []string) bool {
 		}
 	}
 	return true
+}
+
+func containsCaseFoldedSubstring(content string, oldText string) bool {
+	oldText = strings.TrimSpace(oldText)
+	if oldText == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(content), strings.ToLower(oldText))
 }
 
 func minInt(values ...int) int {

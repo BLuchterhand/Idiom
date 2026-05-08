@@ -985,6 +985,19 @@ func (r *Runner) Run(
 			continue
 		}
 
+		if summary, errorText, reject := sourceEditVerificationRejection(req, r.RuntimeBrief, collectedResults); reject {
+			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+			if done {
+				return finish(answer, err, "source_edit_verification_required", true)
+			}
+			continue
+		}
+
+		if prompt, ok := sourceEditCloseoutPrompt(req, r.RuntimeBrief, collectedResults); ok {
+			answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
+			return finish(answer, err, "source_edit_closeout_after_verification", true)
+		}
+
 		if executionState.needsCheckpoint(r.CheckpointPolicy, req) {
 			checkpoint, checkpointErr := CaptureGitCheckpoint(ctx, r.Workspace.Root())
 			if checkpointErr != nil {
@@ -3206,18 +3219,32 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 			Error:   "required edit path(s) were not changed: " + quotedRunnerStrings(missing) + ". Make the required edits, or state a concrete blocker/no-op reason for the skipped path(s).",
 		}, true
 	}
+	if missing := r.missingRequiredEditSnippets(results); len(missing) > 0 {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "required edit snippet(s) are not present after the recorded edits: " + quotedRunnerStrings(missing) + ". Make the missing edit(s), or state a concrete blocker for each skipped required edit.",
+		}, true
+	}
 	if verificationContractSkipsGate(r.RuntimeBrief.VerificationContract) {
 		return workspace.ToolResult{}, false
 	}
 	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief.VerificationContract) {
 		errorText := "workspace changes are present, but the latest successful write is not followed by successful verification. Run the relevant test/build/check command, or state the concrete verification blocker."
 		if plannerOwnsVerification(r.RuntimeBrief) {
-			errorText = "workspace changes are present, but the latest successful write is not followed by lane sanity. This route delegates build/test verification to the planner; run a cheap non-build sanity check such as git diff --check, or state the concrete planner-owned verification blocker."
+			errorText = "workspace changes are present, but the latest successful write is not followed by lane sanity. This route delegates build/test verification to the planner; prefer the edited language's diagnostics when available (for example cpp_diagnostics, go_diagnostics, ts_diagnostics, python_diagnostics, rust_diagnostics, or java_diagnostics). Use git diff --check only as patch-hygiene evidence, or state the concrete planner-owned verification blocker."
 		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
 			Error:   errorText,
+		}, true
+	}
+	if sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "source edits are present, but the available verification is only patch hygiene (`git diff --check`) or no source-aware check. Run language diagnostics, a focused build/test, or state the concrete verification blocker; patch hygiene alone cannot certify source edits.",
 		}, true
 	}
 	return workspace.ToolResult{}, false
@@ -3292,7 +3319,7 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 	b.WriteString("\nMissing completion evidence: ")
 	b.WriteString(reason)
 	if plannerOwnsVerification(r.RuntimeBrief) && hasPendingVerificationAfterWrites(results, r.RuntimeBrief.VerificationContract) {
-		b.WriteString("\n\nRequired next evidence: run lane sanity such as `git diff --check`, or state a concrete planner-owned verification blocker.")
+		b.WriteString("\n\nRequired next evidence: run language diagnostics when available, a focused source-aware check, or state a concrete planner-owned verification blocker. `git diff --check` is only patch hygiene for source edits.")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -6850,6 +6877,138 @@ func missingRequiredEditPaths(required []string, actual map[string]struct{}) []s
 	return missing
 }
 
+func (r *Runner) missingRequiredEditSnippets(results []workspace.ToolResult) []string {
+	if r == nil || r.Workspace == nil {
+		return nil
+	}
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	if len(brief.RequiredEditSnippets) == 0 {
+		return nil
+	}
+	root := strings.TrimSpace(r.Workspace.Root())
+	if root == "" {
+		return nil
+	}
+	changed := changedPathsFromToolResults(results)
+	if len(changed) == 0 {
+		return nil
+	}
+	contentCache := make(map[string]string)
+	var missing []string
+	for i, snippet := range brief.RequiredEditSnippets {
+		candidates := requiredEditSnippetCandidatePaths(snippet, brief.RequiredEditPaths, changed)
+		if len(candidates) == 0 {
+			candidates = mapKeys(changed)
+		}
+		if requiredEditSnippetPresent(root, candidates, snippet.Content, contentCache) {
+			continue
+		}
+		missing = append(missing, requiredEditSnippetName(snippet, i))
+	}
+	return missing
+}
+
+func requiredEditSnippetCandidatePaths(snippet workerruntime.RequiredEditSnippet, required []string, changed map[string]struct{}) []string {
+	if path := normalizeRunnerPath(snippet.Path); path != "" {
+		return []string{path}
+	}
+	var candidates []string
+	seen := make(map[string]struct{})
+	for _, path := range required {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" {
+			continue
+		}
+		if len(changed) > 0 {
+			if _, ok := changed[normalized]; !ok {
+				continue
+			}
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		candidates = append(candidates, normalized)
+	}
+	sort.Strings(candidates)
+	return candidates
+}
+
+func requiredEditSnippetPresent(root string, candidates []string, snippet string, contentCache map[string]string) bool {
+	snippet = strings.TrimSpace(snippet)
+	if snippet == "" {
+		return true
+	}
+	for _, candidate := range candidates {
+		path := normalizeRunnerPath(candidate)
+		if path == "" || filepath.IsAbs(path) {
+			continue
+		}
+		content, ok := contentCache[path]
+		if !ok {
+			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+			if err != nil {
+				continue
+			}
+			content = string(data)
+			contentCache[path] = content
+		}
+		if editSnippetMatchesContent(content, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
+func editSnippetMatchesContent(content string, snippet string) bool {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	snippet = strings.ReplaceAll(strings.TrimSpace(snippet), "\r\n", "\n")
+	if snippet == "" {
+		return true
+	}
+	if strings.Contains(content, snippet) {
+		return true
+	}
+	snippetLines := nonEmptyTrimmedLines(snippet)
+	if len(snippetLines) == 0 {
+		return true
+	}
+	contentLines := nonEmptyTrimmedLines(content)
+	next := 0
+	for _, line := range contentLines {
+		if line != snippetLines[next] {
+			continue
+		}
+		next++
+		if next == len(snippetLines) {
+			return true
+		}
+	}
+	return false
+}
+
+func nonEmptyTrimmedLines(text string) []string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func requiredEditSnippetName(snippet workerruntime.RequiredEditSnippet, index int) string {
+	if id := strings.TrimSpace(snippet.ID); id != "" {
+		return id
+	}
+	if path := strings.TrimSpace(snippet.Path); path != "" {
+		return fmt.Sprintf("required_edit_%d (%s)", index+1, path)
+	}
+	return fmt.Sprintf("required_edit_%d", index+1)
+}
+
 func claimedChangedPathsFromAnswer(reply string) []string {
 	var paths []string
 	seen := make(map[string]struct{})
@@ -7065,6 +7224,189 @@ func resultCountsAsSuccessfulVerification(result workspace.ToolResult) bool {
 		isVerificationCommandText(result.Output)
 }
 
+func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (summary string, errorText string, reject bool) {
+	if !sourceVerificationGateApplies(brief, results) {
+		return "", "", false
+	}
+	latest, ok := latestVerificationAfterLatestSourceWrite(results)
+	if !ok || !verificationResultIsPatchHygieneOnly(latest) {
+		return "", "", false
+	}
+	if isVerificationRequest(req) || workspace.IsWorkspaceWriteTool(req.Tool) || sourceVerificationBoundaryAllowsTool(req.Tool) {
+		return "", "", false
+	}
+	if !workspace.IsBroadInspectionRequest(req) && !workspace.IsNarrowingRequest(req) {
+		return "", "", false
+	}
+	paths := changedSourcePaths(results)
+	if len(paths) == 0 {
+		return "", "", false
+	}
+	return "Source edit verification required",
+		fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no source-aware check at all. Run the relevant diagnostics/build/test command for the edited language (for example cpp_diagnostics, go_diagnostics, ts_diagnostics, python_diagnostics, rust_diagnostics, java_diagnostics, or a focused project build/test), or answer with the concrete verification blocker before doing more reads.", summarizeRunnerPaths(paths, 3)),
+		true
+}
+
+func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if !sourceEditsAreSemanticallyVerified(brief, results) {
+		return "", false
+	}
+	if postReadinessGap(req) != "" {
+		return "", false
+	}
+	if isVerificationRequest(req) || workspace.IsWorkspaceWriteTool(req.Tool) || sourceVerificationBoundaryAllowsTool(req.Tool) {
+		return "", false
+	}
+	if !workspace.IsBroadInspectionRequest(req) && !workspace.IsNarrowingRequest(req) {
+		return "", false
+	}
+	paths := changedSourcePaths(results)
+	if len(paths) == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("Successful source edits are already followed by source-aware verification for %s. The attempted read/search did not name an exact missing claim with `named_gap`, so tools are now disabled. Write the implementation result now: changed paths, verification status, and one concrete blocker only if the verification evidence shows one.", summarizeRunnerPaths(paths, 3)), true
+}
+
+func sourceEditsNeedSemanticVerification(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !sourceVerificationGateApplies(brief, results) {
+		return false
+	}
+	latest, ok := latestVerificationAfterLatestSourceWrite(results)
+	if !ok {
+		return true
+	}
+	return verificationResultIsPatchHygieneOnly(latest)
+}
+
+func sourceVerificationBoundaryAllowsTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "task_ledger", "harness_feedback", "idiom_feedback":
+		return true
+	default:
+		return false
+	}
+}
+
+func sourceEditsAreSemanticallyVerified(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !sourceVerificationGateApplies(brief, results) {
+		return false
+	}
+	latest, ok := latestVerificationAfterLatestSourceWrite(results)
+	return ok && !verificationResultIsPatchHygieneOnly(latest)
+}
+
+func sourceVerificationGateApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !runnerBriefRequiresMutation(brief) || verificationContractSkipsGate(brief.VerificationContract) {
+		return false
+	}
+	return len(changedSourcePaths(results)) > 0
+}
+
+func latestVerificationAfterLatestSourceWrite(results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	var latest workspace.ToolResult
+	found := false
+	seenSourceWrite := false
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if toolResultChangedSourcePath(result) {
+			seenSourceWrite = true
+			found = false
+			latest = workspace.ToolResult{}
+			continue
+		}
+		if seenSourceWrite && resultCountsAsSuccessfulVerification(result) {
+			latest = result
+			found = true
+		}
+	}
+	return latest, found
+}
+
+func verificationResultIsPatchHygieneOnly(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Tool) != "shell" {
+		return false
+	}
+	return shellOutputIsPatchHygieneOnly(result.Output)
+}
+
+func shellOutputIsPatchHygieneOnly(output string) bool {
+	hasPatchHygiene := false
+	hasSourceAware := false
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "$"))
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "git diff --check") {
+			hasPatchHygiene = true
+			continue
+		}
+		if line != "" && isBuildOrTestShellCommand(line) {
+			hasSourceAware = true
+		}
+	}
+	return hasPatchHygiene && !hasSourceAware
+}
+
+func changedSourcePaths(results []workspace.ToolResult) []string {
+	paths := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		for _, path := range changedPathsFromToolResult(result) {
+			normalized := normalizeRunnerPath(path)
+			if normalized == "" || !sourcePathNeedsSemanticVerification(normalized) {
+				continue
+			}
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			paths = append(paths, normalized)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func toolResultChangedSourcePath(result workspace.ToolResult) bool {
+	for _, path := range changedPathsFromToolResult(result) {
+		if sourcePathNeedsSemanticVerification(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func sourcePathNeedsSemanticVerification(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".go", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl", ".tpp",
+		".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs", ".java", ".gd":
+		return true
+	default:
+		return false
+	}
+}
+
+func summarizeRunnerPaths(paths []string, limit int) string {
+	if len(paths) == 0 {
+		return "edited source files"
+	}
+	if limit <= 0 || limit > len(paths) {
+		limit = len(paths)
+	}
+	quoted := make([]string, 0, limit+1)
+	for _, path := range paths[:limit] {
+		quoted = append(quoted, "`"+path+"`")
+	}
+	if len(paths) > limit {
+		quoted = append(quoted, fmt.Sprintf("%d more", len(paths)-limit))
+	}
+	return strings.Join(quoted, ", ")
+}
+
 func isVerificationCommandText(text string) bool {
 	command := strings.ToLower(strings.TrimSpace(text))
 	if command == "" {
@@ -7105,7 +7447,7 @@ func plannerOwnedVerificationShellRejection(req workspace.ToolRequest, brief wor
 		return "", "", false
 	}
 	return "Planner-owned verification shell rejected",
-		"this implementation lane delegates build/test verification to the caller. Use a cheap non-build sanity check such as git diff --check, or answer with the changed paths and the concrete planner-owned verification status.",
+		"this implementation lane delegates build/test verification to the caller. Use language diagnostics when available, use git diff --check only as patch-hygiene evidence, or answer with the changed paths and the concrete planner-owned verification status.",
 		true
 }
 
@@ -7113,7 +7455,7 @@ func verificationRequiredAfterWritesMessage(brief workerruntime.WorkerRuntimeBri
 	summary = "Verification required after workspace edits"
 	if plannerOwnsVerification(brief) {
 		return summary, fmt.Sprintf(
-			"the workspace has %d successful write(s) since the last lane sanity check. This route delegates build/test verification to the planner; do not run build or test commands. Run a cheap non-build sanity check such as git diff --check before more inspection, or answer with the changed paths and the concrete planner-owned verification status.",
+			"the workspace has %d successful write(s) since the last lane sanity check. This route delegates build/test verification to the planner; do not run build or test commands. Prefer language diagnostics when available (for example cpp_diagnostics, go_diagnostics, ts_diagnostics, python_diagnostics, rust_diagnostics, or java_diagnostics); use git diff --check only as patch-hygiene evidence; or answer with the changed paths and the concrete planner-owned verification status.",
 			writesSinceVerification,
 		)
 	}
@@ -7973,9 +8315,9 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 			cmd = strings.TrimSpace(brief.VerificationPlan[0])
 		}
 		if plannerOwnsVerification(brief) {
-			b.WriteString("This implementation turn has successful writes that are still pending lane sanity. Do not inspect or edit again yet. Build/test verification is planner-owned for this route, so run one cheap non-build sanity command now, preferably `")
+			b.WriteString("This implementation turn has successful writes that are still pending lane sanity. Do not inspect or edit again yet. Build/test verification is planner-owned for this route, so run language diagnostics when available; otherwise run one cheap non-build sanity command such as `")
 			b.WriteString(cmd)
-			b.WriteString("`. If lane sanity is forbidden or impossible, answer with the changed paths and the concrete planner-owned verification blocker.\n")
+			b.WriteString("`. For source edits, `git diff --check` is only patch hygiene. If lane sanity is forbidden or impossible, answer with the changed paths and the concrete planner-owned verification blocker.\n")
 			return b.String()
 		}
 		b.WriteString("This implementation turn has successful writes that are still pending verification. Do not inspect or edit again yet. Run one focused verification shell command now, preferably `")

@@ -48,7 +48,7 @@ func TestBuildComposesPromptSourcesAndDeduplicatesFiles(t *testing.T) {
 	}
 }
 
-func TestBuildIncludesOpenCodeStylePromptGuidance(t *testing.T) {
+func TestBuildIncludesNorthStarPromptGuidance(t *testing.T) {
 	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
 	baseline := filepath.Join("..", "..", "prompts", "base.md")
 	profiles := filepath.Join("..", "..", "prompts", "profiles")
@@ -61,14 +61,26 @@ func TestBuildIncludesOpenCodeStylePromptGuidance(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	for _, want := range []string{
-		"Keep a short working checklist",
+		"Runtime briefs and control rails are the authoritative contract",
+		"After the evidence is sufficient, answer",
+		"For non-trivial work, keep visible task state",
 		"Separate read-only analysis from requested mutation",
 		"split it into focused passes and verify each pass",
-		"The `task_ledger` tool drives the plan panel",
+		"Verify writes with evidence that matches the artifact risk",
 		"Return concise final answers",
 	} {
 		if !strings.Contains(stack.Text, want) {
 			t.Fatalf("expected prompt stack to include %q, got:\n%s", want, stack.Text)
+		}
+	}
+	for _, forbidden := range []string{
+		"Verify parent directories before writes",
+		"Aim for ≤3 tool calls",
+		"The `task_ledger` tool drives the plan panel",
+		"standard mode records native graph facts",
+	} {
+		if strings.Contains(stack.Text, forbidden) {
+			t.Fatalf("expected prompt stack to avoid obsolete prompt detail %q, got:\n%s", forbidden, stack.Text)
 		}
 	}
 }

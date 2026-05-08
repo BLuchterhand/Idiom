@@ -219,6 +219,68 @@ enqueue_loader_job_once();
 	}
 }
 
+func TestBuildPromptExecutionPlanCapturesRequiredEditSnippets(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files You May Edit
+
+- native/tests/test_production_graph.cpp
+
+## Verified Current State
+
+` + "```cpp" + `
+TEST_CASE("old behavior") {}
+` + "```" + `
+
+## Required Edits
+
+Add the logistics include:
+` + "```cpp" + `
+#include "core/constants/logistics.h"
+` + "```" + `
+
+Insert the demand-pressure regression:
+` + "```cpp" + `
+TEST_CASE("demand pressure caps production") {
+	CHECK(DEMAND_PRESSURE_CAP > 0.0);
+}
+` + "```" + `
+
+## Planner-Owned Validation
+
+The planner will run the test slice.
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 2 {
+		t.Fatalf("expected two required edit snippets, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	}
+	for i, snippet := range plan.runtimeBrief.RequiredEditSnippets {
+		if snippet.ID == "" {
+			t.Fatalf("snippet %d missing id: %#v", i, snippet)
+		}
+		if snippet.Path != "native/tests/test_production_graph.cpp" {
+			t.Fatalf("snippet %d path = %q, want test file", i, snippet.Path)
+		}
+		if strings.Contains(snippet.Content, "old behavior") {
+			t.Fatalf("verified-current-state snippet should not be captured: %#v", snippet)
+		}
+	}
+	if !strings.Contains(plan.runtimeBrief.RequiredEditSnippets[0].Content, `#include "core/constants/logistics.h"`) {
+		t.Fatalf("missing include snippet: %#v", plan.runtimeBrief.RequiredEditSnippets)
+	}
+	if !strings.Contains(plan.runtimeBrief.RequiredEditSnippets[1].Content, "demand pressure caps production") {
+		t.Fatalf("missing regression snippet: %#v", plan.runtimeBrief.RequiredEditSnippets)
+	}
+}
+
 func TestBuildPromptExecutionPlanCapturesFilesYouMayEditAllowlist(t *testing.T) {
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},

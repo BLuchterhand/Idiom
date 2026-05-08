@@ -78,6 +78,139 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 	}
 }
 
+func TestPatchHygieneDoesNotSatisfySourceEditCompletion(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited native/tests/test_cart_system.cpp"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/tests/test_cart_system.cpp\n"},
+	}
+
+	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- native/tests/test_cart_system.cpp\n\nVerification: git diff --check passed.", results); !rejected || !strings.Contains(result.Error, "patch hygiene") {
+		t.Fatalf("expected source edit completion to reject patch-only verification, rejected=%v result=%#v", rejected, result)
+	}
+
+	results = append(results, workspace.ToolResult{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: "native/tests/test_cart_system.cpp: no warnings or errors"})
+	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- native/tests/test_cart_system.cpp\n\nVerification: cpp_diagnostics passed.", results); rejected {
+		t.Fatalf("expected language diagnostics to satisfy source edit completion, got %#v", result)
+	}
+}
+
+func TestMutationCompletionGateRequiresRequiredEditSnippets(t *testing.T) {
+	root := t.TempDir()
+	target := "native/tests/test_production_graph.cpp"
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(target)), 0o755); err != nil {
+		t.Fatalf("mkdir target dir: %v", err)
+	}
+	includeSnippet := `#include "core/constants/logistics.h"`
+	testSnippet := `TEST_CASE("demand pressure caps production") {
+	CHECK(DEMAND_PRESSURE_CAP > 0.0);
+}`
+	if err := os.WriteFile(filepath.Join(root, target), []byte(includeSnippet+"\n"), 0o644); err != nil {
+		t.Fatalf("write partial target: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			RequiredEditPaths:    []string{target},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+				{ID: "required_edit_1", Path: target, Content: includeSnippet},
+				{ID: "required_edit_2", Path: target, Content: testSnippet},
+			},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited " + target},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- " + target + "\n"},
+	}
+
+	result, rejected := runner.mutationCompletionRejection("Changed paths:\n- "+target+"\n\nVerification: git diff --check passed.", results)
+	if !rejected || !strings.Contains(result.Error, "required_edit_2") {
+		t.Fatalf("expected missing required snippet rejection, rejected=%v result=%#v", rejected, result)
+	}
+	if strings.Contains(result.Error, "patch hygiene") {
+		t.Fatalf("required snippet coverage should fail before semantic verification, got %q", result.Error)
+	}
+
+	fullContent := includeSnippet + "\n\n" + testSnippet + "\n"
+	if err := os.WriteFile(filepath.Join(root, target), []byte(fullContent), 0o644); err != nil {
+		t.Fatalf("write complete target: %v", err)
+	}
+	verifiedResults := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited " + target},
+		{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: target + ": no warnings or errors"},
+	}
+	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- "+target+"\n\nVerification: cpp_diagnostics passed.", verifiedResults); rejected {
+		t.Fatalf("expected complete snippets with diagnostics to pass, got %#v", result)
+	}
+}
+
+func TestPatchHygieneAllowsNonSourceCompletion(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited README.md"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- README.md\n"},
+	}
+
+	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- README.md\n\nVerification: git diff --check passed.", results); rejected {
+		t.Fatalf("expected patch hygiene to satisfy non-source edit completion, got %#v", result)
+	}
+}
+
+func TestSourceEditPatchHygieneBlocksMoreReadsButAllowsDiagnostics(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/cart_system.cpp\n"},
+	}
+
+	summary, errorText, reject := sourceEditVerificationRejection(workspace.ToolRequest{Tool: "read_file", Path: "native/src/cart_system.cpp"}, brief, results)
+	if !reject || summary != "Source edit verification required" || !strings.Contains(errorText, "cpp_diagnostics") {
+		t.Fatalf("expected patch-only source verification to block more reads with diagnostics guidance, got reject=%v summary=%q error=%q", reject, summary, errorText)
+	}
+	if _, _, reject := sourceEditVerificationRejection(workspace.ToolRequest{Tool: "cpp_diagnostics", Path: "native/src/cart_system.cpp"}, brief, results); reject {
+		t.Fatal("diagnostics must remain allowed after patch-only source verification")
+	}
+}
+
+func TestSourceEditCloseoutAfterSemanticVerificationRequiresNamedGapForReads(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp"},
+		{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: "native/src/cart_system.cpp: no warnings or errors"},
+	}
+
+	prompt, ok := sourceEditCloseoutPrompt(workspace.ToolRequest{Tool: "read_file", Path: "native/src/cart_system.cpp"}, brief, results)
+	if !ok || !strings.Contains(prompt, "source-aware verification") {
+		t.Fatalf("expected verified source edit read to force closeout, ok=%v prompt=%q", ok, prompt)
+	}
+	if _, ok := sourceEditCloseoutPrompt(workspace.ToolRequest{Tool: "read_file", Path: "native/src/cart_system.cpp", NamedGap: "inspect function Foo branch after diagnostics"}, brief, results); ok {
+		t.Fatal("read with a named gap should remain model-directed")
+	}
+}
+
 func TestSuccessfulVerificationResultIgnoresNonVerificationShell(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "shell",

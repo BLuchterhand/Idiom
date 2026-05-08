@@ -478,6 +478,7 @@ type harnessAuditLogFacts struct {
 	DebugLogPath            string
 	HasProcessStart         bool
 	HasProcessExit          bool
+	HasModelSession         bool
 	HasSessionSummary       bool
 	IsImplementConversation bool
 }
@@ -503,18 +504,20 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			if !facts.HasProcessExit {
 				session.Missing = append(session.Missing, "process_exit")
 			}
-			if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
-				session.ConversationLog = m.displayPath(conversationPath)
-				conversationFacts, err := readHarnessAuditLogFacts(conversationPath)
-				if err != nil {
-					warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", session.ConversationLog, err))
-				} else if !conversationFacts.HasSessionSummary {
+			if facts.HasModelSession {
+				if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
+					session.ConversationLog = m.displayPath(conversationPath)
+					conversationFacts, err := readHarnessAuditLogFacts(conversationPath)
+					if err != nil {
+						warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", session.ConversationLog, err))
+					} else if !conversationFacts.HasSessionSummary {
+						session.Missing = append(session.Missing, "session_summary")
+					}
+				} else if strings.TrimSpace(facts.DebugLogPath) != "" {
+					warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: debug log path %q is outside the audited workspace root or does not exist", displayPath, facts.DebugLogPath))
+				} else {
 					session.Missing = append(session.Missing, "session_summary")
 				}
-			} else if strings.TrimSpace(facts.DebugLogPath) != "" {
-				warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: debug log path %q is outside the audited workspace root or does not exist", displayPath, facts.DebugLogPath))
-			} else {
-				session.Missing = append(session.Missing, "session_summary")
 			}
 			if len(session.Missing) > 0 {
 				key := session.TelemetryLog + "|" + session.ConversationLog
@@ -594,6 +597,7 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 		case "process_exit":
 			facts.HasProcessExit = true
 		case "model_session":
+			facts.HasModelSession = true
 			facts.SessionID = firstNonEmptyAuditString(facts.SessionID, auditStringField(record, "session_id"))
 			facts.DebugLogPath = firstNonEmptyAuditString(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
 		case "session_summary":
@@ -665,6 +669,7 @@ func firstNonEmptyAuditSessionPath(session harnessAuditIncompleteSession) string
 func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []string, error) {
 	var warnings []string
 	var paths []string
+	defaultScope := false
 	switch {
 	case strings.TrimSpace(req.Glob) != "":
 		matches, err := m.auditGlob(strings.TrimSpace(req.Glob))
@@ -700,11 +705,18 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []string,
 			paths = append(paths, target)
 		}
 	default:
+		defaultScope = true
 		for _, pattern := range []string{"logs/conversations/*.jsonl", "logs/e2e/*.jsonl", "logs/telemetry/*.jsonl"} {
 			matches, err := m.auditGlob(pattern)
 			if err != nil {
 				warnings = append(warnings, err.Error())
 				continue
+			}
+			matches = auditUniqueExistingFiles(matches)
+			sortAuditLogPaths(matches)
+			if len(matches) > limit {
+				warnings = append(warnings, fmt.Sprintf("log scan capped at %d newest file(s) out of %d matched for %s", limit, len(matches), pattern))
+				matches = matches[:limit]
 			}
 			paths = append(paths, matches...)
 		}
@@ -715,7 +727,7 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []string,
 		warnings = append(warnings, "no JSONL behavior logs matched the audit scope")
 		return paths, warnings, nil
 	}
-	if len(paths) > limit {
+	if len(paths) > limit && !defaultScope {
 		warnings = append(warnings, fmt.Sprintf("log scan capped at %d newest file(s) out of %d matched", limit, len(paths)))
 		paths = paths[:limit]
 	}

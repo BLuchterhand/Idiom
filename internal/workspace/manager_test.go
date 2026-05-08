@@ -530,6 +530,33 @@ func TestEditFileRejectsInvalidGoBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestEditFileReportsCaseFoldedAnchorMismatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "native_test.cpp")
+	original := "TEST_CASE(\"CartSystem recovers route loss\") {\n    CHECK(true);\n}\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("native_test.cpp")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "native_test.cpp",
+		OldText: "test_case(\"cartsystem recovers route loss\") {",
+		NewText: "TEST_CASE(\"CartSystem recovers route loss\") {\n    CHECK_FALSE(false);",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "case-insensitive match exists") {
+		t.Fatalf("expected case-folded anchor guidance, got %#v", result)
+	}
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("rejected edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
 func TestEditFileRequiresEvidenceAfterSyntaxPreflightFailure(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "analysis_agents.go")

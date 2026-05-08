@@ -3,12 +3,14 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
@@ -709,6 +711,55 @@ func TestHarnessAuditBehaviorDefaultIncludesTelemetryLogs(t *testing.T) {
 	}
 }
 
+func TestHarnessAuditDefaultLimitIsPerLogSource(t *testing.T) {
+	root := t.TempDir()
+	conversationPath := filepath.Join(root, "logs", "conversations", "session.jsonl")
+	writeWorkspaceFile(t, conversationPath, strings.Join([]string{
+		`{"type":"message","role":"user","content":"find missing code"}`,
+		`{"type":"tool_request","tool":"search_files","action":"search_files:_:Nope:_"}`,
+		`{"type":"tool_result","tool":"search_files","summary":"No file matches for \"Nope\"","error":""}`,
+		"",
+	}, "\n"))
+	baseTime := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(conversationPath, baseTime, baseTime); err != nil {
+		t.Fatalf("chtimes conversation log: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		telemetryPath := filepath.Join(root, "logs", "telemetry", fmt.Sprintf("tool-%d.jsonl", i))
+		writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
+			`{"type":"session_start","command":"tool:pwd"}`,
+			`{"type":"tool_request","tool":"pwd","action":"pwd"}`,
+			`{"type":"tool_result","tool":"pwd","summary":"Printed current working directory","error":""}`,
+			"",
+		}, "\n"))
+		telemetryTime := baseTime.Add(time.Duration(i+1) * time.Minute)
+		if err := os.Chtimes(telemetryPath, telemetryTime, telemetryTime); err != nil {
+			t.Fatalf("chtimes telemetry log: %v", err)
+		}
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Limit: 2})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil || report.LogBehavior.LogsScanned != 3 {
+		t.Fatalf("expected one conversation plus two telemetry logs, got %#v", report.LogBehavior)
+	}
+	if !slices.ContainsFunc(report.LogBehavior.TopPatterns, func(hit eval.PerfPatternHit) bool {
+		return hit.Name == "zero_hit_search" && hit.TotalCount == 1
+	}) {
+		t.Fatalf("expected default audit to retain conversation behavior findings, got %#v", report.LogBehavior.TopPatterns)
+	}
+	if !slices.Contains(report.LogBehavior.Warnings, "log scan capped at 2 newest file(s) out of 3 matched for logs/telemetry/*.jsonl") {
+		t.Fatalf("expected per-source telemetry cap warning, got %#v", report.LogBehavior.Warnings)
+	}
+}
+
 func TestHarnessAuditFlagsIncompleteImplementLifecycle(t *testing.T) {
 	root := t.TempDir()
 	conversationPath := filepath.Join(root, ".idiom", "logs", "conversations", "session.jsonl")
@@ -748,6 +799,35 @@ func TestHarnessAuditFlagsIncompleteImplementLifecycle(t *testing.T) {
 		return finding.ID == "incomplete_implement_session_lifecycle" && finding.Severity == "high"
 	}) {
 		t.Fatalf("expected incomplete lifecycle finding, got %#v", report.Findings)
+	}
+}
+
+func TestHarnessAuditIgnoresImplementProcessWithoutModelSessionSummary(t *testing.T) {
+	root := t.TempDir()
+	telemetryPath := filepath.Join(root, "logs", "telemetry", "implement-help.jsonl")
+	writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
+		`{"type":"session_start","command":"implement","workspace_root":"` + root + `"}`,
+		`{"type":"process_start","command":"implement","pid":123,"workspace_root":"` + root + `"}`,
+		`{"type":"process_exit","command":"implement","exit_code":2}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior != nil && len(report.LogBehavior.IncompleteSessions) != 0 {
+		t.Fatalf("expected no incomplete model session for process-only implement command, got %#v", report.LogBehavior.IncompleteSessions)
+	}
+	if slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "incomplete_implement_session_lifecycle"
+	}) {
+		t.Fatalf("expected no incomplete lifecycle finding for process-only implement command, got %#v", report.Findings)
 	}
 }
 

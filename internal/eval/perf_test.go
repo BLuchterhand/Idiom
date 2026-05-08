@@ -281,6 +281,43 @@ func TestDetectZeroHitSearch(t *testing.T) {
 	}
 }
 
+func TestDirectToolTelemetryDoesNotCreateBehaviorAntiPatterns(t *testing.T) {
+	records := []Record{
+		{Type: "session_start", Data: map[string]any{"command": "tool:go_read_symbol"}},
+		{Type: "process_start", Data: map[string]any{"command": "tool:go_read_symbol"}},
+		{Type: "tool_request", Data: map[string]any{"tool": "go_read_symbol", "action": "go_read_symbol:missing"}},
+		{Type: "tool_result", Data: map[string]any{"tool": "go_read_symbol", "summary": `No Go symbols matched "missing"`}},
+		{Type: "process_exit", Data: map[string]any{"command": "tool:go_read_symbol", "exit_code": 0}},
+	}
+
+	rep := analyzeRecords("direct-tool", records)
+	if rep.ToolResults != 1 || rep.Tools.ByName["go_read_symbol"] != 1 {
+		t.Fatalf("expected direct tool stats to remain available, got %+v", rep)
+	}
+	if len(rep.AntiPatterns) != 0 || rep.AntiPatternScore != 0 {
+		t.Fatalf("expected direct tool telemetry to skip model behavior patterns, got %+v", rep.AntiPatterns)
+	}
+}
+
+func TestAnalyzeModernSummaryRecords(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "implement feature"}},
+		{Type: "model_call", Data: map[string]any{"prompt_tokens": 100, "completion_tokens": 10}},
+		{Type: "tool_request", Data: map[string]any{"tool": "read_file", "action": "read_file:a.go"}},
+		{Type: "tool_result", Data: map[string]any{"tool": "read_file", "summary": "Read a.go"}},
+		{Type: "turn_summary", Data: map[string]any{"used_model_calls": 2, "used_tool_results": 1, "prompt_tokens": 200, "completion_tokens": 20, "duration_ms": 3000, "stop_reason": "model_final"}},
+		{Type: "session_summary", Data: map[string]any{"model_calls": 2, "tool_calls": 1, "prompt_tokens": 200, "completion_tokens": 20, "duration_ms": 3001}},
+	}
+
+	rep := analyzeRecords("modern-session", records)
+	if rep.ModelCalls != 2 || rep.ToolResults != 1 || rep.PromptTokens != 200 || rep.CompletionTokens != 20 || rep.DurationMillis != 3001 {
+		t.Fatalf("modern summary records not parsed: %+v", rep)
+	}
+	if rep.StopReason != "model_final" {
+		t.Fatalf("stop reason: want model_final, got %q", rep.StopReason)
+	}
+}
+
 func TestDetectRejectionRetry(t *testing.T) {
 	raw := `{"tool":"list_files","path":"docs"}`
 	records := buildSynth("", nil, []synthStep{

@@ -24,33 +24,40 @@ type BudgetBrief struct {
 }
 
 type WorkerRuntimeBrief struct {
-	Lane                 string              `json:"lane,omitempty"`
-	TaskFamily           string              `json:"task_family,omitempty"`
-	Contract             string              `json:"contract,omitempty"`
-	Objective            string              `json:"objective,omitempty"`
-	PermissionProfile    string              `json:"permission_profile,omitempty"`
-	TargetRefs           []string            `json:"target_refs,omitempty"`
-	RequiredEditPaths    []string            `json:"required_edit_paths,omitempty"`
-	EvidencePaths        []string            `json:"evidence_paths,omitempty"`
-	ChangedPaths         []string            `json:"changed_paths,omitempty"`
-	UserBoundaries       []string            `json:"user_boundaries,omitempty"`
-	AllowedTools         []string            `json:"allowed_tools,omitempty"`
-	ForbiddenTools       []string            `json:"forbidden_tools,omitempty"`
-	ToolManifest         []ToolManifestEntry `json:"tool_manifest,omitempty"`
-	RequiredEvidence     []string            `json:"required_evidence,omitempty"`
-	RequiredTools        []string            `json:"required_tools,omitempty"`
-	ReadinessGate        []string            `json:"readiness_gate,omitempty"`
-	SearchPolicy         []string            `json:"search_policy,omitempty"`
-	DiscoveryExamples    []string            `json:"discovery_examples,omitempty"`
-	VerificationContract string              `json:"verification_contract,omitempty"`
-	VerificationPlan     []string            `json:"verification_plan,omitempty"`
-	StopConditions       []string            `json:"stop_conditions,omitempty"`
-	FinalCritic          []string            `json:"final_critic,omitempty"`
-	TargetPacket         []string            `json:"target_packet,omitempty"`
-	Constraints          []string            `json:"constraints,omitempty"`
-	RequiredNext         []string            `json:"required_next,omitempty"`
-	InvalidActions       []string            `json:"invalid_actions,omitempty"`
-	Budget               BudgetBrief         `json:"budget,omitempty"`
+	Lane                 string                `json:"lane,omitempty"`
+	TaskFamily           string                `json:"task_family,omitempty"`
+	Contract             string                `json:"contract,omitempty"`
+	Objective            string                `json:"objective,omitempty"`
+	PermissionProfile    string                `json:"permission_profile,omitempty"`
+	TargetRefs           []string              `json:"target_refs,omitempty"`
+	RequiredEditPaths    []string              `json:"required_edit_paths,omitempty"`
+	RequiredEditSnippets []RequiredEditSnippet `json:"required_edit_snippets,omitempty"`
+	EvidencePaths        []string              `json:"evidence_paths,omitempty"`
+	ChangedPaths         []string              `json:"changed_paths,omitempty"`
+	UserBoundaries       []string              `json:"user_boundaries,omitempty"`
+	AllowedTools         []string              `json:"allowed_tools,omitempty"`
+	ForbiddenTools       []string              `json:"forbidden_tools,omitempty"`
+	ToolManifest         []ToolManifestEntry   `json:"tool_manifest,omitempty"`
+	RequiredEvidence     []string              `json:"required_evidence,omitempty"`
+	RequiredTools        []string              `json:"required_tools,omitempty"`
+	ReadinessGate        []string              `json:"readiness_gate,omitempty"`
+	SearchPolicy         []string              `json:"search_policy,omitempty"`
+	DiscoveryExamples    []string              `json:"discovery_examples,omitempty"`
+	VerificationContract string                `json:"verification_contract,omitempty"`
+	VerificationPlan     []string              `json:"verification_plan,omitempty"`
+	StopConditions       []string              `json:"stop_conditions,omitempty"`
+	FinalCritic          []string              `json:"final_critic,omitempty"`
+	TargetPacket         []string              `json:"target_packet,omitempty"`
+	Constraints          []string              `json:"constraints,omitempty"`
+	RequiredNext         []string              `json:"required_next,omitempty"`
+	InvalidActions       []string              `json:"invalid_actions,omitempty"`
+	Budget               BudgetBrief           `json:"budget,omitempty"`
+}
+
+type RequiredEditSnippet struct {
+	ID      string `json:"id,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content"`
 }
 
 type ActionGuidanceInput struct {
@@ -836,6 +843,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.VerificationContract = strings.TrimSpace(brief.VerificationContract)
 	brief.TargetRefs = uniqueNonEmpty(brief.TargetRefs)
 	brief.RequiredEditPaths = uniqueNonEmpty(brief.RequiredEditPaths)
+	brief.RequiredEditSnippets = normalizeRequiredEditSnippets(brief.RequiredEditSnippets)
 	brief.EvidencePaths = uniqueNonEmpty(brief.EvidencePaths)
 	brief.ChangedPaths = uniqueNonEmpty(brief.ChangedPaths)
 	brief.UserBoundaries = uniqueNonEmpty(brief.UserBoundaries)
@@ -863,6 +871,34 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 		brief.ToolManifest = BuildToolManifest(brief.AllowedTools)
 	}
 	return brief
+}
+
+func normalizeRequiredEditSnippets(snippets []RequiredEditSnippet) []RequiredEditSnippet {
+	if len(snippets) == 0 {
+		return nil
+	}
+	out := make([]RequiredEditSnippet, 0, len(snippets))
+	seen := make(map[string]struct{}, len(snippets))
+	for _, snippet := range snippets {
+		normalized := RequiredEditSnippet{
+			ID:      strings.TrimSpace(snippet.ID),
+			Path:    strings.TrimSpace(snippet.Path),
+			Content: strings.TrimSpace(snippet.Content),
+		}
+		if normalized.Content == "" {
+			continue
+		}
+		key := normalized.Path + "\x00" + normalized.Content
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func RenderStepInstruction(instruction StepInstruction) string {
@@ -944,6 +980,7 @@ func RuntimeBriefHasContent(brief WorkerRuntimeBrief) bool {
 		brief.Objective != "" ||
 		len(brief.TargetRefs) > 0 ||
 		len(brief.RequiredEditPaths) > 0 ||
+		len(brief.RequiredEditSnippets) > 0 ||
 		len(brief.AllowedTools) > 0 ||
 		len(brief.ForbiddenTools) > 0 ||
 		len(brief.RequiredEvidence) > 0 ||

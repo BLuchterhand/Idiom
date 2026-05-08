@@ -83,6 +83,37 @@ Do not use prompt text for:
 - compensating for unknown config keys or unmodeled runtime settings
 - scenario-specific recovery scripts after a generic contract failed
 
+## Frontier Harness Simplicity
+
+When comparing idiom to frontier coding harnesses, prefer the simplest
+equivalent contract over another prompt layer or phase machine.
+
+Frontier-style does not mean fewer capabilities. It means:
+
+- small, typed tool surfaces where possible
+- permissions, writes, verification, and loop breaks enforced by the host
+- edit tools returning or triggering enough diff/diagnostic evidence to make
+  the next model choice obvious
+- prompts describing stable behavior, not compensating for missing contracts
+- model-directed continuation whenever a safe, contract-compliant path remains
+
+Before adding a workflow stage, prompt reminder, or special-case recovery,
+ask whether the issue is really one of these simpler contract gaps:
+
+- the tool result lacks the evidence the model needs
+- the route brief failed to declare the contract
+- the completion gate accepted weaker evidence than the changed artifact
+  requires
+- the loop fuse allowed repeated low-value work after the evidence was already
+  sufficient
+- telemetry cannot show the failure shape clearly enough for the next audit
+
+Verification must match artifact risk. Patch-hygiene checks such as
+`git diff --check` can satisfy prose/config formatting checks, but they are not
+source-aware verification for code edits. Source edits require language
+diagnostics, a focused build/test, or a concrete blocker that says why such
+evidence is unavailable.
+
 ## Drift Detection
 
 Prompt overlap is a harness smell, not merely a writing problem. Look for these

@@ -105,9 +105,15 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 	brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, pathparse.MentionedWorkspacePaths(prompt)...)
 	if required := requiredEditPathsFromPrompt(prompt); len(required) > 0 {
 		brief.RequiredEditPaths = appendUniqueBriefStrings(brief.RequiredEditPaths, required...)
+		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, brief.RequiredEditPaths)...)
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_paths_covered_or_blocked")
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
 		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_paths_reported")
+		if len(brief.RequiredEditSnippets) > 0 {
+			brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_snippets_present_or_blocked")
+			brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_snippets_satisfied")
+			brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_snippets_reported")
+		}
 	}
 	if plan := defaultVerificationPlan(m.projectRoot()); len(brief.VerificationPlan) == 0 {
 		brief.VerificationPlan = plan
@@ -176,6 +182,208 @@ func requiredEditPathsFromPrompt(prompt string) []string {
 		"source allowlist",
 	}
 	return pathparse.MentionedWorkspacePathsUnderHeadings(prompt, headings...)
+}
+
+func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []workerruntime.RequiredEditSnippet {
+	section := markdownSectionByHeading(prompt, "required edits")
+	if strings.TrimSpace(section) == "" {
+		return nil
+	}
+	blocks := requiredEditCodeBlocks(section)
+	if len(blocks) == 0 {
+		return nil
+	}
+	path := ""
+	if len(requiredPaths) == 1 {
+		path = strings.TrimSpace(requiredPaths[0])
+	}
+	snippets := make([]workerruntime.RequiredEditSnippet, 0, len(blocks))
+	for _, block := range blocks {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		snippets = append(snippets, workerruntime.RequiredEditSnippet{
+			ID:      fmt.Sprintf("required_edit_%d", len(snippets)+1),
+			Path:    path,
+			Content: block,
+		})
+	}
+	if len(snippets) == 0 {
+		return nil
+	}
+	return snippets
+}
+
+func markdownSectionByHeading(markdown string, headingName string) string {
+	want := normalizeMarkdownHeadingText(headingName)
+	lines := strings.Split(markdown, "\n")
+	start := -1
+	startLevel := 0
+	inFence := false
+	fence := ""
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if marker, _, ok := markdownFenceOpen(trimmed); ok {
+			if !inFence {
+				inFence = true
+				fence = marker
+			} else if strings.HasPrefix(trimmed, fence) {
+				inFence = false
+				fence = ""
+			}
+			continue
+		}
+		if inFence {
+			continue
+		}
+		level, text, ok := markdownHeading(trimmed)
+		if !ok || normalizeMarkdownHeadingText(text) != want {
+			continue
+		}
+		start = i + 1
+		startLevel = level
+		break
+	}
+	if start < 0 {
+		return ""
+	}
+	end := len(lines)
+	inFence = false
+	fence = ""
+	for i := start; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if marker, _, ok := markdownFenceOpen(trimmed); ok {
+			if !inFence {
+				inFence = true
+				fence = marker
+			} else if strings.HasPrefix(trimmed, fence) {
+				inFence = false
+				fence = ""
+			}
+			continue
+		}
+		if inFence {
+			continue
+		}
+		level, _, ok := markdownHeading(trimmed)
+		if ok && level <= startLevel {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+func markdownHeading(line string) (int, string, bool) {
+	if !strings.HasPrefix(line, "#") {
+		return 0, "", false
+	}
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level > 6 || level >= len(line) || line[level] != ' ' {
+		return 0, "", false
+	}
+	text := strings.TrimSpace(line[level+1:])
+	text = strings.TrimSpace(strings.TrimRight(text, "#"))
+	if text == "" {
+		return 0, "", false
+	}
+	return level, text, true
+}
+
+func normalizeMarkdownHeadingText(text string) string {
+	text = strings.Trim(strings.ToLower(strings.TrimSpace(text)), ": ")
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func requiredEditCodeBlocks(section string) []string {
+	var blocks []string
+	var current []string
+	previousNonEmpty := ""
+	fence := ""
+	skipCurrent := false
+	for _, rawLine := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(rawLine)
+		if fence == "" {
+			if marker, info, ok := markdownFenceOpen(trimmed); ok {
+				fence = marker
+				current = nil
+				skipCurrent = skipRequiredEditCodeBlock(previousNonEmpty, info)
+				continue
+			}
+			if trimmed != "" {
+				previousNonEmpty = trimmed
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, fence) {
+			if !skipCurrent {
+				if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
+					blocks = append(blocks, block)
+				}
+			}
+			fence = ""
+			current = nil
+			skipCurrent = false
+			previousNonEmpty = ""
+			continue
+		}
+		current = append(current, rawLine)
+	}
+	return blocks
+}
+
+func markdownFenceOpen(line string) (marker string, info string, ok bool) {
+	switch {
+	case strings.HasPrefix(line, "```"):
+		return "```", strings.TrimSpace(strings.TrimPrefix(line, "```")), true
+	case strings.HasPrefix(line, "~~~"):
+		return "~~~", strings.TrimSpace(strings.TrimPrefix(line, "~~~")), true
+	default:
+		return "", "", false
+	}
+}
+
+func skipRequiredEditCodeBlock(label string, info string) bool {
+	lowerInfo := strings.ToLower(strings.TrimSpace(info))
+	if strings.Contains(lowerInfo, "diff") || strings.Contains(lowerInfo, "patch") {
+		return true
+	}
+	lowerLabel := strings.Trim(strings.ToLower(strings.TrimSpace(label)), ":. ")
+	return strings.HasPrefix(lowerLabel, "old") ||
+		strings.HasPrefix(lowerLabel, "before") ||
+		strings.HasPrefix(lowerLabel, "existing") ||
+		strings.HasPrefix(lowerLabel, "current") ||
+		strings.HasPrefix(lowerLabel, "replace this")
+}
+
+func appendRequiredEditSnippets(dst []workerruntime.RequiredEditSnippet, values ...workerruntime.RequiredEditSnippet) []workerruntime.RequiredEditSnippet {
+	seen := make(map[string]struct{}, len(dst)+len(values))
+	for _, value := range dst {
+		content := strings.TrimSpace(value.Content)
+		if content == "" {
+			continue
+		}
+		seen[strings.TrimSpace(value.Path)+"\x00"+content] = struct{}{}
+	}
+	for _, value := range values {
+		value.ID = strings.TrimSpace(value.ID)
+		value.Path = strings.TrimSpace(value.Path)
+		value.Content = strings.TrimSpace(value.Content)
+		if value.Content == "" {
+			continue
+		}
+		key := value.Path + "\x00" + value.Content
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		dst = append(dst, value)
+	}
+	return dst
 }
 
 func promptContainsExactEditAnchor(prompt string) bool {

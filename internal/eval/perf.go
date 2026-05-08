@@ -160,6 +160,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 	}
 
 	var steps []toolStep
+	agentBehavior := false
 	// Walk records once, collecting what every pattern needs.
 	for _, rec := range records {
 		switch rec.Type {
@@ -171,6 +172,9 @@ func analyzeRecords(path string, records []Record) PerfReport {
 		case "message":
 			role, _ := rec.Data["role"].(string)
 			content, _ := rec.Data["content"].(string)
+			if strings.TrimSpace(role) != "" {
+				agentBehavior = true
+			}
 			switch role {
 			case "user":
 				if rep.UserPrompt == "" {
@@ -183,15 +187,28 @@ func analyzeRecords(path string, records []Record) PerfReport {
 				parseBudgetLedgerIntoPerfReport(content, &rep)
 			}
 		case "user_turn":
+			agentBehavior = true
 			if rep.UserPrompt == "" {
 				if prompt, ok := rec.Data["prompt"].(string); ok {
 					rep.UserPrompt = firstLine(prompt)
 				}
 			}
 		case "assistant_turn":
+			agentBehavior = true
 			if chars := intField(rec.Data, "chars"); chars > 0 {
 				rep.FinalAnswerChars = chars
 			}
+		case "model_call":
+			agentBehavior = true
+			rep.ModelCalls++
+			rep.PromptTokens += intField(rec.Data, "prompt_tokens")
+			rep.CompletionTokens += intField(rec.Data, "completion_tokens")
+		case "turn_summary":
+			agentBehavior = true
+			parseSummaryRecordIntoPerfReport(rec.Data, &rep)
+		case "session_summary":
+			agentBehavior = true
+			parseSessionSummaryIntoPerfReport(rec.Data, &rep)
 		case "tool_request":
 			tool, _ := rec.Data["tool"].(string)
 			action, _ := rec.Data["action"].(string)
@@ -251,17 +268,20 @@ func analyzeRecords(path string, records []Record) PerfReport {
 	}
 
 	// Anti-pattern detectors. Each is independent; all run on the same
-	// step list so adding a new one is local.
-	detectDirWalk(&rep, steps)
-	detectZeroHitSearch(&rep, records)
-	detectTruncatedSearch(&rep, records)
-	detectRedirectStorm(&rep, records)
-	detectSameToolRepeat(&rep, steps)
-	detectDocWander(&rep, steps)
-	detectPromptSurfaceOverlap(&rep, records)
-	detectRejectionRetry(&rep, steps)
-	detectMalformedEditArgs(&rep, records)
-	detectToolErrorStreak(&rep, steps, records)
+	// step list so adding a new one is local. Direct CLI tool telemetry is
+	// still useful for tool/context statistics, but it is not model behavior.
+	if agentBehavior {
+		detectDirWalk(&rep, steps)
+		detectZeroHitSearch(&rep, records)
+		detectTruncatedSearch(&rep, records)
+		detectRedirectStorm(&rep, records)
+		detectSameToolRepeat(&rep, steps)
+		detectDocWander(&rep, steps)
+		detectPromptSurfaceOverlap(&rep, records)
+		detectRejectionRetry(&rep, steps)
+		detectMalformedEditArgs(&rep, records)
+		detectToolErrorStreak(&rep, steps, records)
+	}
 
 	score := 0
 	for _, ap := range rep.AntiPatterns {
@@ -473,6 +493,52 @@ func parseBudgetLedgerIntoPerfReport(content string, rep *PerfReport) {
 		rep.RejectedActions = payload.RejectedActions
 	}
 	rep.StopReason = payload.StopReason
+}
+
+func parseSummaryRecordIntoPerfReport(data map[string]any, rep *PerfReport) {
+	if v := intField(data, "used_model_calls"); v > 0 {
+		rep.ModelCalls = v
+	}
+	if v := intField(data, "used_tool_results"); v > 0 {
+		rep.ToolResults = v
+	}
+	if v := intField(data, "prompt_tokens"); v > 0 {
+		rep.PromptTokens = v
+	}
+	if v := intField(data, "completion_tokens"); v > 0 {
+		rep.CompletionTokens = v
+	}
+	if v := intField(data, "duration_millis"); v > 0 {
+		rep.DurationMillis = v
+	} else if v := intField(data, "duration_ms"); v > 0 {
+		rep.DurationMillis = v
+	}
+	if v := intField(data, "rejected_actions"); v > 0 {
+		rep.RejectedActions = v
+	}
+	if stopReason, _ := data["stop_reason"].(string); strings.TrimSpace(stopReason) != "" {
+		rep.StopReason = stopReason
+	}
+}
+
+func parseSessionSummaryIntoPerfReport(data map[string]any, rep *PerfReport) {
+	if v := intField(data, "model_calls"); v > 0 {
+		rep.ModelCalls = v
+	}
+	if v := intField(data, "tool_calls"); v > 0 {
+		rep.ToolResults = v
+	}
+	if v := intField(data, "prompt_tokens"); v > 0 {
+		rep.PromptTokens = v
+	}
+	if v := intField(data, "completion_tokens"); v > 0 {
+		rep.CompletionTokens = v
+	}
+	if v := intField(data, "duration_millis"); v > 0 {
+		rep.DurationMillis = v
+	} else if v := intField(data, "duration_ms"); v > 0 {
+		rep.DurationMillis = v
+	}
 }
 
 func countTool(t *ToolCounts, tool, summary string) {
