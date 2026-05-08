@@ -110,6 +110,23 @@ func TestGoWorkspaceSymbolFallsBackAfterEmptyGoplsResult(t *testing.T) {
 	}
 }
 
+func TestEnvWithCanonicalPWDOverridesLogicalPWD(t *testing.T) {
+	dir := t.TempDir()
+	env := envWithCanonicalPWD([]string{"PATH=/bin", "PWD=/tmp/Logical"}, dir, []string{"PWD=/tmp/Other"})
+	count := 0
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "PWD=") {
+			count++
+			if got := strings.TrimPrefix(entry, "PWD="); got != config.CanonicalizeExistingPath(dir) {
+				t.Fatalf("expected canonical PWD %q, got %q", config.CanonicalizeExistingPath(dir), got)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected one PWD entry, got %d in %#v", count, env)
+	}
+}
+
 func TestSearchContentMissingScopeReturnsGracefulMiss(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "internal", "agent", "runner.go"), "package agent\n\nfunc ExampleWorker() {}\n")
@@ -309,26 +326,170 @@ func TestEditFileRejectsEmptyContentLineRange(t *testing.T) {
 		Root:         dir,
 		CWD:          dir,
 		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
 	})
 	mgr.MarkPathObserved("notes.md")
 
-	// Most common edit_file footgun: model intends "insert after line N"
-	// but uses the line-range form with empty content, which actually
-	// REPLACES (and thus deletes) lines start-end. The guard should catch
-	// this and direct the model to the substring-anchored form.
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{name: "empty", content: ""},
+		{name: "newline", content: "\n"},
+		{name: "spaces", content: "   \n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Most common edit_file footgun: model intends "insert after line N"
+			// but uses the line-range form with blank content, which actually
+			// REPLACES (and thus deletes) lines start-end. The guard should catch
+			// this and direct the model to the substring-anchored form.
+			result := mgr.Execute(context.Background(), ToolRequest{
+				Tool:      "edit_file",
+				Path:      "notes.md",
+				StartLine: 2,
+				EndLine:   2,
+				Content:   tc.content,
+			})
+			if result.Error == "" {
+				t.Fatalf("expected guard to reject blank-content line-range edit, got %#v", result)
+			}
+			for _, want := range []string{"would DELETE", "old_text", "new_text"} {
+				if !strings.Contains(result.Error, want) {
+					t.Fatalf("expected guard error to mention %q, got: %s", want, result.Error)
+				}
+			}
+			if got := readTestFile(t, path); got != original {
+				t.Fatalf("rejected edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+			}
+		})
+		if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+			t.Fatalf("restore original: %v", err)
+		}
+	}
+}
+
+func TestEditFileLineRangePreservesTrailingLineBoundary(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	original := "line one\nline two\nline three\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("notes.md")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:        "edit_file",
+		Path:        "notes.md",
+		StartLine:   2,
+		EndLine:     2,
+		Content:     "replacement",
+		Description: "replace one line without merging the following line",
+	})
+	if result.Error != "" {
+		t.Fatalf("unexpected edit_file error: %#v", result)
+	}
+
+	want := "line one\nreplacement\nline three\n"
+	if got := readTestFile(t, path); got != want {
+		t.Fatalf("line-range edit should preserve line boundary:\nwant %q\ngot  %q", want, got)
+	}
+}
+
+func TestEditFileRejectsLineRangeWithDuplicatedPrecedingContext(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	original := "setup one\nsetup two\nsetup three\n}\n\n}  // SUITE\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("notes.md")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "edit_file",
+		Path:      "notes.md",
+		StartLine: 4,
+		EndLine:   6,
+		Content: "setup one\nsetup two\nsetup three\n}\n\n" +
+			"new case\n}\n\n}  // SUITE\n",
+		Description: "insert a new case before the suite close",
+	})
+	if result.Error == "" {
+		t.Fatalf("expected duplicated-context line-range edit to be rejected, got %#v", result)
+	}
+	for _, want := range []string{"duplicate context", "old_text", "new_text"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected guard error to mention %q, got: %s", want, result.Error)
+		}
+	}
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("rejected edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestEditFilePrefersExactReplacementWhenLineRangeMetadataIsAlsoPresent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	original := "line one\nline two\nline three\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("notes.md")
+
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "edit_file",
 		Path:      "notes.md",
 		StartLine: 2,
 		EndLine:   2,
-		Content:   "",
+		OldText:   "line two\n",
+		NewText:   "replacement two\n",
+	})
+	if result.Error != "" {
+		t.Fatalf("expected exact replacement to win over line metadata, got: %s", result.Error)
+	}
+	want := "line one\nreplacement two\nline three\n"
+	if got := readTestFile(t, path); got != want {
+		t.Fatalf("unexpected edited file\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestEditFileRejectsLineRangeWithNewTextButNoOldText(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	original := "line one\nline two\nline three\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("notes.md")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "edit_file",
+		Path:      "notes.md",
+		StartLine: 2,
+		EndLine:   2,
+		NewText:   "replacement two\n",
 	})
 	if result.Error == "" {
-		t.Fatalf("expected guard to reject empty-content line-range edit, got %#v", result)
+		t.Fatalf("expected ambiguous line-range/new_text shape to be rejected")
 	}
-	for _, want := range []string{"would DELETE", "old_text", "new_text"} {
+	for _, want := range []string{"content", "new_text", "old_text"} {
 		if !strings.Contains(result.Error, want) {
-			t.Fatalf("expected guard error to mention %q, got: %s", want, result.Error)
+			t.Fatalf("expected error to mention %q, got: %s", want, result.Error)
 		}
 	}
 	if got := readTestFile(t, path); got != original {
@@ -345,24 +506,88 @@ func TestEditFileRejectsInvalidGoBeforeWrite(t *testing.T) {
 		Root:         dir,
 		CWD:          dir,
 		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
 	})
 	mgr.MarkPathObserved("analysis_agents.go")
 
-	// Content "\n" replaces the package declaration with a blank line —
-	// produces invalid Go but bypasses the empty-content footgun guard
-	// (which would reject before the Go preflight gets a chance).
+	// Non-blank invalid Go content should bypass the blank-range deletion
+	// guard and reach syntax preflight.
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "edit_file",
 		Path:      "analysis_agents.go",
 		StartLine: 1,
 		EndLine:   1,
-		Content:   "\n",
+		Content:   "package\n",
 	})
 	if result.Error == "" || !strings.Contains(result.Error, "preflight syntax validation failed") {
 		t.Fatalf("expected Go syntax preflight rejection, got %#v", result)
 	}
+	if !strings.Contains(result.Error, "planned content around syntax error") {
+		t.Fatalf("expected syntax error context, got %#v", result)
+	}
 	if got := readTestFile(t, path); got != original {
 		t.Fatalf("invalid edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestEditFileRequiresEvidenceAfterSyntaxPreflightFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "analysis_agents.go")
+	original := "package app\n\nfunc ok() {}\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("analysis_agents.go")
+
+	bad := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "edit_file",
+		Path:      "analysis_agents.go",
+		StartLine: 1,
+		EndLine:   1,
+		Content:   "package\n",
+	})
+	if bad.Error == "" || !strings.Contains(bad.Error, "preflight syntax validation failed") {
+		t.Fatalf("expected Go syntax preflight rejection, got %#v", bad)
+	}
+
+	blocked := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "analysis_agents.go",
+		OldText: "func ok() {}",
+		NewText: "func okRenamed() {}",
+	})
+	if blocked.Error == "" || !strings.Contains(blocked.Error, "previous syntax preflight failure") {
+		t.Fatalf("expected recovery guard before next edit, got %#v", blocked)
+	}
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("blocked edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+
+	read := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "read_file",
+		Path:      "analysis_agents.go",
+		StartLine: 1,
+		EndLine:   3,
+	})
+	if read.Error != "" {
+		t.Fatalf("expected read_file to refresh evidence, got %#v", read)
+	}
+
+	fixed := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "analysis_agents.go",
+		OldText: "func ok() {}",
+		NewText: "func okRenamed() {}",
+	})
+	if fixed.Error != "" {
+		t.Fatalf("expected edit after evidence refresh to succeed, got %#v", fixed)
+	}
+	if got := readTestFile(t, path); got != "package app\n\nfunc okRenamed() {}\n" {
+		t.Fatalf("unexpected edited content:\n%s", got)
 	}
 }
 
@@ -655,6 +880,31 @@ func TestListFilesSkipsNoisyDirsFromRootListing(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "internal/app/app.go") {
 		t.Fatalf("expected source path in root listing, got:\n%s", result.Output)
+	}
+}
+
+func TestShellRejectsDirectoryOnlyCommands(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		Shell:                 "/bin/sh",
+		CommandTimeoutSeconds: 5,
+		EnableShell:           true,
+	})
+
+	for _, command := range []string{"cd", "cd subdir", "cd subdir && cd .."} {
+		t.Run(command, func(t *testing.T) {
+			result := mgr.Execute(context.Background(), ToolRequest{Tool: "shell", Command: command})
+			if result.Error == "" || !strings.Contains(result.Error, "do not persist") {
+				t.Fatalf("expected directory-only shell rejection, got %#v", result)
+			}
+		})
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "shell", Command: "cd . && pwd"})
+	if result.Error != "" {
+		t.Fatalf("expected cd plus command to remain allowed, got %#v", result)
 	}
 }
 

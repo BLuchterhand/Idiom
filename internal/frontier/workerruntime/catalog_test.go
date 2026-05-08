@@ -34,6 +34,11 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		if len(spec.ReadinessGate) == 0 || len(spec.FinalCritic) == 0 {
 			t.Fatalf("expected implementation contract to keep readiness/final critic, got %#v", spec)
 		}
+		for _, want := range []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported"} {
+			if !containsString(spec.SearchPolicy, want) {
+				t.Fatalf("expected implementation search policy to include %q, got %#v", want, spec.SearchPolicy)
+			}
+		}
 	})
 
 	t.Run("unknown family", func(t *testing.T) {
@@ -69,7 +74,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 }
 
 func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
-	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "go_workspace_symbol", "shell", "edit_file", "write_file"}
+	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "context_query", "context_trace_pack", "go_workspace_symbol", "shell", "edit_file", "write_file"}
 
 	brief := RuntimeBriefForTaskFamily("direct_question", "main", available)
 	if brief.PermissionProfile != "conversation_only" {
@@ -92,12 +97,12 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 		}
 	}
 
-	archAvailable := []string{"task", "list_files", "search_files", "search_content", "read_file", "discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "go_overview", "go_workspace_symbol", "go_read_symbol", "go_file_outline", "shell"}
+	archAvailable := []string{"task", "list_files", "search_files", "search_content", "read_file", "file_stats", "harness_audit", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "go_overview", "go_workspace_symbol", "go_read_symbol", "go_file_outline", "shell"}
 	arch := RuntimeBriefForTaskFamily("architecture", "main", archAvailable)
-	if containsString(arch.AllowedTools, "go_overview") || containsString(arch.AllowedTools, "shell") {
+	if containsString(arch.AllowedTools, "go_overview") || containsString(arch.AllowedTools, "shell") || containsString(arch.AllowedTools, "context_trace_pack") {
 		t.Fatalf("architecture should advertise the lean read-only discovery surface, got %#v", arch.AllowedTools)
 	}
-	for _, expected := range []string{"task", "search_content", "read_file", "discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "go_workspace_symbol", "go_read_symbol", "go_file_outline"} {
+	for _, expected := range []string{"task", "search_content", "read_file", "file_stats", "context_status", "context_query", "context_zoom", "context_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "go_workspace_symbol", "go_read_symbol", "go_file_outline"} {
 		if !containsString(arch.AllowedTools, expected) {
 			t.Fatalf("architecture missing %q in %#v", expected, arch.AllowedTools)
 		}

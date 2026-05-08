@@ -36,6 +36,103 @@ func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
 	}
 }
 
+func TestBuildActionGuidanceForExactAnchorWriteFailure(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "edit_file", Path: "tests/e2e/suite.gd"}
+	result := workspace.ToolResult{
+		Tool:    "edit_file",
+		Summary: "Edit request rejected",
+		Error:   "old_text did not appear in tests/e2e/suite.gd",
+	}
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:       "tool_result",
+		Request:      req,
+		Result:       result,
+		Constraints:  []string{"exact_anchor_implementation"},
+		WriteCapable: true,
+	})
+
+	if !containsString(guidance.InvalidNext, "read/search before resolving exact-anchor write failure") {
+		t.Fatalf("missing exact-anchor invalid action: %#v", guidance)
+	}
+	joined := strings.Join(guidance.ValidNext, "\n")
+	for _, want := range []string{
+		"retry one corrected write shape from the target packet",
+		"<<QUESTION>> naming the missing anchor",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in exact-anchor guidance, got %#v", want, guidance.ValidNext)
+		}
+	}
+
+	plan := BuildRecoveryPlan(RecoveryInput{
+		Reason:       "tool_result",
+		Request:      req,
+		Result:       result,
+		Constraints:  []string{"exact_anchor_implementation"},
+		WriteCapable: true,
+	})
+	if plan.FailureClass != "exact_anchor_write_failure" {
+		t.Fatalf("FailureClass = %q, want exact_anchor_write_failure in %#v", plan.FailureClass, plan)
+	}
+	recovery := strings.Join(append(append([]string{}, plan.DoNotRepeat...), plan.RequiredNext...), "\n")
+	for _, want := range []string{
+		"read/search after an exact-anchor write failed",
+		"<<QUESTION>> naming the missing anchor",
+	} {
+		if !strings.Contains(recovery, want) {
+			t.Fatalf("expected %q in exact-anchor recovery, got %#v", want, plan)
+		}
+	}
+}
+
+func TestBuildActionGuidanceForExactAnchorHiddenPrewriteTool(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "read_file", Path: ".planning/campaigns/megaflora-system.md"}
+	result := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Tool hidden by active contract",
+		Error:   "read_file is hidden for the rest of this turn by the active runtime contract.",
+	}
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:       "tool_rejected",
+		Request:      req,
+		Result:       result,
+		Constraints:  []string{"exact_anchor_implementation"},
+		WriteCapable: true,
+	})
+	if !containsString(guidance.InvalidNext, "read/search/shell before first exact-anchor write") {
+		t.Fatalf("missing exact-anchor hidden-tool invalid action: %#v", guidance)
+	}
+	joined := strings.Join(guidance.ValidNext, "\n")
+	for _, want := range []string{
+		"call edit_file or apply_patch with the supplied target-packet anchor now",
+		"<<QUESTION>> if no exact write anchor or patch is present",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in exact-anchor hidden-tool guidance, got %#v", want, guidance.ValidNext)
+		}
+	}
+
+	plan := BuildRecoveryPlan(RecoveryInput{
+		Reason:       "tool_rejected",
+		Request:      req,
+		Result:       result,
+		Constraints:  []string{"exact_anchor_implementation"},
+		WriteCapable: true,
+	})
+	if plan.FailureClass != "exact_anchor_prewrite_hidden_tool" {
+		t.Fatalf("FailureClass = %q, want exact_anchor_prewrite_hidden_tool in %#v", plan.FailureClass, plan)
+	}
+	recovery := strings.Join(append(append([]string{}, plan.DoNotRepeat...), plan.RequiredNext...), "\n")
+	for _, want := range []string{
+		"read/search/shell before first exact-anchor write",
+		"use edit_file or apply_patch with the supplied anchor",
+	} {
+		if !strings.Contains(recovery, want) {
+			t.Fatalf("expected %q in exact-anchor hidden-tool recovery, got %#v", want, plan)
+		}
+	}
+}
+
 func TestBuildActionGuidanceIgnoresCompletionGatePhrasesInSearchOutput(t *testing.T) {
 	guidance := BuildActionGuidance(ActionGuidanceInput{
 		Reason:  "tool_result",
@@ -533,6 +630,15 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 	for _, want := range []string{"answer_when_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "prefer_symbol_or_handle_probes_over_raw_path_reads"} {
 		if !containsString(spec.SearchPolicy, want) {
 			t.Fatalf("expected child read-only search policy to include %q, got %#v", want, spec.SearchPolicy)
+		}
+	}
+}
+
+func TestRoleSpecForImplementTrustsPreloadedAnchors(t *testing.T) {
+	spec := RoleSpecFor("implement")
+	for _, want := range []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported"} {
+		if !containsString(spec.SearchPolicy, want) {
+			t.Fatalf("expected implement search policy to include %q, got %#v", want, spec.SearchPolicy)
 		}
 	}
 }

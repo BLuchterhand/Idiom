@@ -53,12 +53,10 @@ type DiscoveryRedirect struct {
 // for the majority while still protecting the large-file case.
 const smallFileRedirectThreshold = 400
 
-// turnWideReadFileHardBlockAt is the number of read_file→outline
-// redirects (any .go file) in a single turn after which we stop
-// redirecting and start hard-rejecting raw read_file on .go paths
-// with no range. The model has been told 3 times; at that point,
-// failing gracefully by forcing a structured call is better than
-// continuing to burn an extra step on each one.
+// turnWideReadFileHardBlockAt is the number of read_file->outline redirects
+// for a single language in one turn after which we stop soft redirecting and
+// start hard-rejecting the wide raw-read shape. Other semantic redirects stay
+// soft: they are ranked guidance, not mandatory strategy.
 const turnWideReadFileHardBlockAt = 3
 
 // NewDiscoveryRedirect returns a per-turn redirect state.
@@ -119,6 +117,11 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	if !ok {
 		return RedirectDecision{}
 	}
+	if cap == workspace.CapFileOutline && strings.TrimSpace(req.Path) == "" {
+		if path, ok := redirectReadFilePath(req, ws); ok {
+			req.Path = path
+		}
+	}
 	req = normalizeRedirectRequest(req, lang, cap)
 	replacement := lang.Tool(cap)
 	if replacement == "" {
@@ -144,12 +147,12 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 		guide = lang.DecisionGuide
 	}
 
-	// After turnWideReadFileHardBlockAt fires of the same (lang, cap),
-	// the model has had its nudge three times. Flip to a hard-reject
-	// path so the runner populates rejectedFingerprints and a retry
-	// actually terminates the turn instead of giving the model yet
-	// another soft bounce. Gated by cap==CapFileOutline because the
-	// other capabilities use the soft-nudge semantics to good effect.
+	// After turnWideReadFileHardBlockAt whole-file outline redirects of the
+	// same language, flip wide raw reads to a hard-reject path so the runner
+	// populates rejectedFingerprints and a retry terminates the churn. Gated
+	// by CapFileOutline because the other capabilities are semantic ranking
+	// hints; forcing them would choose the model's strategy instead of
+	// protecting an invariant.
 	//
 	// Using `>=` means the third fire (not the fourth) hard-rejects.
 	// Empirical: the suite run at the looser `>` threshold still saw
@@ -263,7 +266,26 @@ func normalizeRedirectRequest(req workspace.ToolRequest, lang workspace.Language
 }
 
 func redirectFingerprint(req workspace.ToolRequest) string {
-	return req.Tool + "|" + req.Path + "|" + req.Pattern + "|" + req.Glob + "|" + req.Command
+	return req.Tool + "|" + req.ID + "|" + req.Path + "|" + req.Pattern + "|" + req.Glob + "|" + req.Command
+}
+
+func redirectReadFilePath(req workspace.ToolRequest, ws *workspace.Manager) (string, bool) {
+	path := strings.TrimSpace(req.Path)
+	if path != "" {
+		return path, true
+	}
+	id := strings.TrimSpace(req.ID)
+	if id == "" || ws == nil {
+		return "", false
+	}
+	resolved, err := ws.ResolveHandlePath(id)
+	if err != nil {
+		return "", false
+	}
+	if rel, err := filepath.Rel(ws.Root(), resolved); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel), true
+	}
+	return resolved, true
 }
 
 // matchRedirectRule maps a generic tool request to a (language,
@@ -280,8 +302,8 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		if req.StartLine > 0 || req.EndLine > 0 {
 			return workspace.LanguageSupport{}, "", false
 		}
-		path := strings.TrimSpace(req.Path)
-		if path == "" {
+		path, ok := redirectReadFilePath(req, ws)
+		if !ok {
 			return workspace.LanguageSupport{}, "", false
 		}
 		lang, ok := workspace.LanguageForFile(path)
@@ -292,6 +314,9 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 			return workspace.LanguageSupport{}, "", false
 		}
 		if lang.Tool(workspace.CapFileOutline) == "" {
+			return workspace.LanguageSupport{}, "", false
+		}
+		if pathLooksTestLike(path) {
 			return workspace.LanguageSupport{}, "", false
 		}
 		// Small files short-circuit the outline detour. A typical
@@ -350,6 +375,31 @@ func searchContentTargetsConcreteFile(req workspace.ToolRequest) bool {
 		return false
 	}
 	return filepath.Ext(filepath.Base(path)) != ""
+}
+
+func pathLooksTestLike(path string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), "\\", "/"))
+	if normalized == "" {
+		return false
+	}
+	parts := strings.Split(normalized, "/")
+	for _, part := range parts[:len(parts)-1] {
+		switch part {
+		case "test", "tests", "__tests__", "spec", "specs", "fixtures":
+			return true
+		}
+	}
+	base := strings.TrimSuffix(filepath.Base(normalized), filepath.Ext(normalized))
+	if base == "" {
+		return false
+	}
+	return strings.HasPrefix(base, "test_") ||
+		strings.HasSuffix(base, "_test") ||
+		strings.HasSuffix(base, "_tests") ||
+		strings.HasPrefix(base, "spec_") ||
+		strings.HasSuffix(base, "_spec") ||
+		strings.Contains(normalized, ".test.") ||
+		strings.Contains(normalized, ".spec.")
 }
 
 // languageForSearchRequest infers a language for a generic search_content
@@ -469,6 +519,8 @@ func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (workspace
 //
 //   - `sed -n 'A,Bp' FILE` → read_file(path=FILE, start_line=A, end_line=B).
 //     Strictly generic: no language-specific replacement is needed.
+//   - `wc [-l|-c|-w] FILE` → file_stats(path=FILE). Strictly generic:
+//     the model is asking for bounded counts, not arbitrary shell.
 //   - `grep [-n|-rn|-r] "IDENT" [FILE]` with an identifier-shaped pattern
 //     → language symbol tool (references if scoped to a file, workspace
 //     symbol otherwise).
@@ -586,6 +638,31 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		}
 	}
 
+	if match := matchShellWCStats(cmd); match != "" {
+		d.firedRedirects[fp] = true
+		kind := "shell|file_stats"
+		d.kindFireCount[kind]++
+		hardReject := d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
+		msg := fmt.Sprintf(
+			"The request counts file size/lines via shell. Use file_stats instead — it returns structured file, byte, and line counts without a shell prompt.\n"+
+				"Try: {\"tool\":\"file_stats\",\"path\":%q}\n"+
+				"If the stats do not answer the question, retry your original command and it will execute.",
+			match)
+		result := workspace.ToolResult{Tool: req.Tool, Summary: "Redirected to file_stats", Output: msg}
+		if hardReject {
+			result.Summary = "Shell wc blocked — use file_stats instead"
+			result.Error = msg
+			result.Output = ""
+		}
+		return RedirectDecision{
+			ShouldRedirect: true,
+			HardReject:     hardReject,
+			Result:         result,
+			Language:       "",
+			Capability:     workspace.Capability("file_stats"),
+		}
+	}
+
 	if match := matchShellGrepIdentifier(cmd); match != nil {
 		lang, ok := languageForShellGrep(match, ws)
 		if !ok {
@@ -686,6 +763,65 @@ type shellGrepMatch struct {
 	glob    string
 }
 
+func matchShellWCStats(cmd string) string {
+	if strings.ContainsAny(cmd, "$`") || shellCommandHasControlOperator(cmd) {
+		return ""
+	}
+	fields := shellCommandFields(cmd)
+	if len(fields) < 2 || fields[0] != "wc" {
+		return ""
+	}
+	pathArg := ""
+	for i := 1; i < len(fields); i++ {
+		field := fields[i]
+		if field == "--" {
+			if i+1 >= len(fields) || pathArg != "" {
+				return ""
+			}
+			pathArg = fields[i+1]
+			i++
+			continue
+		}
+		if strings.HasPrefix(field, "-") {
+			if !isSupportedWCFlag(field) {
+				return ""
+			}
+			continue
+		}
+		if pathArg != "" {
+			return ""
+		}
+		pathArg = field
+	}
+	return stripShellQuotes(pathArg)
+}
+
+func isSupportedWCFlag(flag string) bool {
+	if flag == "" || flag[0] != '-' {
+		return false
+	}
+	switch flag {
+	case "-l", "-c", "-m", "-w":
+		return true
+	}
+	if strings.HasPrefix(flag, "--") {
+		switch flag {
+		case "--lines", "--bytes", "--chars", "--words":
+			return true
+		default:
+			return false
+		}
+	}
+	for _, r := range strings.TrimPrefix(flag, "-") {
+		switch r {
+		case 'l', 'c', 'm', 'w':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 var reShellGrepIdentToken = regexp.MustCompile(`^[A-Za-z_][\w:]*$`)
 
 // matchShellGrepIdentifier accepts `grep [-flags] PATTERN [FILE]` (or `rg`
@@ -694,10 +830,10 @@ var reShellGrepIdentToken = regexp.MustCompile(`^[A-Za-z_][\w:]*$`)
 // anywhere in the line disqualify the whole match — we only rewrite the
 // unambiguous symbol-lookup shape.
 func matchShellGrepIdentifier(cmd string) *shellGrepMatch {
-	if strings.ContainsAny(cmd, "|><$`;&") {
+	if strings.ContainsAny(cmd, "$`") || shellCommandHasControlOperator(cmd) {
 		return nil
 	}
-	fields := strings.Fields(cmd)
+	fields := shellCommandFields(cmd)
 	if len(fields) < 2 {
 		return nil
 	}
@@ -728,26 +864,170 @@ func matchShellGrepIdentifier(cmd string) *shellGrepMatch {
 	if i >= len(fields) {
 		return nil
 	}
-	pattern := stripShellQuotes(fields[i])
-	if len(pattern) < 2 || !reShellGrepIdentToken.MatchString(pattern) {
+	pattern, ok := shellGrepSymbolPattern(stripShellQuotes(fields[i]))
+	if !ok {
 		return nil
 	}
 	i++
 	path := ""
-	if i < len(fields) {
-		// Everything after the pattern must be a single unambiguous
-		// file token. Multiple files, globs, or anything regex-shaped
-		// disqualifies.
-		if len(fields)-i > 1 {
+	for i < len(fields) {
+		token := fields[i]
+		if strings.HasPrefix(token, "--include=") {
+			glob = stripShellQuotes(strings.TrimPrefix(token, "--include="))
+			i++
+			continue
+		}
+		if token == "-g" && i+1 < len(fields) {
+			i++
+			glob = stripShellQuotes(fields[i])
+			i++
+			continue
+		}
+		if strings.HasPrefix(token, "-") {
+			i++
+			continue
+		}
+		if path != "" {
 			return nil
 		}
-		candidate := fields[i]
+		candidate := stripShellQuotes(token)
 		if strings.ContainsAny(candidate, "*?[]{}()") {
 			return nil
 		}
 		path = candidate
+		i++
 	}
 	return &shellGrepMatch{pattern: pattern, path: path, glob: glob}
+}
+
+func shellCommandHasControlOperator(cmd string) bool {
+	var quote rune
+	escaped := false
+	for _, r := range cmd {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			if quote != '\'' {
+				escaped = true
+			}
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+		if strings.ContainsRune("|><;&", r) {
+			return true
+		}
+	}
+	return false
+}
+
+func shellCommandFields(cmd string) []string {
+	var fields []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	for _, r := range cmd {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			if quote == '\'' {
+				b.WriteRune(r)
+			} else {
+				escaped = true
+			}
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				b.WriteRune(r)
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if b.Len() > 0 {
+				fields = append(fields, b.String())
+				b.Reset()
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if escaped {
+		b.WriteRune('\\')
+	}
+	if b.Len() > 0 {
+		fields = append(fields, b.String())
+	}
+	return fields
+}
+
+func shellGrepSymbolPattern(pattern string) (string, bool) {
+	pattern = strings.TrimSpace(pattern)
+	if reShellGrepIdentToken.MatchString(pattern) {
+		return pattern, true
+	}
+	if strings.ContainsAny(pattern, "*+?[]{}()^$") {
+		return "", false
+	}
+	if first, ok := firstIdentifierAlternative(pattern); ok {
+		return first, true
+	}
+	if ident, ok := extractUnambiguousSyntaxIdentifier(pattern); ok {
+		return ident, true
+	}
+	return "", false
+}
+
+func firstIdentifierAlternative(pattern string) (string, bool) {
+	normalized := strings.ReplaceAll(pattern, `\|`, "|")
+	if !strings.Contains(normalized, "|") {
+		return "", false
+	}
+	parts := strings.Split(normalized, "|")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if !looksLikeIdentifier(part) {
+			return "", false
+		}
+	}
+	first := strings.TrimSpace(parts[0])
+	return first, first != ""
+}
+
+func extractUnambiguousSyntaxIdentifier(pattern string) (string, bool) {
+	var found string
+	for _, extractors := range syntaxExtractors {
+		for _, re := range extractors {
+			m := re.FindStringSubmatch(pattern)
+			if len(m) < 2 || m[1] == "" {
+				continue
+			}
+			if found != "" && found != m[1] {
+				return "", false
+			}
+			found = m[1]
+		}
+	}
+	return found, found != ""
 }
 
 func languageForShellGrep(match *shellGrepMatch, ws *workspace.Manager) (workspace.LanguageSupport, bool) {

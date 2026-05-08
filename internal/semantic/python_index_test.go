@@ -134,9 +134,9 @@ def test_engine():
 
 func TestPythonImportResolution(t *testing.T) {
 	byModule := map[string]string{
-		"demo":          "src/demo/__init__.py",
-		"demo.core":     "src/demo/core.py",
-		"demo.app":      "src/demo/app.py",
+		"demo":      "src/demo/__init__.py",
+		"demo.core": "src/demo/core.py",
+		"demo.app":  "src/demo/app.py",
 	}
 	byRel := map[string]string{
 		"src/demo/__init__.py": "src/demo/__init__.py",
@@ -152,6 +152,29 @@ func TestPythonImportResolution(t *testing.T) {
 	}
 	if got := resolvePythonModule("src/demo/app.py", "math", byModule, byRel); got != "" {
 		t.Fatalf("stdlib import should resolve to empty, got %q", got)
+	}
+
+	raw, resolved := parsePythonImports("src/demo/app.py", `
+from . import plugin
+import os, demo.core as core
+import importlib
+
+def load():
+    return importlib.import_module("demo.plugin")
+`, map[string]string{
+		"demo":        "src/demo/__init__.py",
+		"demo.core":   "src/demo/core.py",
+		"demo.plugin": "src/demo/plugin.py",
+	}, map[string]string{
+		"src/demo/__init__.py": "src/demo/__init__.py",
+		"src/demo/core.py":     "src/demo/core.py",
+		"src/demo/plugin.py":   "src/demo/plugin.py",
+	})
+	if !containsString(raw, ".plugin") || !containsString(raw, "demo.core") || !containsString(raw, "demo.plugin") {
+		t.Fatalf("expected raw imports to include relative, multi-import, and dynamic imports, got %v", raw)
+	}
+	if !containsString(resolved, "src/demo/plugin.py") || !containsString(resolved, "src/demo/core.py") {
+		t.Fatalf("expected imports to resolve plugin and core, got %v", resolved)
 	}
 }
 

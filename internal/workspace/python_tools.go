@@ -326,11 +326,12 @@ func (m *Manager) pythonCallsFrom(ctx context.Context, req ToolRequest) ToolResu
 	}
 	pathFilter, err := m.pythonPathFilterForRequest(req)
 	if err == nil {
-		if output, lspErr := m.pythonCallHierarchyViaLSP(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(output) != "" {
+		if payload, lspErr := m.pythonCallHierarchyViaLSP(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
 			return ToolResult{
-				Tool:    "python_calls_from",
-				Summary: "Resolved outgoing Python calls via LSP call hierarchy",
-				Output:  output,
+				Tool:          "python_calls_from",
+				Summary:       "Resolved outgoing Python calls via LSP call hierarchy",
+				Output:        payload.Output,
+				Relationships: payload.Relationships,
 			}
 		}
 	}
@@ -360,11 +361,12 @@ func (m *Manager) pythonCallsInto(ctx context.Context, req ToolRequest) ToolResu
 	}
 	pathFilter, err := m.pythonPathFilterForRequest(req)
 	if err == nil {
-		if output, lspErr := m.pythonCallHierarchyViaLSP(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(output) != "" {
+		if payload, lspErr := m.pythonCallHierarchyViaLSP(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
 			return ToolResult{
-				Tool:    "python_calls_into",
-				Summary: "Resolved incoming Python calls via LSP call hierarchy",
-				Output:  output,
+				Tool:          "python_calls_into",
+				Summary:       "Resolved incoming Python calls via LSP call hierarchy",
+				Output:        payload.Output,
+				Relationships: payload.Relationships,
 			}
 		}
 	}

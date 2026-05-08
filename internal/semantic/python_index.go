@@ -57,11 +57,12 @@ type PythonCall struct {
 }
 
 var (
-	pythonImportRe     = regexp.MustCompile(`^\s*import\s+([A-Za-z_][\w\.]*)(?:\s+as\s+[A-Za-z_]\w*)?\s*(?:$|,|#)`)
-	pythonFromImportRe = regexp.MustCompile(`^\s*from\s+(\.*[A-Za-z_][\w\.]*|\.+)\s+import\s+`)
-	pythonFuncRe       = regexp.MustCompile(`^(\s*)(async\s+)?def\s+([A-Za-z_]\w*)\s*\(`)
-	pythonClassRe      = regexp.MustCompile(`^(\s*)class\s+([A-Za-z_]\w*)\s*(?:\(|:)`)
-	pythonCallRe       = regexp.MustCompile(`\b([A-Za-z_][\w]*)\s*\(`)
+	pythonImportRe        = regexp.MustCompile(`^\s*import\s+(.+)`)
+	pythonFromImportRe    = regexp.MustCompile(`^\s*from\s+(\.*[A-Za-z_][\w\.]*|\.+)\s+import\s+(.+)`)
+	pythonDynamicImportRe = regexp.MustCompile(`\b(?:importlib\.import_module|__import__)\s*\(\s*["']([^"']+)["']`)
+	pythonFuncRe          = regexp.MustCompile(`^(\s*)(async\s+)?def\s+([A-Za-z_]\w*)\s*\(`)
+	pythonClassRe         = regexp.MustCompile(`^(\s*)class\s+([A-Za-z_]\w*)\s*(?:\(|:)`)
+	pythonCallRe          = regexp.MustCompile(`\b([A-Za-z_][\w]*)\s*\(`)
 )
 
 var pythonFileExtensions = map[string]struct{}{
@@ -72,10 +73,15 @@ var pythonFileExtensions = map[string]struct{}{
 // BuildPythonIndex walks root, parses every .py / .pyi file, and returns
 // the populated index. Returns (nil, nil) if no Python files are found.
 func BuildPythonIndex(root string) (*PythonIndex, error) {
+	return BuildPythonIndexWithOptions(root, IndexOptions{})
+}
+
+func BuildPythonIndexWithOptions(root string, opts IndexOptions) (*PythonIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
 	}
+	scope := cleanIndexScope(opts.Scope)
 
 	index := &PythonIndex{
 		Root:    root,
@@ -86,11 +92,18 @@ func BuildPythonIndex(root string) (*PythonIndex, error) {
 	byRel := make(map[string]string)
 	paths := make([]string, 0, 64)
 
+	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := indexContextErr(opts); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
+			if !shouldVisitIndexDir(root, path, scope) {
+				return filepath.SkipDir
+			}
 			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
@@ -110,6 +123,9 @@ func BuildPythonIndex(root string) (*PythonIndex, error) {
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+		if !pathInIndexScope(rel, scope) {
+			return nil
+		}
 		paths = append(paths, rel)
 		byRel[rel] = rel
 		for _, module := range pythonModuleNamesFor(rel) {
@@ -117,8 +133,14 @@ func BuildPythonIndex(root string) (*PythonIndex, error) {
 				byModule[module] = rel
 			}
 		}
+		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
+			return errStop
+		}
 		return nil
 	})
+	if err == errStop {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +150,9 @@ func BuildPythonIndex(root string) (*PythonIndex, error) {
 
 	sort.Strings(paths)
 	for _, rel := range paths {
+		if err := indexContextErr(opts); err != nil {
+			return nil, err
+		}
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		contentBytes, readErr := os.ReadFile(full)
 		if readErr != nil {
@@ -368,39 +393,88 @@ func parsePythonImports(rel string, content string, byModule map[string]string, 
 	resolved := make([]string, 0, 8)
 	seenRaw := make(map[string]struct{})
 	seenRes := make(map[string]struct{})
+	addImport := func(module string) {
+		module = strings.TrimSpace(module)
+		if module == "" {
+			return
+		}
+		if _, ok := seenRaw[module]; !ok {
+			seenRaw[module] = struct{}{}
+			raw = append(raw, module)
+		}
+		if target := resolvePythonModule(rel, module, byModule, byRel); target != "" {
+			if _, ok := seenRes[target]; !ok {
+				seenRes[target] = struct{}{}
+				resolved = append(resolved, target)
+			}
+		}
+	}
 	for _, line := range lines {
 		clean := stripPythonComment(line)
 		if match := pythonImportRe.FindStringSubmatch(clean); len(match) >= 2 {
-			module := strings.TrimSpace(match[1])
-			if _, ok := seenRaw[module]; !ok {
-				seenRaw[module] = struct{}{}
-				raw = append(raw, module)
-			}
-			if target := resolvePythonModule(rel, module, byModule, byRel); target != "" {
-				if _, ok := seenRes[target]; !ok {
-					seenRes[target] = struct{}{}
-					resolved = append(resolved, target)
-				}
+			for _, module := range parsePythonImportNames(match[1]) {
+				addImport(module)
 			}
 			continue
 		}
 		if match := pythonFromImportRe.FindStringSubmatch(clean); len(match) >= 2 {
 			module := strings.TrimSpace(match[1])
-			if _, ok := seenRaw[module]; !ok {
-				seenRaw[module] = struct{}{}
-				raw = append(raw, module)
-			}
-			if target := resolvePythonModule(rel, module, byModule, byRel); target != "" {
-				if _, ok := seenRes[target]; !ok {
-					seenRes[target] = struct{}{}
-					resolved = append(resolved, target)
+			addImport(module)
+			if len(match) >= 3 {
+				for _, imported := range parsePythonImportNames(match[2]) {
+					if imported == "*" {
+						continue
+					}
+					addImport(joinPythonImportedModule(module, imported))
 				}
+			}
+		}
+		for _, match := range pythonDynamicImportRe.FindAllStringSubmatch(clean, -1) {
+			if len(match) >= 2 {
+				addImport(match[1])
 			}
 		}
 	}
 	sort.Strings(raw)
 	sort.Strings(resolved)
 	return raw, resolved
+}
+
+func parsePythonImportNames(spec string) []string {
+	spec = strings.TrimSpace(spec)
+	spec = strings.TrimPrefix(spec, "(")
+	spec = strings.TrimSuffix(spec, ")")
+	if spec == "" {
+		return nil
+	}
+	values := strings.Split(spec, ",")
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if idx := strings.Index(value, " as "); idx >= 0 {
+			value = strings.TrimSpace(value[:idx])
+		}
+		value = strings.Trim(value, " \t()")
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func joinPythonImportedModule(module string, imported string) string {
+	module = strings.TrimSpace(module)
+	imported = strings.TrimSpace(imported)
+	if module == "" || imported == "" {
+		return module
+	}
+	if strings.HasSuffix(module, ".") {
+		return module + imported
+	}
+	return module + "." + imported
 }
 
 // resolvePythonModule tries to map an `import foo.bar` or `from

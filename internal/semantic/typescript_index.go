@@ -110,10 +110,15 @@ var tsSkippedDirs = map[string]struct{}{
 }
 
 func BuildTsIndex(root string) (*TsIndex, error) {
+	return BuildTsIndexWithOptions(root, IndexOptions{})
+}
+
+func BuildTsIndexWithOptions(root string, opts IndexOptions) (*TsIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
 	}
+	scope := cleanIndexScope(opts.Scope)
 
 	index := &TsIndex{
 		Root:    root,
@@ -124,11 +129,18 @@ func BuildTsIndex(root string) (*TsIndex, error) {
 	byRel := make(map[string]string)
 	paths := make([]string, 0, 64)
 
+	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := indexContextErr(opts); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
+			if !shouldVisitIndexDir(root, path, scope) {
+				return filepath.SkipDir
+			}
 			if _, skip := tsSkippedDirs[d.Name()]; skip && path != root {
 				return filepath.SkipDir
 			}
@@ -148,11 +160,20 @@ func BuildTsIndex(root string) (*TsIndex, error) {
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+		if !pathInIndexScope(rel, scope) {
+			return nil
+		}
 		paths = append(paths, rel)
 		byName[filepath.Base(rel)] = rel
 		byRel[rel] = rel
+		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
+			return errStop
+		}
 		return nil
 	})
+	if err == errStop {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +183,9 @@ func BuildTsIndex(root string) (*TsIndex, error) {
 
 	sort.Strings(paths)
 	for _, rel := range paths {
+		if err := indexContextErr(opts); err != nil {
+			return nil, err
+		}
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		contentBytes, err := os.ReadFile(full)
 		if err != nil {

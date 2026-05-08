@@ -12,6 +12,9 @@ func TestDiscoveryProfileClassifiesGenericToolsForBalance(t *testing.T) {
 	}{
 		{name: "composite query", req: ToolRequest{Tool: "discovery_query", Purpose: "impact_analysis", Path: ".", Pattern: "Execute"}, wantClass: "composite_query", wantScope: "targeted", wantCost: "medium"},
 		{name: "composite security query", req: ToolRequest{Tool: "discovery_query", Purpose: "security_review", Path: "."}, wantClass: "composite_query", wantScope: "broad", wantCost: "high"},
+		{name: "context pack", req: ToolRequest{Tool: "context_pack", Task: "Plan Execute", Path: "."}, wantClass: "context_pack", wantScope: "targeted", wantCost: "medium"},
+		{name: "context trace pack", req: ToolRequest{Tool: "context_trace_pack", Command: "pytest tests/test_app.py", Path: "."}, wantClass: "runtime_trace", wantScope: "targeted", wantCost: "medium"},
+		{name: "harness feedback", req: ToolRequest{Tool: "harness_feedback", Component: "context_pack"}, wantClass: "harness_feedback", wantScope: "targeted", wantCost: "low"},
 		{name: "structural", req: ToolRequest{Tool: "structural_search", Path: "internal", Pattern: "if $X { $Y }"}, wantClass: "ast_search", wantScope: "targeted", wantCost: "medium"},
 		{name: "dependency root", req: ToolRequest{Tool: "dependency_graph", Path: "."}, wantClass: "dependency_graph", wantScope: "broad", wantCost: "medium"},
 		{name: "dependency scoped", req: ToolRequest{Tool: "dependency_graph", Path: "internal/workspace"}, wantClass: "dependency_graph", wantScope: "targeted", wantCost: "medium"},
@@ -67,6 +70,9 @@ func TestDiscoveryProfileDoesNotCountVerificationShellAsDiscovery(t *testing.T) 
 func TestGenericDiscoveryToolsCountAsNarrowingEvidence(t *testing.T) {
 	mgr := NewManager(testWorkspaceConfig())
 	for _, req := range []ToolRequest{
+		{Tool: "harness_feedback", Component: "context_pack", Expected: "x", Observed: "y", Impact: "z"},
+		{Tool: "context_pack", Task: "Plan Execute", Path: "."},
+		{Tool: "context_trace_pack", Command: "pytest tests/test_app.py", Path: "."},
 		{Tool: "discovery_query", Purpose: "impact_analysis", Path: ".", Pattern: "Execute"},
 		{Tool: "structural_search", Pattern: "if $X { $Y }", Path: "."},
 		{Tool: "dependency_graph", Language: "go", Path: "."},

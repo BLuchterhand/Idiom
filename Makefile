@@ -1,5 +1,6 @@
 APP_NAME ?= idiom
 CONFIG ?= config.json
+LOCAL_BIN ?= $(HOME)/.local/bin
 SUITE ?= testdata/swe/representative-suite.json
 LIVE_SUBSET_SUITE ?= testdata/swe/live-subset.json
 LIVE_LOGS ?= testdata/swe/generated-logs
@@ -13,7 +14,7 @@ CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
 
-.PHONY: run server opencode classifier-server route-classifier build fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset
+.PHONY: run server opencode classifier-server route-classifier build install-path fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset
 
 run:
 	go run ./cmd/idiom -config $(CONFIG)
@@ -31,7 +32,17 @@ classifier-server:
 route-classifier: classifier-server
 
 build:
+	mkdir -p bin
 	go build -o bin/$(APP_NAME) ./cmd/idiom
+	$(MAKE) install-path
+
+install-path:
+	mkdir -p "$(LOCAL_BIN)"
+	ln -sfn "$(CURDIR)/bin/$(APP_NAME)" "$(LOCAL_BIN)/$(APP_NAME)"
+	@case ":$$PATH:" in \
+		*:"$(LOCAL_BIN)":*) echo "$(LOCAL_BIN)/$(APP_NAME) -> $(CURDIR)/bin/$(APP_NAME)" ;; \
+		*) echo "warning: $(LOCAL_BIN) is not on PATH for this shell" ;; \
+	esac
 
 fmt:
 	go fmt ./...

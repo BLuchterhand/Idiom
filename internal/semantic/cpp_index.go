@@ -40,6 +40,7 @@ type CppSymbol struct {
 	StartLine  int
 	EndLine    int
 	Calls      []CppCall
+	HasBody    bool
 	SourceFile string
 }
 
@@ -49,10 +50,10 @@ type CppCall struct {
 }
 
 var (
-	cppIncludeRe       = regexp.MustCompile(`^\s*#include\s+"([^"]+)"`)
-	cppTypeRe          = regexp.MustCompile(`^\s*(class|struct|enum(?:\s+class)?|union|namespace)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	cppIncludeRe       = regexp.MustCompile(`^\s*#include\s+[<"]([^>"]+)`)
+	cppTypeRe          = regexp.MustCompile(`^\s*(?:template\s*<[^>]*>\s*)?(class|struct|enum(?:\s+class)?|union|namespace)\s+([A-Za-z_][A-Za-z0-9_]*)`)
 	cppNameBeforeParen = regexp.MustCompile(`([A-Za-z_~][A-Za-z0-9_:~]*)\s*$`)
-	cppCallRe          = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	cppCallRe          = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^;{}()\n]*>)?\s*\(`)
 )
 
 var cppFileExtensions = map[string]struct{}{
@@ -80,25 +81,37 @@ var cppHeaderExtensions = map[string]struct{}{
 }
 
 func BuildCppIndex(root string) (*CppIndex, error) {
+	return BuildCppIndexWithOptions(root, IndexOptions{})
+}
+
+func BuildCppIndexWithOptions(root string, opts IndexOptions) (*CppIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
 	}
+	scope := cleanIndexScope(opts.Scope)
 
 	index := &CppIndex{
 		Root:    root,
 		Forward: make(map[string][]string),
 		Reverse: make(map[string][]string),
 	}
-	byName := make(map[string]string)
+	byName := make(map[string][]string)
 	byRel := make(map[string]string)
 	paths := make([]string, 0, 64)
 
+	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := indexContextErr(opts); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
+			if !shouldVisitIndexDir(root, path, scope) {
+				return filepath.SkipDir
+			}
 			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
@@ -115,11 +128,20 @@ func BuildCppIndex(root string) (*CppIndex, error) {
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+		if !pathInIndexScope(rel, scope) {
+			return nil
+		}
 		paths = append(paths, rel)
-		byName[filepath.Base(rel)] = rel
+		byName[filepath.Base(rel)] = appendUniqueString(byName[filepath.Base(rel)], rel)
 		byRel[rel] = rel
+		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
+			return errStop
+		}
 		return nil
 	})
+	if err == errStop {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +151,9 @@ func BuildCppIndex(root string) (*CppIndex, error) {
 
 	sort.Strings(paths)
 	for _, rel := range paths {
+		if err := indexContextErr(opts); err != nil {
+			return nil, err
+		}
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		contentBytes, err := os.ReadFile(full)
 		if err != nil {
@@ -341,7 +366,7 @@ func (idx *CppIndex) uniqueRankedPaths(files []CppFile, limit int) []string {
 	return out
 }
 
-func parseCppIncludes(rel string, content string, byName map[string]string, byRel map[string]string) []string {
+func parseCppIncludes(rel string, content string, byName map[string][]string, byRel map[string]string) []string {
 	lines := strings.Split(content, "\n")
 	includes := make([]string, 0, 8)
 	for _, line := range lines {
@@ -359,7 +384,7 @@ func parseCppIncludes(rel string, content string, byName map[string]string, byRe
 	return includes
 }
 
-func resolveCppInclude(sourceRel string, include string, byName map[string]string, byRel map[string]string) string {
+func resolveCppInclude(sourceRel string, include string, byName map[string][]string, byRel map[string]string) string {
 	include = filepath.ToSlash(strings.TrimSpace(include))
 	if include == "" {
 		return ""
@@ -376,8 +401,8 @@ func resolveCppInclude(sourceRel string, include string, byName map[string]strin
 		return candidate
 	}
 	base := filepath.Base(include)
-	if rel, ok := byName[base]; ok {
-		return rel
+	if matches := byName[base]; len(matches) == 1 {
+		return matches[0]
 	}
 	return ""
 }
@@ -441,9 +466,10 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 			symbol.StartLine = pendingStart
 			symbol.EndLine = pendingStart
 			symbol.SourceFile = rel
-			if strings.Contains(signature, "{") {
+			symbol.HasBody = strings.Contains(signature, "{")
+			if symbol.HasBody {
 				symbol.EndLine = findCppBraceEnd(lines, i)
-				symbol.Calls = extractCppCalls(lines, symbol.StartLine, symbol.EndLine)
+				symbol.Calls = filterCppDefinitionCalls(symbol, extractCppCalls(lines, symbol.StartLine, symbol.EndLine))
 			}
 			symbols = append(symbols, symbol)
 		}
@@ -518,6 +544,20 @@ func extractCppCalls(lines []string, startLine int, endLine int) []CppCall {
 		}
 	}
 	return calls
+}
+
+func filterCppDefinitionCalls(symbol CppSymbol, calls []CppCall) []CppCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	filtered := make([]CppCall, 0, len(calls))
+	for _, call := range calls {
+		if call.Line == symbol.StartLine && call.Name == symbol.Name {
+			continue
+		}
+		filtered = append(filtered, call)
+	}
+	return filtered
 }
 
 func findCppBraceEnd(lines []string, startIdx int) int {

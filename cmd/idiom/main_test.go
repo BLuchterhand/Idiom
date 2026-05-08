@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -328,6 +329,42 @@ func TestSessionIDFromPath(t *testing.T) {
 	}
 }
 
+func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
+	telemetryDir := t.TempDir()
+	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
+	configPath := writeMainConfig(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "pwd", "-config", configPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"Tool": "pwd"`) {
+		t.Fatalf("expected tool result on stdout, got %q", stdout.String())
+	}
+
+	entries, err := os.ReadDir(telemetryDir)
+	if err != nil {
+		t.Fatalf("read telemetry dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one telemetry file, got %d", len(entries))
+	}
+	records := readMainTelemetryRecords(t, filepath.Join(telemetryDir, entries[0].Name()))
+	if !recordTypesContain(records, "process_start", "tool_request", "tool_result", "process_exit") {
+		t.Fatalf("telemetry missing expected records: %#v", records)
+	}
+	var sawDirectToolResult bool
+	for _, record := range records {
+		if record["type"] == "tool_result" && record["tool"] == "pwd" && record["agent"] == "direct" {
+			sawDirectToolResult = true
+		}
+	}
+	if !sawDirectToolResult {
+		t.Fatalf("missing direct pwd tool result telemetry: %#v", records)
+	}
+}
+
 func writeMainConfig(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
@@ -335,4 +372,37 @@ func writeMainConfig(t *testing.T) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read telemetry log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	records := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("parse telemetry line %q: %v", line, err)
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func recordTypesContain(records []map[string]any, want ...string) bool {
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		if typ, ok := record["type"].(string); ok {
+			seen[typ] = true
+		}
+	}
+	for _, typ := range want {
+		if !seen[typ] {
+			return false
+		}
+	}
+	return true
 }

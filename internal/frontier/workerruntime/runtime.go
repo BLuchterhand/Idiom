@@ -30,6 +30,7 @@ type WorkerRuntimeBrief struct {
 	Objective            string              `json:"objective,omitempty"`
 	PermissionProfile    string              `json:"permission_profile,omitempty"`
 	TargetRefs           []string            `json:"target_refs,omitempty"`
+	RequiredEditPaths    []string            `json:"required_edit_paths,omitempty"`
 	EvidencePaths        []string            `json:"evidence_paths,omitempty"`
 	ChangedPaths         []string            `json:"changed_paths,omitempty"`
 	UserBoundaries       []string            `json:"user_boundaries,omitempty"`
@@ -84,6 +85,7 @@ type RunState struct {
 	Step                 int                 `json:"step,omitempty"`
 	Permission           string              `json:"permission_profile,omitempty"`
 	TargetRefs           []string            `json:"target_refs,omitempty"`
+	RequiredEditPaths    []string            `json:"required_edit_paths,omitempty"`
 	EvidencePaths        []string            `json:"evidence_paths,omitempty"`
 	ChangedPaths         []string            `json:"changed_paths,omitempty"`
 	Constraints          []string            `json:"constraints,omitempty"`
@@ -168,6 +170,16 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "emit exactly one valid JSON tool object")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer normally only if the task is complete")
 		return guidance
+	}
+	if exactAnchorWriteFailure(input.Constraints, tool, statusCombined) {
+		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search before resolving exact-anchor write failure")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "retry one corrected write shape from the target packet if a safe anchor is known")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> naming the missing anchor if the packet anchor no longer matches")
+	}
+	if exactAnchorHiddenPrewriteTool(input.Constraints, tool, statusCombined) {
+		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search/shell before first exact-anchor write")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "call edit_file or apply_patch with the supplied target-packet anchor now")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> if no exact write anchor or patch is present")
 	}
 	if containsAny(statusCombined, "repeated", "replayed", "already failed earlier") {
 		if tool != "" {
@@ -347,6 +359,38 @@ func closureGuidanceScope(constraints []string, statusCombined string) string {
 	}
 }
 
+func exactAnchorWriteFailure(constraints []string, tool string, statusCombined string) bool {
+	if !containsStringValue(constraints, "exact_anchor_implementation") {
+		return false
+	}
+	if !workspace.IsWorkspaceWriteTool(tool) {
+		return false
+	}
+	return containsAny(statusCombined,
+		"edit request rejected",
+		"write request rejected",
+		"patch request rejected",
+		"patch hunk did not apply",
+		"old_text did not appear",
+		"requested lines",
+		"outside",
+		"line-range",
+	)
+}
+
+func exactAnchorHiddenPrewriteTool(constraints []string, tool string, statusCombined string) bool {
+	if !containsStringValue(constraints, "exact_anchor_implementation") {
+		return false
+	}
+	if workspace.IsWorkspaceWriteTool(tool) || strings.TrimSpace(tool) == "task_ledger" || strings.TrimSpace(tool) == "harness_feedback" {
+		return false
+	}
+	return containsAny(statusCombined,
+		"tool hidden by active contract",
+		"hidden for the rest of this turn by the active runtime contract",
+	)
+}
+
 func scopeSpecificClosureLabel(scope string) string {
 	if strings.TrimSpace(scope) == "child_packet_available" {
 		return "child packet"
@@ -517,6 +561,16 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	if containsAny(combined, "malformed tool", "tool_parse") {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one valid JSON tool object")
 	}
+	if exactAnchorWriteFailure(input.Constraints, tool, combined) {
+		plan.FailureClass = "exact_anchor_write_failure"
+		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "read/search after an exact-anchor write failed")
+		plan.RequiredNext = appendUnique(plan.RequiredNext, "retry one corrected write shape from the target packet, or answer with <<QUESTION>> naming the missing anchor")
+	}
+	if exactAnchorHiddenPrewriteTool(input.Constraints, tool, combined) {
+		plan.FailureClass = "exact_anchor_prewrite_hidden_tool"
+		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "read/search/shell before first exact-anchor write")
+		plan.RequiredNext = appendUnique(plan.RequiredNext, "use edit_file or apply_patch with the supplied anchor, or answer with <<QUESTION>> naming the missing anchor")
+	}
 	if containsAny(combined, "approval required", "write approval required") {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "stop and report that write approval is required")
 	}
@@ -606,6 +660,7 @@ func UserVisibleBlocker(reason string, result workspace.ToolResult) bool {
 func BuildStepInstruction(state RunState) StepInstruction {
 	state = MergeRuntimeBriefIntoState(WorkerRuntimeBrief{}, state)
 	state.TargetRefs = uniqueNonEmpty(state.TargetRefs)
+	state.RequiredEditPaths = uniqueNonEmpty(state.RequiredEditPaths)
 	state.EvidencePaths = uniqueNonEmpty(state.EvidencePaths)
 	state.ChangedPaths = uniqueNonEmpty(state.ChangedPaths)
 	state.Constraints = uniqueNonEmpty(state.Constraints)
@@ -682,6 +737,9 @@ func MergeRuntimeBriefIntoStateDelta(brief WorkerRuntimeBrief, state RunState) R
 	if len(state.TargetRefs) == 0 {
 		state.TargetRefs = append([]string(nil), brief.TargetRefs...)
 	}
+	if len(state.RequiredEditPaths) == 0 {
+		state.RequiredEditPaths = append([]string(nil), brief.RequiredEditPaths...)
+	}
 	state.EvidencePaths = mergeStrings(state.EvidencePaths, brief.EvidencePaths)
 	state.ChangedPaths = mergeStrings(state.ChangedPaths, brief.ChangedPaths)
 	state.Constraints = mergeStrings(state.Constraints, brief.Constraints)
@@ -712,6 +770,9 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 	}
 	if len(state.TargetRefs) == 0 {
 		state.TargetRefs = append([]string(nil), brief.TargetRefs...)
+	}
+	if len(state.RequiredEditPaths) == 0 {
+		state.RequiredEditPaths = append([]string(nil), brief.RequiredEditPaths...)
 	}
 	state.EvidencePaths = mergeStrings(state.EvidencePaths, brief.EvidencePaths)
 	state.ChangedPaths = mergeStrings(state.ChangedPaths, brief.ChangedPaths)
@@ -774,6 +835,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.PermissionProfile = strings.TrimSpace(brief.PermissionProfile)
 	brief.VerificationContract = strings.TrimSpace(brief.VerificationContract)
 	brief.TargetRefs = uniqueNonEmpty(brief.TargetRefs)
+	brief.RequiredEditPaths = uniqueNonEmpty(brief.RequiredEditPaths)
 	brief.EvidencePaths = uniqueNonEmpty(brief.EvidencePaths)
 	brief.ChangedPaths = uniqueNonEmpty(brief.ChangedPaths)
 	brief.UserBoundaries = uniqueNonEmpty(brief.UserBoundaries)
@@ -881,6 +943,7 @@ func RuntimeBriefHasContent(brief WorkerRuntimeBrief) bool {
 		brief.Contract != "" ||
 		brief.Objective != "" ||
 		len(brief.TargetRefs) > 0 ||
+		len(brief.RequiredEditPaths) > 0 ||
 		len(brief.AllowedTools) > 0 ||
 		len(brief.ForbiddenTools) > 0 ||
 		len(brief.RequiredEvidence) > 0 ||

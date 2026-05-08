@@ -73,6 +73,7 @@ type ToolResultDetail struct {
 	DiscoveryClass string
 	DiscoveryScope string
 	DiscoveryCost  string
+	ExtraFields    map[string]any
 }
 
 type ToolRequestDetail struct {
@@ -341,7 +342,27 @@ func (l *DebugLogger) LogToolResultDetail(d ToolResultDetail) error {
 	if strings.TrimSpace(d.DiscoveryCost) != "" {
 		record["discovery_cost"] = strings.TrimSpace(d.DiscoveryCost)
 	}
+	l.addToolResultExtraFields(record, d.ExtraFields)
 	return l.writeRecord(record)
+}
+
+func (l *DebugLogger) addToolResultExtraFields(record map[string]any, fields map[string]any) {
+	for key, value := range fields {
+		key = strings.TrimSpace(key)
+		if !strings.HasPrefix(key, "context_") {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) != "" {
+				record[key] = l.sanitizeText(typed)
+			}
+		case bool, int, int64, float64:
+			record[key] = typed
+		case []string:
+			record[key] = typed
+		}
+	}
 }
 
 func (l *DebugLogger) LogModelCall(c ModelCall) error {

@@ -571,39 +571,39 @@ func (m *Manager) tsReferencesViaLSP(ctx context.Context, match semantic.TsSymbo
 	return m.formatTsLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
 }
 
-func (m *Manager) tsCallHierarchyViaLSP(ctx context.Context, match semantic.TsSymbolMatch, pathFilter string, incoming bool) (string, error) {
+func (m *Manager) tsCallHierarchyViaLSP(ctx context.Context, match semantic.TsSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newTsLSPClient(ctx)
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	defer client.close()
 
 	abs, err := m.resolvePath(match.Path, "")
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if err := client.openFile(abs); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	items, err := m.tsPrepareCallHierarchy(ctx, client, abs, m.tsLSPPosition(abs, match))
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if len(items) == 0 {
-		return "", nil
+		return callHierarchyResult{}, nil
 	}
 	if incoming {
 		var calls []tsIncomingCall
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-			return "", err
+			return callHierarchyResult{}, err
 		}
-		return m.formatTsIncomingCalls(calls, pathFilter), nil
+		return m.formatTsIncomingCalls(calls, pathFilter, match), nil
 	}
 	var calls []tsOutgoingCall
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
-	return m.formatTsOutgoingCalls(abs, calls, pathFilter), nil
+	return m.formatTsOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
 func (m *Manager) tsPrepareCallHierarchy(ctx context.Context, client *tsLSPClient, abs string, position map[string]any) ([]tsCallHierarchyItem, error) {
@@ -689,7 +689,7 @@ func (m *Manager) formatTsLocations(locations []tsLocation, pathFilter string, l
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -748,7 +748,7 @@ func (m *Manager) formatTsWorkspaceSymbols(symbols []tsSymbolInfo, pathFilter st
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -788,7 +788,7 @@ func (m *Manager) formatTsWorkspaceSymbols(symbols []tsSymbolInfo, pathFilter st
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatTsIncomingCalls(calls []tsIncomingCall, pathFilter string) string {
+func (m *Manager) formatTsIncomingCalls(calls []tsIncomingCall, pathFilter string, target semantic.TsSymbolMatch) callHierarchyResult {
 	type entry struct {
 		path string
 		line int
@@ -800,7 +800,7 @@ func (m *Manager) formatTsIncomingCalls(calls []tsIncomingCall, pathFilter strin
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -820,16 +820,22 @@ func (m *Manager) formatTsIncomingCalls(calls []tsIncomingCall, pathFilter strin
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
+	targetAbs, _ := m.resolvePath(target.Path, "")
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name))
+		line := fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name)
+		lines = append(lines, line)
+		if targetAbs != "" {
+			relationships = append(relationships, m.callRelationshipFromAbs(item.path, item.line, item.name, targetAbs, target.Line, target.Name, line))
+		}
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
-func (m *Manager) formatTsOutgoingCalls(callerPath string, calls []tsOutgoingCall, pathFilter string) string {
+func (m *Manager) formatTsOutgoingCalls(callerPath string, callerName string, calls []tsOutgoingCall, pathFilter string) callHierarchyResult {
 	type entry struct {
 		callsitePath string
 		callsiteLine int
@@ -843,7 +849,7 @@ func (m *Manager) formatTsOutgoingCalls(callerPath string, calls []tsOutgoingCal
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(targetAbs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(targetAbs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(targetAbs))
@@ -872,13 +878,16 @@ func (m *Manager) formatTsOutgoingCalls(callerPath string, calls []tsOutgoingCal
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine))
+		line := fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine)
+		lines = append(lines, line)
+		relationships = append(relationships, m.callRelationshipFromAbs(item.callsitePath, item.callsiteLine, callerName, item.targetPath, item.targetLine, item.name, line))
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
 func (m *Manager) formatTsDiagnostics(abs string, diagnostics []tsDiagnostic) string {

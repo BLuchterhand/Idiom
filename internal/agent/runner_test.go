@@ -73,7 +73,7 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 
 	state := newRunnerExecutionState(false, 0)
 	state.writesSinceVerification = 2
-	if state.shouldRequireVerification(req, "tests_passed_or_failed_or_skipped_with_blocker") {
+	if state.shouldRequireVerification(req, workerruntime.WorkerRuntimeBrief{VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker"}) {
 		t.Fatal("post-write verification gate should allow git diff --check")
 	}
 }
@@ -128,6 +128,7 @@ func TestToolActionClassNormalizesRepeatedDeadEndKeys(t *testing.T) {
 		{req: workspace.ToolRequest{Tool: "list_files", Path: "internal"}, want: "list_files:internal"},
 		{req: workspace.ToolRequest{Tool: "shell", Command: "find . -maxdepth 2"}, want: "broad_inspection"},
 		{req: workspace.ToolRequest{Tool: "shell", Command: "rg route internal/app"}, want: "shell_narrow:rg route internal/app"},
+		{req: workspace.ToolRequest{Tool: "shell", Command: "git diff --check -- README.md"}, want: "shell_verification:git diff --check -- readme.md"},
 		{req: workspace.ToolRequest{Tool: "read_file", ID: "f12"}, want: "read_file:f12"},
 		{req: workspace.ToolRequest{Tool: "discovery_query", Purpose: "impact_analysis", Path: "internal/workspace/manager.go", Pattern: "Execute", Language: "go"}, want: "discovery_query:impact_analysis:internal/workspace/manager.go:execute:go"},
 		{req: workspace.ToolRequest{Tool: "structural_search", Path: "internal", Pattern: "if $COND { $BODY }", Language: "go"}, want: "structural_search:internal:if $cond { $body }:go"},
@@ -146,6 +147,135 @@ func TestToolActionClassNormalizesRepeatedDeadEndKeys(t *testing.T) {
 		if got := toolActionClass(tc.req); got != tc.want {
 			t.Fatalf("toolActionClass(%#v) = %q, want %q", tc.req, got, tc.want)
 		}
+	}
+}
+
+func TestVerificationShellActionClassDoesNotShareGenericGitDeadEnd(t *testing.T) {
+	plainDiff := toolActionClass(workspace.ToolRequest{
+		Tool:    "shell",
+		Command: "git diff -- README.md",
+	})
+	verifyDiffCheck := toolActionClass(workspace.ToolRequest{
+		Tool:    "shell",
+		Command: "git diff --check -- README.md",
+	})
+	if plainDiff == verifyDiffCheck {
+		t.Fatalf("verification shell action class must not match generic git action class: %q", plainDiff)
+	}
+	if !strings.HasPrefix(verifyDiffCheck, "shell_verification:") {
+		t.Fatalf("verification command should use shell_verification action class, got %q", verifyDiffCheck)
+	}
+}
+
+func TestPlannerOwnedVerificationRejectsBuildTestShell(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:  "implementation",
+		Contract:    "implementation_result",
+		Constraints: []string{"planner_owned_verification"},
+	}
+	for _, command := range []string{
+		"cd native && scons -j1 -Q 2>&1 | head -20",
+		"go test ./...",
+		"cargo check",
+		"npm run build",
+		"python -m pytest",
+		"python3 -m unittest",
+		"python3 scripts/run_tests.py --build-only",
+		"python3 tools/build.py",
+		"make test",
+	} {
+		t.Run(command, func(t *testing.T) {
+			summary, _, reject := plannerOwnedVerificationShellRejection(
+				workspace.ToolRequest{Tool: "shell", Command: command},
+				brief,
+			)
+			if !reject || summary != "Planner-owned verification shell rejected" {
+				t.Fatalf("expected planner-owned build/test rejection, got reject=%t summary=%q", reject, summary)
+			}
+		})
+	}
+}
+
+func TestPlannerOwnedVerificationAllowsCheapSanityShell(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:  "implementation",
+		Contract:    "implementation_result",
+		Constraints: []string{"planner_owned_verification"},
+	}
+	for _, command := range []string{
+		"git diff --check -- README.md",
+		"git status --short",
+	} {
+		t.Run(command, func(t *testing.T) {
+			if summary, _, reject := plannerOwnedVerificationShellRejection(
+				workspace.ToolRequest{Tool: "shell", Command: command},
+				brief,
+			); reject {
+				t.Fatalf("unexpected planner-owned rejection %q for %q", summary, command)
+			}
+		})
+	}
+}
+
+func TestRequiredEditPathScopeRejectsWritesOutsideAllowlist(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		RequiredEditPaths: []string{"native/src/job_queue.cpp", "scripts/ui/status_panel.gd"},
+	}
+
+	if summary, _, reject := requiredEditPathScopeRejection(
+		workspace.ToolRequest{Tool: "edit_file", Path: "native/src/job_queue.cpp"},
+		brief,
+	); reject {
+		t.Fatalf("allowed path should not be rejected: %q", summary)
+	}
+
+	summary, errorText, reject := requiredEditPathScopeRejection(
+		workspace.ToolRequest{Tool: "write_file", Path: "native/src/other.cpp"},
+		brief,
+	)
+	if !reject || summary != "Write outside required edit paths rejected" {
+		t.Fatalf("expected out-of-scope write rejection, reject=%t summary=%q", reject, summary)
+	}
+	if !strings.Contains(errorText, "native/src/other.cpp") || !strings.Contains(errorText, "native/src/job_queue.cpp") {
+		t.Fatalf("expected error to name attempted and allowed paths, got %q", errorText)
+	}
+}
+
+func TestRequiredEditPathScopeAllowsParentMkdir(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		RequiredEditPaths: []string{"native/src/new_system/job_queue.cpp"},
+	}
+
+	if summary, _, reject := requiredEditPathScopeRejection(
+		workspace.ToolRequest{Tool: "mkdir", Path: "native/src/new_system"},
+		brief,
+	); reject {
+		t.Fatalf("parent mkdir for required edit path should be allowed, got %q", summary)
+	}
+}
+
+func TestPlannerOwnedVerificationGateNamesLaneSanity(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:  "implementation",
+		Contract:    "implementation_result",
+		Constraints: []string{"planner_owned_verification"},
+	}
+
+	summary, errorText := verificationRequiredAfterWritesMessage(brief, 2)
+	if summary != "Verification required after workspace edits" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+	for _, want := range []string{"delegates build/test verification to the planner", "git diff --check", "do not run build or test"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("expected planner-owned verification message to contain %q, got %q", want, errorText)
+		}
+	}
+	if strings.Contains(errorText, "go test ./...") {
+		t.Fatalf("planner-owned verification message should not suggest full tests: %q", errorText)
 	}
 }
 
@@ -313,8 +443,10 @@ func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
-			Root: root,
-			CWD:  root,
+			Root:         root,
+			CWD:          root,
+			EnableShell:  true,
+			EnableWrites: true,
 		}),
 		Policy: RunPolicy{MaxToolSteps: 2, MaxNoProgressTurns: 2},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
@@ -433,8 +565,10 @@ func TestRunnerBootstrappedReadReminderDoesNotPoisonNarrowRead(t *testing.T) {
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
-			Root: root,
-			CWD:  root,
+			Root:         root,
+			CWD:          root,
+			EnableShell:  true,
+			EnableWrites: true,
 		}),
 		Policy: RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 4},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
@@ -954,6 +1088,67 @@ func TestVerificationOnlyRecoveryNudgeSuggestsVerificationCommand(t *testing.T) 
 	}
 	if strings.Contains(nudge, `{"tool":"search_files"`) || strings.Contains(nudge, `{"tool":"search_content"`) {
 		t.Fatalf("verification recovery nudge should not suggest discovery first, got:\n%s", nudge)
+	}
+}
+
+func TestImplementationRecoveryNudgeSuggestsVerificationAfterWrites(t *testing.T) {
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read README.md lines 1-3", Output: "one\ntwo\nthree"},
+		{Tool: "edit_file", Summary: "Edited README.md lines 1-1"},
+		{Tool: "edit_file", Summary: "Edited README.md lines 2-2"},
+		{
+			Tool:    "read_file",
+			Summary: "Verification required after workspace edits",
+			Error:   "the workspace has 2 successful write(s) since the last verification.",
+		},
+	}
+	nudge := buildRejectionRecoveryNudge(
+		workspace.ToolRequest{Tool: "read_file", Path: "README.md"},
+		results,
+		nil,
+		workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+		"main",
+		false,
+		false,
+	)
+	if !strings.Contains(nudge, "pending verification") ||
+		!strings.Contains(nudge, "git diff --check") {
+		t.Fatalf("expected verification-first nudge, got:\n%s", nudge)
+	}
+	if strings.Contains(nudge, "smaller window") || strings.Contains(nudge, "structured probe") {
+		t.Fatalf("verification recovery nudge should not suggest more inspection, got:\n%s", nudge)
+	}
+}
+
+func TestExactAnchorPreWriteRecoveryNudgeDoesNotSuggestReadRefinement(t *testing.T) {
+	nudge := buildRejectionRecoveryNudge(
+		workspace.ToolRequest{Tool: "read_file", Path: "scripts/ui/depot_panel.gd"},
+		nil,
+		nil,
+		workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Constraints:       []string{"exact_anchor_implementation"},
+			RequiredEditPaths: []string{"scripts/ui/depot_panel.gd"},
+			TargetRefs:        []string{"scripts/ui/depot_panel.gd"},
+		},
+		"main",
+		false,
+		false,
+	)
+	for _, want := range []string{"exact-anchor implementation pre-write", "Call edit_file or apply_patch", "<<QUESTION>>"} {
+		if !strings.Contains(nudge, want) {
+			t.Fatalf("expected exact-anchor recovery nudge to contain %q, got:\n%s", want, nudge)
+		}
+	}
+	for _, forbidden := range []string{"smaller window", "structured probe"} {
+		if strings.Contains(nudge, forbidden) {
+			t.Fatalf("exact-anchor recovery nudge should not suggest %q, got:\n%s", forbidden, nudge)
+		}
 	}
 }
 
@@ -1732,6 +1927,65 @@ func TestBudgetClosureRunEmitsAcceptanceSignals(t *testing.T) {
 	}
 }
 
+func TestForcedCompletionUsesDeterministicMutationFallback(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "Changed paths:\n- src/example.cpp\n\nVerification: git diff --check passed."},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			Constraints:          []string{"planner_owned_verification"},
+			RequiredEditPaths:    []string{"src/example.h", "src/example.cpp"},
+		},
+	}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited src/example.cpp"}}
+
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "implement the requested patch"}},
+		llama.ChatOptions{},
+		results,
+		"Tools are now disabled.",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("expected deterministic mutation fallback without model call, got %d request(s)", requests)
+	}
+	for _, want := range []string{
+		"src/example.cpp",
+		"Required edit paths not changed:",
+		"src/example.h",
+		"pending lane sanity; build/test verification is planner-owned",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected deterministic mutation answer to include %q, got:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(strings.ToLower(answer), "passed") {
+		t.Fatalf("deterministic mutation fallback should not claim unrun verification passed:\n%s", answer)
+	}
+}
+
 func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) {
 	root := t.TempDir()
 	var replies []string
@@ -1743,6 +1997,7 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":%q,"start_line":1,"end_line":1}`, path))
 	}
 	replies = append(replies, `{"tool":"search_content","path":".","pattern":"still looking"}`)
+	replies = append(replies, `{"tool":"read_file","path":"target.txt","start_line":1,"end_line":1}`)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
@@ -1759,6 +2014,7 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 	defer server.Close()
 
 	var completion runnerCompletionStatus
+	var sawRecovery bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -1774,6 +2030,9 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 			TargetRefs:        []string{"target.txt"},
 		},
 		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_write_only_recovery" {
+				sawRecovery = true
+			}
 			if event.Role == "completion_status" {
 				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
 					t.Fatalf("decode completion status: %v", err)
@@ -1804,8 +2063,116 @@ func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) 
 	if !completion.RequiresEdit || !completion.UserVisibleBlocker || completion.Contract != "implementation_result" {
 		t.Fatalf("completion status missing implementation contract: %#v", completion)
 	}
+	if !sawRecovery {
+		t.Fatalf("expected write-only recovery nudge before final blocker")
+	}
 	if requests != len(replies) {
 		t.Fatalf("expected %d executed reads plus one blocked read request, used %d/%d replies", mutationReadBudgetHard, requests, len(replies))
+	}
+}
+
+func TestMutationReadBudgetExhaustionAllowsImplementationRecoveryWrite(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "before\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	for i := 0; i < mutationReadBudgetHard; i++ {
+		path := fmt.Sprintf("%c.txt", 'a'+rune(i))
+		if err := writeTestFile(root, path, "seed\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	replies := []string{`{"tool":"read_file","path":"target.txt","start_line":1,"end_line":1}`}
+	for i := 0; i < mutationReadBudgetHard-1; i++ {
+		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":"%c.txt","start_line":1,"end_line":1}`, 'a'+rune(i)))
+	}
+	replies = append(replies,
+		`{"tool":"search_content","path":".","pattern":"still looking"}`,
+		`{"tool":"edit_file","path":"target.txt","start_line":1,"end_line":1,"content":"after\n","description":"update target"}`,
+		`{"tool":"shell","command":"git diff --check --no-index target.txt target.txt","workdir":"."}`,
+		"Changed paths:\n- target.txt\nVerification: git diff --check --no-index target.txt target.txt passed.",
+	)
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawRecovery bool
+	var sawBlockedCompletion bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			Shell:                 "/bin/sh",
+			CommandTimeoutSeconds: 5,
+			EnableShell:           true,
+			EnableWrites:          true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 12, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "Update the target file.",
+			PermissionProfile: "guarded_workspace_write",
+			TargetRefs:        []string{"target.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_write_only_recovery" {
+				sawRecovery = true
+			}
+			if event.Role == "completion_status" {
+				var completion runnerCompletionStatus
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion status: %v", err)
+				}
+				if completion.Status == "blocked" {
+					sawBlockedCompletion = true
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update the target file."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "target.txt") {
+		t.Fatalf("expected normal implementation answer, got %q", answer)
+	}
+	if !sawRecovery {
+		t.Fatalf("expected write-only recovery nudge")
+	}
+	if sawBlockedCompletion {
+		t.Fatalf("did not expect blocked completion after successful recovery")
+	}
+	content, err := os.ReadFile(filepath.Join(root, "target.txt"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(content) != "after\n" {
+		t.Fatalf("target not edited through recovery, got %q", content)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d requests, got %d answer=%q", len(replies), requests, answer)
 	}
 }
 
@@ -2032,17 +2399,32 @@ func TestInFlightVerificationGateRespectsSkippedVerificationContract(t *testing.
 	state.writesSinceVerification = 2
 	readReq := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
 
-	if !state.shouldRequireVerification(readReq, "tests_passed_or_failed_or_skipped_with_blocker") {
+	if !state.shouldRequireVerification(readReq, workerruntime.WorkerRuntimeBrief{VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker"}) {
 		t.Fatal("expected normal mutation contract to require verification after repeated writes")
 	}
-	if state.shouldRequireVerification(readReq, "not_required_for_text_mutations") {
+	if state.shouldRequireVerification(readReq, workerruntime.WorkerRuntimeBrief{VerificationContract: "not_required_for_text_mutations"}) {
 		t.Fatal("text-mutation verification contract should skip in-flight verification gate")
 	}
-	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "task_ledger"}, "tests_passed_or_failed_or_skipped_with_blocker") {
+	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "task_ledger"}, workerruntime.WorkerRuntimeBrief{VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker"}) {
 		t.Fatal("task_ledger should remain allowed while verification is pending")
 	}
-	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "cpp_diagnostics"}, "tests_passed_or_failed_or_skipped_with_blocker") {
+	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "cpp_diagnostics"}, workerruntime.WorkerRuntimeBrief{VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker"}) {
 		t.Fatal("diagnostics tools should remain allowed as verification requests")
+	}
+}
+
+func TestInFlightVerificationGateSkipsPlannerOwnedVerification(t *testing.T) {
+	state := newRunnerExecutionState(false, 0)
+	state.writesSinceVerification = 2
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		Constraints:          []string{"planner_owned_verification"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+
+	if state.shouldRequireVerification(workspace.ToolRequest{Tool: "read_file", Path: "src/main.cpp"}, brief) {
+		t.Fatal("planner-owned verification lanes should not block follow-up implementation reads after writes")
 	}
 }
 
@@ -2056,6 +2438,25 @@ func TestControlRailsUseRuntimeBriefForImplementation(t *testing.T) {
 	}
 	if rails.PermissionProfile != "guarded_workspace_write" || rails.VerificationContract == "not_required_for_read_only_lane" {
 		t.Fatalf("expected write + verification rails, got %#v", rails)
+	}
+}
+
+func TestControlRailsReportRequiredEditPathsAndInstructionAttachment(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			RequiredEditPaths: []string{"native/src/job_queue.cpp"},
+		},
+		InstructionAttacher: NewInstructionAttacher(t.TempDir()),
+	}
+
+	rails := runner.controlRails(nil)
+	if !slices.Contains(rails.RequiredEditPaths, "native/src/job_queue.cpp") {
+		t.Fatalf("expected required edit paths in control rails, got %#v", rails.RequiredEditPaths)
+	}
+	if !rails.DynamicInstructions {
+		t.Fatalf("expected control rails to report dynamic instruction attachment")
 	}
 }
 
@@ -2263,8 +2664,139 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write, verify}); rejected {
 		t.Fatalf("expected verified mutation to pass, got %#v", result)
 	}
+	unsupportedPathAnswer := "Changed paths:\n- README.md\n- src/missing.go\n\nVerification: git diff --check passed."
+	if result, rejected := runner.mutationCompletionRejection(unsupportedPathAnswer, []workspace.ToolResult{write, verify}); !rejected || !strings.Contains(result.Error, "not backed") {
+		t.Fatalf("expected unsupported changed-path claim rejection, got rejected=%v result=%#v", rejected, result)
+	}
+	unsupportedChangesMadeAnswer := "Changes made:\n\n1. **`README.md`** updated.\n2. **`src/missing.go`** updated.\n\nVerification: git diff --check passed."
+	if result, rejected := runner.mutationCompletionRejection(unsupportedChangesMadeAnswer, []workspace.ToolResult{write, verify}); !rejected || !strings.Contains(result.Error, "src/missing.go") {
+		t.Fatalf("expected unsupported changes-made claim rejection, got rejected=%v result=%#v", rejected, result)
+	}
+	laterWrite := workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md again"}
+	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write, verify, laterWrite}); !rejected || !strings.Contains(result.Error, "latest successful write") {
+		t.Fatalf("expected stale-verification mutation rejection, got rejected=%v result=%#v", rejected, result)
+	}
 	if _, rejected := runner.mutationCompletionRejection("No change needed; already set.", nil); rejected {
 		t.Fatal("expected explicit no-op answer to pass mutation gate")
+	}
+}
+
+func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
+	replies := []string{"Done.", "Done.", "Done."}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var completion runnerCompletionStatus
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 10},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"README.md"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			Constraints:          []string{"planner_owned_verification"},
+		},
+		SeedResults: []workspace.ToolResult{
+			{Tool: "edit_file", Summary: "Edited README.md"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role != "completion_status" {
+				return
+			}
+			if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+				t.Fatalf("decode completion status: %v", err)
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update README.md."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 3 {
+		t.Fatalf("expected deterministic stop on third gate rejection, got %d request(s)", requests)
+	}
+	for _, want := range []string{"<<QUESTION>>:", "Completion gate rejected", "README.md", "lane sanity"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected blocker answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+	if completion.Status != "blocked" || completion.BlockerKind != "completion_gate_repeated_rejection" || !completion.UserVisibleBlocker {
+		t.Fatalf("unexpected completion status: %#v", completion)
+	}
+	if !completion.EditAttempted || !slices.Contains(completion.ChangedPaths, "README.md") {
+		t.Fatalf("expected completion status to carry edited path, got %#v", completion)
+	}
+}
+
+func TestMutationFallbackAnswerReportsChangedPathsAndVerification(t *testing.T) {
+	brief := workerruntime.RuntimeBriefForRole("implement", "main", "update README")
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read README.md", Output: "hello\n"},
+		{Tool: "edit_file", Summary: "Edited README.md"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- README.md\n"},
+	}
+
+	answer, ok := synthesizeNoToolsFallbackAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected mutation fallback answer")
+	}
+	if strings.Contains(answer, "Partial findings from this turn") {
+		t.Fatalf("mutation fallback should not use read-only partial-findings framing, got:\n%s", answer)
+	}
+	for _, want := range []string{
+		"Changed paths:",
+		"- README.md",
+		"Verification: git diff --check -- README.md passed",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected mutation fallback to contain %q, got:\n%s", want, answer)
+		}
+	}
+}
+
+func TestMutationFallbackAnswerDropsStaleHarnessBlockerAfterLaterVerification(t *testing.T) {
+	brief := workerruntime.RuntimeBriefForRole("implement", "main", "update README")
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited README.md"},
+		{
+			Tool:    "read_file",
+			Summary: "Verification required after workspace edits",
+			Error:   "the workspace has 2 successful write(s) since the last verification.",
+		},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- README.md\n"},
+	}
+
+	answer, ok := synthesizeNoToolsFallbackAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected mutation fallback answer")
+	}
+	if strings.Contains(answer, "Blocker:") ||
+		strings.Contains(answer, "Verification required after workspace edits") {
+		t.Fatalf("stale harness rejection should not survive later verification, got:\n%s", answer)
+	}
+	if !strings.Contains(answer, "Verification: git diff --check -- README.md passed") {
+		t.Fatalf("expected later successful verification, got:\n%s", answer)
 	}
 }
 
@@ -3692,6 +4224,420 @@ func TestSynthesizeFallbackAnswerUsesNarrowEvidenceAndFinalBlocker(t *testing.T)
 	}
 	if strings.Contains(answer, "listed files") {
 		t.Fatalf("broad list_files result should not be preferred as narrowing evidence:\n%s", answer)
+	}
+}
+
+func TestSynthesizeMutationFallbackAnswerDropsErrorsSupersededByLaterWrite(t *testing.T) {
+	answer := synthesizeMutationFallbackAnswer(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}, []workspace.ToolResult{
+		{
+			Tool:    "edit_file",
+			Summary: "Missing write description",
+			Error:   "edit_file requires a description field",
+		},
+		{
+			Tool:    "edit_file",
+			Summary: "Edited src/example.h",
+		},
+	})
+
+	if !strings.Contains(answer, "src/example.h") {
+		t.Fatalf("expected changed path in fallback, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "Missing write description") || strings.Contains(answer, "Blocker:") {
+		t.Fatalf("expected superseded edit error to be omitted, got:\n%s", answer)
+	}
+	if !strings.Contains(answer, "workspace writes are still pending verification") {
+		t.Fatalf("expected verification blocker to remain, got:\n%s", answer)
+	}
+}
+
+func TestMutationDeterministicFallbackStartsAfterSuccessfulWrite(t *testing.T) {
+	brief := workerruntime.RuntimeBriefForRole("implement", "main", "update README")
+	pendingResults := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited README.md"},
+	}
+	if !shouldPreferDeterministicNoToolsAnswer("main", brief, pendingResults) {
+		t.Fatal("mutation fallback should be preferred after a successful write")
+	}
+
+	verifiedResults := append(pendingResults, workspace.ToolResult{
+		Tool:    "shell",
+		Summary: "Ran shell command",
+		Output:  "$ git diff --check -- README.md\n",
+	})
+	if !shouldPreferDeterministicNoToolsAnswer("main", brief, verifiedResults) {
+		t.Fatal("mutation fallback should be preferred after changed paths and successful verification")
+	}
+}
+
+func TestSynthesizeMutationFallbackReportsMissingRequiredPathsAndPlannerOwnedVerification(t *testing.T) {
+	answer := synthesizeMutationFallbackAnswer(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Constraints:          []string{"planner_owned_verification"},
+		RequiredEditPaths:    []string{"native/src/example.h", "native/src/example.cpp"},
+	}, []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited native/src/example.cpp"},
+	})
+
+	for _, want := range []string{
+		"Changed paths:",
+		"native/src/example.cpp",
+		"Required edit paths not changed:",
+		"native/src/example.h",
+		"pending lane sanity; build/test verification is planner-owned",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected mutation fallback to include %q, got:\n%s", want, answer)
+		}
+	}
+}
+
+func TestHideExactAnchorReadToolsRequiresWriteFirst(t *testing.T) {
+	root := t.TempDir()
+	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	hidden := map[string]bool{}
+	exactHidden := map[string]bool{}
+
+	hideExactAnchorReadTools(hidden, exactHidden, manager)
+
+	for _, tool := range []string{"read_file", "context_status", "context_query", "shell", "git_diff", "pwd"} {
+		if !hidden[tool] || !exactHidden[tool] {
+			t.Fatalf("expected exact-anchor pre-write mode to hide %s; hidden=%v exact=%v", tool, hidden[tool], exactHidden[tool])
+		}
+	}
+	for _, tool := range []string{"edit_file", "write_file", "append_file", "apply_patch", "task_ledger", "harness_feedback", "idiom_feedback"} {
+		if hidden[tool] {
+			t.Fatalf("expected exact-anchor pre-write mode to allow %s", tool)
+		}
+	}
+}
+
+func TestExactAnchorPreWriteVisibleBriefAdvertisesWriteOnlySurface(t *testing.T) {
+	brief := runnerVisibleBriefForToolSurface(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		Constraints:       []string{"exact_anchor_implementation"},
+		AllowedTools:      []string{"read_file", "search_content", "edit_file", "apply_patch", "shell", "task_ledger", "harness_feedback"},
+		RequiredTools:     []string{"edit_file_or_apply_patch", "verification_shell"},
+		RequiredEditPaths: []string{"scripts/ui/depot_panel.gd"},
+		TargetRefs:        []string{"scripts/ui/depot_panel.gd"},
+	}, nil)
+
+	for _, forbidden := range []string{"read_file", "search_content", "shell"} {
+		if containsRunnerString(brief.AllowedTools, forbidden) {
+			t.Fatalf("exact-anchor pre-write brief advertised %s in allowed tools: %#v", forbidden, brief.AllowedTools)
+		}
+		manifest, err := json.Marshal(brief.ToolManifest)
+		if err != nil {
+			t.Fatalf("marshal manifest: %v", err)
+		}
+		if strings.Contains(string(manifest), fmt.Sprintf(`"tool":"%s"`, forbidden)) {
+			t.Fatalf("exact-anchor pre-write manifest advertised %s: %s", forbidden, manifest)
+		}
+	}
+	for _, allowed := range []string{"edit_file", "apply_patch", "task_ledger", "harness_feedback"} {
+		if !containsRunnerString(brief.AllowedTools, allowed) {
+			t.Fatalf("exact-anchor pre-write brief should keep %s, got %#v", allowed, brief.AllowedTools)
+		}
+	}
+	if !reflect.DeepEqual(brief.RequiredTools, []string{"edit_file_or_apply_patch"}) {
+		t.Fatalf("exact-anchor pre-write required tools = %#v, want edit only", brief.RequiredTools)
+	}
+	if !containsRunnerString(brief.InvalidActions, "read/search/shell before first exact-anchor write") {
+		t.Fatalf("expected explicit invalid pre-write read/search/shell action, got %#v", brief.InvalidActions)
+	}
+}
+
+func TestControlRailsExactAnchorPreWriteDoesNotAdvertiseReadShell(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Constraints:       []string{"exact_anchor_implementation"},
+			AllowedTools:      []string{"read_file", "search_content", "edit_file", "apply_patch", "shell", "task_ledger"},
+			RequiredEditPaths: []string{"scripts/ui/depot_panel.gd"},
+		},
+	}
+
+	rails := runner.controlRails(nil)
+	for _, forbidden := range []string{"read_file", "search_content", "shell"} {
+		if containsRunnerString(rails.AllowedTools, forbidden) {
+			t.Fatalf("exact-anchor pre-write control rails advertised %s: %#v", forbidden, rails.AllowedTools)
+		}
+	}
+	for _, allowed := range []string{"edit_file", "apply_patch", "task_ledger"} {
+		if !containsRunnerString(rails.AllowedTools, allowed) {
+			t.Fatalf("exact-anchor pre-write control rails should keep %s, got %#v", allowed, rails.AllowedTools)
+		}
+	}
+	if !reflect.DeepEqual(rails.RequiredTools, []string{"edit_file_or_apply_patch"}) {
+		t.Fatalf("exact-anchor pre-write control rails required tools = %#v, want edit only", rails.RequiredTools)
+	}
+}
+
+func TestWorkspaceWriteResultCompletedRequiresErrorFreeWrite(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "edit_file", Path: "README.md"}
+	if !workspaceWriteResultCompleted(req, workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md"}) {
+		t.Fatal("successful edit_file result should complete the exact-anchor write phase")
+	}
+	if !workspaceWriteResultCompleted(req, workspace.ToolResult{Tool: "edit_file", Summary: "No-op edit for README.md"}) {
+		t.Fatal("error-free no-op edit should complete the exact-anchor write phase so verification/closeout can proceed")
+	}
+	if workspaceWriteResultCompleted(req, workspace.ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "old_text did not appear"}) {
+		t.Fatal("failed edit_file result must not release exact-anchor read tools")
+	}
+	if workspaceWriteResultCompleted(workspace.ToolRequest{Tool: "read_file", Path: "README.md"}, workspace.ToolResult{Tool: "read_file", Summary: "Read README.md"}) {
+		t.Fatal("read tools must not complete the exact-anchor write phase")
+	}
+}
+
+func TestExactAnchorWriteFailureKeepsReadToolsHidden(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "actual\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	replies := []string{
+		`{"tool":"edit_file","path":"target.txt","old_text":"missing\n","new_text":"replacement\n","description":"replace supplied exact anchor"}`,
+		`{"tool":"read_file","path":"target.txt","start_line":1,"end_line":1}`,
+		"<<QUESTION>>: supplied exact anchor `missing` did not match target.txt; no workspace change was made.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := replies[len(replies)-1]
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	mgr := workspace.NewManager(config.Workspace{
+		Root:         root,
+		CWD:          root,
+		EnableWrites: true,
+	})
+	mgr.MarkPathObserved("target.txt")
+	var events []RunEvent
+	var results []workspace.ToolResult
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Constraints:       []string{"exact_anchor_implementation"},
+			RequiredEditPaths: []string{"target.txt"},
+			TargetRefs:        []string{"target.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "apply exact anchor edit"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.TrimSpace(answer) == "" {
+		t.Fatal("expected non-empty final answer after failed exact-anchor write")
+	}
+	for _, event := range events {
+		if event.Role == "tool_hidden" && strings.Contains(event.Content, "restored after successful exact-anchor write") {
+			t.Fatalf("read tools should not be restored after failed exact-anchor write; events=%v", eventRolesFor(events))
+		}
+	}
+	foundRetainedHidden := false
+	foundHiddenRead := false
+	for _, event := range events {
+		if event.Role == "tool_hidden" && strings.Contains(event.Content, "remain hidden after failed exact-anchor write") {
+			foundRetainedHidden = true
+		}
+	}
+	for _, result := range results {
+		if result.Tool == "read_file" && result.Summary == "Tool hidden by active contract" {
+			foundHiddenRead = true
+		}
+	}
+	if !foundRetainedHidden {
+		t.Fatalf("expected explicit telemetry that read tools stayed hidden; events=%v", eventRolesFor(events))
+	}
+	if !foundHiddenRead {
+		t.Fatalf("expected attempted read to remain hidden after failed write; results=%#v", results)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "target.txt"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(content) != "actual\n" {
+		t.Fatalf("failed exact-anchor edit should not change file, got %q", content)
+	}
+}
+
+func TestExactAnchorRepeatedHiddenToolsReturnTypedBlocker(t *testing.T) {
+	root := t.TempDir()
+	replies := []string{
+		`{"tool":"read_file","path":"target.txt"}`,
+		`{"tool":"read_file","path":"target.txt"}`,
+		`{"tool":"shell","command":"cat target.txt"}`,
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request after deterministic exact-anchor blocker")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var completion runnerCompletionStatus
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Constraints:       []string{"exact_anchor_implementation"},
+			RequiredEditPaths: []string{"target.txt"},
+			TargetRefs:        []string{"target.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_status" {
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion status: %v", err)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "apply exact anchor edit"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") || !strings.Contains(answer, "No workspace change was made") {
+		t.Fatalf("expected deterministic exact-anchor blocker, got %q", answer)
+	}
+	if completion.Status != "blocked" || completion.BlockerKind != "exact_anchor_prewrite_hidden_tool_repeated" || !completion.RequiresEdit {
+		t.Fatalf("unexpected completion status: %#v", completion)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected deterministic blocker without final-answer model call, got %d request(s)", requests)
+	}
+}
+
+func TestExactAnchorRejectedWritesAfterRecoveryReturnTypedBlocker(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "actual\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	replies := []string{
+		`{"tool":"edit_file","path":"target.txt","description":"empty write shape"}`,
+		`{"tool":"edit_file","path":"target.txt","old_text":"missing anchor","new_text":"replacement\n","description":"bad anchor"}`,
+		`{"tool":"edit_file","path":"target.txt","start_line":1,"end_line":1,"content":"","description":"bad empty line edit"}`,
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request after deterministic exact-anchor write blocker")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var completion runnerCompletionStatus
+	mgr := workspace.NewManager(config.Workspace{
+		Root:         root,
+		CWD:          root,
+		EnableWrites: true,
+	})
+	mgr.MarkPathObserved("target.txt")
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Constraints:       []string{"exact_anchor_implementation"},
+			RequiredEditPaths: []string{"target.txt"},
+			TargetRefs:        []string{"target.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_status" {
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion status: %v", err)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "apply exact anchor edit"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") ||
+		!strings.Contains(answer, "repeated edit_file write attempts") ||
+		!strings.Contains(answer, "empty or whitespace-only content") {
+		t.Fatalf("expected deterministic repeated-write blocker, got %q", answer)
+	}
+	if completion.Status != "blocked" || completion.BlockerKind != "exact_anchor_write_failure_repeated" || !completion.RequiresEdit {
+		t.Fatalf("unexpected completion status: %#v", completion)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected deterministic blocker without extra model call, got %d request(s)", requests)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "target.txt"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(content) != "actual\n" {
+		t.Fatalf("rejected exact-anchor writes should not change file, got %q", content)
 	}
 }
 
@@ -7419,16 +8365,16 @@ func TestSuccessfulSearchMustBeConsumedBeforeAnotherSearch(t *testing.T) {
 // short-circuits the turn via rejection_retry_blocked instead of
 // replaying the rejection cycle.
 func TestRejectionRetryBlocked(t *testing.T) {
-	// Three list_files in a row trips the chained-list_files guard on
-	// the third. A later retry of that same 3rd call's fingerprint
-	// should trigger rejection_retry_blocked.
-	args3 := `{"tool":"list_files","path":"internal/agent"}`
+	// A repeated root list_files in explore mode trips the broad-inspection
+	// guard without using the chained-list_files hiding path. A later retry of
+	// that same rejected fingerprint should trigger rejection_retry_blocked.
+	rejectedArgs := `{"tool":"list_files","path":"."}`
 	replies := []string{
-		`{"tool":"list_files","path":"internal/app"}`,
+		`{"tool":"list_files","path":"."}`,
 		`{"tool":"list_files","path":"internal/agent"}`,
-		args3, // 3rd consecutive — rejected by chained-list_files guard
+		rejectedArgs, // rejected by broad-inspection guard
 		`{"tool":"read_file","path":"internal/app/app.go"}`,
-		args3, // retry of the rejected fingerprint — blocked
+		rejectedArgs, // retry of the rejected fingerprint — blocked
 		"final answer",
 	}
 	events, _ := runNudgeScenario(t, RunPolicy{MaxNoProgressTurns: 8}, replies)
@@ -7545,11 +8491,11 @@ func eventRolesFor(events []RunEvent) []string {
 func TestFingerprintNudgeFiresOncePerFingerprint(t *testing.T) {
 	// Alternate A/B/A/B/A so the identical-call run never reaches 3.
 	replies := []string{
-		`{"tool":"list_files","path":"internal/app","recursive":true}`,
-		`{"tool":"list_files","path":"internal/agent","recursive":true}`,
-		`{"tool":"list_files","path":"internal/app","recursive":true}`,
-		`{"tool":"list_files","path":"internal/agent","recursive":true}`,
-		`{"tool":"list_files","path":"internal/app","recursive":true}`,
+		`{"tool":"read_file","path":"internal/app/app.go"}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go"}`,
+		`{"tool":"read_file","path":"internal/app/app.go"}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go"}`,
+		`{"tool":"read_file","path":"internal/app/app.go"}`,
 		"done",
 	}
 	policy := RunPolicy{MaxNoProgressTurns: 8, FingerprintNudgeAt: 3}

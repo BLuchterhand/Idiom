@@ -489,11 +489,12 @@ func (m *Manager) javaCallsFrom(ctx context.Context, req ToolRequest) ToolResult
 	}
 	pathFilter, err := m.javaPathFilterForRequest(req)
 	if err == nil && m.jdtlsBinary() != "" {
-		if output, lspErr := m.javaCallHierarchyViaJdtls(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(output) != "" {
+		if payload, lspErr := m.javaCallHierarchyViaJdtls(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
 			return ToolResult{
-				Tool:    "java_calls_from",
-				Summary: "Resolved outgoing Java calls via jdtls call hierarchy",
-				Output:  output,
+				Tool:          "java_calls_from",
+				Summary:       "Resolved outgoing Java calls via jdtls call hierarchy",
+				Output:        payload.Output,
+				Relationships: payload.Relationships,
 			}
 		}
 	}
@@ -523,11 +524,12 @@ func (m *Manager) javaCallsInto(ctx context.Context, req ToolRequest) ToolResult
 	}
 	pathFilter, err := m.javaPathFilterForRequest(req)
 	if err == nil && m.jdtlsBinary() != "" {
-		if output, lspErr := m.javaCallHierarchyViaJdtls(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(output) != "" {
+		if payload, lspErr := m.javaCallHierarchyViaJdtls(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
 			return ToolResult{
-				Tool:    "java_calls_into",
-				Summary: "Resolved incoming Java calls via jdtls call hierarchy",
-				Output:  output,
+				Tool:          "java_calls_into",
+				Summary:       "Resolved incoming Java calls via jdtls call hierarchy",
+				Output:        payload.Output,
+				Relationships: payload.Relationships,
 			}
 		}
 	}

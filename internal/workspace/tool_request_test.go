@@ -97,6 +97,26 @@ func TestParseToolRequestRepairsSafeMissingToolAliases(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestRepairsNumericStringFields(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"start_line\":\"10\",\"end_line\":\"12\",\"content\":\"updated\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.StartLine != 10 || req.EndLine != 12 {
+		t.Fatalf("line range = %d-%d, want 10-12", req.StartLine, req.EndLine)
+	}
+}
+
+func TestParseToolRequestRejectsUnsafeNumericStringFields(t *testing.T) {
+	_, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\",\"start_line\":\"ten\"}\n```")
+	if !ok || err == nil || !strings.Contains(err.Error(), "cannot unmarshal string") {
+		t.Fatalf("expected original decode error for unsafe numeric string, ok=%t err=%v", ok, err)
+	}
+}
+
 func TestExploreShellClassificationAndValidation(t *testing.T) {
 	if !IsBroadInspectionRequest(ToolRequest{Tool: "shell", Command: "find . -maxdepth 2"}) {
 		t.Fatal("expected find shell command to be broad inspection")

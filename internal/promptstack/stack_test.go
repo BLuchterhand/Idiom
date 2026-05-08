@@ -64,7 +64,7 @@ func TestBuildIncludesOpenCodeStylePromptGuidance(t *testing.T) {
 		"Keep a short working checklist",
 		"Separate read-only analysis from requested mutation",
 		"split it into focused passes and verify each pass",
-		"Keep a short task ledger",
+		"The `task_ledger` tool drives the plan panel",
 		"Return concise final answers",
 	} {
 		if !strings.Contains(stack.Text, want) {
@@ -153,6 +153,22 @@ func TestBuildRejectsMissingRequiredPrompt(t *testing.T) {
 	_, err := Build(config.Chat{SystemPromptFiles: []string{filepath.Join(t.TempDir(), "missing.md")}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "load baseline prompt") {
 		t.Fatalf("expected missing required prompt error, got %v", err)
+	}
+}
+
+func TestBuildLenientWarnsAndSkipsMissingExplicitPrompt(t *testing.T) {
+	stack, err := BuildLenient(config.Chat{
+		SystemPrompt:      "inline rules",
+		SystemPromptFiles: []string{filepath.Join(t.TempDir(), "missing.md")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BuildLenient: %v", err)
+	}
+	if !strings.Contains(stack.Text, "inline rules") {
+		t.Fatalf("expected inline prompt to survive, got %q", stack.Text)
+	}
+	if len(stack.Warnings) == 0 || !strings.Contains(stack.Warnings[0], "skipped missing baseline prompt") {
+		t.Fatalf("expected missing prompt warning, got %#v", stack.Warnings)
 	}
 }
 

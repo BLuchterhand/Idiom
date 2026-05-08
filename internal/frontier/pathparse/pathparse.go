@@ -27,11 +27,92 @@ func LooksLikeWorkspacePathToken(candidate string) bool {
 
 func HasWorkspaceFileExtension(candidate string) bool {
 	switch filepath.Ext(candidate) {
-	case ".go", ".md", ".json", ".yaml", ".yml", ".toml", ".txt":
+	case ".go",
+		".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl", ".tpp",
+		".gd", ".tscn", ".tres",
+		".py", ".pyi",
+		".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts",
+		".rs",
+		".java", ".kt", ".kts",
+		".sh", ".bash", ".zsh", ".fish", ".ps1",
+		".md", ".mdx", ".json", ".jsonl", ".yaml", ".yml", ".toml", ".xml", ".ini", ".cfg", ".conf", ".env", ".txt", ".csv", ".tsv":
 		return true
 	default:
 		return false
 	}
+}
+
+func MentionedWorkspacePathsUnderHeadings(text string, headings ...string) []string {
+	if strings.TrimSpace(text) == "" || len(headings) == 0 {
+		return nil
+	}
+	headingSet := make(map[string]struct{}, len(headings))
+	for _, heading := range headings {
+		normalized := normalizeSectionHeading(heading)
+		if normalized != "" {
+			headingSet[normalized] = struct{}{}
+		}
+	}
+	if len(headingSet) == 0 {
+		return nil
+	}
+	var out []string
+	seen := make(map[string]struct{})
+	active := false
+	sawPath := false
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		normalized := normalizeSectionHeading(line)
+		if _, ok := headingSet[normalized]; ok {
+			active = true
+			sawPath = false
+			continue
+		}
+		if !active {
+			continue
+		}
+		if line == "" {
+			if sawPath {
+				break
+			}
+			continue
+		}
+		if sawPath && looksLikeMarkdownHeading(line) {
+			break
+		}
+		paths := MentionedWorkspacePaths(line)
+		if len(paths) == 0 {
+			continue
+		}
+		sawPath = true
+		for _, path := range paths {
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+func normalizeSectionHeading(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, "#*: `\"'")
+	value = strings.TrimSuffix(value, ":")
+	value = strings.ToLower(value)
+	value = strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func looksLikeMarkdownHeading(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "#") ||
+		(strings.HasPrefix(trimmed, "**") && strings.Contains(trimmed, "**")) ||
+		strings.HasSuffix(trimmed, ":")
 }
 
 func MentionedWorkspacePaths(text string) []string {

@@ -63,6 +63,94 @@ func TestDiscoveryQueryImpactAnalysisWritesLayeredArtifact(t *testing.T) {
 	}
 }
 
+func TestDiscoveryQueryUsesFreshContextIndexForOrientation(t *testing.T) {
+	root := seedDiscoveryQueryGoRepo(t)
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		EnableShell:           true,
+		EnableWrites:          true,
+	})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:     "discovery_query",
+		Purpose:  "impact_analysis",
+		Path:     ".",
+		Pattern:  "Target",
+		Language: "go",
+		MaxDepth: 2,
+	})
+	if result.Error != "" {
+		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
+	}
+	packet := readDiscoveryQueryPacket(t, root, result.Output)
+	if packet.ContextIndexID == "" || len(packet.ContextViews) != 1 {
+		t.Fatalf("expected context index/view metadata in artifact, got %#v", packet)
+	}
+	if !packetHasLayer(packet, "context_pack") {
+		t.Fatalf("expected context_pack layer, got layers %#v", packetLayerNames(packet))
+	}
+	if packetHasLayer(packet, "target_listing") {
+		t.Fatalf("fresh context graph should replace broad target listing, got layers %#v", packetLayerNames(packet))
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(packet.ContextViews[0]))); err != nil {
+		t.Fatalf("expected context view artifact to exist: %v", err)
+	}
+}
+
+func TestDiscoveryQueryFallsBackWhenContextIndexIsStale(t *testing.T) {
+	root := seedDiscoveryQueryGoRepo(t)
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		EnableShell:           true,
+		EnableWrites:          true,
+	})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	writeWorkspaceFile(t, filepath.Join(root, "service", "service.go"), `package service
+
+func Target(v string) string {
+	return v + "changed"
+}
+`)
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:     "discovery_query",
+		Purpose:  "impact_analysis",
+		Path:     ".",
+		Pattern:  "Target",
+		Language: "go",
+		MaxDepth: 2,
+	})
+	if result.Error != "" {
+		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
+	}
+	packet := readDiscoveryQueryPacket(t, root, result.Output)
+	if packet.ContextIndexID == "" {
+		t.Fatalf("expected stale context index id to remain visible, got %#v", packet)
+	}
+	if packetHasLayer(packet, "context_pack") {
+		t.Fatalf("stale context graph should not generate context_pack layer, got layers %#v", packetLayerNames(packet))
+	}
+	if !packetHasLayer(packet, "target_listing") {
+		t.Fatalf("stale context graph should fall back to live target listing, got layers %#v", packetLayerNames(packet))
+	}
+	if !packetGapsContain(packet, "context index is stale") {
+		t.Fatalf("expected stale context gap, got %#v", packet.Gaps)
+	}
+}
+
 func TestDiscoveryQuerySecurityReviewRunsSecurityRecipeWithoutExternalTools(t *testing.T) {
 	root := seedDiscoveryQueryGoRepo(t)
 	mgr := NewManager(config.Workspace{
@@ -174,4 +262,13 @@ func packetLayerNames(packet discoveryQueryPacket) []string {
 		names = append(names, layer.Name)
 	}
 	return names
+}
+
+func packetGapsContain(packet discoveryQueryPacket, text string) bool {
+	for _, gap := range packet.Gaps {
+		if strings.Contains(gap, text) {
+			return true
+		}
+	}
+	return false
 }

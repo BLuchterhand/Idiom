@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"idiom/internal/config"
+	"idiom/internal/telemetry"
 )
 
 type artifactOptions struct {
@@ -32,6 +33,10 @@ type artifactOptions struct {
 }
 
 func runArtifactMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
+	return runArtifactMainWithTelemetry(args, stdout, stderr, promptRun, nil)
+}
+
+func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, rec *telemetry.Recorder) int {
 	opts, err := parseArtifactOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -46,6 +51,12 @@ func runArtifactMain(args []string, stdout io.Writer, stderr io.Writer, promptRu
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
+	logCLIPhase(rec, "artifact_start", map[string]any{
+		"has_output":    strings.TrimSpace(opts.OutputPath) != "",
+		"has_json_out":  strings.TrimSpace(opts.JSONOut) != "",
+		"has_validator": strings.TrimSpace(opts.Validator) != "",
+		"no_tools":      opts.NoTools,
+	})
 
 	prompt, err := artifactPrompt(opts)
 	if err != nil {
@@ -58,7 +69,7 @@ func runArtifactMain(args []string, stdout io.Writer, stderr io.Writer, promptRu
 	}
 
 	var events bytes.Buffer
-	answer, err := promptRun(cfg, prompt, runOptions{JSONEvents: true, Resume: opts.Resume}, &events)
+	answer, err := promptRun(cfg, prompt, runOptions{JSONEvents: true, Resume: opts.Resume, Telemetry: rec}, &events)
 	if writeErr := writeOptionalFile(opts.JSONOut, events.Bytes()); writeErr != nil {
 		fmt.Fprintln(stderr, writeErr)
 		return 1
@@ -96,6 +107,10 @@ func runArtifactMain(args []string, stdout io.Writer, stderr io.Writer, promptRu
 	if opts.OutputPath == "" || opts.OutputPath == "-" {
 		fmt.Fprintln(stdout, answer)
 	}
+	logCLIPhase(rec, "artifact_written", map[string]any{
+		"output_path": strings.TrimSpace(opts.OutputPath),
+		"answer_len":  len(answer),
+	})
 	return 0
 }
 

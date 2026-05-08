@@ -42,17 +42,152 @@ func TestLoadAppliesDefaultsAndResolvesWorkspacePaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Workspace.Root != projectRoot {
-		t.Fatalf("expected workspace root %q, got %q", projectRoot, cfg.Workspace.Root)
+	canonicalProjectRoot, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	if cfg.Workspace.CWD != projectRoot {
-		t.Fatalf("expected cwd %q, got %q", projectRoot, cfg.Workspace.CWD)
+	if cfg.Workspace.Root != canonicalProjectRoot {
+		t.Fatalf("expected workspace root %q, got %q", canonicalProjectRoot, cfg.Workspace.Root)
 	}
-	if got := cfg.Chat.ProjectPromptFiles[0]; got != filepath.Join(projectRoot, "AGENTS.md") {
+	if cfg.Workspace.CWD != canonicalProjectRoot {
+		t.Fatalf("expected cwd %q, got %q", canonicalProjectRoot, cfg.Workspace.CWD)
+	}
+	if got := cfg.Chat.ProjectPromptFiles[0]; got != filepath.Join(canonicalProjectRoot, "AGENTS.md") {
 		t.Fatalf("expected project prompt under project root, got %q", got)
 	}
 	if cfg.Chat.DebugLogMode != "redacted" || cfg.Chat.MaxToolSteps != 16 {
 		t.Fatalf("expected chat defaults, got mode=%q steps=%d", cfg.Chat.DebugLogMode, cfg.Chat.MaxToolSteps)
+	}
+	if cfg.Chat.AttachInstructionFiles {
+		t.Fatal("expected instruction attachment disabled by default")
+	}
+}
+
+func TestLoadHonorsAttachInstructionFilesFalse(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "chat": {
+    "attach_instruction_files": false
+  },
+  "workspace": {
+    "root": ".",
+    "cwd": "."
+  }
+}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Chat.AttachInstructionFiles {
+		t.Fatal("expected attach_instruction_files=false to disable dynamic instruction attachment")
+	}
+}
+
+func TestLoadHonorsAttachInstructionFilesTrue(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "chat": {
+    "attach_instruction_files": true
+  },
+  "workspace": {
+    "root": ".",
+    "cwd": "."
+  }
+}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Chat.AttachInstructionFiles {
+		t.Fatal("expected attach_instruction_files=true to enable dynamic instruction attachment")
+	}
+}
+
+func TestLoadRejectsUnknownConfigKeys(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "chat": {
+    "preset": "custom",
+    "made_up": true
+  },
+  "workspace": {
+    "root": ".",
+    "cwd": "."
+  }
+}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, err := Load(cfgPath)
+	if err == nil || !strings.Contains(err.Error(), "chat.made_up") {
+		t.Fatalf("expected unknown config key error, got %v", err)
+	}
+}
+
+func TestLoadAcceptsModeledRouteClassifierAliasAndCommentKeys(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "_comment": "allowed JSON comment field",
+  "chat": {
+    "preset": "custom",
+    "max_tokens": 16
+  },
+  "route_classifier": {
+    "enabled": true,
+    "always_on": true
+  },
+  "_mcp": [
+    {"name": "disabled", "url": "https://example.invalid"}
+  ],
+  "workspace": {
+    "root": ".",
+    "cwd": "."
+  }
+}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.RouteClassifier.AlwaysOn {
+		t.Fatal("expected always_on alias to be modeled")
+	}
+}
+
+func TestCanonicalizeExistingPathResolvesPhysicalPath(t *testing.T) {
+	dir := t.TempDir()
+	projectRoot := filepath.Join(dir, "project")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	linkRoot := filepath.Join(dir, "project-link")
+	if err := os.Symlink(projectRoot, linkRoot); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	got := CanonicalizeExistingPath(linkRoot)
+	want, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	if got != want {
+		t.Fatalf("canonical path: want %q, got %q", want, got)
 	}
 }
 

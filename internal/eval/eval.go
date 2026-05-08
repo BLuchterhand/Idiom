@@ -16,6 +16,8 @@ type Record struct {
 	Data map[string]any
 }
 
+const maxJSONLRecordBytes = 64 * 1024 * 1024
+
 type PhaseExpectation struct {
 	Lane  string `json:"lane,omitempty"`
 	Phase string `json:"phase,omitempty"`
@@ -188,6 +190,7 @@ type ControlRailsExpectation struct {
 	PermissionProfile     string   `json:"permission_profile,omitempty"`
 	RequireAllowedTools   []string `json:"require_allowed_tools,omitempty"`
 	RequireTargetRefs     []string `json:"require_target_refs,omitempty"`
+	RequireEditPaths      []string `json:"require_edit_paths,omitempty"`
 	RequireEvidence       []string `json:"require_evidence,omitempty"`
 	RequireTools          []string `json:"require_tools,omitempty"`
 	RequireForbiddenTools []string `json:"require_forbidden_tools,omitempty"`
@@ -196,6 +199,7 @@ type ControlRailsExpectation struct {
 	VerificationContract  string   `json:"verification_contract,omitempty"`
 	RequireStopConditions []string `json:"require_stop_conditions,omitempty"`
 	RequireFinalCritic    []string `json:"require_final_critic,omitempty"`
+	DynamicInstructions   *bool    `json:"dynamic_instruction_attachment,omitempty"`
 	FailureToEval         *bool    `json:"failure_to_eval,omitempty"`
 }
 
@@ -457,6 +461,7 @@ type ControlRailsSnapshot struct {
 	TaskFamily           string   `json:"task_family,omitempty"`
 	PermissionProfile    string   `json:"permission_profile,omitempty"`
 	TargetRefs           []string `json:"target_refs,omitempty"`
+	RequiredEditPaths    []string `json:"required_edit_paths,omitempty"`
 	RequiredEvidence     []string `json:"required_evidence,omitempty"`
 	RequiredTools        []string `json:"required_tools,omitempty"`
 	AllowedTools         []string `json:"allowed_tools,omitempty"`
@@ -466,6 +471,7 @@ type ControlRailsSnapshot struct {
 	VerificationContract string   `json:"verification_contract,omitempty"`
 	StopConditions       []string `json:"stop_conditions,omitempty"`
 	FinalCritic          []string `json:"final_critic,omitempty"`
+	DynamicInstructions  bool     `json:"dynamic_instruction_attachment,omitempty"`
 	FailureToEval        bool     `json:"failure_to_eval"`
 	Raw                  string   `json:"raw,omitempty"`
 }
@@ -534,6 +540,7 @@ func LoadRecords(path string) ([]Record, error) {
 
 	records := make([]Record, 0, 64)
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 1024*1024), maxJSONLRecordBytes)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -543,13 +550,39 @@ func LoadRecords(path string) ([]Record, error) {
 		if err := json.Unmarshal([]byte(line), &payload); err != nil {
 			return nil, fmt.Errorf("decode log record: %w", err)
 		}
-		recType, _ := payload["type"].(string)
-		records = append(records, Record{Type: recType, Data: payload})
+		records = append(records, normalizeLogRecord(payload))
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan log: %w", err)
 	}
 	return records, nil
+}
+
+func normalizeLogRecord(payload map[string]any) Record {
+	recType, _ := payload["type"].(string)
+	if recType != "" {
+		return Record{Type: recType, Data: payload}
+	}
+	kind, _ := payload["kind"].(string)
+	if kind == "" {
+		return Record{Data: payload}
+	}
+	data := make(map[string]any)
+	if nested, ok := payload["payload"].(map[string]any); ok {
+		for k, v := range nested {
+			data[k] = v
+		}
+	} else if value, ok := payload["payload"]; ok {
+		data["payload"] = value
+	}
+	for _, key := range []string{"ts", "session_id"} {
+		if v, ok := payload[key]; ok {
+			data[key] = v
+		}
+	}
+	data["kind"] = kind
+	data["type"] = kind
+	return Record{Type: kind, Data: data}
 }
 
 func LoadScenario(path string) (Scenario, error) {
@@ -2316,6 +2349,8 @@ func parseControlRails(content string) ControlRailsSnapshot {
 	rails.WorkflowPhase = strings.TrimSpace(rails.WorkflowPhase)
 	rails.TaskFamily = strings.TrimSpace(rails.TaskFamily)
 	rails.PermissionProfile = strings.TrimSpace(rails.PermissionProfile)
+	rails.TargetRefs = uniqueNonEmptyStrings(rails.TargetRefs)
+	rails.RequiredEditPaths = uniqueNonEmptyStrings(rails.RequiredEditPaths)
 	rails.RequiredEvidence = uniqueNonEmptyStrings(rails.RequiredEvidence)
 	rails.RequiredTools = uniqueNonEmptyStrings(rails.RequiredTools)
 	rails.AllowedTools = uniqueNonEmptyStrings(rails.AllowedTools)
@@ -2355,6 +2390,11 @@ func controlRailsMatches(actual ControlRailsSnapshot, expected ControlRailsExpec
 	}
 	for _, required := range expected.RequireTargetRefs {
 		if !containsStringFold(actual.TargetRefs, required) {
+			return false
+		}
+	}
+	for _, required := range expected.RequireEditPaths {
+		if !containsStringFold(actual.RequiredEditPaths, required) {
 			return false
 		}
 	}
@@ -2400,6 +2440,9 @@ func controlRailsMatches(actual ControlRailsSnapshot, expected ControlRailsExpec
 		if !containsStringFold(actual.FinalCritic, required) {
 			return false
 		}
+	}
+	if expected.DynamicInstructions != nil && actual.DynamicInstructions != *expected.DynamicInstructions {
+		return false
 	}
 	if expected.FailureToEval != nil && actual.FailureToEval != *expected.FailureToEval {
 		return false

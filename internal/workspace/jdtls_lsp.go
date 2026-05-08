@@ -436,7 +436,7 @@ func (m *Manager) formatJdtlsLocations(locations []jdtlsLocation, pathFilter str
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -495,7 +495,7 @@ func (m *Manager) formatJdtlsWorkspaceSymbols(symbols []jdtlsSymbolInfo, pathFil
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -535,7 +535,7 @@ func (m *Manager) formatJdtlsWorkspaceSymbols(symbols []jdtlsSymbolInfo, pathFil
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatJdtlsIncomingCalls(calls []jdtlsIncomingCall, pathFilter string) string {
+func (m *Manager) formatJdtlsIncomingCalls(calls []jdtlsIncomingCall, pathFilter string, target semantic.JavaSymbolMatch) callHierarchyResult {
 	type entry struct {
 		path string
 		line int
@@ -547,7 +547,7 @@ func (m *Manager) formatJdtlsIncomingCalls(calls []jdtlsIncomingCall, pathFilter
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -567,16 +567,22 @@ func (m *Manager) formatJdtlsIncomingCalls(calls []jdtlsIncomingCall, pathFilter
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
+	targetAbs, _ := m.resolvePath(target.Path, "")
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name))
+		line := fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name)
+		lines = append(lines, line)
+		if targetAbs != "" {
+			relationships = append(relationships, m.callRelationshipFromAbs(item.path, item.line, item.name, targetAbs, target.Line, target.Name, line))
+		}
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
-func (m *Manager) formatJdtlsOutgoingCalls(callerPath string, calls []jdtlsOutgoingCall, pathFilter string) string {
+func (m *Manager) formatJdtlsOutgoingCalls(callerPath string, callerName string, calls []jdtlsOutgoingCall, pathFilter string) callHierarchyResult {
 	type entry struct {
 		callsitePath string
 		callsiteLine int
@@ -590,7 +596,7 @@ func (m *Manager) formatJdtlsOutgoingCalls(callerPath string, calls []jdtlsOutgo
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(targetAbs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(targetAbs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(targetAbs))
@@ -619,13 +625,16 @@ func (m *Manager) formatJdtlsOutgoingCalls(callerPath string, calls []jdtlsOutgo
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine))
+		line := fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine)
+		lines = append(lines, line)
+		relationships = append(relationships, m.callRelationshipFromAbs(item.callsitePath, item.callsiteLine, callerName, item.targetPath, item.targetLine, item.name, line))
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
 func jdtlsSymbolKindName(kind int) string {
@@ -826,19 +835,19 @@ func (m *Manager) javaReferencesViaJdtls(ctx context.Context, match semantic.Jav
 	return m.formatJdtlsLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
 }
 
-func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, pathFilter string, incoming bool) (string, error) {
+func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newJdtlsLSPClient(ctx)
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	defer client.close()
 
 	abs, err := m.resolvePath(match.Path, "")
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if err := client.openFile(abs); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	prepareParams := map[string]any{
 		"textDocument": map[string]any{"uri": jdtlsFileURI(abs)},
@@ -846,21 +855,21 @@ func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semantic.
 	}
 	var items []jdtlsCallHierarchyItem
 	if err := client.request(ctx, "textDocument/prepareCallHierarchy", prepareParams, &items); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if len(items) == 0 {
-		return "", nil
+		return callHierarchyResult{}, nil
 	}
 	if incoming {
 		var calls []jdtlsIncomingCall
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-			return "", err
+			return callHierarchyResult{}, err
 		}
-		return m.formatJdtlsIncomingCalls(calls, pathFilter), nil
+		return m.formatJdtlsIncomingCalls(calls, pathFilter, match), nil
 	}
 	var calls []jdtlsOutgoingCall
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
-	return m.formatJdtlsOutgoingCalls(abs, calls, pathFilter), nil
+	return m.formatJdtlsOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }

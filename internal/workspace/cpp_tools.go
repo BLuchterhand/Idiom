@@ -220,6 +220,23 @@ func (m *Manager) cppDefinition(ctx context.Context, req ToolRequest) ToolResult
 		return ToolResult{Tool: "cpp_definition", Summary: "C++ definition query rejected", Error: err.Error()}
 	}
 	if output, err := m.cppDefinitionViaClangd(ctx, match); err == nil && strings.TrimSpace(output) != "" {
+		if !cppLocationOutputOnlyHeaders(output) {
+			return ToolResult{
+				Tool:    "cpp_definition",
+				Summary: "Resolved C++ definition via clangd",
+				Output:  output,
+			}
+		}
+		if fallback, fallbackErr := m.cppDefinitionFallbackMatch(match); fallbackErr == nil {
+			display, displayErr := m.cppHandleDisplay(fallback.Path)
+			if displayErr == nil {
+				return ToolResult{
+					Tool:    "cpp_definition",
+					Summary: "Resolved C++ definition via semantic index fallback",
+					Output:  fmt.Sprintf("%s:%d %s %s", display, fallback.Line, fallback.Kind, cppDisplayName(fallback.Qualified, fallback.Name)),
+				}
+			}
+		}
 		return ToolResult{
 			Tool:    "cpp_definition",
 			Summary: "Resolved C++ definition via clangd",
@@ -321,11 +338,12 @@ func (m *Manager) cppCallsFrom(ctx context.Context, req ToolRequest) ToolResult 
 	}
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	if err == nil {
-		if output, lspErr := m.cppCallHierarchyViaClangd(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(output) != "" {
+		if payload, lspErr := m.cppCallHierarchyViaClangd(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
 			return ToolResult{
-				Tool:    "cpp_calls_from",
-				Summary: "Resolved outgoing C++ calls via clangd call hierarchy",
-				Output:  output,
+				Tool:          "cpp_calls_from",
+				Summary:       "Resolved outgoing C++ calls via clangd call hierarchy",
+				Output:        payload.Output,
+				Relationships: payload.Relationships,
 			}
 		}
 	}
@@ -355,11 +373,12 @@ func (m *Manager) cppCallsInto(ctx context.Context, req ToolRequest) ToolResult 
 	}
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	if err == nil {
-		if output, lspErr := m.cppCallHierarchyViaClangd(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(output) != "" {
+		if payload, lspErr := m.cppCallHierarchyViaClangd(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
 			return ToolResult{
-				Tool:    "cpp_calls_into",
-				Summary: "Resolved incoming C++ calls via clangd call hierarchy",
-				Output:  output,
+				Tool:          "cpp_calls_into",
+				Summary:       "Resolved incoming C++ calls via clangd call hierarchy",
+				Output:        payload.Output,
+				Relationships: payload.Relationships,
 			}
 		}
 	}
@@ -702,6 +721,54 @@ func (m *Manager) cppDeclarationFallbackMatch(match semantic.CppSymbolMatch) (se
 	return candidates[0], nil
 }
 
+func (m *Manager) cppDefinitionFallbackMatch(match semantic.CppSymbolMatch) (semantic.CppSymbolMatch, error) {
+	index, err := m.getCppIndex()
+	if err != nil {
+		return semantic.CppSymbolMatch{}, err
+	}
+	patterns := []string{match.Qualified, match.Name}
+	seen := make(map[string]struct{})
+	candidates := make([]semantic.CppSymbolMatch, 0, 8)
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		for _, candidate := range index.FindSymbols(pattern, 32) {
+			key := candidate.Path + ":" + strconv.Itoa(candidate.Line) + ":" + candidate.Name
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			if candidate.Name != match.Name {
+				continue
+			}
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) == 0 {
+		return semantic.CppSymbolMatch{}, fmt.Errorf("no definition fallback candidates found")
+	}
+	wantQualified := strings.TrimSpace(match.Qualified)
+	sort.Slice(candidates, func(i, j int) bool {
+		iHeader := cppIsHeaderPath(candidates[i].Path)
+		jHeader := cppIsHeaderPath(candidates[j].Path)
+		if iHeader != jHeader {
+			return !iHeader
+		}
+		iExact := wantQualified != "" && strings.TrimSpace(candidates[i].Qualified) == wantQualified
+		jExact := wantQualified != "" && strings.TrimSpace(candidates[j].Qualified) == wantQualified
+		if iExact != jExact {
+			return iExact
+		}
+		if candidates[i].Path != candidates[j].Path {
+			return candidates[i].Path < candidates[j].Path
+		}
+		return candidates[i].Line < candidates[j].Line
+	})
+	return candidates[0], nil
+}
+
 func (m *Manager) cppImplementationFallback(match semantic.CppSymbolMatch, pathFilter string) (string, error) {
 	index, err := m.getCppIndex()
 	if err != nil {
@@ -970,6 +1037,27 @@ func cppIsHeaderPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func cppLocationOutputOnlyHeaders(output string) bool {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	seen := false
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		loc := fields[1]
+		idx := strings.LastIndex(loc, ":")
+		if idx <= 0 {
+			continue
+		}
+		seen = true
+		if !cppIsHeaderPath(loc[:idx]) {
+			return false
+		}
+	}
+	return seen
 }
 
 func cppDisplayName(qualified string, name string) string {

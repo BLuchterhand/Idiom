@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,13 +21,16 @@ import (
 	"idiom/internal/app"
 	"idiom/internal/config"
 	"idiom/internal/llama"
+	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
 
 type runOptions struct {
-	JSONEvents bool
-	Resume     string
-	TaskFamily string
+	JSONEvents               bool
+	Resume                   string
+	TaskFamily               string
+	PlannerOwnedVerification bool
+	Telemetry                *telemetry.Recorder
 }
 
 type promptRunner func(config.Config, string, runOptions, io.Writer) (string, error)
@@ -35,19 +39,88 @@ type modeRunner func(config.Config, runOptions) error
 type listSessionsRunner func(config.Config, io.Writer) error
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "tool" {
-		os.Exit(runToolMain(os.Args[2:], os.Stdout, os.Stderr))
+	os.Exit(runMain(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
+	rec := startCommandTelemetry(args)
+	if rec != nil {
+		stopTelemetrySignalHandler := installTelemetrySignalHandler(rec)
+		defer func() {
+			stopTelemetrySignalHandler()
+			if recovered := recover(); recovered != nil {
+				_ = rec.CloseWithFields(2, map[string]any{
+					"reason": "panic",
+					"panic":  fmt.Sprint(recovered),
+				})
+				panic(recovered)
+			}
+			_ = rec.Close(code)
+		}()
 	}
-	if len(os.Args) > 1 && os.Args[1] == "artifact" {
-		os.Exit(runArtifactMain(os.Args[2:], os.Stdout, os.Stderr, runPromptOnce))
+	if len(args) > 0 && args[0] == "tool" {
+		return runToolMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
-	if len(os.Args) > 1 && os.Args[1] == "implement" {
-		os.Exit(runImplementMain(os.Args[2:], os.Stdout, os.Stderr, runPromptOnce))
+	if len(args) > 0 && args[0] == "context" {
+		return runContextMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions))
+	if len(args) > 0 && args[0] == "artifact" {
+		return runArtifactMainWithTelemetry(args[1:], stdout, stderr, runPromptOnce, rec)
+	}
+	if len(args) > 0 && args[0] == "implement" {
+		return runImplementMainWithTelemetry(args[1:], stdout, stderr, runPromptOnce, rec)
+	}
+	if len(args) > 0 && args[0] == "architect" {
+		return runArchitectMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
+	return runWithTelemetry(args, stdout, stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions, rec)
+}
+
+func installTelemetrySignalHandler(rec *telemetry.Recorder) func() {
+	if rec == nil {
+		return func() {}
+	}
+	signals := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	var stopOnce sync.Once
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case sig := <-signals:
+			exitCode := telemetrySignalExitCode(sig)
+			_ = rec.CloseWithFields(exitCode, map[string]any{
+				"reason": "signal",
+				"signal": sig.String(),
+			})
+			os.Exit(exitCode)
+		case <-done:
+			return
+		}
+	}()
+	return func() {
+		stopOnce.Do(func() {
+			signal.Stop(signals)
+			close(done)
+		})
+	}
+}
+
+func telemetrySignalExitCode(sig os.Signal) int {
+	switch sig {
+	case os.Interrupt:
+		return 130
+	case syscall.SIGTERM:
+		return 143
+	default:
+		return 1
+	}
 }
 
 func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, promptsRun promptsRunner, tuiRun modeRunner, serverRun modeRunner, listSessions listSessionsRunner) int {
+	return runWithTelemetry(args, stdout, stderr, promptRun, promptsRun, tuiRun, serverRun, listSessions, nil)
+}
+
+func runWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, promptsRun promptsRunner, tuiRun modeRunner, serverRun modeRunner, listSessions listSessionsRunner, rec *telemetry.Recorder) int {
 	var configPath string
 	var serverOnly bool
 	var prompt string
@@ -81,6 +154,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	}
 
 	if listSessionsFlag {
+		logCLIPhase(rec, "list_sessions", nil)
 		if err := listSessions(cfg, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -89,7 +163,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	}
 
 	if serverOnly {
-		if err := serverRun(cfg, runOptions{}); err != nil {
+		if err := serverRun(cfg, runOptions{Telemetry: rec}); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -106,7 +180,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		opts := runOptions{JSONEvents: jsonEvents, Resume: resume}
+		opts := runOptions{JSONEvents: jsonEvents, Resume: resume, Telemetry: rec}
 		answers, err := promptsRun(cfg, prompts, opts, stdout)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -121,7 +195,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 	}
 
 	if prompt != "" {
-		opts := runOptions{JSONEvents: jsonEvents, Resume: resume}
+		opts := runOptions{JSONEvents: jsonEvents, Resume: resume, Telemetry: rec}
 		answer, err := promptRun(cfg, prompt, opts, stdout)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -133,7 +207,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunn
 		return 0
 	}
 
-	if err := tuiRun(cfg, runOptions{Resume: resume}); err != nil {
+	if err := tuiRun(cfg, runOptions{Resume: resume, Telemetry: rec}); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -178,6 +252,10 @@ func cleanPromptTurns(prompts []string) ([]string, error) {
 }
 
 func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	return runToolMainWithTelemetry(args, stdout, stderr, nil)
+}
+
+func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printToolUsage(stderr)
 		return 0
@@ -188,7 +266,9 @@ func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		listFs.SetOutput(stderr)
 		listConfigPath := listFs.String("config", "config.json", "path to config file")
 		_ = listFs.Parse(args[1:])
-		return runToolListWithConfig(stdout, *listConfigPath)
+		code := runToolListWithConfig(stdout, *listConfigPath)
+		logCLIPhase(rec, "tool_list", map[string]any{"exit_code": code})
+		return code
 	}
 
 	toolName := args[0]
@@ -232,6 +312,7 @@ func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		req.Args = json.RawMessage(rawInput)
 	}
 	req.Tool = toolName
+	logDirectToolRequest(rec, req, len(rawInput))
 
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
@@ -245,7 +326,9 @@ func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	startedAt := time.Now()
 	result := mgr.Execute(ctx, req)
+	logDirectToolResult(rec, req, result, time.Since(startedAt).Milliseconds())
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
@@ -299,6 +382,7 @@ func loadToolConfig(path string) (config.Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		cfg := config.Default()
 		if wd, e := os.Getwd(); e == nil {
+			wd = config.CanonicalizeExistingPath(wd)
 			cfg.Workspace.Root = wd
 			cfg.Workspace.CWD = wd
 		}
@@ -315,8 +399,17 @@ func printToolUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Run a single workspace tool and print its result as JSON.")
 	fmt.Fprintln(stderr, "Does not require llama-server.")
+	fmt.Fprintln(stderr, "For persistent codebase context, use `idiom context build|status|query|zoom|pack|trace`.")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Discovery tools:")
+	fmt.Fprintln(stderr, "  harness_audit      Audit idiom tool surfaces, backends, and behavior logs")
+	fmt.Fprintln(stderr, "  harness_feedback   Record structured idiom harness/tool/prompt feedback into telemetry")
+	fmt.Fprintln(stderr, "  context_index      Build or refresh the persistent codebase comprehension graph")
+	fmt.Fprintln(stderr, "  context_status     Report context graph freshness, stale files, and stale symbols")
+	fmt.Fprintln(stderr, "  context_query      Query graph nodes and relationships at repo/package/file/symbol resolution")
+	fmt.Fprintln(stderr, "  context_zoom       Expand one graph handle with neighboring evidence")
+	fmt.Fprintln(stderr, "  context_pack       Generate a packet-ready context view")
+	fmt.Fprintln(stderr, "  context_trace_pack Save language-agnostic runtime trace evidence from a command")
 	fmt.Fprintln(stderr, "  discovery_query     Multi-layer analysis (impact, tracing, architecture, security, history)")
 	fmt.Fprintln(stderr, "  structural_search   AST-aware pattern search (requires ast-grep)")
 	fmt.Fprintln(stderr, "  dependency_graph    Language-aware dependency analysis")
@@ -337,6 +430,7 @@ func printToolUsage(stderr io.Writer) {
 func runTUI(cfg config.Config, opts runOptions) error {
 	model := app.New(cfg)
 	defer model.Close()
+	logModelSessionLink(opts.Telemetry, "tui", model.DebugLogPath())
 
 	if opts.Resume != "" {
 		if err := model.ResumeSession(opts.Resume); err != nil {
@@ -355,6 +449,8 @@ func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.
 	model := app.New(cfg)
 	defer model.Close()
 	model.SetForcedTaskFamily(opts.TaskFamily)
+	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
+	logModelSessionLink(opts.Telemetry, "prompt", model.DebugLogPath())
 
 	if opts.Resume != "" {
 		path := app.ResolveSessionLogPath(cfg, opts.Resume)
@@ -380,6 +476,8 @@ func runPromptsOnce(cfg config.Config, prompts []string, opts runOptions, stdout
 	model := app.New(cfg)
 	defer model.Close()
 	model.SetForcedTaskFamily(opts.TaskFamily)
+	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
+	logModelSessionLink(opts.Telemetry, "turns_file", model.DebugLogPath())
 
 	if opts.Resume != "" {
 		path := app.ResolveSessionLogPath(cfg, opts.Resume)
@@ -415,6 +513,170 @@ func sessionIDFromPath(path string) string {
 		base = base[:len(base)-len(ext)]
 	}
 	return base
+}
+
+func startCommandTelemetry(args []string) *telemetry.Recorder {
+	wd, _ := os.Getwd()
+	wd = config.CanonicalizeExistingPath(wd)
+	rec, err := telemetry.Open(telemetry.Options{
+		Command:       commandTelemetryName(args),
+		Args:          args,
+		WorkspaceRoot: wd,
+	})
+	if err != nil {
+		return nil
+	}
+	return rec
+}
+
+func commandTelemetryName(args []string) string {
+	if len(args) == 0 {
+		return "tui"
+	}
+	switch args[0] {
+	case "tool":
+		if len(args) > 1 {
+			return "tool:" + args[1]
+		}
+		return "tool"
+	case "context":
+		if len(args) > 1 {
+			return "context:" + args[1]
+		}
+		return "context"
+	case "artifact", "implement":
+		return args[0]
+	case "architect":
+		if len(args) > 1 {
+			return "architect:" + args[1]
+		}
+		return "architect"
+	default:
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "-prompt=") || strings.HasPrefix(arg, "--prompt=") {
+				return "prompt"
+			}
+			if strings.HasPrefix(arg, "-turns-file=") || strings.HasPrefix(arg, "--turns-file=") {
+				return "turns_file"
+			}
+			switch arg {
+			case "-server-only", "--server-only":
+				return "server"
+			case "-prompt", "--prompt":
+				return "prompt"
+			case "-turns-file", "--turns-file":
+				return "turns_file"
+			case "-list-sessions", "--list-sessions":
+				return "list_sessions"
+			}
+		}
+		return "tui"
+	}
+}
+
+func logCLIPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
+	if rec == nil {
+		return
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	_ = rec.Log(eventType, fields)
+}
+
+func logModelSessionLink(rec *telemetry.Recorder, mode string, debugLogPath string) {
+	if rec == nil || strings.TrimSpace(debugLogPath) == "" {
+		return
+	}
+	_ = rec.Log("model_session", map[string]any{
+		"mode":           mode,
+		"debug_log_path": filepath.Clean(debugLogPath),
+		"session_id":     sessionIDFromPath(debugLogPath),
+	})
+}
+
+func logDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, rawInputBytes int) {
+	if rec == nil {
+		return
+	}
+	profile := workspace.DiscoveryProfileForRequest(req)
+	fields := map[string]any{
+		"step":            1,
+		"agent":           "direct",
+		"tool":            strings.TrimSpace(req.Tool),
+		"raw_input_bytes": rawInputBytes,
+		"path":            strings.TrimSpace(req.Path),
+		"workdir":         strings.TrimSpace(req.Workdir),
+		"purpose":         strings.TrimSpace(req.Purpose),
+		"language":        strings.TrimSpace(req.Language),
+		"has_pattern":     strings.TrimSpace(req.Pattern) != "",
+		"has_query":       strings.TrimSpace(req.Query) != "",
+		"has_command":     strings.TrimSpace(req.Command) != "",
+		"has_content":     strings.TrimSpace(req.Content) != "",
+		"start_line":      req.StartLine,
+		"end_line":        req.EndLine,
+		"limit":           req.Limit,
+		"recursive":       req.Recursive,
+	}
+	if profile.Discovery {
+		fields["discovery_class"] = profile.Class
+		fields["discovery_scope"] = profile.Scope
+		fields["discovery_cost"] = profile.Cost
+	}
+	_ = rec.Log("tool_request", fields)
+}
+
+func logDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64) {
+	if rec == nil {
+		return
+	}
+	outputChars := len(result.Output)
+	tool := firstNonEmptyCLIString(result.Tool, req.Tool)
+	fields := map[string]any{
+		"step":        1,
+		"agent":       "direct",
+		"tool":        tool,
+		"summary":     result.Summary,
+		"error":       result.Error,
+		"duration_ms": durationMillis,
+	}
+	if outputChars > 0 {
+		fields["output_chars"] = outputChars
+		fields["output_lines"] = outputLineCount(result.Output)
+	}
+	if result.PrecisionTier != "" {
+		fields["precision_tier"] = result.PrecisionTier
+	}
+	profile := workspace.DiscoveryProfileForRequest(req)
+	if profile.Discovery {
+		fields["discovery_class"] = profile.Class
+		fields["discovery_scope"] = profile.Scope
+		fields["discovery_cost"] = profile.Cost
+	}
+	for key, value := range workspace.ToolTelemetryFields(tool, result.Output) {
+		fields[key] = value
+	}
+	_ = rec.Log("tool_result", fields)
+}
+
+func outputLineCount(output string) int {
+	if output == "" {
+		return 0
+	}
+	lines := strings.Count(output, "\n")
+	if !strings.HasSuffix(output, "\n") {
+		lines++
+	}
+	return lines
+}
+
+func firstNonEmptyCLIString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func runListSessions(cfg config.Config, stdout io.Writer) error {
@@ -492,19 +754,33 @@ func loadExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolRegi
 	return workspace.NewExternalToolRegistry(tools)
 }
 
-func runServerOnly(cfg config.Config, _ runOptions) error {
+func runServerOnly(cfg config.Config, opts runOptions) error {
+	return runServerOnlyWithTelemetry(cfg, opts)
+}
+
+func runServerOnlyWithTelemetry(cfg config.Config, opts runOptions) error {
 	client := llama.NewClient(cfg.BaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
 	controller := llama.NewServerController(cfg.LlamaServer, client)
+	logCLIPhase(opts.Telemetry, "server_starting", map[string]any{
+		"base_url": cfg.BaseURL(),
+		"backend":  cfg.LlamaServer.Kind,
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Chat.ServerStartTimeoutSecs)*time.Second)
 	defer cancel()
 
 	if err := controller.Start(ctx); err != nil {
+		logCLIPhase(opts.Telemetry, "server_error", map[string]any{"stage": "start", "error": err.Error()})
 		return err
 	}
 	if err := controller.WaitUntilReady(ctx); err != nil {
+		logCLIPhase(opts.Telemetry, "server_error", map[string]any{"stage": "wait_until_ready", "error": err.Error()})
 		return err
 	}
+	logCLIPhase(opts.Telemetry, "server_ready", map[string]any{
+		"base_url": cfg.BaseURL(),
+		"log_path": controller.LogPath(),
+	})
 
 	fmt.Printf("llama-server ready on %s\n", cfg.BaseURL())
 	fmt.Printf("model: %s\n", cfg.LlamaServer.Model)
@@ -518,7 +794,11 @@ func runServerOnly(cfg config.Config, _ runOptions) error {
 	defer stopCancel()
 
 	if err := controller.Stop(stopCtx); err != nil {
+		logCLIPhase(opts.Telemetry, "server_error", map[string]any{"stage": "stop", "error": err.Error()})
 		return err
 	}
+	logCLIPhase(opts.Telemetry, "server_stopped", map[string]any{
+		"base_url": cfg.BaseURL(),
+	})
 	return nil
 }

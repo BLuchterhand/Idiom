@@ -1,13 +1,15 @@
 package workspace
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/parser"
+	goscan "go/scanner"
 	"go/token"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -25,7 +27,7 @@ import (
 	"idiom/internal/semantic"
 )
 
-	type Manager struct {
+type Manager struct {
 	cfg config.Workspace
 
 	mode                  Mode
@@ -40,12 +42,18 @@ import (
 	permissionRules       map[string][]ToolRule
 	mcpRegistry           *mcp.Registry
 	externalToolsRegistry *ExternalToolRegistry
-	goIndex         *semantic.GoIndex
-	goIndexToken    string
-	cppIndex        *semantic.CppIndex
-	cppIndexToken   string
-	goplsPath       string
-	goplsChecked    bool
+	goIndex               *semantic.GoIndex
+	goIndexToken          string
+	cppIndex              *semantic.CppIndex
+	cppIndexToken         string
+	goplsPath             string
+	goplsChecked          bool
+	editRecoveryRequired  map[string]editRecoveryState
+}
+
+type editRecoveryState struct {
+	line   int
+	detail string
 }
 
 type Mode string
@@ -71,32 +79,52 @@ const (
 )
 
 type ToolRequest struct {
-	Tool         string              `json:"tool"`
-	ID           string              `json:"id,omitempty"`
-	Path         string              `json:"path,omitempty"`
-	StartLine    int                 `json:"start_line,omitempty"`
-	EndLine      int                 `json:"end_line,omitempty"`
-	Pattern      string              `json:"pattern,omitempty"`
-	Query        string              `json:"query,omitempty"`
-	Purpose      string              `json:"purpose,omitempty"`
-	Language     string              `json:"language,omitempty"`
-	Glob         string              `json:"glob,omitempty"`
-	Workdir      string              `json:"workdir,omitempty"`
-	Command      string              `json:"command,omitempty"`
-	Prompt       string              `json:"prompt,omitempty"`
-	Agent        string              `json:"agent,omitempty"`
-	Mode         string              `json:"mode,omitempty"`
-	Content      string              `json:"content,omitempty"`
-	OldText      string              `json:"old_text,omitempty"`
-	NewText      string              `json:"new_text,omitempty"`
-	ReplaceAll   bool                `json:"replace_all,omitempty"`
-	Recursive    bool                `json:"recursive,omitempty"`
-	MaxDepth     int                 `json:"max_depth,omitempty"`
-	Destination  string              `json:"destination,omitempty"`
-	Declarations []string            `json:"declarations,omitempty"`
-	Moves        []GoDeclarationMove `json:"moves,omitempty"`
-	Todos        []TaskLedgerItem    `json:"todos,omitempty"`
-	Items        []TaskLedgerItem    `json:"items,omitempty"`
+	Tool            string              `json:"tool"`
+	ID              string              `json:"id,omitempty"`
+	Path            string              `json:"path,omitempty"`
+	StartLine       int                 `json:"start_line,omitempty"`
+	EndLine         int                 `json:"end_line,omitempty"`
+	Pattern         string              `json:"pattern,omitempty"`
+	Query           string              `json:"query,omitempty"`
+	Task            string              `json:"task,omitempty"`
+	Purpose         string              `json:"purpose,omitempty"`
+	Language        string              `json:"language,omitempty"`
+	Glob            string              `json:"glob,omitempty"`
+	Workdir         string              `json:"workdir,omitempty"`
+	Command         string              `json:"command,omitempty"`
+	Prompt          string              `json:"prompt,omitempty"`
+	Agent           string              `json:"agent,omitempty"`
+	Mode            string              `json:"mode,omitempty"`
+	Content         string              `json:"content,omitempty"`
+	OldText         string              `json:"old_text,omitempty"`
+	NewText         string              `json:"new_text,omitempty"`
+	ReplaceAll      bool                `json:"replace_all,omitempty"`
+	Recursive       bool                `json:"recursive,omitempty"`
+	MaxDepth        int                 `json:"max_depth,omitempty"`
+	Limit           int                 `json:"limit,omitempty"`
+	BudgetTokens    int                 `json:"budget_tokens,omitempty"`
+	Resolution      string              `json:"resolution,omitempty"`
+	IncludeEvidence bool                `json:"include_evidence,omitempty"`
+	IncludeSource   bool                `json:"include_source,omitempty"`
+	IncludeFiles    bool                `json:"include_files,omitempty"`
+	Refresh         bool                `json:"refresh,omitempty"`
+	Category        string              `json:"category,omitempty"`
+	Component       string              `json:"component,omitempty"`
+	Expected        string              `json:"expected,omitempty"`
+	Observed        string              `json:"observed,omitempty"`
+	Workaround      string              `json:"workaround,omitempty"`
+	Impact          string              `json:"impact,omitempty"`
+	Evidence        []string            `json:"evidence,omitempty"`
+	Confidence      string              `json:"confidence,omitempty"`
+	Severity        string              `json:"severity,omitempty"`
+	SuggestedFix    string              `json:"suggested_fix,omitempty"`
+	RequiredTests   []string            `json:"required_tests,omitempty"`
+	ForbiddenPaths  []string            `json:"forbidden_paths,omitempty"`
+	Destination     string              `json:"destination,omitempty"`
+	Declarations    []string            `json:"declarations,omitempty"`
+	Moves           []GoDeclarationMove `json:"moves,omitempty"`
+	Todos           []TaskLedgerItem    `json:"todos,omitempty"`
+	Items           []TaskLedgerItem    `json:"items,omitempty"`
 	// NamedGap explains one exact unresolved claim a post-readiness
 	// follow-up tool call is trying to verify or falsify. It should be
 	// specific enough that the next discovery move is obvious (for
@@ -155,7 +183,19 @@ type ToolResult struct {
 	Summary       string
 	Output        string
 	Error         string
-	PrecisionTier string `json:"precision_tier,omitempty"`
+	PrecisionTier string             `json:"precision_tier,omitempty"`
+	Relationships []ToolRelationship `json:"relationships,omitempty"`
+}
+
+type ToolRelationship struct {
+	Kind         string `json:"kind,omitempty"`
+	SourcePath   string `json:"source_path,omitempty"`
+	SourceLine   int    `json:"source_line,omitempty"`
+	SourceSymbol string `json:"source_symbol,omitempty"`
+	TargetPath   string `json:"target_path,omitempty"`
+	TargetLine   int    `json:"target_line,omitempty"`
+	TargetSymbol string `json:"target_symbol,omitempty"`
+	Evidence     string `json:"evidence,omitempty"`
 }
 
 type listedEntry struct {
@@ -167,15 +207,18 @@ const searchContentLineCap = 240
 const listFilesDisplayCap = 80
 
 func NewManager(cfg config.Workspace) *Manager {
+	cfg.Root = config.CanonicalizeExistingPath(cfg.Root)
+	cfg.CWD = config.CanonicalizeExistingPath(cfg.CWD)
 	return &Manager{
-		cfg:           cfg,
-		mode:          ModeNormal,
-		thoroughness:  ThoroughnessMedium,
-		writePolicy:   WritePolicyGuarded,
-		nextHandle:    1,
-		pathToHandle:  make(map[string]string),
-		handleToPath:  make(map[string]string),
-		observedPaths: make(map[string]struct{}),
+		cfg:                  cfg,
+		mode:                 ModeNormal,
+		thoroughness:         ThoroughnessMedium,
+		writePolicy:          WritePolicyGuarded,
+		nextHandle:           1,
+		pathToHandle:         make(map[string]string),
+		handleToPath:         make(map[string]string),
+		observedPaths:        make(map[string]struct{}),
+		editRecoveryRequired: make(map[string]editRecoveryState),
 	}
 }
 
@@ -523,6 +566,7 @@ func appendExternalToolDefinitions(defs []ToolDefinition, extReg *ExternalToolRe
 func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResult) {
 	defer func() {
 		result = annotateLanguagePrecisionTier(result)
+		result = annotateLanguageRelationships(result)
 	}()
 
 	tool := strings.TrimSpace(req.Tool)
@@ -542,6 +586,24 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		return m.searchContent(ctx, req, tool)
 	case "read_file":
 		return m.readFile(req)
+	case "file_stats":
+		return m.fileStats(req)
+	case "harness_audit":
+		return m.harnessAudit(req)
+	case "harness_feedback", "idiom_feedback":
+		return m.harnessFeedback(req)
+	case "context_index":
+		return m.contextIndex(ctx, req)
+	case "context_status":
+		return m.contextStatus(ctx, req)
+	case "context_query":
+		return m.contextQuery(ctx, req)
+	case "context_zoom":
+		return m.contextZoom(req)
+	case "context_pack":
+		return m.contextPack(ctx, req)
+	case "context_trace_pack":
+		return m.contextTracePack(ctx, req)
 	case "discovery_query":
 		return m.discoveryQuery(ctx, req)
 	case "structural_search":
@@ -824,19 +886,20 @@ func (m *Manager) knownToolNames() []string {
 	return names
 }
 
-// builtinToolNamesForSuggest enumerates the built-in tools in the
-// dispatch switch above. Kept in sync with the case clauses; new
-// built-ins should be added here so error suggestions can find them.
+// builtinToolNamesForSuggest reuses the manifest inventory so unsupported-tool
+// recovery does not drift away from the exported built-in surface.
 func builtinToolNamesForSuggest() []string {
-	return []string{
-		"task_ledger", "task", "pwd", "list_files", "search_files",
-		"search_content", "read_file", "discovery_query",
-		"structural_search", "dependency_graph", "history_range",
-		"history_symbol", "blame_range", "ctags_symbols",
-		"semgrep_scan", "joern_scan", "git_status", "git_diff",
-		"shell", "mkdir", "edit_file", "write_file", "append_file",
-		"apply_patch", "go_move_declarations", "go_file_outline",
-	}
+	return ToolManifestTools(ToolManifestToolOptions{
+		IncludeTaskLedger: true,
+		IncludeTask:       true,
+		IncludeWriteTools: true,
+		IncludeGo:         true,
+		IncludeCpp:        true,
+		IncludePython:     true,
+		IncludeTypescript: true,
+		IncludeRust:       true,
+		IncludeJava:       true,
+	})
 }
 
 // closestToolNames returns up to maxN candidates closest to target by
@@ -1116,11 +1179,14 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 		return ToolResult{Tool: "git_diff", Summary: "Failed to resolve workdir", Error: err.Error()}
 	}
 	args := []string{"diff", "--no-color"}
+	diffPath := ""
 	if req.Path != "" {
 		// Validate the path resolves under the workspace before passing to git.
-		if _, err := m.resolvePath(req.Path, req.Workdir); err != nil {
+		resolved, err := m.resolvePath(req.Path, req.Workdir)
+		if err != nil {
 			return ToolResult{Tool: "git_diff", Summary: "Failed to resolve path", Error: err.Error()}
 		}
+		diffPath = resolved
 		args = append(args, "--", req.Path)
 	}
 	output, execErr := m.runCommand(ctx, workdir, "git", args...)
@@ -1135,6 +1201,10 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 	}
 	if execErr != nil {
 		result.Error = execErr.Error()
+	} else if diffPath != "" {
+		m.clearEditRecovery(diffPath)
+	} else {
+		m.clearAllEditRecovery()
 	}
 	return result
 }
@@ -1147,7 +1217,14 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 
 	var req ToolRequest
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
-		return ToolRequest{}, payload, true, fmt.Errorf("decode tool request: %w", err)
+		if repaired, ok := repairNumericStringToolFields([]byte(payload)); ok {
+			if repairErr := json.Unmarshal(repaired, &req); repairErr == nil {
+				err = nil
+			}
+		}
+		if err != nil {
+			return ToolRequest{}, payload, true, fmt.Errorf("decode tool request: %w", err)
+		}
 	}
 	if strings.TrimSpace(req.Tool) == "" {
 		if repaired, ok := inferMissingToolRequest(req); ok {
@@ -1156,6 +1233,42 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 		return ToolRequest{}, payload, true, fmt.Errorf("tool request is missing tool")
 	}
 	return req, payload, true, nil
+}
+
+func repairNumericStringToolFields(payload []byte) ([]byte, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil, false
+	}
+	repaired := false
+	for _, field := range []string{"start_line", "end_line", "max_depth", "limit", "budget_tokens"} {
+		raw, ok := obj[field]
+		if !ok {
+			continue
+		}
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" || strings.HasPrefix(value, "-") || strings.HasPrefix(value, "+") {
+			return nil, false
+		}
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return nil, false
+		}
+		obj[field] = json.RawMessage(strconv.Itoa(parsed))
+		repaired = true
+	}
+	if !repaired {
+		return nil, false
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 func inferMissingToolRequest(req ToolRequest) (ToolRequest, bool) {
@@ -1319,7 +1432,7 @@ func IsNarrowingRequest(req ToolRequest) bool {
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg", "read_file",
-		"discovery_query",
+		"harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query",
 		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
@@ -1357,7 +1470,7 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg",
-		"discovery_query",
+		"harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query",
 		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
@@ -1953,6 +2066,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	}
 
 	m.MarkPathObserved(m.displayPath(path))
+	m.clearEditRecoveryAfterRead(path, start, end)
 	summary := fmt.Sprintf("Read %s lines %d-%d", description, start, end)
 	if tailRead {
 		summary += fmt.Sprintf(" (file has %d lines total; defaulted to recent log tail; pass start_line/end_line for a different window)", len(lines))
@@ -1988,11 +2102,232 @@ func (m *Manager) readLogTail(path string, description string, lineCap int) (Too
 		fmt.Fprintf(&b, "%d:%s\n", start+i, line)
 	}
 	m.MarkPathObserved(m.displayPath(path))
+	m.clearEditRecoveryAfterRead(path, start, start+len(lines)-1)
 	return ToolResult{
 		Tool:    "read_file",
 		Summary: fmt.Sprintf("Read %s lines %d-%d (file has %d lines total; defaulted to recent log tail; pass start_line/end_line for a different window)", description, start, start+len(lines)-1, totalLines),
 		Output:  strings.TrimRight(b.String(), "\n"),
 	}, true
+}
+
+type fileStatsReport struct {
+	Path             string           `json:"path"`
+	Recursive        bool             `json:"recursive,omitempty"`
+	MaxDepth         int              `json:"max_depth,omitempty"`
+	Glob             string           `json:"glob,omitempty"`
+	Files            int              `json:"files"`
+	Directories      int              `json:"directories,omitempty"`
+	Bytes            int64            `json:"bytes"`
+	Lines            int              `json:"lines"`
+	LineCountErrors  int              `json:"line_count_errors,omitempty"`
+	Truncated        bool             `json:"truncated,omitempty"`
+	Limit            int              `json:"limit,omitempty"`
+	Entries          []fileStatsEntry `json:"entries,omitempty"`
+	EntriesTruncated bool             `json:"entries_truncated,omitempty"`
+}
+
+type fileStatsEntry struct {
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes"`
+	Lines int    `json:"lines,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+const fileStatsDefaultLimit = 1000
+const fileStatsMaxLimit = 10000
+const fileStatsEntryDisplayCap = 50
+
+func (m *Manager) fileStats(req ToolRequest) ToolResult {
+	requestPath := strings.TrimSpace(req.Path)
+	if requestPath == "" {
+		requestPath = "."
+	}
+	target, err := m.resolvePath(requestPath, req.Workdir)
+	if err != nil {
+		return ToolResult{Tool: "file_stats", Summary: "Failed to resolve path", Error: err.Error()}
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return ToolResult{Tool: "file_stats", Summary: "Failed to stat path", Error: err.Error()}
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = fileStatsDefaultLimit
+	}
+	if limit > fileStatsMaxLimit {
+		limit = fileStatsMaxLimit
+	}
+	report := fileStatsReport{
+		Path:      m.displayPath(target),
+		Recursive: req.Recursive,
+		MaxDepth:  req.MaxDepth,
+		Glob:      strings.TrimSpace(req.Glob),
+		Limit:     limit,
+	}
+
+	if !info.IsDir() {
+		entry := m.fileStatsEntry(target, info)
+		report.Files = 1
+		report.Bytes = entry.Bytes
+		report.Lines = entry.Lines
+		if entry.Error != "" {
+			report.LineCountErrors = 1
+		}
+		report.Entries = []fileStatsEntry{entry}
+		return fileStatsResult(report)
+	}
+
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		if req.Recursive {
+			maxDepth = 8
+		} else {
+			maxDepth = 1
+		}
+	}
+	report.MaxDepth = maxDepth
+	err = filepath.WalkDir(target, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if filepath.Clean(path) == filepath.Clean(target) {
+			return nil
+		}
+		rel, err := filepath.Rel(target, path)
+		if err != nil {
+			return nil
+		}
+		depth := pathDepth(rel)
+		if entry.IsDir() {
+			if m.shouldSkipListEntry(target, path, true) {
+				return filepath.SkipDir
+			}
+			if depth > maxDepth {
+				return filepath.SkipDir
+			}
+			report.Directories++
+			return nil
+		}
+		if depth > maxDepth || m.shouldSkipListEntry(target, path, false) {
+			return nil
+		}
+		if !fileStatsGlobMatch(report.Glob, rel) {
+			return nil
+		}
+		if report.Files >= limit {
+			report.Truncated = true
+			return filepath.SkipAll
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		stats := m.fileStatsEntry(path, info)
+		report.Files++
+		report.Bytes += stats.Bytes
+		report.Lines += stats.Lines
+		if stats.Error != "" {
+			report.LineCountErrors++
+		}
+		if len(report.Entries) < fileStatsEntryDisplayCap {
+			report.Entries = append(report.Entries, stats)
+		} else {
+			report.EntriesTruncated = true
+		}
+		return nil
+	})
+	if err != nil {
+		return ToolResult{Tool: "file_stats", Summary: "Failed to collect file stats", Error: err.Error()}
+	}
+	return fileStatsResult(report)
+}
+
+func (m *Manager) fileStatsEntry(path string, info os.FileInfo) fileStatsEntry {
+	entry := fileStatsEntry{
+		Path:  m.displayPath(path),
+		Bytes: info.Size(),
+	}
+	lines, err := countFileNewlines(path)
+	if err != nil {
+		entry.Error = err.Error()
+		return entry
+	}
+	entry.Lines = lines
+	return entry
+}
+
+func fileStatsResult(report fileStatsReport) ToolResult {
+	output, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return ToolResult{Tool: "file_stats", Summary: "Failed to encode file stats", Error: err.Error()}
+	}
+	summary := fmt.Sprintf("Counted %d file(s), %d line(s), %s under %s", report.Files, report.Lines, formatBytes(report.Bytes), report.Path)
+	if report.Truncated {
+		summary += fmt.Sprintf(" (truncated at %d files)", report.Limit)
+	}
+	return ToolResult{
+		Tool:    "file_stats",
+		Summary: summary,
+		Output:  string(output),
+	}
+}
+
+func countFileNewlines(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	buf := make([]byte, 32*1024)
+	count := 0
+	var total int64
+	var last byte
+	for {
+		n, err := file.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			count += bytes.Count(chunk, []byte{'\n'})
+			total += int64(n)
+			last = chunk[n-1]
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+	if total > 0 && last != '\n' {
+		count++
+	}
+	return count, nil
+}
+
+func pathDepth(rel string) int {
+	cleaned := filepath.ToSlash(filepath.Clean(rel))
+	if cleaned == "." || cleaned == "" {
+		return 0
+	}
+	return strings.Count(cleaned, "/") + 1
+}
+
+func fileStatsGlobMatch(glob string, rel string) bool {
+	glob = strings.TrimSpace(glob)
+	if glob == "" {
+		return true
+	}
+	slashRel := filepath.ToSlash(rel)
+	if ok, err := path.Match(glob, slashRel); err == nil && ok {
+		return true
+	}
+	if ok, err := path.Match(glob, path.Base(slashRel)); err == nil && ok {
+		return true
+	}
+	if ok, err := filepath.Match(glob, filepath.Base(rel)); err == nil && ok {
+		return true
+	}
+	return false
 }
 
 func readLastLines(path string, lineCap int) ([]string, int, error) {
@@ -2015,13 +2350,9 @@ func countFileLinesFromData(data []byte) int {
 	if len(data) == 0 {
 		return 0
 	}
-	count := 0
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
+	count := bytes.Count(data, []byte{'\n'})
+	if !bytes.HasSuffix(data, []byte{'\n'}) {
 		count++
-	}
-	if count == 0 {
-		return 1
 	}
 	return count
 }
@@ -3639,6 +3970,9 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 			Error:   fmt.Sprintf("edit_file requires you to have observed %s in this session before editing it.", m.displayPath(path)),
 		}
 	}
+	if rejected := m.rejectPendingEditRecovery("edit_file", path); rejected != nil {
+		return *rejected
+	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -3651,7 +3985,25 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 
 	current := string(content)
 	if req.StartLine > 0 || req.EndLine > 0 {
-		return m.editFileByLineRange(path, current, req)
+		if strings.TrimSpace(req.Content) == "" && strings.TrimSpace(req.OldText) != "" {
+			// Some model/tool-call adapters include line metadata alongside
+			// the exact-match shape. Prefer the explicit old_text/new_text
+			// replacement instead of treating empty line-range content as a
+			// deletion or ignoring new_text.
+		} else if strings.TrimSpace(req.Content) == "" && strings.TrimSpace(req.NewText) != "" {
+			return ToolResult{
+				Tool:    "edit_file",
+				Summary: "Edit request rejected",
+				Error: fmt.Sprintf(
+					"edit_file line-range edits use the `content` field, not `new_text`. "+
+						"Either set content to the replacement lines for %s lines %d-%d, "+
+						"or provide old_text with new_text and omit the line range.",
+					m.displayPath(path), req.StartLine, req.EndLine,
+				),
+			}
+		} else {
+			return m.editFileByLineRange(path, current, req)
+		}
 	}
 	if strings.TrimSpace(req.OldText) == "" {
 		// The model's malformed shape is almost always one of three:
@@ -3748,26 +4100,6 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: fmt.Sprintf("end_line (%d) must be >= start_line (%d). Swap them if you meant the other direction, or set end_line=start_line for a single-line edit.", endLine, startLine)}
 	}
 
-	// Empty content with a line range is the most common edit_file footgun.
-	// The model often calls edit_file with a line range thinking "insert
-	// after line N" — but the line-range form REPLACES those lines with
-	// content, so empty content silently DELETES them. Reject this combo
-	// with a directive pointing at the substring-anchored form.
-	if req.Content == "" && req.NewText == "" {
-		return ToolResult{
-			Tool:    "edit_file",
-			Summary: "Edit request rejected",
-			Error: fmt.Sprintf(
-				"empty content with line range %d-%d would DELETE those lines from %s. "+
-					"If you intended to INSERT new content, use the substring-anchored form instead: "+
-					"set old_text to a unique existing snippet (no line numbers needed) and set new_text to "+
-					"old_text + your additions. The substring form is safer because it cannot accidentally "+
-					"delete content. If you genuinely intended deletion, set content explicitly to a single newline.",
-				startLine, endLine, m.displayPath(path),
-			),
-		}
-	}
-
 	spans := lineSpans(current)
 	if len(spans) == 0 {
 		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "cannot apply a line edit to an empty file"}
@@ -3782,7 +4114,46 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 
 	startOffset := spans[startLine-1].start
 	endOffset := spans[endLine-1].end
-	updated := current[:startOffset] + req.Content + current[endOffset:]
+	replacedRange := current[startOffset:endOffset]
+	// Empty or whitespace-only content with a line range is the most common
+	// edit_file footgun. The model often calls edit_file with a line range
+	// thinking "insert after line N" — but the line-range form REPLACES those
+	// lines, so blank content silently deletes them. Reject this generically
+	// when the target range contains real code/text; intentional deletion can
+	// use the exact old_text/new_text form where the removed content is explicit.
+	if strings.TrimSpace(req.Content) == "" && strings.TrimSpace(req.NewText) == "" &&
+		strings.TrimSpace(replacedRange) != "" {
+		return ToolResult{
+			Tool:    "edit_file",
+			Summary: "Edit request rejected",
+			Error: fmt.Sprintf(
+				"empty or whitespace-only content with line range %d-%d would DELETE non-empty lines from %s. "+
+					"If you intended to INSERT new content, use the substring-anchored form instead: "+
+					"set old_text to a unique existing snippet (no line numbers needed) and set new_text to "+
+					"old_text + your additions. If you genuinely intended deletion, use old_text/new_text "+
+					"so the deleted text is explicit.",
+				startLine, endLine, m.displayPath(path),
+			),
+		}
+	}
+	if lineRangeReplacementDuplicatesPrecedingContext(current, spans, startLine, req.Content) {
+		return ToolResult{
+			Tool:    "edit_file",
+			Summary: "Edit request rejected",
+			Error: fmt.Sprintf(
+				"line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range. "+
+					"Line-range content must contain only the final replacement for the selected lines. "+
+					"For inserts, use old_text/new_text with a unique existing snippet and append the new content to new_text.",
+				m.displayPath(path), startLine, endLine,
+			),
+		}
+	}
+	replacement := req.Content
+	if replacement != "" && strings.HasSuffix(replacedRange, "\n") &&
+		!strings.HasSuffix(replacement, "\n") {
+		replacement += lineEndingSuffix(replacedRange)
+	}
+	updated := current[:startOffset] + replacement + current[endOffset:]
 	if updated == current {
 		return ToolResult{
 			Tool:    "edit_file",
@@ -3798,11 +4169,76 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 	}
 
 	m.invalidateGoIndex()
+	m.invalidateCppIndex()
 	return ToolResult{
 		Tool:    "edit_file",
 		Summary: fmt.Sprintf("Edited %s lines %d-%d", m.displayPath(path), startLine, endLine),
 		Output:  fmt.Sprintf("replaced lines: %d-%d", startLine, endLine),
 	}
+}
+
+func lineEndingSuffix(text string) string {
+	if strings.HasSuffix(text, "\r\n") {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+func lineRangeReplacementDuplicatesPrecedingContext(current string, spans []lineSpan, startLine int, replacement string) bool {
+	if startLine <= 1 || strings.TrimSpace(replacement) == "" || len(spans) == 0 {
+		return false
+	}
+	contextStartLine := startLine - 8
+	if contextStartLine < 1 {
+		contextStartLine = 1
+	}
+	context := current[spans[contextStartLine-1].start:spans[startLine-2].end]
+	contextLines := normalizedNonEmptyLines(context)
+	replacementLines := normalizedNonEmptyLines(replacement)
+	maxCompare := minInt(len(contextLines), len(replacementLines), 6)
+	for n := maxCompare; n >= 3; n-- {
+		if equalStringSlices(contextLines[len(contextLines)-n:], replacementLines[:n]) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedNonEmptyLines(text string) []string {
+	rawLines := strings.Split(text, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, line := range rawLines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func equalStringSlices(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func minInt(values ...int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	minimum := values[0]
+	for _, value := range values[1:] {
+		if value < minimum {
+			minimum = value
+		}
+	}
+	return minimum
 }
 
 func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, path string, contents []byte) *ToolResult {
@@ -3813,10 +4249,12 @@ func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, pat
 	case ".go":
 		fset := token.NewFileSet()
 		if _, err := parser.ParseFile(fset, path, contents, parser.AllErrors); err != nil {
+			line := syntaxErrorLine(err)
+			m.noteEditRecoveryRequired(path, line, err.Error())
 			return &ToolResult{
 				Tool:    toolName,
 				Summary: summary,
-				Error:   fmt.Sprintf("preflight syntax validation failed for %s: %v", m.displayPath(path), err),
+				Error:   m.formatSyntaxPreflightError(path, contents, line, err),
 			}
 		}
 	case ".json":
@@ -3829,6 +4267,148 @@ func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, pat
 		}
 	}
 	return nil
+}
+
+func (m *Manager) rejectPendingEditRecovery(toolName string, path string) *ToolResult {
+	state, ok := m.pendingEditRecovery(path)
+	if !ok {
+		return nil
+	}
+	display := m.displayPath(path)
+	lineHint := ""
+	if state.line > 0 {
+		lineHint = fmt.Sprintf(" around line %d", state.line)
+	}
+	return &ToolResult{
+		Tool:    toolName,
+		Summary: "Edit request rejected",
+		Error: fmt.Sprintf(
+			"previous syntax preflight failure on %s still needs evidence refresh%s. Run read_file on %s with start_line/end_line covering the failing region, or run git_diff for that path, before retrying edit_file. Last validation error: %s",
+			display,
+			lineHint,
+			display,
+			state.detail,
+		),
+	}
+}
+
+func (m *Manager) noteEditRecoveryRequired(path string, line int, detail string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.editRecoveryRequired == nil {
+		m.editRecoveryRequired = make(map[string]editRecoveryState)
+	}
+	m.editRecoveryRequired[normalizePathKey(path)] = editRecoveryState{line: line, detail: strings.TrimSpace(detail)}
+}
+
+func (m *Manager) pendingEditRecovery(path string) (editRecoveryState, bool) {
+	if m == nil {
+		return editRecoveryState{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.editRecoveryRequired == nil {
+		return editRecoveryState{}, false
+	}
+	state, ok := m.editRecoveryRequired[normalizePathKey(path)]
+	return state, ok
+}
+
+func (m *Manager) clearEditRecovery(path string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.editRecoveryRequired, normalizePathKey(path))
+}
+
+func (m *Manager) clearAllEditRecovery() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key := range m.editRecoveryRequired {
+		delete(m.editRecoveryRequired, key)
+	}
+}
+
+func (m *Manager) clearEditRecoveryAfterRead(path string, startLine int, endLine int) {
+	state, ok := m.pendingEditRecovery(path)
+	if !ok {
+		return
+	}
+	if state.line > 0 && (startLine > state.line || endLine < state.line) {
+		return
+	}
+	m.clearEditRecovery(path)
+}
+
+func (m *Manager) formatSyntaxPreflightError(path string, contents []byte, line int, err error) string {
+	display := m.displayPath(path)
+	var b strings.Builder
+	if line > 0 {
+		fmt.Fprintf(&b, "preflight syntax validation failed for %s at line %d: %v", display, line, err)
+	} else {
+		fmt.Fprintf(&b, "preflight syntax validation failed for %s: %v", display, err)
+	}
+	if context := plannedWriteLineContext(contents, line, 2); context != "" {
+		b.WriteString("\n")
+		b.WriteString(context)
+	}
+	if line > 0 {
+		fmt.Fprintf(&b, "\nBefore retrying edit_file on %s, inspect the failing region with read_file start_line/end_line around line %d or run git_diff for that path.", display, line)
+	} else {
+		fmt.Fprintf(&b, "\nBefore retrying edit_file on %s, inspect the failing region with read_file or run git_diff for that path.", display)
+	}
+	return b.String()
+}
+
+func syntaxErrorLine(err error) int {
+	var list goscan.ErrorList
+	if errors.As(err, &list) && len(list) > 0 {
+		return list[0].Pos.Line
+	}
+	var scanErr *goscan.Error
+	if errors.As(err, &scanErr) {
+		return scanErr.Pos.Line
+	}
+	return 0
+}
+
+func plannedWriteLineContext(contents []byte, line int, radius int) string {
+	if line <= 0 {
+		return ""
+	}
+	lines := strings.Split(string(contents), "\n")
+	if line > len(lines) {
+		return ""
+	}
+	if radius < 0 {
+		radius = 0
+	}
+	start := line - radius
+	if start < 1 {
+		start = 1
+	}
+	end := line + radius
+	if end > len(lines) {
+		end = len(lines)
+	}
+	var b strings.Builder
+	b.WriteString("planned content around syntax error:\n")
+	for i := start; i <= end; i++ {
+		marker := " "
+		if i == line {
+			marker = ">"
+		}
+		fmt.Fprintf(&b, "%s %d:%s\n", marker, i, truncateSearchContentLine(lines[i-1], searchContentLineCap))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 type lineSpan struct {
@@ -3867,6 +4447,13 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 	if command == "" {
 		return ToolResult{Tool: "shell", Summary: "Shell request rejected", Error: "command is required"}
 	}
+	if isDirectoryOnlyShellCommand(command) {
+		return ToolResult{
+			Tool:    "shell",
+			Summary: "Shell request rejected",
+			Error:   "directory changes inside shell commands do not persist; set workdir or include the command to run in that directory",
+		}
+	}
 	if m.Mode() == ModeExplore {
 		if err := validateExploreShellCommand(command); err != nil {
 			return ToolResult{
@@ -3890,6 +4477,26 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		m.invalidateCppIndex()
 	}
 	return result
+}
+
+func isDirectoryOnlyShellCommand(command string) bool {
+	segments := splitShellSegments(command)
+	if len(segments) == 0 {
+		return false
+	}
+	for _, segment := range segments {
+		fields := strings.Fields(segment)
+		if len(fields) == 0 {
+			continue
+		}
+		switch fields[0] {
+		case "cd", "pushd", "popd":
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) runCommand(parent context.Context, dir, name string, args ...string) (string, error) {
@@ -3922,9 +4529,7 @@ func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, 
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
+	cmd.Env = envWithCanonicalPWD(os.Environ(), dir, extraEnv)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -3939,6 +4544,37 @@ func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, 
 		return stdout.String(), stderr.String(), fmt.Errorf("command failed: %w", err)
 	}
 	return stdout.String(), stderr.String(), nil
+}
+
+func envWithCanonicalPWD(base []string, dir string, extra []string) []string {
+	env := append([]string(nil), base...)
+	env = append(env, extra...)
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return env
+	}
+	env = setEnvValue(env, "PWD", config.CanonicalizeExistingPath(dir))
+	return env
+}
+
+func setEnvValue(env []string, key string, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			if !replaced {
+				out = append(out, prefix+value)
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, entry)
+	}
+	if !replaced {
+		out = append(out, prefix+value)
+	}
+	return out
 }
 
 func (m *Manager) resolveWorkdir(workdir string) (string, error) {
@@ -4109,11 +4745,10 @@ func (m *Manager) displayPath(path string) string {
 	if path == "" {
 		return ""
 	}
-	rel, err := filepath.Rel(m.cfg.Root, path)
-	if err != nil || rel == "." {
-		return path
+	if rel, ok := m.relativeWorkspacePath(path); ok && rel != "." {
+		return rel
 	}
-	return rel
+	return path
 }
 
 func (m *Manager) handleDisplay(path string) string {
@@ -4649,4 +5284,3 @@ func isNoMatchExit(err error) bool {
 	}
 	return strings.Contains(err.Error(), "exit status 1")
 }
-

@@ -5,7 +5,7 @@
     "binary": "mlx_lm.server",
     "host": "127.0.0.1",
     "port": 47680,
-    "model": "models/qwen3.6-27b-mlx-6bit",
+    "model": "models/qwen3-coder-30b-a3b-mlx-6bit",
     "ctx_size": 196608,
     "log_file": "logs/mlx-server.log",
     "extra_args": [

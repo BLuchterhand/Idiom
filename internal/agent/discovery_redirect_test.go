@@ -118,6 +118,26 @@ func TestSearchContentRoutesByPathScope(t *testing.T) {
 	}
 }
 
+func TestSearchContentRedirectStaysSoftAfterRepeatedClass(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+
+	requests := []workspace.ToolRequest{
+		{Tool: "search_content", Pattern: "Runner", Glob: "*.go"},
+		{Tool: "search_content", Pattern: "RunPolicy", Glob: "*.go"},
+		{Tool: "search_content", Pattern: "ToolRequest", Glob: "*.go"},
+	}
+	for i, req := range requests {
+		decision := d.Consider(req, ws)
+		if !decision.ShouldRedirect {
+			t.Fatalf("request %d: expected redirect", i+1)
+		}
+		if decision.HardReject {
+			t.Fatalf("request %d: search_content redirect should remain a soft nudge", i+1)
+		}
+	}
+}
+
 // TestRedirectSkipsInactiveLanguage ensures a request that looks like
 // it matches a language (by extension) but targets a workspace where
 // that language is not active does not redirect. The deterministic
@@ -228,6 +248,46 @@ func TestRedirectRoutesCppReadFile(t *testing.T) {
 	}
 	if decision.Capability != workspace.CapFileOutline {
 		t.Fatalf("capability: want file_outline, got %s", decision.Capability)
+	}
+}
+
+func TestRedirectSkipsTestLikeReadFileOutline(t *testing.T) {
+	ws := newTestWorkspaceWithFiles(t, map[string]string{
+		"native/tests/test_item_lifecycle_system.cpp": strings.Repeat("TEST_CASE(\"[REC-027] captures previous band\") {}\n", 420),
+		"pkg/widget_test.go":                          strings.Repeat("func TestWidget(t *testing.T) {}\n", 420),
+	})
+
+	for _, path := range []string{
+		"native/tests/test_item_lifecycle_system.cpp",
+		"pkg/widget_test.go",
+	} {
+		t.Run(path, func(t *testing.T) {
+			d := NewDiscoveryRedirect()
+			decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: path}, ws)
+			if decision.ShouldRedirect {
+				t.Fatalf("test-like source read should execute directly, got redirect to %s", decision.Capability)
+			}
+		})
+	}
+}
+
+func TestRedirectRoutesReadFileHandle(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	ws.PrimeDiscoveredPaths([]string{"main.go"})
+	d := NewDiscoveryRedirect()
+
+	decision := d.Consider(workspace.ToolRequest{Tool: "read_file", ID: "f1"}, ws)
+	if !decision.ShouldRedirect {
+		t.Fatalf("expected redirect for unbounded handle read")
+	}
+	if decision.Language != "go" {
+		t.Fatalf("language: want go, got %s", decision.Language)
+	}
+	if decision.Capability != workspace.CapFileOutline {
+		t.Fatalf("capability: want file_outline, got %s", decision.Capability)
+	}
+	if !strings.Contains(decision.Result.Output, `"path":"main.go"`) {
+		t.Fatalf("result should resolve the handle to a path: %q", decision.Result.Output)
 	}
 }
 
@@ -630,7 +690,7 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 		{
 			name: "java_interface",
 			files: map[string]string{
-				"pom.xml":              "<project></project>\n",
+				"pom.xml":               "<project></project>\n",
 				"src/main/Service.java": "public interface Service {}\n",
 			},
 			pattern: "public interface Service",
@@ -816,6 +876,38 @@ func TestShellSedSkipsInPlaceEdits(t *testing.T) {
 	}
 }
 
+func TestShellWCRedirectsToFileStats(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: "wc -l internal/agent/runner.go"}, ws)
+	if !decision.ShouldRedirect {
+		t.Fatalf("wc file count should redirect")
+	}
+	if decision.Capability != workspace.Capability("file_stats") {
+		t.Fatalf("capability: want file_stats, got %s", decision.Capability)
+	}
+	if !strings.Contains(decision.Result.Output, `"tool":"file_stats"`) || !strings.Contains(decision.Result.Output, "internal/agent/runner.go") {
+		t.Fatalf("result should redirect to file_stats with the path: %q", decision.Result.Output)
+	}
+}
+
+func TestShellWCSkipsPipelinesAndMultipleFiles(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	for _, cmd := range []string{
+		"wc -l internal/agent/runner.go internal/app/app.go",
+		"find . -type f | wc -l",
+		"wc -L internal/agent/runner.go",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			d := NewDiscoveryRedirect()
+			decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: cmd}, ws)
+			if decision.ShouldRedirect {
+				t.Fatalf("shell command %q should not redirect to file_stats", cmd)
+			}
+		})
+	}
+}
+
 // TestShellGrepIdentifierRedirects covers the largest shell cluster —
 // `grep -n "Ident" file` and `grep -rn "Ident"` — routing to references
 // (scoped) or workspace_symbol (broad).
@@ -842,6 +934,32 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 		}
 		if decision.Capability != workspace.CapWorkspaceSymbol {
 			t.Fatalf("capability: want workspace_symbol, got %s", decision.Capability)
+		}
+	})
+	t.Run("quoted_declaration_extracts_symbol", func(t *testing.T) {
+		d := NewDiscoveryRedirect()
+		decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -n 'type ToolRequest struct' internal/workspace/manager.go`}, ws)
+		if !decision.ShouldRedirect {
+			t.Fatalf("declaration grep should redirect")
+		}
+		if decision.Capability != workspace.CapReferences {
+			t.Fatalf("capability: want references, got %s", decision.Capability)
+		}
+		if !strings.Contains(decision.Result.Output, `"pattern":"ToolRequest"`) {
+			t.Fatalf("should extract the declaration symbol: %q", decision.Result.Output)
+		}
+	})
+	t.Run("identifier_alternation_with_late_include", func(t *testing.T) {
+		d := NewDiscoveryRedirect()
+		decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -rn 'parseToolCall\|ParseToolRequest' internal/ --include='*.go'`}, ws)
+		if !decision.ShouldRedirect {
+			t.Fatalf("identifier alternation grep should redirect")
+		}
+		if decision.Language != "go" {
+			t.Fatalf("language: want go, got %s", decision.Language)
+		}
+		if !strings.Contains(decision.Result.Output, `"pattern":"parseToolCall"`) {
+			t.Fatalf("should start from the first identifier alternative: %q", decision.Result.Output)
 		}
 	})
 }

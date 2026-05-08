@@ -94,7 +94,9 @@ func New(cfg config.Config) *Model {
 	}
 	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
 	m.workspace = workspace.NewManager(cfg.Workspace)
-	m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
+	if cfg.Chat.AttachInstructionFiles {
+		m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
+	}
 	mode := agent.ModeOrDefault(m.agentModeName)
 	m.workspace.SetPermissionRules(mode.PermissionRules)
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -887,8 +889,19 @@ func (m *Model) reloadPromptStackWithProfiles(profiles []string) error {
 	}
 	stack, err := promptstack.Build(chat, profiles)
 	if err != nil {
-		return err
+		if !m.cfg.Chat.AllowMissingPrompts {
+			return err
+		}
+		lenientStack, lenientErr := promptstack.BuildLenient(chat, profiles)
+		if lenientErr != nil {
+			return err
+		}
+		lenientStack.Warnings = append([]string{"prompt context degraded: " + err.Error()}, lenientStack.Warnings...)
+		stack = lenientStack
 	}
 	m.promptStack = stack
+	if len(stack.Warnings) > 0 {
+		m.setContextError(strings.Join(stack.Warnings, "; "))
+	}
 	return nil
 }

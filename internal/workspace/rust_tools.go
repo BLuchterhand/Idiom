@@ -420,8 +420,8 @@ func (m *Manager) rustCallsFrom(ctx context.Context, req ToolRequest) ToolResult
 	}
 	pathFilter, err := m.rustPathFilterForRequest(req)
 	if err == nil {
-		if output, lspErr := m.rustCallHierarchyViaRustAnalyzer(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(output) != "" {
-			return ToolResult{Tool: "rust_calls_from", Summary: "Resolved outgoing Rust calls via rust-analyzer", Output: output}
+		if payload, lspErr := m.rustCallHierarchyViaRustAnalyzer(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
+			return ToolResult{Tool: "rust_calls_from", Summary: "Resolved outgoing Rust calls via rust-analyzer", Output: payload.Output, Relationships: payload.Relationships}
 		}
 	}
 	index, err := m.getRustIndex()
@@ -450,8 +450,8 @@ func (m *Manager) rustCallsInto(ctx context.Context, req ToolRequest) ToolResult
 	}
 	pathFilter, err := m.rustPathFilterForRequest(req)
 	if err == nil {
-		if output, lspErr := m.rustCallHierarchyViaRustAnalyzer(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(output) != "" {
-			return ToolResult{Tool: "rust_calls_into", Summary: "Resolved incoming Rust calls via rust-analyzer", Output: output}
+		if payload, lspErr := m.rustCallHierarchyViaRustAnalyzer(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
+			return ToolResult{Tool: "rust_calls_into", Summary: "Resolved incoming Rust calls via rust-analyzer", Output: payload.Output, Relationships: payload.Relationships}
 		}
 	}
 	index, err := m.getRustIndex()

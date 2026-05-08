@@ -320,11 +320,12 @@ func (m *Manager) tsCallsFrom(ctx context.Context, req ToolRequest) ToolResult {
 	}
 	pathFilter, _ := m.tsPathFilterForRequest(req)
 	if m.tsserverBinary() != "" {
-		if output, lspErr := m.tsCallHierarchyViaLSP(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(output) != "" {
+		if payload, lspErr := m.tsCallHierarchyViaLSP(ctx, match, pathFilter, false); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
 			return ToolResult{
-				Tool:    "ts_calls_from",
-				Summary: "Resolved outgoing TypeScript calls via typescript-language-server call hierarchy",
-				Output:  output,
+				Tool:          "ts_calls_from",
+				Summary:       "Resolved outgoing TypeScript calls via typescript-language-server call hierarchy",
+				Output:        payload.Output,
+				Relationships: payload.Relationships,
 			}
 		}
 	}
@@ -354,11 +355,12 @@ func (m *Manager) tsCallsInto(ctx context.Context, req ToolRequest) ToolResult {
 	}
 	pathFilter, _ := m.tsPathFilterForRequest(req)
 	if m.tsserverBinary() != "" {
-		if output, lspErr := m.tsCallHierarchyViaLSP(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(output) != "" {
+		if payload, lspErr := m.tsCallHierarchyViaLSP(ctx, match, pathFilter, true); lspErr == nil && strings.TrimSpace(payload.Output) != "" {
 			return ToolResult{
-				Tool:    "ts_calls_into",
-				Summary: "Resolved incoming TypeScript calls via typescript-language-server call hierarchy",
-				Output:  output,
+				Tool:          "ts_calls_into",
+				Summary:       "Resolved incoming TypeScript calls via typescript-language-server call hierarchy",
+				Output:        payload.Output,
+				Relationships: payload.Relationships,
 			}
 		}
 	}

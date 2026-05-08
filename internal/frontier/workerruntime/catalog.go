@@ -157,7 +157,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
 			RequiredTools:        []string{"edit_file_or_apply_patch", "verification_shell"},
 			ReadinessGate:        []string{"changed_paths_reported", "verification_contract_resolved"},
-			SearchPolicy:         []string{"consume_target_packet_first", "prefer_small_bounded_edits", "verify_changed_surface"},
+			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported", "prefer_small_bounded_edits", "verify_changed_surface"},
 			VerificationContract: verificationContract,
 			StopConditions:       []string{"implementation_verified_or_failure_reported", "blocked_by_missing_permission_or_information"},
 			FinalCritic:          []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"},
@@ -196,20 +196,10 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		FinalCritic:          append([]string(nil), spec.FinalCritic...),
 	}
 	if spec.PermissionProfile == "conversation_only" {
-		// Built-in tools are stripped (no edit/shell/discovery_query in
-		// conversation mode) but project-defined external tools survive.
-		// Externals are read-only by intent — host projects register
-		// them so the agent can answer questions about the codebase
-		// without entering full implementation mode. The CLI/prompt
-		// path now picks up host-registered external discovery tools
-		// even for direct-question routes.
-		preserved := make([]string, 0)
-		for _, name := range brief.AllowedTools {
-			if isExternalToolName(strings.TrimSpace(name)) {
-				preserved = append(preserved, name)
-			}
-		}
-		brief.AllowedTools = preserved
+		// Conversation mode is intentionally tool-free. Codebase questions
+		// should route to locate, architecture, review, or implementation
+		// families before any workspace tool is advertised.
+		brief.AllowedTools = nil
 		brief.ToolManifest = nil
 	}
 	if spec.PermissionProfile == "read_only_workspace" {
@@ -274,6 +264,13 @@ func readOnlyDiscoveryToolNames() []string {
 		"search_files",
 		"search_content",
 		"read_file",
+		"file_stats",
+		"harness_audit",
+		"context_index",
+		"context_status",
+		"context_query",
+		"context_zoom",
+		"context_pack",
 		"discovery_query",
 		"structural_search",
 		"dependency_graph",
@@ -452,6 +449,14 @@ var builtinToolNames = map[string]struct{}{
 	"search_content":     {},
 	"rg":                 {},
 	"read_file":          {},
+	"file_stats":         {},
+	"harness_audit":      {},
+	"context_index":      {},
+	"context_status":     {},
+	"context_query":      {},
+	"context_zoom":       {},
+	"context_pack":       {},
+	"context_trace_pack": {},
 	"discovery_query":    {},
 	"structural_search":  {},
 	"dependency_graph":   {},

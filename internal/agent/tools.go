@@ -195,7 +195,7 @@ func mutateSchemaRequireLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 func isPostReadinessGapTool(name string) bool {
 	switch name {
 	case "read_file", "search_content", "search_files", "list_files",
-		"discovery_query", "structural_search", "ctags_symbols",
+		"harness_audit", "discovery_query", "structural_search", "ctags_symbols",
 		"go_read_symbol", "go_file_outline", "go_extract_body",
 		"go_workspace_symbol", "go_references", "go_definition",
 		"go_calls_from", "go_calls_into", "go_related_files",

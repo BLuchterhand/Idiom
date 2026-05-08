@@ -118,6 +118,21 @@ func TestBuildPromptExecutionPlanHonorsForcedTaskFamily(t *testing.T) {
 	}
 }
 
+func TestPlannerOwnedVerificationMarksImplementationBrief(t *testing.T) {
+	model := &Model{}
+	model.SetForcedTaskFamily("implementation")
+	model.SetPlannerOwnedVerification(true)
+
+	plan := model.buildPromptExecutionPlan(context.Background(), "Modify the file and leave tests to the caller.")
+
+	if !slices.Contains(plan.runtimeBrief.Constraints, "planner_owned_verification") {
+		t.Fatalf("expected planner-owned verification constraint, got %#v", plan.runtimeBrief.Constraints)
+	}
+	if !slices.Contains(plan.runtimeBrief.InvalidActions, "build_or_test_shell") {
+		t.Fatalf("expected build/test shell invalid action, got %#v", plan.runtimeBrief.InvalidActions)
+	}
+}
+
 func TestBuildPromptExecutionPlanSkipsClassifierWhenTaskFamilyForced(t *testing.T) {
 	var classifierCalls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +153,117 @@ func TestBuildPromptExecutionPlanSkipsClassifierWhenTaskFamilyForced(t *testing.
 	}
 	if got := atomic.LoadInt32(&classifierCalls); got != 0 {
 		t.Fatalf("forced task family should bypass classifier, got %d classifier calls", got)
+	}
+}
+
+func TestBuildPromptExecutionPlanSkipsClassifierWhenDisabled(t *testing.T) {
+	var classifierCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&classifierCalls, 1)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"family\":\"architecture\"}"}}]}`))
+	}))
+	defer server.Close()
+
+	model := &Model{
+		cfg: config.Config{
+			Chat:            config.Chat{ProjectRoot: t.TempDir()},
+			RouteClassifier: config.RouteClassifier{Enabled: false},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+
+	plan := model.buildPromptExecutionPlan(context.Background(), "Run the tests and report failures.")
+	if plan.route.Family != "verification_only" {
+		t.Fatalf("expected fallback route when classifier disabled, got %#v", plan.route)
+	}
+	if got := atomic.LoadInt32(&classifierCalls); got != 0 {
+		t.Fatalf("disabled route classifier should not call model, got %d classifier calls", got)
+	}
+}
+
+func TestBuildPromptExecutionPlanCapturesRequiredEditPathsAndExactAnchor(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files To Modify
+
+| File | Purpose |
+| --- | --- |
+| native/src/simulation/job_queue.cpp | Update queue logic |
+| scripts/ui/status_panel.gd | Update UI wiring |
+
+Old text:
+enqueue_loader_job();
+
+New text:
+enqueue_loader_job_once();
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	for _, want := range []string{"native/src/simulation/job_queue.cpp", "scripts/ui/status_panel.gd"} {
+		if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, want) {
+			t.Fatalf("expected required edit path %q, got %#v", want, plan.runtimeBrief.RequiredEditPaths)
+		}
+	}
+	if !slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
+		t.Fatalf("expected exact-anchor constraint, got %#v", plan.runtimeBrief.Constraints)
+	}
+	if !slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt") {
+		t.Fatalf("expected broad-read invalid action, got %#v", plan.runtimeBrief.InvalidActions)
+	}
+}
+
+func TestBuildPromptExecutionPlanCapturesFilesYouMayEditAllowlist(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files You May Edit
+
+- native/src/simulation/world/megaflora_stamper.h
+- native/src/simulation/world/megaflora_stamper.cpp
+- scripts/world/megaflora_stamper.gd
+
+Implement the patch in the named files only.
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	for _, want := range []string{
+		"native/src/simulation/world/megaflora_stamper.h",
+		"native/src/simulation/world/megaflora_stamper.cpp",
+		"scripts/world/megaflora_stamper.gd",
+	} {
+		if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, want) {
+			t.Fatalf("expected required edit path %q, got %#v", want, plan.runtimeBrief.RequiredEditPaths)
+		}
+	}
+}
+
+func TestNewHonorsAttachInstructionFilesConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.Root = t.TempDir()
+	cfg.Workspace.CWD = cfg.Workspace.Root
+	cfg.Chat.AttachInstructionFiles = false
+	model := New(cfg)
+	if model.instructionAttacher != nil {
+		t.Fatal("expected dynamic instruction attachment to be disabled")
+	}
+
+	cfg.Chat.AttachInstructionFiles = true
+	model = New(cfg)
+	if model.instructionAttacher == nil {
+		t.Fatal("expected dynamic instruction attachment to be enabled")
 	}
 }
 
@@ -168,5 +294,40 @@ func TestReloadPromptStackGeneratesProjectArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(model.promptStack.Text, "Generated Project Context") {
 		t.Fatalf("expected generated context body in prompt stack, got:\n%s", model.promptStack.Text)
+	}
+}
+
+func TestReloadPromptStackRejectsMissingExplicitPromptByDefault(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.md")
+	model := &Model{
+		cfg: config.Config{
+			Chat: config.Chat{SystemPromptFiles: []string{missing}},
+		},
+	}
+
+	if err := model.reloadPromptStackWithProfiles(nil); err == nil {
+		t.Fatalf("reloadPromptStackWithProfiles should reject missing explicit prompts by default")
+	}
+}
+
+func TestReloadPromptStackCanDegradeMissingExplicitPromptWhenConfigured(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.md")
+	model := &Model{
+		cfg: config.Config{
+			Chat: config.Chat{
+				SystemPromptFiles:   []string{missing},
+				AllowMissingPrompts: true,
+			},
+		},
+	}
+
+	if err := model.reloadPromptStackWithProfiles(nil); err != nil {
+		t.Fatalf("reloadPromptStackWithProfiles should degrade missing prompts when configured: %v", err)
+	}
+	if !strings.Contains(model.contextError, "prompt context degraded") {
+		t.Fatalf("expected context warning, got %q", model.contextError)
+	}
+	if len(model.promptStack.Warnings) == 0 {
+		t.Fatalf("expected prompt stack warnings")
 	}
 }

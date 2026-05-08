@@ -20,6 +20,24 @@ A small Bubble Tea harness for running `Qwen3.6-35B-A3B` locally through `llama.
 - `logs/conversations/`: per-session JSONL debug logs
 - `transcripts/`: saved chats
 
+## Install
+
+On macOS, run the master installer to install the required local toolchain,
+workspace discovery backends, build `bin/idiom`, and verify the active harness
+audit requirements:
+
+```bash
+./scripts/install-requirements.sh
+```
+
+The default install covers Go, ripgrep, ast-grep, Universal Ctags, Semgrep,
+Joern, and `gopls`. To also install optional precision backends for other
+language families, run:
+
+```bash
+./scripts/install-requirements.sh --all
+```
+
 ## Run
 
 ```bash
@@ -55,6 +73,20 @@ optionally runs a project-provided validator with `IDIOM_ARTIFACT` set to the
 artifact path. Project-specific rules belong in the prompt and validator, not
 in idiom core.
 
+Externalize planning context before asking a model to architect, critique, or
+brief a feature:
+
+```bash
+./idiom architect packet --task-file /tmp/task.md --output /tmp/packet.json
+./idiom architect lint --packet /tmp/packet.json
+./idiom architect plan --packet /tmp/packet.json --output /tmp/plan.prompt.md
+./idiom artifact --prompt-file /tmp/plan.prompt.md --output /tmp/plan.md --no-tools
+```
+
+See [docs/architect-packets.md](docs/architect-packets.md). Idiom owns the
+packet schema, prompt rendering, and gate contracts; project profiles own local
+rules, collectors, tests, and domain traps.
+
 List or resume prior sessions (sessions are the JSONL files in `chat.debug_log_dir`):
 
 ```bash
@@ -73,10 +105,13 @@ make build
 make eval LOG=logs/conversations/20260418-055543.504.jsonl
 ```
 
-Avoid the repo-root `./idiom` binary for development runs after source changes.
-It can lag behind the checked-out code and miss newer flags or subcommands. For
-source-current runs, prefer `go run ./cmd/idiom <subcommand> <flags>`, or run
-`make build` first and then use `bin/idiom` / `~/.local/bin/idiom`.
+`make build` also refreshes `~/.local/bin/idiom` as a symlink to the current
+`bin/idiom` build, so shells with `~/.local/bin` on `PATH` pick up each rebuild.
+
+**Avoid the repo-root `./idiom` binary for development.** It is not updated by
+`make build` and can be stale when the source gains new flags or subcommands.
+For source-current runs, prefer `go run ./cmd/idiom <subcommand> <flags>` or
+run `make build` first and then use `bin/idiom` / `~/.local/bin/idiom` instead.
 
 ## In-app controls
 
@@ -227,6 +262,46 @@ Use `/debuglog` in the TUI to show the current session log path, and `/debuglog 
 
 The default TUI trace view is now compact. Use `/trace detail` when you want raw tool chatter in the visible transcript, or `/trace compact` to collapse it back into a short activity summary in the footer.
 
+## Local Telemetry
+
+Every `idiom` process also writes a local JSONL telemetry file under
+`logs/telemetry` by default. This covers TUI launches, `--prompt`,
+`--server-only`, `artifact`, `implement`, `architect`, and standalone
+`idiom tool` calls without changing stdout contracts. Tool telemetry records
+request/result summaries, timing, output sizes, discovery class/scope/cost,
+errors, and structured context/feedback fields for tools that emit them; it
+does not persist raw tool output. Prompt-like CLI arguments and tool payload
+bodies are redacted to length plus digest.
+
+Set `IDIOM_TELEMETRY_DIR=/path/to/logs` to move these files, or
+`IDIOM_TELEMETRY=0` to disable the process-level telemetry. Model sessions
+continue to write the richer debug logs in `logs/conversations`, and
+`harness_audit` behavior scans include both `logs/conversations` and
+`logs/telemetry` by default.
+
+## Harness Audit
+
+`harness_audit` is a read-only workspace tool for auditing idiom itself. It
+reports evidence about the exported tool surface, language capability wiring,
+backend availability, and recent JSONL behavior logs. It is meant to identify
+future harness/tooling improvements, not to replace Go or language-specific
+code search.
+
+```bash
+./idiom tool harness_audit --input '{"purpose":"all","path":"logs/conversations","limit":25}'
+```
+
+Use `purpose:"tool_surface"` for static manifest/schema/backend checks, or
+`purpose:"behavior"` to scan behavior logs for efficiency and control-rail
+signals such as repeated rejected calls, zero-hit searches, or generic-read
+overuse. Agents can add task-grounded harness/tool/prompt observations with
+`harness_feedback`; behavior audits aggregate those events by category,
+component, confidence, and severity.
+
+```bash
+./idiom tool harness_feedback --input '{"category":"tool_gap","component":"context_pack","expected":"packet names the deciding relationship","observed":"packet named candidate files but omitted the edge needed to choose","workaround":"used language references before editing","impact":"extra read loop","evidence":["logs/conversations/session.jsonl step 8"],"confidence":"verified","severity":"medium"}'
+```
+
 ## Replay And Eval
 
 `idiom` now includes a scored log-evaluation CLI:
@@ -338,6 +413,7 @@ The harness now gives Qwen a tool loop for workspace operations. When needed, th
 - print the working directory with `pwd`
 - list files with `list_files`
 - read files with `read_file`
+- count files, bytes, and lines with `file_stats` instead of shell `wc`/`find` pipelines
 - search with `rg`
 - run deterministic purpose-built discovery with `discovery_query` (`impact_analysis`, `function_tracing`, `architecture_boundary`, `security_review`, or `history_context`)
 - search code structurally with `structural_search` (ast-grep when installed)
@@ -418,7 +494,8 @@ You can also add explicit paths with `project_prompt_files`.
 ## Notes
 
 - The TUI stops the server on exit only if it started that server itself.
-- The default config targets `models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf`.
-- If you want a different quantization later, change the `llama_server.model` path in `config.json`.
+- `config.example.json` shows a llama.cpp GGUF setup; the checked-in
+  `config.json` is a local MLX/llama setup. Adjust `llama_server.model` and
+  related model paths for the local weights you actually have.
 - Keep project prompt files short. A distilled `.qwen.md` is usually better than sending a large architecture manual every turn.
 - `workspace.enable_writes` and `workspace.enable_shell` can be turned off if you want a read-only or no-exec mode.

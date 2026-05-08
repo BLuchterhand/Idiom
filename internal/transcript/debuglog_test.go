@@ -164,6 +164,11 @@ func TestDebugLoggerRecordsDiscoveryBalanceMetadata(t *testing.T) {
 		DiscoveryClass: "ast_search",
 		DiscoveryScope: "targeted",
 		DiscoveryCost:  "medium",
+		ExtraFields: map[string]any{
+			"context_store_kind":     "sqlite-graph-v1",
+			"context_files_indexed":  3,
+			"non_context_debug_data": "ignored",
+		},
 	}); err != nil {
 		t.Fatalf("LogToolResultDetail: %v", err)
 	}
@@ -186,6 +191,9 @@ func TestDebugLoggerRecordsDiscoveryBalanceMetadata(t *testing.T) {
 	}
 	if records[1]["discovery_class"] != "ast_search" || records[1]["discovery_scope"] != "targeted" || records[1]["discovery_cost"] != "medium" {
 		t.Fatalf("tool_result missing discovery metadata: %#v", records[1])
+	}
+	if records[1]["context_store_kind"] != "sqlite-graph-v1" || records[1]["context_files_indexed"].(float64) != 3 || records[1]["non_context_debug_data"] != nil {
+		t.Fatalf("tool_result missing sanitized context metadata: %#v", records[1])
 	}
 	if records[2]["discovery_by_class"] == nil || records[2]["discovery_by_cost"] == nil {
 		t.Fatalf("session_summary missing discovery aggregates: %#v", records[2])

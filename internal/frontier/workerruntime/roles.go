@@ -69,7 +69,7 @@ func RoleSpecFor(name string) RoleSpec {
 			ForbiddenTools:       []string{"unbounded_write", "unapproved_protected_write"},
 			RequiredEvidence:     []string{"changed_files_or_noop_reason", "verification_result"},
 			ReadinessGate:        []string{"target_packet_or_changed_files_present", "verification_contract_resolved"},
-			SearchPolicy:         []string{"consume_target_packet_first", "avoid_broad_discovery_after_target", "verify_changed_surface"},
+			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported", "avoid_broad_discovery_after_target", "verify_changed_surface"},
 			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 			StopConditions:       []string{"implementation_verified_or_failure_reported", "blocked_by_missing_permission_or_information", "budget_exhausted_with_uncertainty_declared"},
 		}

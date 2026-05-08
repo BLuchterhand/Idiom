@@ -100,10 +100,15 @@ var javaSkippedDirNames = map[string]struct{}{
 // that actually contains .java files; if root has no Java sources it
 // returns (nil, nil).
 func BuildJavaIndex(root string) (*JavaIndex, error) {
+	return BuildJavaIndexWithOptions(root, IndexOptions{})
+}
+
+func BuildJavaIndexWithOptions(root string, opts IndexOptions) (*JavaIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
 	}
+	scope := cleanIndexScope(opts.Scope)
 	index := &JavaIndex{
 		Root:      root,
 		Forward:   make(map[string][]string),
@@ -111,11 +116,18 @@ func BuildJavaIndex(root string) (*JavaIndex, error) {
 		byPackage: make(map[string][]string),
 	}
 	paths := make([]string, 0, 64)
+	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := indexContextErr(opts); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
+			if !shouldVisitIndexDir(root, path, scope) {
+				return filepath.SkipDir
+			}
 			if _, skip := javaSkippedDirNames[d.Name()]; skip && path != root {
 				return filepath.SkipDir
 			}
@@ -135,9 +147,18 @@ func BuildJavaIndex(root string) (*JavaIndex, error) {
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+		if !pathInIndexScope(rel, scope) {
+			return nil
+		}
 		paths = append(paths, rel)
+		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
+			return errStop
+		}
 		return nil
 	})
+	if err == errStop {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +169,9 @@ func BuildJavaIndex(root string) (*JavaIndex, error) {
 
 	classByFQN := make(map[string]string) // fq class name -> file path
 	for _, rel := range paths {
+		if err := indexContextErr(opts); err != nil {
+			return nil, err
+		}
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		contentBytes, err := os.ReadFile(full)
 		if err != nil {

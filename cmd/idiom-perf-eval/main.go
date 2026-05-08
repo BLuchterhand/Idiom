@@ -147,6 +147,9 @@ func printReport(r eval.PerfReport, w io.Writer) {
 	if r.FinalAnswerChars > 0 {
 		fmt.Fprintf(w, "   final answer: %d chars\n", r.FinalAnswerChars)
 	}
+	if r.Context != nil {
+		printContextStats(r.Context, "   ", w)
+	}
 	if len(r.AntiPatterns) == 0 {
 		fmt.Fprintln(w, "   anti-patterns: none detected")
 		return
@@ -208,6 +211,15 @@ func printAggregate(a eval.PerfAggregate, topN int, w io.Writer) {
 			t.Tool, t.Calls, t.Share*100, t.AvgPerLog)
 	}
 
+	if a.Context != nil {
+		fmt.Fprintln(w)
+		printContextStats(a.Context, "", w)
+	}
+	if a.Feedback != nil {
+		fmt.Fprintln(w)
+		printFeedbackStats(a.Feedback, "", w)
+	}
+
 	if len(a.WorstOffenders) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "worst offenders (by anti-pattern score, top %d):\n", topN)
@@ -219,6 +231,59 @@ func printAggregate(a eval.PerfAggregate, topN int, w io.Writer) {
 			fmt.Fprintln(w, line)
 		}
 	}
+}
+
+func printFeedbackStats(feedback *eval.FeedbackStats, indent string, w io.Writer) {
+	if feedback == nil {
+		return
+	}
+	fmt.Fprintf(w, "%sfeedback:         total=%d verified=%d inferred=%d evidence_items=%d severity(high=%d medium=%d low=%d)\n",
+		indent, feedback.Total, feedback.Verified, feedback.Inferred, feedback.EvidenceItems, feedback.HighSeverity, feedback.MediumSeverity, feedback.LowSeverity)
+	printCountMap(w, indent+"feedback cats:   ", feedback.ByCategory)
+	printCountMap(w, indent+"feedback comps:  ", feedback.ByComponent)
+}
+
+func printContextStats(ctx *eval.ContextStats, indent string, w io.Writer) {
+	if ctx == nil {
+		return
+	}
+	fmt.Fprintf(w, "%scontext graph:    results=%d indexed=%d fresh=%d stale=%d incompatible=%d trace_failures=%d\n",
+		indent, ctx.ToolResults, ctx.IndexedResults, ctx.FreshResults, ctx.StaleResults, ctx.IncompatibleBackendResults, ctx.TraceFailures)
+	fmt.Fprintf(w, "%scontext size:     max_files=%d max_symbols=%d max_edges=%d stale_symbols=%d refreshed_stale_symbols=%d stale_samples=%d\n",
+		indent, ctx.MaxFilesIndexed, ctx.MaxSymbolsIndexed, ctx.MaxEdgesIndexed, ctx.MaxStaleSymbols, ctx.RefreshedStaleSymbols, ctx.StaleSymbolSamples)
+	fmt.Fprintf(w, "%scontext refresh:  incremental=%d reused_files=%d dependency_refresh_files=%d auto=%d skipped=%d failed=%d fresh_after=%d files_indexed=%d refreshed_files=%d\n",
+		indent, ctx.IncrementalRefreshes, ctx.ReusedIndexedFiles, ctx.DependencyRefreshFiles, ctx.AutoRefreshAttempts, ctx.AutoRefreshSkips, ctx.AutoRefreshFailures, ctx.AutoRefreshFreshAfter, ctx.AutoRefreshFilesIndexed, ctx.AutoRefreshRefreshedFiles)
+	fmt.Fprintf(w, "%scontext query:    nodes=%d edges=%d summary_nodes=%d model_summary_nodes=%d candidates=%d/%d tests=%d gaps=%d\n",
+		indent, ctx.NodesReturned, ctx.EdgesReturned, ctx.SummaryNodesReturned, ctx.ModelSummaryNodesReturned, ctx.CandidateFiles, ctx.CandidateSymbols, ctx.TestsSuggested, ctx.UnresolvedGaps)
+	fmt.Fprintf(w, "%scontext collect:  reports=%d coverage=%d unavailable=%d warnings=%d version_mismatches=%d diagnostics=%d normalized_relationship_edges=%d\n",
+		indent, ctx.CollectorReports, ctx.CollectorCoverage, ctx.CollectorUnavailable, ctx.CollectorWarnings, ctx.CollectorVersionMismatches, ctx.EnrichmentDiagnostics, ctx.NormalizedRelationshipEdges)
+	printCountMap(w, indent+"context stores:   ", ctx.StoreKindCounts)
+	printCountMap(w, indent+"context active:   ", ctx.ActiveBackendCounts)
+	printCountMap(w, indent+"context reports:  ", ctx.CollectorReportNameCounts)
+}
+
+func printCountMap(w io.Writer, label string, values map[string]int) {
+	if len(values) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if values[keys[i]] != values[keys[j]] {
+			return values[keys[i]] > values[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	fmt.Fprint(w, label)
+	for i, key := range keys {
+		if i > 0 {
+			fmt.Fprint(w, ", ")
+		}
+		fmt.Fprintf(w, "%s=%d", key, values[key])
+	}
+	fmt.Fprintln(w)
 }
 
 func firstNonEmpty(a, b string) string {

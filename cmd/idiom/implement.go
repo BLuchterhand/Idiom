@@ -8,18 +8,25 @@ import (
 	"strings"
 
 	"idiom/internal/config"
+	"idiom/internal/telemetry"
 )
 
 type implementOptions struct {
-	ConfigPath string
-	Prompt     string
-	PromptFile string
-	Model      string
-	Resume     string
-	JSONEvents bool
+	ConfigPath               string
+	Prompt                   string
+	PromptFile               string
+	Model                    string
+	Resume                   string
+	JSONEvents               bool
+	PlannerOwnedVerification bool
+	AllowBuildTests          bool
 }
 
 func runImplementMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
+	return runImplementMainWithTelemetry(args, stdout, stderr, promptRun, nil)
+}
+
+func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, rec *telemetry.Recorder) int {
 	opts, err := parseImplementOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -34,6 +41,10 @@ func runImplementMain(args []string, stdout io.Writer, stderr io.Writer, promptR
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
+	logCLIPhase(rec, "implement_start", map[string]any{
+		"json_events": opts.JSONEvents,
+		"resume":      strings.TrimSpace(opts.Resume) != "",
+	})
 
 	prompt, err := implementPrompt(opts)
 	if err != nil {
@@ -41,9 +52,11 @@ func runImplementMain(args []string, stdout io.Writer, stderr io.Writer, promptR
 		return 1
 	}
 	answer, err := promptRun(cfg, prompt, runOptions{
-		JSONEvents: opts.JSONEvents,
-		Resume:     opts.Resume,
-		TaskFamily: "implementation",
+		JSONEvents:               opts.JSONEvents,
+		Resume:                   opts.Resume,
+		TaskFamily:               "implementation",
+		PlannerOwnedVerification: opts.PlannerOwnedVerification && !opts.AllowBuildTests,
+		Telemetry:                rec,
 	}, stdout)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -65,6 +78,8 @@ func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, e
 	fs.BoolVar(&opts.JSONEvents, "json", false, "emit structured JSONL events to stdout")
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id before running")
 	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
+	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", false, "delegate build/test verification to the caller; implementation may only run cheap non-build sanity checks")
+	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: keep build/test shell commands available inside the implementation lane")
 	if err := fs.Parse(args); err != nil {
 		return implementOptions{}, err
 	}

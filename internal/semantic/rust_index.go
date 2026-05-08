@@ -127,10 +127,15 @@ func rustSourceDirPriority(dir string) int {
 // conservative regexes, and returns a RustIndex. Returns nil, nil when no
 // .rs files were found (lets callers surface a clean "no rust here" error).
 func BuildRustIndex(root string) (*RustIndex, error) {
+	return BuildRustIndexWithOptions(root, IndexOptions{})
+}
+
+func BuildRustIndexWithOptions(root string, opts IndexOptions) (*RustIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
 	}
+	scope := cleanIndexScope(opts.Scope)
 
 	index := &RustIndex{
 		Root:    root,
@@ -139,11 +144,18 @@ func BuildRustIndex(root string) (*RustIndex, error) {
 	}
 	paths := make([]string, 0, 64)
 
+	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := indexContextErr(opts); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
+			if !shouldVisitIndexDir(root, path, scope) {
+				return filepath.SkipDir
+			}
 			name := d.Name()
 			if discovery.ShouldSkipDirName(name) && path != root {
 				return filepath.SkipDir
@@ -161,9 +173,18 @@ func BuildRustIndex(root string) (*RustIndex, error) {
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+		if !pathInIndexScope(rel, scope) {
+			return nil
+		}
 		paths = append(paths, rel)
+		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
+			return errStop
+		}
 		return nil
 	})
+	if err == errStop {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +194,9 @@ func BuildRustIndex(root string) (*RustIndex, error) {
 
 	sort.Strings(paths)
 	for _, rel := range paths {
+		if err := indexContextErr(opts); err != nil {
+			return nil, err
+		}
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		contentBytes, err := os.ReadFile(full)
 		if err != nil {

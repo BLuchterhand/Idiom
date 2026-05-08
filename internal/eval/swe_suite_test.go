@@ -212,6 +212,29 @@ func TestTaskScenarioAssertionsIncludeDiscoveryBalance(t *testing.T) {
 	}
 }
 
+func TestComprehensionMemorySuiteCoversContextTooling(t *testing.T) {
+	suite := ComprehensionMemorySuite()
+	report := EvaluateSWESuiteDefinition(suite)
+	if !report.Passed {
+		t.Fatalf("expected comprehension memory suite definition to pass, findings=%#v lint=%#v coverage=%#v", report.Findings, report.LintFindings, report.Coverage)
+	}
+	for _, tool := range []string{"context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query"} {
+		if report.Coverage.Tools[tool] == 0 {
+			t.Fatalf("expected comprehension suite coverage for tool %q, got %#v", tool, report.Coverage.Tools)
+		}
+	}
+	for _, family := range []string{"orientation", "localization", "planning", "failing_test"} {
+		if report.Coverage.Families[family] == 0 {
+			t.Fatalf("expected comprehension suite family %q, got %#v", family, report.Coverage.Families)
+		}
+	}
+	for _, assertion := range []string{"tools", "discovery_classes", "broad_tool_budget", "heavy_discovery_budget"} {
+		if report.Coverage.ScenarioAssertions[assertion] == 0 {
+			t.Fatalf("expected scenario assertion %q, got %#v", assertion, report.Coverage.ScenarioAssertions)
+		}
+	}
+}
+
 func TestEvaluateSWESuiteDefinitionWithFixturesReportsMissingFixture(t *testing.T) {
 	dir := t.TempDir()
 	suite := SWESuite{

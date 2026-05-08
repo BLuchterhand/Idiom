@@ -103,6 +103,12 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 	mode := m.currentMode()
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
 	brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, pathparse.MentionedWorkspacePaths(prompt)...)
+	if required := requiredEditPathsFromPrompt(prompt); len(required) > 0 {
+		brief.RequiredEditPaths = appendUniqueBriefStrings(brief.RequiredEditPaths, required...)
+		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_paths_covered_or_blocked")
+		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
+		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_paths_reported")
+	}
 	if plan := defaultVerificationPlan(m.projectRoot()); len(brief.VerificationPlan) == 0 {
 		brief.VerificationPlan = plan
 	}
@@ -129,7 +135,70 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 			"large read_file on named target refs before source evidence",
 		)
 	}
+	if m.plannerOwnedVerification && isImplementationLikeFamily(route.Family) {
+		brief.Constraints = appendUniqueBriefStrings(brief.Constraints,
+			"planner_owned_verification",
+		)
+		brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions,
+			"build_or_test_shell",
+		)
+		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
+			"after edits run only cheap non-build sanity checks or report planner-owned verification status",
+		)
+	}
+	if isImplementationLikeFamily(route.Family) && promptContainsExactEditAnchor(prompt) {
+		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "exact_anchor_implementation")
+		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "exact_edit_anchor")
+		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "attempt_exact_anchor_edit_before_broad_discovery")
+		brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_first_edit_attempt")
+	}
 	return brief
+}
+
+func requiredEditPathsFromPrompt(prompt string) []string {
+	headings := []string{
+		"files to modify",
+		"files-to-modify",
+		"files to edit",
+		"files you may edit",
+		"files you may modify",
+		"files you can edit",
+		"edit files",
+		"editable files",
+		"write scope",
+		"allowed files",
+		"allowed edit files",
+		"allowed edit paths",
+		"allowed source files",
+		"edit allowlist",
+		"file allowlist",
+		"files allowlist",
+		"source allowlist",
+	}
+	return pathparse.MentionedWorkspacePathsUnderHeadings(prompt, headings...)
+}
+
+func promptContainsExactEditAnchor(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	if strings.Contains(prompt, "*** Begin Patch") ||
+		strings.Contains(prompt, "```diff") ||
+		(strings.Contains(prompt, "\n--- ") && strings.Contains(prompt, "\n+++ ") && strings.Contains(prompt, "\n@@")) {
+		return true
+	}
+	anchorPairs := [][]string{
+		{"old_text", "new_text"},
+		{"old text", "new text"},
+		{"old snippet", "new snippet"},
+		{"before:", "after:"},
+		{"replace:", "with:"},
+		{"exact old", "exact new"},
+	}
+	for _, pair := range anchorPairs {
+		if strings.Contains(lower, pair[0]) && strings.Contains(lower, pair[1]) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultVerificationPlan(root string) []string {

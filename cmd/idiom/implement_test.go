@@ -37,8 +37,57 @@ func TestRunImplementMainForcesImplementationTaskFamily(t *testing.T) {
 	if gotOpts.TaskFamily != "implementation" {
 		t.Fatalf("TaskFamily = %q, want implementation", gotOpts.TaskFamily)
 	}
+	if gotOpts.PlannerOwnedVerification {
+		t.Fatal("idiom implement should keep build/test verification available by default")
+	}
 	if strings.TrimSpace(stdout.String()) != "done" {
 		t.Fatalf("stdout = %q, want done", stdout.String())
+	}
+}
+
+func TestRunImplementMainCanDelegateBuildTestsToPlanner(t *testing.T) {
+	configPath := writeMainConfig(t)
+	var stdout, stderr bytes.Buffer
+	var gotOpts runOptions
+
+	code := runImplementMain(
+		[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			gotOpts = opts
+			return "done", nil
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !gotOpts.PlannerOwnedVerification {
+		t.Fatal("--planner-owned-verification should mark build/test verification as caller-owned")
+	}
+}
+
+func TestRunImplementMainAllowBuildTestsOverridesPlannerOwnedVerification(t *testing.T) {
+	configPath := writeMainConfig(t)
+	var stdout, stderr bytes.Buffer
+	var gotOpts runOptions
+
+	code := runImplementMain(
+		[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification", "-allow-build-tests"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			gotOpts = opts
+			return "done", nil
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if gotOpts.PlannerOwnedVerification {
+		t.Fatal("--allow-build-tests should leave build/test verification available to the implementation lane")
 	}
 }
 
@@ -68,7 +117,7 @@ func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
 	}
-	if !gotOpts.JSONEvents || gotOpts.Resume != "prior" || gotOpts.TaskFamily != "implementation" {
+	if !gotOpts.JSONEvents || gotOpts.Resume != "prior" || gotOpts.TaskFamily != "implementation" || gotOpts.PlannerOwnedVerification {
 		t.Fatalf("unexpected opts: %#v", gotOpts)
 	}
 	if !strings.Contains(stdout.String(), `"type":"final"`) || strings.Contains(stdout.String(), "ok\n") && !strings.Contains(stdout.String(), `"content":"ok"`) {

@@ -412,39 +412,39 @@ func (m *Manager) rustImplementationsViaRustAnalyzer(ctx context.Context, match 
 	return m.formatRALocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, false), nil
 }
 
-func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch, pathFilter string, incoming bool) (string, error) {
+func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newRustAnalyzerLSPClient(ctx)
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	defer client.close()
 
 	abs, err := m.resolvePath(match.Path, "")
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if err := client.openFile(abs); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	items, err := m.rustAnalyzerPrepareCallHierarchy(ctx, client, abs, m.rustLSPPosition(abs, match))
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if len(items) == 0 {
-		return "", nil
+		return callHierarchyResult{}, nil
 	}
 	if incoming {
 		var calls []raIncomingCall
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-			return "", err
+			return callHierarchyResult{}, err
 		}
-		return m.formatRAIncomingCalls(calls, pathFilter), nil
+		return m.formatRAIncomingCalls(calls, pathFilter, match), nil
 	}
 	var calls []raOutgoingCall
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
-	return m.formatRAOutgoingCalls(abs, calls, pathFilter), nil
+	return m.formatRAOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
 func (m *Manager) rustAnalyzerPrepareCallHierarchy(ctx context.Context, client *rustAnalyzerLSPClient, abs string, position map[string]any) ([]raCallHierarchyItem, error) {
@@ -553,7 +553,7 @@ func (m *Manager) formatRALocations(locations []raLocation, pathFilter string, l
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -612,7 +612,7 @@ func (m *Manager) formatRAWorkspaceSymbols(symbols []raSymbolInfo, pathFilter st
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -652,7 +652,7 @@ func (m *Manager) formatRAWorkspaceSymbols(symbols []raSymbolInfo, pathFilter st
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatRAIncomingCalls(calls []raIncomingCall, pathFilter string) string {
+func (m *Manager) formatRAIncomingCalls(calls []raIncomingCall, pathFilter string, target semantic.RustSymbolMatch) callHierarchyResult {
 	type entry struct {
 		path string
 		line int
@@ -664,7 +664,7 @@ func (m *Manager) formatRAIncomingCalls(calls []raIncomingCall, pathFilter strin
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -684,16 +684,22 @@ func (m *Manager) formatRAIncomingCalls(calls []raIncomingCall, pathFilter strin
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
+	targetAbs, _ := m.resolvePath(target.Path, "")
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name))
+		line := fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name)
+		lines = append(lines, line)
+		if targetAbs != "" {
+			relationships = append(relationships, m.callRelationshipFromAbs(item.path, item.line, item.name, targetAbs, target.Line, target.Name, line))
+		}
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
-func (m *Manager) formatRAOutgoingCalls(callerPath string, calls []raOutgoingCall, pathFilter string) string {
+func (m *Manager) formatRAOutgoingCalls(callerPath string, callerName string, calls []raOutgoingCall, pathFilter string) callHierarchyResult {
 	type entry struct {
 		callsitePath string
 		callsiteLine int
@@ -707,7 +713,7 @@ func (m *Manager) formatRAOutgoingCalls(callerPath string, calls []raOutgoingCal
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(targetAbs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(targetAbs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(targetAbs))
@@ -736,13 +742,16 @@ func (m *Manager) formatRAOutgoingCalls(callerPath string, calls []raOutgoingCal
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine))
+		line := fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine)
+		lines = append(lines, line)
+		relationships = append(relationships, m.callRelationshipFromAbs(item.callsitePath, item.callsiteLine, callerName, item.targetPath, item.targetLine, item.name, line))
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
 func raSymbolKindName(kind int) string {

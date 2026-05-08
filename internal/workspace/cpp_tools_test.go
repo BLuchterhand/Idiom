@@ -30,6 +30,12 @@ class EntityBox {
 public:
     T value;
 };
+
+template <typename T>
+struct Widget {
+    T data;
+    Widget() : data{} {}
+};
 `)
 	writeCppFixture(t, filepath.Join(root, "src", "entity_manager.cpp"), `
 #include "entity_manager.h"

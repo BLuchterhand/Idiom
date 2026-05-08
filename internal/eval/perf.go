@@ -49,20 +49,83 @@ type AntiPattern struct {
 // to a single line in aggregate output; ByName on ToolCounts is the
 // one place detail lives.
 type PerfReport struct {
-	LogPath          string        `json:"log_path"`
-	SessionID        string        `json:"session_id,omitempty"`
-	UserPrompt       string        `json:"user_prompt,omitempty"`
-	ModelCalls       int           `json:"model_calls"`
-	ToolResults      int           `json:"tool_results"`
-	PromptTokens     int           `json:"prompt_tokens"`
-	CompletionTokens int           `json:"completion_tokens"`
-	DurationMillis   int           `json:"duration_millis"`
-	RejectedActions  int           `json:"rejected_actions"`
-	StopReason       string        `json:"stop_reason,omitempty"`
-	Tools            ToolCounts    `json:"tools"`
-	AntiPatterns     []AntiPattern `json:"anti_patterns,omitempty"`
-	AntiPatternScore int           `json:"anti_pattern_score"`
-	FinalAnswerChars int           `json:"final_answer_chars,omitempty"`
+	LogPath          string         `json:"log_path"`
+	SessionID        string         `json:"session_id,omitempty"`
+	UserPrompt       string         `json:"user_prompt,omitempty"`
+	ModelCalls       int            `json:"model_calls"`
+	ToolResults      int            `json:"tool_results"`
+	PromptTokens     int            `json:"prompt_tokens"`
+	CompletionTokens int            `json:"completion_tokens"`
+	DurationMillis   int            `json:"duration_millis"`
+	RejectedActions  int            `json:"rejected_actions"`
+	StopReason       string         `json:"stop_reason,omitempty"`
+	Tools            ToolCounts     `json:"tools"`
+	Context          *ContextStats  `json:"context,omitempty"`
+	Feedback         *FeedbackStats `json:"feedback,omitempty"`
+	AntiPatterns     []AntiPattern  `json:"anti_patterns,omitempty"`
+	AntiPatternScore int            `json:"anti_pattern_score"`
+	FinalAnswerChars int            `json:"final_answer_chars,omitempty"`
+}
+
+type ContextStats struct {
+	ToolResults                 int            `json:"tool_results,omitempty"`
+	IndexedResults              int            `json:"indexed_results,omitempty"`
+	FreshResults                int            `json:"fresh_results,omitempty"`
+	StaleResults                int            `json:"stale_results,omitempty"`
+	IncompatibleBackendResults  int            `json:"incompatible_backend_results,omitempty"`
+	TraceFailures               int            `json:"trace_failures,omitempty"`
+	MaxFilesIndexed             int            `json:"max_files_indexed,omitempty"`
+	MaxSymbolsIndexed           int            `json:"max_symbols_indexed,omitempty"`
+	MaxEdgesIndexed             int            `json:"max_edges_indexed,omitempty"`
+	MaxStaleSymbols             int            `json:"max_stale_symbols,omitempty"`
+	RefreshedStaleSymbols       int            `json:"refreshed_stale_symbols,omitempty"`
+	StaleSymbolSamples          int            `json:"stale_symbol_samples,omitempty"`
+	IncrementalRefreshes        int            `json:"incremental_refreshes,omitempty"`
+	ReusedIndexedFiles          int            `json:"reused_indexed_files,omitempty"`
+	DependencyRefreshFiles      int            `json:"dependency_refresh_files,omitempty"`
+	AutoRefreshAttempts         int            `json:"auto_refresh_attempts,omitempty"`
+	AutoRefreshSkips            int            `json:"auto_refresh_skips,omitempty"`
+	AutoRefreshFailures         int            `json:"auto_refresh_failures,omitempty"`
+	AutoRefreshFreshAfter       int            `json:"auto_refresh_fresh_after,omitempty"`
+	AutoRefreshFilesIndexed     int            `json:"auto_refresh_files_indexed,omitempty"`
+	AutoRefreshRefreshedFiles   int            `json:"auto_refresh_refreshed_files,omitempty"`
+	NodesReturned               int            `json:"nodes_returned,omitempty"`
+	EdgesReturned               int            `json:"edges_returned,omitempty"`
+	SummaryNodesReturned        int            `json:"summary_nodes_returned,omitempty"`
+	ModelSummaryNodesReturned   int            `json:"model_summary_nodes_returned,omitempty"`
+	CandidateFiles              int            `json:"candidate_files,omitempty"`
+	CandidateSymbols            int            `json:"candidate_symbols,omitempty"`
+	TestsSuggested              int            `json:"tests_suggested,omitempty"`
+	UnresolvedGaps              int            `json:"unresolved_gaps,omitempty"`
+	CollectorReports            int            `json:"collector_reports,omitempty"`
+	CollectorCoverage           int            `json:"collector_coverage,omitempty"`
+	CollectorUnavailable        int            `json:"collector_unavailable,omitempty"`
+	CollectorWarnings           int            `json:"collector_warnings,omitempty"`
+	CollectorVersionMismatches  int            `json:"collector_version_mismatches,omitempty"`
+	EnrichmentDiagnostics       int            `json:"enrichment_diagnostics,omitempty"`
+	NormalizedRelationshipEdges int            `json:"normalized_relationship_edges,omitempty"`
+	ActiveBackendCounts         map[string]int `json:"active_backend_counts,omitempty"`
+	ActiveBackendStatusCounts   map[string]int `json:"active_backend_status_counts,omitempty"`
+	StoreKindCounts             map[string]int `json:"store_kind_counts,omitempty"`
+	StorageBackendStatusCounts  map[string]int `json:"storage_backend_status_counts,omitempty"`
+	CollectorReportNameCounts   map[string]int `json:"collector_report_name_counts,omitempty"`
+	CollectorCoverageNameCounts map[string]int `json:"collector_coverage_name_counts,omitempty"`
+	AutoRefreshReasonCounts     map[string]int `json:"auto_refresh_reason_counts,omitempty"`
+	AutoRefreshSkippedCounts    map[string]int `json:"auto_refresh_skipped_counts,omitempty"`
+}
+
+type FeedbackStats struct {
+	Total          int            `json:"total,omitempty"`
+	Verified       int            `json:"verified,omitempty"`
+	Inferred       int            `json:"inferred,omitempty"`
+	HighSeverity   int            `json:"high_severity,omitempty"`
+	MediumSeverity int            `json:"medium_severity,omitempty"`
+	LowSeverity    int            `json:"low_severity,omitempty"`
+	EvidenceItems  int            `json:"evidence_items,omitempty"`
+	ByCategory     map[string]int `json:"by_category,omitempty"`
+	ByComponent    map[string]int `json:"by_component,omitempty"`
+	ByConfidence   map[string]int `json:"by_confidence,omitempty"`
+	BySeverity     map[string]int `json:"by_severity,omitempty"`
 }
 
 // AnalyzeLog reads a JSONL conversation log from disk and produces one
@@ -119,6 +182,16 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			case "budget_ledger":
 				parseBudgetLedgerIntoPerfReport(content, &rep)
 			}
+		case "user_turn":
+			if rep.UserPrompt == "" {
+				if prompt, ok := rec.Data["prompt"].(string); ok {
+					rep.UserPrompt = firstLine(prompt)
+				}
+			}
+		case "assistant_turn":
+			if chars := intField(rec.Data, "chars"); chars > 0 {
+				rep.FinalAnswerChars = chars
+			}
 		case "tool_request":
 			tool, _ := rec.Data["tool"].(string)
 			action, _ := rec.Data["action"].(string)
@@ -155,6 +228,18 @@ func analyzeRecords(path string, records []Record) PerfReport {
 				}
 			}
 			countTool(&rep.Tools, tool, summary)
+			ingestContextTelemetry(&rep, rec.Data)
+			ingestFeedbackTelemetry(&rep, rec.Data)
+		case "summary":
+			if rep.DurationMillis == 0 {
+				rep.DurationMillis = intField(rec.Data, "elapsed_ms")
+			}
+			if rep.ToolResults == 0 {
+				rep.ToolResults = intField(rec.Data, "tool_results")
+			}
+			if rep.FinalAnswerChars == 0 {
+				rep.FinalAnswerChars = intField(rec.Data, "answer_chars")
+			}
 		}
 	}
 
@@ -173,6 +258,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 	detectRedirectStorm(&rep, records)
 	detectSameToolRepeat(&rep, steps)
 	detectDocWander(&rep, steps)
+	detectPromptSurfaceOverlap(&rep, records)
 	detectRejectionRetry(&rep, steps)
 	detectMalformedEditArgs(&rep, records)
 	detectToolErrorStreak(&rep, steps, records)
@@ -198,6 +284,171 @@ func analyzeRecords(path string, records []Record) PerfReport {
 	}
 
 	return rep
+}
+
+func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
+	tool := stringField(data, "tool")
+	if !strings.HasPrefix(tool, "context_") && stringField(data, "context_store_kind") == "" && stringField(data, "context_active_backend") == "" {
+		return
+	}
+	if rep.Context == nil {
+		rep.Context = &ContextStats{
+			ActiveBackendCounts:         make(map[string]int),
+			ActiveBackendStatusCounts:   make(map[string]int),
+			StoreKindCounts:             make(map[string]int),
+			StorageBackendStatusCounts:  make(map[string]int),
+			CollectorReportNameCounts:   make(map[string]int),
+			CollectorCoverageNameCounts: make(map[string]int),
+			AutoRefreshReasonCounts:     make(map[string]int),
+			AutoRefreshSkippedCounts:    make(map[string]int),
+		}
+	}
+	ctx := rep.Context
+	ctx.ToolResults++
+	if boolField(data, "context_indexed") {
+		ctx.IndexedResults++
+	}
+	if _, ok := data["context_fresh"]; ok {
+		if boolField(data, "context_fresh") {
+			ctx.FreshResults++
+		} else {
+			ctx.StaleResults++
+		}
+	}
+	if intField(data, "context_incompatible_backends") > 0 {
+		ctx.IncompatibleBackendResults++
+	}
+	if _, ok := data["context_trace_success"]; ok && !boolField(data, "context_trace_success") {
+		ctx.TraceFailures++
+	}
+	ctx.MaxFilesIndexed = maxInt(ctx.MaxFilesIndexed, intField(data, "context_files_indexed"))
+	ctx.MaxSymbolsIndexed = maxInt(ctx.MaxSymbolsIndexed, intField(data, "context_symbols_indexed"))
+	ctx.MaxEdgesIndexed = maxInt(ctx.MaxEdgesIndexed, intField(data, "context_edges_indexed"))
+	ctx.MaxStaleSymbols = maxInt(ctx.MaxStaleSymbols, intField(data, "context_stale_symbols"))
+	ctx.RefreshedStaleSymbols += intField(data, "context_refreshed_stale_symbols")
+	ctx.StaleSymbolSamples += intField(data, "context_stale_symbol_samples")
+	if boolField(data, "context_incremental") {
+		ctx.IncrementalRefreshes++
+	}
+	ctx.ReusedIndexedFiles += intField(data, "context_reused_indexed_files")
+	ctx.DependencyRefreshFiles += intField(data, "context_dependency_refresh_files")
+	if _, ok := data["context_auto_refresh_attempted"]; ok {
+		if boolField(data, "context_auto_refresh_attempted") {
+			ctx.AutoRefreshAttempts++
+		} else if stringField(data, "context_auto_refresh_skipped_reason") != "" {
+			ctx.AutoRefreshSkips++
+		}
+	}
+	if stringField(data, "context_auto_refresh_error") != "" {
+		ctx.AutoRefreshFailures++
+	}
+	if boolField(data, "context_auto_refresh_fresh_after") {
+		ctx.AutoRefreshFreshAfter++
+	}
+	ctx.AutoRefreshFilesIndexed += intField(data, "context_auto_refresh_files_indexed")
+	ctx.AutoRefreshRefreshedFiles += intField(data, "context_auto_refresh_refreshed_files")
+	ctx.NodesReturned += intField(data, "context_nodes")
+	ctx.EdgesReturned += intField(data, "context_edges")
+	ctx.SummaryNodesReturned += intField(data, "context_summary_nodes")
+	ctx.ModelSummaryNodesReturned += intField(data, "context_model_summary_nodes")
+	ctx.CandidateFiles += intField(data, "context_candidate_files")
+	ctx.CandidateSymbols += intField(data, "context_candidate_symbols")
+	ctx.TestsSuggested += intField(data, "context_tests")
+	ctx.UnresolvedGaps += intField(data, "context_unresolved_gaps")
+	ctx.CollectorReports += intField(data, "context_collector_reports")
+	ctx.CollectorCoverage += intField(data, "context_collector_coverage")
+	ctx.CollectorUnavailable += intField(data, "context_collector_unavailable")
+	ctx.CollectorWarnings += intField(data, "context_collector_warnings")
+	if boolField(data, "context_collector_version_mismatch") {
+		ctx.CollectorVersionMismatches++
+	}
+	ctx.EnrichmentDiagnostics += intField(data, "context_enrichment_diagnostics")
+	ctx.NormalizedRelationshipEdges += intField(data, "context_normalized_relationship_edges")
+	incrementStringCount(ctx.ActiveBackendCounts, stringField(data, "context_active_backend"))
+	incrementStringCount(ctx.ActiveBackendStatusCounts, stringField(data, "context_active_backend_status"))
+	incrementStringCount(ctx.StoreKindCounts, stringField(data, "context_store_kind"))
+	for _, status := range stringSliceField(data, "context_storage_backends") {
+		incrementStringCount(ctx.StorageBackendStatusCounts, status)
+	}
+	for _, name := range stringSliceField(data, "context_collector_report_names") {
+		incrementStringCount(ctx.CollectorReportNameCounts, name)
+	}
+	for _, name := range stringSliceField(data, "context_collector_coverage_names") {
+		incrementStringCount(ctx.CollectorCoverageNameCounts, name)
+	}
+	incrementStringCount(ctx.AutoRefreshReasonCounts, stringField(data, "context_auto_refresh_reason"))
+	incrementStringCount(ctx.AutoRefreshSkippedCounts, stringField(data, "context_auto_refresh_skipped_reason"))
+}
+
+func ingestFeedbackTelemetry(rep *PerfReport, data map[string]any) {
+	tool := stringField(data, "tool")
+	category := stringField(data, "feedback_category")
+	if tool != "harness_feedback" && tool != "idiom_feedback" && category == "" {
+		return
+	}
+	if rep.Feedback == nil {
+		rep.Feedback = newFeedbackStats()
+	}
+	feedback := rep.Feedback
+	feedback.Total++
+	feedback.EvidenceItems += intField(data, "feedback_evidence_count")
+	confidence := stringField(data, "feedback_confidence")
+	severity := stringField(data, "feedback_severity")
+	incrementStringCount(feedback.ByCategory, category)
+	incrementStringCount(feedback.ByComponent, stringField(data, "feedback_component"))
+	incrementStringCount(feedback.ByConfidence, confidence)
+	incrementStringCount(feedback.BySeverity, severity)
+	switch confidence {
+	case "verified":
+		feedback.Verified++
+	case "inferred":
+		feedback.Inferred++
+	}
+	switch severity {
+	case "high":
+		feedback.HighSeverity++
+	case "medium":
+		feedback.MediumSeverity++
+	case "low":
+		feedback.LowSeverity++
+	}
+}
+
+func newFeedbackStats() *FeedbackStats {
+	return &FeedbackStats{
+		ByCategory:   make(map[string]int),
+		ByComponent:  make(map[string]int),
+		ByConfidence: make(map[string]int),
+		BySeverity:   make(map[string]int),
+	}
+}
+
+func incrementStringCount(counts map[string]int, value string) {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		counts[value]++
+	}
+}
+
+func stringSliceField(data map[string]any, key string) []string {
+	if data == nil {
+		return nil
+	}
+	switch typed := data[key].(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			value, ok := item.(string)
+			if ok && strings.TrimSpace(value) != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func parseBudgetLedgerIntoPerfReport(content string, rep *PerfReport) {
@@ -455,6 +706,46 @@ func detectDocWander(rep *PerfReport, steps []toolStep) {
 	}
 }
 
+func detectPromptSurfaceOverlap(rep *PerfReport, records []Record) {
+	count := 0
+	var examples []string
+	addExample := func(example string) {
+		count++
+		if len(examples) < 3 {
+			examples = append(examples, example)
+		}
+	}
+	for _, rec := range records {
+		switch rec.Type {
+		case "session_start", "context_update":
+			sources := stringSliceField(rec.Data, "context_sources")
+			if len(sources) >= 8 {
+				addExample(fmt.Sprintf("%s has %d prompt/context sources", rec.Type, len(sources)))
+			}
+		case "message":
+			role := stringField(rec.Data, "role")
+			if role != "control_rails" {
+				continue
+			}
+			content := stringField(rec.Data, "content")
+			var payload struct {
+				DynamicInstructions bool `json:"dynamic_instruction_attachment"`
+			}
+			if json.Unmarshal([]byte(content), &payload) == nil && payload.DynamicInstructions {
+				addExample("control_rails reports dynamic instruction attachment enabled")
+			}
+		}
+	}
+	if count > 0 {
+		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
+			Name:        "prompt_surface_overlap",
+			Count:       count,
+			Description: "large or dynamic prompt surfaces can cause overlapping guidance; audit ownership before adding more prompt text",
+			Examples:    examples,
+		})
+	}
+}
+
 // detectMalformedEditArgs flags the specific failure shape that live
 // logs surface: edit_file called with invalid line ranges (start > end)
 // or missing old_text. Neither fails pre-execute guards (the request
@@ -619,6 +910,8 @@ type PerfAggregate struct {
 	TotalRejectedActions int                    `json:"total_rejected_actions"`
 	PatternHitRate       []PerfPatternHit       `json:"pattern_hit_rate"`
 	ToolMix              []PerfToolMix          `json:"tool_mix"`
+	Context              *ContextStats          `json:"context,omitempty"`
+	Feedback             *FeedbackStats         `json:"feedback,omitempty"`
 	StopReasonCounts     map[string]int         `json:"stop_reason_counts,omitempty"`
 	WorstOffenders       []PerfWorstOffender    `json:"worst_offenders,omitempty"`
 	Extras               map[string]interface{} `json:"extras,omitempty"`
@@ -632,9 +925,9 @@ type PerfPatternHit struct {
 }
 
 type PerfToolMix struct {
-	Tool    string  `json:"tool"`
-	Calls   int     `json:"calls"`
-	Share   float64 `json:"share"`
+	Tool      string  `json:"tool"`
+	Calls     int     `json:"calls"`
+	Share     float64 `json:"share"`
 	AvgPerLog float64 `json:"avg_per_log"`
 }
 
@@ -691,6 +984,8 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 			toolCalls[tool] += calls
 			totalCalls += calls
 		}
+		mergeContextStats(&agg.Context, r.Context)
+		mergeFeedbackStats(&agg.Feedback, r.Feedback)
 	}
 	agg.MedianToolResults = median(toolResults)
 	agg.MaxToolResults = maxOf(toolResults)
@@ -751,6 +1046,96 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 	return agg
 }
 
+func mergeContextStats(target **ContextStats, source *ContextStats) {
+	if source == nil {
+		return
+	}
+	if *target == nil {
+		*target = &ContextStats{
+			ActiveBackendCounts:         make(map[string]int),
+			ActiveBackendStatusCounts:   make(map[string]int),
+			StoreKindCounts:             make(map[string]int),
+			StorageBackendStatusCounts:  make(map[string]int),
+			CollectorReportNameCounts:   make(map[string]int),
+			CollectorCoverageNameCounts: make(map[string]int),
+			AutoRefreshReasonCounts:     make(map[string]int),
+			AutoRefreshSkippedCounts:    make(map[string]int),
+		}
+	}
+	dst := *target
+	dst.ToolResults += source.ToolResults
+	dst.IndexedResults += source.IndexedResults
+	dst.FreshResults += source.FreshResults
+	dst.StaleResults += source.StaleResults
+	dst.IncompatibleBackendResults += source.IncompatibleBackendResults
+	dst.TraceFailures += source.TraceFailures
+	dst.MaxFilesIndexed = maxInt(dst.MaxFilesIndexed, source.MaxFilesIndexed)
+	dst.MaxSymbolsIndexed = maxInt(dst.MaxSymbolsIndexed, source.MaxSymbolsIndexed)
+	dst.MaxEdgesIndexed = maxInt(dst.MaxEdgesIndexed, source.MaxEdgesIndexed)
+	dst.MaxStaleSymbols = maxInt(dst.MaxStaleSymbols, source.MaxStaleSymbols)
+	dst.RefreshedStaleSymbols += source.RefreshedStaleSymbols
+	dst.StaleSymbolSamples += source.StaleSymbolSamples
+	dst.IncrementalRefreshes += source.IncrementalRefreshes
+	dst.ReusedIndexedFiles += source.ReusedIndexedFiles
+	dst.DependencyRefreshFiles += source.DependencyRefreshFiles
+	dst.AutoRefreshAttempts += source.AutoRefreshAttempts
+	dst.AutoRefreshSkips += source.AutoRefreshSkips
+	dst.AutoRefreshFailures += source.AutoRefreshFailures
+	dst.AutoRefreshFreshAfter += source.AutoRefreshFreshAfter
+	dst.AutoRefreshFilesIndexed += source.AutoRefreshFilesIndexed
+	dst.AutoRefreshRefreshedFiles += source.AutoRefreshRefreshedFiles
+	dst.NodesReturned += source.NodesReturned
+	dst.EdgesReturned += source.EdgesReturned
+	dst.SummaryNodesReturned += source.SummaryNodesReturned
+	dst.ModelSummaryNodesReturned += source.ModelSummaryNodesReturned
+	dst.CandidateFiles += source.CandidateFiles
+	dst.CandidateSymbols += source.CandidateSymbols
+	dst.TestsSuggested += source.TestsSuggested
+	dst.UnresolvedGaps += source.UnresolvedGaps
+	dst.CollectorReports += source.CollectorReports
+	dst.CollectorCoverage += source.CollectorCoverage
+	dst.CollectorUnavailable += source.CollectorUnavailable
+	dst.CollectorWarnings += source.CollectorWarnings
+	dst.CollectorVersionMismatches += source.CollectorVersionMismatches
+	dst.EnrichmentDiagnostics += source.EnrichmentDiagnostics
+	dst.NormalizedRelationshipEdges += source.NormalizedRelationshipEdges
+	mergeStringCounts(dst.ActiveBackendCounts, source.ActiveBackendCounts)
+	mergeStringCounts(dst.ActiveBackendStatusCounts, source.ActiveBackendStatusCounts)
+	mergeStringCounts(dst.StoreKindCounts, source.StoreKindCounts)
+	mergeStringCounts(dst.StorageBackendStatusCounts, source.StorageBackendStatusCounts)
+	mergeStringCounts(dst.CollectorReportNameCounts, source.CollectorReportNameCounts)
+	mergeStringCounts(dst.CollectorCoverageNameCounts, source.CollectorCoverageNameCounts)
+	mergeStringCounts(dst.AutoRefreshReasonCounts, source.AutoRefreshReasonCounts)
+	mergeStringCounts(dst.AutoRefreshSkippedCounts, source.AutoRefreshSkippedCounts)
+}
+
+func mergeFeedbackStats(target **FeedbackStats, source *FeedbackStats) {
+	if source == nil {
+		return
+	}
+	if *target == nil {
+		*target = newFeedbackStats()
+	}
+	dst := *target
+	dst.Total += source.Total
+	dst.Verified += source.Verified
+	dst.Inferred += source.Inferred
+	dst.HighSeverity += source.HighSeverity
+	dst.MediumSeverity += source.MediumSeverity
+	dst.LowSeverity += source.LowSeverity
+	dst.EvidenceItems += source.EvidenceItems
+	mergeStringCounts(dst.ByCategory, source.ByCategory)
+	mergeStringCounts(dst.ByComponent, source.ByComponent)
+	mergeStringCounts(dst.ByConfidence, source.ByConfidence)
+	mergeStringCounts(dst.BySeverity, source.BySeverity)
+}
+
+func mergeStringCounts(target map[string]int, source map[string]int) {
+	for key, value := range source {
+		target[key] += value
+	}
+}
+
 func median(values []int) int {
 	if len(values) == 0 {
 		return 0
@@ -772,4 +1157,11 @@ func maxOf(values []int) int {
 		}
 	}
 	return best
+}
+
+func maxInt(a int, b int) int {
+	if b > a {
+		return b
+	}
+	return a
 }

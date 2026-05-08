@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"idiom/internal/agent"
+	"idiom/internal/config"
 	"idiom/internal/llama"
 )
 
@@ -83,6 +84,50 @@ func TestCorrectTurnRoutePlanDowngradesImplementationLikeExplanationQuestion(t *
 	}
 }
 
+func TestCorrectTurnRoutePlanUpgradesVerificationOnlyWithEditIntent(t *testing.T) {
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "verification_only"}, "Modify exactly one file and do not run tests.", agent.BuildMode())
+	if plan.Family != "implementation" {
+		t.Fatalf("family = %q, want implementation", plan.Family)
+	}
+	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestFallbackTurnRouteKeepsEditAtomWithAcceptanceCommandsAsImplementation(t *testing.T) {
+	prompt := `
+# IMPLEMENTATION REQUEST - EDIT FILES
+
+The user explicitly requests repository file edits using apply_patch, edit_file,
+or write_file.
+
+## Files To Modify
+
+| File | What |
+|---|---|
+| src/simulation/job_queue.cpp | Post/cancel loader jobs. |
+
+## Required Behavior
+
+- Modify the implementation so loader jobs are deduplicated.
+
+## Acceptance
+
+` + "```bash" + `
+python3 scripts/run_tests.py --build-only
+./build/tests/job_queue_tests --case JobQueue
+git diff --check
+` + "```" + `
+`
+	plan := fallbackTurnRoute(prompt, agent.BuildMode())
+	if plan.Family != "implementation" {
+		t.Fatalf("family = %q, want implementation", plan.Family)
+	}
+	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
 func TestCorrectTurnRoutePlanKeepsAnalysisContinuationReadOnly(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Continue your investigation until you have a confident response.", agent.BuildMode())
 	if plan.Family != "architecture" {
@@ -115,6 +160,9 @@ func TestClassifyTurnRouteLetsModelUpgradeDirectQuestionFallback(t *testing.T) {
 	defer server.Close()
 
 	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Can you verify that this still builds?", agent.BuildMode())

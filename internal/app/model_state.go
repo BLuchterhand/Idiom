@@ -171,6 +171,7 @@ type Model struct {
 	lastAssistantReasoningContent string
 	agentModeName                 string
 	forcedTaskFamily              string
+	plannerOwnedVerification      bool
 	traceMode                     traceDisplayMode
 
 	workspaceOverviewInjected bool
@@ -386,6 +387,21 @@ func samplingSummaryForOptions(opts llama.ChatOptions) string {
 	)
 }
 
+// resolveModelID picks the right display name for a backend's loaded model.
+// llama-server's /v1/models reports the actually-loaded GGUF, so reported
+// is trusted. mlx_lm.server may report default catalog models before the
+// configured local model, but chat requests still need the configured model id
+// verbatim. Returning a basename for local MLX paths makes the server treat it
+// as a Hugging Face repo id.
+func resolveModelID(spec config.LlamaServer, reported string) string {
+	if spec.IsMLX() {
+		if name := strings.TrimSpace(spec.Model); name != "" {
+			return name
+		}
+	}
+	return reported
+}
+
 func (m *Model) bootstrap() {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
@@ -400,7 +416,7 @@ func (m *Model) bootstrap() {
 
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
-		m.events <- serverStatusMsg{running: true, modelID: models[0].ID}
+		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, models[0].ID)}
 		return
 	}
 
@@ -421,7 +437,7 @@ func (m *Model) startImplementerAsync() {
 	defer cancel()
 
 	if models, err := m.implementerClient.ListModels(ctx); err == nil && len(models) > 0 {
-		m.events <- infoMsg{text: "Implementer ready: " + models[0].ID}
+		m.events <- infoMsg{text: "Implementer ready: " + resolveModelID(*m.cfg.Implementer, models[0].ID)}
 		return
 	}
 	if !m.cfg.Chat.AutoStartServer {
@@ -440,7 +456,7 @@ func (m *Model) startImplementerAsync() {
 	if err == nil && len(models) > 0 {
 		id = models[0].ID
 	}
-	m.events <- infoMsg{text: "Implementer ready: " + id}
+	m.events <- infoMsg{text: "Implementer ready: " + resolveModelID(*m.cfg.Implementer, id)}
 }
 
 func (m *Model) handleSlashCommand(raw string) bool {
@@ -731,11 +747,11 @@ func (m *Model) startServerAsync() {
 
 		models, err := m.client.ListModels(context.Background())
 		if err != nil || len(models) == 0 {
-			m.events <- serverStatusMsg{running: true, modelID: "local-model", owned: true}
+			m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, "local-model"), owned: true}
 			return
 		}
 
-		m.events <- serverStatusMsg{running: true, modelID: models[0].ID, owned: true}
+		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, models[0].ID), owned: true}
 	}()
 }
 
@@ -770,10 +786,10 @@ func (m *Model) restartServerAsync() {
 
 		models, err := m.client.ListModels(context.Background())
 		if err != nil || len(models) == 0 {
-			m.events <- serverStatusMsg{running: true, modelID: "local-model", owned: true}
+			m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, "local-model"), owned: true}
 			return
 		}
-		m.events <- serverStatusMsg{running: true, modelID: models[0].ID, owned: true}
+		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, models[0].ID), owned: true}
 	}()
 }
 
@@ -1203,6 +1219,7 @@ func (m *Model) logToolResult(event agent.ToolResultEvent) {
 		DiscoveryClass: profile.Class,
 		DiscoveryScope: profile.Scope,
 		DiscoveryCost:  profile.Cost,
+		ExtraFields:    workspace.ToolTelemetryFields(event.Result.Tool, event.Result.Output),
 	})
 }
 
@@ -1398,6 +1415,7 @@ func (m *Model) logNestedToolResult(content string) bool {
 			DiscoveryClass: profile.Class,
 			DiscoveryScope: profile.Scope,
 			DiscoveryCost:  profile.Cost,
+			ExtraFields:    workspace.ToolTelemetryFields(payload.Result.Tool, payload.Result.Output),
 		})
 	}
 	return true
@@ -1472,6 +1490,10 @@ func (m *Model) setContextError(message string) {
 
 func (m *Model) SetForcedTaskFamily(family string) {
 	m.forcedTaskFamily = strings.TrimSpace(family)
+}
+
+func (m *Model) SetPlannerOwnedVerification(enabled bool) {
+	m.plannerOwnedVerification = enabled
 }
 
 func (m *Model) clearContextError() {

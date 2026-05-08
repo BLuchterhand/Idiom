@@ -126,8 +126,80 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
+			Name:        "file_stats",
+			Description: "Count files, directories, bytes, and lines for a file or bounded directory scope. Use for size/count questions instead of shell wc/find pipelines.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"path":`+strProp("file or directory to count; defaults to workspace root")+`,"recursive":{"type":"boolean","description":"walk directories recursively"},"glob":`+strProp("optional file glob, e.g. *.go")+`,"max_depth":`+intProp("directory depth limit; default 1, or 8 when recursive=true")+`,"limit":`+intProp("max files to count; default 1000, cap 10000"),
+			),
+		},
+		{
+			Name:        "harness_audit",
+			Description: "Audit idiom itself: exported tool/schema coverage, language capability wiring, backend availability, and recent JSONL behavior logs. Use only for harness/tooling improvement questions, not as a replacement for code search.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"purpose":{"type":"string","enum":["all","tool_surface","behavior"],"description":"audit scope; all includes static tool-surface checks and recent log behavior"},"path":`+strProp("optional log file or directory to scan for behavior signals; defaults to recent logs/conversations JSONL logs")+`,"glob":`+strProp("optional workspace-relative glob of JSONL logs to scan")+`,"limit":`+intProp("max recent log files to scan; default 25, cap 200"),
+			),
+		},
+		{
+			Name:        "harness_feedback",
+			Description: "Record structured feedback about idiom harness/tool/prompt behavior that affected the current task. Use only for generic idiom capability gaps, confusing contracts, stale-context failures, telemetry gaps, or workflow friction; do not use for product-code bugs.",
+			ParametersJSON: schemaObj(
+				[]string{"category", "component", "expected", "observed", "impact", "confidence"},
+				`"category":{"type":"string","enum":["tool_gap","prompt_gap","workflow_gap","context_gap","stale_context","language_support","routing_gap","verification_gap","telemetry_gap","audit_gap","other"],"description":"generic feedback class"},"component":`+strProp("idiom surface involved, e.g. context_pack, gdscript_trace, prompt/base, direct tool CLI")+`,"expected":`+strProp("capability or contract the agent reasonably expected")+`,"observed":`+strProp("what actually happened, stated as evidence rather than speculation")+`,"workaround":`+strProp("how the agent proceeded, if any")+`,"impact":`+strProp("task effect such as extra reads, blocked edit, wrong routing, or missing audit signal")+`,"evidence":{"type":"array","items":{"type":"string"},"description":"short log paths, step ids, tool outputs, or file references backing the observation"},"confidence":{"type":"string","enum":["verified","inferred"],"description":"verified when backed by logs/tool output; inferred when observed indirectly"},"severity":{"type":"string","enum":["low","medium","high"],"description":"task impact; default low"},"suggested_fix":`+strProp("optional generic harness/tool/prompt improvement, not a one-off task-specific workaround"),
+			),
+		},
+		{
+			Name:        "context_index",
+			Description: "Build or refresh idiom's persistent, language-agnostic codebase comprehension graph. This writes the active SQLite graph plus a JSON export; use it when context_status is missing/stale or before generating packet-ready context.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"path":`+strProp("optional file or directory scope; defaults to workspace root")+`,"language":`+strProp("language hint; auto indexes recognized source files, with rich Go/C++/Python/TypeScript/JavaScript/Rust/Java/GDScript collectors, Godot project resource support, and generic cross-language fallback")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"indexing depth; standard records fast language/backend/build-system enrichment, deep also runs bounded live language-tool/LSP probes and normalizes parseable relationship evidence"},"limit":`+intProp("optional max files to index"),
+			),
+		},
+		{
+			Name:        "context_status",
+			Description: "Report whether the persistent SQLite-backed codebase comprehension graph exists, whether indexed files/symbols or collector versions are stale, and whether storage backends are compatible. With refresh=true, repair bounded stale scopes, small stale file sets, missing indexes, and collector-version mismatches before reporting.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"refresh":`+boolProp("optional: attempt stale graph repair before reporting; uses path when provided, otherwise refreshes a small capped stale/missing file set or rebuilds the root for missing indexes/collector-version mismatches")+`,"path":`+strProp("optional bounded file or directory refresh scope; omit for workspace-level status/repair")+`,"language":`+strProp("optional language hint for refresh; auto remains language-agnostic")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"refresh indexing depth; default standard"}`,
+			),
+		},
+		{
+			Name:        "context_query",
+			Description: "Query idiom's persistent codebase graph for repository, package, file, symbol, summary, import, call, or test relationships without dumping raw source. Results are observational and include confidence/staleness.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"query":`+strProp("natural-language or keyword query")+`,"pattern":`+strProp("optional symbol or handle hint")+`,"path":`+strProp("optional path scope")+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"limit":`+intProp("max nodes to return; default 12")+`,"include_evidence":`+boolProp("include edge evidence such as path/line"),
+			),
+		},
+		{
+			Name:        "context_zoom",
+			Description: "Return a deeper or broader view for one context graph handle, path, or symbol. Use after context_query returns a promising handle.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"id":`+strProp("context graph handle such as symbol://path.go#Name")+`,"pattern":`+strProp("optional symbol fallback when id is not known")+`,"path":`+strProp("optional path fallback when id is not known")+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"limit":`+intProp("max related nodes/edges to return; default 20")+`,"include_source":`+boolProp("reserved for future exact source excerpts"),
+			),
+		},
+		{
+			Name:        "context_pack",
+			Description: "Generate a saved, packet-ready context view for a task from the persistent graph. Returns candidate files, symbols, tests, evidence handles, risks, unknowns, and stale-context gaps without prescribing edits.",
+			ParametersJSON: schemaObj(
+				[]string{"task"},
+				`"task":`+strProp("task statement to localize")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"packet mode; default plan"},"limit":`+intProp("max candidate files; default 8")+`,"budget_tokens":`+intProp("optional intended context budget for downstream packet rendering")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands that must be carried into the pack"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"}`,
+			),
+		},
+		{
+			Name:        "context_trace_pack",
+			Description: "Run a command and save language-agnostic runtime evidence under .idiom/comprehension/traces. Parses generic stack frames, test output, Go test JSON, Go coverprofiles, and LCOV without overwriting static graph facts.",
+			ParametersJSON: schemaObj(
+				[]string{"command"},
+				`"command":`+strProp("runtime command to execute, such as a focused test command")+`,"path":`+strProp("optional workspace-relative scope for matching the trace to a task")+`,"language":`+strProp("optional language hint; auto keeps the output language-agnostic while enabling collector-specific parsers when recognizable")+`,"workdir":`+strProp("optional workspace-relative working directory")+`,"limit":`+intProp("max runtime events/files to return; default 64")+`,"include_files":`+boolProp("include parsed executed-file and stack-frame evidence; default true"),
+			),
+		},
+		{
 			Name:        "discovery_query",
-			Description: "Run a deterministic layered discovery recipe for a configured purpose and persist the full evidence packet under .idiom/discovery/queries. Use when you need reproducible impact analysis, function tracing, architecture-boundary discovery, security review, or history context instead of choosing tools ad hoc.",
+			Description: "Run a deterministic layered discovery recipe for a configured purpose and persist the full evidence packet under .idiom/discovery/queries. Uses a fresh context graph for orientation when available, then falls back to live probes for stale, missing, or too-coarse claims.",
 			ParametersJSON: schemaObj(
 				[]string{"purpose"},
 				`"purpose":{"type":"string","enum":["impact_analysis","function_tracing","architecture_boundary","security_review","history_context"],"description":"deterministic recipe to run"},"path":`+strProp("optional target file/directory")+`,"pattern":`+strProp("optional symbol, function, type, package, or search pattern")+`,"language":`+strProp("optional language/ecosystem hint, e.g. go, typescript, python, cpp, rust, java")+`,"max_depth":`+intProp("optional relationship depth/budget; default 2"),
@@ -397,6 +469,147 @@ func baseToolDefinitions() []ToolDefinition {
 			ParametersJSON: schemaObj(
 				[]string{"path"},
 				`"path":`+strProp("file path"),
+			),
+		},
+		{
+			Name:           "cpp_overview",
+			Description:    "Summarize the C/C++ workspace structure.",
+			ParametersJSON: `{"type":"object","properties":{}}`,
+		},
+		{
+			Name:        "cpp_entrypoints",
+			Description: "List likely C/C++ anchor files and entrypoints.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"max_depth":`+intProp("optional result limit"),
+			),
+		},
+		{
+			Name:        "cpp_find_symbol",
+			Description: "Find C/C++ symbols matching a pattern.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope")+`,"max_depth":`+intProp("optional result limit"),
+			),
+		},
+		{
+			Name:        "cpp_read_symbol",
+			Description: "Read a C/C++ symbol snippet.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope")+`,"start_line":`+intProp("optional 1-based start")+`,"end_line":`+intProp("optional 1-based end"),
+			),
+		},
+		{
+			Name:        "cpp_related_files",
+			Description: "Find C/C++ files related to a pattern, scoped to a path.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("term")+`,"path":`+strProp("optional file or directory scope")+`,"max_depth":`+intProp("optional result limit"),
+			),
+		},
+		{
+			Name:        "cpp_workspace_symbol",
+			Description: "Workspace-wide C/C++ symbol lookup.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope")+`,"max_depth":`+intProp("optional result limit"),
+			),
+		},
+		{
+			Name:        "cpp_definition",
+			Description: "Find a C/C++ symbol definition.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_declaration",
+			Description: "Find a C/C++ symbol declaration.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_implementations",
+			Description: "Find C/C++ implementations or overrides for a symbol.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_references",
+			Description: "Find references to a C/C++ symbol.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_calls_from",
+			Description: "Find outgoing calls from a C/C++ function or method.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("function or method name")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_calls_into",
+			Description: "Find incoming calls to a C/C++ function or method.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("function or method name")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_extract_body",
+			Description: "Extract the body of a C/C++ function or method.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("optional file or directory scope")+`,"start_line":`+intProp("optional 1-based start")+`,"end_line":`+intProp("optional 1-based end"),
+			),
+		},
+		{
+			Name:        "cpp_includes",
+			Description: "Find direct and transitive C/C++ include dependencies for a file or include pattern.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("file path, header name, or include pattern")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_who_includes",
+			Description: "Find C/C++ files that directly or transitively include a file or include pattern.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("file path, header name, or include pattern")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_blast_radius",
+			Description: "Estimate C/C++ translation units affected by a file or include pattern.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("file path, header name, symbol, or include pattern")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_dead_symbol",
+			Description: "Check whether a C/C++ symbol appears unused.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("optional file or directory scope"),
+			),
+		},
+		{
+			Name:        "cpp_diagnostics",
+			Description: "Run C/C++ diagnostics with clangd when compile_commands.json is available.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"path":`+strProp("optional file or directory scope"),
 			),
 		},
 		{

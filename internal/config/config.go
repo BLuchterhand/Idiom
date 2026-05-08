@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -27,6 +28,7 @@ type Config struct {
 // requested and the endpoint is unreachable.
 type RouteClassifier struct {
 	Enabled             bool     `json:"enabled"`
+	AlwaysOn            bool     `json:"always_on,omitempty"`
 	BaseURL             string   `json:"base_url"`
 	Model               string   `json:"model"`
 	MaxTokens           int      `json:"max_tokens"`
@@ -143,10 +145,12 @@ type Chat struct {
 	DebugLogMode           string   `json:"debug_log_mode"`
 	SystemPrompt           string   `json:"system_prompt"`
 	SystemPromptFiles      []string `json:"system_prompt_files"`
+	AllowMissingPrompts    bool     `json:"allow_missing_prompts,omitempty"`
 	ProfilesDir            string   `json:"profiles_dir"`
 	DefaultProfiles        []string `json:"default_profiles"`
 	ProjectRoot            string   `json:"project_root"`
 	ProjectPromptFiles     []string `json:"project_prompt_files"`
+	AttachInstructionFiles bool     `json:"attach_instruction_files"`
 	Preset                 string   `json:"preset"`
 	Temperature            float64  `json:"temperature"`
 	TopP                   float64  `json:"top_p"`
@@ -277,6 +281,7 @@ func Default() Config {
 			DefaultProfiles:        []string{"coding"},
 			ProjectRoot:            "",
 			ProjectPromptFiles:     []string{},
+			AttachInstructionFiles: false,
 			Preset:                 "qwen3-coding-preserve",
 			Temperature:            0.6,
 			TopP:                   0.95,
@@ -319,6 +324,12 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
+	if unknown, err := UnknownJSONKeys(data, Config{}); err != nil {
+		return Config{}, fmt.Errorf("inspect config keys: %w", err)
+	} else if len(unknown) > 0 {
+		return Config{}, fmt.Errorf("unknown config key(s): %s", strings.Join(unknown, ", "))
+	}
+
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
@@ -327,12 +338,108 @@ func Load(path string) (Config, error) {
 	cfg.resolvePaths(baseDir)
 	cfg.applyRuntimeDefaults()
 	cfg.applyWorkspaceDefaults()
+	cfg.canonicalizeWorkspacePaths()
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+// UnknownJSONKeys returns JSON object keys that are not modeled by target's
+// json tags. Keys beginning with "_" are treated as JSON-comment fields so
+// example config files can carry disabled blocks such as "_mcp".
+func UnknownJSONKeys(data []byte, target any) ([]string, error) {
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, err
+	}
+	var unknown []string
+	collectUnknownJSONKeys(decoded, reflect.TypeOf(target), "", &unknown)
+	sort.Strings(unknown)
+	return unknown, nil
+}
+
+var rawMessageType = reflect.TypeOf(json.RawMessage{})
+
+func collectUnknownJSONKeys(value any, typ reflect.Type, path string, unknown *[]string) {
+	if typ == nil || value == nil {
+		return
+	}
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ == rawMessageType {
+		return
+	}
+	switch typ.Kind() {
+	case reflect.Struct:
+		object, ok := value.(map[string]any)
+		if !ok {
+			return
+		}
+		fields := jsonFieldTypes(typ)
+		for key, child := range object {
+			if strings.HasPrefix(key, "_") {
+				continue
+			}
+			fieldType, ok := fields[key]
+			if !ok {
+				*unknown = append(*unknown, joinConfigPath(path, key))
+				continue
+			}
+			collectUnknownJSONKeys(child, fieldType, joinConfigPath(path, key), unknown)
+		}
+	case reflect.Slice, reflect.Array:
+		items, ok := value.([]any)
+		if !ok {
+			return
+		}
+		for i, item := range items {
+			collectUnknownJSONKeys(item, typ.Elem(), fmt.Sprintf("%s[%d]", path, i), unknown)
+		}
+	case reflect.Map:
+		object, ok := value.(map[string]any)
+		if !ok {
+			return
+		}
+		elem := typ.Elem()
+		for key, child := range object {
+			collectUnknownJSONKeys(child, elem, joinConfigPath(path, key), unknown)
+		}
+	}
+}
+
+func jsonFieldTypes(typ reflect.Type) map[string]reflect.Type {
+	fields := make(map[string]reflect.Type)
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		tag := field.Tag.Get("json")
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		fields[name] = field.Type
+	}
+	return fields
+}
+
+func joinConfigPath(base string, key string) string {
+	key = strings.TrimSpace(key)
+	if base == "" {
+		return key
+	}
+	if key == "" {
+		return base
+	}
+	return base + "." + key
 }
 
 func (c Config) Validate() error {
@@ -603,6 +710,94 @@ func (c *Config) applyWorkspaceDefaults() {
 	if c.Chat.ProjectRoot == "" {
 		c.Chat.ProjectRoot = c.Workspace.Root
 	}
+}
+
+func (c *Config) canonicalizeWorkspacePaths() {
+	c.Workspace.Root = CanonicalizeExistingPath(c.Workspace.Root)
+	c.Workspace.CWD = CanonicalizeExistingPath(c.Workspace.CWD)
+	c.Chat.ProjectRoot = CanonicalizeExistingPath(c.Chat.ProjectRoot)
+	c.Chat.ProjectPromptFiles = canonicalizePathSlice(c.Chat.ProjectPromptFiles)
+}
+
+func canonicalizePathSlice(paths []string) []string {
+	if len(paths) == 0 {
+		return paths
+	}
+	out := make([]string, len(paths))
+	for i, path := range paths {
+		out[i] = CanonicalizeExistingPath(path)
+	}
+	return out
+}
+
+// CanonicalizeExistingPath returns the physical absolute spelling for an
+// existing path. On case-insensitive filesystems this prevents logically
+// equivalent roots such as "Idiom" and "idiom" from splitting telemetry,
+// caches, or language-server workspace identities.
+func CanonicalizeExistingPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	abs := path
+	if !filepath.IsAbs(abs) {
+		if resolved, err := filepath.Abs(abs); err == nil {
+			abs = resolved
+		}
+	}
+	abs = filepath.Clean(abs)
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return canonicalizeExistingPathCase(real)
+	}
+	current := abs
+	var suffix []string
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		suffix = append([]string{filepath.Base(current)}, suffix...)
+		current = parent
+		if real, err := filepath.EvalSymlinks(current); err == nil {
+			parts := append([]string{canonicalizeExistingPathCase(real)}, suffix...)
+			return filepath.Join(parts...)
+		}
+	}
+	return abs
+}
+
+func canonicalizeExistingPathCase(abs string) string {
+	cleaned := filepath.Clean(abs)
+	if cleaned == "." || cleaned == "" {
+		return cleaned
+	}
+	volume := filepath.VolumeName(cleaned)
+	rest := strings.TrimPrefix(cleaned[len(volume):], string(filepath.Separator))
+	if rest == "" {
+		if volume != "" {
+			return volume + string(filepath.Separator)
+		}
+		return string(filepath.Separator)
+	}
+	current := volume + string(filepath.Separator)
+	for _, part := range strings.Split(rest, string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		matched := part
+		entries, err := os.ReadDir(current)
+		if err != nil {
+			return cleaned
+		}
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), part) {
+				matched = entry.Name()
+				break
+			}
+		}
+		current = filepath.Join(current, matched)
+	}
+	return current
 }
 
 func resolvePath(baseDir, path string) string {

@@ -42,6 +42,9 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	if m == nil {
 		return turnRoutePlan{}, false
 	}
+	if !m.cfg.RouteClassifier.Enabled {
+		return turnRoutePlan{}, false
+	}
 	_ = m.ensureSummaryServer()
 	history := renderRecentConversationForRouting(m.messages, 6)
 	messages := []llama.ChatMessage{

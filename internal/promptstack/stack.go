@@ -47,11 +47,20 @@ type Source struct {
 }
 
 type Stack struct {
-	Text    string
-	Sources []Source
+	Text     string
+	Sources  []Source
+	Warnings []string
 }
 
 func Build(chat config.Chat, profiles []string) (Stack, error) {
+	return build(chat, profiles, true)
+}
+
+func BuildLenient(chat config.Chat, profiles []string) (Stack, error) {
+	return build(chat, profiles, false)
+}
+
+func build(chat config.Chat, profiles []string, requireExplicit bool) (Stack, error) {
 	builder := stackBuilder{
 		seen: make(map[string]struct{}),
 	}
@@ -61,7 +70,7 @@ func Build(chat config.Chat, profiles []string) (Stack, error) {
 	}
 
 	for _, path := range chat.SystemPromptFiles {
-		if err := builder.addFile("baseline", filepath.Base(path), path, true); err != nil {
+		if err := builder.addFile("baseline", filepath.Base(path), path, requireExplicit, !requireExplicit); err != nil {
 			return Stack{}, err
 		}
 	}
@@ -72,7 +81,7 @@ func Build(chat config.Chat, profiles []string) (Stack, error) {
 			continue
 		}
 		profilePath := filepath.Join(chat.ProfilesDir, profile+".md")
-		if err := builder.addFile("profile", "profile:"+profile, profilePath, true); err != nil {
+		if err := builder.addFile("profile", "profile:"+profile, profilePath, requireExplicit, !requireExplicit); err != nil {
 			return Stack{}, err
 		}
 	}
@@ -80,7 +89,7 @@ func Build(chat config.Chat, profiles []string) (Stack, error) {
 	if dir := userConfigDir(); dir != "" {
 		for _, name := range userGlobalPromptCandidates {
 			path := filepath.Join(dir, name)
-			if err := builder.addFile("user_global", name, path, false); err != nil {
+			if err := builder.addFile("user_global", name, path, false, false); err != nil {
 				return Stack{}, err
 			}
 		}
@@ -89,21 +98,22 @@ func Build(chat config.Chat, profiles []string) (Stack, error) {
 	if chat.ProjectRoot != "" {
 		for _, name := range autoProjectPromptCandidates {
 			path := filepath.Join(chat.ProjectRoot, name)
-			if err := builder.addFile("project", name, path, false); err != nil {
+			if err := builder.addFile("project", name, path, false, false); err != nil {
 				return Stack{}, err
 			}
 		}
 	}
 
 	for _, path := range chat.ProjectPromptFiles {
-		if err := builder.addFile("project", filepath.Base(path), path, true); err != nil {
+		if err := builder.addFile("project", filepath.Base(path), path, requireExplicit, !requireExplicit); err != nil {
 			return Stack{}, err
 		}
 	}
 
 	return Stack{
-		Text:    strings.Join(builder.sections, "\n\n"),
-		Sources: builder.sources,
+		Text:     strings.Join(builder.sections, "\n\n"),
+		Sources:  builder.sources,
+		Warnings: builder.warnings,
 	}, nil
 }
 
@@ -133,6 +143,7 @@ type stackBuilder struct {
 	seen     map[string]struct{}
 	sources  []Source
 	sections []string
+	warnings []string
 }
 
 func (b *stackBuilder) addInline(kind, name, body string) {
@@ -148,11 +159,14 @@ func (b *stackBuilder) addInline(kind, name, body string) {
 	b.sections = append(b.sections, renderSection(kind, name, body))
 }
 
-func (b *stackBuilder) addFile(kind, name, path string, required bool) error {
+func (b *stackBuilder) addFile(kind, name, path string, required bool, warnMissing bool) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		if required {
 			return fmt.Errorf("%s prompt path is empty", kind)
+		}
+		if warnMissing {
+			b.warnings = append(b.warnings, fmt.Sprintf("skipped empty %s prompt path", kind))
 		}
 		return nil
 	}
@@ -164,6 +178,9 @@ func (b *stackBuilder) addFile(kind, name, path string, required bool) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !required && os.IsNotExist(err) {
+			if warnMissing {
+				b.warnings = append(b.warnings, fmt.Sprintf("skipped missing %s prompt %q", kind, path))
+			}
 			return nil
 		}
 		return fmt.Errorf("load %s prompt %q: %w", kind, path, err)
@@ -173,6 +190,9 @@ func (b *stackBuilder) addFile(kind, name, path string, required bool) error {
 	if body == "" {
 		if required {
 			return fmt.Errorf("%s prompt %q is empty", kind, path)
+		}
+		if warnMissing {
+			b.warnings = append(b.warnings, fmt.Sprintf("skipped empty %s prompt %q", kind, path))
 		}
 		return nil
 	}

@@ -499,19 +499,19 @@ func (m *Manager) pythonReferencesViaLSP(ctx context.Context, match semantic.Pyt
 	return m.formatPylspLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
 }
 
-func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, pathFilter string, incoming bool) (string, error) {
+func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newPylspLSPClient(ctx)
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	defer client.close()
 
 	abs, err := m.resolvePath(match.Path, "")
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if err := client.openFile(abs); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	params := map[string]any{
 		"textDocument": map[string]any{"uri": pylspFileURI(abs)},
@@ -519,23 +519,23 @@ func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.
 	}
 	var items []pylspCallHierarchyItem
 	if err := client.request(ctx, "textDocument/prepareCallHierarchy", params, &items); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if len(items) == 0 {
-		return "", nil
+		return callHierarchyResult{}, nil
 	}
 	if incoming {
 		var calls []pylspIncomingCall
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-			return "", err
+			return callHierarchyResult{}, err
 		}
-		return m.formatPylspIncomingCalls(calls, pathFilter), nil
+		return m.formatPylspIncomingCalls(calls, pathFilter, match), nil
 	}
 	var calls []pylspOutgoingCall
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
-	return m.formatPylspOutgoingCalls(abs, calls, pathFilter), nil
+	return m.formatPylspOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
 func (m *Manager) pythonDiagnosticsViaLSP(ctx context.Context, abs string) ([]pylspDiagnostic, error) {
@@ -692,7 +692,7 @@ func (m *Manager) formatPylspLocations(locations []pylspLocation, pathFilter str
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -751,7 +751,7 @@ func (m *Manager) formatPylspWorkspaceSymbols(symbols []pylspSymbolInfo, pathFil
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -791,7 +791,7 @@ func (m *Manager) formatPylspWorkspaceSymbols(symbols []pylspSymbolInfo, pathFil
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatPylspIncomingCalls(calls []pylspIncomingCall, pathFilter string) string {
+func (m *Manager) formatPylspIncomingCalls(calls []pylspIncomingCall, pathFilter string, target semantic.PythonSymbolMatch) callHierarchyResult {
 	type entry struct {
 		path string
 		line int
@@ -803,7 +803,7 @@ func (m *Manager) formatPylspIncomingCalls(calls []pylspIncomingCall, pathFilter
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -823,16 +823,22 @@ func (m *Manager) formatPylspIncomingCalls(calls []pylspIncomingCall, pathFilter
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
+	targetAbs, _ := m.resolvePath(target.Path, "")
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name))
+		line := fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name)
+		lines = append(lines, line)
+		if targetAbs != "" {
+			relationships = append(relationships, m.callRelationshipFromAbs(item.path, item.line, item.name, targetAbs, target.Line, target.Name, line))
+		}
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
-func (m *Manager) formatPylspOutgoingCalls(callerPath string, calls []pylspOutgoingCall, pathFilter string) string {
+func (m *Manager) formatPylspOutgoingCalls(callerPath string, callerName string, calls []pylspOutgoingCall, pathFilter string) callHierarchyResult {
 	type entry struct {
 		callsitePath string
 		callsiteLine int
@@ -846,7 +852,7 @@ func (m *Manager) formatPylspOutgoingCalls(callerPath string, calls []pylspOutgo
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(targetAbs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(targetAbs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(targetAbs))
@@ -875,13 +881,16 @@ func (m *Manager) formatPylspOutgoingCalls(callerPath string, calls []pylspOutgo
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine))
+		line := fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine)
+		lines = append(lines, line)
+		relationships = append(relationships, m.callRelationshipFromAbs(item.callsitePath, item.callsiteLine, callerName, item.targetPath, item.targetLine, item.name, line))
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
 func pylspSymbolKindName(kind int) string {

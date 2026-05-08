@@ -61,10 +61,15 @@ type GoPackage struct {
 }
 
 func BuildGoIndex(root string) (*GoIndex, error) {
+	return BuildGoIndexWithOptions(root, IndexOptions{})
+}
+
+func BuildGoIndexWithOptions(root string, opts IndexOptions) (*GoIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
 	}
+	scope := cleanIndexScope(opts.Scope)
 
 	module := readGoModule(root)
 	fset := token.NewFileSet()
@@ -74,11 +79,19 @@ func BuildGoIndex(root string) (*GoIndex, error) {
 		Package: make(map[string]GoPackage),
 	}
 
+	errStop := filepath.SkipAll
+	filesParsed := 0
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := indexContextErr(opts); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
+			if !shouldVisitIndexDir(root, path, scope) {
+				return filepath.SkipDir
+			}
 			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
@@ -94,6 +107,9 @@ func BuildGoIndex(root string) (*GoIndex, error) {
 		}
 		rel = filepath.ToSlash(filepath.Clean(rel))
 		if discovery.ShouldSkipRelFile(rel) {
+			return nil
+		}
+		if !pathInIndexScope(rel, scope) {
 			return nil
 		}
 
@@ -184,8 +200,15 @@ func BuildGoIndex(root string) (*GoIndex, error) {
 		pkg.Methods += fileInfo.Methods
 		pkg.Types += fileInfo.Types
 		index.Package[fileInfo.PathDir()] = pkg
+		filesParsed++
+		if opts.MaxFiles > 0 && filesParsed >= opts.MaxFiles {
+			return errStop
+		}
 		return nil
 	})
+	if err == errStop {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}

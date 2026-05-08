@@ -240,7 +240,7 @@ func scoreCppSymbolMatch(pattern string, file CppFile, symbol CppSymbol) int {
 	if strings.Contains(pathLower, pattern) {
 		score += 8
 	}
-	if symbol.Kind == "method" {
+	if score > 0 && symbol.Kind == "method" {
 		score += 2
 	}
 	return score

@@ -487,23 +487,23 @@ func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semantic.Cpp
 	return m.formatClangdLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
 }
 
-func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.CppSymbolMatch, pathFilter string, incoming bool) (string, error) {
+func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.CppSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newClangdLSPClient(ctx)
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	defer client.close()
 
 	abs, err := m.resolvePath(match.Path, "")
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if err := client.openFile(abs); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	items, err := m.clangdPrepareCallHierarchy(ctx, client, abs, m.cppLSPPosition(abs, match))
 	if err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
 	if len(items) == 0 {
 		params := map[string]any{
@@ -518,7 +518,7 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.
 					if pathErr != nil {
 						continue
 					}
-					if !strings.HasPrefix(targetAbs, m.cfg.Root) {
+					if !m.pathWithinWorkspace(targetAbs) {
 						continue
 					}
 					if fallbackItems, prepErr := m.clangdPrepareCallHierarchy(ctx, client, targetAbs, map[string]any{
@@ -533,20 +533,20 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.
 		}
 	}
 	if len(items) == 0 {
-		return "", nil
+		return callHierarchyResult{}, nil
 	}
 	if incoming {
 		var calls []clangdIncomingCall
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-			return "", err
+			return callHierarchyResult{}, err
 		}
-		return m.formatClangdIncomingCalls(calls, pathFilter), nil
+		return m.formatClangdIncomingCalls(calls, pathFilter, match), nil
 	}
 	var calls []clangdOutgoingCall
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
-		return "", err
+		return callHierarchyResult{}, err
 	}
-	return m.formatClangdOutgoingCalls(abs, calls, pathFilter), nil
+	return m.formatClangdOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
 func (m *Manager) clangdPrepareCallHierarchy(ctx context.Context, client *clangdLSPClient, abs string, position map[string]any) ([]clangdCallHierarchyItem, error) {
@@ -665,7 +665,7 @@ func (m *Manager) formatClangdLocations(locations []clangdLocation, pathFilter s
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -724,7 +724,7 @@ func (m *Manager) formatClangdWorkspaceSymbols(symbols []clangdSymbolInfo, pathF
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -764,7 +764,7 @@ func (m *Manager) formatClangdWorkspaceSymbols(symbols []clangdSymbolInfo, pathF
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatClangdIncomingCalls(calls []clangdIncomingCall, pathFilter string) string {
+func (m *Manager) formatClangdIncomingCalls(calls []clangdIncomingCall, pathFilter string, target semantic.CppSymbolMatch) callHierarchyResult {
 	type entry struct {
 		path string
 		line int
@@ -776,7 +776,7 @@ func (m *Manager) formatClangdIncomingCalls(calls []clangdIncomingCall, pathFilt
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(abs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(abs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(abs))
@@ -796,16 +796,22 @@ func (m *Manager) formatClangdIncomingCalls(calls []clangdIncomingCall, pathFilt
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
+	targetAbs, _ := m.resolvePath(target.Path, "")
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name))
+		line := fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name)
+		lines = append(lines, line)
+		if targetAbs != "" {
+			relationships = append(relationships, m.callRelationshipFromAbs(item.path, item.line, item.name, targetAbs, target.Line, target.Name, line))
+		}
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
-func (m *Manager) formatClangdOutgoingCalls(callerPath string, calls []clangdOutgoingCall, pathFilter string) string {
+func (m *Manager) formatClangdOutgoingCalls(callerPath string, callerName string, calls []clangdOutgoingCall, pathFilter string) callHierarchyResult {
 	type entry struct {
 		callsitePath string
 		callsiteLine int
@@ -819,7 +825,7 @@ func (m *Manager) formatClangdOutgoingCalls(callerPath string, calls []clangdOut
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(targetAbs, m.cfg.Root) {
+		if !m.pathWithinWorkspace(targetAbs) {
 			continue
 		}
 		displayPath := filepath.ToSlash(m.displayPath(targetAbs))
@@ -848,13 +854,16 @@ func (m *Manager) formatClangdOutgoingCalls(callerPath string, calls []clangdOut
 		return entries[i].name < entries[j].name
 	})
 	lines := make([]string, 0, len(entries))
+	relationships := make([]ToolRelationship, 0, len(entries))
 	for _, item := range entries {
-		lines = append(lines, fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine))
+		line := fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine)
+		lines = append(lines, line)
+		relationships = append(relationships, m.callRelationshipFromAbs(item.callsitePath, item.callsiteLine, callerName, item.targetPath, item.targetLine, item.name, line))
 		if len(lines) >= m.cfg.MaxDirectoryEntries {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
+	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
 func (m *Manager) sourceLineText(path string, line int) string {

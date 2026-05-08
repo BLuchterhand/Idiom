@@ -947,6 +947,75 @@ func TestLoadRecordsReadsJSONL(t *testing.T) {
 	}
 }
 
+func TestLoadRecordsNormalizesKindPayloadJSONL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.jsonl")
+	const payload = "{\"kind\":\"tool_request\",\"payload\":{\"tool\":\"search_content\",\"raw\":\"{\\\"pattern\\\":\\\"Runner\\\"}\",\"action\":\"search_content:Runner\"}}\n"
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+	records, err := LoadRecords(path)
+	if err != nil {
+		t.Fatalf("LoadRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].Type != "tool_request" {
+		t.Fatalf("record type: want tool_request, got %q", records[0].Type)
+	}
+	if got, _ := records[0].Data["tool"].(string); got != "search_content" {
+		t.Fatalf("normalized tool: want search_content, got %q", got)
+	}
+}
+
+func TestLoadRecordsHandlesLongJSONLLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.jsonl")
+	payload := "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"" + strings.Repeat("x", 128*1024) + "\"}\n"
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+	records, err := LoadRecords(path)
+	if err != nil {
+		t.Fatalf("LoadRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if got, _ := records[0].Data["content"].(string); len(got) != 128*1024 {
+		t.Fatalf("long content length: want %d, got %d", 128*1024, len(got))
+	}
+}
+
+func TestAnalyzeLogSupportsE2EKindPayloadRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "e2e.jsonl")
+	payload := strings.Join([]string{
+		`{"kind":"user_turn","payload":{"index":0,"prompt":"find Runner"}}`,
+		`{"kind":"tool_request","payload":{"turn":0,"step":1,"tool":"search_content","raw":"{\"pattern\":\"Runner\"}","action":"search_content:Runner"}}`,
+		`{"kind":"tool_result","payload":{"turn":0,"step":1,"tool":"search_content","summary":"Found 1 matches","error":""}}`,
+		`{"kind":"assistant_turn","payload":{"index":0,"chars":42}}`,
+		`{"kind":"summary","payload":{"elapsed_ms":99,"tool_requests":1,"tool_results":1,"answer_chars":42}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write e2e log: %v", err)
+	}
+	report, err := AnalyzeLog(path)
+	if err != nil {
+		t.Fatalf("AnalyzeLog: %v", err)
+	}
+	if report.UserPrompt != "find Runner" {
+		t.Fatalf("user prompt: want find Runner, got %q", report.UserPrompt)
+	}
+	if report.Tools.SearchContent != 1 || report.Tools.Total != 1 {
+		t.Fatalf("tool counts not parsed: %+v", report.Tools)
+	}
+	if report.ToolResults != 1 || report.DurationMillis != 99 || report.FinalAnswerChars != 42 {
+		t.Fatalf("summary metrics not parsed: %+v", report)
+	}
+}
+
 func containsLanguageCapabilityExpectation(items []LanguageCapabilityExpectation, language string) bool {
 	for _, item := range items {
 		if strings.EqualFold(item.Language, language) {

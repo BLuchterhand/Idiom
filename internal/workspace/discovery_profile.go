@@ -26,6 +26,22 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 		return discoveryProfile("text_search", "targeted", "low", false)
 	case "read_file":
 		return discoveryProfile("file_read", "targeted", "low", false)
+	case "harness_audit":
+		return discoveryProfile("harness_audit", scopeFromPath(req.Path), "medium", true)
+	case "harness_feedback", "idiom_feedback":
+		return discoveryProfile("harness_feedback", "targeted", "low", true)
+	case "context_index":
+		return discoveryProfile("context_index", scopeFromPath(req.Path), "medium", true)
+	case "context_status":
+		return discoveryProfile("context_status", "targeted", "low", true)
+	case "context_query":
+		return discoveryProfile("context_query", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Pattern, req.Query)), "low", true)
+	case "context_zoom":
+		return discoveryProfile("context_zoom", "targeted", "low", true)
+	case "context_pack":
+		return discoveryProfile("context_pack", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Task, req.Query, req.Pattern)), "medium", true)
+	case "context_trace_pack":
+		return discoveryProfile("runtime_trace", scopeFromPathAndPattern(req.Path, req.Command), "medium", true)
 	case "discovery_query":
 		cost := "medium"
 		if normalizeDiscoveryQueryPurpose(req.Purpose) == "security_review" {

@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"idiom/internal/comprehension"
 )
 
 const (
@@ -20,18 +22,20 @@ const (
 )
 
 type discoveryQueryPacket struct {
-	SchemaVersion int                   `json:"schema_version"`
-	ID            string                `json:"id"`
-	Purpose       string                `json:"purpose"`
-	Query         string                `json:"query,omitempty"`
-	Target        string                `json:"target,omitempty"`
-	Pattern       string                `json:"pattern,omitempty"`
-	Language      string                `json:"language,omitempty"`
-	Depth         int                   `json:"depth"`
-	GeneratedAt   string                `json:"generated_at"`
-	ArtifactPath  string                `json:"artifact_path"`
-	Layers        []discoveryQueryLayer `json:"layers"`
-	Gaps          []string              `json:"gaps,omitempty"`
+	SchemaVersion  int                   `json:"schema_version"`
+	ID             string                `json:"id"`
+	Purpose        string                `json:"purpose"`
+	Query          string                `json:"query,omitempty"`
+	Target         string                `json:"target,omitempty"`
+	Pattern        string                `json:"pattern,omitempty"`
+	Language       string                `json:"language,omitempty"`
+	Depth          int                   `json:"depth"`
+	GeneratedAt    string                `json:"generated_at"`
+	ArtifactPath   string                `json:"artifact_path"`
+	ContextIndexID string                `json:"context_index_id,omitempty"`
+	ContextViews   []string              `json:"context_views,omitempty"`
+	Layers         []discoveryQueryLayer `json:"layers"`
+	Gaps           []string              `json:"gaps,omitempty"`
 }
 
 type discoveryQueryLayer struct {
@@ -47,11 +51,13 @@ type discoveryQueryLayer struct {
 }
 
 type discoveryQuerySummary struct {
-	ID           string   `json:"id"`
-	Purpose      string   `json:"purpose"`
-	ArtifactPath string   `json:"artifact_path"`
-	LayersRun    []string `json:"layers_run"`
-	Evidence     []struct {
+	ID             string   `json:"id"`
+	Purpose        string   `json:"purpose"`
+	ArtifactPath   string   `json:"artifact_path"`
+	ContextIndexID string   `json:"context_index_id,omitempty"`
+	ContextViews   []string `json:"context_views,omitempty"`
+	LayersRun      []string `json:"layers_run"`
+	Evidence       []struct {
 		Name          string `json:"name"`
 		Tool          string `json:"tool"`
 		Summary       string `json:"summary"`
@@ -128,9 +134,12 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 	pattern := strings.TrimSpace(req.Pattern)
 	language := r.packet.Language
 
+	contextBacked := r.addContextGraphLayer(req, path, pattern, language)
 	r.addContextLayer()
 	if isRegularFile(targetAbs) {
 		r.addFileOrientation(path, language)
+	} else if contextBacked {
+		r.packet.Gaps = append(r.packet.Gaps, "fresh context graph supplied target orientation; skipped live target listing")
 	} else {
 		r.addLayer("target_listing", ToolRequest{Tool: "list_files", Path: path, Recursive: true, MaxDepth: 2})
 	}
@@ -166,6 +175,78 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 	default:
 		r.packet.Gaps = append(r.packet.Gaps, "unknown purpose; ran only common orientation layers")
 	}
+}
+
+type discoveryContextPackSummary struct {
+	PackID         string   `json:"pack_id"`
+	IndexID        string   `json:"index_id"`
+	ArtifactPath   string   `json:"artifact_path"`
+	Fresh          bool     `json:"fresh"`
+	UnresolvedGaps []string `json:"unresolved_gaps"`
+}
+
+func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string, pattern string, language string) bool {
+	status, err := comprehension.Status(r.manager.cfg.Root)
+	if err != nil || !status.Indexed {
+		return false
+	}
+	if status.IndexID != "" {
+		r.packet.ContextIndexID = status.IndexID
+	}
+	if !status.Fresh {
+		r.packet.Gaps = append(r.packet.Gaps, "context index is stale; skipped context graph backing and used live discovery layers")
+		return false
+	}
+	task := discoveryContextPackTask(r.packet.Purpose, path, pattern, language, req.Query)
+	result, ok := r.addLayerResult("context_pack", ToolRequest{
+		Tool:  "context_pack",
+		Task:  task,
+		Path:  path,
+		Mode:  "plan",
+		Limit: 8,
+	})
+	if !ok || strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+	var pack discoveryContextPackSummary
+	if err := json.Unmarshal([]byte(result.Output), &pack); err != nil {
+		r.packet.Gaps = append(r.packet.Gaps, "context_pack output could not be decoded; used live discovery layers")
+		return false
+	}
+	if pack.IndexID != "" {
+		r.packet.ContextIndexID = pack.IndexID
+	}
+	if pack.ArtifactPath != "" && !slices.Contains(r.packet.ContextViews, pack.ArtifactPath) {
+		r.packet.ContextViews = append(r.packet.ContextViews, pack.ArtifactPath)
+	}
+	if !pack.Fresh {
+		r.packet.Gaps = append(r.packet.Gaps, "context_pack reported stale context; live discovery layers remain authoritative")
+		return false
+	}
+	for _, gap := range pack.UnresolvedGaps {
+		gap = strings.TrimSpace(gap)
+		if gap != "" {
+			r.packet.Gaps = append(r.packet.Gaps, "context_pack: "+gap)
+		}
+	}
+	return true
+}
+
+func discoveryContextPackTask(purpose string, path string, pattern string, language string, query string) string {
+	parts := []string{"Discovery query", purpose}
+	if strings.TrimSpace(query) != "" {
+		parts = append(parts, strings.TrimSpace(query))
+	}
+	if strings.TrimSpace(pattern) != "" {
+		parts = append(parts, "pattern "+strings.TrimSpace(pattern))
+	}
+	if strings.TrimSpace(path) != "" {
+		parts = append(parts, "path "+strings.TrimSpace(path))
+	}
+	if strings.TrimSpace(language) != "" {
+		parts = append(parts, "language "+strings.TrimSpace(language))
+	}
+	return strings.Join(parts, " ")
 }
 
 func (r *discoveryQueryRunner) addContextLayer() {
@@ -264,13 +345,17 @@ func (r *discoveryQueryRunner) addCtagsFallback(path string, pattern string) {
 }
 
 func (r *discoveryQueryRunner) addLayer(name string, req ToolRequest) {
+	_, _ = r.addLayerResult(name, req)
+}
+
+func (r *discoveryQueryRunner) addLayerResult(name string, req ToolRequest) (ToolResult, bool) {
 	if strings.TrimSpace(req.Tool) == "" || req.Tool == "discovery_query" {
-		return
+		return ToolResult{}, false
 	}
 	keyData, _ := json.Marshal(req)
 	key := name + ":" + string(keyData)
 	if _, ok := r.seen[key]; ok {
-		return
+		return ToolResult{}, false
 	}
 	r.seen[key] = struct{}{}
 
@@ -287,6 +372,7 @@ func (r *discoveryQueryRunner) addLayer(name string, req ToolRequest) {
 		PrecisionTier: result.PrecisionTier,
 	}
 	r.packet.Layers = append(r.packet.Layers, layer)
+	return result, true
 }
 
 func (r *discoveryQueryRunner) writeArtifact() error {
@@ -307,10 +393,12 @@ func (r *discoveryQueryRunner) writeArtifact() error {
 
 func (r *discoveryQueryRunner) summaryJSON() string {
 	summary := discoveryQuerySummary{
-		ID:           r.packet.ID,
-		Purpose:      r.packet.Purpose,
-		ArtifactPath: r.packet.ArtifactPath,
-		Gaps:         slices.Clone(r.packet.Gaps),
+		ID:             r.packet.ID,
+		Purpose:        r.packet.Purpose,
+		ArtifactPath:   r.packet.ArtifactPath,
+		ContextIndexID: r.packet.ContextIndexID,
+		ContextViews:   slices.Clone(r.packet.ContextViews),
+		Gaps:           slices.Clone(r.packet.Gaps),
 	}
 	for _, layer := range r.packet.Layers {
 		summary.LayersRun = append(summary.LayersRun, layer.Name+":"+layer.Tool)
