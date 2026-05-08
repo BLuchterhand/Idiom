@@ -154,6 +154,43 @@ func TestBuildPlanningPacketV2IncludesBudgetFreshnessAndScope(t *testing.T) {
 	}
 }
 
+func TestBuildPlanningPacketV2ParsesTruncatedContextViewFromPath(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".idiom/comprehension/views/large.json"), `{
+  "pack_id": "large",
+  "index_id": "idx-large",
+  "fresh": true,
+  "candidate_files": [
+    {"path": "cmd/idiom/architect.go", "role": "modify", "reason": "owns architect CLI", "language": "go", "confidence": "precise_backend", "handles": ["file://cmd/idiom/architect.go"]}
+  ],
+  "tests": [
+    {"command": "go test ./cmd/idiom", "reason": "architect CLI smoke coverage"}
+  ],
+  "padding": "`+strings.Repeat("x", 4096)+`"
+}`+"\n")
+
+	packet, err := BuildPacket(context.Background(), BuildOptions{
+		Root:           root,
+		Task:           "Plan architect CLI smoke coverage",
+		Schema:         "planning_v2",
+		BudgetTier:     "brief",
+		ContextViews:   []string{".idiom/comprehension/views/large.json"},
+		MaxOutputBytes: 128,
+	})
+	if err != nil {
+		t.Fatalf("BuildPacket: %v", err)
+	}
+	if !strings.Contains(packet.Evidence[0].Content, "[truncated]") {
+		t.Fatalf("test setup expected truncated evidence content: %#v", packet.Evidence[0])
+	}
+	if !hasCandidateScope(packet, "file://cmd/idiom/architect.go") {
+		t.Fatalf("candidate scope should be parsed from full context view path, got %#v", packet.CandidateScope)
+	}
+	if len(packet.Unknowns) != 0 {
+		t.Fatalf("full context view fallback should avoid parse unknowns, got %#v", packet.Unknowns)
+	}
+}
+
 func TestBuildPlanningPacketV2IncludesMultiLanguageFixtureScope(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, ".idiom/comprehension/views/multi.json"), `{
@@ -369,6 +406,30 @@ func TestAuditPlanFindsMissingFile(t *testing.T) {
 	}
 	if !hasAuditFinding(result, "missing_file", "error") {
 		t.Fatalf("expected missing_file error, got %#v", result.Findings)
+	}
+}
+
+func TestAuditPlanDoesNotTruncateLongerExtensions(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{
+		"traces/run.json",
+		"src/feature.cpp",
+		"scenes/main.tscn",
+		"web/view.jsx",
+	} {
+		writeFile(t, filepath.Join(root, path), "fixture\n")
+	}
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Review plan paths",
+		Workspace:     WorkspaceSummary{Root: root},
+	}
+	result := AuditPlan(packet, "Review traces/run.json, src/feature.cpp, scenes/main.tscn, and web/view.jsx.")
+	if !result.OK {
+		t.Fatalf("expected existing long-extension paths to pass, got %#v", result.Findings)
+	}
+	if hasAuditFinding(result, "missing_file", "error") {
+		t.Fatalf("path extraction truncated longer extension: %#v", result.Findings)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -133,7 +134,7 @@ type contextCandidateTest struct {
 }
 
 func enrichPlanningPacketV2(packet *Packet, opts PlanningPacketV2Options) {
-	views := summarizeContextViews(packet.Evidence)
+	views := summarizeContextViews(packet.Workspace.Root, packet.Evidence)
 	packet.Tests = mergeCommands(packet.Tests, testsFromContextViews(views))
 	packet.Unknowns = mergeStrings(packet.Unknowns, unknownsFromContextViews(views))
 	packet.Risks = cleanRisks(append(packet.Risks, risksFromContextViews(views)...))
@@ -471,7 +472,7 @@ func buildPlanningHandoff(packet Packet) *PlanningHandoff {
 	return handoff
 }
 
-func summarizeContextViews(evidence []Evidence) []contextViewSummary {
+func summarizeContextViews(root string, evidence []Evidence) []contextViewSummary {
 	out := make([]contextViewSummary, 0)
 	for _, ev := range evidence {
 		if ev.Kind != "context_view" || strings.TrimSpace(ev.Content) == "" || strings.TrimSpace(ev.Error) != "" {
@@ -480,9 +481,13 @@ func summarizeContextViews(evidence []Evidence) []contextViewSummary {
 		view := contextViewSummary{Label: evidenceName(ev), Path: ev.Path}
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(ev.Content), &payload); err != nil {
-			view.ParseError = err.Error()
-			out = append(out, view)
-			continue
+			fullPayload, fullErr := readFullContextViewPayload(root, ev.Path)
+			if fullErr != nil {
+				view.ParseError = err.Error()
+				out = append(out, view)
+				continue
+			}
+			payload = fullPayload
 		}
 		view.PackID = stringField(payload, "pack_id")
 		view.IndexID = stringField(payload, "index_id")
@@ -509,6 +514,26 @@ func summarizeContextViews(evidence []Evidence) []contextViewSummary {
 		out = append(out, view)
 	}
 	return out
+}
+
+func readFullContextViewPayload(root string, path string) (map[string]any, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, os.ErrNotExist
+	}
+	full := path
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(root, full)
+	}
+	data, err := os.ReadFile(filepath.Clean(full))
+	if err != nil {
+		return nil, err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }
 
 func testsFromContextViews(views []contextViewSummary) []CommandRef {

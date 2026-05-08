@@ -23,7 +23,7 @@ type PlanAuditFinding struct {
 }
 
 var (
-	planPathPattern    = regexp.MustCompile(`(?:^|[\s'"\(\[` + "`" + `])([A-Za-z0-9_./-]+\.(?:go|rs|py|pyi|ts|tsx|js|jsx|java|c|cc|cpp|cxx|h|hh|hpp|hxx|gd|tscn|tres|md|json|ya?ml|toml|sh|sql)(?::\d+)?)`)
+	planPathPattern    = regexp.MustCompile(`(?:^|[\s'"\(\[` + "`" + `])([A-Za-z0-9_./-]+\.(?:go|rs|pyi|py|tsx|tscn|ts|jsx|json|js|java|cxx|cpp|cc|c|hxx|hpp|hh|h|gd|tres|md|ya?ml|toml|sh|sql)(?::\d+)?)(?:$|[\s'"\)\]\},;.` + "`" + `])`)
 	planHandlePattern  = regexp.MustCompile(`\b(?:file|symbol|test|trace|context_pack)://[^\s\]\),;` + "`" + `]+`)
 	planCommandPattern = regexp.MustCompile("`([^`]*(?:go test|make test|make build|go build|npm test|pnpm test|yarn test)[^`]*)`")
 )
