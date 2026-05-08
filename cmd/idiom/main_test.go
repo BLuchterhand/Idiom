@@ -329,6 +329,12 @@ func TestSessionIDFromPath(t *testing.T) {
 	}
 }
 
+func TestCommandTelemetryNameClassifiesAuditSubcommands(t *testing.T) {
+	if got := commandTelemetryName([]string{"audit", "watch", "--once"}); got != "audit:watch" {
+		t.Fatalf("commandTelemetryName audit watch = %q, want audit:watch", got)
+	}
+}
+
 func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
 	telemetryDir := t.TempDir()
 	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)

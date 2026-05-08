@@ -73,6 +73,9 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "architect" {
 		return runArchitectMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
+	if len(args) > 0 && args[0] == "audit" {
+		return runAuditMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
 	return runWithTelemetry(args, stdout, stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions, rec)
 }
 
@@ -636,6 +639,11 @@ func commandTelemetryName(args []string) string {
 			return "architect:" + args[1]
 		}
 		return "architect"
+	case "audit":
+		if len(args) > 1 {
+			return "audit:" + args[1]
+		}
+		return "audit"
 	default:
 		for _, arg := range args {
 			if strings.HasPrefix(arg, "-prompt=") || strings.HasPrefix(arg, "--prompt=") {

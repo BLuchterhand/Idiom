@@ -310,6 +310,20 @@ component, confidence, and severity.
 ./idiom tool harness_feedback --input '{"category":"tool_gap","component":"context_pack","expected":"packet names the deciding relationship","observed":"packet named candidate files but omitted the edge needed to choose","workaround":"used language references before editing","impact":"extra read loop","evidence":["logs/conversations/session.jsonl step 8"],"confidence":"verified","severity":"medium"}'
 ```
 
+For autonomous local monitoring, run `idiom audit watch`. The watcher polls
+telemetry and conversation JSONL streams, debounces high-signal trigger events
+such as completed `implement` processes, completion-gate records, high-risk stop
+reasons, malformed tool input, stale-context reports, and `harness_feedback`,
+then writes deterministic review packets under `.idiom/audits/watch`.
+
+```bash
+./idiom audit watch --config config.json
+./idiom audit watch --config config.json --once --review-existing --debounce 0
+```
+
+The first long-running invocation creates a baseline by default; pass
+`--review-existing` when you want the initial scan to review existing logs.
+
 ## Replay And Eval
 
 `idiom` now includes a scored log-evaluation CLI:
