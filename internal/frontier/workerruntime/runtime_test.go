@@ -133,6 +133,34 @@ func TestBuildActionGuidanceForExactAnchorHiddenPrewriteTool(t *testing.T) {
 	}
 }
 
+func TestBuildActionGuidanceForWriteReadyImplementationPacket(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:       "tool_result",
+		Request:      workspace.ToolRequest{Tool: "read_file", Path: "native/tests/test_cart_system.cpp", StartLine: 100, EndLine: 160},
+		Constraints:  []string{"implementation_packet_write_ready"},
+		WriteCapable: true,
+		Result: workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Read native/tests/test_cart_system.cpp lines 100-160",
+			Output:  "TEST_CASE(\"existing pattern\") {}",
+		},
+	})
+	if !containsString(guidance.InvalidNext, "orientation read/search after required edit paths and packet evidence without a named missing fact") {
+		t.Fatalf("missing write-ready invalid action: %#v", guidance)
+	}
+	joined := strings.Join(guidance.ValidNext, "\n")
+	for _, want := range []string{
+		"edit_file or apply_patch on a required edit path",
+		"if this read resolved the named edit-safety fact, edit a required path now",
+		"do not take another orientation read",
+		"<<QUESTION>> naming the exact edit-safety fact",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in write-ready guidance, got %#v", want, guidance.ValidNext)
+		}
+	}
+}
+
 func TestBuildActionGuidanceIgnoresCompletionGatePhrasesInSearchOutput(t *testing.T) {
 	guidance := BuildActionGuidance(ActionGuidanceInput{
 		Reason:  "tool_result",
@@ -463,6 +491,53 @@ func TestBuildStepInstructionUsesClosureDirective(t *testing.T) {
 	}
 }
 
+func TestBuildStepInstructionUsesWriteReadyImplementationDirective(t *testing.T) {
+	instruction := BuildStepInstruction(RunState{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		Permission:        "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/system.cpp", "native/tests/test_system.cpp"},
+		Constraints:       []string{"implementation_packet_write_ready"},
+	})
+	for _, want := range []string{
+		"write-ready implementation packet",
+		"one named fact",
+		"edit an in-scope required path",
+		"<<QUESTION>>",
+	} {
+		if !strings.Contains(instruction.Directive, want) {
+			t.Fatalf("expected write-ready directive %q, got %q", want, instruction.Directive)
+		}
+	}
+}
+
+func TestBuildStepInstructionOnlyUsesRemainingPathDirectiveForMissingPaths(t *testing.T) {
+	partial := BuildStepInstruction(RunState{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		Permission:        "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+		ChangedPaths:      []string{"a.txt"},
+	})
+	if !strings.Contains(partial.Directive, "Required edit paths remain contractual") {
+		t.Fatalf("expected remaining-path directive for partial edit, got %q", partial.Directive)
+	}
+
+	complete := BuildStepInstruction(RunState{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		Permission:        "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+		ChangedPaths:      []string{"a.txt", "b.txt"},
+	})
+	if strings.Contains(complete.Directive, "Required edit paths remain contractual") {
+		t.Fatalf("did not expect remaining-path directive once all required paths changed, got %q", complete.Directive)
+	}
+}
+
 func TestRenderInitialRuntimeBriefIncludesPolicyManifestAndTargets(t *testing.T) {
 	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
 		Lane:                 "implement",
@@ -521,6 +596,26 @@ func TestRenderInitialRuntimeBriefAddsGuardedWriteFirstActionContract(t *testing
 	})
 	if strings.Contains(readOnly, "first assistant response must be either exactly one tool call") {
 		t.Fatalf("read-only runtime brief should not include guarded-write first-action directive:\n%s", readOnly)
+	}
+}
+
+func TestRenderInitialRuntimeBriefAddsRequiredEditPathReadinessDirective(t *testing.T) {
+	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/system.cpp"},
+		AllowedTools:      []string{"read_file", "edit_file"},
+	})
+	for _, want := range []string{
+		"required_edit_paths are present",
+		"read only for a named edit-safety fact",
+		"then edit or report <<QUESTION>>",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected required-path readiness directive %q in:\n%s", want, rendered)
+		}
 	}
 }
 

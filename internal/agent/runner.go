@@ -180,11 +180,20 @@ func (r *Runner) Run(
 	budgetExhausted := false
 	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
 	acceptedAnswerSignalsEmitted := false
+	completionStatusEmitted := false
+	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
+		completionStatusEmitted = true
+		r.emitCompletionStatus(status, reason, blockerKind, results, userVisibleBlocker)
+	}
 	defer func() {
 		r.emitBudgetLedger(policy, metrics, stopReason, budgetExhausted)
 	}()
 	emitAcceptedAnswerSignalsOnce := func(answer string) {
 		if acceptedAnswerSignalsEmitted || strings.TrimSpace(answer) == "" {
+			return
+		}
+		if blockerKind, _ := r.finalAnswerBlockerKind(answer, collectedResults); blockerKind != "" && completionStatusEmitted {
+			acceptedAnswerSignalsEmitted = true
 			return
 		}
 		r.emitAcceptedAnswerSignals(answer, collectedResults)
@@ -373,7 +382,7 @@ func (r *Runner) Run(
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
 				if priorGateRejections >= 2 {
 					answer := r.completionGateRepeatedBlockerAnswer(result, collectedResults)
-					r.emitCompletionStatus("blocked", "completion_gate_repeated_rejection", "completion_gate_repeated_rejection", collectedResults, true)
+					emitCompletionStatus("blocked", "completion_gate_repeated_rejection", "completion_gate_repeated_rejection", collectedResults, true)
 					return finish(answer, nil, "completion_gate_repeated_rejection", true)
 				}
 				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
@@ -440,15 +449,16 @@ func (r *Runner) Run(
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 				if answer, ok := r.exactAnchorHiddenToolBlockerAnswer(req, collectedResults); ok {
-					r.emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", collectedResults, true)
+					emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", collectedResults, true)
 					return finish(answer, nil, "exact_anchor_prewrite_hidden_tool_repeated", true)
 				}
 			}
 			if implementationWriteOnlyRecoveryActive && isReadClassTool(req) {
 				decision := runnerRequestBudgetDecision{ForceAnswerReason: "read_budget_exhausted"}
 				if answer, ok := r.implementationReadBudgetBlockerAnswer(decision, collectedResults); ok {
-					r.emitCompletionStatus("blocked", "read_budget_exhausted_before_write", "read_budget_exhausted_before_write", collectedResults, true)
-					return finish(answer, nil, "read_budget_exhausted_before_write", true)
+					blockerKind := r.implementationReadBudgetBlockerKind(collectedResults)
+					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+					return finish(answer, nil, blockerKind, true)
 				}
 			}
 			answer, err, done := controller.rejectTool(
@@ -460,7 +470,7 @@ func (r *Runner) Run(
 			)
 			if done {
 				if answer, ok := r.exactAnchorHiddenToolBlockerAnswer(req, collectedResults); ok {
-					r.emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", collectedResults, true)
+					emitCompletionStatus("blocked", "exact_anchor_prewrite_hidden_tool_repeated", "exact_anchor_prewrite_hidden_tool_repeated", collectedResults, true)
 					return finish(answer, nil, "exact_anchor_prewrite_hidden_tool_repeated", true)
 				}
 				return finish(answer, err, "hidden_tool_repeated", true)
@@ -661,7 +671,8 @@ func (r *Runner) Run(
 		if isReadClassTool(req) {
 			requestBudget.noteReadClassRequest(req)
 			metrics.ReadClassCalls++
-			if decision := requestBudget.readBudgetDecision(policy, req); decision.Handled {
+			readPolicy := r.readBudgetPolicyForCurrentState(policy, collectedResults)
+			if decision := requestBudget.readBudgetDecision(readPolicy, req); decision.Handled {
 				if decision.EventRole != "" {
 					r.emitEvent(RunEvent{Role: decision.EventRole, Content: firstNonEmpty(decision.EventContent, decision.Nudge)})
 				}
@@ -685,8 +696,9 @@ func (r *Runner) Run(
 						continue
 					}
 					if answer, ok := r.implementationReadBudgetBlockerAnswer(decision, collectedResults); ok {
-						r.emitCompletionStatus("blocked", decision.ForceAnswerReason, "read_budget_exhausted_before_write", collectedResults, true)
-						return finish(answer, nil, decision.ForceAnswerReason, true)
+						blockerKind := r.implementationReadBudgetBlockerKind(collectedResults)
+						emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+						return finish(answer, nil, blockerKind, true)
 					}
 					answer, err = controller.completeWithoutMoreToolsWithReason(decision.ForceAnswerPrompt)
 					return finish(answer, err, decision.ForceAnswerReason, true)
@@ -967,7 +979,7 @@ func (r *Runner) Run(
 			if exactAnchorWriteOnlyActive && (rejectionRecoveryNudgeUsed || exactAnchorWriteFailures >= 3) {
 				result := workspace.ToolResult{Tool: req.Tool, Summary: summary, Error: errorText}
 				if blocker, ok := r.exactAnchorRepeatedWriteFailureBlockerAnswer(req, result, collectedResults); ok {
-					r.emitCompletionStatus("blocked", "exact_anchor_write_failure_repeated", "exact_anchor_write_failure_repeated", collectedResults, true)
+					emitCompletionStatus("blocked", "exact_anchor_write_failure_repeated", "exact_anchor_write_failure_repeated", collectedResults, true)
 					return finish(blocker, nil, "exact_anchor_write_failure_repeated", true)
 				}
 			}
@@ -1056,7 +1068,7 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "read-class tools remain hidden after failed exact-anchor write"})
 			if rejectionRecoveryNudgeUsed || exactAnchorWriteFailures >= 3 {
 				if answer, ok := r.exactAnchorRepeatedWriteFailureBlockerAnswer(req, result, collectedResults); ok {
-					r.emitCompletionStatus("blocked", "exact_anchor_write_failure_repeated", "exact_anchor_write_failure_repeated", collectedResults, true)
+					emitCompletionStatus("blocked", "exact_anchor_write_failure_repeated", "exact_anchor_write_failure_repeated", collectedResults, true)
 					return finish(answer, nil, "exact_anchor_write_failure_repeated", true)
 				}
 			}
@@ -1344,6 +1356,7 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 
 func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	brief = runnerBriefWithRequiredEditPathHints(brief, results)
 	switch phase := debugLogPhase(brief, results); phase {
 	case "latest_log_selection":
 		brief.Constraints = mergeRunnerStateStrings([]string{"latest_log_selection_phase"}, brief.Constraints)
@@ -1453,6 +1466,39 @@ func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results [
 		}, brief.SearchPolicy)
 	}
 	return workerruntime.NormalizeRuntimeBrief(brief)
+}
+
+func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
+	if !runnerBriefRequiresMutation(brief) || len(brief.RequiredEditPaths) == 0 {
+		return brief
+	}
+	changed := changedPathsFromToolResults(results)
+	missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
+	if len(changed) == 0 {
+		brief.Constraints = mergeRunnerStateStrings([]string{"implementation_packet_write_ready"}, brief.Constraints)
+		brief.RequiredNext = mergeRunnerStateStrings([]string{
+			"edit a required path now if the packet and gathered evidence support a safe change",
+			"if one exact edit-safety fact is missing, name it and use one targeted probe; after it resolves, edit or report <<QUESTION>>",
+		}, brief.RequiredNext)
+		brief.InvalidActions = mergeRunnerStateStrings([]string{
+			"orientation read/search after required edit paths and packet evidence without a named missing fact",
+		}, brief.InvalidActions)
+		brief.SearchPolicy = mergeRunnerStateStrings([]string{
+			"required_edit_paths plus packet evidence establish the write scope; discovery should close only a named edit-safety gap",
+		}, brief.SearchPolicy)
+		return brief
+	}
+	if len(missing) > 0 {
+		brief.Constraints = mergeRunnerStateStrings([]string{"implementation_required_paths_remaining"}, brief.Constraints)
+		brief.RequiredNext = mergeRunnerStateStrings([]string{
+			"edit each remaining required path or report <<QUESTION>> with the exact blocker for that path",
+		}, brief.RequiredNext)
+		brief.InvalidActions = mergeRunnerStateStrings([]string{
+			"final answer while required edit paths remain unchanged",
+			"new orientation read/search before resolving remaining required edit paths",
+		}, brief.InvalidActions)
+	}
+	return brief
 }
 
 func runnerVisibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
@@ -3573,11 +3619,41 @@ func runnerBriefRequiresMutation(brief workerruntime.WorkerRuntimeBrief) bool {
 		strings.Contains(permission, "write")
 }
 
+func (r *Runner) readBudgetPolicyForCurrentState(policy RunPolicy, results []workspace.ToolResult) RunPolicy {
+	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
+		return policy
+	}
+	changed := changedPathsFromToolResults(results)
+	if len(changed) == 0 {
+		return clampReadBudgetHard(policy, requiredEditPathPrewriteReadBudgetHard)
+	}
+	if len(missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changed)) > 0 {
+		return clampReadBudgetHard(policy, requiredEditPathRemainderReadBudgetHard)
+	}
+	return policy
+}
+
+func clampReadBudgetHard(policy RunPolicy, ceiling int) RunPolicy {
+	if ceiling <= 0 {
+		return policy
+	}
+	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > ceiling {
+		policy.ReadBudgetHard = ceiling
+	}
+	return policy
+}
+
 func (r *Runner) implementationReadBudgetBlockerAnswer(decision runnerRequestBudgetDecision, results []workspace.ToolResult) (string, bool) {
 	if r == nil || decision.ForceAnswerReason != "read_budget_exhausted" {
 		return "", false
 	}
-	if !runnerBriefRequiresMutation(r.RuntimeBrief) || len(changedPathsFromToolResults(results)) > 0 {
+	if !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return "", false
+	}
+	if missing := r.remainingRequiredEditPaths(results); len(missing) > 0 {
+		return fmt.Sprintf("<<QUESTION>>: Read/search budget exhausted while required edit path(s) remain unchanged: %s. Complete those edits from the current packet/evidence, or re-dispatch with a narrower anchor for each skipped path.", strings.Join(missing, ", ")), true
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
 		return "", false
 	}
 	target := "the requested implementation target"
@@ -3591,7 +3667,13 @@ func (r *Runner) implementationReadBudgetRecoveryPrompt(decision runnerRequestBu
 	if r == nil || decision.ForceAnswerReason != "read_budget_exhausted" {
 		return "", false
 	}
-	if !runnerBriefRequiresMutation(r.RuntimeBrief) || len(changedPathsFromToolResults(results)) > 0 {
+	if !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return "", false
+	}
+	if missing := r.remainingRequiredEditPaths(results); len(missing) > 0 {
+		return fmt.Sprintf("Read/search budget is exhausted while required edit path(s) remain unchanged: %s. Read/search tools are now hidden for this turn. Use the target packet and gathered evidence to make the smallest safe edit to each remaining required path with edit_file, write_file, append_file, or apply_patch. If a remaining path genuinely cannot be edited safely from the available evidence, answer with <<QUESTION>> and name the exact missing anchor for that path; do not perform additional discovery.", strings.Join(missing, ", ")), true
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
 		return "", false
 	}
 	target := "the requested implementation target"
@@ -3599,6 +3681,20 @@ func (r *Runner) implementationReadBudgetRecoveryPrompt(decision runnerRequestBu
 		target = strings.Join(refs, ", ")
 	}
 	return fmt.Sprintf("Read/search budget is exhausted before any edit attempt. Read/search tools are now hidden for this turn. If the target packet and gathered evidence identify an exact safe edit to %s, make the smallest allowed edit with edit_file, write_file, append_file, or apply_patch. If the exact edit location is still genuinely unknown, answer with <<QUESTION>> and name the one missing fact or preloaded anchor needed; do not perform additional discovery.", target), true
+}
+
+func (r *Runner) implementationReadBudgetBlockerKind(results []workspace.ToolResult) string {
+	if r != nil && len(r.remainingRequiredEditPaths(results)) > 0 {
+		return "read_budget_exhausted_required_paths_remaining"
+	}
+	return "read_budget_exhausted_before_write"
+}
+
+func (r *Runner) remainingRequiredEditPaths(results []workspace.ToolResult) []string {
+	if r == nil {
+		return nil
+	}
+	return missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
 }
 
 func (r *Runner) exactAnchorHiddenToolBlockerAnswer(req workspace.ToolRequest, results []workspace.ToolResult) (string, bool) {
@@ -5123,6 +5219,35 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	lane := firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
 	contract := firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer")
 	evidencePaths := acceptedAnswerEvidencePaths(answer, results, r.RuntimeBrief)
+	if blockerKind, reason := r.finalAnswerBlockerKind(answer, results); blockerKind != "" {
+		r.emitEvent(marshalRunEvent("readiness_check", map[string]any{
+			"lane":           lane,
+			"ready":          false,
+			"confidence":     "blocked",
+			"action":         "block",
+			"reason":         reason,
+			"evidence_paths": evidencePaths,
+		}))
+		r.emitEvent(marshalRunEvent("final_answer_critic", map[string]any{
+			"contract":     contract,
+			"passed":       false,
+			"action":       "block",
+			"reason":       reason,
+			"blocker_kind": blockerKind,
+		}))
+		r.emitEvent(marshalRunEvent("control_rails_enforcement", map[string]any{
+			"lane":           lane,
+			"task_family":    firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
+			"contract":       contract,
+			"passed":         false,
+			"action":         "block",
+			"reason":         reason,
+			"blocker_kind":   blockerKind,
+			"evidence_paths": evidencePaths,
+		}))
+		r.emitCompletionStatus("blocked", reason, blockerKind, results, true)
+		return
+	}
 	confidence := "medium"
 	if len(evidencePaths) >= 2 && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(answer)), "partial findings from this turn") {
 		confidence = "high"
@@ -5150,6 +5275,18 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 		"action":         "accept",
 		"evidence_paths": evidencePaths,
 	}))
+}
+
+func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolResult) (string, string) {
+	if r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) {
+		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
+			return "required_edit_paths_remaining", "required_edit_paths_remaining"
+		}
+	}
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		return "user_visible_blocker", "user_visible_blocker"
+	}
+	return "", ""
 }
 
 func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) []string {
@@ -6891,10 +7028,47 @@ func unsupportedClaimedChangedPaths(reply string, results []workspace.ToolResult
 	var unsupported []string
 	for _, path := range claimed {
 		if _, ok := actual[path]; !ok {
+			if claimedPathMatchesActualBasename(path, actual) || !looksLikeStrictChangedPathClaim(path) {
+				continue
+			}
 			unsupported = append(unsupported, path)
 		}
 	}
 	return unsupported
+}
+
+func claimedPathMatchesActualBasename(claimed string, actual map[string]struct{}) bool {
+	claimed = normalizeRunnerPath(claimed)
+	if claimed == "" || strings.Contains(claimed, "/") {
+		return false
+	}
+	matches := 0
+	for path := range actual {
+		if filepath.Base(path) == claimed {
+			matches++
+		}
+	}
+	return matches == 1
+}
+
+func looksLikeStrictChangedPathClaim(path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	if pathparse.HasWorkspaceFileExtension(path) {
+		return true
+	}
+	first, _, hasSlash := strings.Cut(path, "/")
+	if !hasSlash {
+		return false
+	}
+	switch first {
+	case ".codex", ".github", ".idiom", ".vscode", "app", "apps", "bin", "cmd", "config", "configs", "docs", "examples", "internal", "lib", "native", "pkg", "prompts", "scripts", "src", "test", "tests", "tools", "web":
+		return true
+	default:
+		return false
+	}
 }
 
 func missingRequiredEditPaths(required []string, actual map[string]struct{}) []string {
@@ -7794,6 +7968,7 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 
 func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	changedPaths := mapKeys(changedPathsFromToolResults(results))
+	missingRequiredPaths := missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))
 	var lastError *workspace.ToolResult
 	latestProgressIndex := -1
 	for i := range results {
@@ -7821,6 +7996,9 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	}
 
 	var b strings.Builder
+	if len(missingRequiredPaths) > 0 {
+		b.WriteString("<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.\n\n")
+	}
 	if len(changedPaths) > 0 {
 		b.WriteString("Changed paths:\n")
 		for _, path := range changedPaths {
@@ -7833,9 +8011,9 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		b.WriteString("Changed paths: none\n\n")
 	}
 
-	if missing := missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
+	if len(missingRequiredPaths) > 0 {
 		b.WriteString("Required edit paths not changed:\n")
-		for _, path := range missing {
+		for _, path := range missingRequiredPaths {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteString("\n")

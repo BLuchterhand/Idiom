@@ -113,7 +113,11 @@ func (r *Runner) effectivePolicy() RunPolicy {
 	return policy
 }
 
-const mutationReadBudgetHard = 8
+const (
+	mutationReadBudgetHard                  = 8
+	requiredEditPathPrewriteReadBudgetHard  = 5
+	requiredEditPathRemainderReadBudgetHard = 2
+)
 
 func clampMutationReadBudget(policy RunPolicy) RunPolicy {
 	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > mutationReadBudgetHard {

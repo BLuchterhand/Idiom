@@ -107,8 +107,15 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 	if required := requiredEditPathsFromPrompt(prompt); len(required) > 0 {
 		brief.RequiredEditPaths = appendUniqueBriefStrings(brief.RequiredEditPaths, required...)
 		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, brief.RequiredEditPaths)...)
+		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "required_edit_paths_define_write_scope")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_paths_covered_or_blocked")
+		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
+			"use reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>",
+		)
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
+		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
+			"treat required_edit_paths plus packet evidence as readiness-to-write unless one exact edit-safety fact is missing",
+		)
 		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_paths_reported")
 		if len(brief.RequiredEditSnippets) > 0 {
 			brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_snippets_present_or_blocked")
@@ -394,20 +401,69 @@ func promptContainsExactEditAnchor(prompt string) bool {
 		(strings.Contains(prompt, "\n--- ") && strings.Contains(prompt, "\n+++ ") && strings.Contains(prompt, "\n@@")) {
 		return true
 	}
-	anchorPairs := [][]string{
-		{"old_text", "new_text"},
-		{"old text", "new text"},
-		{"old snippet", "new snippet"},
-		{"before:", "after:"},
-		{"replace:", "with:"},
-		{"exact old", "exact new"},
+	return promptHasStructuredExactEditPair(lower)
+}
+
+func promptHasStructuredExactEditPair(lowerPrompt string) bool {
+	type pair struct {
+		left  string
+		right string
 	}
-	for _, pair := range anchorPairs {
-		if strings.Contains(lower, pair[0]) && strings.Contains(lower, pair[1]) {
+	pairs := []pair{
+		{left: "old_text", right: "new_text"},
+		{left: "old text", right: "new text"},
+		{left: "old snippet", right: "new snippet"},
+		{left: "before", right: "after"},
+		{left: "replace", right: "with"},
+		{left: "exact old", right: "exact new"},
+	}
+	labels := make(map[string]struct{}, len(pairs)*2)
+	for _, line := range strings.Split(lowerPrompt, "\n") {
+		label, ok := exactEditAnchorLineLabel(line)
+		if !ok {
+			continue
+		}
+		labels[label] = struct{}{}
+	}
+	for _, pair := range pairs {
+		if _, ok := labels[pair.left]; !ok {
+			continue
+		}
+		if _, ok := labels[pair.right]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+func exactEditAnchorLineLabel(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	line = strings.TrimLeft(line, "-*")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", false
+	}
+	separator := strings.Index(line, ":")
+	if equals := strings.Index(line, "="); equals >= 0 && (separator < 0 || equals < separator) {
+		separator = equals
+	}
+	if separator < 0 {
+		return "", false
+	}
+	label := strings.TrimSpace(line[:separator])
+	label = strings.Trim(label, "`'\"*_ {}")
+	label = strings.NewReplacer("-", " ", "_", " ").Replace(label)
+	label = strings.Join(strings.Fields(label), " ")
+	switch label {
+	case "old text", "new text", "old snippet", "new snippet", "before", "after", "replace", "with", "exact old", "exact new":
+		return label, true
+	case "old":
+		return "old text", true
+	case "new":
+		return "new text", true
+	default:
+		return "", false
+	}
 }
 
 func defaultVerificationPlan(root string) []string {

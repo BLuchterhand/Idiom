@@ -248,8 +248,73 @@ enqueue_loader_job_once();
 	if !slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
 		t.Fatalf("expected exact-anchor constraint, got %#v", plan.runtimeBrief.Constraints)
 	}
+	if !slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope") {
+		t.Fatalf("expected required-path write-scope constraint, got %#v", plan.runtimeBrief.Constraints)
+	}
 	if !slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt") {
 		t.Fatalf("expected broad-read invalid action, got %#v", plan.runtimeBrief.InvalidActions)
+	}
+	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "treat required_edit_paths plus packet evidence as readiness-to-write unless one exact edit-safety fact is missing") {
+		t.Fatalf("expected readiness-to-write search policy, got %#v", plan.runtimeBrief.SearchPolicy)
+	}
+}
+
+func TestBuildPromptExecutionPlanDoesNotTreatGenericAnchorGuidanceAsExactAnchor(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+Modify only the allowlisted files named in the brief. Exact anchors, exact
+old/new snippets, Current-State Anchors, Required Edits, or unified patches in
+the brief are sufficient source evidence. For edit_file line-range edits,
+content must be only the final replacement; prefer an exact old_text/new_text
+edit when available.
+
+## Files To Modify
+
+| File | Action |
+|---|---|
+| native/tests/test_track_system.cpp | Add live integration coverage. |
+
+## Verified Current State
+
+` + "```cpp" + `
+TEST_CASE("existing pattern") {
+    ColonySim sim;
+}
+` + "```" + `
+
+## Required Behavior
+
+Add a new test that wires the existing systems together using local APIs.
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_track_system.cpp") {
+		t.Fatalf("expected required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+	if slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
+		t.Fatalf("generic launcher guidance and verified-state snippets should not force exact-anchor write-first: %#v", plan.runtimeBrief.Constraints)
+	}
+	if slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt") {
+		t.Fatalf("non-exact add-test brief should allow bounded prewrite reads, got %#v", plan.runtimeBrief.InvalidActions)
+	}
+	if !slices.Contains(plan.runtimeBrief.RequiredNext, "use reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>") {
+		t.Fatalf("expected non-exact required-path packet to bias toward edit/block after bounded reads, got %#v", plan.runtimeBrief.RequiredNext)
+	}
+}
+
+func TestPromptContainsExactEditAnchorRecognizesStructuredJSONFields(t *testing.T) {
+	prompt := `Apply this exact edit:
+{
+  "old_text": "before();",
+  "new_text": "after();"
+}`
+	if !promptContainsExactEditAnchor(prompt) {
+		t.Fatal("expected structured old_text/new_text fields to count as an exact edit anchor")
 	}
 }
 

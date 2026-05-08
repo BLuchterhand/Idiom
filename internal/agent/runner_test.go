@@ -138,6 +138,28 @@ func TestClaimedChangedPathsStopBeforeVerificationStatusProse(t *testing.T) {
 	}
 }
 
+func TestUnsupportedClaimedChangedPathsIgnoresDescriptiveSlashPhrases(t *testing.T) {
+	results := []workspace.ToolResult{
+		{Tool: "apply_patch", Output: "update native/src/simulation/logistics/track_system.cpp\nupdate native/tests/test_transport_integration.cpp\n"},
+	}
+	answer := strings.Join([]string{
+		"Changed paths:",
+		"- native/src/simulation/logistics/track_system.cpp",
+		"- test_transport_integration.cpp",
+		"",
+		"Verification: source/dest and capacity/latency cases covered; git diff --check passed.",
+	}, "\n")
+
+	if got := unsupportedClaimedChangedPaths(answer, results); len(got) != 0 {
+		t.Fatalf("descriptive slash phrases and unique basenames should not be rejected as changed paths, got %#v", got)
+	}
+
+	answer = "Changed paths:\n- native/src/simulation/logistics/track_system.cpp\n- native/tests/missing_test.cpp\n"
+	if got := unsupportedClaimedChangedPaths(answer, results); !reflect.DeepEqual(got, []string{"native/tests/missing_test.cpp"}) {
+		t.Fatalf("real unbacked workspace path should still be rejected, got %#v", got)
+	}
+}
+
 func TestMutationCompletionGateRequiresRequiredEditSnippets(t *testing.T) {
 	root := t.TempDir()
 	target := "native/tests/test_production_graph.cpp"
@@ -2142,6 +2164,7 @@ func TestForcedCompletionUsesDeterministicMutationFallback(t *testing.T) {
 		t.Fatalf("expected deterministic mutation fallback without model call, got %d request(s)", requests)
 	}
 	for _, want := range []string{
+		"<<QUESTION>>: Implementation incomplete",
 		"src/example.cpp",
 		"Required edit paths not changed:",
 		"src/example.h",
@@ -2153,6 +2176,81 @@ func TestForcedCompletionUsesDeterministicMutationFallback(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(answer), "passed") {
 		t.Fatalf("deterministic mutation fallback should not claim unrun verification passed:\n%s", answer)
+	}
+}
+
+func TestToolStepBudgetPartialRequiredEditsEmitsBlockedCompletion(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before a\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := writeTestFile(root, "b.txt", "before b\n"); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"tool":"write_file","path":"a.txt","content":"after a\n","description":"partial required edit"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var critic map[string]any
+	var completion runnerCompletionStatus
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "not_required_for_text_mutations",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.txt", "b.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "final_answer_critic":
+				if err := json.Unmarshal([]byte(event.Content), &critic); err != nil {
+					t.Fatalf("decode critic: %v", err)
+				}
+			case "completion_status":
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion: %v", err)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update both required files."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>: Implementation incomplete") || !strings.Contains(answer, "b.txt") {
+		t.Fatalf("expected visible incomplete-implementation blocker, got %q", answer)
+	}
+	if passed, _ := critic["passed"].(bool); passed {
+		t.Fatalf("final answer critic should reject partial required edits, got %#v", critic)
+	}
+	if completion.Status != "blocked" || completion.BlockerKind != "required_edit_paths_remaining" {
+		t.Fatalf("expected blocked completion for missing required path, got %#v", completion)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one model tool request before deterministic budget closeout, got %d", requests)
 	}
 }
 
@@ -2343,6 +2441,204 @@ func TestMutationReadBudgetExhaustionAllowsImplementationRecoveryWrite(t *testin
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected %d requests, got %d answer=%q", len(replies), requests, answer)
+	}
+}
+
+func TestMutationReadBudgetRecoveryTargetsRemainingRequiredEditPaths(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before a\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := writeTestFile(root, "b.txt", "before b\n"); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"write_file","path":"a.txt","content":"after a\n","description":"update first required file"}`,
+		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1}`,
+		`{"tool":"write_file","path":"b.txt","content":"after b\n","description":"update remaining required file"}`,
+		`{"tool":"shell","command":"git diff --check --no-index a.txt a.txt","workdir":"."}`,
+		"Changed paths:\n- a.txt\n- b.txt\nVerification: not required for this test fixture.",
+	}
+
+	requests := 0
+	extraRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reply string
+		if requests >= len(replies) {
+			extraRequests++
+			reply = "Changed paths:\n- a.txt\n- b.txt\nVerification: not required for this test fixture."
+		} else {
+			reply = replies[requests]
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var recoveryPrompt string
+	var sawBlockedCompletion bool
+	var eventLog []string
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			Shell:                 "/bin/sh",
+			CommandTimeoutSeconds: 5,
+			EnableShell:           true,
+			EnableWrites:          true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 12, MaxNoProgressTurns: 8, ReadBudgetHard: 2},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "not_required_for_text_mutations",
+			Objective:            "Update both required files.",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.txt", "b.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_gate_rejected" || event.Role == "completion_status" || event.Role == "implementation_write_only_recovery" {
+				eventLog = append(eventLog, event.Role+": "+event.Content)
+			}
+			if event.Role == "implementation_write_only_recovery" {
+				recoveryPrompt = event.Content
+			}
+			if event.Role == "completion_status" {
+				var completion runnerCompletionStatus
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion status: %v", err)
+				}
+				if completion.Status == "blocked" {
+					sawBlockedCompletion = true
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt and b.txt."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if extraRequests != 0 {
+		t.Fatalf("unexpected extra chat request count=%d events=%v answer=%q", extraRequests, eventLog, answer)
+	}
+	if !strings.Contains(recoveryPrompt, "b.txt") || strings.Contains(recoveryPrompt, "a.txt, b.txt") {
+		t.Fatalf("expected recovery prompt to target only remaining required path, got %q", recoveryPrompt)
+	}
+	if sawBlockedCompletion {
+		t.Fatalf("did not expect blocked completion after remaining required path was edited")
+	}
+	if !strings.Contains(answer, "a.txt") || !strings.Contains(answer, "b.txt") {
+		t.Fatalf("expected final answer to report both changed paths, got %q", answer)
+	}
+	for path, want := range map[string]string{"a.txt": "after a\n", "b.txt": "after b\n"} {
+		content, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if string(content) != want {
+			t.Fatalf("%s content = %q, want %q", path, string(content), want)
+		}
+	}
+}
+
+func TestRequiredEditPathPacketUsesTighterPrewriteReadBudget(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"} {
+		if err := writeTestFile(root, path, "seed\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"c.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"d.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"e.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"f.txt","start_line":1,"end_line":1}`,
+		`{"tool":"write_file","path":"a.txt","content":"changed\n","description":"make required edit"}`,
+		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var recoveryPrompt string
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:                  root,
+			CWD:                   root,
+			EnableWrites:          true,
+			CommandTimeoutSeconds: 5,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 12, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "not_required_for_text_mutations",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_write_only_recovery" {
+				recoveryPrompt = event.Content
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if recoveryPrompt == "" || !strings.Contains(recoveryPrompt, "a.txt") {
+		t.Fatalf("expected tighter required-path recovery prompt, got %q", recoveryPrompt)
+	}
+	if !strings.Contains(answer, "a.txt") {
+		t.Fatalf("expected final answer to report required path, got %q", answer)
+	}
+	if requests != requiredEditPathPrewriteReadBudgetHard+3 {
+		t.Fatalf("expected recovery after %d reads plus blocked read/write/final, got %d requests", requiredEditPathPrewriteReadBudgetHard, requests)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a: %v", err)
+	}
+	if string(content) != "changed\n" {
+		t.Fatalf("a.txt content = %q", string(content))
 	}
 }
 
@@ -3148,6 +3444,41 @@ func TestRunnerBriefWithPhaseHintsPromotesTargetWritePhase(t *testing.T) {
 	invalid := strings.Join(live.InvalidActions, "\n")
 	if !strings.Contains(invalid, "source discovery outside the named target after target inspection") {
 		t.Fatalf("expected target-write invalid action guidance, got %#v", live.InvalidActions)
+	}
+}
+
+func TestRunnerBriefWithPhaseHintsPromotesRequiredPathWriteReadiness(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		RequiredEditPaths:    []string{"native/src/system.cpp", "native/tests/test_system.cpp"},
+		RequiredEvidence:     []string{"required_edit_paths_covered_or_blocked"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+
+	live := runnerBriefWithPhaseHints(brief, nil)
+	if !containsRunnerString(live.Constraints, "implementation_packet_write_ready") {
+		t.Fatalf("expected write-ready constraint, got %#v", live.Constraints)
+	}
+	required := strings.Join(live.RequiredNext, "\n")
+	if !strings.Contains(required, "edit a required path now") || !strings.Contains(required, "one exact edit-safety fact") {
+		t.Fatalf("expected readiness-to-write guidance, got %#v", live.RequiredNext)
+	}
+	invalid := strings.Join(live.InvalidActions, "\n")
+	if !strings.Contains(invalid, "orientation read/search") {
+		t.Fatalf("expected orientation-read invalid action, got %#v", live.InvalidActions)
+	}
+
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited native/src/system.cpp"},
+	}
+	live = runnerBriefWithPhaseHints(brief, results)
+	if !containsRunnerString(live.Constraints, "implementation_required_paths_remaining") {
+		t.Fatalf("expected remaining-path constraint, got %#v", live.Constraints)
+	}
+	if !strings.Contains(strings.Join(live.RequiredNext, "\n"), "remaining required path") {
+		t.Fatalf("expected remaining-path guidance, got %#v", live.RequiredNext)
 	}
 }
 

@@ -21,6 +21,34 @@ When the model is making a normal execution choice, the harness should steer bef
 - Prefer bounded follow-up budgets over automatic answer synthesis.
 - Prefer “answer now or take one narrow next step” over “you must use tool X next”.
 
+## Model-Harness Parity
+
+The ideal state is not a clever harness that constantly corrects the model. The
+ideal state is parity: the model understands the same observable contract the
+harness enforces, and the harness backstop rarely fires.
+
+Use prompting, runtime briefs, and step-state packets to teach contract
+semantics in model-readable language:
+
+- what evidence means a task is ready to answer or write
+- what exact missing fact justifies one more probe
+- what counts as completion, verification, no-op, or blocker
+- which obligations are planner-owned, lane-owned, or host-owned
+
+Use deterministic checks for the invariant boundary:
+
+- required edit paths must be changed or explicitly blocked
+- writes must stay inside the allowed scope
+- verification evidence must match the artifact risk and occur after the
+  relevant writes
+- repeated low-value reads/searches must eventually stop
+
+If a deterministic backstop fires repeatedly, treat that as an alignment gap,
+not as proof that the model should be micromanaged. The first repair should be
+to make the structured contract clearer at its canonical owner: route metadata,
+runtime brief, tool result, step-state packet, or one prompt surface. Do not add
+the same rule to every prompt layer.
+
 ## Force Is Still Correct
 
 Hard enforcement is still required for invariants. These are not strategy suggestions.
@@ -64,8 +92,8 @@ The rule is:
 - One obligation gets one canonical owner.
 - Repeated operational requirements belong in typed runtime briefs, tool
   schemas, deterministic checks, completion gates, or telemetry.
-- Prompt text should explain behavior the model must reason about, not emulate
-  a missing contract.
+- Prompt text should explain behavior the model must reason about and align the
+  model with existing contracts, not emulate a missing contract.
 - If a prompt addition fixes a recurring failure, first ask whether the failure
   should instead be a route-plan field, required edit path, tool availability
   change, stale-context refresh rule, or audit finding.
@@ -127,16 +155,23 @@ signals before adding more instructions:
   contract and keeping safe choices open
 - agents enter read/search loops after a bounded implementation brief because
   the edit scope, exact anchor, or verification owner was only prose
+- deterministic backstops fire frequently for behavior the model should be able
+  to infer from the runtime brief and current evidence
 - behavior audits show `prompt_surface_overlap`, repeated rejections, broad-read
   loops, or structured `harness_feedback` against prompt/tool/context contracts
 
 The repair path is:
 
 1. Identify the single owner for the behavior.
-2. Promote repeated obligations into structured metadata or deterministic gates.
-3. Remove duplicate prose from secondary prompt surfaces.
-4. Add or update audit telemetry so the same drift shape is visible next time.
-5. Add an expectation test for the behavior, not a coverage-driven test of the
+2. Decide whether the problem is contract absence, contract opacity, or model
+   non-compliance with a clear contract.
+3. Promote repeated obligations into structured metadata or deterministic gates
+   when the contract is missing.
+4. Align the model-facing wording at the canonical owner when the contract
+   exists but the model is not naturally following it.
+5. Remove duplicate prose from secondary prompt surfaces.
+6. Add or update audit telemetry so the same drift shape is visible next time.
+7. Add an expectation test for the behavior, not a coverage-driven test of the
    implementation detail.
 
 Nudges are temporary. If the same nudge becomes routine, graduate it into a
@@ -197,6 +232,9 @@ Prompt layers should agree on the same shape:
 - do not hardcode strategy around one recurring scenario or question class; if a rule is real, express it in generic evidence/contract terms rather than domain-specific terms
 - answer composition must be evidence-shaped, not topic-template-shaped; repeated live-test topics should become generic contracts or eval fixtures, not special final-answer branches
 - before adding prompt text, check whether the same obligation is already owned by the base prompt, a profile, runtime brief, control rail, tool schema, wrapper doc, or recovery packet
+- model-facing guidance and harness enforcement should describe the same
+  contract from different sides: prompts explain how to recognize readiness,
+  while gates enforce the invariant when readiness is ignored
 - prompt-surface drift should produce audit-visible evidence (`prompt_surface_overlap` or `harness_feedback`) and a consolidation plan, not another overlapping instruction
 
 The goal is frontier-style behavior: open-ended model decisioning constrained by explicit, observable harness contracts.
