@@ -13,7 +13,10 @@ import (
 	"time"
 )
 
-const SchemaVersion = "idiom.architect.packet.v1"
+const (
+	SchemaVersion           = "idiom.architect.packet.v1"
+	PlanningPacketV2Version = "idiom.architect.planning_packet.v2"
+)
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
@@ -83,6 +86,7 @@ type Evidence struct {
 	Kind     string `json:"kind"`
 	Label    string `json:"label,omitempty"`
 	Path     string `json:"path,omitempty"`
+	Handle   string `json:"handle,omitempty"`
 	Command  string `json:"command,omitempty"`
 	Required bool   `json:"required,omitempty"`
 	Content  string `json:"content,omitempty"`
@@ -95,21 +99,28 @@ type Risk struct {
 }
 
 type Packet struct {
-	SchemaVersion string            `json:"schema_version"`
-	CreatedAt     time.Time         `json:"created_at"`
-	Task          string            `json:"task"`
-	Profile       ProfileSummary    `json:"profile"`
-	Workspace     WorkspaceSummary  `json:"workspace"`
-	Constraints   []string          `json:"constraints,omitempty"`
-	Files         []FileRef         `json:"files,omitempty"`
-	Tests         []CommandRef      `json:"tests,omitempty"`
-	Anchors       []Anchor          `json:"anchors,omitempty"`
-	Evidence      []Evidence        `json:"evidence,omitempty"`
-	Risks         []Risk            `json:"risks,omitempty"`
-	Unknowns      []string          `json:"unknowns,omitempty"`
-	Gates         []Gate            `json:"gates,omitempty"`
-	Roles         []Role            `json:"roles,omitempty"`
-	Metadata      map[string]string `json:"metadata,omitempty"`
+	SchemaVersion        string                     `json:"schema_version"`
+	CreatedAt            time.Time                  `json:"created_at"`
+	Task                 string                     `json:"task"`
+	Profile              ProfileSummary             `json:"profile"`
+	Workspace            WorkspaceSummary           `json:"workspace"`
+	Contracts            *PlanningContracts         `json:"contracts,omitempty"`
+	RepositoryView       []RepositoryViewItem       `json:"repository_view,omitempty"`
+	CandidateScope       []RankedScopeItem          `json:"candidate_scope,omitempty"`
+	Constraints          []string                   `json:"constraints,omitempty"`
+	Files                []FileRef                  `json:"files,omitempty"`
+	Tests                []CommandRef               `json:"tests,omitempty"`
+	Anchors              []Anchor                   `json:"anchors,omitempty"`
+	Evidence             []Evidence                 `json:"evidence,omitempty"`
+	Freshness            *FreshnessReport           `json:"freshness,omitempty"`
+	LanguageCapabilities []LanguageCapabilityReport `json:"language_capabilities,omitempty"`
+	Handoff              *PlanningHandoff           `json:"handoff,omitempty"`
+	ContextBudget        *ContextBudgetReport       `json:"context_budget,omitempty"`
+	Risks                []Risk                     `json:"risks,omitempty"`
+	Unknowns             []string                   `json:"unknowns,omitempty"`
+	Gates                []Gate                     `json:"gates,omitempty"`
+	Roles                []Role                     `json:"roles,omitempty"`
+	Metadata             map[string]string          `json:"metadata,omitempty"`
 }
 
 type ProfileSummary struct {
@@ -127,6 +138,8 @@ type BuildOptions struct {
 	Root           string
 	CWD            string
 	Task           string
+	Schema         string
+	BudgetTier     string
 	ProfilePath    string
 	RunCollectors  bool
 	MaxRuleBytes   int
@@ -159,8 +172,12 @@ func BuildPacket(ctx context.Context, opts BuildOptions) (Packet, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	schemaVersion, err := normalizePacketSchema(opts.Schema)
+	if err != nil {
+		return Packet{}, err
+	}
 	packet := Packet{
-		SchemaVersion: SchemaVersion,
+		SchemaVersion: schemaVersion,
 		CreatedAt:     now,
 		Task:          strings.TrimSpace(opts.Task),
 		Profile: ProfileSummary{
@@ -200,7 +217,21 @@ func BuildPacket(ctx context.Context, opts BuildOptions) (Packet, error) {
 	if packet.Task == "" {
 		return Packet{}, fmt.Errorf("task is required")
 	}
+	if packet.SchemaVersion == PlanningPacketV2Version {
+		enrichPlanningPacketV2(&packet, PlanningPacketV2Options{BudgetTier: opts.BudgetTier, Now: now})
+	}
 	return packet, nil
+}
+
+func normalizePacketSchema(schema string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(schema)) {
+	case "", "v1", "packet_v1", "architect_packet_v1", SchemaVersion:
+		return SchemaVersion, nil
+	case "v2", "planning_v2", "planning-packet-v2", "planning_packet_v2", PlanningPacketV2Version:
+		return PlanningPacketV2Version, nil
+	default:
+		return "", fmt.Errorf("unknown architect packet schema %q", schema)
+	}
 }
 
 func LoadProfile(root string, profilePath string) (Profile, string, error) {

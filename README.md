@@ -81,11 +81,14 @@ brief a feature:
 ./idiom architect lint --packet /tmp/packet.json
 ./idiom architect plan --packet /tmp/packet.json --output /tmp/plan.prompt.md
 ./idiom artifact --prompt-file /tmp/plan.prompt.md --output /tmp/plan.md --no-tools
+./idiom architect plan-audit --packet /tmp/packet.json --plan-file /tmp/plan.md
 ```
 
 See [docs/architect-packets.md](docs/architect-packets.md). Idiom owns the
 packet schema, prompt rendering, and gate contracts; project profiles own local
 rules, collectors, tests, and domain traps.
+Use `--schema planning_v2` when you want ranked scope, freshness, language
+capability, handoff, and context budget sections for planner-quality review.
 
 List or resume prior sessions (sessions are the JSONL files in `chat.debug_log_dir`):
 

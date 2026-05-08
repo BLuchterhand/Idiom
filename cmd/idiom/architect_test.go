@@ -52,6 +52,42 @@ func TestArchitectPacketCommandWritesPacket(t *testing.T) {
 	}
 }
 
+func TestArchitectPacketCommandWritesPlanningV2(t *testing.T) {
+	root := t.TempDir()
+	writeArchitectTestFile(t, filepath.Join(root, ".idiom/comprehension/views/pack.json"), `{
+  "pack_id": "abc",
+  "index_id": "idx1",
+  "fresh": true,
+  "candidate_files": [{"path":"cmd/idiom/architect.go","language":"go","confidence":"precise_backend"}],
+  "tests": [{"command":"go test ./cmd/idiom","reason":"cli behavior"}]
+}`+"\n")
+	outputPath := filepath.Join(t.TempDir(), "packet.json")
+	var stdout, stderr bytes.Buffer
+	code := runArchitectMain([]string{
+		"packet",
+		"--root", root,
+		"--schema", "planning_v2",
+		"--budget-tier", "brief",
+		"--task", "Plan feature",
+		"--context-view", ".idiom/comprehension/views/pack.json",
+		"--output", outputPath,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected success, code=%d stderr=%s", code, stderr.String())
+	}
+	var packet architect.Packet
+	readJSONFile(t, outputPath, &packet)
+	if packet.SchemaVersion != architect.PlanningPacketV2Version {
+		t.Fatalf("expected planning v2 packet, got %#v", packet.SchemaVersion)
+	}
+	if packet.ContextBudget == nil || packet.ContextBudget.BudgetTier != "brief" {
+		t.Fatalf("planning v2 budget missing: %#v", packet.ContextBudget)
+	}
+	if packet.Contracts == nil || len(packet.Contracts.ValidationRequirements) != 1 {
+		t.Fatalf("context view validation not carried into contracts: %#v", packet.Contracts)
+	}
+}
+
 func TestArchitectLintCommandFailsRequiredGate(t *testing.T) {
 	packetPath := filepath.Join(t.TempDir(), "packet.json")
 	writeArchitectTestFile(t, packetPath, `{
@@ -66,6 +102,28 @@ func TestArchitectLintCommandFailsRequiredGate(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "exact_tests_required") {
 		t.Fatalf("lint output missing gate: %s", stdout.String())
+	}
+}
+
+func TestArchitectPlanAuditCommandFailsMissingFile(t *testing.T) {
+	root := t.TempDir()
+	packetPath := filepath.Join(t.TempDir(), "packet.json")
+	writeArchitectTestFile(t, packetPath, `{
+  "schema_version": "idiom.architect.planning_packet.v2",
+  "task": "Implement packet work",
+  "workspace": {"root": "`+filepath.ToSlash(root)+`"}
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runArchitectMain([]string{
+		"plan-audit",
+		"--packet", packetPath,
+		"--plan", "Modify internal/architect/missing.go.",
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected audit failure, code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "missing_file") {
+		t.Fatalf("audit output missing finding: %s", stdout.String())
 	}
 }
 

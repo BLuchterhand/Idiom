@@ -17,6 +17,8 @@ This mirrors proven patterns from other agent tools:
 ```bash
 idiom architect packet \
   --task-file /tmp/task.md \
+  --schema planning_v2 \
+  --budget-tier standard \
   --profile demo \
   --context-view .idiom/comprehension/views/<pack-id>.json \
   --file src/feature.cpp:modify:"feature logic" \
@@ -34,6 +36,10 @@ idiom artifact \
   --output /tmp/plan.md \
   --no-tools
 
+idiom architect plan-audit \
+  --packet /tmp/packet.json \
+  --plan-file /tmp/plan.md
+
 idiom architect critique \
   --packet /tmp/packet.json \
   --prior-file /tmp/plan.md \
@@ -45,6 +51,16 @@ idiom architect critique \
 as `context_view` evidence. `plan`, `critique`, and `brief` also only render
 prompts; use `idiom artifact` or another model runner to generate the actual
 plan, critique, or brief.
+
+`--schema planning_v2` keeps the v1 packet fields and adds planner-quality
+sections: `contracts`, `repository_view`, `candidate_scope`, `freshness`,
+`language_capabilities`, `handoff`, and `context_budget`. This schema is
+intended for plan generation and plan audit. The default remains v1 for
+existing callers.
+
+`plan-audit` is deterministic. It checks a candidate plan against the packet
+for missing file references, unresolved handles, protected-path edits, stale
+context use, validation gaps, and vague "inspect more" deferrals.
 
 ## Profile
 

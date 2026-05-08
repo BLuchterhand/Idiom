@@ -98,6 +98,62 @@ func TestBuildPacketIncludesContextViewEvidence(t *testing.T) {
 	}
 }
 
+func TestBuildPlanningPacketV2IncludesBudgetFreshnessAndScope(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".idiom/comprehension/views/pack.json"), `{
+  "pack_id": "abc",
+  "index_id": "idx1",
+  "fresh": false,
+  "candidate_files": [
+    {"path": "internal/workspace/context_tools.go", "role": "modify", "reason": "owns context tools", "language": "go", "confidence": "precise_backend", "handles": ["file://internal/workspace/context_tools.go"]}
+  ],
+  "candidate_symbols": [
+    {"id": "symbol://internal/workspace/context_tools.go#contextPack", "path": "internal/workspace/context_tools.go", "qualified_name": "contextPack", "kind": "method", "language": "go", "confidence": "precise_backend", "reason": "builds context packets"}
+  ],
+  "tests": [
+    {"command": "go test ./internal/workspace", "reason": "context tool behavior"}
+  ],
+  "unresolved_gaps": ["refresh stale context before edits"]
+}`+"\n")
+
+	packet, err := BuildPacket(context.Background(), BuildOptions{
+		Root:         root,
+		Task:         "Plan context packet quality",
+		Schema:       "planning_v2",
+		BudgetTier:   "brief",
+		ContextViews: []string{".idiom/comprehension/views/pack.json"},
+		Tests:        []CommandRef{{Command: "go test ./internal/architect", Reason: "architect packet behavior"}},
+	})
+	if err != nil {
+		t.Fatalf("BuildPacket: %v", err)
+	}
+	if packet.SchemaVersion != PlanningPacketV2Version {
+		t.Fatalf("expected planning v2 schema, got %q", packet.SchemaVersion)
+	}
+	if packet.ContextBudget == nil || packet.ContextBudget.BudgetTier != "brief" || packet.ContextBudget.EstimatedTokens == 0 {
+		t.Fatalf("missing budget report: %#v", packet.ContextBudget)
+	}
+	if packet.Contracts == nil || len(packet.Contracts.ValidationRequirements) != 2 {
+		t.Fatalf("validation requirements were not preserved in contracts: %#v", packet.Contracts)
+	}
+	if packet.Freshness == nil || packet.Freshness.Fresh == nil || *packet.Freshness.Fresh {
+		t.Fatalf("expected stale freshness metadata: %#v", packet.Freshness)
+	}
+	if !hasCandidateScope(packet, "file://internal/workspace/context_tools.go") || !hasCandidateScope(packet, "symbol://internal/workspace/context_tools.go#contextPack") {
+		t.Fatalf("candidate scope missing context handles: %#v", packet.CandidateScope)
+	}
+	if len(packet.LanguageCapabilities) != 1 || packet.LanguageCapabilities[0].Language != "go" || packet.LanguageCapabilities[0].PrecisionTier != "precise_backend" {
+		t.Fatalf("language capabilities missing precision: %#v", packet.LanguageCapabilities)
+	}
+	result := LintPacket(packet)
+	if !result.OK {
+		t.Fatalf("planning v2 packet should lint without errors: %#v", result)
+	}
+	if !hasLintFinding(result, "planning_v2_freshness", "warning") {
+		t.Fatalf("expected stale freshness warning, got %#v", result.Findings)
+	}
+}
+
 func TestLintPacketEnforcesRequiredGates(t *testing.T) {
 	packet := Packet{
 		SchemaVersion: SchemaVersion,
@@ -228,6 +284,77 @@ func TestLintPacketWarnsOnEmptyEvidence(t *testing.T) {
 	}
 }
 
+func TestContextBudgetWarnsOnDuplicateEvidence(t *testing.T) {
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "x",
+		Evidence: []Evidence{
+			{Kind: "rule", Label: "a", Path: "RULES.md", Content: "same"},
+			{Kind: "rule", Label: "b", Path: "RULES.md", Content: "same"},
+		},
+	}
+	report := BuildContextBudget(packet, ContextBudgetOptions{Tier: "standard"})
+	if report == nil || len(report.Warnings) == 0 {
+		t.Fatalf("expected duplicate evidence warning, got %#v", report)
+	}
+	if !containsWarning(report.Warnings, "duplicate evidence") {
+		t.Fatalf("expected duplicate evidence warning, got %#v", report.Warnings)
+	}
+}
+
+func TestAuditPlanFindsMissingFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "internal/architect/packet.go"), "package architect\n")
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Implement packet work",
+		Workspace:     WorkspaceSummary{Root: root},
+		Files:         []FileRef{{Path: "internal/architect/packet.go", Role: "modify"}},
+	}
+	result := AuditPlan(packet, "Modify internal/architect/packet.go and internal/architect/missing.go.")
+	if result.OK {
+		t.Fatalf("expected audit failure")
+	}
+	if !hasAuditFinding(result, "missing_file", "error") {
+		t.Fatalf("expected missing_file error, got %#v", result.Findings)
+	}
+}
+
+func TestAuditPlanWarnsOnMissingValidationAndStaleFacts(t *testing.T) {
+	stale := false
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Change shared context behavior",
+		Tests:         []CommandRef{{Command: "go test ./internal/architect", Reason: "packet behavior"}},
+		Freshness:     &FreshnessReport{Fresh: &stale, StaleNodes: []string{"internal/architect/packet.go"}},
+	}
+	result := AuditPlan(packet, "Update the packet builder in a bounded atom.")
+	if !result.OK {
+		t.Fatalf("warnings should not fail audit: %#v", result)
+	}
+	if !hasAuditFinding(result, "validation_gap", "warning") || !hasAuditFinding(result, "stale_fact", "warning") {
+		t.Fatalf("expected validation and stale warnings, got %#v", result.Findings)
+	}
+}
+
+func TestAuditPlanRejectsProtectedPathEdit(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "internal/secret.go"), "package internal\n")
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Implement a change",
+		Workspace:     WorkspaceSummary{Root: root},
+		Contracts:     &PlanningContracts{ProtectedPaths: []string{"internal/secret.go"}},
+	}
+	result := AuditPlan(packet, "Modify internal/secret.go to expose the value.")
+	if result.OK {
+		t.Fatalf("expected protected path failure")
+	}
+	if !hasAuditFinding(result, "protected_path", "error") {
+		t.Fatalf("expected protected_path error, got %#v", result.Findings)
+	}
+}
+
 func TestRenderPromptIncludesPacketAndPrior(t *testing.T) {
 	packet := Packet{SchemaVersion: SchemaVersion, Task: "x", Profile: ProfileSummary{Name: "demo"}}
 	prompt, err := RenderPrompt(PromptCritique, packet, "candidate plan")
@@ -252,6 +379,33 @@ func writeFile(t *testing.T, path string, content string) {
 func hasLintFinding(result LintResult, gate string, level string) bool {
 	for _, finding := range result.Findings {
 		if finding.Gate == gate && finding.Level == level {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCandidateScope(packet Packet, handle string) bool {
+	for _, item := range packet.CandidateScope {
+		if item.Handle == handle {
+			return true
+		}
+	}
+	return false
+}
+
+func containsWarning(warnings []string, pattern string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAuditFinding(result PlanAuditResult, kind string, severity string) bool {
+	for _, finding := range result.Findings {
+		if finding.Kind == kind && finding.Severity == severity {
 			return true
 		}
 	}

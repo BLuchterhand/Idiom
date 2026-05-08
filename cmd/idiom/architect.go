@@ -20,6 +20,8 @@ type architectOptions struct {
 	CWD            string
 	Task           string
 	TaskFile       string
+	Schema         string
+	BudgetTier     string
 	Profile        string
 	OutputPath     string
 	RunCollectors  bool
@@ -67,6 +69,8 @@ func runArchitectMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 		return runArchitectPacket(args[1:], stdout, stderr)
 	case "lint":
 		return runArchitectLint(args[1:], stdout, stderr)
+	case "plan-audit", "audit-plan":
+		return runArchitectPlanAudit(args[1:], stdout, stderr)
 	case "prompt":
 		return runArchitectPrompt(args[1:], stdout, stderr)
 	case "plan":
@@ -111,6 +115,8 @@ func runArchitectPacket(args []string, stdout io.Writer, stderr io.Writer) int {
 		Root:           opts.Root,
 		CWD:            opts.CWD,
 		Task:           task,
+		Schema:         opts.Schema,
+		BudgetTier:     opts.BudgetTier,
 		ProfilePath:    opts.Profile,
 		RunCollectors:  opts.RunCollectors,
 		MaxRuleBytes:   opts.MaxRuleBytes,
@@ -135,6 +141,55 @@ func runArchitectPacket(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	if err := writeArchitectOutput(opts.OutputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func runArchitectPlanAudit(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("idiom architect plan-audit", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	packetPath := fs.String("packet", "", "path to architect packet JSON; reads stdin when omitted")
+	planText := fs.String("plan", "", "candidate plan text")
+	planFile := fs.String("plan-file", "", "read candidate plan text from file")
+	outputPath := fs.String("output", "", "write audit JSON to path; default stdout")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+		return 2
+	}
+	if strings.TrimSpace(*planText) != "" && strings.TrimSpace(*planFile) != "" {
+		fmt.Fprintln(stderr, "--plan and --plan-file are mutually exclusive")
+		return 2
+	}
+	packet, err := readPacket(*packetPath, os.Stdin)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	plan := strings.TrimSpace(*planText)
+	if strings.TrimSpace(*planFile) != "" {
+		data, err := os.ReadFile(filepath.Clean(*planFile))
+		if err != nil {
+			fmt.Fprintf(stderr, "read plan file: %v\n", err)
+			return 1
+		}
+		plan = string(data)
+	}
+	result := architect.AuditPlan(packet, plan)
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	data = append(data, '\n')
+	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if !result.OK {
 		return 1
 	}
 	return 0
@@ -219,6 +274,8 @@ func addArchitectPacketFlags(fs *flag.FlagSet, opts *architectOptions) {
 	fs.StringVar(&opts.CWD, "cwd", "", "logical current working directory for the packet")
 	fs.StringVar(&opts.Task, "task", "", "task statement")
 	fs.StringVar(&opts.TaskFile, "task-file", "", "read task statement from file")
+	fs.StringVar(&opts.Schema, "schema", "", "packet schema: v1 or planning_v2")
+	fs.StringVar(&opts.BudgetTier, "budget-tier", "standard", "planning_v2 context budget tier: brief, standard, deep, or max-local")
 	fs.StringVar(&opts.Profile, "profile", "", "profile path or name under .idiom/architect/profiles")
 	fs.StringVar(&opts.OutputPath, "output", "", "write packet JSON to path; default stdout")
 	fs.BoolVar(&opts.RunCollectors, "run-collectors", false, "execute profile collectors and include output evidence")
@@ -386,6 +443,7 @@ func printArchitectUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  idiom architect packet --task <text> [--profile <path-or-name>] [--output <packet.json>]")
 	fmt.Fprintln(stderr, "  idiom architect lint --packet <packet.json>")
+	fmt.Fprintln(stderr, "  idiom architect plan-audit --packet <packet.json> --plan-file <plan.md>")
 	fmt.Fprintln(stderr, "  idiom architect prompt --kind plan|critique|brief --packet <packet.json> [--prior-file <plan.md>]")
 	fmt.Fprintln(stderr, "  idiom architect plan|critique|brief --packet <packet.json> [--prior-file <plan.md>]")
 	fmt.Fprintln(stderr)

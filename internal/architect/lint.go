@@ -22,8 +22,11 @@ func LintPacket(packet Packet) LintResult {
 	if strings.TrimSpace(packet.Task) == "" {
 		findings = append(findings, LintFinding{Gate: "task_required", Level: "error", Message: "packet task is empty"})
 	}
-	if packet.SchemaVersion != SchemaVersion {
-		findings = append(findings, LintFinding{Gate: "schema_version", Level: "error", Message: fmt.Sprintf("schema_version = %q, want %q", packet.SchemaVersion, SchemaVersion)})
+	if !knownPacketSchema(packet.SchemaVersion) {
+		findings = append(findings, LintFinding{Gate: "schema_version", Level: "error", Message: fmt.Sprintf("schema_version = %q, want %q or %q", packet.SchemaVersion, SchemaVersion, PlanningPacketV2Version)})
+	}
+	if packet.SchemaVersion == PlanningPacketV2Version {
+		findings = append(findings, lintPlanningPacketV2(packet)...)
 	}
 	for _, ev := range packet.Evidence {
 		if ev.Error != "" && isRequiredEvidence(packet, ev) {
@@ -78,6 +81,32 @@ func LintPacket(packet Packet) LintResult {
 		}
 	}
 	return LintResult{OK: ok, Findings: findings}
+}
+
+func knownPacketSchema(schema string) bool {
+	return schema == SchemaVersion || schema == PlanningPacketV2Version
+}
+
+func lintPlanningPacketV2(packet Packet) []LintFinding {
+	var findings []LintFinding
+	if packet.Contracts == nil {
+		findings = append(findings, LintFinding{Gate: "planning_v2_contracts", Level: "error", Message: "planning_v2 packet is missing contracts"})
+	}
+	if packet.ContextBudget == nil {
+		findings = append(findings, LintFinding{Gate: "context_budget", Level: "error", Message: "planning_v2 packet is missing context_budget"})
+	}
+	if len(packet.Tests) > 0 && (packet.Contracts == nil || len(packet.Contracts.ValidationRequirements) == 0) {
+		findings = append(findings, LintFinding{Gate: "planning_v2_validation", Level: "error", Message: "planning_v2 packet did not preserve validation requirements in contracts"})
+	}
+	if packet.Freshness != nil && packet.Freshness.Fresh != nil && !*packet.Freshness.Fresh {
+		findings = append(findings, LintFinding{Gate: "planning_v2_freshness", Level: "warning", Message: "planning_v2 packet includes stale context under freshness"})
+	}
+	for _, item := range packet.CandidateScope {
+		if item.Path == "" && item.Symbol == "" && item.Handle == "" {
+			findings = append(findings, LintFinding{Gate: "planning_v2_candidate_scope", Level: "warning", Message: "candidate_scope contains an item without path, symbol, or handle"})
+		}
+	}
+	return findings
 }
 
 type contextViewLintPayload struct {
