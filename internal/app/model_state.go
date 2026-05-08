@@ -172,6 +172,7 @@ type Model struct {
 	agentModeName                 string
 	forcedTaskFamily              string
 	plannerOwnedVerification      bool
+	maxTokensOverride             int
 	traceMode                     traceDisplayMode
 
 	workspaceOverviewInjected bool
@@ -1494,6 +1495,14 @@ func (m *Model) SetForcedTaskFamily(family string) {
 
 func (m *Model) SetPlannerOwnedVerification(enabled bool) {
 	m.plannerOwnedVerification = enabled
+}
+
+func (m *Model) SetMaxTokensOverride(maxTokens int) {
+	if maxTokens > 0 {
+		m.maxTokensOverride = maxTokens
+		return
+	}
+	m.maxTokensOverride = 0
 }
 
 func (m *Model) clearContextError() {

@@ -30,6 +30,7 @@ type runOptions struct {
 	Resume                   string
 	TaskFamily               string
 	PlannerOwnedVerification bool
+	MaxTokensOverride        int
 	Telemetry                *telemetry.Recorder
 }
 
@@ -538,6 +539,7 @@ func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.
 	defer model.Close()
 	model.SetForcedTaskFamily(opts.TaskFamily)
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
+	model.SetMaxTokensOverride(opts.MaxTokensOverride)
 	logModelSessionLink(opts.Telemetry, "prompt", model.DebugLogPath())
 
 	if opts.Resume != "" {
@@ -565,6 +567,7 @@ func runPromptsOnce(cfg config.Config, prompts []string, opts runOptions, stdout
 	defer model.Close()
 	model.SetForcedTaskFamily(opts.TaskFamily)
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
+	model.SetMaxTokensOverride(opts.MaxTokensOverride)
 	logModelSessionLink(opts.Telemetry, "turns_file", model.DebugLogPath())
 
 	if opts.Resume != "" {

@@ -54,17 +54,63 @@ func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
 	}
 }
 
+func TestArtifactCommandForwardsMaxTokenOverride(t *testing.T) {
+	configPath := writeMainConfig(t)
+	var stdout, stderr bytes.Buffer
+	var gotOpts runOptions
+
+	code := runArtifactMain(
+		[]string{"-config", configPath, "-prompt", "draft", "-max-token", "4096"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			gotOpts = opts
+			return "artifact", nil
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !gotOpts.JSONEvents {
+		t.Fatal("artifact command must request JSON events from the prompt runner")
+	}
+	if gotOpts.MaxTokensOverride != 4096 {
+		t.Fatalf("MaxTokensOverride = %d, want 4096", gotOpts.MaxTokensOverride)
+	}
+}
+
+func TestArtifactCommandRejectsNegativeMaxToken(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := runArtifactMain(
+		[]string{"-prompt", "draft", "-max-token", "-1"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) {
+			t.Fatal("prompt runner should not be called")
+			return "", nil
+		},
+	)
+
+	if code != 2 || !strings.Contains(stderr.String(), "non-negative") {
+		t.Fatalf("expected max-token validation failure, code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func TestArtifactCommandNoToolsWrapsPromptAndFailsToolUse(t *testing.T) {
 	configPath := writeMainConfig(t)
 	var stdout, stderr bytes.Buffer
 	var gotPrompt string
+	var gotOpts runOptions
 
 	code := runArtifactMain(
 		[]string{"-config", configPath, "-prompt", "draft", "-no-tools"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, prompt string, _ runOptions, w io.Writer) (string, error) {
+		func(_ config.Config, prompt string, opts runOptions, w io.Writer) (string, error) {
 			gotPrompt = prompt
+			gotOpts = opts
 			_, _ = w.Write([]byte("{\"type\":\"tool_request\",\"tool\":\"read_file\"}\n"))
 			return "artifact", nil
 		},
@@ -75,6 +121,9 @@ func TestArtifactCommandNoToolsWrapsPromptAndFailsToolUse(t *testing.T) {
 	}
 	if !strings.Contains(gotPrompt, "Do not call tools") {
 		t.Fatalf("-no-tools did not wrap prompt: %q", gotPrompt)
+	}
+	if gotOpts.TaskFamily != "direct_question" {
+		t.Fatalf("-no-tools TaskFamily = %q, want direct_question", gotOpts.TaskFamily)
 	}
 	if !strings.Contains(stderr.String(), "read_file") {
 		t.Fatalf("stderr should name offending tool, got %q", stderr.String())

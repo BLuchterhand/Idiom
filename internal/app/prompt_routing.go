@@ -43,6 +43,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	m.lastAssistantReasoningContent = ""
 	plan := m.buildPromptExecutionPlan(ctx, prompt)
 	chatOpts := tuneChatOptionsForPlan(m.chatOptions(), plan)
+	chatOpts = applyMaxTokensOverride(chatOpts, m.maxTokensOverride)
 	if m.workspace != nil {
 		m.workspace.PrimeDiscoveredPaths(promptMentionedWorkspacePaths(prompt))
 	}
@@ -486,6 +487,13 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 1536)
 	case "review_findings", "architecture_assessment":
 		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 2048)
+	}
+	return opts
+}
+
+func applyMaxTokensOverride(opts llama.ChatOptions, maxTokens int) llama.ChatOptions {
+	if maxTokens > 0 {
+		opts.MaxTokens = maxTokens
 	}
 	return opts
 }

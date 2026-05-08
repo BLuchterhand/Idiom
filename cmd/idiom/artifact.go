@@ -27,6 +27,7 @@ type artifactOptions struct {
 	Validator  string
 	Model      string
 	Resume     string
+	MaxTokens  int
 
 	NoTools     bool
 	FailOnTools bool
@@ -52,10 +53,11 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 		cfg.LlamaServer.Model = opts.Model
 	}
 	logCLIPhase(rec, "artifact_start", map[string]any{
-		"has_output":    strings.TrimSpace(opts.OutputPath) != "",
-		"has_json_out":  strings.TrimSpace(opts.JSONOut) != "",
-		"has_validator": strings.TrimSpace(opts.Validator) != "",
-		"no_tools":      opts.NoTools,
+		"has_output":          strings.TrimSpace(opts.OutputPath) != "",
+		"has_json_out":        strings.TrimSpace(opts.JSONOut) != "",
+		"has_validator":       strings.TrimSpace(opts.Validator) != "",
+		"no_tools":            opts.NoTools,
+		"max_tokens_override": opts.MaxTokens,
 	})
 
 	prompt, err := artifactPrompt(opts)
@@ -68,8 +70,12 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 		opts.FailOnTools = true
 	}
 
+	runOpts := runOptions{JSONEvents: true, Resume: opts.Resume, MaxTokensOverride: opts.MaxTokens, Telemetry: rec}
+	if opts.NoTools {
+		runOpts.TaskFamily = "direct_question"
+	}
 	var events bytes.Buffer
-	answer, err := promptRun(cfg, prompt, runOptions{JSONEvents: true, Resume: opts.Resume, Telemetry: rec}, &events)
+	answer, err := promptRun(cfg, prompt, runOpts, &events)
 	if writeErr := writeOptionalFile(opts.JSONOut, events.Bytes()); writeErr != nil {
 		fmt.Fprintln(stderr, writeErr)
 		return 1
@@ -126,6 +132,8 @@ func parseArtifactOptions(args []string, stderr io.Writer) (artifactOptions, err
 	fs.StringVar(&opts.Validator, "validator", "", "shell command to validate artifact; path is in $IDIOM_ARTIFACT")
 	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session before running")
+	fs.IntVar(&opts.MaxTokens, "max-token", 0, "override chat max_tokens for this artifact run; 0 uses config/routing defaults")
+	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "alias for --max-token")
 	fs.BoolVar(&opts.NoTools, "no-tools", false, "ask the model not to use tools and fail if any tool events occur")
 	fs.BoolVar(&opts.FailOnTools, "fail-on-tools", false, "fail if any tool request/result events occur")
 	if err := fs.Parse(args); err != nil {
@@ -139,6 +147,9 @@ func parseArtifactOptions(args []string, stderr io.Writer) (artifactOptions, err
 	}
 	if strings.TrimSpace(opts.Prompt) == "" && strings.TrimSpace(opts.PromptFile) == "" {
 		return opts, fmt.Errorf("--prompt or --prompt-file is required")
+	}
+	if opts.MaxTokens < 0 {
+		return opts, fmt.Errorf("--max-token must be non-negative")
 	}
 	return opts, nil
 }

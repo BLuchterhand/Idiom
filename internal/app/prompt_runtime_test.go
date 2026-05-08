@@ -73,6 +73,40 @@ func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.
 	}
 }
 
+func TestApplyMaxTokensOverrideLeavesRouteClampWhenUnset(t *testing.T) {
+	opts := llama.ChatOptions{MaxTokens: 8192}
+	plan := promptExecutionPlan{
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			PermissionProfile: "read_only_workspace",
+			Contract:          "grounded_explanation",
+		},
+	}
+
+	tuned := tuneChatOptionsForPlan(opts, plan)
+	tuned = applyMaxTokensOverride(tuned, 0)
+
+	if tuned.MaxTokens != 1536 {
+		t.Fatalf("expected grounded explanation token cap, got %d", tuned.MaxTokens)
+	}
+}
+
+func TestApplyMaxTokensOverrideWinsOverRouteClamp(t *testing.T) {
+	opts := llama.ChatOptions{MaxTokens: 8192}
+	plan := promptExecutionPlan{
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			PermissionProfile: "read_only_workspace",
+			Contract:          "grounded_explanation",
+		},
+	}
+
+	tuned := tuneChatOptionsForPlan(opts, plan)
+	tuned = applyMaxTokensOverride(tuned, 4096)
+
+	if tuned.MaxTokens != 4096 {
+		t.Fatalf("expected max-token override, got %d", tuned.MaxTokens)
+	}
+}
+
 func TestDefaultVerificationPlanPrefersGoTestWhenGoModExists(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.22\n"), 0o644); err != nil {
