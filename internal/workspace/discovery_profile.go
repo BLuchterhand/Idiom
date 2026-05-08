@@ -40,6 +40,8 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 		return discoveryProfile("context_zoom", "targeted", "low", true)
 	case "context_pack":
 		return discoveryProfile("context_pack", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Task, req.Query, req.Pattern)), "medium", true)
+	case "context_impact":
+		return discoveryProfile("context_impact", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Task, req.Query, req.Pattern)), "medium", true)
 	case "context_trace_pack":
 		return discoveryProfile("runtime_trace", scopeFromPathAndPattern(req.Path, req.Command), "medium", true)
 	case "discovery_query":

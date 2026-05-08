@@ -95,6 +95,7 @@ type ContextStats struct {
 	ModelSummaryNodesReturned   int            `json:"model_summary_nodes_returned,omitempty"`
 	CandidateFiles              int            `json:"candidate_files,omitempty"`
 	CandidateSymbols            int            `json:"candidate_symbols,omitempty"`
+	ImpactScope                 int            `json:"impact_scope,omitempty"`
 	TestsSuggested              int            `json:"tests_suggested,omitempty"`
 	UnresolvedGaps              int            `json:"unresolved_gaps,omitempty"`
 	CollectorReports            int            `json:"collector_reports,omitempty"`
@@ -115,17 +116,19 @@ type ContextStats struct {
 }
 
 type FeedbackStats struct {
-	Total          int            `json:"total,omitempty"`
-	Verified       int            `json:"verified,omitempty"`
-	Inferred       int            `json:"inferred,omitempty"`
-	HighSeverity   int            `json:"high_severity,omitempty"`
-	MediumSeverity int            `json:"medium_severity,omitempty"`
-	LowSeverity    int            `json:"low_severity,omitempty"`
-	EvidenceItems  int            `json:"evidence_items,omitempty"`
-	ByCategory     map[string]int `json:"by_category,omitempty"`
-	ByComponent    map[string]int `json:"by_component,omitempty"`
-	ByConfidence   map[string]int `json:"by_confidence,omitempty"`
-	BySeverity     map[string]int `json:"by_severity,omitempty"`
+	Total                int            `json:"total,omitempty"`
+	Verified             int            `json:"verified,omitempty"`
+	Inferred             int            `json:"inferred,omitempty"`
+	HighSeverity         int            `json:"high_severity,omitempty"`
+	MediumSeverity       int            `json:"medium_severity,omitempty"`
+	LowSeverity          int            `json:"low_severity,omitempty"`
+	EvidenceItems        int            `json:"evidence_items,omitempty"`
+	PlanningQualityTotal int            `json:"planning_quality_total,omitempty"`
+	ByCategory           map[string]int `json:"by_category,omitempty"`
+	ByComponent          map[string]int `json:"by_component,omitempty"`
+	ByConfidence         map[string]int `json:"by_confidence,omitempty"`
+	BySeverity           map[string]int `json:"by_severity,omitempty"`
+	ByPlanningCategory   map[string]int `json:"by_planning_category,omitempty"`
 }
 
 // AnalyzeLog reads a JSONL conversation log from disk and produces one
@@ -373,6 +376,7 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 	ctx.ModelSummaryNodesReturned += intField(data, "context_model_summary_nodes")
 	ctx.CandidateFiles += intField(data, "context_candidate_files")
 	ctx.CandidateSymbols += intField(data, "context_candidate_symbols")
+	ctx.ImpactScope += intField(data, "context_impact_scope")
 	ctx.TestsSuggested += intField(data, "context_tests")
 	ctx.UnresolvedGaps += intField(data, "context_unresolved_gaps")
 	ctx.CollectorReports += intField(data, "context_collector_reports")
@@ -418,6 +422,10 @@ func ingestFeedbackTelemetry(rep *PerfReport, data map[string]any) {
 	incrementStringCount(feedback.ByComponent, stringField(data, "feedback_component"))
 	incrementStringCount(feedback.ByConfidence, confidence)
 	incrementStringCount(feedback.BySeverity, severity)
+	if feedbackCategoryIsPlanningQuality(category) {
+		feedback.PlanningQualityTotal++
+		incrementStringCount(feedback.ByPlanningCategory, category)
+	}
 	switch confidence {
 	case "verified":
 		feedback.Verified++
@@ -436,10 +444,22 @@ func ingestFeedbackTelemetry(rep *PerfReport, data map[string]any) {
 
 func newFeedbackStats() *FeedbackStats {
 	return &FeedbackStats{
-		ByCategory:   make(map[string]int),
-		ByComponent:  make(map[string]int),
-		ByConfidence: make(map[string]int),
-		BySeverity:   make(map[string]int),
+		ByCategory:         make(map[string]int),
+		ByComponent:        make(map[string]int),
+		ByConfidence:       make(map[string]int),
+		BySeverity:         make(map[string]int),
+		ByPlanningCategory: make(map[string]int),
+	}
+}
+
+func feedbackCategoryIsPlanningQuality(category string) bool {
+	switch strings.TrimSpace(category) {
+	case "planning_quality", "packet_quality", "impact_ranking", "plan_audit_gap", "budget_gap", "replay_eval_gap",
+		"missing_affordance", "bad_scope_rank", "stale_fact", "backend_gap", "packet_bloat", "read_loop",
+		"edit_readiness_failure", "unsupported_plan_claim", "validation_gap", "language_precision_gap":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1156,6 +1176,7 @@ func mergeContextStats(target **ContextStats, source *ContextStats) {
 	dst.ModelSummaryNodesReturned += source.ModelSummaryNodesReturned
 	dst.CandidateFiles += source.CandidateFiles
 	dst.CandidateSymbols += source.CandidateSymbols
+	dst.ImpactScope += source.ImpactScope
 	dst.TestsSuggested += source.TestsSuggested
 	dst.UnresolvedGaps += source.UnresolvedGaps
 	dst.CollectorReports += source.CollectorReports
@@ -1190,10 +1211,12 @@ func mergeFeedbackStats(target **FeedbackStats, source *FeedbackStats) {
 	dst.MediumSeverity += source.MediumSeverity
 	dst.LowSeverity += source.LowSeverity
 	dst.EvidenceItems += source.EvidenceItems
+	dst.PlanningQualityTotal += source.PlanningQualityTotal
 	mergeStringCounts(dst.ByCategory, source.ByCategory)
 	mergeStringCounts(dst.ByComponent, source.ByComponent)
 	mergeStringCounts(dst.ByConfidence, source.ByConfidence)
 	mergeStringCounts(dst.BySeverity, source.BySeverity)
+	mergeStringCounts(dst.ByPlanningCategory, source.ByPlanningCategory)
 }
 
 func mergeStringCounts(target map[string]int, source map[string]int) {

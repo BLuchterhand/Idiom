@@ -61,6 +61,8 @@ func runContextMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runContextTool(args[1:], stdout, stderr, rec, "context_zoom")
 	case "pack":
 		return runContextTool(args[1:], stdout, stderr, rec, "context_pack")
+	case "impact":
+		return runContextTool(args[1:], stdout, stderr, rec, "context_impact")
 	case "trace":
 		return runContextTool(args[1:], stdout, stderr, rec, "context_trace_pack")
 	default:
@@ -73,7 +75,7 @@ func runContextMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, tool string) int {
 	opts := contextOptions{Config: "config.json", Language: "auto"}
 	modeDefault := "standard"
-	if tool == "context_pack" {
+	if tool == "context_pack" || tool == "context_impact" {
 		modeDefault = "plan"
 	}
 	fs := flag.NewFlagSet("idiom context "+strings.TrimPrefix(tool, "context_"), flag.ContinueOnError)
@@ -82,8 +84,8 @@ func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	fs.StringVar(&opts.Path, "path", "", "optional workspace-relative path scope")
 	fs.StringVar(&opts.Language, "language", "auto", "language hint: auto, go, cpp, gdscript, python, typescript, javascript, rust, java, or another registered source family")
 	fs.StringVar(&opts.Mode, "mode", modeDefault, "indexing mode for build or packet mode for pack")
-	fs.StringVar(&opts.Task, "task", "", "task statement for context pack")
-	fs.StringVar(&opts.TaskFile, "task-file", "", "read task statement for context pack from file")
+	fs.StringVar(&opts.Task, "task", "", "task statement for context pack or impact ranking")
+	fs.StringVar(&opts.TaskFile, "task-file", "", "read task statement for context pack or impact ranking from file")
 	fs.StringVar(&opts.OutputPath, "output", "", "write command JSON to path; default stdout")
 	fs.StringVar(&opts.Query, "query", "", "context query text")
 	fs.StringVar(&opts.Pattern, "pattern", "", "symbol or pattern hint")
@@ -97,8 +99,8 @@ func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	fs.BoolVar(&opts.IncludeSource, "include-source", false, "reserved for exact source excerpts")
 	fs.BoolVar(&opts.IncludeFiles, "include-files", true, "include parsed executed-file and stack-frame evidence for trace packs")
 	fs.BoolVar(&opts.Refresh, "refresh", false, "for context status, attempt bounded or capped stale graph refresh before reporting")
-	fs.Var(&opts.RequiredTests, "required-test", "exact validation command to carry into context pack; repeatable")
-	fs.Var(&opts.ForbiddenPaths, "forbidden-path", "workspace-relative path to omit from context pack candidates; repeatable")
+	fs.Var(&opts.RequiredTests, "required-test", "exact validation command to carry into context pack or impact ranking; repeatable")
+	fs.Var(&opts.ForbiddenPaths, "forbidden-path", "workspace-relative path to omit from context pack or impact candidates; repeatable")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -185,6 +187,7 @@ func printContextUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  idiom context query --query 'what calls X' [--resolution symbol]")
 	fmt.Fprintln(stderr, "  idiom context zoom --id 'symbol://path.go#Name'")
 	fmt.Fprintln(stderr, "  idiom context pack --task 'plan a bounded change' [--path .] [--output view.json]")
+	fmt.Fprintln(stderr, "  idiom context impact --task 'plan a bounded change' [--path .]")
 	fmt.Fprintln(stderr, "  idiom context trace --command 'go test ./...' [--language auto]")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Builds, queries, and enriches idiom's persistent codebase comprehension graph.")

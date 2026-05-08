@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"idiom/internal/comprehension"
@@ -21,16 +22,17 @@ const (
 )
 
 type harnessAuditReport struct {
-	GeneratedAt             string                   `json:"generated_at"`
-	WorkspaceRoot           string                   `json:"workspace_root,omitempty"`
-	Purpose                 string                   `json:"purpose"`
-	Findings                []harnessAuditFinding    `json:"findings,omitempty"`
-	ToolSurface             *harnessAuditToolSurface `json:"tool_surface,omitempty"`
-	LanguageTooling         []harnessAuditLanguage   `json:"language_tooling,omitempty"`
-	BackendAvailability     []harnessAuditBackend    `json:"backend_availability,omitempty"`
-	LogBehavior             *harnessAuditLogBehavior `json:"log_behavior,omitempty"`
-	ImprovementQuestions    []harnessAuditQuestion   `json:"improvement_questions,omitempty"`
-	ConsolidationCandidates []harnessAuditQuestion   `json:"consolidation_candidates,omitempty"`
+	GeneratedAt             string                       `json:"generated_at"`
+	WorkspaceRoot           string                       `json:"workspace_root,omitempty"`
+	Purpose                 string                       `json:"purpose"`
+	Findings                []harnessAuditFinding        `json:"findings,omitempty"`
+	ToolSurface             *harnessAuditToolSurface     `json:"tool_surface,omitempty"`
+	LanguageTooling         []harnessAuditLanguage       `json:"language_tooling,omitempty"`
+	BackendAvailability     []harnessAuditBackend        `json:"backend_availability,omitempty"`
+	LogBehavior             *harnessAuditLogBehavior     `json:"log_behavior,omitempty"`
+	PlanningQuality         *harnessAuditPlanningQuality `json:"planning_quality,omitempty"`
+	ImprovementQuestions    []harnessAuditQuestion       `json:"improvement_questions,omitempty"`
+	ConsolidationCandidates []harnessAuditQuestion       `json:"consolidation_candidates,omitempty"`
 }
 
 type harnessAuditFinding struct {
@@ -86,7 +88,16 @@ type harnessAuditLogBehavior struct {
 	TopPatterns        []eval.PerfPatternHit           `json:"top_patterns,omitempty"`
 	TopTools           []eval.PerfToolMix              `json:"top_tools,omitempty"`
 	WorstOffenders     []eval.PerfWorstOffender        `json:"worst_offenders,omitempty"`
+	InProgressSessions []harnessAuditInProgressSession `json:"in_progress_sessions,omitempty"`
 	IncompleteSessions []harnessAuditIncompleteSession `json:"incomplete_sessions,omitempty"`
+}
+
+type harnessAuditInProgressSession struct {
+	TelemetryLog    string `json:"telemetry_log,omitempty"`
+	ConversationLog string `json:"conversation_log,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	Command         string `json:"command,omitempty"`
+	PID             int    `json:"pid,omitempty"`
 }
 
 type harnessAuditIncompleteSession struct {
@@ -95,6 +106,21 @@ type harnessAuditIncompleteSession struct {
 	SessionID       string   `json:"session_id,omitempty"`
 	Command         string   `json:"command,omitempty"`
 	Missing         []string `json:"missing"`
+}
+
+type harnessAuditPlanningQuality struct {
+	FeedbackTotal       int                 `json:"feedback_total"`
+	PlanningFeedback    int                 `json:"planning_feedback"`
+	VerifiedFeedback    int                 `json:"verified_feedback,omitempty"`
+	HighSeverity        int                 `json:"high_severity,omitempty"`
+	PlanningCategories  map[string]int      `json:"planning_categories,omitempty"`
+	TopComponents       []harnessAuditCount `json:"top_components,omitempty"`
+	RecommendedSurfaces []string            `json:"recommended_surfaces,omitempty"`
+}
+
+type harnessAuditCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 type harnessAuditQuestion struct {
@@ -138,7 +164,7 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 		report.ConsolidationCandidates = append(report.ConsolidationCandidates, staticConsolidationCandidates(m.cfg.Root)...)
 	}
 
-	if purpose == "all" || purpose == "behavior" {
+	if purpose == "all" || purpose == "behavior" || purpose == "planning_quality" {
 		behavior, findings, questions, err := m.auditLogBehavior(req)
 		if err != nil {
 			return ToolResult{Tool: "harness_audit", Summary: "Harness audit rejected", Error: err.Error()}
@@ -146,6 +172,11 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 		report.LogBehavior = behavior
 		report.Findings = append(report.Findings, findings...)
 		report.ImprovementQuestions = append(report.ImprovementQuestions, questions...)
+		if purpose == "all" || purpose == "planning_quality" {
+			report.PlanningQuality = planningQualityFromFeedback(behavior.Aggregate.Feedback)
+			report.Findings = append(report.Findings, planningQualityFindings(report.PlanningQuality)...)
+			report.ImprovementQuestions = append(report.ImprovementQuestions, planningQualityQuestions(report.PlanningQuality)...)
+		}
 	}
 	report.ImprovementQuestions = append(report.ImprovementQuestions, staticImprovementQuestions(report)...)
 
@@ -169,6 +200,8 @@ func normalizeHarnessAuditPurpose(purpose string) string {
 		return "tool_surface"
 	case "behavior", "behaviour", "logs", "log_behavior", "efficiency", "perf":
 		return "behavior"
+	case "planning_quality", "planning-quality", "planning", "planner_quality":
+		return "planning_quality"
 	default:
 		return "all"
 	}
@@ -397,7 +430,7 @@ func (m *Manager) auditBackendAvailability(languages []harnessAuditLanguage) []h
 func (m *Manager) auditContextGraphBackend() harnessAuditBackend {
 	backend := harnessAuditBackend{
 		Name:     "context_graph_sqlite",
-		Tools:    []string{"context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query"},
+		Tools:    []string{"context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query"},
 		Impact:   "Context graph tools use the embedded SQLite graph when present; discovery_query falls back to live probes when the graph is stale, collector-version-mismatched, missing, or incompatible.",
 		Active:   true,
 		Binaries: []string{"embedded:modernc.org/sqlite"},
@@ -454,7 +487,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, [
 		report.LogPath = m.displayPath(path)
 		reports = append(reports, report)
 	}
-	incompleteSessions, lifecycleWarnings := m.auditIncompleteImplementSessions(paths)
+	incompleteSessions, inProgressSessions, lifecycleWarnings := m.auditIncompleteImplementSessions(paths)
 	warnings = append(warnings, lifecycleWarnings...)
 	aggregate := eval.Aggregate(reports)
 	behavior := &harnessAuditLogBehavior{
@@ -466,6 +499,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, [
 		TopPatterns:        firstAuditPatterns(aggregate.PatternHitRate, 8),
 		TopTools:           firstAuditTools(aggregate.ToolMix, 10),
 		WorstOffenders:     aggregate.WorstOffenders,
+		InProgressSessions: inProgressSessions,
 		IncompleteSessions: incompleteSessions,
 	}
 	return behavior, logBehaviorFindings(aggregate, incompleteSessions), logBehaviorQuestions(aggregate), nil
@@ -476,6 +510,7 @@ type harnessAuditLogFacts struct {
 	WorkspaceRoot           string
 	SessionID               string
 	DebugLogPath            string
+	PID                     int
 	HasProcessStart         bool
 	HasProcessExit          bool
 	HasModelSession         bool
@@ -483,8 +518,9 @@ type harnessAuditLogFacts struct {
 	IsImplementConversation bool
 }
 
-func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAuditIncompleteSession, []string) {
+func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAuditIncompleteSession, []harnessAuditInProgressSession, []string) {
 	var incomplete []harnessAuditIncompleteSession
+	var inProgress []harnessAuditInProgressSession
 	var warnings []string
 	seen := make(map[string]struct{})
 
@@ -496,6 +532,21 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 		}
 		displayPath := m.displayPath(path)
 		if facts.HasProcessStart && strings.EqualFold(strings.TrimSpace(facts.Command), "implement") {
+			if !facts.HasProcessExit && processIDAppearsRunning(facts.PID) {
+				session := harnessAuditInProgressSession{
+					TelemetryLog: displayPath,
+					SessionID:    strings.TrimSpace(facts.SessionID),
+					Command:      "implement",
+					PID:          facts.PID,
+				}
+				if facts.HasModelSession {
+					if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
+						session.ConversationLog = m.displayPath(conversationPath)
+					}
+				}
+				inProgress = append(inProgress, session)
+				continue
+			}
 			session := harnessAuditIncompleteSession{
 				TelemetryLog: displayPath,
 				SessionID:    strings.TrimSpace(facts.SessionID),
@@ -548,7 +599,12 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 		right := firstNonEmptyAuditSessionPath(incomplete[j])
 		return left < right
 	})
-	return incomplete, warnings
+	sort.Slice(inProgress, func(i, j int) bool {
+		left := firstNonEmptyAuditInProgressSessionPath(inProgress[i])
+		right := firstNonEmptyAuditInProgressSessionPath(inProgress[j])
+		return left < right
+	})
+	return incomplete, inProgress, warnings
 }
 
 func (m *Manager) auditConversationPathFromTelemetry(facts harnessAuditLogFacts) string {
@@ -591,6 +647,7 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 			facts.HasProcessStart = true
 			facts.Command = firstNonEmptyAuditString(facts.Command, auditStringField(record, "command"))
 			facts.WorkspaceRoot = firstNonEmptyAuditString(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
+			facts.PID = auditIntField(record, "pid")
 		case "session_start":
 			facts.Command = firstNonEmptyAuditString(facts.Command, auditStringField(record, "command"))
 			facts.WorkspaceRoot = firstNonEmptyAuditString(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
@@ -616,6 +673,17 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 		facts.SessionID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
 	return facts, nil
+}
+
+func processIDAppearsRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return process.Signal(syscall.Signal(0)) == nil
 }
 
 func auditControlRailsIndicateImplementation(record map[string]any) bool {
@@ -650,6 +718,23 @@ func auditStringField(record map[string]any, key string) string {
 	return ""
 }
 
+func auditIntField(record map[string]any, key string) int {
+	value, ok := record[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case json.Number:
+		n, _ := typed.Int64()
+		return int(n)
+	}
+	return 0
+}
+
 func firstNonEmptyAuditString(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -657,6 +742,13 @@ func firstNonEmptyAuditString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonEmptyAuditInProgressSessionPath(session harnessAuditInProgressSession) string {
+	if strings.TrimSpace(session.TelemetryLog) != "" {
+		return strings.TrimSpace(session.TelemetryLog)
+	}
+	return strings.TrimSpace(session.ConversationLog)
 }
 
 func firstNonEmptyAuditSessionPath(session harnessAuditIncompleteSession) string {
@@ -935,6 +1027,86 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 	return findings
 }
 
+func planningQualityFromFeedback(feedback *eval.FeedbackStats) *harnessAuditPlanningQuality {
+	report := &harnessAuditPlanningQuality{
+		PlanningCategories: make(map[string]int),
+	}
+	if feedback == nil {
+		return report
+	}
+	report.FeedbackTotal = feedback.Total
+	report.PlanningFeedback = feedback.PlanningQualityTotal
+	report.VerifiedFeedback = feedback.Verified
+	report.HighSeverity = feedback.HighSeverity
+	for category, count := range feedback.ByPlanningCategory {
+		report.PlanningCategories[category] = count
+	}
+	report.TopComponents = auditTopCounts(feedback.ByComponent, 6)
+	report.RecommendedSurfaces = planningQualityRecommendedSurfaces(report)
+	if len(report.PlanningCategories) == 0 {
+		report.PlanningCategories = nil
+	}
+	return report
+}
+
+func planningQualityFindings(report *harnessAuditPlanningQuality) []harnessAuditFinding {
+	if report == nil || report.PlanningFeedback == 0 {
+		return nil
+	}
+	severity := "medium"
+	if report.HighSeverity > 0 {
+		severity = "high"
+	}
+	return []harnessAuditFinding{{
+		ID:             "planning_quality_feedback_reported",
+		Severity:       severity,
+		Evidence:       fmt.Sprintf("%d planning-quality feedback event(s); top planning category %s", report.PlanningFeedback, auditTopCount(report.PlanningCategories)),
+		Recommendation: "Triage planning-quality feedback into context impact ranking, packet schema, plan audit, budget, or replay-eval improvements before adding prompt text.",
+		Tools:          []string{"harness_feedback", "harness_audit", "context_impact", "architect plan-audit"},
+	}}
+}
+
+func planningQualityQuestions(report *harnessAuditPlanningQuality) []harnessAuditQuestion {
+	if report == nil || report.PlanningFeedback == 0 {
+		return nil
+	}
+	return []harnessAuditQuestion{{
+		Area:      "planning_quality",
+		Question:  "Which planning-quality feedback category should become the next deterministic packet, ranking, audit, or eval contract?",
+		Evidence:  fmt.Sprintf("%d planning-quality feedback event(s); recommended surfaces: %s", report.PlanningFeedback, strings.Join(report.RecommendedSurfaces, ", ")),
+		Candidate: "Prefer a typed context_impact, planning_v2, plan-audit, budget, or replay-eval improvement over another strategy prompt.",
+	}}
+}
+
+func planningQualityRecommendedSurfaces(report *harnessAuditPlanningQuality) []string {
+	if report == nil {
+		return nil
+	}
+	var surfaces []string
+	if report.PlanningCategories["packet_quality"] > 0 || report.PlanningCategories["planning_quality"] > 0 {
+		surfaces = append(surfaces, "architect packet --schema planning_v2")
+	}
+	if report.PlanningCategories["impact_ranking"] > 0 || report.PlanningCategories["missing_affordance"] > 0 || report.PlanningCategories["bad_scope_rank"] > 0 || report.PlanningCategories["read_loop"] > 0 {
+		surfaces = append(surfaces, "context_impact")
+	}
+	if report.PlanningCategories["plan_audit_gap"] > 0 || report.PlanningCategories["edit_readiness_failure"] > 0 || report.PlanningCategories["unsupported_plan_claim"] > 0 || report.PlanningCategories["validation_gap"] > 0 {
+		surfaces = append(surfaces, "architect plan-audit")
+	}
+	if report.PlanningCategories["budget_gap"] > 0 || report.PlanningCategories["packet_bloat"] > 0 {
+		surfaces = append(surfaces, "architect budget")
+	}
+	if report.PlanningCategories["replay_eval_gap"] > 0 {
+		surfaces = append(surfaces, "architect replay-compare")
+	}
+	if report.PlanningCategories["stale_fact"] > 0 || report.PlanningCategories["backend_gap"] > 0 || report.PlanningCategories["language_precision_gap"] > 0 {
+		surfaces = append(surfaces, "context_status", "context_pack")
+	}
+	if len(surfaces) == 0 && report.PlanningFeedback > 0 {
+		surfaces = append(surfaces, "harness_feedback")
+	}
+	return uniqueStringValues(surfaces)
+}
+
 func staticImprovementQuestions(report harnessAuditReport) []harnessAuditQuestion {
 	var questions []harnessAuditQuestion
 	if report.ToolSurface != nil &&
@@ -964,6 +1136,26 @@ func staticImprovementQuestions(report harnessAuditReport) []harnessAuditQuestio
 		})
 	}
 	return questions
+}
+
+func auditTopCounts(values map[string]int, limit int) []harnessAuditCount {
+	out := make([]harnessAuditCount, 0, len(values))
+	for name, count := range values {
+		if strings.TrimSpace(name) == "" || count <= 0 {
+			continue
+		}
+		out = append(out, harnessAuditCount{Name: name, Count: count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count == out[j].Count {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Count > out[j].Count
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func staticConsolidationCandidates(root string) []harnessAuditQuestion {

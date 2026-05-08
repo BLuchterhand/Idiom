@@ -602,6 +602,8 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		return m.contextZoom(req)
 	case "context_pack":
 		return m.contextPack(ctx, req)
+	case "context_impact":
+		return m.contextImpact(ctx, req)
 	case "context_trace_pack":
 		return m.contextTracePack(ctx, req)
 	case "discovery_query":
@@ -1432,7 +1434,7 @@ func IsNarrowingRequest(req ToolRequest) bool {
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg", "read_file",
-		"harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query",
+		"harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
 		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
@@ -1470,7 +1472,7 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg",
-		"harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query",
+		"harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
 		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",

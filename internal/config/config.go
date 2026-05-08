@@ -259,7 +259,7 @@ func Default() Config {
 			Host:            "127.0.0.1",
 			Port:            8080,
 			Model:           "models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
-			CtxSize:         196608,
+			CtxSize:         262144,
 			Threads:         defaultThreads(),
 			GPULayers:       0,
 			Jinja:           true,
@@ -980,7 +980,7 @@ func applyBackendRuntimeDefaults(b *LlamaServer, parent *LlamaServer, defaultLog
 		b.Threads = defaultThreads()
 	}
 	if b.CtxSize <= 0 {
-		b.CtxSize = 196608
+		b.CtxSize = 262144
 	}
 	if b.Reasoning == "" {
 		if parent != nil && parent.Reasoning != "" {

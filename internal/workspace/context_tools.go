@@ -170,6 +170,188 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 	}
 }
 
+type contextImpactReport struct {
+	Task              string                       `json:"task"`
+	ArtifactPath      string                       `json:"artifact_path,omitempty"`
+	IndexID           string                       `json:"index_id,omitempty"`
+	Fresh             bool                         `json:"fresh"`
+	GeneratedAt       string                       `json:"generated_at,omitempty"`
+	BudgetTokens      int                          `json:"budget_tokens,omitempty"`
+	ImpactScope       []contextImpactItem          `json:"impact_scope,omitempty"`
+	Tests             []comprehension.PackTest     `json:"tests,omitempty"`
+	Risks             []string                     `json:"risks,omitempty"`
+	Unknowns          []string                     `json:"unknowns,omitempty"`
+	UnresolvedGaps    []string                     `json:"unresolved_gaps,omitempty"`
+	AutoRefresh       *comprehension.RefreshReport `json:"auto_refresh,omitempty"`
+	ContextViewPath   string                       `json:"context_view_path,omitempty"`
+	ContextViewHandle string                       `json:"context_view_handle,omitempty"`
+}
+
+type contextImpactItem struct {
+	Handle      string                `json:"handle,omitempty"`
+	Path        string                `json:"path,omitempty"`
+	Symbol      string                `json:"symbol,omitempty"`
+	Kind        string                `json:"kind"`
+	Rank        float64               `json:"rank"`
+	Signals     []contextImpactSignal `json:"signals,omitempty"`
+	Confidence  string                `json:"confidence,omitempty"`
+	Limitations []string              `json:"limitations,omitempty"`
+}
+
+type contextImpactSignal struct {
+	Kind   string  `json:"kind"`
+	Weight float64 `json:"weight"`
+	Detail string  `json:"detail,omitempty"`
+}
+
+func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult {
+	task := strings.TrimSpace(firstNonEmptyString(req.Task, req.Query, req.Prompt, req.Content, req.Pattern))
+	refresh := m.contextAutoRefresh(ctx, req, "context_impact")
+	pack, err := comprehension.Pack(comprehension.PackOptions{
+		Root:           m.cfg.Root,
+		Task:           task,
+		Path:           req.Path,
+		Scope:          req.Workdir,
+		Mode:           firstNonEmptyString(req.Mode, "plan"),
+		Limit:          req.Limit,
+		BudgetTokens:   req.BudgetTokens,
+		RequiredTests:  req.RequiredTests,
+		ForbiddenPaths: req.ForbiddenPaths,
+	})
+	if err != nil {
+		return ToolResult{Tool: "context_impact", Summary: "Context impact ranking failed", Error: err.Error()}
+	}
+	pack.AutoRefresh = refresh
+	report := contextImpactReport{
+		Task:              pack.Task,
+		ArtifactPath:      pack.ArtifactPath,
+		IndexID:           pack.IndexID,
+		Fresh:             pack.Fresh,
+		GeneratedAt:       pack.GeneratedAt,
+		BudgetTokens:      pack.BudgetTokens,
+		ImpactScope:       contextImpactItems(pack, req.Limit),
+		Tests:             append([]comprehension.PackTest(nil), pack.Tests...),
+		Risks:             append([]string(nil), pack.Risks...),
+		Unknowns:          append([]string(nil), pack.Unknowns...),
+		UnresolvedGaps:    append([]string(nil), pack.UnresolvedGaps...),
+		AutoRefresh:       refresh,
+		ContextViewPath:   pack.ArtifactPath,
+		ContextViewHandle: "context_pack://" + pack.PackID,
+	}
+	output, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return ToolResult{Tool: "context_impact", Summary: "Context impact report encode failed", Error: err.Error()}
+	}
+	gap := ""
+	if len(report.UnresolvedGaps) > 0 {
+		gap = fmt.Sprintf("; %d gap(s)", len(report.UnresolvedGaps))
+	}
+	return ToolResult{
+		Tool:    "context_impact",
+		Summary: fmt.Sprintf("Context impact ranked %d item(s), %d test(s); context view: %s%s%s", len(report.ImpactScope), len(report.Tests), report.ContextViewPath, gap, contextRefreshSummary(refresh)),
+		Output:  string(output),
+	}
+}
+
+func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpactItem {
+	var items []contextImpactItem
+	for _, file := range pack.CandidateFiles {
+		rank := 0.74
+		role := strings.ToLower(strings.TrimSpace(file.Role))
+		if strings.Contains(role, "modify") || strings.Contains(role, "edit") {
+			rank = 0.92
+		}
+		if strings.Contains(role, "test") {
+			rank = 0.78
+		}
+		item := contextImpactItem{
+			Handle:     firstNonEmptyString(firstString(file.Handles), "file://"+file.Path),
+			Path:       file.Path,
+			Kind:       "file",
+			Rank:       rank,
+			Confidence: firstNonEmptyString(file.Confidence, "heuristic"),
+			Signals: []contextImpactSignal{{
+				Kind:   "context_pack_candidate",
+				Weight: 0.32,
+				Detail: firstNonEmptyString(file.Reason, file.Role),
+			}},
+		}
+		if file.Stale {
+			item.Limitations = append(item.Limitations, "candidate was marked stale by context graph")
+		}
+		items = append(items, item)
+	}
+	for _, symbol := range pack.CandidateSymbols {
+		item := contextImpactItem{
+			Handle:     firstNonEmptyString(symbol.ID, "symbol://"+symbol.Path+"#"+symbol.QualifiedName),
+			Path:       symbol.Path,
+			Symbol:     symbol.QualifiedName,
+			Kind:       firstNonEmptyString(symbol.Kind, "symbol"),
+			Rank:       0.68,
+			Confidence: firstNonEmptyString(symbol.Confidence, "heuristic"),
+			Signals: []contextImpactSignal{{
+				Kind:   "context_pack_symbol",
+				Weight: 0.30,
+				Detail: symbol.Reason,
+			}},
+		}
+		if symbol.Stale {
+			item.Limitations = append(item.Limitations, "symbol was marked stale by context graph")
+		}
+		items = append(items, item)
+	}
+	for _, test := range pack.Tests {
+		handle := ""
+		if test.Command != "" {
+			handle = "test://" + contextImpactStableHandle(test.Command)
+		} else if test.Path != "" {
+			handle = "file://" + test.Path
+		}
+		items = append(items, contextImpactItem{
+			Handle:     handle,
+			Path:       test.Path,
+			Symbol:     test.Symbol,
+			Kind:       "test_command",
+			Rank:       0.62,
+			Confidence: "exact_tool_output",
+			Signals: []contextImpactSignal{{
+				Kind:   "validation_candidate",
+				Weight: 0.25,
+				Detail: firstNonEmptyString(test.Reason, test.Command),
+			}},
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Rank == items[j].Rank {
+			return items[i].Kind+"\x00"+items[i].Handle < items[j].Kind+"\x00"+items[j].Handle
+		}
+		return items[i].Rank > items[j].Rank
+	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func contextImpactStableHandle(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unspecified"
+	}
+	sum := 0
+	for _, ch := range value {
+		sum = (sum*33 + int(ch)) & 0x7fffffff
+	}
+	return fmt.Sprintf("%08x", sum)
+}
+
 func (m *Manager) contextAutoRefresh(ctx context.Context, req ToolRequest, purpose string) *comprehension.RefreshReport {
 	scope := boundedContextRefreshScope(req)
 	status, statusErr := comprehension.Status(m.cfg.Root)

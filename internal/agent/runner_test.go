@@ -101,6 +101,43 @@ func TestPatchHygieneDoesNotSatisfySourceEditCompletion(t *testing.T) {
 	}
 }
 
+func TestPlannerOwnedVerificationAllowsSourceEditCloseoutWithDelegatedStatus(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			Constraints:          []string{"planner_owned_verification"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited native/tests/test_cart_system.cpp"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/tests/test_cart_system.cpp\n"},
+	}
+
+	patchOnlyAnswer := "Changed paths:\n- native/tests/test_cart_system.cpp\n\nVerification: git diff --check passed."
+	if result, rejected := runner.mutationCompletionRejection(patchOnlyAnswer, results); !rejected || !strings.Contains(result.Error, "planner-owned") {
+		t.Fatalf("expected planner-owned source edit closeout to require delegated verification status, rejected=%v result=%#v", rejected, result)
+	}
+
+	delegatedAnswer := patchOnlyAnswer + "\nPlanner-owned validation not run by lane; build/test verification is planner-owned."
+	if result, rejected := runner.mutationCompletionRejection(delegatedAnswer, results); rejected {
+		t.Fatalf("expected planner-owned delegated verification status to satisfy closeout, got %#v", result)
+	}
+}
+
+func TestClaimedChangedPathsStopBeforeVerificationStatusProse(t *testing.T) {
+	answer := "Changed paths:\n- native/tests/test_cart_system.cpp\nPlanner-owned validation not run by lane; build/test verification is planner-owned."
+	if got := claimedChangedPathsFromAnswer(answer); !reflect.DeepEqual(got, []string{"native/tests/test_cart_system.cpp"}) {
+		t.Fatalf("expected verification prose outside changed paths, got %#v", got)
+	}
+
+	answer = "Changed paths:\n- docs/planner-owned.md\n\nVerification: git diff --check passed."
+	if got := claimedChangedPathsFromAnswer(answer); !reflect.DeepEqual(got, []string{"docs/planner-owned.md"}) {
+		t.Fatalf("expected planner-owned path to remain valid, got %#v", got)
+	}
+}
+
 func TestMutationCompletionGateRequiresRequiredEditSnippets(t *testing.T) {
 	root := t.TempDir()
 	target := "native/tests/test_production_graph.cpp"
@@ -4425,6 +4462,26 @@ func TestSynthesizeMutationFallbackReportsMissingRequiredPathsAndPlannerOwnedVer
 	} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected mutation fallback to include %q, got:\n%s", want, answer)
+		}
+	}
+}
+
+func TestSynthesizeMutationFallbackReportsPatchHygieneOnlyForPlannerOwnedSourceEdits(t *testing.T) {
+	answer := synthesizeMutationFallbackAnswer(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Constraints:          []string{"planner_owned_verification"},
+	}, []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited native/src/example.cpp"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/example.cpp\n"},
+	})
+
+	for _, want := range []string{
+		"Verification: git diff --check -- native/src/example.cpp passed (patch hygiene only); planner-owned build/test verification not run by lane.",
+		"native/src/example.cpp",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected fallback to include %q, got:\n%s", want, answer)
 		}
 	}
 }

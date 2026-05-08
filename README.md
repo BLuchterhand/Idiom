@@ -77,8 +77,11 @@ Externalize planning context before asking a model to architect, critique, or
 brief a feature:
 
 ```bash
-./idiom architect packet --task-file /tmp/task.md --output /tmp/packet.json
+./idiom context impact --task-file /tmp/task.md --output /tmp/impact.json
+./idiom context pack --task-file /tmp/task.md --output /tmp/context-view.json
+./idiom architect packet --task-file /tmp/task.md --schema planning_v2 --context-view /tmp/context-view.json --output /tmp/packet.json
 ./idiom architect lint --packet /tmp/packet.json
+./idiom architect budget --packet /tmp/packet.json
 ./idiom architect plan --packet /tmp/packet.json --output /tmp/plan.prompt.md
 ./idiom artifact --prompt-file /tmp/plan.prompt.md --output /tmp/plan.md --no-tools
 ./idiom architect plan-audit --packet /tmp/packet.json --plan-file /tmp/plan.md
@@ -89,6 +92,8 @@ packet schema, prompt rendering, and gate contracts; project profiles own local
 rules, collectors, tests, and domain traps.
 Use `--schema planning_v2` when you want ranked scope, freshness, language
 capability, handoff, and context budget sections for planner-quality review.
+Use `architect packet-compare` and `architect replay-compare` to compare v1 and
+V2 packet/plan variants from the same task and model run.
 
 List or resume prior sessions (sessions are the JSONL files in `chat.debug_log_dir`):
 
@@ -186,7 +191,7 @@ Notes:
 
 - If you hand-tune the numeric sampling fields in `config.json`, set `preset: "custom"` so startup does not re-apply a built-in preset over your manual values.
 - `qwen3-coding-preserve` is the shipped coding default for long sessions; it consumes more context because historical thinking traces are retained. Use `qwen3-coding` when you want the same sampling settings without retained thinking.
-- The shipped config now uses `ctx_size: 196608`; preserved thinking becomes more useful as context grows, and Qwen officially recommends even larger windows for strongest long-horizon behavior.
+- The shipped config now uses `ctx_size: 262144` for Qwen3.6-35B-A3B. Preserved thinking becomes more useful as context grows, and Qwen recommends large windows for strongest long-horizon behavior.
 - The harness now starts `llama-server` with `flash_attention`, `reasoning: auto`, and `reasoning_format: deepseek` by default, so visible responses stay clean while reasoning content remains structured on the server side.
 
 ## Inference backends
@@ -194,7 +199,7 @@ Notes:
 Each of the three server blocks (`llama_server`, `implementer`, `route_classifier`) accepts a `kind` field that selects the inference backend:
 
 - `"kind": "llama"` (default) — launches `llama-server` from llama.cpp with the existing GGUF model path and llama-specific flags (`jinja`, `flash_attention`, `reasoning*`, `cache-type-*`, etc).
-- `"kind": "mlx"` — launches `mlx_lm.server` from [mlx-lm](https://github.com/ml-explore/mlx-lm). On Apple Silicon this typically beats llama.cpp's Metal backend by ~15–30% throughput and ~10% memory. `model` becomes a Hugging Face ID (e.g. `unsloth/Qwen3.6-27B-UD-MLX-4bit`) or a local MLX directory — not a GGUF path. Llama-specific flags (`jinja`, `flash_attention`, `reasoning*`) are ignored, and `chat_template_kwargs` (`enable_thinking`, `preserve_thinking`) is omitted from requests since MLX doesn't understand it.
+- `"kind": "mlx"` — launches `mlx_lm.server` from [mlx-lm](https://github.com/ml-explore/mlx-lm). On Apple Silicon this typically beats llama.cpp's Metal backend by ~15–30% throughput and ~10% memory. `model` becomes a Hugging Face ID (e.g. `Qwen/Qwen3.6-35B-A3B`) or a local MLX directory — not a GGUF path. Llama-specific flags (`jinja`, `flash_attention`, `reasoning*`) are ignored, and per-request `chat_template_kwargs` (`enable_thinking`, `preserve_thinking`) are omitted. For Qwen3.6 thinking preservation on MLX, set server defaults through `extra_args`, for example `--chat-template-args '{"enable_thinking":true,"preserve_thinking":true}'`.
 
 The blocks are independent, so mixed setups work — for example, main chat on MLX and the route classifier still on llama.cpp. Set `binary` to `mlx_lm.server` (install via `pip install mlx-lm`) and pass any additional flags via `extra_args`.
 

@@ -272,6 +272,11 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 	}
 
 	toolName := args[0]
+	if toolHelpRequested(args[1:]) {
+		printToolHelp(stdout, toolName)
+		logCLIPhase(rec, "tool_help", map[string]any{"tool": toolName, "exit_code": 0})
+		return 0
+	}
 	toolFs := flag.NewFlagSet("idiom tool "+toolName, flag.ContinueOnError)
 	toolFs.SetOutput(stderr)
 	configPath := toolFs.String("config", "config.json", "path to config file")
@@ -280,13 +285,31 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		return 2
 	}
 
+	req := workspace.ToolRequest{Tool: toolName}
+	requestLogged := false
+	logRequest := func(rawInputBytes int) {
+		if requestLogged {
+			return
+		}
+		logDirectToolRequest(rec, req, rawInputBytes)
+		requestLogged = true
+	}
+	logFailureResult := func(summary string, errText string) {
+		logDirectToolResult(rec, req, workspace.ToolResult{
+			Tool:    toolName,
+			Summary: summary,
+			Error:   errText,
+		}, 0)
+	}
+
 	cfg, err := loadToolConfig(*configPath)
 	if err != nil {
+		logRequest(0)
+		logFailureResult("Direct tool setup failed", err.Error())
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 
-	req := workspace.ToolRequest{Tool: toolName}
 	var rawInput []byte
 	if *inputJSON != "" {
 		rawInput = []byte(*inputJSON)
@@ -295,7 +318,10 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
 			data, err := io.ReadAll(os.Stdin)
 			if err != nil {
-				fmt.Fprintf(stderr, "read stdin: %v\n", err)
+				errText := fmt.Sprintf("read stdin: %v", err)
+				logRequest(0)
+				logFailureResult("Direct tool input failed", errText)
+				fmt.Fprintln(stderr, errText)
 				return 1
 			}
 			rawInput = data
@@ -303,7 +329,10 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 	}
 	if len(rawInput) > 0 {
 		if err := json.Unmarshal(rawInput, &req); err != nil {
-			fmt.Fprintf(stderr, "invalid input JSON: %v\n", err)
+			errText := fmt.Sprintf("invalid input JSON: %v", err)
+			logRequest(len(rawInput))
+			logFailureResult("Direct tool input rejected", errText)
+			fmt.Fprintln(stderr, errText)
 			return 1
 		}
 		// Preserve the full input as Args so external tools (and any
@@ -312,12 +341,14 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		req.Args = json.RawMessage(rawInput)
 	}
 	req.Tool = toolName
-	logDirectToolRequest(rec, req, len(rawInput))
+	logRequest(len(rawInput))
 
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
 	if extReg, extErr := loadExternalToolsRegistry(cfg.Workspace); extErr != nil {
-		fmt.Fprintf(stderr, "external tools setup: %v\n", extErr)
+		errText := fmt.Sprintf("external tools setup: %v", extErr)
+		logFailureResult("Direct tool setup failed", errText)
+		fmt.Fprintln(stderr, errText)
 		return 1
 	} else if extReg != nil {
 		mgr.SetExternalToolsRegistry(extReg)
@@ -341,6 +372,59 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		return 1
 	}
 	return 0
+}
+
+func toolHelpRequested(args []string) bool {
+	skipValue := false
+	for _, arg := range args {
+		if skipValue {
+			skipValue = false
+			continue
+		}
+		arg = strings.TrimSpace(arg)
+		switch strings.TrimSpace(arg) {
+		case "help", "--help", "-h":
+			return true
+		case "--input", "-input", "--config", "-config":
+			skipValue = true
+		}
+	}
+	return false
+}
+
+func printToolHelp(stdout io.Writer, toolName string) {
+	toolName = strings.TrimSpace(toolName)
+	fmt.Fprintf(stdout, "Usage:\n  idiom tool %s --input '<json>'\n\n", toolName)
+	defs := workspace.BuildToolDefinitions([]string{toolName})
+	if len(defs) > 0 {
+		def := defs[0]
+		fmt.Fprintf(stdout, "%s\n\n", def.Description)
+		fmt.Fprintln(stdout, "Schema:")
+		fmt.Fprintln(stdout, def.ParametersJSON)
+		if example, ok := toolManifestExample(toolName); ok {
+			fmt.Fprintln(stdout)
+			fmt.Fprintln(stdout, "Example:")
+			fmt.Fprintln(stdout, example.Request)
+			if strings.TrimSpace(example.Purpose) != "" {
+				fmt.Fprintf(stdout, "Purpose: %s\n", example.Purpose)
+			}
+		}
+		return
+	}
+	if example, ok := toolManifestExample(toolName); ok {
+		fmt.Fprintf(stdout, "%s\n\nExample:\n%s\n", example.Purpose, example.Request)
+		return
+	}
+	fmt.Fprintf(stdout, "No built-in schema found for %q. If this is a project external tool, run `idiom tool list --config <path>` and inspect the project tool docs.\n", toolName)
+}
+
+func toolManifestExample(toolName string) (workspace.ToolManifestEntry, bool) {
+	for _, entry := range workspace.BuildToolManifest([]string{toolName}) {
+		if strings.TrimSpace(entry.Tool) == toolName {
+			return entry, true
+		}
+	}
+	return workspace.ToolManifestEntry{}, false
 }
 
 func runToolList(stdout io.Writer) int {
@@ -399,7 +483,7 @@ func printToolUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Run a single workspace tool and print its result as JSON.")
 	fmt.Fprintln(stderr, "Does not require llama-server.")
-	fmt.Fprintln(stderr, "For persistent codebase context, use `idiom context build|status|query|zoom|pack|trace`.")
+	fmt.Fprintln(stderr, "For persistent codebase context, use `idiom context build|status|query|zoom|pack|impact|trace`.")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Discovery tools:")
 	fmt.Fprintln(stderr, "  harness_audit      Audit idiom tool surfaces, backends, and behavior logs")
@@ -409,6 +493,7 @@ func printToolUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  context_query      Query graph nodes and relationships at repo/package/file/symbol resolution")
 	fmt.Fprintln(stderr, "  context_zoom       Expand one graph handle with neighboring evidence")
 	fmt.Fprintln(stderr, "  context_pack       Generate a packet-ready context view")
+	fmt.Fprintln(stderr, "  context_impact     Rank task-relevant files, symbols, and tests")
 	fmt.Fprintln(stderr, "  context_trace_pack Save language-agnostic runtime trace evidence from a command")
 	fmt.Fprintln(stderr, "  discovery_query     Multi-layer analysis (impact, tracing, architecture, security, history)")
 	fmt.Fprintln(stderr, "  structural_search   AST-aware pattern search (requires ast-grep)")

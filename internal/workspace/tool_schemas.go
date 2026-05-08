@@ -138,7 +138,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Audit idiom itself: exported tool/schema coverage, language capability wiring, backend availability, and recent JSONL behavior logs. Use only for harness/tooling improvement questions, not as a replacement for code search.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"purpose":{"type":"string","enum":["all","tool_surface","behavior"],"description":"audit scope; all includes static tool-surface checks and recent log behavior"},"path":`+strProp("optional log file or directory to scan for behavior signals; defaults to recent logs/conversations JSONL logs")+`,"glob":`+strProp("optional workspace-relative glob of JSONL logs to scan")+`,"limit":`+intProp("max recent log files to scan; default 25, cap 200"),
+				`"purpose":{"type":"string","enum":["all","tool_surface","behavior","planning_quality"],"description":"audit scope; all includes static tool-surface checks, recent log behavior, and planning-quality feedback"},"path":`+strProp("optional log file or directory to scan for behavior signals; defaults to recent logs/conversations JSONL logs")+`,"glob":`+strProp("optional workspace-relative glob of JSONL logs to scan")+`,"limit":`+intProp("max recent log files to scan; default 25, cap 200"),
 			),
 		},
 		{
@@ -146,7 +146,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Record structured feedback about idiom harness/tool/prompt behavior that affected the current task. Use only for generic idiom capability gaps, confusing contracts, stale-context failures, telemetry gaps, or workflow friction; do not use for product-code bugs.",
 			ParametersJSON: schemaObj(
 				[]string{"category", "component", "expected", "observed", "impact", "confidence"},
-				`"category":{"type":"string","enum":["tool_gap","prompt_gap","workflow_gap","context_gap","stale_context","language_support","routing_gap","verification_gap","telemetry_gap","audit_gap","other"],"description":"generic feedback class"},"component":`+strProp("idiom surface involved, e.g. context_pack, gdscript_trace, prompt/base, direct tool CLI")+`,"expected":`+strProp("capability or contract the agent reasonably expected")+`,"observed":`+strProp("what actually happened, stated as evidence rather than speculation")+`,"workaround":`+strProp("how the agent proceeded, if any")+`,"impact":`+strProp("task effect such as extra reads, blocked edit, wrong routing, or missing audit signal")+`,"evidence":{"type":"array","items":{"type":"string"},"description":"short log paths, step ids, tool outputs, or file references backing the observation"},"confidence":{"type":"string","enum":["verified","inferred"],"description":"verified when backed by logs/tool output; inferred when observed indirectly"},"severity":{"type":"string","enum":["low","medium","high"],"description":"task impact; default low"},"suggested_fix":`+strProp("optional generic harness/tool/prompt improvement, not a one-off task-specific workaround"),
+				`"category":{"type":"string","enum":["tool_gap","prompt_gap","workflow_gap","context_gap","stale_context","language_support","routing_gap","verification_gap","telemetry_gap","audit_gap","planning_quality","packet_quality","impact_ranking","plan_audit_gap","budget_gap","replay_eval_gap","missing_affordance","bad_scope_rank","stale_fact","backend_gap","packet_bloat","read_loop","edit_readiness_failure","unsupported_plan_claim","validation_gap","language_precision_gap","other"],"description":"generic feedback class"},"component":`+strProp("idiom surface involved, e.g. context_pack, context_impact, architect/plan-audit, prompt/base, direct tool CLI")+`,"expected":`+strProp("capability or contract the agent reasonably expected")+`,"observed":`+strProp("what actually happened, stated as evidence rather than speculation")+`,"workaround":`+strProp("how the agent proceeded, if any")+`,"impact":`+strProp("task effect such as extra reads, blocked edit, wrong routing, or missing audit signal")+`,"evidence":{"type":"array","items":{"type":"string"},"description":"short log paths, step ids, tool outputs, or file references backing the observation"},"confidence":{"type":"string","enum":["verified","inferred"],"description":"verified when backed by logs/tool output; inferred when observed indirectly"},"severity":{"type":"string","enum":["low","medium","high"],"description":"task impact; default low"},"suggested_fix":`+strProp("optional generic harness/tool/prompt improvement, not a one-off task-specific workaround"),
 			),
 		},
 		{
@@ -187,6 +187,14 @@ func baseToolDefinitions() []ToolDefinition {
 			ParametersJSON: schemaObj(
 				[]string{"task"},
 				`"task":`+strProp("task statement to localize")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"packet mode; default plan"},"limit":`+intProp("max candidate files; default 8")+`,"budget_tokens":`+intProp("optional intended context budget for downstream packet rendering")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands that must be carried into the pack"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"}`,
+			),
+		},
+		{
+			Name:        "context_impact",
+			Description: "Rank task-relevant files, symbols, and validation candidates with signal explanations from the persistent graph. Use before planner packet generation when you need affected-scope evidence without raw source flooding.",
+			ParametersJSON: schemaObj(
+				[]string{"task"},
+				`"task":`+strProp("task statement to localize")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"ranking mode; default plan"},"limit":`+intProp("max impact items; default 8")+`,"budget_tokens":`+intProp("optional intended downstream context budget")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands to include in ranking evidence"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"}`,
 			),
 		},
 		{

@@ -56,6 +56,7 @@ func ContextTelemetryFields(tool string, output string) map[string]any {
 	copyTelemetryArrayLen(payload, fields, "edges", "context_edges")
 	copyTelemetryArrayLen(payload, fields, "candidate_files", "context_candidate_files")
 	copyTelemetryArrayLen(payload, fields, "candidate_symbols", "context_candidate_symbols")
+	copyTelemetryArrayLen(payload, fields, "impact_scope", "context_impact_scope")
 	copyTelemetryArrayLen(payload, fields, "tests", "context_tests")
 	copyTelemetryArrayLen(payload, fields, "relationships", "context_relationships")
 	copyTelemetryArrayLen(payload, fields, "collector_reports", "context_collector_reports")

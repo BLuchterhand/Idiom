@@ -201,7 +201,7 @@ func TestAnalyzeLogIngestsHarnessFeedbackTelemetryFields(t *testing.T) {
 			"tool":                    "idiom_feedback",
 			"summary":                 "Recorded prompt_gap feedback for prompt/base",
 			"error":                   "",
-			"feedback_category":       "prompt_gap",
+			"feedback_category":       "impact_ranking",
 			"feedback_component":      "prompt/base",
 			"feedback_confidence":     "inferred",
 			"feedback_severity":       "high",
@@ -215,12 +215,12 @@ func TestAnalyzeLogIngestsHarnessFeedbackTelemetryFields(t *testing.T) {
 	if rep.Feedback.Total != 2 || rep.Feedback.Verified != 1 || rep.Feedback.Inferred != 1 || rep.Feedback.MediumSeverity != 1 || rep.Feedback.HighSeverity != 1 || rep.Feedback.EvidenceItems != 3 {
 		t.Fatalf("unexpected feedback summary: %#v", rep.Feedback)
 	}
-	if rep.Feedback.ByCategory["tool_gap"] != 1 || rep.Feedback.ByComponent["context_pack"] != 1 || rep.Feedback.ByConfidence["verified"] != 1 || rep.Feedback.BySeverity["high"] != 1 {
+	if rep.Feedback.ByCategory["tool_gap"] != 1 || rep.Feedback.ByCategory["impact_ranking"] != 1 || rep.Feedback.ByPlanningCategory["impact_ranking"] != 1 || rep.Feedback.PlanningQualityTotal != 1 || rep.Feedback.ByComponent["context_pack"] != 1 || rep.Feedback.ByConfidence["verified"] != 1 || rep.Feedback.BySeverity["high"] != 1 {
 		t.Fatalf("unexpected feedback buckets: %#v", rep.Feedback)
 	}
 
 	agg := Aggregate([]PerfReport{rep})
-	if agg.Feedback == nil || agg.Feedback.Total != 2 || agg.Feedback.HighSeverity != 1 || agg.Feedback.ByCategory["prompt_gap"] != 1 || agg.Feedback.ByComponent["prompt/base"] != 1 {
+	if agg.Feedback == nil || agg.Feedback.Total != 2 || agg.Feedback.HighSeverity != 1 || agg.Feedback.PlanningQualityTotal != 1 || agg.Feedback.ByCategory["impact_ranking"] != 1 || agg.Feedback.ByComponent["prompt/base"] != 1 {
 		t.Fatalf("aggregate did not preserve feedback telemetry: %#v", agg.Feedback)
 	}
 }

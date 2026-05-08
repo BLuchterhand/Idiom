@@ -833,13 +833,55 @@ The work is complete enough when:
 - Local Qwen planning improves on replay tasks by reducing read loops,
   unsupported claims, stale claims, and irrelevant file selection.
 
-## Immediate Next Work
+## Completion Status 2026-05-08
 
-1. Add `planning_packet_v2` schema and renderer on top of the existing architect
-   packet path.
-2. Add deterministic `context_budget` reporting to packet generation.
-3. Add `plan_audit` deterministic checks before optional model critique.
-4. Add planning-quality feedback kinds and audit analyzer ingestion.
-5. Add multi-language fixtures for Go, C++, and GDScript packet generation.
-6. Build replay evals that compare current packets with V2 packets using the
-   same local model and task.
+Implemented:
+
+- `architect packet --schema planning_v2` renders the V2 packet fields on top of
+  the existing architect packet path.
+- Packet generation includes deterministic `context_budget` reporting.
+- `architect plan-audit` runs deterministic checks before any optional
+  model-assisted critique.
+- `context_impact` ranks task-relevant files, symbols, and validation
+  candidates with explicit signals and stable handles, while preserving the
+  saved context view path.
+- `harness_feedback` accepts planning-quality feedback kinds including
+  `missing_affordance`, `bad_scope_rank`, `stale_fact`, `backend_gap`,
+  `packet_bloat`, `read_loop`, `edit_readiness_failure`,
+  `unsupported_plan_claim`, `validation_gap`, and `language_precision_gap`.
+- `harness_audit --purpose planning_quality` ingests feedback telemetry,
+  clusters planning categories, and recommends deterministic improvement
+  surfaces such as `context_impact`, `architect plan-audit`,
+  `architect budget`, or `architect replay-compare`.
+- Multi-language packet fixtures cover Go, C++, and GDScript in the same
+  planner-facing packet shape with language capability precision tiers.
+- `architect packet-compare` compares base and V2 packet variants.
+- `architect replay-compare` compares model-produced base/V2 plans by running
+  deterministic plan audit on both outputs from the same task/model replay.
+- `architect budget` evaluates realistic packet tiers and emits long-context
+  placement probes for head/middle/tail sensitivity.
+- Focused tests cover V2 packet shape, freshness warnings, validation contract
+  preservation, CLI rendering, lint, plan audit, context impact ranking,
+  planning-quality telemetry/audit ingestion, multi-language packet generation,
+  packet comparison, replay comparison, and budget experiments.
+
+Verification after recent completion-gate bug fixes:
+
+- `go test ./cmd/idiom ./internal/architect ./internal/config ./internal/agent ./internal/app ./internal/frontier/workerruntime`
+  passed.
+- A CLI smoke test generated a `planning_packet.v2` packet with `brief` budget,
+  linted it successfully, and audited a candidate plan successfully.
+- Recent completion-gate changes did not modify `internal/architect` or the
+  plan-audit implementation; the only direct overlap is README-facing usage
+  text.
+
+Design-doc completion coverage:
+
+1. Phase 1 is implemented by `planning_v2`, `context_budget`, `lint`, and
+   `plan-audit`.
+2. Phase 2 is implemented by `context_impact`, context-view handles, and
+   multi-language capability fixtures.
+3. Phase 3 is implemented by planning-quality `harness_feedback` categories,
+   telemetry ingestion, and `harness_audit --purpose planning_quality`.
+4. Phase 4 is implemented by `architect budget`, `architect packet-compare`,
+   and `architect replay-compare`.

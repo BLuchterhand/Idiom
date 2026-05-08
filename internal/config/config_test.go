@@ -299,7 +299,7 @@ func TestLoadAcceptsMLXBackendWithoutPathResolution(t *testing.T) {
     "binary": "mlx_lm.server",
     "host": "127.0.0.1",
     "port": 8080,
-    "model": "mlx-community/Qwen3.6-27B-MLX-4bit"
+    "model": "Qwen/Qwen3.6-35B-A3B"
   },
   "chat": {"preset": "qwen3-coding-preserve", "max_tokens": 16}
 }`
@@ -313,7 +313,7 @@ func TestLoadAcceptsMLXBackendWithoutPathResolution(t *testing.T) {
 	if cfg.LlamaServer.Kind != "mlx" {
 		t.Fatalf("expected kind=mlx, got %q", cfg.LlamaServer.Kind)
 	}
-	if cfg.LlamaServer.Model != "mlx-community/Qwen3.6-27B-MLX-4bit" {
+	if cfg.LlamaServer.Model != "Qwen/Qwen3.6-35B-A3B" {
 		t.Fatalf("expected HF id to be preserved (not joined with baseDir), got %q", cfg.LlamaServer.Model)
 	}
 	if !cfg.LlamaServer.IsMLX() {
@@ -427,7 +427,7 @@ func TestDefaultConfigPreservesQwenThinking(t *testing.T) {
 	if !cfg.Chat.PreserveThinking {
 		t.Fatal("expected preserve_thinking enabled by default")
 	}
-	if cfg.LlamaServer.CtxSize != 196608 {
-		t.Fatalf("expected default ctx_size 196608, got %d", cfg.LlamaServer.CtxSize)
+	if cfg.LlamaServer.CtxSize != 262144 {
+		t.Fatalf("expected default ctx_size 262144, got %d", cfg.LlamaServer.CtxSize)
 	}
 }

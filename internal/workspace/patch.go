@@ -180,7 +180,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
 		return ToolResult{Tool: "apply_patch", Summary: "Patch request rejected", Error: "workspace writes are disabled"}
 	}
-	body := req.Content
+	body := normalizePatchEnvelope(req.Content)
 	if strings.TrimSpace(body) == "" {
 		return ToolResult{Tool: "apply_patch", Summary: "Patch request rejected", Error: "apply_patch requires the patch body in content"}
 	}
@@ -282,6 +282,28 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 		Summary: fmt.Sprintf("Applied patch with %d op(s)", len(ops)),
 		Output:  strings.Join(summaries, "\n"),
 	}
+}
+
+func normalizePatchEnvelope(text string) string {
+	body := strings.TrimSpace(text)
+	if body == "" || strings.HasPrefix(body, patchBeginMarker) {
+		return text
+	}
+	if !patchStartsWithFileSection(body) {
+		return text
+	}
+	if strings.Contains(body, "\n"+patchBeginMarker) || strings.Contains(body, "\n"+patchEndMarker) {
+		return text
+	}
+	return patchBeginMarker + "\n" + strings.TrimRight(body, "\n") + "\n" + patchEndMarker
+}
+
+func patchStartsWithFileSection(body string) bool {
+	first, _, _ := strings.Cut(body, "\n")
+	first = strings.TrimSpace(first)
+	return strings.HasPrefix(first, patchAddPrefix) ||
+		strings.HasPrefix(first, patchUpdatePrefix) ||
+		strings.HasPrefix(first, patchDeletePrefix)
 }
 
 func applyUpdateHunks(current string, hunks []PatchHunk) (string, error) {

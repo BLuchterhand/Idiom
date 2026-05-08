@@ -136,6 +136,26 @@ func TestRunMainRoutesContextCommands(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
+	code = runMain([]string{"context", "impact", "--config", configPath, "--task", "Plan a change to Run", "--required-test", "go test ./..."}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("context impact failed code=%d stderr=%s", code, stderr.String())
+	}
+	var impact struct {
+		ContextViewPath string `json:"context_view_path"`
+		ImpactScope     []struct {
+			Kind string `json:"kind"`
+			Path string `json:"path"`
+		} `json:"impact_scope"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &impact); err != nil {
+		t.Fatalf("decode impact output: %v\n%s", err, stdout.String())
+	}
+	if impact.ContextViewPath == "" || len(impact.ImpactScope) == 0 {
+		t.Fatalf("expected context impact view and ranked scope, got %#v", impact)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
 	command := "printf '%s\\n' 'Traceback (most recent call last):' '  File \"" + filepath.ToSlash(filepath.Join(root, "pkg", "pkg.go")) + "\", line 3, in Run' 'AssertionError: bad' >&2; exit 1"
 	code = runMain([]string{"context", "trace", "--config", configPath, "--command", command, "--language", "auto"}, &stdout, &stderr)
 	if code != 0 {

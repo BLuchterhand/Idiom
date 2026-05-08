@@ -127,6 +127,89 @@ func TestArchitectPlanAuditCommandFailsMissingFile(t *testing.T) {
 	}
 }
 
+func TestArchitectBudgetCommandReportsTiers(t *testing.T) {
+	packetPath := filepath.Join(t.TempDir(), "packet.json")
+	writeArchitectTestFile(t, packetPath, `{
+  "schema_version": "idiom.architect.planning_packet.v2",
+  "task": "Plan packet budget",
+  "context_budget": {"budget_tier":"brief","token_limit":24000,"estimated_tokens":120,"reserved_output_tokens":6000,"risk":"low"},
+  "candidate_scope": [{"handle":"file://internal/architect/packet.go","path":"internal/architect/packet.go","kind":"file","rank":0.9}]
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runArchitectMain([]string{"budget", "--packet", packetPath, "--tiers", "brief,standard"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected budget success, code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"budget_tier": "brief"`) || !strings.Contains(stdout.String(), `"placement"`) {
+		t.Fatalf("budget output missing tiers or placement probes: %s", stdout.String())
+	}
+}
+
+func TestArchitectPacketCompareCommandReportsV2Deltas(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "base.json")
+	candidatePath := filepath.Join(dir, "candidate.json")
+	writeArchitectTestFile(t, basePath, `{
+  "schema_version": "idiom.architect.packet.v1",
+  "task": "Plan packet compare",
+  "tests": [{"command":"go test ./internal/architect"}],
+  "evidence": [{"kind":"rule","content":"Use exact tests."}]
+}`)
+	writeArchitectTestFile(t, candidatePath, `{
+  "schema_version": "idiom.architect.planning_packet.v2",
+  "task": "Plan packet compare",
+  "contracts": {"validation_requirements":[{"command":"go test ./internal/architect"}]},
+  "context_budget": {"budget_tier":"brief","token_limit":24000,"estimated_tokens":120,"reserved_output_tokens":6000,"risk":"low"},
+  "freshness": {"fresh": true},
+  "language_capabilities": [{"language":"go","precision_tier":"precise_backend"}],
+  "candidate_scope": [{"handle":"file://internal/architect/packet.go","path":"internal/architect/packet.go","kind":"file","rank":0.9}]
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runArchitectMain([]string{"packet-compare", "--base", basePath, "--candidate", candidatePath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected compare success, code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "candidate adds ranked candidate_scope") || !strings.Contains(stdout.String(), `"label": "candidate"`) {
+		t.Fatalf("compare output missing expected delta: %s", stdout.String())
+	}
+}
+
+func TestArchitectReplayCompareCommandAuditsPlanVariants(t *testing.T) {
+	dir := t.TempDir()
+	root := t.TempDir()
+	writeArchitectTestFile(t, filepath.Join(root, "internal/architect/packet.go"), "package architect\n")
+	basePath := filepath.Join(dir, "base.json")
+	candidatePath := filepath.Join(dir, "candidate.json")
+	basePlanPath := filepath.Join(dir, "base-plan.md")
+	candidatePlanPath := filepath.Join(dir, "candidate-plan.md")
+	writeArchitectTestFile(t, basePath, `{
+  "schema_version": "idiom.architect.packet.v1",
+  "task": "Implement replay compare",
+  "workspace": {"root": "`+filepath.ToSlash(root)+`"},
+  "files": [{"path":"internal/architect/packet.go","role":"modify"}],
+  "tests": [{"command":"go test ./internal/architect"}]
+}`)
+	writeArchitectTestFile(t, candidatePath, `{
+  "schema_version": "idiom.architect.planning_packet.v2",
+  "task": "Implement replay compare",
+  "workspace": {"root": "`+filepath.ToSlash(root)+`"},
+  "files": [{"path":"internal/architect/packet.go","role":"modify"}],
+  "tests": [{"command":"go test ./internal/architect"}],
+  "contracts": {"validation_requirements":[{"command":"go test ./internal/architect"}]},
+  "candidate_scope": [{"handle":"file://internal/architect/packet.go","path":"internal/architect/packet.go","kind":"file","rank":0.9}]
+}`)
+	writeArchitectTestFile(t, basePlanPath, "Modify internal/architect/packet.go.\n")
+	writeArchitectTestFile(t, candidatePlanPath, "Modify internal/architect/packet.go and validate with `go test ./internal/architect`.\n")
+	var stdout, stderr bytes.Buffer
+	code := runArchitectMain([]string{"replay-compare", "--base", basePath, "--candidate", candidatePath, "--base-plan", basePlanPath, "--candidate-plan", candidatePlanPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected replay compare success, code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "candidate plan has fewer audit warnings") || !strings.Contains(stdout.String(), `"preferred_variant": "candidate"`) {
+		t.Fatalf("replay compare output missing expected improvement: %s", stdout.String())
+	}
+}
+
 func TestArchitectPromptCommandRendersBrief(t *testing.T) {
 	packetPath := filepath.Join(t.TempDir(), "packet.json")
 	writeArchitectTestFile(t, packetPath, `{

@@ -115,6 +115,38 @@ func normalizeHarnessFeedbackCategory(category string) string {
 		return "telemetry_gap"
 	case "audit_gap", "audit":
 		return "audit_gap"
+	case "planning_quality", "planning", "planner_quality":
+		return "planning_quality"
+	case "packet_quality", "planning_packet", "planner_packet", "packet":
+		return "packet_quality"
+	case "impact_ranking", "impact_rank", "context_impact":
+		return "impact_ranking"
+	case "plan_audit_gap", "plan_audit", "plan-audit":
+		return "plan_audit_gap"
+	case "budget_gap", "context_budget", "packet_budget":
+		return "budget_gap"
+	case "replay_eval_gap", "replay_eval", "planning_eval":
+		return "replay_eval_gap"
+	case "missing_affordance", "missing_affordances", "affordance_gap":
+		return "missing_affordance"
+	case "bad_scope_rank", "bad_scope_ranking", "scope_rank", "scope_ranking":
+		return "bad_scope_rank"
+	case "stale_fact", "stale_facts":
+		return "stale_fact"
+	case "backend_gap", "missing_backend":
+		return "backend_gap"
+	case "packet_bloat", "context_bloat":
+		return "packet_bloat"
+	case "read_loop", "read_loops":
+		return "read_loop"
+	case "edit_readiness_failure", "edit_readiness":
+		return "edit_readiness_failure"
+	case "unsupported_plan_claim", "unsupported_claim":
+		return "unsupported_plan_claim"
+	case "validation_gap":
+		return "validation_gap"
+	case "language_precision_gap", "precision_gap":
+		return "language_precision_gap"
 	case "other", "":
 		return "other"
 	default:

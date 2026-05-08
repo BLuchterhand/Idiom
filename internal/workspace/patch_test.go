@@ -124,6 +124,47 @@ func TestApplyPatchAddUpdateDelete(t *testing.T) {
 	}
 }
 
+func TestApplyPatchRepairsMissingEnvelopeForFileSectionPatch(t *testing.T) {
+	mgr, dir := patchWorkspaceConfig(t)
+	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("alpha\nbeta\ngamma\n"), 0o644); err != nil {
+		t.Fatalf("seed existing.txt: %v", err)
+	}
+
+	patch := "*** Update File: existing.txt\n" +
+		"@@\n" +
+		" alpha\n" +
+		"-beta\n" +
+		"+BETA\n" +
+		" gamma\n"
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "apply_patch", Content: patch})
+	if result.Error != "" {
+		t.Fatalf("apply_patch should repair unambiguous missing envelope, got %#v", result)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "existing.txt")); err != nil || string(data) != "alpha\nBETA\ngamma\n" {
+		t.Fatalf("updated file mismatch: data=%q err=%v", string(data), err)
+	}
+}
+
+func TestApplyPatchDoesNotRepairGitDiffWithoutEnvelope(t *testing.T) {
+	mgr, dir := patchWorkspaceConfig(t)
+	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatalf("seed existing.txt: %v", err)
+	}
+
+	patch := "diff --git a/existing.txt b/existing.txt\n" +
+		"--- a/existing.txt\n" +
+		"+++ b/existing.txt\n" +
+		"@@\n" +
+		"-beta\n" +
+		"+BETA\n"
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "apply_patch", Content: patch})
+	if result.Error == "" || !strings.Contains(result.Error, "patch must start") {
+		t.Fatalf("expected git diff to remain rejected without envelope, got %#v", result)
+	}
+}
+
 func TestApplyPatchMoveTo(t *testing.T) {
 	mgr, dir := patchWorkspaceConfig(t)
 	if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("hello\n"), 0o644); err != nil {

@@ -154,6 +154,58 @@ func TestBuildPlanningPacketV2IncludesBudgetFreshnessAndScope(t *testing.T) {
 	}
 }
 
+func TestBuildPlanningPacketV2IncludesMultiLanguageFixtureScope(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".idiom/comprehension/views/multi.json"), `{
+  "pack_id": "multi",
+  "index_id": "idx-multi",
+  "fresh": true,
+  "candidate_files": [
+    {"path": "internal/agent/runner.go", "role": "modify", "reason": "Go runner contract", "language": "go", "confidence": "precise_backend", "handles": ["file://internal/agent/runner.go"]},
+    {"path": "native/tests/test_production_graph.cpp", "role": "test", "reason": "C++ production regression", "language": "cpp", "confidence": "syntax_backend", "handles": ["file://native/tests/test_production_graph.cpp"]},
+    {"path": "scripts/world/colony_panel.gd", "role": "modify", "reason": "GDScript UI wiring", "language": "gdscript", "confidence": "heuristic", "handles": ["file://scripts/world/colony_panel.gd"]}
+  ],
+  "candidate_symbols": [
+    {"id": "symbol://internal/agent/runner.go#Runner.Run", "path": "internal/agent/runner.go", "qualified_name": "Runner.Run", "kind": "method", "language": "go", "confidence": "precise_backend", "reason": "runner loop"},
+    {"id": "symbol://native/tests/test_production_graph.cpp#production_graph", "path": "native/tests/test_production_graph.cpp", "qualified_name": "production_graph", "kind": "test", "language": "cpp", "confidence": "syntax_backend", "reason": "native regression"},
+    {"id": "symbol://scripts/world/colony_panel.gd#_ready", "path": "scripts/world/colony_panel.gd", "qualified_name": "_ready", "kind": "function", "language": "gdscript", "confidence": "heuristic", "reason": "scene initialization"}
+  ],
+  "tests": [
+    {"command": "go test ./internal/agent", "reason": "Go runner behavior"},
+    {"command": "scons test=production_graph", "reason": "C++ native regression"}
+  ]
+}`+"\n")
+
+	packet, err := BuildPacket(context.Background(), BuildOptions{
+		Root:         root,
+		Task:         "Plan a cross-language logistics tracker change",
+		Schema:       "planning_v2",
+		BudgetTier:   "brief",
+		ContextViews: []string{".idiom/comprehension/views/multi.json"},
+	})
+	if err != nil {
+		t.Fatalf("BuildPacket: %v", err)
+	}
+	for _, want := range []string{"go", "cpp", "gdscript"} {
+		if !hasLanguageCapability(packet, want) {
+			t.Fatalf("expected language capability %q, got %#v", want, packet.LanguageCapabilities)
+		}
+	}
+	for _, want := range []string{
+		"file://internal/agent/runner.go",
+		"file://native/tests/test_production_graph.cpp",
+		"file://scripts/world/colony_panel.gd",
+		"symbol://scripts/world/colony_panel.gd#_ready",
+	} {
+		if !hasCandidateScope(packet, want) {
+			t.Fatalf("expected candidate scope %q, got %#v", want, packet.CandidateScope)
+		}
+	}
+	if packet.ContextBudget == nil || packet.ContextBudget.BudgetTier != "brief" {
+		t.Fatalf("expected brief context budget, got %#v", packet.ContextBudget)
+	}
+}
+
 func TestLintPacketEnforcesRequiredGates(t *testing.T) {
 	packet := Packet{
 		SchemaVersion: SchemaVersion,
@@ -388,6 +440,15 @@ func hasLintFinding(result LintResult, gate string, level string) bool {
 func hasCandidateScope(packet Packet, handle string) bool {
 	for _, item := range packet.CandidateScope {
 		if item.Handle == handle {
+			return true
+		}
+	}
+	return false
+}
+
+func hasLanguageCapability(packet Packet, language string) bool {
+	for _, capability := range packet.LanguageCapabilities {
+		if capability.Language == language {
 			return true
 		}
 	}

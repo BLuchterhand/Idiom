@@ -3241,13 +3241,55 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		}, true
 	}
 	if sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
+		if plannerOwnsVerification(r.RuntimeBrief) && plannerOwnedVerificationStatusReported(reply) {
+			return workspace.ToolResult{}, false
+		}
+		errorText := "source edits are present, but the available verification is only patch hygiene (`git diff --check`) or no source-aware check. Run language diagnostics, a focused build/test, or state the concrete verification blocker; patch hygiene alone cannot certify source edits."
+		if plannerOwnsVerification(r.RuntimeBrief) {
+			errorText = "source edits are present, but the available lane sanity is only patch hygiene (`git diff --check`) or no source-aware check. For planner-owned verification lanes, run language diagnostics when available, or answer with changed paths plus the concrete planner-owned build/test verification status. Do not claim patch hygiene certifies source edits."
+		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
-			Error:   "source edits are present, but the available verification is only patch hygiene (`git diff --check`) or no source-aware check. Run language diagnostics, a focused build/test, or state the concrete verification blocker; patch hygiene alone cannot certify source edits.",
+			Error:   errorText,
 		}, true
 	}
 	return workspace.ToolResult{}, false
+}
+
+func plannerOwnedVerificationStatusReported(reply string) bool {
+	for _, line := range strings.Split(strings.ToLower(reply), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !containsAny(line, "planner", "caller") {
+			continue
+		}
+		if !containsAny(line, "verification", "validation", "build/test", "test/build", "acceptance") {
+			continue
+		}
+		if containsAny(line,
+			"pending",
+			"not run",
+			"unrun",
+			"not performed",
+			"not attempted",
+			"delegated",
+			"caller-owned",
+			"caller owned",
+			"outside this lane",
+			"outside the lane",
+			"blocked",
+			"skipped",
+			"build/test verification is planner-owned",
+			"build/test verification is planner owned",
+			"build/test validation is planner-owned",
+			"build/test validation is planner owned",
+			"test/build verification is planner-owned",
+			"test/build verification is planner owned",
+		) {
+			return true
+		}
+	}
+	return false
 }
 
 // escalateCompletionGateMessage prefixes the gate's existing error
@@ -7072,6 +7114,10 @@ func changedPathsSectionStop(lower string, pathsSeen bool) bool {
 		return false
 	}
 	trimmed := strings.TrimSpace(lower)
+	label := strings.TrimSpace(strings.TrimLeft(trimmed, "-* "))
+	if pathsSeen && changedPathsSectionStatusLabel(label) {
+		return true
+	}
 	headingLike := strings.HasPrefix(trimmed, "#") ||
 		strings.HasPrefix(trimmed, "**") ||
 		strings.HasSuffix(trimmed, ":")
@@ -7082,6 +7128,16 @@ func changedPathsSectionStop(lower string, pathsSeen bool) bool {
 		return false
 	}
 	return containsAny(lower, "verification", "test", "planner", "blocker", "validation", "lane sanity")
+}
+
+func changedPathsSectionStatusLabel(label string) bool {
+	label = strings.Trim(strings.TrimSpace(label), "`")
+	return strings.HasPrefix(label, "verification:") ||
+		strings.HasPrefix(label, "validation:") ||
+		strings.HasPrefix(label, "planner-owned ") ||
+		strings.HasPrefix(label, "planner owned ") ||
+		strings.HasPrefix(label, "blocker:") ||
+		strings.HasPrefix(label, "lane sanity")
 }
 
 func changedPathsFromToolResult(result workspace.ToolResult) []string {
@@ -7787,7 +7843,18 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		b.WriteString("\n")
 	}
 
-	if summary, ok := latestSuccessfulVerificationSummary(results); ok {
+	if latestSourceVerification, ok := latestVerificationAfterLatestSourceWrite(results); sourceEditsNeedSemanticVerification(brief, results) && ok && verificationResultIsPatchHygieneOnly(latestSourceVerification) {
+		b.WriteString("Verification: ")
+		if summary, ok := latestSuccessfulVerificationSummary(results); ok {
+			b.WriteString(summary)
+			b.WriteString(" (patch hygiene only); ")
+		}
+		if plannerOwnsVerification(brief) {
+			b.WriteString("planner-owned build/test verification not run by lane.\n")
+		} else {
+			b.WriteString("source-aware verification pending for source edits.\n")
+		}
+	} else if summary, ok := latestSuccessfulVerificationSummary(results); ok {
 		b.WriteString("Verification: ")
 		b.WriteString(summary)
 		b.WriteString("\n")

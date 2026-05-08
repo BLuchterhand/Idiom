@@ -365,6 +365,67 @@ func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
 	}
 }
 
+func TestRunMainWritesTelemetryForRejectedDirectToolInput(t *testing.T) {
+	telemetryDir := t.TempDir()
+	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
+	configPath := writeMainConfig(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "harness_feedback", "-config", configPath, "-input", "{"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid input JSON") {
+		t.Fatalf("expected invalid JSON error, got %q", stderr.String())
+	}
+
+	entries, err := os.ReadDir(telemetryDir)
+	if err != nil {
+		t.Fatalf("read telemetry dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one telemetry file, got %d", len(entries))
+	}
+	records := readMainTelemetryRecords(t, filepath.Join(telemetryDir, entries[0].Name()))
+	if !recordTypesContain(records, "process_start", "tool_request", "tool_result", "process_exit") {
+		t.Fatalf("telemetry missing expected records: %#v", records)
+	}
+	var sawRejectedToolResult bool
+	for _, record := range records {
+		if record["type"] == "tool_result" && record["tool"] == "harness_feedback" && strings.Contains(stringFieldForTest(record, "error"), "invalid input JSON") {
+			sawRejectedToolResult = true
+		}
+	}
+	if !sawRejectedToolResult {
+		t.Fatalf("missing rejected direct tool result telemetry: %#v", records)
+	}
+}
+
+func TestRunMainToolHelpPrintsSchemaWithoutError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "harness_feedback", "--help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	for _, want := range []string{"Usage:", "Record structured feedback", `"confidence"`, "Example:"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected tool help to contain %q, got:\n%s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stderr.String(), "flag: help requested") {
+		t.Fatalf("tool help should not surface flag parser help errors: %q", stderr.String())
+	}
+}
+
+func TestToolHelpRequestedIgnoresFlagValues(t *testing.T) {
+	if !toolHelpRequested([]string{"--config", "custom.json", "--help"}) {
+		t.Fatal("expected help after config flag to be recognized")
+	}
+	if toolHelpRequested([]string{"--input", "help"}) {
+		t.Fatal("input value should not be treated as a help request")
+	}
+}
+
 func writeMainConfig(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
@@ -372,6 +433,11 @@ func writeMainConfig(t *testing.T) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func stringFieldForTest(record map[string]any, key string) string {
+	value, _ := record[key].(string)
+	return value
 }
 
 func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {

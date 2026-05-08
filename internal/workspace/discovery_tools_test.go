@@ -28,6 +28,7 @@ func TestGenericDiscoveryToolsAreAdvertised(t *testing.T) {
 		"context_query",
 		"context_zoom",
 		"context_pack",
+		"context_impact",
 		"context_trace_pack",
 		"discovery_query",
 		"structural_search",
@@ -49,7 +50,7 @@ func TestGenericDiscoveryToolsAreAdvertised(t *testing.T) {
 	for _, def := range defs {
 		names = append(names, def.Name)
 	}
-	for _, want := range []string{"harness_audit", "harness_feedback", "file_stats", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "blame_range"} {
+	for _, want := range []string{"harness_audit", "harness_feedback", "file_stats", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "blame_range"} {
 		if !slices.Contains(names, want) {
 			t.Fatalf("expected tool definitions to include %q, got %#v", want, names)
 		}
@@ -144,6 +145,37 @@ func TestContextToolsBuildQueryAndReportStaleSymbols(t *testing.T) {
 		return test.Command == "go test ./..."
 	}) {
 		t.Fatalf("expected context_pack to preserve required tests, got %#v", packReport.Tests)
+	}
+
+	result = mgr.Execute(context.Background(), ToolRequest{Tool: "context_impact", Task: "Plan a change to Run", RequiredTests: []string{"go test ./..."}})
+	if result.Error != "" {
+		t.Fatalf("context_impact returned error: %v\n%s", result.Error, result.Output)
+	}
+	var impactReport struct {
+		ContextViewPath string `json:"context_view_path"`
+		ImpactScope     []struct {
+			Kind    string  `json:"kind"`
+			Path    string  `json:"path"`
+			Rank    float64 `json:"rank"`
+			Signals []struct {
+				Kind string `json:"kind"`
+			} `json:"signals"`
+		} `json:"impact_scope"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &impactReport); err != nil {
+		t.Fatalf("decode context_impact output: %v\n%s", err, result.Output)
+	}
+	if impactReport.ContextViewPath == "" || !slices.ContainsFunc(impactReport.ImpactScope, func(item struct {
+		Kind    string  `json:"kind"`
+		Path    string  `json:"path"`
+		Rank    float64 `json:"rank"`
+		Signals []struct {
+			Kind string `json:"kind"`
+		} `json:"signals"`
+	}) bool {
+		return item.Kind == "file" && item.Path == "pkg/pkg.go" && item.Rank > 0 && len(item.Signals) > 0
+	}) {
+		t.Fatalf("expected context_impact ranking with file signal, got %#v", impactReport)
 	}
 
 	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"changed\" }\n")
@@ -617,6 +649,66 @@ func TestHarnessFeedbackReturnsStructuredTelemetryFields(t *testing.T) {
 	}
 }
 
+func TestHarnessFeedbackPlanningQualityFeedsAuditClusters(t *testing.T) {
+	root := t.TempDir()
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:         "harness_feedback",
+		Category:     "impact_ranking",
+		Component:    "context_impact",
+		Expected:     "ranked scope names the file that owns the planning behavior",
+		Observed:     "ranking omitted the owner file even though context_pack had it",
+		Impact:       "planner needed extra reads before producing bounded atoms",
+		Confidence:   "verified",
+		Severity:     "high",
+		SuggestedFix: "include context_pack file candidates in impact ranking",
+	})
+	if result.Error != "" {
+		t.Fatalf("harness_feedback returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessFeedbackReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode feedback report: %v\n%s", err, result.Output)
+	}
+	if report.Category != "impact_ranking" {
+		t.Fatalf("expected planning-quality category normalization, got %#v", report)
+	}
+	fields := ToolTelemetryFields(result.Tool, result.Output)
+	logPath := filepath.Join(root, "logs", "telemetry", "feedback.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"tool_request","tool":"harness_feedback","action":"harness_feedback"}`,
+		mustMarshalTestJSON(t, map[string]any{
+			"type":                "tool_result",
+			"tool":                "harness_feedback",
+			"error":               "",
+			"summary":             result.Summary,
+			"feedback_category":   fields["feedback_category"],
+			"feedback_component":  fields["feedback_component"],
+			"feedback_confidence": fields["feedback_confidence"],
+			"feedback_severity":   fields["feedback_severity"],
+		}),
+		"",
+	}, "\n"))
+
+	result = mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "planning_quality", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var audit harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &audit); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if audit.PlanningQuality == nil || audit.PlanningQuality.PlanningFeedback != 1 || audit.PlanningQuality.PlanningCategories["impact_ranking"] != 1 {
+		t.Fatalf("expected planning-quality audit cluster, got %#v", audit.PlanningQuality)
+	}
+	if !slices.ContainsFunc(audit.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "planning_quality_feedback_reported" && finding.Severity == "high"
+	}) {
+		t.Fatalf("expected planning-quality finding, got %#v", audit.Findings)
+	}
+}
+
 func TestHarnessFeedbackRejectsUnstructuredReports(t *testing.T) {
 	root := t.TempDir()
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
@@ -799,6 +891,44 @@ func TestHarnessAuditFlagsIncompleteImplementLifecycle(t *testing.T) {
 		return finding.ID == "incomplete_implement_session_lifecycle" && finding.Severity == "high"
 	}) {
 		t.Fatalf("expected incomplete lifecycle finding, got %#v", report.Findings)
+	}
+}
+
+func TestHarnessAuditClassifiesActiveImplementLifecycleAsInProgress(t *testing.T) {
+	root := t.TempDir()
+	conversationPath := filepath.Join(root, ".idiom", "logs", "conversations", "active.jsonl")
+	telemetryPath := filepath.Join(root, "logs", "telemetry", "active-implement.jsonl")
+	writeWorkspaceFile(t, conversationPath, strings.Join([]string{
+		`{"type":"session_start","workspace_root":"` + root + `"}`,
+		`{"type":"message","role":"control_rails","content":"{\"contract\":\"implementation_result\",\"task_family\":\"implementation\"}"}`,
+		"",
+	}, "\n"))
+	writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
+		`{"type":"session_start","command":"implement","workspace_root":"` + root + `"}`,
+		fmt.Sprintf(`{"type":"process_start","command":"implement","pid":%d,"workspace_root":"%s"}`, os.Getpid(), root),
+		`{"type":"model_session","session_id":"active","debug_log_path":"` + conversationPath + `"}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil || len(report.LogBehavior.InProgressSessions) != 1 {
+		t.Fatalf("expected one in-progress session, got %#v", report.LogBehavior)
+	}
+	if len(report.LogBehavior.IncompleteSessions) != 0 {
+		t.Fatalf("active session should not be incomplete, got %#v", report.LogBehavior.IncompleteSessions)
+	}
+	if slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "incomplete_implement_session_lifecycle"
+	}) {
+		t.Fatalf("expected no incomplete lifecycle finding for active process, got %#v", report.Findings)
 	}
 }
 
@@ -1103,6 +1233,15 @@ func writeWorkspaceFile(t *testing.T, path string, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile %s: %v", path, err)
 	}
+}
+
+func mustMarshalTestJSON(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal JSON: %v", err)
+	}
+	return string(data)
 }
 
 func runTestCommand(t *testing.T, dir string, name string, args ...string) {

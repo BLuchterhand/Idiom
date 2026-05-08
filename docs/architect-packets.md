@@ -15,18 +15,28 @@ This mirrors proven patterns from other agent tools:
 ## Flow
 
 ```bash
+idiom context impact \
+  --task-file /tmp/task.md \
+  --output /tmp/impact.json
+
+idiom context pack \
+  --task-file /tmp/task.md \
+  --output /tmp/context-view.json
+
 idiom architect packet \
   --task-file /tmp/task.md \
   --schema planning_v2 \
   --budget-tier standard \
   --profile demo \
-  --context-view .idiom/comprehension/views/<pack-id>.json \
+  --context-view /tmp/context-view.json \
   --file src/feature.cpp:modify:"feature logic" \
   --test "go test ./...:harness regression" \
   --constraint "Stop with <<QUESTION>> if a required symbol is missing." \
   --output /tmp/packet.json
 
 idiom architect lint --packet /tmp/packet.json
+
+idiom architect budget --packet /tmp/packet.json
 
 idiom architect plan --packet /tmp/packet.json \
   --output /tmp/plan.prompt.md
@@ -44,13 +54,24 @@ idiom architect critique \
   --packet /tmp/packet.json \
   --prior-file /tmp/plan.md \
   --output /tmp/critique.prompt.md
+
+idiom architect packet-compare \
+  --base /tmp/packet-v1.json \
+  --candidate /tmp/packet.json
+
+idiom architect replay-compare \
+  --base /tmp/packet-v1.json \
+  --candidate /tmp/packet.json \
+  --base-plan /tmp/plan-v1.md \
+  --candidate-plan /tmp/plan.md
 ```
 
-`packet` and `lint` are deterministic. They do not require a model.
-`--context-view` accepts a saved `idiom context pack` JSON view and records it
-as `context_view` evidence. `plan`, `critique`, and `brief` also only render
-prompts; use `idiom artifact` or another model runner to generate the actual
-plan, critique, or brief.
+`context impact`, `context pack`, `packet`, `lint`, `budget`,
+`packet-compare`, `replay-compare`, and `plan-audit` are deterministic. They do
+not require a model. `--context-view` accepts a saved `idiom context pack` JSON
+view and records it as `context_view` evidence. `plan`, `critique`, and `brief`
+also only render prompts; use `idiom artifact` or another model runner to
+generate the actual plan, critique, or brief.
 
 `--schema planning_v2` keeps the v1 packet fields and adds planner-quality
 sections: `contracts`, `repository_view`, `candidate_scope`, `freshness`,
@@ -61,6 +82,12 @@ existing callers.
 `plan-audit` is deterministic. It checks a candidate plan against the packet
 for missing file references, unresolved handles, protected-path edits, stale
 context use, validation gaps, and vague "inspect more" deferrals.
+
+`budget` evaluates the same packet across `brief`, `standard`, `deep`, and
+`max-local` budget tiers and emits placement probes for long-context
+sensitivity. `packet-compare` reports deterministic schema/packet deltas between
+variants. `replay-compare` audits model-produced plans from base and candidate
+packets so V2 planning changes can be compared on the same task and model.
 
 ## Profile
 
