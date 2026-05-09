@@ -301,6 +301,7 @@ func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, jsonEvents
 		"edits": len(plan.Edits),
 	})
 
+	executorStartedAt := time.Now()
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_start", map[string]any{
 		"edits": len(plan.Edits),
 	})
@@ -335,18 +336,20 @@ func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, jsonEvents
 			report.Failed++
 			report.Failures = append(report.Failures, fmt.Sprintf("edits[%d] %s: %s", i, edit.Path, result.Error))
 			emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
-				"total":     report.Total,
-				"succeeded": report.Succeeded,
-				"failed":    report.Failed,
+				"total":       report.Total,
+				"succeeded":   report.Succeeded,
+				"failed":      report.Failed,
+				"duration_ms": time.Since(executorStartedAt).Milliseconds(),
 			})
 			return report, fmt.Errorf("executor phase aborted on edit %d (%s): %s", i, edit.Path, result.Error)
 		}
 		report.Succeeded++
 	}
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
-		"total":     report.Total,
-		"succeeded": report.Succeeded,
-		"failed":    report.Failed,
+		"total":       report.Total,
+		"succeeded":   report.Succeeded,
+		"failed":      report.Failed,
+		"duration_ms": time.Since(executorStartedAt).Milliseconds(),
 	})
 	return report, nil
 }

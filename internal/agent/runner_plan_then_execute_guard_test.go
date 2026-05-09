@@ -311,6 +311,63 @@ func TestCanonicalMutationBlockerFinalAnswerStillFiresForRegularImplementation(t
 	}
 }
 
+func TestPlanThenExecuteShortCircuitAnswerFiresAfterSuccessfulSubmit(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	req := workspace.ToolRequest{Tool: "submit_plan"}
+	result := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "Plan submitted with 2 edit(s); the executor phase will dispatch them.",
+		Output:  "plan_path: /tmp/plans/x.plan.json\nedits: 2\nschema_version: idiom.plan.v1",
+	}
+	answer, ok := planThenExecuteShortCircuitAnswer(brief, req, result)
+	if !ok {
+		t.Fatalf("short-circuit must fire after successful submit_plan; got !ok")
+	}
+	if !strings.Contains(answer, "Plan submitted with 2 edit(s)") {
+		t.Fatalf("synthetic answer must include the result summary; got %q", answer)
+	}
+	if !strings.Contains(answer, "executor phase") {
+		t.Fatalf("synthetic answer must reference the executor phase; got %q", answer)
+	}
+}
+
+func TestPlanThenExecuteShortCircuitSkipsErrors(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	req := workspace.ToolRequest{Tool: "submit_plan"}
+	failure := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "submit_plan requires at least one edit in the edits array",
+	}
+	if _, ok := planThenExecuteShortCircuitAnswer(brief, req, failure); ok {
+		t.Fatalf("short-circuit must NOT fire on a failed submit_plan — let the runner recover normally")
+	}
+}
+
+func TestPlanThenExecuteShortCircuitSkipsNonPlanExecuteLanes(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "implementation"}
+	req := workspace.ToolRequest{Tool: "submit_plan"}
+	result := workspace.ToolResult{Tool: "submit_plan", Summary: "ok"}
+	if _, ok := planThenExecuteShortCircuitAnswer(brief, req, result); ok {
+		t.Fatalf("short-circuit must only fire under plan_then_execute_planner; got ok")
+	}
+}
+
+func TestPlanThenExecuteShortCircuitSkipsOtherTools(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
+	req := workspace.ToolRequest{Tool: "read_file"}
+	result := workspace.ToolResult{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"}
+	if _, ok := planThenExecuteShortCircuitAnswer(brief, req, result); ok {
+		t.Fatalf("short-circuit must only fire on submit_plan; got ok for %q", req.Tool)
+	}
+}
+
 func TestImplementationScopedEditAllowsSubmitPlan(t *testing.T) {
 	// The scoped-edit tool surface filter trims the brief's
 	// allowed_tools to write tools + read_file + code_navigate. Without

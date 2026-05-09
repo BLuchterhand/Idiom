@@ -68,6 +68,47 @@ func planThenExecuteForbiddenWriteTool(tool string) bool {
 	return false
 }
 
+// planThenExecuteShortCircuitAnswer synthesizes the planner-phase
+// final answer from a successful submit_plan tool result, letting the
+// runner exit immediately without spending another model call on a
+// summary that's redundant with the persisted plan artifact.
+//
+// Returns ("", false) when the short-circuit doesn't apply (wrong
+// lane, no successful submit_plan, etc.). When it returns a non-empty
+// answer, the runner should call finish(answer, nil,
+// "plan_submitted_short_circuit", false).
+//
+// Why this exists: the planner's natural step-2 output is a short
+// "Plan submitted with N edits across M files: ..." paragraph. That
+// summary is already implicit in the plan artifact (the executor
+// phase will dispatch each edit and emit per-edit JSON events with
+// path + status). Asking the model to retype it costs ~4s and ~200
+// tokens for zero new information.
+func planThenExecuteShortCircuitAnswer(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult) (string, bool) {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+		return "", false
+	}
+	if strings.TrimSpace(req.Tool) != "submit_plan" {
+		return "", false
+	}
+	if strings.TrimSpace(result.Error) != "" {
+		return "", false
+	}
+	summary := strings.TrimSpace(result.Summary)
+	if summary == "" {
+		summary = "Plan submitted; the executor phase will dispatch the planned edits."
+	}
+	body := []string{
+		summary,
+		"",
+		"The plan artifact is on disk under .idiom/plans/. The orchestrator's executor phase will dispatch each edit deterministically and emit per-edit telemetry. No further planner action required.",
+	}
+	if details := strings.TrimSpace(result.Output); details != "" {
+		body = append(body, "", details)
+	}
+	return strings.Join(body, "\n"), true
+}
+
 // successfulSubmitPlanResultCount returns the number of successful
 // submit_plan tool results in the lane's recorded history. The
 // completion gate uses this as the "the planner did its job" signal

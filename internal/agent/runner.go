@@ -1342,6 +1342,20 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "plan_then_execute_readiness_nudge", Content: nudge})
 			}
 		}
+		// Plan-then-execute short-circuit: once the planner emits a
+		// successful submit_plan call, the next model turn would just
+		// retype a summary already implicit in the plan artifact.
+		// Synthesize the final answer from the tool result and exit
+		// the runner instead of spending another ~4s of model time.
+		if answer, ok := planThenExecuteShortCircuitAnswer(r.RuntimeBrief, req, result); ok {
+			recorder.activeToolCall = activeToolCall
+			r.emitEvent(RunEvent{
+				Role:    "plan_then_execute_short_circuit",
+				Content: "submit_plan succeeded; synthesizing final answer from plan artifact instead of spending a second model turn",
+			})
+			emitAcceptedAnswerSignalsOnce(answer)
+			return finish(answer, nil, "plan_submitted_short_circuit", false)
+		}
 		if !delegatedReadOnlyAnswerReady && !postChildPacketActive {
 			r.attachInstructionsForTouchedPaths(&turnMessages, req, result)
 		}
