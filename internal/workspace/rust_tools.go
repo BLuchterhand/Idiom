@@ -209,6 +209,9 @@ func (m *Manager) rustWorkspaceSymbol(ctx context.Context, req ToolRequest) Tool
 // -- Tool: rust_read_symbol -------------------------------------------------
 
 func (m *Manager) rustReadSymbol(req ToolRequest) ToolResult {
+	if err := validateSymbolPattern("rust_read_symbol", req.Pattern); err != nil {
+		return ToolResult{Tool: "rust_read_symbol", Summary: "Rust symbol read rejected", Error: err.Error()}
+	}
 	match, err := m.selectRustSymbolMatch(req)
 	if err != nil {
 		return ToolResult{Tool: "rust_read_symbol", Summary: "Rust symbol read rejected", Error: err.Error()}
@@ -364,7 +367,7 @@ func (m *Manager) rustFileOutline(req ToolRequest) ToolResult {
 		}
 	}
 
-	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use rust_read_symbol for a specific body.", len(file.Symbols), rel)
+	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use code_navigate capability=read_symbol for a specific body.", len(file.Symbols), rel)
 	return ToolResult{Tool: "rust_file_outline", Summary: summary, Output: strings.TrimSpace(b.String())}
 }
 

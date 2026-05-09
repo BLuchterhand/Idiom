@@ -257,10 +257,10 @@ func (r *discoveryQueryRunner) addContextLayer() {
 		return
 	}
 	r.packet.Layers = append(r.packet.Layers, discoveryQueryLayer{
-		Name:          "project_behavior_digest",
+		Name:          "project_context_digest",
 		Tool:          "artifact_read",
 		Request:       map[string]any{"path": ".idiom/discovery/context.md"},
-		Summary:       "Read project behavior digest",
+		Summary:       "Read generated project context digest",
 		OutputExcerpt: compactDiscoveryQueryOutput(string(data)),
 		OutputLines:   countNonEmptyOutputLines(string(data)),
 		OutputChars:   len(data),
@@ -636,7 +636,7 @@ func emptyJSONValue(value any) bool {
 }
 
 func compactDiscoveryQuerySummaryLayerOutput(layer discoveryQueryLayer) string {
-	if layer.Name == "project_behavior_digest" {
+	if layer.Name == "project_behavior_digest" || layer.Name == "project_context_digest" {
 		return ""
 	}
 	return compactDiscoveryQueryEvidenceOutput(layer.OutputExcerpt)

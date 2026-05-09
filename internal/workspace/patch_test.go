@@ -83,6 +83,100 @@ func TestParsePatchRequiresEnvelope(t *testing.T) {
 	}
 }
 
+func TestSerializePatchRoundTripsAddUpdateDelete(t *testing.T) {
+	original := "*** Begin Patch\n" +
+		"*** Add File: created/note.md\n" +
+		"+# Note\n" +
+		"+body\n" +
+		"*** Update File: existing.txt\n" +
+		"@@\n" +
+		" alpha\n" +
+		"-beta\n" +
+		"+BETA\n" +
+		" gamma\n" +
+		"*** Delete File: doomed.txt\n" +
+		"*** End Patch\n"
+	ops, err := ParsePatch(original)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	encoded := SerializePatch(ops)
+	// The serializer should round-trip through ParsePatch cleanly: same op
+	// kinds, paths, and hunk content. We don't assert byte-equality with
+	// the original because optional whitespace around `@@` and trailing
+	// newlines are not byte-significant.
+	round, err := ParsePatch(encoded)
+	if err != nil {
+		t.Fatalf("re-parse: %v\n--- encoded ---\n%s", err, encoded)
+	}
+	if len(round) != len(ops) {
+		t.Fatalf("op count differs after round-trip: got %d want %d", len(round), len(ops))
+	}
+	for i := range ops {
+		if round[i].Kind != ops[i].Kind {
+			t.Fatalf("op %d kind: got %q want %q", i, round[i].Kind, ops[i].Kind)
+		}
+		if round[i].Path != ops[i].Path {
+			t.Fatalf("op %d path: got %q want %q", i, round[i].Path, ops[i].Path)
+		}
+		if round[i].NewBody != ops[i].NewBody {
+			t.Fatalf("op %d body: got %q want %q", i, round[i].NewBody, ops[i].NewBody)
+		}
+		if len(round[i].Hunks) != len(ops[i].Hunks) {
+			t.Fatalf("op %d hunk count: got %d want %d", i, len(round[i].Hunks), len(ops[i].Hunks))
+		}
+	}
+}
+
+func TestParsePatchTolerantOfUnknownTripleStarDirectives(t *testing.T) {
+	// Models occasionally invent extra *** directives between/around file
+	// sections (e.g. `*** Sanity Check`, `*** Note`, `*** Verification`).
+	// The parser should silently skip them rather than hard-failing the
+	// whole patch.
+	patch := "*** Begin Patch\n" +
+		"*** Sanity Check\n" +
+		"*** Update File: existing.txt\n" +
+		"@@\n" +
+		" alpha\n" +
+		"-beta\n" +
+		"+BETA\n" +
+		" gamma\n" +
+		"*** Note: this is a model commentary directive\n" +
+		"*** Add File: new.txt\n" +
+		"+content\n" +
+		"*** Verification\n" +
+		"*** End Patch"
+	ops, err := ParsePatch(patch)
+	if err != nil {
+		t.Fatalf("expected unknown *** directives to be tolerated, got: %v", err)
+	}
+	if len(ops) != 2 {
+		t.Fatalf("expected 2 ops (update, add), got %d: %#v", len(ops), ops)
+	}
+	if ops[0].Kind != PatchOpUpdate || ops[0].Path != "existing.txt" {
+		t.Fatalf("first op should update existing.txt, got %#v", ops[0])
+	}
+	if ops[1].Kind != PatchOpAdd || ops[1].Path != "new.txt" {
+		t.Fatalf("second op should add new.txt, got %#v", ops[1])
+	}
+}
+
+func TestParsePatchStillRejectsBareTextOutsideFileSection(t *testing.T) {
+	// The unknown-directive tolerance is scoped to lines that start with
+	// `*** ` — bare prose between sections should still fail loudly so we
+	// don't silently swallow a malformed patch envelope.
+	patch := "*** Begin Patch\n" +
+		"this is just prose, not a directive\n" +
+		"*** Update File: existing.txt\n" +
+		"@@\n" +
+		" alpha\n" +
+		"+beta\n" +
+		"*** End Patch"
+	if _, err := ParsePatch(patch); err == nil {
+		t.Fatal("expected bare prose between sections to fail parsing")
+	}
+}
+
 func TestApplyPatchAddUpdateDelete(t *testing.T) {
 	mgr, dir := patchWorkspaceConfig(t)
 	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("alpha\nbeta\ngamma\n"), 0o644); err != nil {

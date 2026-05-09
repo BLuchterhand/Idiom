@@ -26,6 +26,10 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 		return discoveryProfile("text_search", "targeted", "low", false)
 	case "read_file":
 		return discoveryProfile("file_read", "targeted", "low", false)
+	case "code_navigate":
+		return codeNavigationDiscoveryProfile(req)
+	case "source_sanity":
+		return discoveryProfile("diagnostics", "targeted", "medium", false)
 	case "harness_audit":
 		return discoveryProfile("harness_audit", scopeFromPath(req.Path), "medium", true)
 	case "harness_feedback", "idiom_feedback":

@@ -30,6 +30,12 @@ type PackOptions struct {
 	RequiredTests  []string
 	ForbiddenPaths []string
 	Now            time.Time
+	// Intent overrides automatic intent detection from Task. Empty means
+	// detect from Task.
+	Intent Intent
+	// LearnedWeights overrides the on-disk persisted weights. Empty means
+	// load from .idiom/ranker/weights.json.
+	LearnedWeights map[string]float64
 }
 
 type PackResult struct {
@@ -63,6 +69,8 @@ type PackFile struct {
 	Stale          bool     `json:"stale,omitempty"`
 	Handles        []string `json:"handles,omitempty"`
 	OmittedHandles int      `json:"omitted_handles,omitempty"`
+	Score          float64  `json:"score,omitempty"`
+	Hub            bool     `json:"hub,omitempty"`
 }
 
 type PackSymbol struct {
@@ -169,6 +177,24 @@ func Pack(opts PackOptions) (PackResult, error) {
 		testBuilder.add(test)
 	}
 
+	intent := opts.Intent
+	if intent == "" {
+		intent = DetectIntent(task)
+	}
+	learnedWeights := opts.LearnedWeights
+	if learnedWeights == nil {
+		loaded, _ := LoadLearnedWeights(root)
+		learnedWeights = loaded
+	}
+	rankInputs := RankInputs{
+		Graph:          &graph,
+		MatchedIDs:     matchedIDs,
+		Intent:         intent,
+		LearnedWeights: learnedWeights,
+		QueryTokens:    terms,
+	}
+	candidateFiles := finalizePackFiles(fileBuilder.all(), rankInputs, limit)
+
 	result := PackResult{
 		IndexID:          graph.ID,
 		StoreKind:        graph.StoreKind,
@@ -178,7 +204,7 @@ func Pack(opts PackOptions) (PackResult, error) {
 		Fresh:            status.Fresh,
 		GeneratedAt:      now.Format(time.RFC3339),
 		BudgetTokens:     opts.BudgetTokens,
-		CandidateFiles:   fileBuilder.list(limit),
+		CandidateFiles:   candidateFiles,
 		CandidateSymbols: symbolBuilder.list(limit * 2),
 		Tests:            testBuilder.list(limit),
 		Relationships:    summarizeEdges(relationships, true),
@@ -320,7 +346,9 @@ func (b *packFileBuilder) addPackFile(file PackFile) {
 	b.files[file.Path] = existing
 }
 
-func (b *packFileBuilder) list(limit int) []PackFile {
+// all returns every accumulated candidate file in role-stable order, before
+// any score-based ranking, limit, or handle bounding is applied.
+func (b *packFileBuilder) all() []PackFile {
 	out := make([]PackFile, 0, len(b.files))
 	for _, file := range b.files {
 		out = append(out, file)
@@ -334,13 +362,28 @@ func (b *packFileBuilder) list(limit int) []PackFile {
 		}
 		return out[i].Path < out[j].Path
 	})
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	for i := range out {
-		out[i] = boundedPackFileHandles(out[i])
-	}
 	return out
+}
+
+// finalizePackFiles applies score-based ranking via RankPackFiles, then the
+// candidate limit and per-file handle bounding. The Hub flag is set inside
+// RankPackFiles so callers that bypass finalizePackFiles still see it.
+func finalizePackFiles(files []PackFile, in RankInputs, limit int) []PackFile {
+	ranked := RankPackFiles(RankInputs{
+		Files:          files,
+		Graph:          in.Graph,
+		MatchedIDs:     in.MatchedIDs,
+		Intent:         in.Intent,
+		LearnedWeights: in.LearnedWeights,
+		QueryTokens:    in.QueryTokens,
+	})
+	if limit > 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	for i := range ranked {
+		ranked[i] = boundedPackFileHandles(ranked[i])
+	}
+	return ranked
 }
 
 func boundedPackFileHandles(file PackFile) PackFile {

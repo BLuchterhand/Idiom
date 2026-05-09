@@ -324,6 +324,63 @@ then writes deterministic review packets under `.idiom/audits/watch`.
 The first long-running invocation creates a baseline by default; pass
 `--review-existing` when you want the initial scan to review existing logs.
 
+## Brief Pre-Flight Lint
+
+`idiom brief lint <brief.md>` runs a deterministic pre-dispatch lint on an
+implementation brief before handing it to `idiom implement`. The lint covers
+single-purpose decomposition, prompt-magic contract triggers, content fence
+safety, blockquoted code, test-anchor preload presence, verified-current-state
+presence, and exact-anchor specificity for every required edit path.
+
+```bash
+./idiom brief lint path/to/brief.md
+```
+
+Exit codes: `0` OK (warnings still printed), `1` lint failure, `2` usage
+error. The implementation is a Python script embedded in the binary and
+extracted to a temp dir on each invocation; `python3` must be on `PATH`.
+
+The exact-anchor check is the strongest signal — every required edit path
+must carry at least one `<path>:<line>` reference, an explicit `line N` /
+`lines N-M` mention, or a quoted unique snippet from the file. Relational
+anchors ("near other small predicates", "find the closing brace") force the
+lane to spend reads locating the insertion site and frequently exhaust the
+pre-write read budget.
+
+This was originally Colony's `scripts/qwen_brief_preflight.py`; the canonical
+implementation now lives with idiom so any project dispatching multi-file
+briefs through `idiom implement` can run the same lint pre-flight.
+
+## Ranker Learning
+
+`context_pack` and `context_impact` rank candidate files using intent-aware
+path/graph signals plus a per-workspace learnable multiplier persisted under
+`.idiom/ranker/weights.json`. Each candidate file carries a `score` and a
+`hub` flag in the packet output; consumers should treat the score as the
+primary ordering and `hub: true` as "imported by many things, demoted unless
+the task names it."
+
+Eval runs feed the learning loop automatically when an `SWEOracle.Groundedness`
+oracle is configured: scores >= 0.75 boost the oracle's `context_files`,
+scores < 0.40 penalize them, and the noisy middle band records a no-op so the
+audit trail still reflects that the eval ran. Every update writes to
+`.idiom/ranker/learning_log.jsonl` under `source: "eval"`.
+
+For manual nudges, the `idiom ranker` CLI is the escape hatch:
+
+```bash
+./idiom ranker boost    internal/agent/runner.go internal/eval/swe_suite.go
+./idiom ranker penalize --note "stale heuristic" docs/old.md
+./idiom ranker show
+./idiom ranker show --json
+./idiom ranker reset
+```
+
+Each CLI invocation records the action in the same learning log under
+`source: "cli"`. `harness_audit` exposes the merged state through its
+`ranker_learning` block, listing wired vs dormant trigger sites and
+per-source recommendations for further automation.
+
 ## Replay And Eval
 
 `idiom` now includes a scored log-evaluation CLI:
@@ -508,13 +565,18 @@ If `project_root` is set, the app auto-discovers these files in order:
 
 - `.qwen.md`
 - `QWEN.md`
+- `IDIOM.md`
 - `AGENTS.md`
-- `CLAUDE.md`
 
 Use `project_prompt_candidates` to replace that auto-discovery list. Set it to
 `[]` when you want a compact prompt surface made only from
 `project_prompt_files`. You can also add explicit paths with
-`project_prompt_files`.
+`project_prompt_files`. Add `CLAUDE.md` to `project_prompt_candidates`
+explicitly if a project wants Claude-specific guidance reused. Generated
+discovery context such as
+`.idiom/discovery/context.md` is not auto-loaded as prompt behavior; use the
+context/discovery tools for it, or add it explicitly when you want an
+evidence-only prompt section.
 
 ## Notes
 

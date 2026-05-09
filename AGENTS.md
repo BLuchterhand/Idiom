@@ -28,6 +28,16 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 - Treat prompt files, runner policy, control rails, and eval fixtures as one system. Changes in one layer often require updates or tests in another.
 - If the available evidence is thin, say so and gather more. Do not smooth over uncertainty with confident prose.
 
+### Behavior Debugging
+
+For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or context packets:
+
+- Trace behavioral authority end to end: static prompt stack, dynamic instruction attachment, runtime brief, tool manifest/schema, recovery nudges, gates, telemetry, and audit output.
+- Search for authority leaks, not only direct wording. Distinguish instructions from evidence, telemetry, generated context, and source text.
+- For required-path implementation failures, distinguish exact-anchor write-first contracts from abstract scope-ready packets. Check both what tells the model to write and which bounded read/search affordances remain visible.
+- Prefer removing conflicting affordances or encoding a typed contract over adding another prompt reminder.
+- Add regression tests for the absence of bad behavior, not only the presence of desired guidance.
+
 ### Discovery Tool CLI Reference
 
 These tools are available both inside idiom agent sessions and via `idiom tool` from an external agent's shell:

@@ -95,7 +95,13 @@ func New(cfg config.Config) *Model {
 	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
 	m.workspace = workspace.NewManager(cfg.Workspace)
 	if cfg.Chat.AttachInstructionFiles {
-		m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
+		if candidates, explicit := instructionAttachmentCandidates(cfg.Chat); explicit {
+			if len(candidates) > 0 {
+				m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root(), candidates...)
+			}
+		} else {
+			m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
+		}
 	}
 	mode := agent.ModeOrDefault(m.agentModeName)
 	m.workspace.SetPermissionRules(mode.PermissionRules)
@@ -126,6 +132,31 @@ func New(cfg config.Config) *Model {
 	}
 	m.initDebugLogger()
 	return m
+}
+
+func instructionAttachmentCandidates(chat config.Chat) ([]string, bool) {
+	if chat.ProjectPromptCandidates == nil {
+		return nil, false
+	}
+	var candidates []string
+	seen := map[string]struct{}{}
+	for _, name := range chat.ProjectPromptCandidates {
+		name = strings.TrimSpace(name)
+		if name == "" || name != filepath.Base(name) {
+			continue
+		}
+		switch name {
+		case ".qwen.md", "QWEN.md", "IDIOM.md", "AGENTS.md", "CLAUDE.md":
+		default:
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		candidates = append(candidates, name)
+	}
+	return candidates, true
 }
 
 // modeStepCap applies the Mode's StepCap on top of the config.MaxToolSteps

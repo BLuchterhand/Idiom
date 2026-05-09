@@ -306,13 +306,12 @@ func postReadinessFieldDescription(name string) string {
 
 // toolResultMessage builds the message we append to turnMessages after
 // a tool executes. When the call came in via native tool_calls (call is
-// non-nil), we return a role:"tool" message linked by tool_call_id —
-// OpenAI's documented shape, which Qwen was trained on. If the call came
-// from the legacy fenced-block fallback path (call == nil), we fall back
-// to a role:"system" message rendered by the workspace helper so the
-// model can still parse it. The llama.cpp jinja Qwen template treats
-// role:"tool" as the authoritative channel; the fallback is only there
-// to keep headless/test paths working if someone forgets --jinja.
+// non-nil), we return a role:"tool" message linked by tool_call_id:
+// OpenAI's documented shape, which Qwen was trained on. The main runner
+// synthesizes a tool_call for legacy inline-JSON tool requests before
+// recording the result, so file/tool output stays in the tool channel
+// rather than becoming system-strength prompt text. The nil-call fallback
+// remains only for low-level tests or non-runner callers.
 func toolResultMessage(call *llama.ToolCall, result workspace.ToolResult) llama.ChatMessage {
 	if call != nil && call.ID != "" {
 		return llama.ChatMessage{
@@ -330,12 +329,12 @@ func toolResultMessage(call *llama.ToolCall, result workspace.ToolResult) llama.
 
 // toolResultTouchedPaths returns the set of workspace paths a tool call
 // affected (or tried to read), so the InstructionAttacher can walk up
-// from those directories and surface nearby AGENTS.md / CLAUDE.md once.
+// from those directories and surface nearby configured instruction files once.
 // Kept intentionally shallow: we only care about tools that name a
 // single file or a patch envelope.
 func toolResultTouchedPaths(req workspace.ToolRequest, _ workspace.ToolResult) []string {
 	switch req.Tool {
-	case "read_file", "edit_file", "write_file", "append_file", "go_read_symbol", "go_extract_body", "go_diagnostics", "go_file_outline", "cpp_read_symbol", "cpp_extract_body", "cpp_diagnostics":
+	case "read_file", "edit_file", "write_file", "append_file", "code_navigate", "source_sanity", "go_read_symbol", "go_extract_body", "go_diagnostics", "go_file_outline", "cpp_read_symbol", "cpp_extract_body", "cpp_diagnostics":
 		if req.Path != "" {
 			return []string{req.Path}
 		}

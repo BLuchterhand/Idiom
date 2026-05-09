@@ -116,7 +116,7 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 		)
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
 		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
-			"treat required_edit_paths plus packet evidence as readiness-to-write unless one exact edit-safety fact is missing",
+			"treat required_edit_paths plus packet evidence as edit scope; allow only bounded required-path reads for named edit-safety facts",
 		)
 		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_paths_reported")
 		if len(brief.RequiredEditSnippets) > 0 {
@@ -159,7 +159,7 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 			"build_or_test_shell",
 		)
 		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
-			"after edits run only cheap non-build sanity checks or report planner-owned verification status",
+			"after source edits run source_sanity; for non-source edits run only cheap non-build sanity checks or report planner-owned verification status",
 		)
 	}
 	if isImplementationLikeFamily(route.Family) && promptContainsExactEditAnchor(prompt) {
@@ -525,11 +525,30 @@ func promptHasStructuredPacketMarker(prompt string) bool {
 }
 
 func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []workerruntime.RequiredEditSnippet {
-	section := markdownSectionByHeading(prompt, "required edits")
-	if strings.TrimSpace(section) == "" {
-		return nil
+	// Planner conventions vary: some briefs use "## Required Edits" with the
+	// new code inline, others use "## Implementation Shape" or just
+	// "## Implementation" for the same purpose. We scan candidates in order
+	// and take the first one whose code fences survive the
+	// skipRequiredEditCodeBlock filter, so an empty "required edits"
+	// header doesn't shadow a populated "implementation shape" section.
+	headings := []string{
+		"required edits",
+		"edits to apply",
+		"edits",
+		"implementation shape",
+		"implementation",
 	}
-	blocks := requiredEditCodeBlocks(section)
+	var blocks []string
+	for _, heading := range headings {
+		candidate := markdownSectionByHeading(prompt, heading)
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		if found := requiredEditCodeBlocks(candidate); len(found) > 0 {
+			blocks = found
+			break
+		}
+	}
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -871,12 +890,25 @@ func isEvidenceFirstMutationFamily(family string) bool {
 func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) llama.ChatOptions {
 	profile := strings.TrimSpace(plan.runtimeBrief.PermissionProfile)
 	contract := strings.TrimSpace(plan.runtimeBrief.Contract)
+	taskFamily := strings.TrimSpace(plan.runtimeBrief.TaskFamily)
 	readOnly := profile == "conversation_only" || profile == "read_only_workspace" || profile == "read_only_verification_shell"
 	if readOnly {
 		thinkingOff := false
 		opts.EnableThinking = &thinkingOff
 		opts.PreserveThinking = false
 	}
+	// NOTE on plan-then-execute thinking control: setting
+	// EnableThinking=false here was tried 2026-05-09 and proved a
+	// no-op on Colony's MLX backend. internal/llama/client.go's
+	// buildChatTemplateKwargs short-circuits for non-llama.cpp
+	// backends, so chat_template_kwargs never reaches mlx_lm.server.
+	// MLX does honor the server-startup arg
+	// `--chat-template-args {"enable_thinking":false}`, so the
+	// effective control point is the launcher, not idiom. If/when we
+	// also support llama.cpp for the planner, a per-task-family
+	// override at this site would activate; until then this comment
+	// is the breadcrumb.
+	_ = taskFamily
 	switch contract {
 	case "direct_answer":
 		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 1024)

@@ -62,16 +62,15 @@ var languageRegistry = []LanguageSupport{
 			CapEntrypoints:     "go_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Go decision guide - prefer structured tools over raw shell/grep:
-- Orient a .go file: go_file_outline (path)
-- Find a symbol anywhere: go_workspace_symbol (pattern)
-- Jump to a definition: go_definition (pattern, path scope)
-- Who calls this / who uses this: go_references, go_calls_into
-- What does this call: go_calls_from
-- Read one symbol body: go_read_symbol (pattern, path)
-- Files related to a concept: go_related_files (pattern, path)
-- Build/vet errors: go_diagnostics (path)
-A narrow read_file range can supply exact context when semantic tools do not land.
+Go decision guide - prefer code_navigate capabilities over raw shell/grep:
+- Orient a .go file: code_navigate capability=file_outline path=<file.go>
+- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
+- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
+- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
+- What does this call: code_navigate capability=calls_from
+- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file.go>
+- Files related to a concept: code_navigate capability=related_files pattern=<term> path=<scope>
+A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
 			info, err := os.Stat(filepath.Join(root, "go.mod"))
@@ -97,16 +96,15 @@ A narrow read_file range can supply exact context when semantic tools do not lan
 			CapEntrypoints:     "cpp_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-C/C++ decision guide - prefer structured tools over raw shell/grep:
-- Orient a .cpp/.h file: cpp_file_outline (path)
-- Find a symbol anywhere: cpp_workspace_symbol (pattern)
-- Jump to a definition / declaration: cpp_definition, cpp_declaration
-- Who calls this / who uses this: cpp_references, cpp_calls_into
-- What does this call: cpp_calls_from
-- Read one symbol body: cpp_read_symbol (pattern, path)
-- Include graph: cpp_includes, cpp_who_includes, cpp_blast_radius
-- Compiler diagnostics: cpp_diagnostics (path)
-A narrow read_file range can supply exact context when semantic tools do not land.
+C/C++ decision guide - prefer code_navigate capabilities over raw shell/grep:
+- Orient a .cpp/.h file: code_navigate capability=file_outline path=<file>
+- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
+- Jump to a definition/declaration: code_navigate capability=definition pattern=<name> path=<scope>
+- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
+- What does this call: code_navigate capability=calls_from
+- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file>
+- Files related to a concept: code_navigate capability=related_files pattern=<term> path=<scope>
+A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
 			if info, err := os.Stat(filepath.Join(root, "compile_commands.json")); err == nil && !info.IsDir() {
@@ -154,17 +152,15 @@ A narrow read_file range can supply exact context when semantic tools do not lan
 			CapEntrypoints:     "python_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Python decision guide - prefer structured tools over raw shell/grep:
-- Orient a .py file: python_file_outline (path)
-- Find a symbol anywhere: python_workspace_symbol (pattern)
-- Jump to a definition: python_definition (pattern, path scope)
-- Who calls this / who uses this: python_references, python_calls_into
-- What does this call: python_calls_from
-- Read one symbol body: python_read_symbol (pattern, path)
-- Files related to a concept: python_related_files (pattern, path)
-- Subclasses of a base class: python_implementations (pattern)
-- Type / lint errors: python_diagnostics (path; reports unavailable if no Python LSP server is present)
-A narrow read_file range can supply exact context when semantic tools do not land.
+Python decision guide - prefer code_navigate capabilities over raw shell/grep:
+- Orient a .py file: code_navigate capability=file_outline path=<file.py>
+- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
+- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
+- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
+- What does this call: code_navigate capability=calls_from
+- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file.py>
+- Subclasses/implementations: code_navigate capability=implementations pattern=<name>
+A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
 			markers := []string{
@@ -230,16 +226,15 @@ A narrow read_file range can supply exact context when semantic tools do not lan
 			CapEntrypoints:     "ts_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-TypeScript/JavaScript decision guide - prefer structured tools over raw shell/grep:
-- Orient a .ts/.tsx/.js/.jsx file: ts_file_outline (path)
-- Find a symbol anywhere: ts_workspace_symbol (pattern)
-- Jump to a definition: ts_definition (pattern, path scope)
-- Who calls this / who uses this: ts_references, ts_calls_into
-- What does this call: ts_calls_from
-- Read one symbol body: ts_read_symbol (pattern, path)
-- Files related to a concept: ts_related_files (pattern, path)
-- Type/compile errors: ts_diagnostics (path)
-The same toolset covers .js/.jsx/.mjs/.cjs; typescript-language-server handles both TS and JS from one process. A narrow read_file range can supply exact context when semantic tools do not land.
+TypeScript/JavaScript decision guide - prefer code_navigate capabilities over raw shell/grep:
+- Orient a .ts/.tsx/.js/.jsx file: code_navigate capability=file_outline path=<file>
+- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
+- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
+- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
+- What does this call: code_navigate capability=calls_from
+- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file>
+- Files related to a concept: code_navigate capability=related_files pattern=<term> path=<scope>
+The same route covers .js/.jsx/.mjs/.cjs. A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
 			for _, marker := range []string{"tsconfig.json", "jsconfig.json", "package.json"} {
@@ -292,17 +287,15 @@ The same toolset covers .js/.jsx/.mjs/.cjs; typescript-language-server handles b
 			CapEntrypoints:     "rust_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Rust decision guide - prefer structured tools over raw shell/grep:
-- Orient a .rs file: rust_file_outline (path)
-- Find a symbol anywhere: rust_workspace_symbol (pattern)
-- Jump to a definition: rust_definition (pattern, path scope)
-- Who calls this / who uses this: rust_references, rust_calls_into
-- What does this call: rust_calls_from
-- Read one symbol body: rust_read_symbol (pattern, path)
-- Trait impls across the crate: rust_implementations (trait name)
-- Files related to a concept: rust_related_files (pattern, path)
-- Build errors: rust_diagnostics (path, runs cargo check)
-A narrow read_file range can supply exact context when semantic tools do not land.
+Rust decision guide - prefer code_navigate capabilities over raw shell/grep:
+- Orient a .rs file: code_navigate capability=file_outline path=<file.rs>
+- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
+- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
+- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
+- What does this call: code_navigate capability=calls_from
+- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file.rs>
+- Trait impls across the crate: code_navigate capability=implementations pattern=<trait>
+A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
 			if info, err := os.Stat(filepath.Join(root, "Cargo.toml")); err == nil && !info.IsDir() {
@@ -351,17 +344,15 @@ A narrow read_file range can supply exact context when semantic tools do not lan
 			CapEntrypoints:     "java_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Java decision guide - prefer structured tools over raw shell/grep:
-- Orient a .java file: java_file_outline (path)
-- Find a symbol anywhere: java_workspace_symbol (pattern)
-- Jump to a definition: java_definition (pattern, path scope)
-- Who calls this / who uses this: java_references, java_calls_into
-- What does this call: java_calls_from
-- Read one symbol body: java_read_symbol (pattern, path)
-- Interface implementers: java_implementations (pattern)
-- Files related to a concept: java_related_files (pattern, path)
-- Build/compile errors: java_diagnostics (path)
-A narrow read_file range can supply exact context when semantic tools do not land.
+Java decision guide - prefer code_navigate capabilities over raw shell/grep:
+- Orient a .java file: code_navigate capability=file_outline path=<file.java>
+- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
+- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
+- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
+- What does this call: code_navigate capability=calls_from
+- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file.java>
+- Interface implementers: code_navigate capability=implementations pattern=<name>
+A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
 			for _, manifest := range []string{"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle"} {
@@ -429,6 +420,72 @@ func LanguageForExtension(ext string) (LanguageSupport, bool) {
 // the matching language, if any.
 func LanguageForFile(path string) (LanguageSupport, bool) {
 	return LanguageForExtension(filepath.Ext(path))
+}
+
+// LanguageForName maps model-facing language names and common aliases
+// to the registry entry used by capability routers.
+func LanguageForName(name string) (LanguageSupport, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case "golang":
+		name = "go"
+	case "c", "cc", "cxx", "c++":
+		name = "cpp"
+	case "py":
+		name = "python"
+	case "js", "javascript", "jsx", "ts":
+		name = "typescript"
+	case "rs":
+		name = "rust"
+	}
+	for _, lang := range languageRegistry {
+		if strings.EqualFold(lang.Name, name) {
+			return lang, true
+		}
+	}
+	return LanguageSupport{}, false
+}
+
+// DiagnosticToolForLanguage returns the diagnostics tool for a language
+// name used by graph/context records. JavaScript shares the TypeScript
+// toolchain in this harness.
+func DiagnosticToolForLanguage(language string) string {
+	if lang, ok := LanguageForName(language); ok {
+		return lang.Tool(CapDiagnostics)
+	}
+	return ""
+}
+
+// DiagnosticToolNames returns the built-in diagnostics tools derived from
+// the language registry rather than a separate per-language list.
+func DiagnosticToolNames() []string {
+	seen := make(map[string]struct{}, len(languageRegistry))
+	out := make([]string, 0, len(languageRegistry))
+	for _, lang := range languageRegistry {
+		tool := strings.TrimSpace(lang.Tool(CapDiagnostics))
+		if tool == "" {
+			continue
+		}
+		if _, ok := seen[tool]; ok {
+			continue
+		}
+		seen[tool] = struct{}{}
+		out = append(out, tool)
+	}
+	return out
+}
+
+func IsDiagnosticToolName(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return false
+	}
+	for _, candidate := range DiagnosticToolNames() {
+		if candidate == tool {
+			return true
+		}
+	}
+	return false
 }
 
 // ActiveLanguages returns languages whose Detect function reports true

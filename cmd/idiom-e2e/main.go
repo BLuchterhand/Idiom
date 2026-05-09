@@ -109,7 +109,7 @@ func main() {
 		MaxToolSteps:        mode.StepCap,
 		Policy:              agent.ModePolicy(mode),
 		AgentName:           "main",
-		InstructionAttacher: agent.NewInstructionAttacher(ws.Root()),
+		InstructionAttacher: e2eInstructionAttacher(cfg.Chat, ws.Root()),
 		OnEvent: func(event agent.RunEvent) {
 			emit("run_event", event)
 		},
@@ -231,6 +231,42 @@ type multiPrompt []string
 
 func (m *multiPrompt) String() string     { return strings.Join(*m, " || ") }
 func (m *multiPrompt) Set(s string) error { *m = append(*m, s); return nil }
+
+func e2eInstructionAttacher(chat config.Chat, root string) *agent.InstructionAttacher {
+	if !chat.AttachInstructionFiles {
+		return nil
+	}
+	if chat.ProjectPromptCandidates == nil {
+		return agent.NewInstructionAttacher(root)
+	}
+	candidates := e2eInstructionCandidates(chat.ProjectPromptCandidates)
+	if len(candidates) == 0 {
+		return nil
+	}
+	return agent.NewInstructionAttacher(root, candidates...)
+}
+
+func e2eInstructionCandidates(names []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || name != filepath.Base(name) {
+			continue
+		}
+		switch name {
+		case ".qwen.md", "QWEN.md", "IDIOM.md", "AGENTS.md", "CLAUDE.md":
+		default:
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
 
 func firstN[T any](s []T, n int) []T {
 	if len(s) <= n {

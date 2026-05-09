@@ -108,21 +108,118 @@ func (r *Runner) effectivePolicy() RunPolicy {
 		policy.MaxNoProgressTurns = 6
 	}
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
-		policy = clampMutationReadBudget(policy)
+		if r.planThenExecutePlannerPhase() {
+			policy = clampPlanThenExecuteReadBudget(policy)
+		} else {
+			policy = clampMutationReadBudget(policy)
+		}
+		policy = scaleMaxToolStepsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
+	}
+	return policy
+}
+
+// scaleMaxToolStepsByRequiredPaths grows the per-run tool-step ceiling for
+// multi-file briefs. Single-file atoms keep the configured default; atoms
+// with N required edit paths expand to base + 2*(N-1) capped at the
+// ceiling.
+//
+// Scoping rules:
+//   - MaxToolSteps == 0 (unbounded) is left alone.
+//   - MaxToolSteps < base (explicit tight constraint, e.g. tests forcing
+//     budget exhaustion at step 1) is left alone — we treat values below
+//     the base as deliberate.
+//   - MaxToolSteps >= base is raised to the scaled value when scaled is
+//     larger; already-higher policies are left alone.
+func scaleMaxToolStepsByRequiredPaths(policy RunPolicy, pathCount int) RunPolicy {
+	if pathCount <= 1 {
+		return policy
+	}
+	scaled := maxToolStepsBase + 2*(pathCount-1)
+	if scaled > maxToolStepsCeiling {
+		scaled = maxToolStepsCeiling
+	}
+	if policy.MaxToolSteps >= maxToolStepsBase && policy.MaxToolSteps < scaled {
+		policy.MaxToolSteps = scaled
 	}
 	return policy
 }
 
 const (
-	mutationReadBudgetHard                  = 8
+	mutationReadBudgetHard                  = 12
 	requiredEditPathPrewriteReadBudgetHard  = 5
 	writeReadyPacketPrewriteReadBudgetHard  = 1
 	requiredEditPathRemainderReadBudgetHard = 2
+	// planThenExecuteReadBudgetCeiling caps the planner-phase read
+	// budget for plan-then-execute mode. The planner needs at least one
+	// read per required path (to confirm anchors and indentation) before
+	// it can submit a plan, so the regular mutation cap of 12 starves
+	// briefs with 8+ required paths. The closeout nudge fires earlier
+	// when state allows, so this ceiling rarely matters in practice — it
+	// just prevents a runaway scan when something goes wrong.
+	planThenExecuteReadBudgetCeiling = 32
+	// maxToolStepsBase is the conservative default budget for a single-file
+	// implementation atom. Multi-file briefs scale up via
+	// scaleMaxToolStepsByRequiredPaths so a 5-file atom doesn't run out of
+	// tool steps doing legitimate per-file orientation reads.
+	maxToolStepsBase = 16
+	// maxToolStepsCeiling caps the scaled budget so a sprawling brief
+	// can't run away even if it slipped past the brief lint.
+	maxToolStepsCeiling = 40
+	// postCompletionVerificationCutoff bounds how many non-write tool calls
+	// the agent can issue after all required edit paths have been written.
+	// A small budget lets the model do legitimate "did my edit land?" reads
+	// without letting verification thrash exhaust the tool-step budget and
+	// produce a false failure signal. Past this count the runner
+	// force-answers with a success completion.
+	postCompletionVerificationCutoff = 3
 )
+
+// scaledRequiredEditPathPrewriteBudget grows the pre-write read budget for
+// briefs that span more than one required edit path. With one required path
+// the baseline 5 reads is plenty for a single anchor confirmation; with two
+// or more, each additional path needs at least one orientation read of its
+// own. Capped at the broader mutation budget so this never invites unbounded
+// discovery.
+func scaledRequiredEditPathPrewriteBudget(pathCount int) int {
+	if pathCount <= 1 {
+		return requiredEditPathPrewriteReadBudgetHard
+	}
+	scaled := requiredEditPathPrewriteReadBudgetHard + 2*(pathCount-1)
+	if scaled > mutationReadBudgetHard {
+		return mutationReadBudgetHard
+	}
+	return scaled
+}
 
 func clampMutationReadBudget(policy RunPolicy) RunPolicy {
 	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > mutationReadBudgetHard {
 		policy.ReadBudgetHard = mutationReadBudgetHard
+	}
+	return policy
+}
+
+// planThenExecutePlannerReadBudget computes the planner-phase pre-write
+// read budget for plan-then-execute mode. The formula 2*N+4 gives the
+// model headroom to read each required path twice plus a small buffer
+// for the file-outline / cross-checks the addendum encourages. Capped
+// at planThenExecuteReadBudgetCeiling so no single brief can run away.
+func planThenExecutePlannerReadBudget(pathCount int) int {
+	if pathCount <= 0 {
+		return planThenExecuteReadBudgetCeiling
+	}
+	scaled := 2*pathCount + 4
+	if scaled > planThenExecuteReadBudgetCeiling {
+		scaled = planThenExecuteReadBudgetCeiling
+	}
+	return scaled
+}
+
+// clampPlanThenExecuteReadBudget caps the configured read budget by the
+// plan-execute ceiling. Mirror of clampMutationReadBudget for the
+// planner phase.
+func clampPlanThenExecuteReadBudget(policy RunPolicy) RunPolicy {
+	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > planThenExecuteReadBudgetCeiling {
+		policy.ReadBudgetHard = planThenExecuteReadBudgetCeiling
 	}
 	return policy
 }

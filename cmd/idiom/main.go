@@ -71,11 +71,20 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "implement" {
 		return runImplementMainWithTelemetry(args[1:], stdout, stderr, runPromptOnce, rec)
 	}
+	if len(args) > 0 && args[0] == "plan-execute" {
+		return runPlanExecuteMainWithTelemetry(args[1:], stdout, stderr, runPromptOnce, rec)
+	}
 	if len(args) > 0 && args[0] == "architect" {
 		return runArchitectMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
 	if len(args) > 0 && args[0] == "audit" {
 		return runAuditMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
+	if len(args) > 0 && args[0] == "ranker" {
+		return runRankerMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
+	if len(args) > 0 && args[0] == "brief" {
+		return runBriefMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
 	return runWithTelemetry(args, stdout, stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions, rec)
 }
@@ -647,6 +656,16 @@ func commandTelemetryName(args []string) string {
 			return "audit:" + args[1]
 		}
 		return "audit"
+	case "ranker":
+		if len(args) > 1 {
+			return "ranker:" + args[1]
+		}
+		return "ranker"
+	case "brief":
+		if len(args) > 1 {
+			return "brief:" + args[1]
+		}
+		return "brief"
 	default:
 		for _, arg := range args {
 			if strings.HasPrefix(arg, "-prompt=") || strings.HasPrefix(arg, "--prompt=") {

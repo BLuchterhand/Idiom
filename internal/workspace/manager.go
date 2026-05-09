@@ -30,10 +30,11 @@ import (
 type Manager struct {
 	cfg config.Workspace
 
-	mode                  Mode
-	thoroughness          ExploreThoroughness
-	writePolicy           WritePolicy
-	bypassReadBeforeEdit  bool
+	mode                       Mode
+	thoroughness               ExploreThoroughness
+	writePolicy                WritePolicy
+	bypassReadBeforeEdit       bool
+	planThenExecutePlannerMode bool
 	mu                    sync.Mutex
 	nextHandle            int
 	pathToHandle          map[string]string
@@ -88,6 +89,7 @@ type ToolRequest struct {
 	Query           string              `json:"query,omitempty"`
 	Task            string              `json:"task,omitempty"`
 	Purpose         string              `json:"purpose,omitempty"`
+	Capability      string              `json:"capability,omitempty"`
 	Language        string              `json:"language,omitempty"`
 	Glob            string              `json:"glob,omitempty"`
 	Workdir         string              `json:"workdir,omitempty"`
@@ -157,6 +159,15 @@ type ToolRequest struct {
 	// and Manager.Execute hands them to mcp.Registry.Call. Empty for
 	// every built-in tool — they keep using the typed fields above.
 	Args json.RawMessage `json:"-"`
+	// Edits carries the structured edit list for a submit_plan call
+	// (the planner phase of plan-then-execute mode). Each entry is
+	// one edit the executor phase should dispatch in order.
+	Edits []PlanEdit `json:"edits,omitempty"`
+	// Rationale is the planner's free-text explanation of WHY the
+	// plan looks the way it does. Captured alongside the plan so the
+	// executor (and any reviewer) can read the plan as a single
+	// document.
+	Rationale string `json:"rationale,omitempty"`
 }
 
 type GoDeclarationMove struct {
@@ -258,6 +269,23 @@ func (m *Manager) HasObservedPath(path string) bool {
 func normalizePathKey(path string) string {
 	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
 	return strings.ToLower(cleaned)
+}
+
+// SetPlanThenExecutePlannerMode toggles the workspace into plan-then-
+// execute planner mode. Activates the submit_plan tool surface and
+// hides per-edit write tools (edit_file, write_file, append_file,
+// apply_patch, delegate_edit, mkdir, go_move_declarations) from the
+// manifest the runner advertises to the model. Off by default; the
+// `idiom plan-execute` orchestrator turns it on for the planner phase
+// only — the executor phase uses a fresh Manager that leaves it off.
+func (m *Manager) SetPlanThenExecutePlannerMode(active bool) {
+	m.planThenExecutePlannerMode = active
+}
+
+// PlanThenExecutePlannerMode reports whether SetPlanThenExecutePlannerMode
+// has been called with true.
+func (m *Manager) PlanThenExecutePlannerMode() bool {
+	return m.planThenExecutePlannerMode
 }
 
 func (m *Manager) SetBypassReadBeforeEdit(bypass bool) {
@@ -402,8 +430,8 @@ func (m *Manager) Instructions() string {
 	return fmt.Sprintf(
 		"Workspace root: %s\nWorking directory: %s\n\n"+
 			"Rules:\n"+
-			"- Do not invent file paths from memory. Use list_files, search_files, discovered handles, or language-specific symbol tools to discover real files first.\n"+
-			"- After an orientation call, narrow with structured language tools or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
+			"- Do not invent file paths from memory. Use list_files, search_files, discovered handles, or structured symbol/navigation routes to discover real files first.\n"+
+			"- After an orientation call, narrow with structured language-aware routes or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
 			"- Paths are relative to the working directory unless absolute.\n"+
 			"- Prefer edit_file for small localized changes; write_file overwrites.\n"+
 			"%s"+
@@ -429,7 +457,7 @@ func (m *Manager) exploreInstructions() string {
 		"You are in EXPLORE mode — a READ-ONLY investigation session. Do not change files or system state.\n\n"+
 			"Workspace root: %s\nWorking directory: %s\nThoroughness: %s\n\n"+
 			"Rules:\n"+
-			"- Start broad once, then narrow with structured language tools or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
+			"- Start broad once, then narrow with structured language-aware routes or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
 			"- Do not invent file paths. Use search tools first.\n"+
 			"- shell is limited to read-only utilities (ls, find, rg, grep, awk, sed, cat, head, tail, wc, file, pwd, git status/log/diff/show/grep).\n"+
 			"- When you have enough evidence, answer directly. Continue only for one exact missing claim and one exact probe.",
@@ -441,15 +469,16 @@ func (m *Manager) exploreInstructions() string {
 
 func (m *Manager) toolManifestTools(readOnly bool) []string {
 	return ToolManifestTools(ToolManifestToolOptions{
-		IncludeTaskLedger: !readOnly,
-		IncludeTask:       true,
-		IncludeWriteTools: !readOnly,
-		IncludeGo:         m.isGoWorkspace(),
-		IncludeCpp:        m.isCppWorkspace(),
-		IncludePython:     m.isPythonWorkspace(),
-		IncludeTypescript: m.isTsWorkspace(),
-		IncludeRust:       m.isRustWorkspace(),
-		IncludeJava:       m.isJavaWorkspace(),
+		IncludeTaskLedger:      !readOnly,
+		IncludeTask:            true,
+		IncludeWriteTools:      !readOnly,
+		IncludePlanThenExecute: m.planThenExecutePlannerMode && !readOnly,
+		IncludeGo:              m.isGoWorkspace(),
+		IncludeCpp:             m.isCppWorkspace(),
+		IncludePython:          m.isPythonWorkspace(),
+		IncludeTypescript:      m.isTsWorkspace(),
+		IncludeRust:            m.isRustWorkspace(),
+		IncludeJava:            m.isJavaWorkspace(),
 	})
 }
 
@@ -563,12 +592,107 @@ func appendExternalToolDefinitions(defs []ToolDefinition, extReg *ExternalToolRe
 	return defs
 }
 
+// Execute dispatches a tool request and wraps the dispatch in a per-tool
+// wall-clock timeout so a misbehaving backend (e.g., a hung clangd query
+// or runaway external tool) cannot stall the lane indefinitely. On
+// timeout the runner sees a synthesized "tool timed out" result that
+// flows through the normal failure-streak guard, and the runaway
+// goroutine is left to drain in the background rather than blocking the
+// loop.
 func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResult) {
 	defer func() {
 		result = annotateLanguagePrecisionTier(result)
 		result = annotateLanguageRelationships(result)
 	}()
+	timeout := toolTimeoutFor(strings.TrimSpace(req.Tool))
+	if timeout <= 0 {
+		return m.executeDispatch(ctx, req)
+	}
+	return m.executeWithTimeout(ctx, req, timeout)
+}
 
+// executeWithTimeout runs the tool dispatch in a goroutine and races it
+// against a context deadline. If the dispatch returns first, its result
+// is used; if the deadline trips first, a synthesized timeout result is
+// returned and the goroutine is left to drain. Panics inside the
+// dispatch goroutine are recovered into a "tool panicked" result so a
+// single bad tool can never bring down the runner.
+func (m *Manager) executeWithTimeout(ctx context.Context, req ToolRequest, timeout time.Duration) ToolResult {
+	return m.executeWithTimeoutFn(ctx, req, timeout, func(timeoutCtx context.Context) ToolResult {
+		return m.executeDispatch(timeoutCtx, req)
+	})
+}
+
+// executeWithTimeoutFn is the testable core of executeWithTimeout. It
+// runs fn in a goroutine, races it against the deadline derived from
+// ctx + timeout, and synthesizes "Tool timed out" / "Tool canceled" /
+// "Tool panicked" results for the bad-path cases.
+func (m *Manager) executeWithTimeoutFn(ctx context.Context, req ToolRequest, timeout time.Duration, fn func(context.Context) ToolResult) ToolResult {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	done := make(chan ToolResult, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- ToolResult{
+					Tool:    req.Tool,
+					Summary: "Tool panicked",
+					Error:   fmt.Sprintf("%s panicked while executing: %v", strings.TrimSpace(req.Tool), r),
+				}
+			}
+		}()
+		done <- fn(timeoutCtx)
+	}()
+	select {
+	case res := <-done:
+		return res
+	case <-timeoutCtx.Done():
+		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+			return ToolResult{
+				Tool:    req.Tool,
+				Summary: "Tool timed out",
+				Error:   fmt.Sprintf("%s did not return within %s; the runner is moving on. Treat this as a tool stall and pick a different approach (e.g., a different tool, narrower input, or a per-path blocker).", strings.TrimSpace(req.Tool), timeout),
+			}
+		}
+		return ToolResult{
+			Tool:    req.Tool,
+			Summary: "Tool canceled",
+			Error:   "the run was canceled before this tool returned",
+		}
+	}
+}
+
+// toolTimeoutFor returns the per-tool wall-clock budget used by
+// executeWithTimeout. Heavy index/scan tools get a larger budget; the
+// rest use a conservative 30s default. Returning 0 disables the
+// timeout for tools that legitimately need to stream long-running
+// output (none today).
+func toolTimeoutFor(tool string) time.Duration {
+	switch tool {
+	// Indexing/build paths can legitimately take a couple of minutes on
+	// a cold repo or after a major refactor.
+	case "context_index", "context_build":
+		return 5 * time.Minute
+	// Security scans are heavy by design.
+	case "semgrep_scan", "joern_scan":
+		return 5 * time.Minute
+	// Trace runs execute a user-supplied command — the caller is
+	// expected to keep that bounded but we still allow generous time.
+	case "context_trace_pack":
+		return 5 * time.Minute
+	// Universal Ctags + LSP-backed queries can be slow on big files.
+	case "ctags_symbols":
+		return 90 * time.Second
+	// Shell commands are user-bounded; the workspace already enforces
+	// CommandTimeoutSeconds inside the shell handler. Skip the outer
+	// timeout to avoid double-bounding.
+	case "shell":
+		return 0
+	}
+	return 30 * time.Second
+}
+
+func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result ToolResult) {
 	tool := strings.TrimSpace(req.Tool)
 	mode := m.Mode()
 	switch tool {
@@ -588,10 +712,16 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		return m.readFile(req)
 	case "file_stats":
 		return m.fileStats(req)
+	case "code_navigate":
+		return m.codeNavigate(ctx, req)
+	case "source_sanity":
+		return m.sourceSanity(ctx, req)
 	case "harness_audit":
 		return m.harnessAudit(req)
 	case "harness_feedback", "idiom_feedback":
 		return m.harnessFeedback(req)
+	case "submit_plan":
+		return m.submitPlan(req)
 	case "context_index":
 		return m.contextIndex(ctx, req)
 	case "context_status":
@@ -1444,7 +1574,7 @@ func IsNarrowingRequest(req ToolRequest) bool {
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg", "read_file",
-		"harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
+		"code_navigate", "source_sanity", "harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
 		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
@@ -1482,7 +1612,7 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg",
-		"harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
+		"code_navigate", "source_sanity", "harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
 		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
@@ -1983,7 +2113,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		// say so explicitly instead of letting the bare "no such file"
 		// repeat across sibling probes. The Did-you-mean output already
 		// surfaces real siblings of the closest-existing ancestor.
-		errMsg := err.Error() + ". Verify the path with search_files, a language-specific symbol tool, or search_content before retrying read_file."
+		errMsg := err.Error() + ". Verify the path with search_files, a structured symbol/navigation route, or search_content before retrying read_file."
 		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
 			parent := filepath.Dir(strings.ReplaceAll(strings.TrimSpace(req.Path), "\\", "/"))
 			if parent != "." && parent != "/" && parent != "" {
@@ -2497,6 +2627,9 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
 		return ToolResult{Tool: "go_read_symbol", Summary: "Go symbol read rejected", Error: "pattern is required"}
+	}
+	if err := validateSymbolPattern("go_read_symbol", pattern); err != nil {
+		return ToolResult{Tool: "go_read_symbol", Summary: "Go symbol read rejected", Error: err.Error()}
 	}
 
 	index, err := m.getGoIndex()
@@ -4683,7 +4816,7 @@ func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 		info, statErr := os.Stat(path)
 		if statErr != nil {
 			return "", "", fmt.Errorf(
-				"path %q was not found. %s Use search_files, a language-specific symbol tool, or search_content and then read a returned handle.",
+				"path %q was not found. %s Use search_files, a structured symbol/navigation route, or search_content and then read a returned handle.",
 				m.displayPath(path),
 				m.notFoundRecoveryHint(path),
 			)

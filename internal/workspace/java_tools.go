@@ -312,6 +312,9 @@ func (m *Manager) javaFindSymbol(req ToolRequest) ToolResult {
 }
 
 func (m *Manager) javaReadSymbol(req ToolRequest) ToolResult {
+	if err := validateSymbolPattern("java_read_symbol", req.Pattern); err != nil {
+		return ToolResult{Tool: "java_read_symbol", Summary: "Java symbol read rejected", Error: err.Error()}
+	}
 	match, err := m.selectJavaSymbolMatch(req)
 	if err != nil {
 		return ToolResult{Tool: "java_read_symbol", Summary: "Java symbol read rejected", Error: err.Error()}
@@ -638,7 +641,7 @@ func (m *Manager) javaFileOutline(req ToolRequest) ToolResult {
 		}
 	}
 
-	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use java_read_symbol for a specific body.", len(file.Symbols), rel)
+	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use code_navigate capability=read_symbol for a specific body.", len(file.Symbols), rel)
 	return ToolResult{
 		Tool:    "java_file_outline",
 		Summary: summary,

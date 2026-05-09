@@ -134,6 +134,22 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
+			Name:        "code_navigate",
+			Description: "Route a language-agnostic code navigation request to the best language-aware symbol/navigation tool for the given path or language, with a bounded generic source-text fallback.",
+			ParametersJSON: schemaObj(
+				[]string{"capability"},
+				`"capability":{"type":"string","enum":["file_outline","find_symbol","workspace_symbol","read_symbol","definition","references","calls_from","calls_into","implementations","related_files"],"description":"navigation capability the model needs"},"path":`+strProp("source file or narrow source directory used to infer language and scope")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"query":`+strProp("alternate symbol/name/pattern when pattern is not used")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file_outline/read_symbol-capable routes")+`,"end_line":`+intProp("optional end line for file_outline/read_symbol-capable routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
+			),
+		},
+		{
+			Name:        "source_sanity",
+			Description: "Run source-aware sanity for edited source files. Routes to the file language's diagnostics when available; otherwise falls back to a generic source syntax sanity check.",
+			ParametersJSON: schemaObj(
+				[]string{"path"},
+				`"path":`+strProp("source file or narrow source directory")+`,"limit":`+intProp("max files to check when path is a directory; default 24"),
+			),
+		},
+		{
 			Name:        "harness_audit",
 			Description: "Audit idiom itself: exported tool/schema coverage, language capability wiring, backend availability, and recent JSONL behavior logs. Use only for harness/tooling improvement questions, not as a replacement for code search.",
 			ParametersJSON: schemaObj(
@@ -143,7 +159,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "harness_feedback",
-			Description: "Record structured feedback about idiom harness/tool/prompt behavior that affected the current task. Use only for generic idiom capability gaps, confusing contracts, stale-context failures, telemetry gaps, or workflow friction; do not use for product-code bugs.",
+			Description: "Record structured feedback about idiom harness/tool/prompt behavior that affected the current task. Use only for generic idiom capability gaps, confusing contracts, stale-context failures, telemetry gaps, or workflow friction; do not use for product-code bugs. ALL of `category`, `component`, `expected`, `observed`, `impact`, `confidence` are REQUIRED; `evidence` should be a non-empty array of repo-relative paths or step ids; `category` and `confidence` must come from the documented enum values exactly. Validation rejects partial submissions silently — fill every required field on the first call.",
 			ParametersJSON: schemaObj(
 				[]string{"category", "component", "expected", "observed", "impact", "confidence"},
 				`"category":{"type":"string","enum":["tool_gap","prompt_gap","workflow_gap","context_gap","stale_context","language_support","routing_gap","verification_gap","telemetry_gap","audit_gap","planning_quality","packet_quality","impact_ranking","plan_audit_gap","budget_gap","replay_eval_gap","missing_affordance","bad_scope_rank","stale_fact","backend_gap","packet_bloat","read_loop","edit_readiness_failure","unsupported_plan_claim","validation_gap","language_precision_gap","other"],"description":"generic feedback class"},"component":`+strProp("idiom surface involved, e.g. context_pack, context_impact, architect/plan-audit, prompt/base, direct tool CLI")+`,"expected":`+strProp("capability or contract the agent reasonably expected")+`,"observed":`+strProp("what actually happened, stated as evidence rather than speculation")+`,"workaround":`+strProp("how the agent proceeded, if any")+`,"impact":`+strProp("task effect such as extra reads, blocked edit, wrong routing, or missing audit signal")+`,"evidence":{"type":"array","items":{"type":"string"},"description":"short log paths, step ids, tool outputs, or file references backing the observation"},"confidence":{"type":"string","enum":["verified","inferred"],"description":"verified when backed by logs/tool output; inferred when observed indirectly"},"severity":{"type":"string","enum":["low","medium","high"],"description":"task impact; default low"},"suggested_fix":`+strProp("optional generic harness/tool/prompt improvement, not a one-off task-specific workaround"),
@@ -255,7 +271,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "ctags_symbols",
-			Description: "Fallback symbol discovery via Universal Ctags JSON output. Use when language-specific tools do not cover a file type.",
+			Description: "Fallback symbol discovery via Universal Ctags JSON output. Use when the primary language-aware route does not cover a file type.",
 			ParametersJSON: schemaObj(
 				nil,
 				`"path":`+strProp("file or directory to index")+`,"pattern":`+strProp("optional symbol name filter"),
@@ -335,10 +351,26 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "apply_patch",
-			Description: "Apply a multi-file patch envelope (*** Begin Patch / *** End Patch). Requires a one-sentence description of the patch's intent.",
+			Description: "Apply a multi-file patch envelope. The envelope grammar is exactly: outer `*** Begin Patch` / `*** End Patch` markers; per-file sections introduced by `*** Add File: <path>`, `*** Update File: <path>`, or `*** Delete File: <path>`; `*** Update File:` may carry an optional `*** Move to: <new-path>`; hunks inside an Update File start with `@@` and contain lines prefixed by ` `, `+`, or `-`. Do NOT invent additional `*** Foo` directives such as `*** Sanity Check`, `*** Note`, `*** Verification`, or commentary headers — the parser tolerates and skips them but they signal a brief misread. Requires a one-sentence description of the patch's intent.",
 			ParametersJSON: schemaObj(
 				[]string{"content", "description"},
-				`"content":`+strProp("patch envelope")+`,"description":`+strProp("one sentence covering the patch's overall intent")+`,"task_id":`+strProp("optional: id of the planned task_ledger item this patch fulfills, so the plan panel can check it off in place"),
+				`"content":`+strProp("patch envelope using only *** Begin/End Patch, *** Add/Update/Delete File, *** Move to, and @@ hunks")+`,"description":`+strProp("one sentence covering the patch's overall intent")+`,"task_id":`+strProp("optional: id of the planned task_ledger item this patch fulfills, so the plan panel can check it off in place"),
+			),
+		},
+		{
+			Name:        "submit_plan",
+			Description: "Submit a structured edit plan in plan-then-execute mode. The planner enumerates every edit up front (path + either old_text/new_text or start_line/end_line/content); the executor phase dispatches them in order against the workspace. Use this in lieu of per-edit tool calls when the lane is plan-only.",
+			ParametersJSON: schemaObj(
+				[]string{"edits"},
+				`"rationale":`+strProp("paragraph explaining the overall plan and why these edits in this order")+`,"edits":{"type":"array","description":"ordered list of edits the executor will dispatch","items":{"type":"object","properties":{"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start for the line-range shape")+`,"end_line":`+intProp("1-based end for the line-range shape")+`,"old_text":`+strProp("exact text to replace for the substring shape")+`,"new_text":`+strProp("replacement text for the substring shape")+`,"content":`+strProp("replacement content for the line-range shape")+`,"replace_all":`+boolProp("replace every occurrence of old_text")+`,"purpose":`+strProp("one sentence: what this edit does and why")+`},"required":["path"]}}`,
+			),
+		},
+		{
+			Name:        "delegate_edit",
+			Description: "Hand a single file edit to the local executor model (typically the 30B coder behind ImplementerClient). The executor receives the spec, emits the workspace tool call, and the runner dispatches it. Use this when you have already decided the exact change and want to keep your own context focused on planning the next path instead of re-reading the file you just wrote. Falls back to direct dispatch if the executor is unavailable or returns an unparseable reply, so the lane never stalls. Requires a path plus EITHER old_text+new_text OR start_line+end_line+content.",
+			ParametersJSON: schemaObj(
+				[]string{"path"},
+				`"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start for the line-range shape; use with end_line and content")+`,"end_line":`+intProp("1-based end for the line-range shape; use with start_line and content")+`,"old_text":`+strProp("exact text to replace for the exact-match shape; use with new_text")+`,"new_text":`+strProp("replacement text for the exact-match shape; use with old_text")+`,"content":`+strProp("replacement content for the line-range shape; use with start_line and end_line")+`,"replace_all":`+boolProp("replace every occurrence of old_text instead of just the first")+`,"purpose":`+strProp("one sentence: what the executor should do and why"),
 			),
 		},
 		{
@@ -449,7 +481,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "go_read_symbol",
-			Description: "Read the body of a Go symbol.",
+			Description: "Read the body of a Go symbol. ANCHOR FIRST: confirm the symbol name and file via go_find_symbol, go_workspace_symbol, or a prior tool result before calling this — speculative pattern guesses fail more than half the time and waste a tool step.",
 			ParametersJSON: schemaObj(
 				[]string{"pattern", "path"},
 				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("file path"),
@@ -502,7 +534,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "cpp_read_symbol",
-			Description: "Read a C/C++ symbol snippet.",
+			Description: "Read a C/C++ symbol snippet. ANCHOR FIRST: confirm the symbol name and file via cpp_find_symbol, cpp_workspace_symbol, or a prior tool result before calling this — speculative pattern guesses fail more than half the time (observed ~56% failure rate) and waste a tool step.",
 			ParametersJSON: schemaObj(
 				[]string{"pattern"},
 				`"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope")+`,"start_line":`+intProp("optional 1-based start")+`,"end_line":`+intProp("optional 1-based end"),
@@ -712,7 +744,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "python_read_symbol",
-			Description: "Read the body of a Python symbol.",
+			Description: "Read the body of a Python symbol. ANCHOR FIRST: confirm the symbol name and file via python_find_symbol or a prior tool result before calling this — speculative pattern guesses fail and waste a tool step.",
 			ParametersJSON: schemaObj(
 				[]string{"pattern", "path"},
 				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("file path"),
@@ -762,7 +794,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "ts_read_symbol",
-			Description: "Read the body of a TypeScript/JavaScript symbol.",
+			Description: "Read the body of a TypeScript/JavaScript symbol. ANCHOR FIRST: confirm the symbol name and file via ts_find_symbol or a prior tool result before calling this — speculative pattern guesses fail and waste a tool step.",
 			ParametersJSON: schemaObj(
 				[]string{"pattern"},
 				`"pattern":`+strProp("symbol, e.g. ClassName.method")+`,"path":`+strProp("file path"),
@@ -868,7 +900,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "rust_read_symbol",
-			Description: "Read the body of a Rust symbol.",
+			Description: "Read the body of a Rust symbol. ANCHOR FIRST: confirm the symbol name and file via rust_find_symbol or a prior tool result before calling this — speculative pattern guesses fail and waste a tool step.",
 			ParametersJSON: schemaObj(
 				[]string{"pattern", "path"},
 				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("file path"),
@@ -958,7 +990,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "java_read_symbol",
-			Description: "Read the body of a Java symbol.",
+			Description: "Read the body of a Java symbol. ANCHOR FIRST: confirm the symbol name and file via java_find_symbol or java_workspace_symbol or a prior tool result before calling this — speculative pattern guesses fail and waste a tool step.",
 			ParametersJSON: schemaObj(
 				[]string{"pattern"},
 				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("file path"),

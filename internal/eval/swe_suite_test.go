@@ -511,6 +511,158 @@ func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 	}
 }
 
+func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
+	root := t.TempDir()
+	contextPath := "internal/runner.go"
+	full := filepath.Join(root, contextPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte("the runner enforces request budget through ledger snapshot"), 0o644); err != nil {
+		t.Fatalf("write context: %v", err)
+	}
+	task := SWETask{
+		ID:       "grounded-task",
+		Family:   "direct_question",
+		Prompt:   "Explain runner budget.",
+		Scenario: Scenario{Name: "grounded-task", PromptContains: []string{"runner"}},
+		Oracle: SWEOracle{
+			Groundedness: &SWEGroundednessOracle{
+				MinScore:     0.5,
+				ContextFiles: []string{contextPath},
+			},
+		},
+	}
+	records := []Record{
+		{Type: "session_start", Data: map[string]any{"workspace_root": root}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Explain runner budget."}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "the runner enforces request budget through ledger snapshot"}},
+	}
+	report := EvaluateSWETask("grounded.jsonl", records, task)
+	if report.LearningUpdate == nil {
+		t.Fatalf("expected learning update record, got nil; findings=%#v", report.Findings)
+	}
+	if report.LearningUpdate.Action != "boost" {
+		t.Fatalf("expected boost action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score)
+	}
+	if !report.LearningUpdate.Applied {
+		t.Fatalf("expected applied=true for boost band")
+	}
+	weightsPath := filepath.Join(root, ".idiom", "ranker", "weights.json")
+	if _, err := os.Stat(weightsPath); err != nil {
+		t.Fatalf("weights.json missing: %v", err)
+	}
+	logPath := filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("learning log missing: %v", err)
+	}
+	if !strings.Contains(string(data), "\"source\":\"eval\"") || !strings.Contains(string(data), "\"action\":\"boost\"") {
+		t.Fatalf("learning log missing expected entry: %s", string(data))
+	}
+}
+
+func TestEvaluateSWETaskGroundednessPenalizesLowScore(t *testing.T) {
+	root := t.TempDir()
+	contextPath := "spec.md"
+	if err := os.WriteFile(filepath.Join(root, contextPath), []byte("workspace ranker hub demotion penalty multipliers"), 0o644); err != nil {
+		t.Fatalf("write context: %v", err)
+	}
+	task := SWETask{
+		ID:       "ungrounded",
+		Family:   "direct_question",
+		Prompt:   "explain.",
+		Scenario: Scenario{Name: "ungrounded", PromptContains: []string{"explain"}},
+		Oracle: SWEOracle{
+			Groundedness: &SWEGroundednessOracle{MinScore: 0.0, ContextFiles: []string{contextPath}},
+		},
+	}
+	records := []Record{
+		{Type: "session_start", Data: map[string]any{"workspace_root": root}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "explain."}},
+		// Final assistant text has zero overlap with the context tokens.
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "completely unrelated commentary about cats and birds"}},
+	}
+	report := EvaluateSWETask("ungrounded.jsonl", records, task)
+	if report.LearningUpdate == nil {
+		t.Fatalf("expected learning update, got nil")
+	}
+	if report.LearningUpdate.Action != "penalize" {
+		t.Fatalf("expected penalize action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score)
+	}
+}
+
+func TestLintSWESuiteFlagsGroundednessConfigErrors(t *testing.T) {
+	suite := SWESuite{
+		Name: "groundedness-lint",
+		Tasks: []SWETask{
+			{
+				ID:       "no-context",
+				Family:   "direct_question",
+				Prompt:   "explain.",
+				Scenario: Scenario{Name: "no-context", PromptContains: []string{"explain"}},
+				Oracle: SWEOracle{
+					Groundedness: &SWEGroundednessOracle{MinScore: 0.5}, // missing context
+				},
+			},
+			{
+				ID:       "out-of-range",
+				Family:   "direct_question",
+				Prompt:   "explain.",
+				Scenario: Scenario{Name: "out-of-range", PromptContains: []string{"explain"}},
+				Oracle: SWEOracle{
+					Groundedness: &SWEGroundednessOracle{MinScore: 1.5, ContextFragments: []string{"frag"}},
+				},
+			},
+			{
+				ID:       "absolute-path",
+				Family:   "direct_question",
+				Prompt:   "explain.",
+				Scenario: Scenario{Name: "absolute-path", PromptContains: []string{"explain"}},
+				Oracle: SWEOracle{
+					Groundedness: &SWEGroundednessOracle{MinScore: 0.5, ContextFiles: []string{"/absolute"}},
+				},
+			},
+		},
+	}
+	findings := LintSWESuite(suite)
+	joined := strings.Join(findings, "\n")
+	if !strings.Contains(joined, "no-context") || !strings.Contains(joined, "context_files or context_fragments") {
+		t.Fatalf("expected no-context lint finding, got %v", findings)
+	}
+	if !strings.Contains(joined, "out-of-range") || !strings.Contains(joined, "must be in [0, 1]") {
+		t.Fatalf("expected out-of-range lint finding, got %v", findings)
+	}
+	if !strings.Contains(joined, "absolute-path") {
+		t.Fatalf("expected absolute-path lint finding, got %v", findings)
+	}
+}
+
+func TestTaskOracleAssertionsCoversNewOracles(t *testing.T) {
+	task := SWETask{
+		Oracle: SWEOracle{
+			Groundedness:         &SWEGroundednessOracle{MinScore: 0.5, ContextFragments: []string{"x"}},
+			ForbidGenericPhrases: true,
+		},
+	}
+	got := taskOracleAssertions(task)
+	if !containsStr(got, "groundedness") {
+		t.Fatalf("expected groundedness in assertions, got %v", got)
+	}
+	if !containsStr(got, "forbid_generic_phrases") {
+		t.Fatalf("expected forbid_generic_phrases in assertions, got %v", got)
+	}
+}
+
+func containsStr(set []string, want string) bool {
+	for _, v := range set {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestEvaluateSWESuiteReportsMissingLogs(t *testing.T) {
 	suite := SWESuite{
 		Name: "small",

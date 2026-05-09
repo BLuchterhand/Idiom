@@ -158,6 +158,9 @@ func (m *Manager) pythonFindSymbol(req ToolRequest) ToolResult {
 }
 
 func (m *Manager) pythonReadSymbol(req ToolRequest) ToolResult {
+	if err := validateSymbolPattern("python_read_symbol", req.Pattern); err != nil {
+		return ToolResult{Tool: "python_read_symbol", Summary: "Python symbol read rejected", Error: err.Error()}
+	}
 	match, err := m.selectPythonSymbolMatch(req)
 	if err != nil {
 		return ToolResult{Tool: "python_read_symbol", Summary: "Python symbol read rejected", Error: err.Error()}
@@ -461,7 +464,7 @@ func (m *Manager) pythonFileOutline(req ToolRequest) ToolResult {
 		}
 	}
 
-	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use python_read_symbol for a specific body.", len(file.Symbols), rel)
+	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use code_navigate capability=read_symbol for a specific body.", len(file.Symbols), rel)
 	return ToolResult{
 		Tool:    "python_file_outline",
 		Summary: summary,

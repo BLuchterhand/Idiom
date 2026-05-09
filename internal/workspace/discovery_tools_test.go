@@ -23,6 +23,8 @@ func TestGenericDiscoveryToolsAreAdvertised(t *testing.T) {
 		"harness_audit",
 		"harness_feedback",
 		"file_stats",
+		"code_navigate",
+		"source_sanity",
 		"context_index",
 		"context_status",
 		"context_query",
@@ -50,7 +52,7 @@ func TestGenericDiscoveryToolsAreAdvertised(t *testing.T) {
 	for _, def := range defs {
 		names = append(names, def.Name)
 	}
-	for _, want := range []string{"harness_audit", "harness_feedback", "file_stats", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "blame_range"} {
+	for _, want := range []string{"harness_audit", "harness_feedback", "file_stats", "code_navigate", "source_sanity", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "blame_range"} {
 		if !slices.Contains(names, want) {
 			t.Fatalf("expected tool definitions to include %q, got %#v", want, names)
 		}

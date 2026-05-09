@@ -486,8 +486,8 @@ func buildWorkflows(root string, activeLanguages []string, promptFiles []string)
 			Title: "Discovery First",
 			When:  "Use before broad repo reading or edits.",
 			Steps: []string{
-				"Start with workspace overview, search_content, or a language-specific overview tool.",
-				"Use workspace_symbol / read_symbol style tools before broad file reads when the question is symbol-shaped.",
+				"Start with workspace overview, search_content, or a structured overview route.",
+				"Use symbol/navigation routes before broad file reads when the question is symbol-shaped.",
 				"Only fall back to raw reads once the target file or declaration is known.",
 			},
 		},
@@ -500,7 +500,7 @@ func buildWorkflows(root string, activeLanguages []string, promptFiles []string)
 				Title:    "Verify Go Package",
 				When:     "After changing Go behavior in one package.",
 				Commands: []string{"go test ./path/to/package"},
-				Steps:    []string{"Run the smallest affected package test first.", "Use go_diagnostics or go_read_symbol to narrow failures before broad test runs."},
+				Steps:    []string{"Run the smallest affected package test first.", "Use source_sanity for source edits and structured symbol/navigation routes to narrow failures before broad test runs."},
 			})
 		case "python":
 			workflows = append(workflows, WorkflowRecipe{

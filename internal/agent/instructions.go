@@ -8,10 +8,10 @@ import (
 	"sync"
 )
 
-// InstructionAttachment models a "nearest AGENTS.md / CLAUDE.md"
+// InstructionAttachment models a nearest project-instruction file
 // lookup. OpenCode's `session/instruction.ts` does the same: when the
 // model reads a file, walk up from that file's directory to the repo
-// root and, on the way, find the nearest `AGENTS.md` (or `CLAUDE.md`)
+// root and, on the way, find the nearest configured instruction file
 // to attach as a one-shot system message.
 //
 // Rationale: project-specific conventions belong with the code, not in
@@ -29,17 +29,16 @@ type InstructionAttacher struct {
 	root      string
 	candidate []string
 
-	mu        sync.Mutex
-	attached  map[string]struct{}
+	mu       sync.Mutex
+	attached map[string]struct{}
 }
 
 // NewInstructionAttacher constructs an attacher rooted at the given
-// workspace root. Candidates default to AGENTS.md and CLAUDE.md (in
-// that order). Pass custom candidates if a project uses a different
-// filename.
+// workspace root. Candidates default to AGENTS.md. Pass custom candidates
+// if a project uses a different filename, including CLAUDE.md.
 func NewInstructionAttacher(root string, candidates ...string) *InstructionAttacher {
 	if len(candidates) == 0 {
-		candidates = []string{"AGENTS.md", "CLAUDE.md"}
+		candidates = []string{"AGENTS.md"}
 	}
 	return &InstructionAttacher{
 		root:      strings.TrimSpace(root),

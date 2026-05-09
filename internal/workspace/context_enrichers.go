@@ -302,22 +302,7 @@ func graphSymbolCanHaveImplementations(kind string) bool {
 }
 
 func diagnosticToolForGraphLanguage(language string) string {
-	switch language {
-	case "go":
-		return "go_diagnostics"
-	case "cpp":
-		return "cpp_diagnostics"
-	case "python":
-		return "python_diagnostics"
-	case "typescript", "javascript":
-		return "ts_diagnostics"
-	case "rust":
-		return "rust_diagnostics"
-	case "java":
-		return "java_diagnostics"
-	default:
-		return ""
-	}
+	return DiagnosticToolForLanguage(language)
 }
 
 func relationshipToolsForGraphLanguage(language string) map[string]string {

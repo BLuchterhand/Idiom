@@ -264,17 +264,38 @@ func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpac
 		if strings.Contains(role, "test") {
 			rank = 0.78
 		}
+		// Prefer the explicit score from the comprehension ranker when it
+		// produced one; the role-based defaults remain as a fall-back for
+		// callers that bypass the ranker.
+		if file.Score > 0 {
+			rank = file.Score
+		}
+		signals := []contextImpactSignal{{
+			Kind:   "context_pack_candidate",
+			Weight: 0.32,
+			Detail: firstNonEmptyString(file.Reason, file.Role),
+		}}
+		if file.Score > 0 {
+			signals = append(signals, contextImpactSignal{
+				Kind:   "ranker_score",
+				Weight: file.Score,
+				Detail: "ranker_score",
+			})
+		}
+		if file.Hub {
+			signals = append(signals, contextImpactSignal{
+				Kind:   "hub_demotion",
+				Weight: 0.6,
+				Detail: "fanout_or_name_hub",
+			})
+		}
 		item := contextImpactItem{
 			Handle:     firstNonEmptyString(firstString(file.Handles), "file://"+file.Path),
 			Path:       file.Path,
 			Kind:       "file",
 			Rank:       rank,
 			Confidence: firstNonEmptyString(file.Confidence, "heuristic"),
-			Signals: []contextImpactSignal{{
-				Kind:   "context_pack_candidate",
-				Weight: 0.32,
-				Detail: firstNonEmptyString(file.Reason, file.Role),
-			}},
+			Signals:    signals,
 		}
 		if file.Stale {
 			item.Limitations = append(item.Limitations, "candidate was marked stale by context graph")

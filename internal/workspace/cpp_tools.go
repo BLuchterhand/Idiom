@@ -141,6 +141,9 @@ func (m *Manager) cppFindSymbol(req ToolRequest) ToolResult {
 }
 
 func (m *Manager) cppReadSymbol(req ToolRequest) ToolResult {
+	if err := validateSymbolPattern("cpp_read_symbol", req.Pattern); err != nil {
+		return ToolResult{Tool: "cpp_read_symbol", Summary: "C++ symbol read rejected", Error: err.Error()}
+	}
 	match, err := m.selectCppSymbolMatch(req)
 	if err != nil {
 		return ToolResult{Tool: "cpp_read_symbol", Summary: "C++ symbol read rejected", Error: err.Error()}
@@ -592,7 +595,7 @@ func (m *Manager) cppFileOutline(req ToolRequest) ToolResult {
 		}
 	}
 
-	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use cpp_read_symbol for a specific body.", len(file.Symbols), rel)
+	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use code_navigate capability=read_symbol for a specific body.", len(file.Symbols), rel)
 	return ToolResult{
 		Tool:    "cpp_file_outline",
 		Summary: summary,

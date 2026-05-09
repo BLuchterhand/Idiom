@@ -43,13 +43,14 @@ const (
 )
 
 const (
-	patchBeginMarker  = "*** Begin Patch"
-	patchEndMarker    = "*** End Patch"
-	patchAddPrefix    = "*** Add File: "
-	patchUpdatePrefix = "*** Update File: "
-	patchDeletePrefix = "*** Delete File: "
-	patchMovePrefix   = "*** Move to: "
-	patchHunkMarker   = "@@"
+	patchBeginMarker            = "*** Begin Patch"
+	patchEndMarker              = "*** End Patch"
+	patchAddPrefix              = "*** Add File: "
+	patchUpdatePrefix           = "*** Update File: "
+	patchDeletePrefix           = "*** Delete File: "
+	patchMovePrefix             = "*** Move to: "
+	patchHunkMarker             = "@@"
+	patchUnknownDirectivePrefix = "*** "
 )
 
 func ParsePatch(text string) ([]PatchOp, error) {
@@ -105,6 +106,14 @@ func ParsePatch(text string) ([]PatchOp, error) {
 				return nil, fmt.Errorf("%q is only valid inside an Update File section", patchMovePrefix)
 			}
 			current.MoveTo = strings.TrimSpace(strings.TrimPrefix(line, patchMovePrefix))
+		case strings.HasPrefix(line, patchUnknownDirectivePrefix):
+			// Unknown `*** Foo` directive — likely model commentary or a
+			// non-standard envelope marker (e.g. `*** Sanity Check`). The
+			// documented directives are matched earlier in this switch;
+			// real hunk content always starts with `+`, `-`, ` `, or is
+			// empty, so skipping here cannot swallow legitimate edits.
+			// Silent-tolerate rather than hard-failing the entire patch.
+			continue
 		case current == nil:
 			if strings.TrimSpace(line) == "" {
 				continue
@@ -150,6 +159,71 @@ func ParsePatch(text string) ([]PatchOp, error) {
 		}
 	}
 	return ops, nil
+}
+
+// SerializePatch reverses ParsePatch: it turns a slice of PatchOp into the
+// canonical *** Begin Patch / *** End Patch envelope text. Used by the
+// runner-side pre-flight when it needs to drop redundant sections from a
+// model-issued patch and re-submit the trimmed envelope to applyPatch
+// without changing applyPatch's semantics.
+func SerializePatch(ops []PatchOp) string {
+	var b strings.Builder
+	b.WriteString(patchBeginMarker)
+	b.WriteString("\n")
+	for _, op := range ops {
+		switch op.Kind {
+		case PatchOpAdd:
+			b.WriteString(patchAddPrefix)
+			b.WriteString(strings.TrimSpace(op.Path))
+			b.WriteString("\n")
+			body := op.NewBody
+			if body != "" {
+				for _, line := range strings.Split(body, "\n") {
+					b.WriteString("+")
+					b.WriteString(line)
+					b.WriteString("\n")
+				}
+			}
+		case PatchOpUpdate:
+			b.WriteString(patchUpdatePrefix)
+			b.WriteString(strings.TrimSpace(op.Path))
+			b.WriteString("\n")
+			if mv := strings.TrimSpace(op.MoveTo); mv != "" {
+				b.WriteString(patchMovePrefix)
+				b.WriteString(mv)
+				b.WriteString("\n")
+			}
+			for _, hunk := range op.Hunks {
+				b.WriteString(patchHunkMarker)
+				if header := strings.TrimSpace(hunk.ContextHeader); header != "" {
+					b.WriteString(" ")
+					b.WriteString(header)
+				}
+				b.WriteString("\n")
+				for _, line := range hunk.Lines {
+					switch line.Kind {
+					case LineContext:
+						b.WriteString(" ")
+						b.WriteString(line.Text)
+					case LineInsert:
+						b.WriteString("+")
+						b.WriteString(line.Text)
+					case LineDelete:
+						b.WriteString("-")
+						b.WriteString(line.Text)
+					}
+					b.WriteString("\n")
+				}
+			}
+		case PatchOpDelete:
+			b.WriteString(patchDeletePrefix)
+			b.WriteString(strings.TrimSpace(op.Path))
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString(patchEndMarker)
+	b.WriteString("\n")
+	return b.String()
 }
 
 func PatchOpPaths(ops []PatchOp) []string {

@@ -15,6 +15,8 @@ func TestDiscoveryProfileClassifiesGenericToolsForBalance(t *testing.T) {
 		{name: "context pack", req: ToolRequest{Tool: "context_pack", Task: "Plan Execute", Path: "."}, wantClass: "context_pack", wantScope: "targeted", wantCost: "medium"},
 		{name: "context trace pack", req: ToolRequest{Tool: "context_trace_pack", Command: "pytest tests/test_app.py", Path: "."}, wantClass: "runtime_trace", wantScope: "targeted", wantCost: "medium"},
 		{name: "harness feedback", req: ToolRequest{Tool: "harness_feedback", Component: "context_pack"}, wantClass: "harness_feedback", wantScope: "targeted", wantCost: "low"},
+		{name: "code navigation", req: ToolRequest{Tool: "code_navigate", Capability: "definition", Path: "src/app.cpp", Pattern: "Run"}, wantClass: "language_relationship", wantScope: "targeted", wantCost: "medium"},
+		{name: "source sanity", req: ToolRequest{Tool: "source_sanity", Path: "src/app.cpp"}, wantClass: "diagnostics", wantScope: "targeted", wantCost: "medium"},
 		{name: "structural", req: ToolRequest{Tool: "structural_search", Path: "internal", Pattern: "if $X { $Y }"}, wantClass: "ast_search", wantScope: "targeted", wantCost: "medium"},
 		{name: "dependency root", req: ToolRequest{Tool: "dependency_graph", Path: "."}, wantClass: "dependency_graph", wantScope: "broad", wantCost: "medium"},
 		{name: "dependency scoped", req: ToolRequest{Tool: "dependency_graph", Path: "internal/workspace"}, wantClass: "dependency_graph", wantScope: "targeted", wantCost: "medium"},
@@ -28,8 +30,11 @@ func TestDiscoveryProfileClassifiesGenericToolsForBalance(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := DiscoveryProfileForRequest(tc.req)
-			if got.Class != tc.wantClass || got.Scope != tc.wantScope || got.Cost != tc.wantCost || !got.Discovery || !got.Generic {
-				t.Fatalf("DiscoveryProfileForRequest(%#v) = %#v, want class=%q scope=%q cost=%q generic discovery", tc.req, got, tc.wantClass, tc.wantScope, tc.wantCost)
+			if got.Class != tc.wantClass || got.Scope != tc.wantScope || got.Cost != tc.wantCost || !got.Discovery {
+				t.Fatalf("DiscoveryProfileForRequest(%#v) = %#v, want class=%q scope=%q cost=%q discovery", tc.req, got, tc.wantClass, tc.wantScope, tc.wantCost)
+			}
+			if tc.req.Tool != "source_sanity" && !got.Generic {
+				t.Fatalf("DiscoveryProfileForRequest(%#v) = %#v, want generic discovery", tc.req, got)
 			}
 		})
 	}
@@ -71,6 +76,8 @@ func TestGenericDiscoveryToolsCountAsNarrowingEvidence(t *testing.T) {
 	mgr := NewManager(testWorkspaceConfig())
 	for _, req := range []ToolRequest{
 		{Tool: "harness_feedback", Component: "context_pack", Expected: "x", Observed: "y", Impact: "z"},
+		{Tool: "code_navigate", Capability: "read_symbol", Path: "src/app.cpp", Pattern: "Run"},
+		{Tool: "source_sanity", Path: "src/app.cpp"},
 		{Tool: "context_pack", Task: "Plan Execute", Path: "."},
 		{Tool: "context_trace_pack", Command: "pytest tests/test_app.py", Path: "."},
 		{Tool: "discovery_query", Purpose: "impact_analysis", Path: ".", Pattern: "Execute"},

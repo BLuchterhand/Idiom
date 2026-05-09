@@ -254,8 +254,8 @@ enqueue_loader_job_once();
 	if !slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt") {
 		t.Fatalf("expected broad-read invalid action, got %#v", plan.runtimeBrief.InvalidActions)
 	}
-	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "treat required_edit_paths plus packet evidence as readiness-to-write unless one exact edit-safety fact is missing") {
-		t.Fatalf("expected readiness-to-write search policy, got %#v", plan.runtimeBrief.SearchPolicy)
+	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "treat required_edit_paths plus packet evidence as edit scope; allow only bounded required-path reads for named edit-safety facts") {
+		t.Fatalf("expected required-path scoped search policy, got %#v", plan.runtimeBrief.SearchPolicy)
 	}
 }
 
@@ -622,6 +622,41 @@ The planner will run the test slice.
 	}
 }
 
+func TestBuildPromptExecutionPlanCapturesImplementationShapeSnippets(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files To Modify
+
+- native/src/foo.cpp
+
+## Implementation Shape
+
+Add the helper:
+` + "```cpp" + `
+int helper(int x) { return x + 1; }
+` + "```" + `
+
+## Verification
+
+Run the tests.
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 1 {
+		t.Fatalf("expected one snippet from Implementation Shape heading, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	}
+	if !strings.Contains(plan.runtimeBrief.RequiredEditSnippets[0].Content, "int helper(int x)") {
+		t.Fatalf("snippet content missing helper body: %#v", plan.runtimeBrief.RequiredEditSnippets[0])
+	}
+}
+
 func TestBuildPromptExecutionPlanCapturesFilesYouMayEditAllowlist(t *testing.T) {
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
@@ -670,6 +705,33 @@ func TestNewHonorsAttachInstructionFilesConfig(t *testing.T) {
 	}
 }
 
+func TestNewUsesProjectPromptCandidatesForDynamicInstructionAttachment(t *testing.T) {
+	candidates, explicit := instructionAttachmentCandidates(config.Chat{ProjectPromptCandidates: []string{"AGENTS.md"}})
+	if !explicit || !slices.Equal(candidates, []string{"AGENTS.md"}) {
+		t.Fatalf("expected explicit AGENTS.md candidate only, got explicit=%t candidates=%#v", explicit, candidates)
+	}
+	candidates, explicit = instructionAttachmentCandidates(config.Chat{ProjectPromptCandidates: []string{"AGENTS.md", "CLAUDE.md"}})
+	if !explicit || !slices.Equal(candidates, []string{"AGENTS.md", "CLAUDE.md"}) {
+		t.Fatalf("expected explicit candidates to preserve configured list, got explicit=%t candidates=%#v", explicit, candidates)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = t.TempDir()
+	cfg.Workspace.CWD = cfg.Workspace.Root
+	cfg.Chat.AttachInstructionFiles = true
+	cfg.Chat.ProjectPromptCandidates = []string{}
+	model := New(cfg)
+	if model.instructionAttacher != nil {
+		t.Fatal("expected empty project_prompt_candidates to suppress dynamic instruction attachment")
+	}
+
+	cfg.Chat.ProjectPromptCandidates = []string{"AGENTS.md"}
+	model = New(cfg)
+	if model.instructionAttacher == nil {
+		t.Fatal("expected explicit AGENTS.md candidate to enable dynamic instruction attachment")
+	}
+}
+
 func TestReloadPromptStackGeneratesProjectArtifacts(t *testing.T) {
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# Demo\n\nAlways verify focused changes.\n"), 0o644); err != nil {
@@ -692,11 +754,9 @@ func TestReloadPromptStackGeneratesProjectArtifacts(t *testing.T) {
 	if _, err := os.Stat(contextPath); err != nil {
 		t.Fatalf("expected generated context at %s: %v", contextPath, err)
 	}
-	if !strings.Contains(model.promptStack.Text, "[project behavior: .idiom/discovery/context.md]") {
-		t.Fatalf("expected prompt stack to include generated context, got:\n%s", model.promptStack.Text)
-	}
-	if !strings.Contains(model.promptStack.Text, "Generated Project Context") {
-		t.Fatalf("expected generated context body in prompt stack, got:\n%s", model.promptStack.Text)
+	if strings.Contains(model.promptStack.Text, "[project behavior: .idiom/discovery/context.md]") ||
+		strings.Contains(model.promptStack.Text, "Generated Project Context") {
+		t.Fatalf("generated context should not be auto-loaded as prompt behavior, got:\n%s", model.promptStack.Text)
 	}
 }
 

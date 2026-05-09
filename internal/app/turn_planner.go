@@ -220,6 +220,17 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
 		plan.Reason = firstNonEmptyString(plan.Reason, "direct_implementation")
+	case "plan_then_execute_planner":
+		// Planner phase of `idiom plan-execute`. Same lane shape as
+		// implementation (write-capable contract, single turn) but the
+		// only exposed write tool is submit_plan; per-edit writes are
+		// runtime-rejected. Without this case the family fell through
+		// to fallbackTurnRoute → direct_answer, leaving the planner
+		// with zero tools and no way to submit a plan.
+		plan.InitialLane = "implement"
+		plan.FollowupLane = ""
+		plan.Contract = "implementation_result"
+		plan.Reason = firstNonEmptyString(plan.Reason, "plan_then_execute_planner")
 	case "multi_turn_state":
 		plan.InitialLane = "main"
 		plan.Contract = "direct_answer"
@@ -364,7 +375,8 @@ func isImplementationLikeFamily(family string) bool {
 		"explore_then_implement",
 		"investigate_then_implement",
 		"review_then_implement",
-		"architecture_then_implement":
+		"architecture_then_implement",
+		"plan_then_execute_planner":
 		return true
 	default:
 		return false

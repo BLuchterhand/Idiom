@@ -95,7 +95,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			PermissionProfile:    "analysis_read_only_then_guarded_writes",
 			ToolProfile:          CapabilityGuardedWrite,
 			RequiredEvidence:     []string{"target_location", "changed_paths", "verification_status"},
-			RequiredTools:        []string{"edit_file_or_apply_patch", "verification_shell"},
+			RequiredTools:        []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
 			ReadinessGate:        []string{"target_location_confirmed", "changed_paths_reported", "verification_status_reported"},
 			SearchPolicy:         []string{"delegate_broad_discovery_when_needed", "locate_target_before_edit", "verify_changed_surface"},
 			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
@@ -134,6 +134,29 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []string{"required_evidence_satisfied", "budget_exhausted_with_uncertainty_declared"},
 			FinalCritic:          []string{"answers_actual_user_request", "required_evidence_cited"},
 		}
+	case "plan_then_execute_planner":
+		// Planner phase of `idiom plan-execute`. The model has read
+		// access plus the submit_plan tool; per-edit writes are
+		// runtime-rejected by the runner's plan-then-execute write
+		// guard, and the workspace manager hides them from the
+		// manifest when SetPlanThenExecutePlannerMode is active.
+		// Verification is planner-owned (the executor phase
+		// dispatches edits deterministically without re-running
+		// tests), so the contract reflects "plan submitted, no per-
+		// edit verification needed in this phase."
+		return RuntimeContractSpec{
+			TaskFamily:           "plan_then_execute_planner",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			ToolProfile:          CapabilityGuardedWrite,
+			RequiredEvidence:     []string{"plan_submitted_or_blocker"},
+			RequiredTools:        []string{"submit_plan"},
+			ReadinessGate:        []string{"submit_plan_called_or_blocker_reported"},
+			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "submit_plan_when_edit_set_is_supported", "do_not_call_per_edit_writes"},
+			VerificationContract: "not_required_for_text_mutations",
+			StopConditions:       []string{"submit_plan_returned_ok_or_blocker_reported", "blocked_by_missing_permission_or_information"},
+			FinalCritic:          []string{"answers_actual_user_request", "submit_plan_called", "edits_listed_in_summary"},
+		}
 	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		family = strings.TrimSpace(family)
 		// Verification contract differs by family: code-producing
@@ -155,7 +178,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			PermissionProfile:    "guarded_workspace_write",
 			ToolProfile:          CapabilityGuardedWrite,
 			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
-			RequiredTools:        []string{"edit_file_or_apply_patch", "verification_shell"},
+			RequiredTools:        []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
 			ReadinessGate:        []string{"changed_paths_reported", "verification_contract_resolved"},
 			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported", "prefer_small_bounded_edits", "verify_changed_surface"},
 			VerificationContract: verificationContract,
@@ -223,7 +246,7 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 	case CapabilityDebugLogInvestigator:
 		return filterAllowedTools(available, "search_files", "search_content", "read_file")
 	case CapabilityVerificationOnly:
-		return filterAllowedTools(available, "shell", "read_file", "search_files", "search_content")
+		return filterAllowedTools(available, "source_sanity", "shell", "read_file", "search_files", "search_content")
 	case CapabilityLocateOnly:
 		return filterAllowedTools(available, "pwd", "search_files", "search_content", "read_file")
 	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
@@ -265,6 +288,8 @@ func readOnlyDiscoveryToolNames() []string {
 		"search_content",
 		"read_file",
 		"file_stats",
+		"code_navigate",
+		"source_sanity",
 		"harness_audit",
 		"context_index",
 		"context_status",

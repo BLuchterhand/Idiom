@@ -43,6 +43,31 @@ discovery packets, exact anchors, changed paths, and verification results. It
 must not prescribe the exact next tool unless a hard invariant is being
 enforced.
 
+## Capability Menus, Not Language Menus
+
+The model should declare the capability it needs in task terms: inspect this
+symbol, check this source file, explain this dependency, find callers, verify
+this edit. The harness should resolve that request to the best concrete
+resource for the affected file, language, and workspace.
+
+Prefer generic, capability-oriented routes over exposing language-specific
+strategy choices in prompts or recovery text:
+
+- Good: the model asks for source sanity on `src/foo.cpp`; the harness routes
+  to C++ diagnostics when available and falls back to a generic source check
+  when they are not.
+- Good: the model asks for symbol navigation on a Go file; the harness uses
+  the Go-aware indexer if present and otherwise reports that only generic
+  search is available.
+- Bad: a prompt tells the model to choose between `go_diagnostics`,
+  `typescript_diagnostics`, `rust_diagnostics`, and `cpp_diagnostics` as a
+  strategy step.
+
+Language-specific tools are still valid implementation details and may remain
+available when useful. They should not be the canonical way to express a
+contract. The durable contract is the capability, the path or symbol it applies
+to, the evidence returned, and any uncertainty or fallback used.
+
 Use deterministic checks for the invariant boundary:
 
 - required edit paths must be changed or explicitly blocked
@@ -50,6 +75,11 @@ Use deterministic checks for the invariant boundary:
 - verification evidence must match the artifact risk and occur after the
   relevant writes
 - repeated low-value reads/searches must eventually stop
+- when the harness has computed a required-path implementation state, the
+  tool surface should expose the contract menu: in-scope write capabilities,
+  bounded required-path source reads for named edit-safety gaps, or a concrete
+  blocker. Exact-anchor packets may be write-first; abstract/rich packets
+  should not be treated as if the precise edit anchor is guaranteed.
 
 If a deterministic backstop fires repeatedly, treat that as an alignment gap,
 not as proof that the model should be micromanaged. The first repair should be
@@ -147,8 +177,8 @@ ask whether the issue is really one of these simpler contract gaps:
 Verification must match artifact risk. Patch-hygiene checks such as
 `git diff --check` can satisfy prose/config formatting checks, but they are not
 source-aware verification for code edits. Source edits require language
-diagnostics, a focused build/test, or a concrete blocker that says why such
-evidence is unavailable.
+diagnostics through the generic `source_sanity` route, a focused build/test, or
+a concrete blocker that says why source-aware evidence is unavailable.
 
 ## Drift Detection
 

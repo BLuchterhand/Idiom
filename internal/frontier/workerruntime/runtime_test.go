@@ -151,12 +151,41 @@ func TestBuildActionGuidanceForWriteReadyImplementationPacket(t *testing.T) {
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
 		"edit_file or apply_patch on a required edit path",
-		"if this read resolved the named edit-safety fact, edit a required path now",
+		"edit a required path now from the packet and inspected evidence",
 		"do not take another orientation read",
 		"<<QUESTION>> naming the exact edit-safety fact",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected %q in write-ready guidance, got %#v", want, guidance.ValidNext)
+		}
+	}
+	if strings.Contains(joined, "one more targeted probe") {
+		t.Fatalf("write-ready guidance must not suggest another probe, got %#v", guidance.ValidNext)
+	}
+}
+
+func TestBuildActionGuidanceForRequiredPathGateDoesNotNudgeMoreReads(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:       "completion_gate_rejected",
+		Request:      workspace.ToolRequest{},
+		Constraints:  []string{"implementation_packet_write_ready", "implementation_required_paths_remaining"},
+		WriteCapable: true,
+		Result: workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "required edit path(s) were not changed: native/tests/test_energy.cpp.",
+		},
+	})
+	joined := strings.Join(guidance.ValidNext, "\n")
+	if strings.Contains(joined, "gather or edit the missing evidence") {
+		t.Fatalf("required-path gate should not suggest gathering more evidence, got %#v", guidance.ValidNext)
+	}
+	for _, want := range []string{
+		"satisfy the missing write contract with an allowed edit",
+		"answer only after the gate condition is satisfied",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in required-path gate guidance, got %#v", want, guidance.ValidNext)
 		}
 	}
 }
@@ -324,8 +353,8 @@ func TestBuildActionGuidanceClosureOmitsOutlineFollowupMenu(t *testing.T) {
 	})
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, forbidden := range []string{
-		"go_read_symbol with one of the outlined declaration names",
-		"go_references or go_calls_into on a named declaration",
+		"code_navigate capability=read_symbol with one of the outlined declaration names",
+		"code_navigate capability=references or capability=calls_into on a named declaration",
 		"go_move_declarations",
 	} {
 		if strings.Contains(joined, forbidden) {
@@ -488,7 +517,7 @@ func TestRenderStepInstructionIncludesReadinessState(t *testing.T) {
 		`"ready_to_write":true`,
 		"context_packet_available",
 		"writing is supported by the current packet/evidence",
-		"one exact edit-safety gap",
+		"exact edit blocker",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected readiness field %q in:\n%s", want, rendered)
@@ -509,7 +538,7 @@ func TestBuildStepInstructionPrioritizesRequiredEditPathsOverAnswerReadiness(t *
 			ReadyToAnswer: true,
 		},
 	})
-	if !strings.Contains(instruction.Directive, "Required edit paths make this a write-ready implementation packet") {
+	if !strings.Contains(instruction.Directive, "Required edit paths define the implementation scope") {
 		t.Fatalf("expected required-edit-path directive to win, got %q", instruction.Directive)
 	}
 	if strings.Contains(instruction.Directive, "answering is supported") {
@@ -568,9 +597,11 @@ func TestBuildStepInstructionUsesWriteReadyImplementationDirective(t *testing.T)
 		Constraints:       []string{"implementation_packet_write_ready"},
 	})
 	for _, want := range []string{
-		"write-ready implementation packet",
-		"one named fact",
+		"Required edit paths define the implementation scope",
 		"edit an in-scope required path",
+		"bounded required-path source read",
+		"named_gap",
+		"exact missing anchor or stale fact",
 		"<<QUESTION>>",
 	} {
 		if !strings.Contains(instruction.Directive, want) {
@@ -677,8 +708,10 @@ func TestRenderInitialRuntimeBriefAddsRequiredEditPathReadinessDirective(t *test
 	})
 	for _, want := range []string{
 		"required_edit_paths are present",
-		"read only for a named edit-safety fact",
-		"then edit or report <<QUESTION>>",
+		"Edit an in-scope required path",
+		"bounded required-path source read",
+		"named_gap",
+		"exact blocker",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected required-path readiness directive %q in:\n%s", want, rendered)
@@ -716,6 +749,24 @@ func TestRenderInitialRuntimeBriefAddsDeterministicDiscoveryExamples(t *testing.
 		if !strings.Contains(rendered, needle) {
 			t.Fatalf("expected %q in deterministic discovery guidance:\n%s", needle, rendered)
 		}
+	}
+}
+
+func TestRenderInitialRuntimeBriefSuppressesDiscoveryExamplesForWriteReadyPacket(t *testing.T) {
+	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "edit_file", "discovery_query"},
+		RequiredEditPaths: []string{"native/tests/test_energy.cpp"},
+		TargetPacket:      []string{"[implementation target packet]", "verified anchor: native/tests/test_energy.cpp"},
+	})
+	if strings.Contains(rendered, `"discovery_examples"`) || strings.Contains(rendered, "Use one discovery_query before ad hoc") {
+		t.Fatalf("write-ready implementation packet should not advertise discovery examples:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "required_edit_paths are present") {
+		t.Fatalf("expected write-ready required-path directive to remain:\n%s", rendered)
 	}
 }
 

@@ -53,6 +53,21 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 	if m == nil {
 		return false
 	}
+	// In headless mode (idiom --prompt --json, idiom artifact, idiom
+	// implement) there is no TUI thread to call resolveApproval, so
+	// blocking on the response channel hangs the lane forever. Auto-deny
+	// instead so the runner's doom-loop / approval-required path closes
+	// cleanly with the rejected-blocker shape callers expect.
+	if m.eventStream != nil {
+		m.emitJSONEvent(map[string]any{
+			"event":    "approval_auto_denied",
+			"tool":     req.Tool,
+			"mode":     modeName,
+			"reason":   "headless mode (json event stream active); no TUI available to approve",
+			"session":  m.eventStream.sessionID,
+		})
+		return false
+	}
 	m.approvalSerial.Lock()
 	defer m.approvalSerial.Unlock()
 

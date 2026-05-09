@@ -1491,6 +1491,14 @@ func (m *Model) setContextError(message string) {
 
 func (m *Model) SetForcedTaskFamily(family string) {
 	m.forcedTaskFamily = strings.TrimSpace(family)
+	// Plan-then-execute planner phase needs the workspace manifest to
+	// swap per-edit write tools for submit_plan so the model's tool
+	// spec actually exposes the only write the planner is allowed to
+	// call. Detect via the canonical task-family constant and toggle
+	// the manager flag here, where forced family is set.
+	if m.workspace != nil {
+		m.workspace.SetPlanThenExecutePlannerMode(m.forcedTaskFamily == "plan_then_execute_planner")
+	}
 }
 
 func (m *Model) SetPlannerOwnedVerification(enabled bool) {

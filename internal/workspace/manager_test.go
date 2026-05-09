@@ -28,6 +28,115 @@ func TestGoReadSymbolWindowUsesSymbolExtentWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestSourceSanityFallsBackWhenLanguageDiagnosticsUnavailable(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "native", "tests", "test_energy.cpp")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("TEST_CASE(\"broken\" {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "source_sanity", Path: "native/tests/test_energy.cpp"})
+
+	if result.Tool != "source_sanity" {
+		t.Fatalf("tool = %q, want source_sanity", result.Tool)
+	}
+	if result.Error == "" {
+		t.Fatalf("expected generic fallback to catch malformed source, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "cpp_diagnostics unavailable") || !strings.Contains(result.Output, "generic source sanity failed") {
+		t.Fatalf("expected diagnostics-unavailable note and generic fallback in output, got:\n%s", result.Output)
+	}
+	if !strings.Contains(result.Error, "unclosed") && !strings.Contains(result.Error, "mismatched") {
+		t.Fatalf("expected delimiter failure, got %q", result.Error)
+	}
+}
+
+func TestSourceSanityRoutesKnownLanguagesThroughDiagnosticsTool(t *testing.T) {
+	if got := sourceSanityDiagnosticToolForPath("native/tests/test_energy.cpp"); got != "cpp_diagnostics" {
+		t.Fatalf("cpp source_sanity tool = %q, want cpp_diagnostics", got)
+	}
+	if got := sourceSanityDiagnosticToolForPath("internal/agent/runner.go"); got != "go_diagnostics" {
+		t.Fatalf("go source_sanity tool = %q, want go_diagnostics", got)
+	}
+	if got := sourceSanityDiagnosticToolForPath("scripts/demo.gd"); got != "" {
+		t.Fatalf("gdscript source_sanity tool = %q, want generic fallback", got)
+	}
+	if !sourceSanityCoversPath("scripts/demo.gd") {
+		t.Fatal("source_sanity should cover gdscript through generic fallback")
+	}
+}
+
+func TestCodeNavigateRoutesByPathLanguage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nav\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "pkg", "runner.go")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package pkg\n\nfunc Run() string {\n\treturn \"ok\"\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "read_symbol",
+		Path:       filepath.Join("pkg", "runner.go"),
+		Pattern:    "Run",
+	})
+
+	if result.Tool != "code_navigate" {
+		t.Fatalf("tool = %q, want code_navigate", result.Tool)
+	}
+	if result.Error != "" {
+		t.Fatalf("code_navigate returned error: %v\n%s", result.Error, result.Output)
+	}
+	if !strings.Contains(result.Summary, "go_read_symbol") || !strings.Contains(result.Output, "routed_tool: go_read_symbol") {
+		t.Fatalf("expected Go read-symbol route, got summary=%q output=\n%s", result.Summary, result.Output)
+	}
+	if !strings.Contains(result.Output, "func Run() string") {
+		t.Fatalf("expected symbol body in output, got:\n%s", result.Output)
+	}
+}
+
+func TestCodeNavigateGenericFallbackForUnregisteredSource(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nav\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "scripts", "player.gd")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("extends Node\n\nfunc _ready():\n\tpass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "definition",
+		Path:       filepath.Join("scripts", "player.gd"),
+		Pattern:    "_ready",
+	})
+
+	if result.Error != "" {
+		t.Fatalf("code_navigate fallback returned error: %v\n%s", result.Error, result.Output)
+	}
+	if !strings.Contains(result.Summary, "generic fallback") || !strings.Contains(result.Output, "routed_tool: generic_source_text") {
+		t.Fatalf("expected generic fallback, got summary=%q output=\n%s", result.Summary, result.Output)
+	}
+	if !strings.Contains(result.Output, "func _ready():") {
+		t.Fatalf("expected fallback match in output, got:\n%s", result.Output)
+	}
+}
+
 func TestGoReadSymbolWindowHonorsExplicitRequest(t *testing.T) {
 	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 16, StartLine: 16, EndLine: 132}, 50, 70)
 	if start != 50 || end != 70 {
@@ -173,8 +282,8 @@ func TestInstructionsPreferStructuredNarrowing(t *testing.T) {
 	})
 	instructions := mgr.Instructions()
 	for _, want := range []string{
-		"Use list_files, search_files, discovered handles, or language-specific symbol tools",
-		"narrow with structured language tools or discovered handles first",
+		"Use list_files, search_files, discovered handles, or structured symbol/navigation routes",
+		"narrow with structured language-aware routes or discovered handles first",
 		"either answer directly or take one exact next tool step",
 	} {
 		if !strings.Contains(instructions, want) {
@@ -197,7 +306,7 @@ func TestExploreInstructionsPreferStructuredNarrowing(t *testing.T) {
 	}
 	instructions := mgr.Instructions()
 	for _, want := range []string{
-		"narrow with structured language tools or discovered handles first",
+		"narrow with structured language-aware routes or discovered handles first",
 		"Continue only for one exact missing claim and one exact probe",
 	} {
 		if !strings.Contains(instructions, want) {
@@ -220,8 +329,8 @@ func TestResolveReadPathMissingFileSuggestsStructuredDiscovery(t *testing.T) {
 		t.Fatal("expected missing read path error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "language-specific symbol tool") {
-		t.Fatalf("expected missing path error to mention language-specific symbol tools, got %q", msg)
+	if !strings.Contains(msg, "structured symbol/navigation route") {
+		t.Fatalf("expected missing path error to mention structured symbol/navigation routes, got %q", msg)
 	}
 }
 

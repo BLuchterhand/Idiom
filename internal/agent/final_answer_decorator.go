@@ -21,6 +21,23 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	if answer == "" || !input.UserFacing {
 		return answer
 	}
+	// Strip self-inflicted "Blocker:" prose when the harness has
+	// objective evidence the contract is satisfied: all required edit
+	// paths changed, planner owns verification, and the last failed
+	// tool was a post-completion write probe (e.g., apply_patch with
+	// stale context after the same file was already updated through
+	// edit_file). The completion gate already accepted this answer —
+	// the rewrite keeps downstream consumers from reading the model's
+	// no-op blocker note as a run-level failure. Runs heading toward a
+	// real <<QUESTION>> blocker still pass through untouched.
+	if cleaned, ok := stripCompletedMutationSelfBlocker(input.Brief, input.Results, answer); ok {
+		return cleaned
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>") && !mutationReplyReportsConcreteNoopOrBlocker(strings.ToLower(answer)) {
+		if blocker, ok := canonicalMutationBlockerFinalAnswer(input.Brief, input.Results); ok {
+			return blocker
+		}
+	}
 	if finalAnswerStopReasonPreservesUncertainty(input.StopReason) {
 		return answer
 	}
@@ -37,6 +54,57 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 		return presentable
 	}
 	return answer
+}
+
+func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !runnerBriefRequiresMutation(brief) {
+		return "", false
+	}
+	// Plan-then-execute planner phase: a successful submit_plan IS the
+	// planner's deliverable; the executor phase (run by the orchestrator
+	// after this runner exits) produces the file changes. Without this
+	// exemption the decorator rewrites the model's clean "plan
+	// submitted" answer into a "Required edit paths remain unchanged"
+	// blocker because the planner phase has no changed_paths yet, even
+	// though the plan was submitted correctly.
+	if strings.TrimSpace(brief.TaskFamily) == "plan_then_execute_planner" && successfulSubmitPlanResultCount(results) > 0 {
+		return "", false
+	}
+	changed := changedPathsFromToolResults(results)
+	missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
+	if len(missing) == 0 {
+		return "", false
+	}
+	var b strings.Builder
+	b.WriteString("<<QUESTION>>: Required edit path")
+	if len(missing) > 1 {
+		b.WriteString("s")
+	}
+	if len(missing) == 1 {
+		b.WriteString(" remains unchanged: ")
+	} else {
+		b.WriteString(" remain unchanged: ")
+	}
+	b.WriteString(strings.Join(missing, ", "))
+	b.WriteString(".")
+	if len(changed) > 0 {
+		b.WriteString(" Changed path")
+		if len(changed) > 1 {
+			b.WriteString("s")
+		}
+		b.WriteString(" recorded: ")
+		b.WriteString(strings.Join(mapKeys(changed), ", "))
+		b.WriteString(".")
+	} else {
+		b.WriteString(" No required workspace edit was completed.")
+	}
+	b.WriteString(" Provide current source anchors for the remaining path")
+	if len(missing) > 1 {
+		b.WriteString("s")
+	}
+	b.WriteString(", or use a bounded required-path read to refresh stale anchors before retrying.")
+	return strings.TrimSpace(b.String()), true
 }
 
 func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput) (string, bool) {
@@ -506,6 +574,140 @@ func looksLikeSubstantiveFinalAnswer(answer string) bool {
 func (r *Runner) userFacingFinalAnswer() bool {
 	name := r.agentName()
 	return !strings.HasPrefix(name, "child:") && !strings.HasPrefix(name, "child_write:")
+}
+
+// stripCompletedMutationSelfBlocker rewrites a mutation-lane final
+// answer when the model surfaced a self-inflicted "Blocker:" line even
+// though the harness can see the work is done. Returns the cleaned
+// answer and true on a rewrite; otherwise empty and false.
+//
+// Preconditions:
+//   - Brief requires mutation
+//   - All required_edit_paths show up in changed paths
+//   - Answer is not already a <<QUESTION>>
+//   - Planner owns verification (so no harness-side verification gate
+//     is going to flip this run to blocked)
+//   - The last tool result with a non-empty error is a write-class call
+//     against a path that was already successfully changed earlier in
+//     the run — the shape of an apply_patch/edit_file probe with stale
+//     context after the file was edited.
+func stripCompletedMutationSelfBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
+	if !runnerBriefRequiresMutation(brief) {
+		return "", false
+	}
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		return "", false
+	}
+	changed := changedPathsFromToolResults(results)
+	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changed)) > 0 {
+		return "", false
+	}
+	if !plannerOwnsVerification(brief) {
+		return "", false
+	}
+	if !lastFailureIsPostCompletionWriteProbe(results, changed) {
+		return "", false
+	}
+	cleaned, stripped := stripBlockerSection(answer)
+	if !stripped || cleaned == "" {
+		return "", false
+	}
+	return cleaned, true
+}
+
+// lastFailureIsPostCompletionWriteProbe reports whether the most recent
+// failed tool result is a write-class call targeting a path that was
+// already changed earlier in the run. Non-write failures and writes
+// against fresh paths return false — those may still represent real
+// blockers.
+func lastFailureIsPostCompletionWriteProbe(results []workspace.ToolResult, changed map[string]struct{}) bool {
+	if len(changed) == 0 {
+		return false
+	}
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) == "" {
+			continue
+		}
+		switch strings.TrimSpace(result.Tool) {
+		case "edit_file", "apply_patch", "write_file", "append_file":
+		default:
+			return false
+		}
+		path := normalizeRunnerPath(writeFailureTargetPath(result))
+		if path == "" {
+			return false
+		}
+		_, ok := changed[path]
+		return ok
+	}
+	return false
+}
+
+// writeFailureTargetPath extracts the workspace path the failed write
+// was aimed at, when the tool's error or summary surfaces it. Returns
+// the empty string when no path is recoverable.
+func writeFailureTargetPath(result workspace.ToolResult) string {
+	switch strings.TrimSpace(result.Tool) {
+	case "apply_patch":
+		// "Update File <path>: hunk 1 context did not match the file"
+		// "Add File <path>: …", etc.
+		errText := strings.TrimSpace(result.Error)
+		for _, prefix := range []string{"Update File ", "Add File ", "Delete File ", "Move File ", "Update+Move File "} {
+			if rest, ok := strings.CutPrefix(errText, prefix); ok {
+				if path, _, found := strings.Cut(rest, ":"); found {
+					return strings.TrimSpace(path)
+				}
+				return strings.TrimSpace(rest)
+			}
+		}
+	case "edit_file", "write_file", "append_file":
+		// edit_file rejection summaries don't always carry the path,
+		// but successful summaries are formatted "Edited <path>" /
+		// "Wrote <path>" / "Appended <path>". Fail closed when neither
+		// the summary nor a parsed error yields a path.
+		summary := strings.TrimSpace(result.Summary)
+		fields := strings.Fields(summary)
+		if len(fields) >= 2 {
+			switch fields[0] {
+			case "Edited", "Wrote", "Appended":
+				return fields[1]
+			}
+		}
+	}
+	return ""
+}
+
+// stripBlockerSection removes a trailing "Blocker:" / "Blockers:"
+// section (and its bullet body) from the answer, returning the
+// cleaned text and true when something was stripped. Other prose
+// (Changed paths, Verification) is preserved.
+func stripBlockerSection(answer string) (string, bool) {
+	lines := strings.Split(answer, "\n")
+	cut := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if lower == "blocker:" ||
+			lower == "blockers:" ||
+			strings.HasPrefix(lower, "blocker:") ||
+			strings.HasPrefix(lower, "blockers:") ||
+			strings.HasPrefix(lower, "blocker -") ||
+			strings.HasPrefix(lower, "blocker—") {
+			cut = i
+			break
+		}
+	}
+	if cut < 0 {
+		return "", false
+	}
+	head := strings.TrimRightFunc(strings.Join(lines[:cut], "\n"), func(r rune) bool {
+		return r == '\n' || r == ' ' || r == '\t'
+	})
+	return head, true
 }
 
 func (r *Runner) emitFinalAnswerDecorationEvent(stopReason string, before string, after string) {

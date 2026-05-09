@@ -31,8 +31,39 @@ type harnessAuditReport struct {
 	BackendAvailability     []harnessAuditBackend        `json:"backend_availability,omitempty"`
 	LogBehavior             *harnessAuditLogBehavior     `json:"log_behavior,omitempty"`
 	PlanningQuality         *harnessAuditPlanningQuality `json:"planning_quality,omitempty"`
+	RankerLearning          *harnessAuditRankerLearning  `json:"ranker_learning,omitempty"`
 	ImprovementQuestions    []harnessAuditQuestion       `json:"improvement_questions,omitempty"`
 	ConsolidationCandidates []harnessAuditQuestion       `json:"consolidation_candidates,omitempty"`
+}
+
+// harnessAuditRankerLearning surfaces the state of the per-workspace
+// learnable ranker weights and the learning log so audits can recommend
+// where to wire additional trigger sites. This is the "audit checking" layer
+// over the eval and CLI triggers; future automated recommendations read
+// here.
+type harnessAuditRankerLearning struct {
+	WeightsPath            string                            `json:"weights_path"`
+	WeightsFileExists      bool                              `json:"weights_file_exists"`
+	WeightCount            int                               `json:"weight_count"`
+	MaxMultiplier          float64                           `json:"max_multiplier,omitempty"`
+	MinMultiplier          float64                           `json:"min_multiplier,omitempty"`
+	LearningLogPath        string                            `json:"learning_log_path"`
+	LearningLogExists      bool                              `json:"learning_log_exists"`
+	LearningSummary        *comprehension.LearningLogSummary `json:"learning_summary,omitempty"`
+	WiredSources           []string                          `json:"wired_sources,omitempty"`
+	DormantSources         []string                          `json:"dormant_sources,omitempty"`
+	TriggerRecommendations []harnessAuditRankerTrigger       `json:"trigger_recommendations,omitempty"`
+}
+
+// harnessAuditRankerTrigger describes one candidate trigger site for the
+// learning loop. The audit lists every known candidate, marks whether it has
+// been observed in the learning log, and explains how it would be wired.
+type harnessAuditRankerTrigger struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"` // wired | dormant | partial
+	Component   string `json:"component,omitempty"`
+	Description string `json:"description"`
+	Suggested   string `json:"suggested,omitempty"`
 }
 
 type harnessAuditFinding struct {
@@ -178,6 +209,13 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 			report.ImprovementQuestions = append(report.ImprovementQuestions, planningQualityQuestions(report.PlanningQuality)...)
 		}
 	}
+	if purpose == "all" || purpose == "behavior" || purpose == "planning_quality" {
+		learning := buildRankerLearningAudit(m.cfg.Root)
+		report.RankerLearning = learning
+		report.Findings = append(report.Findings, rankerLearningFindings(learning)...)
+		report.ImprovementQuestions = append(report.ImprovementQuestions, rankerLearningQuestions(learning)...)
+	}
+
 	report.ImprovementQuestions = append(report.ImprovementQuestions, staticImprovementQuestions(report)...)
 
 	data, err := json.MarshalIndent(report, "", "  ")
@@ -1242,8 +1280,8 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 	if genericReads >= 10 && genericReads > languageReads*2 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "language_tool_selection",
-			Question:  "Are agents missing language-specific tools, or are those tools failing and causing fallback to generic reads?",
-			Evidence:  fmt.Sprintf("generic read/search calls=%d, language-specific calls=%d", genericReads, languageReads),
+			Question:  "Are agents missing structured language-aware routes, or are those routes failing and causing fallback to generic reads?",
+			Evidence:  fmt.Sprintf("generic read/search calls=%d, language-aware route calls=%d", genericReads, languageReads),
 			Candidate: "Sample logs with high generic-read share and inspect precision_tier/unavailable results before adding tools.",
 		})
 	}
@@ -1375,4 +1413,177 @@ func auditDuplicates(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// rankerLearningKnownTriggers is the canonical list of trigger sites the
+// audit knows about. Each entry has a stable name, the rough component that
+// would host it, and a one-line description so future automated
+// recommendations have something to point at.
+var rankerLearningKnownTriggers = []harnessAuditRankerTrigger{
+	{
+		Name:        "eval",
+		Component:   "internal/eval/swe_suite.go",
+		Description: "SWE eval groundedness oracle boost/penalize bands",
+	},
+	{
+		Name:        "cli",
+		Component:   "cmd/idiom/ranker.go",
+		Description: "manual `idiom ranker boost|penalize|reset` invocations",
+	},
+	{
+		Name:        "verified_edit",
+		Component:   "internal/agent/runner.go",
+		Description: "boost files surfaced before a verified edit; not yet wired",
+	},
+	{
+		Name:        "harness_feedback",
+		Component:   "internal/workspace/harness_feedback.go",
+		Description: "self-reported relevance feedback from the agent; not yet wired",
+	},
+	{
+		Name:        "audit_watch",
+		Component:   "cmd/idiom/audit.go",
+		Description: "autonomous review packets folding learning updates; not yet wired",
+	},
+}
+
+// buildRankerLearningAudit reads the persisted ranker weights and learning
+// log and returns the audit projection used by harness_audit.
+func buildRankerLearningAudit(root string) *harnessAuditRankerLearning {
+	out := &harnessAuditRankerLearning{
+		WeightsPath:     filepath.Join(root, ".idiom", "ranker", "weights.json"),
+		LearningLogPath: filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl"),
+	}
+	if _, err := os.Stat(out.WeightsPath); err == nil {
+		out.WeightsFileExists = true
+	}
+	if _, err := os.Stat(out.LearningLogPath); err == nil {
+		out.LearningLogExists = true
+	}
+	weights, _ := comprehension.LoadLearnedWeights(root)
+	out.WeightCount = len(weights)
+	if out.WeightCount > 0 {
+		var minMult, maxMult float64
+		first := true
+		for _, v := range weights {
+			if first {
+				minMult, maxMult = v, v
+				first = false
+				continue
+			}
+			if v < minMult {
+				minMult = v
+			}
+			if v > maxMult {
+				maxMult = v
+			}
+		}
+		out.MinMultiplier = minMult
+		out.MaxMultiplier = maxMult
+	}
+	entries, _ := comprehension.ReadLearningLog(root)
+	if len(entries) > 0 {
+		summary := comprehension.SummarizeLearningLog(entries)
+		out.LearningSummary = &summary
+	}
+	out.WiredSources, out.DormantSources, out.TriggerRecommendations = classifyRankerTriggers(out.LearningSummary)
+	return out
+}
+
+// classifyRankerTriggers labels every known trigger as wired (observed in
+// the log), partial (some signal but missing for >30 days), or dormant
+// (never observed). The harness audit uses this to surface concrete
+// next-step suggestions for the learning loop.
+func classifyRankerTriggers(summary *comprehension.LearningLogSummary) (wired, dormant []string, triggers []harnessAuditRankerTrigger) {
+	bySource := map[string]int{}
+	if summary != nil {
+		bySource = summary.BySource
+	}
+	for _, base := range rankerLearningKnownTriggers {
+		t := base
+		count := bySource[t.Name]
+		switch {
+		case count > 0:
+			t.Status = "wired"
+			wired = append(wired, t.Name)
+		default:
+			t.Status = "dormant"
+			dormant = append(dormant, t.Name)
+		}
+		t.Suggested = rankerTriggerSuggestion(t.Name, t.Status, count)
+		triggers = append(triggers, t)
+	}
+	return wired, dormant, triggers
+}
+
+func rankerTriggerSuggestion(name, status string, count int) string {
+	if status == "wired" {
+		return fmt.Sprintf("observed %d entry(ies) from %s; keep monitoring decay and weight drift", count, name)
+	}
+	switch name {
+	case "eval":
+		return "configure SWE oracle Groundedness on at least one task to start producing eval-driven boost/penalize signals"
+	case "cli":
+		return "use `idiom ranker boost|penalize <files>` to seed manual signals or override automated decisions"
+	case "verified_edit":
+		return "after `apply_patch` or `edit_file` clears verification, boost the files that appeared in the most recent context_pack/discovery_query result"
+	case "harness_feedback":
+		return "extend harness_feedback with a relevance category that calls UpdateLearnedWeights so the agent can self-report useful and misleading files"
+	case "audit_watch":
+		return "in audit watch review packets, summarise low-groundedness sessions and call UpdateLearnedWeights with the files those sessions surfaced"
+	default:
+		return "no signal observed yet"
+	}
+}
+
+func rankerLearningFindings(learning *harnessAuditRankerLearning) []harnessAuditFinding {
+	if learning == nil {
+		return nil
+	}
+	var findings []harnessAuditFinding
+	if !learning.WeightsFileExists && !learning.LearningLogExists {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "ranker_learning_idle",
+			Severity:       "info",
+			Evidence:       "no .idiom/ranker/weights.json or learning_log.jsonl present",
+			Recommendation: "wire at least one trigger site (eval Groundedness oracle or `idiom ranker boost`) to start producing ranker signal",
+		})
+		return findings
+	}
+	if learning.LearningSummary != nil && learning.LearningSummary.NoOpCount*4 > learning.LearningSummary.TotalEntries*3 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "ranker_learning_mostly_noop",
+			Severity:       "low",
+			Evidence:       fmt.Sprintf("%d of %d learning entries landed in the no-op band", learning.LearningSummary.NoOpCount, learning.LearningSummary.TotalEntries),
+			Recommendation: "raise oracle MinScore so high-quality runs cross the 0.75 boost threshold, or supply richer Groundedness ContextFiles",
+		})
+	}
+	if len(learning.DormantSources) > 0 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "ranker_learning_dormant_sources",
+			Severity:       "info",
+			Evidence:       fmt.Sprintf("trigger sites with no observed activity: %v", learning.DormantSources),
+			Recommendation: "see RankerLearning.trigger_recommendations for per-source suggestions",
+		})
+	}
+	return findings
+}
+
+func rankerLearningQuestions(learning *harnessAuditRankerLearning) []harnessAuditQuestion {
+	if learning == nil {
+		return nil
+	}
+	var questions []harnessAuditQuestion
+	for _, t := range learning.TriggerRecommendations {
+		if t.Status == "wired" {
+			continue
+		}
+		questions = append(questions, harnessAuditQuestion{
+			Area:      "ranker_learning",
+			Question:  fmt.Sprintf("Should the %s trigger be wired to feed the learning loop?", t.Name),
+			Evidence:  t.Description,
+			Candidate: t.Component,
+		})
+	}
+	return questions
 }

@@ -6,6 +6,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"idiom/internal/comprehension"
+)
+
+const (
+	// learningBoostScoreThreshold and learningPenalizeScoreThreshold mirror
+	// sigmap's judge bands: well-grounded answers boost the supplied context
+	// files, poorly-grounded answers penalize them, and the noisy middle
+	// produces a no-op so the loop does not over-correct.
+	learningBoostScoreThreshold    = 0.75
+	learningPenalizeScoreThreshold = 0.40
 )
 
 type SWESuite struct {
@@ -41,6 +52,17 @@ type SWEOracle struct {
 	RequireNoShell              bool                        `json:"require_no_shell,omitempty"`
 	RequireNoSummaryRejections  bool                        `json:"require_no_summary_rejections,omitempty"`
 	RequireSummaryRejectionLane []string                    `json:"require_summary_rejection_lane,omitempty"`
+	Groundedness                *SWEGroundednessOracle      `json:"groundedness,omitempty"`
+	ForbidGenericPhrases        bool                        `json:"forbid_generic_phrases,omitempty"`
+}
+
+// SWEGroundednessOracle asserts the final assistant response is grounded in
+// the supplied context. The context is built by concatenating the inline
+// fragments and the contents of any referenced workspace-relative files.
+type SWEGroundednessOracle struct {
+	MinScore         float64  `json:"min_score,omitempty"`
+	ContextFiles     []string `json:"context_files,omitempty"`
+	ContextFragments []string `json:"context_fragments,omitempty"`
 }
 
 type SWEFileContentExpectation struct {
@@ -164,12 +186,27 @@ type SWEResultBucket struct {
 }
 
 type SWETaskReport struct {
-	TaskID   string   `json:"task_id"`
-	Family   string   `json:"family,omitempty"`
-	LogPath  string   `json:"log_path,omitempty"`
-	Passed   bool     `json:"passed"`
-	Findings []string `json:"findings,omitempty"`
-	Metrics  Metrics  `json:"metrics"`
+	TaskID         string                   `json:"task_id"`
+	Family         string                   `json:"family,omitempty"`
+	LogPath        string                   `json:"log_path,omitempty"`
+	Passed         bool                     `json:"passed"`
+	Findings       []string                 `json:"findings,omitempty"`
+	Metrics        Metrics                  `json:"metrics"`
+	LearningUpdate *SWELearningUpdateRecord `json:"learning_update,omitempty"`
+}
+
+// SWELearningUpdateRecord describes the per-file ranker weight update that
+// the eval flow applied as a side effect of the groundedness oracle. It is
+// always present when the oracle produced a score so the audit trail and
+// downstream automation can see whether learning fired.
+type SWELearningUpdateRecord struct {
+	Score     float64  `json:"score"`
+	Action    string   `json:"action"`
+	Files     []string `json:"files,omitempty"`
+	BoostAt   float64  `json:"boost_at"`
+	PenaltyAt float64  `json:"penalty_at"`
+	Applied   bool     `json:"applied"`
+	Reason    string   `json:"reason,omitempty"`
 }
 
 type SWESuiteReport struct {
@@ -291,6 +328,19 @@ func LintSWESuite(suite SWESuite) []string {
 			}
 			if len(expected.Contains) == 0 && len(expected.ForbidContains) == 0 {
 				addFinding(task, "file content oracle for %q must assert required or forbidden text", expected.Path)
+			}
+		}
+		if g := task.Oracle.Groundedness; g != nil {
+			if len(g.ContextFiles) == 0 && len(g.ContextFragments) == 0 {
+				addFinding(task, "groundedness oracle must supply context_files or context_fragments")
+			}
+			if g.MinScore < 0 || g.MinScore > 1 {
+				addFinding(task, "groundedness oracle min_score %.3f must be in [0, 1]", g.MinScore)
+			}
+			for _, p := range g.ContextFiles {
+				if err := validateFixturePathSyntax(p); err != nil {
+					addFinding(task, "groundedness oracle context path is invalid: %v", err)
+				}
 			}
 		}
 	}
@@ -767,7 +817,109 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 			addFinding("summary rejection lanes do not include %q", lane)
 		}
 	}
+	if oracle.Groundedness != nil {
+		score, err := evaluateGroundednessOracle(report.Metrics, *oracle.Groundedness)
+		if err != "" {
+			addFinding("%s", err)
+		} else {
+			if score < oracle.Groundedness.MinScore {
+				addFinding("groundedness %.3f below oracle minimum %.3f", score, oracle.Groundedness.MinScore)
+			}
+			report.LearningUpdate = applyEvalLearnedWeights(report.Metrics.WorkspaceRoot, *oracle.Groundedness, score, report.TaskID)
+		}
+	}
+	if oracle.ForbidGenericPhrases {
+		if hits := DetectGenericPhrases(report.Metrics.FinalAssistant); len(hits) > 0 {
+			addFinding("generic-knowledge phrases were forbidden but observed: %v", hits)
+		}
+	}
 	return report
+}
+
+func evaluateGroundednessOracle(metrics Metrics, oracle SWEGroundednessOracle) (float64, string) {
+	root := strings.TrimSpace(metrics.WorkspaceRoot)
+	var sb strings.Builder
+	for _, frag := range oracle.ContextFragments {
+		if frag = strings.TrimSpace(frag); frag != "" {
+			sb.WriteString(frag)
+			sb.WriteString("\n")
+		}
+	}
+	for _, raw := range oracle.ContextFiles {
+		path := strings.TrimSpace(raw)
+		if path == "" {
+			continue
+		}
+		if filepath.IsAbs(path) {
+			return 0, fmt.Sprintf("groundedness oracle context path %q must be relative", raw)
+		}
+		if root == "" {
+			return 0, fmt.Sprintf("groundedness oracle for %q has no workspace root in log", raw)
+		}
+		full := filepath.Clean(filepath.Join(root, path))
+		rel, err := filepath.Rel(root, full)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return 0, fmt.Sprintf("groundedness oracle context path %q escapes workspace root", raw)
+		}
+		data, readErr := os.ReadFile(full)
+		if readErr != nil {
+			return 0, fmt.Sprintf("groundedness oracle could not read context %q: %v", path, readErr)
+		}
+		sb.Write(data)
+		sb.WriteString("\n")
+	}
+	return GroundednessScore(metrics.FinalAssistant, sb.String()), ""
+}
+
+// applyEvalLearnedWeights reflects the groundedness score back into the
+// per-workspace ranker weights. High groundedness signals that the supplied
+// context files genuinely supported the answer, so they get boosted; low
+// groundedness signals the opposite. Scores in the noisy middle band record
+// a no-op so the audit trail still reflects that the eval ran.
+func applyEvalLearnedWeights(workspaceRoot string, oracle SWEGroundednessOracle, score float64, taskID string) *SWELearningUpdateRecord {
+	files := uniqueNonEmptyStrings(oracle.ContextFiles)
+	rec := &SWELearningUpdateRecord{
+		Score:     score,
+		Files:     files,
+		BoostAt:   learningBoostScoreThreshold,
+		PenaltyAt: learningPenalizeScoreThreshold,
+		Action:    GenericPhraseBand(score, learningBoostScoreThreshold, learningPenalizeScoreThreshold),
+	}
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		rec.Reason = "workspace root missing in metrics; cannot persist"
+		return rec
+	}
+	if len(files) == 0 {
+		rec.Reason = "groundedness oracle had no context files to update"
+		return rec
+	}
+	switch rec.Action {
+	case "boost":
+		if _, err := comprehension.UpdateLearnedWeights(root, comprehension.UpdateLearnedWeightsOptions{Boost: files}); err != nil {
+			rec.Reason = "boost failed: " + err.Error()
+			return rec
+		}
+	case "penalize":
+		if _, err := comprehension.UpdateLearnedWeights(root, comprehension.UpdateLearnedWeightsOptions{Penalty: files}); err != nil {
+			rec.Reason = "penalize failed: " + err.Error()
+			return rec
+		}
+	default:
+		// no_op band; still record the entry so the audit can see that the
+		// eval ran and chose not to nudge.
+	}
+	rec.Applied = rec.Action != "no_op"
+	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
+		Source: "eval",
+		Action: rec.Action,
+		Score:  score,
+		Files:  files,
+		TaskID: taskID,
+	}); err != nil && rec.Reason == "" {
+		rec.Reason = "log append failed: " + err.Error()
+	}
+	return rec
 }
 
 func evaluateFileContentOracle(workspaceRoot string, expected SWEFileContentExpectation) []string {
@@ -1351,6 +1503,12 @@ func taskOracleAssertions(task SWETask) []string {
 	}
 	if len(oracle.RequireSummaryRejectionLane) > 0 {
 		assertions = append(assertions, "summary_rejection_lane")
+	}
+	if oracle.Groundedness != nil {
+		assertions = append(assertions, "groundedness")
+	}
+	if oracle.ForbidGenericPhrases {
+		assertions = append(assertions, "forbid_generic_phrases")
 	}
 	if task.Scenario.RequireApproval != nil && *task.Scenario.RequireApproval {
 		assertions = append(assertions, "approval_required")

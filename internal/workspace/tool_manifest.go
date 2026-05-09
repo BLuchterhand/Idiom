@@ -14,12 +14,17 @@ type ToolManifestToolOptions struct {
 	IncludeTaskLedger bool
 	IncludeTask       bool
 	IncludeWriteTools bool
-	IncludeGo         bool
-	IncludeCpp        bool
-	IncludePython     bool
-	IncludeTypescript bool
-	IncludeRust       bool
-	IncludeJava       bool
+	// IncludePlanThenExecute exposes the submit_plan tool and hides
+	// the per-edit write tools (edit_file, write_file, append_file,
+	// apply_patch, delegate_edit). Used by the plan-then-execute
+	// orchestrator's planner phase.
+	IncludePlanThenExecute bool
+	IncludeGo              bool
+	IncludeCpp             bool
+	IncludePython          bool
+	IncludeTypescript      bool
+	IncludeRust            bool
+	IncludeJava            bool
 }
 
 func ToolManifestTools(opts ToolManifestToolOptions) []string {
@@ -37,6 +42,8 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 		"search_content",
 		"read_file",
 		"file_stats",
+		"code_navigate",
+		"source_sanity",
 		"harness_audit",
 		"harness_feedback",
 		"context_index",
@@ -59,8 +66,11 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 		"git_diff",
 		"shell",
 	)
-	if opts.IncludeWriteTools {
-		tools = append(tools, "mkdir", "edit_file", "write_file", "append_file", "apply_patch")
+	if opts.IncludeWriteTools && !opts.IncludePlanThenExecute {
+		tools = append(tools, "mkdir", "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit")
+	}
+	if opts.IncludePlanThenExecute {
+		tools = append(tools, "submit_plan")
 	}
 	if opts.IncludeGo {
 		tools = append(tools,
@@ -169,7 +179,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 }
 
 func WorkspaceWriteToolNames() []string {
-	return []string{"mkdir", "edit_file", "write_file", "append_file", "apply_patch", "go_move_declarations"}
+	return []string{"mkdir", "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "go_move_declarations"}
 }
 
 func IsWorkspaceWriteTool(tool string) bool {
@@ -200,8 +210,10 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "search_content", Request: `{"tool":"search_content","pattern":"symbol|text","path":".","glob":"*.go","named_gap":"find one exact branch in a known scope after a semantic probe or packet did not fully resolve the question","why_not_answering":"without the deciding branch, the explanation may overstate how delegation is triggered"}`, Purpose: "find exact text when semantic tools or discovered handles are not enough"},
 		{Tool: "read_file", Request: `{"tool":"read_file","path":"relative/file.go","start_line":1,"end_line":120,"named_gap":"verify one exact function body or narrow range now that the target file is known","why_not_answering":"I still need the implementation body, not just the file name"}`, Purpose: "read exact file ranges"},
 		{Tool: "file_stats", Request: `{"tool":"file_stats","path":".","recursive":true,"glob":"*.go","max_depth":3,"limit":1000}`, Purpose: "count files, bytes, and lines without shell wc/find pipelines"},
+		{Tool: "code_navigate", Request: `{"tool":"code_navigate","capability":"read_symbol","path":"relative/file.go","pattern":"Run"}`, Purpose: "request a code navigation capability; the harness routes by file language to the best symbol/navigation tool or a bounded generic fallback"},
+		{Tool: "source_sanity", Request: `{"tool":"source_sanity","path":"relative/file.cpp"}`, Purpose: "run source-aware lane sanity: dispatch to the file language's diagnostics when available, otherwise use a generic source syntax sanity fallback"},
 		{Tool: "harness_audit", Request: `{"tool":"harness_audit","purpose":"all","path":"logs/conversations","limit":25}`, Purpose: "audit idiom's own tool surface, backend availability, and recent behavior logs for evidence-backed improvement questions"},
-		{Tool: "harness_feedback", Request: `{"tool":"harness_feedback","category":"packet_quality","component":"context_pack","expected":"one task-ready packet that made the edit target clear","observed":"the packet lacked the symbol edge needed to choose between two files","workaround":"used exact symbol tools and a narrow file read","impact":"extra read loop before editing","evidence":["logs/conversations/session.jsonl step 8"],"confidence":"verified","severity":"medium"}`, Purpose: "record structured agent-observed idiom harness/tool/prompt gaps into telemetry for later audit triage"},
+		{Tool: "harness_feedback", Request: `{"tool":"harness_feedback","category":"packet_quality","component":"context_pack","expected":"one task-ready packet that made the edit target clear","observed":"the packet lacked the symbol edge needed to choose between two files","workaround":"used exact symbol tools and a narrow file read","impact":"extra read loop before editing","evidence":["logs/conversations/session.jsonl step 8"],"confidence":"verified","severity":"medium"}`, Purpose: "record structured agent-observed idiom harness/tool/prompt gaps into telemetry for later audit triage. REQUIRED fields: category, component, expected, observed, impact, confidence (all strings, all non-empty); evidence must be a non-empty array of repo-relative paths or step ids; category must come from the documented enum exactly. Validation rejects partial submissions silently — fill every required field on the first call."},
 		{Tool: "context_index", Request: `{"tool":"context_index","path":".","language":"auto","mode":"standard"}`, Purpose: "build or refresh the persistent language-agnostic codebase comprehension graph with backend/build-system enrichment"},
 		{Tool: "context_status", Request: `{"tool":"context_status"}`, Purpose: "report context index freshness, stale files, stale symbols, and collector-version freshness"},
 		{Tool: "context_query", Request: `{"tool":"context_query","query":"what calls Run","resolution":"symbol","include_evidence":true}`, Purpose: "query the persistent codebase graph, including durable summary nodes, without dumping source files"},
@@ -232,7 +244,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "go_implementations", Request: `{"tool":"go_implementations","pattern":"InterfaceName","path":"."}`, Purpose: "find Go implementations"},
 		{Tool: "go_calls_from", Request: `{"tool":"go_calls_from","pattern":"FuncName","path":"."}`, Purpose: "find outgoing Go calls"},
 		{Tool: "go_calls_into", Request: `{"tool":"go_calls_into","pattern":"FuncName","path":"."}`, Purpose: "find incoming Go calls"},
-		{Tool: "go_read_symbol", Request: `{"tool":"go_read_symbol","pattern":"Name","path":"relative/file.go"}`, Purpose: "read a Go symbol body"},
+		{Tool: "go_read_symbol", Request: `{"tool":"go_read_symbol","pattern":"Name","path":"relative/file.go"}`, Purpose: "read a Go symbol body. ANCHOR FIRST via go_find_symbol/go_workspace_symbol/lookup or a prior tool result; speculative pattern guesses fail. For literal text or expressions inside a file, use search_content instead — read_symbol is for symbol bodies, not substring search."},
 		{Tool: "go_extract_body", Request: `{"tool":"go_extract_body","pattern":"FuncName","path":"relative/file.go"}`, Purpose: "extract a Go body"},
 		{Tool: "go_importers", Request: `{"tool":"go_importers","pattern":"internal/app"}`, Purpose: "find Go importer packages"},
 		{Tool: "go_diagnostics", Request: `{"tool":"go_diagnostics","path":"relative/file.go"}`, Purpose: "run Go diagnostics"},
@@ -241,7 +253,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "cpp_overview", Request: `{"tool":"cpp_overview"}`, Purpose: "summarize C/C++ workspace"},
 		{Tool: "cpp_entrypoints", Request: `{"tool":"cpp_entrypoints"}`, Purpose: "find C/C++ entrypoints"},
 		{Tool: "cpp_find_symbol", Request: `{"tool":"cpp_find_symbol","pattern":"Name"}`, Purpose: "find C/C++ symbols"},
-		{Tool: "cpp_read_symbol", Request: `{"tool":"cpp_read_symbol","pattern":"Name","path":"src/file.cpp"}`, Purpose: "read a C/C++ symbol body"},
+		{Tool: "cpp_read_symbol", Request: `{"tool":"cpp_read_symbol","pattern":"Name","path":"src/file.cpp"}`, Purpose: "read a C/C++ symbol body. ANCHOR FIRST via cpp_find_symbol/cpp_workspace_symbol/lookup or a prior tool result; speculative pattern guesses fail ~56% of the time. For literal text or expressions inside a file, use search_content instead — read_symbol is for symbol bodies, not substring search of code fragments like 'static_cast<int>(X)' or assertion text."},
 		{Tool: "cpp_related_files", Request: `{"tool":"cpp_related_files","pattern":"Name","path":"src"}`, Purpose: "find related C/C++ files"},
 		{Tool: "cpp_references", Request: `{"tool":"cpp_references","pattern":"Name","path":"."}`, Purpose: "find C/C++ references"},
 		{Tool: "cpp_definition", Request: `{"tool":"cpp_definition","pattern":"Name","path":"."}`, Purpose: "find C/C++ definitions"},
@@ -260,7 +272,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "python_overview", Request: `{"tool":"python_overview"}`, Purpose: "summarize Python workspace"},
 		{Tool: "python_entrypoints", Request: `{"tool":"python_entrypoints"}`, Purpose: "find Python entrypoints"},
 		{Tool: "python_find_symbol", Request: `{"tool":"python_find_symbol","pattern":"Name"}`, Purpose: "find Python symbols"},
-		{Tool: "python_read_symbol", Request: `{"tool":"python_read_symbol","pattern":"Name","path":"src/pkg/file.py"}`, Purpose: "read a Python symbol body"},
+		{Tool: "python_read_symbol", Request: `{"tool":"python_read_symbol","pattern":"Name","path":"src/pkg/file.py"}`, Purpose: "read a Python symbol body. ANCHOR FIRST via python_find_symbol or a prior tool result; speculative pattern guesses fail. For literal text or expressions inside a file, use search_content instead — read_symbol is for symbol bodies, not substring search."},
 		{Tool: "python_related_files", Request: `{"tool":"python_related_files","pattern":"term","path":"src"}`, Purpose: "find related Python files"},
 		{Tool: "python_references", Request: `{"tool":"python_references","pattern":"Name","path":"."}`, Purpose: "find Python references"},
 		{Tool: "python_definition", Request: `{"tool":"python_definition","pattern":"Name","path":"."}`, Purpose: "find Python definitions"},
@@ -273,7 +285,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "ts_overview", Request: `{"tool":"ts_overview"}`, Purpose: "summarize TypeScript/JavaScript workspace"},
 		{Tool: "ts_entrypoints", Request: `{"tool":"ts_entrypoints"}`, Purpose: "find TypeScript/JavaScript entrypoints"},
 		{Tool: "ts_find_symbol", Request: `{"tool":"ts_find_symbol","pattern":"Name"}`, Purpose: "find TypeScript/JavaScript symbols"},
-		{Tool: "ts_read_symbol", Request: `{"tool":"ts_read_symbol","pattern":"ClassName.method","path":"src/file.ts"}`, Purpose: "read a TypeScript/JavaScript symbol body"},
+		{Tool: "ts_read_symbol", Request: `{"tool":"ts_read_symbol","pattern":"ClassName.method","path":"src/file.ts"}`, Purpose: "read a TypeScript/JavaScript symbol body. ANCHOR FIRST via ts_find_symbol or a prior tool result; speculative pattern guesses fail. For literal text or expressions inside a file, use search_content instead — read_symbol is for symbol bodies, not substring search."},
 		{Tool: "ts_related_files", Request: `{"tool":"ts_related_files","pattern":"Name","path":"src"}`, Purpose: "find related TypeScript/JavaScript files"},
 		{Tool: "ts_definition", Request: `{"tool":"ts_definition","pattern":"Name","path":"."}`, Purpose: "find TypeScript/JavaScript definitions"},
 		{Tool: "ts_implementations", Request: `{"tool":"ts_implementations","pattern":"InterfaceName","path":"."}`, Purpose: "find TypeScript/JavaScript implementations"},
@@ -287,7 +299,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "rust_entrypoints", Request: `{"tool":"rust_entrypoints"}`, Purpose: "find Rust entrypoints (main, lib, test, bench)"},
 		{Tool: "rust_find_symbol", Request: `{"tool":"rust_find_symbol","pattern":"Name"}`, Purpose: "find Rust symbols"},
 		{Tool: "rust_workspace_symbol", Request: `{"tool":"rust_workspace_symbol","pattern":"Name"}`, Purpose: "workspace-wide Rust symbol lookup"},
-		{Tool: "rust_read_symbol", Request: `{"tool":"rust_read_symbol","pattern":"Name","path":"src/file.rs"}`, Purpose: "read a Rust symbol body"},
+		{Tool: "rust_read_symbol", Request: `{"tool":"rust_read_symbol","pattern":"Name","path":"src/file.rs"}`, Purpose: "read a Rust symbol body. ANCHOR FIRST via rust_find_symbol or a prior tool result; speculative pattern guesses fail. For literal text or expressions inside a file, use search_content instead — read_symbol is for symbol bodies, not substring search."},
 		{Tool: "rust_related_files", Request: `{"tool":"rust_related_files","pattern":"Name","path":"src"}`, Purpose: "find related Rust files (follows mod tree)"},
 		{Tool: "rust_file_outline", Request: `{"tool":"rust_file_outline","path":"src/file.rs"}`, Purpose: "list Rust declarations with line ranges"},
 		{Tool: "rust_definition", Request: `{"tool":"rust_definition","pattern":"Name","path":"."}`, Purpose: "find Rust definitions"},
@@ -299,7 +311,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "java_overview", Request: `{"tool":"java_overview"}`, Purpose: "summarize Java workspace"},
 		{Tool: "java_entrypoints", Request: `{"tool":"java_entrypoints"}`, Purpose: "find Java entrypoints and test classes"},
 		{Tool: "java_find_symbol", Request: `{"tool":"java_find_symbol","pattern":"Name"}`, Purpose: "find Java symbols"},
-		{Tool: "java_read_symbol", Request: `{"tool":"java_read_symbol","pattern":"Name","path":"src/main/java/com/example/File.java"}`, Purpose: "read a Java symbol body"},
+		{Tool: "java_read_symbol", Request: `{"tool":"java_read_symbol","pattern":"Name","path":"src/main/java/com/example/File.java"}`, Purpose: "read a Java symbol body. ANCHOR FIRST via java_find_symbol/java_workspace_symbol or a prior tool result; speculative pattern guesses fail. For literal text or expressions inside a file, use search_content instead — read_symbol is for symbol bodies, not substring search."},
 		{Tool: "java_related_files", Request: `{"tool":"java_related_files","pattern":"service","path":"src/main/java"}`, Purpose: "find related Java files"},
 		{Tool: "java_workspace_symbol", Request: `{"tool":"java_workspace_symbol","pattern":"Name"}`, Purpose: "workspace-wide Java symbol lookup"},
 		{Tool: "java_definition", Request: `{"tool":"java_definition","pattern":"Name","path":"."}`, Purpose: "find Java definitions"},
@@ -314,7 +326,9 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "edit_file", Request: `{"tool":"edit_file","path":"relative/file","start_line":10,"end_line":12,"content":"replacement\n"}`, Purpose: "edit by line range (alternative shape; use when you know the exact lines). Must provide content — NOT old_text/new_text with this shape."},
 		{Tool: "write_file", Request: `{"tool":"write_file","path":"relative/file","content":"full file contents"}`, Purpose: "write full file content"},
 		{Tool: "append_file", Request: `{"tool":"append_file","path":"relative/file","content":"text to append"}`, Purpose: "append text"},
-		{Tool: "apply_patch", Request: `{"tool":"apply_patch","content":"*** Begin Patch\n*** Update File: relative/file\n@@\n-old\n+new\n*** End Patch"}`, Purpose: "multi-file patch envelope"},
+		{Tool: "apply_patch", Request: `{"tool":"apply_patch","content":"*** Begin Patch\n*** Update File: relative/file\n@@\n-old\n+new\n*** End Patch"}`, Purpose: "multi-file patch envelope. Use ONLY these *** directives: Begin Patch, End Patch, Add File, Update File, Delete File, Move to. Hunks (`@@`) inside Update File. Do not invent extras like *** Sanity Check / *** Note / *** Verification."},
+		{Tool: "delegate_edit", Request: `{"tool":"delegate_edit","path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}`, Purpose: "hand a single edit spec to the local executor model (typically the 30B coder) and return its dispatch result. Use this when you have already decided the exact change and want to keep your own context focused on planning the next edit instead of re-reading what you just wrote."},
+		{Tool: "submit_plan", Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}]}`, Purpose: "submit a structured edit plan (plan-then-execute mode only). The planner enumerates every edit up-front; the executor phase dispatches them in order. Use this in lieu of edit_file/apply_patch when the lane is plan-only."},
 		{Tool: "git_status", Request: `{"tool":"git_status","workdir":"."}`, Purpose: "inspect git state"},
 		{Tool: "git_diff", Request: `{"tool":"git_diff","workdir":".","path":"optional/path"}`, Purpose: "inspect git diff"},
 		{Tool: "shell", Request: `{"tool":"shell","command":"go test ./...","workdir":"."}`, Purpose: "run an allowed shell command"},

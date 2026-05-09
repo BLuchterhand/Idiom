@@ -939,7 +939,7 @@ func suggestedTools(records []Record) []string {
 
 func isSuggestedScenarioTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case "read_file", "search_content", "edit_file", "write_file", "append_file", "mkdir", "shell",
+	case "read_file", "search_content", "code_navigate", "source_sanity", "edit_file", "write_file", "append_file", "mkdir", "shell",
 		"discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_read_symbol", "go_definition", "go_references",
 		"go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_importers",
@@ -963,6 +963,10 @@ func legacyDiscoveryProfile(tool string) (class string, scope string, cost strin
 		return "text_search", "targeted", "low"
 	case "read_file":
 		return "file_read", "targeted", "low"
+	case "code_navigate":
+		return "language_symbol", "targeted", "low"
+	case "source_sanity":
+		return "diagnostics", "targeted", "medium"
 	case "discovery_query":
 		return "composite_query", "targeted", "medium"
 	case "structural_search":

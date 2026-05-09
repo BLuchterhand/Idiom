@@ -168,6 +168,9 @@ func (m *Manager) tsFindSymbol(req ToolRequest) ToolResult {
 }
 
 func (m *Manager) tsReadSymbol(req ToolRequest) ToolResult {
+	if err := validateSymbolPattern("ts_read_symbol", req.Pattern); err != nil {
+		return ToolResult{Tool: "ts_read_symbol", Summary: "TypeScript symbol read rejected", Error: err.Error()}
+	}
 	match, err := m.selectTsSymbolMatch(req)
 	if err != nil {
 		return ToolResult{Tool: "ts_read_symbol", Summary: "TypeScript symbol read rejected", Error: err.Error()}
@@ -464,7 +467,7 @@ func (m *Manager) tsFileOutline(req ToolRequest) ToolResult {
 		}
 	}
 
-	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use ts_read_symbol for a specific body.", len(file.Symbols), rel)
+	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use code_navigate capability=read_symbol for a specific body.", len(file.Symbols), rel)
 	return ToolResult{
 		Tool:    "ts_file_outline",
 		Summary: summary,
