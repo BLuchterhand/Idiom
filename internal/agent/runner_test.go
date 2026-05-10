@@ -3093,7 +3093,16 @@ func TestMutationReadBudgetRecoveryTargetsRemainingRequiredEditPaths(t *testing.
 	}
 }
 
-func TestRequiredEditPathReadinessRejectsNoGapReadWithoutTargetPacket(t *testing.T) {
+// TestRequiredEditPathReadinessAllowsNoGapInScopeRead was renamed
+// from RejectsNoGapReadWithoutTargetPacket after harness fix #4
+// (commit 6fe6bce) dropped the named_gap requirement for in-scope
+// reads. The new contract: a read targeting a required_edit_path
+// is always allowed regardless of named_gap, because the safety
+// reason ("verify the anchor on a path we're about to edit") is
+// implicit. Out-of-scope reads still get blocked — that's the
+// protection the gate is meant to provide. This test now confirms
+// the in-scope no-gap read succeeds rather than triggers recovery.
+func TestRequiredEditPathReadinessAllowsNoGapInScopeRead(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "a.txt", "seed\n"); err != nil {
 		t.Fatalf("write a.txt: %v", err)
@@ -3163,11 +3172,11 @@ func TestRequiredEditPathReadinessRejectsNoGapReadWithoutTargetPacket(t *testing
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if recoveryPrompt == "" || !strings.Contains(recoveryPrompt, "a.txt") {
-		t.Fatalf("expected scoped required-path recovery prompt, got %q", recoveryPrompt)
+	if recoveryPrompt != "" {
+		t.Fatalf("in-scope no-gap read should NOT trigger scoped recovery after fix #4; got: %q", recoveryPrompt)
 	}
-	if successfulReads != 0 {
-		t.Fatalf("no-gap required-path read should be rejected before execution, got %d successful read(s)", successfulReads)
+	if successfulReads != 1 {
+		t.Fatalf("in-scope no-gap read should succeed (in-scope reads are always allowed); got %d successful read(s)", successfulReads)
 	}
 	if !strings.Contains(answer, "a.txt") {
 		t.Fatalf("expected final answer to report required path, got %q", answer)
@@ -3184,7 +3193,13 @@ func TestRequiredEditPathReadinessRejectsNoGapReadWithoutTargetPacket(t *testing
 	}
 }
 
-func TestWriteReadyPacketReadWithoutNamedGapUsesScopedRecovery(t *testing.T) {
+// TestWriteReadyPacketReadWithoutNamedGapAllowsInScopeRead was
+// renamed from UsesScopedRecovery after harness fix #4 (commit
+// 6fe6bce) dropped the named_gap requirement for in-scope reads.
+// The new contract: a read targeting a required_edit_path is
+// always allowed regardless of named_gap. This test now confirms
+// the recovery does NOT fire for an in-scope no-gap read.
+func TestWriteReadyPacketReadWithoutNamedGapAllowsInScopeRead(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
 		t.Fatalf("write a: %v", err)
@@ -3251,11 +3266,11 @@ func TestWriteReadyPacketReadWithoutNamedGapUsesScopedRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !sawRecovery {
-		t.Fatalf("expected scoped recovery after no-gap prewrite read")
+	if sawRecovery {
+		t.Fatalf("in-scope no-gap read should NOT trigger scoped recovery after fix #4")
 	}
-	if successfulReads != 0 {
-		t.Fatalf("no-gap read should be rejected before execution, got %d successful read(s)", successfulReads)
+	if successfulReads != 1 {
+		t.Fatalf("in-scope no-gap read should succeed; got %d successful read(s)", successfulReads)
 	}
 	if !strings.Contains(answer, "a.txt") {
 		t.Fatalf("expected final answer to report changed path, got %q", answer)

@@ -1,6 +1,6 @@
 # Reusability Design — Lift the Plan-Execute Workflow into Idiom
 
-**Status:** Design draft, 2026-05-09 (Phases 1-5 + 4b + 4c + 6 + 6.5 shipped 2026-05-09 / 2026-05-10; Phase 3 rules-embed backfill shipped 2026-05-10 after the post-Phase-6 audit below; Phase 5b / 7 / 8 pending; plug-and-play Phase 9 partial ship 2026-05-10 — `idiom version`, goreleaser config, release workflow, install.sh, three-tier Docker install test (`make test-install-docker`: 14-subcommand surface + 3 static-functionality tests + stub-LLM lane test, all green), and the `internal/autodetect` library landed parallel to canonical Phase 7/8; Phase 11 partial ship — `idiom doctor` landed; remaining 9/10/11 deliverables and Phase 12 unscheduled)
+**Status:** Design draft, 2026-05-09 (Phases 1-5 + 4b + 4c + 5b + 6 + 6.5 + 7 shipped 2026-05-09 / 2026-05-10; Phase 3 rules-embed backfill shipped 2026-05-10 after the post-Phase-6 audit below; Phase 8 pending; plug-and-play Phase 9 partial ship 2026-05-10 — `idiom version`, goreleaser config, release workflow, install.sh, three-tier Docker install test (`make test-install-docker`: 14-subcommand surface + 3 static-functionality tests + stub-LLM lane test, all green), and the `internal/autodetect` library landed parallel to canonical Phase 7/8; Phase 11 partial ship — `idiom doctor` landed; remaining 9/10/11 deliverables and Phase 12 unscheduled)
 **Author:** Idiom session log, Colony donkey-atom debugging
 **Related:** `docs/colony-extraction-plan.md` (raw inventory),
 `docs/planner-executor-delegation-design.md` (the lane shape this
