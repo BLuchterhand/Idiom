@@ -44,7 +44,14 @@ These tools are available both inside idiom agent sessions and via `idiom tool` 
 
 | Tool | When to use | Example invocation |
 |------|-------------|--------------------|
-| `discovery_query` | Broad impact, tracing, architecture, security, or history analysis. Orchestrates multiple sub-tools in one call. | `idiom tool discovery_query --input '{"purpose":"impact_analysis","path":".","pattern":"funcName","language":"go"}'` |
+| `context_pack` | Get a ranked, cached packet of candidate files / symbols / tests for a task. **Default first call when localizing any change** — output is content-addressed and cached in `graph_views`, so identical task strings short-circuit re-discovery. | `idiom tool context_pack --input '{"task":"wire packet cache","mode":"plan","limit":8}'` |
+| `context_query` | Graph-shaped questions ("what calls X", "what tests cover Y") without raw file flooding. | `idiom tool context_query --input '{"query":"callers of LoadView","resolution":"symbol"}'` |
+| `context_zoom` | Drill from a packet handle (file/symbol/repo) to the next resolution level. | `idiom tool context_zoom --input '{"handle":"symbol://internal/comprehension/views.go#SaveView","resolution":"symbol"}'` |
+| `context_status` | Index freshness, stale paths, collector coverage, available backends. | `idiom tool context_status` |
+| `context_index` | Build or refresh the comprehension index. Use scoped `--path <subset>` for incremental refresh. | `idiom tool context_index --input '{"path":".","language":"go","mode":"standard"}'` |
+| `context_impact` | Blast-radius and may-impact analysis using the context graph. | `idiom tool context_impact --input '{"path":"internal/comprehension/pack.go"}'` |
+| `context_trace_pack` | Attach runtime evidence (stack frames, test JSON, coverage) to a packet. | `idiom tool context_trace_pack --input '{"command":"go test ./internal/comprehension/...","path":"."}'` |
+| `discovery_query` | Broad impact, tracing, architecture, security, or history analysis. Orchestrates multiple sub-tools in one call; consults `context_pack` cache when fresh. | `idiom tool discovery_query --input '{"purpose":"impact_analysis","path":".","pattern":"funcName","language":"go"}'` |
 | `structural_search` | AST-aware code pattern search (requires `ast-grep`). | `idiom tool structural_search --input '{"pattern":"fn $NAME($$$ARGS) { $$$BODY }","path":"src/","language":"rust"}'` |
 | `dependency_graph` | Understand module/package dependency structure for Go, Rust, TypeScript, Python, or Java. | `idiom tool dependency_graph --input '{"path":".","language":"go"}'` |
 | `history_range` | Git log for a specific line range in a file. | `idiom tool history_range --input '{"path":"main.go","start_line":10,"end_line":50}'` |
@@ -53,8 +60,33 @@ These tools are available both inside idiom agent sessions and via `idiom tool` 
 | `ctags_symbols` | Symbol indexing across the codebase (requires `ctags`). | `idiom tool ctags_symbols --input '{"path":".","pattern":"Handler"}'` |
 | `semgrep_scan` | Security and pattern scanning (requires `semgrep`). | `idiom tool semgrep_scan --input '{"path":".","pattern":"auto"}'` |
 | `joern_scan` | Code property graph analysis (requires `joern-scan`). | `idiom tool joern_scan --input '{"path":"."}'` |
+| `harness_audit` | Self-audit: tool surface, language coverage, backend availability, log behavior, ranker learning, and `graph_views` cache state. Run after substantive changes to verify the harness sees the new state. | `idiom tool harness_audit --input '{"purpose":"behavior"}'` |
 
 When invoked via CLI, the tool result is printed as JSON with `Tool`, `Summary`, `Output`, and `Error` fields. Exit code is 0 on success, 1 if the tool reported an error.
+
+### When to reach for `context_pack` (and the cache it populates)
+
+`context_pack` is the right starting point for almost every "find the relevant code for this task" question. It returns a ranked candidate file/symbol/test list with provenance, and persists the result in the `graph_views` table inside `.idiom/comprehension/graph.sqlite` so the next call with the same task hits the cache instead of recomputing.
+
+- **Use the same task string across related calls** so identical requests reuse the cache. Don't append timestamps, session ids, or "round 2" suffixes.
+- **The cache key is content-addressed** over `(graph index_id, task, mode, path, scope, limit, budget_tokens, required_tests, forbidden_paths, intent)`. Anything not in that set isn't in the key.
+- **Known cache limitations** (see `docs/codebase-comprehension-memory-design.md` "Known cache limitations"):
+  - Cache survives only within a single `context build` session — `graph.ID` hashes `GeneratedAt`, so every refresh mints a new index_id and old rows become unreachable. Per-row staleness is correctly tracked but not yet load-bearing across rebuilds.
+  - Ranker weight changes (`idiom ranker boost/penalize`) and new runtime traces under `.idiom/comprehension/traces/` aren't in the cache key. Rebuild the index after either if the changes should reshape pack outputs.
+  - Pack bypasses the cache when `context_status` reports `Fresh: false`, so an edited-but-not-refreshed working tree always recomputes.
+- **Plan-then-execute**: the planner's `pack_id` round-trips through `submit_plan` → `PlanArtifact.PackID` → executor phase, which emits `executor_inherits_pack` (or `executor_pack_miss`) JSON events. Pass the `pack_id` through when chaining planner + executor so downstream consumers (UIs, debug tooling) can attach.
+
+### Discovery hierarchy (this Claude Code session, you, an external agent)
+
+When investigating this codebase, the right order is:
+
+1. **`context_pack`** with the task string → ranked candidates, cached.
+2. **Language-aware tools** (`go_find_symbol`, `code_navigate`, `cpp_*`, `python_*`, etc.) for symbol-shaped questions covered by the active language backend.
+3. **`trace_code` / `lookup` / `api_access` / `struct_shape` / `fixture_inventory`** (under `discovery_query`) for graph-shaped or test-fixture questions.
+4. **`structural_search`** for AST-aware patterns.
+5. **`grep`/`rg`/`Read`** for literal strings, comments, doctest names, single-known-file scans, and anywhere the discovery surface doesn't cover the question.
+
+If you find yourself ten greps deep without having tried `context_pack` once, you're holding the tool wrong. Inversely, don't use `context_pack` for "find the literal string `===END===`" — that's grep territory.
 
 ## Verification
 
