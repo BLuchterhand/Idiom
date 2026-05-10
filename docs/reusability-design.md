@@ -1,6 +1,6 @@
 # Reusability Design — Lift the Plan-Execute Workflow into Idiom
 
-**Status:** Design draft, 2026-05-09 (Phases 1-5 + 4b shipped 2026-05-09; Phase 4c/6/7/8 pending)
+**Status:** Design draft, 2026-05-09 (Phases 1-5 + 4b + 4c + 6 + 6.5 shipped 2026-05-09 / 2026-05-10; Phase 3 rules-embed backfill shipped 2026-05-10 after the post-Phase-6 audit below; Phase 5b / 7 / 8 pending; plug-and-play Phase 9 partial ship 2026-05-10 — `idiom version`, goreleaser config, release workflow, install.sh, three-tier Docker install test (`make test-install-docker`: 14-subcommand surface + 3 static-functionality tests + stub-LLM lane test, all green), and the `internal/autodetect` library landed parallel to canonical Phase 7/8; Phase 11 partial ship — `idiom doctor` landed; remaining 9/10/11 deliverables and Phase 12 unscheduled)
 **Author:** Idiom session log, Colony donkey-atom debugging
 **Related:** `docs/colony-extraction-plan.md` (raw inventory),
 `docs/planner-executor-delegation-design.md` (the lane shape this
@@ -265,9 +265,11 @@ Idiom ships canonical profile templates for common stacks
 (`qwen-pair`, `single-llama-cpp`, `mlx-single`). Projects can extend
 with custom profiles.
 
-`idiom backend proxy` is a Go port of `mlx_alias_proxy.py` (or shells
-out to it for now); routes a single client port to multiple backends
-by model alias.
+`idiom backend proxy` is a full Go port of `mlx_alias_proxy.py` that
+routes a single client port to multiple backends by model alias,
+rewrites the `model` field to the absolute path mlx_lm.server expects,
+merges multiple system messages into one leading entry, and streams
+responses chunk-by-chunk for SSE compatibility.
 
 ### `idiom probe lane`
 
@@ -394,10 +396,11 @@ project-shaped.
 | 3 | Prompt-stack reorg — embed canonical, project override | 3-4h | medium | kills duplication |
 | 4 | `idiom backend start|proxy` + `backends.json` schema | 2-3h | low | new-project unblock |
 | 5 | `idiom lane postflight` + pluggable rules | 2-3h | medium | reusable QC |
+| 5b | `idiom lane <mode> --postflight` auto-invokes Phase 5 against `git diff` after the lane returns | 1-2h | low | wires QC into the loop |
 | 6 | `idiom probe lane` + `idiom audit enum-mirrors` + `idiom brief preload` | 2-3h | low | covers remaining scripts |
-| 7 | `idiom init` + `idiom skills install` | 1-2h | none | greenfield onboarding |
-| 8 | Colony shim cleanup — delete generic rules + scripts that idiom now provides | 2h | low | proves the migration |
-| **Total** | | **16-23h** | | |
+| 7 | `idiom init` + `idiom skills install` + canonical `prompts/profiles/{coding,claude-qwen-worker}.md` templates + `prompts/skills/orchestrator-workflow/SKILL.md` (deferred from Phase 3) | 2-3h | low | greenfield onboarding |
+| 8 | Colony shim cleanup — delete generic rules + scripts that idiom now provides; deletion gated on `idiom probe lane` plus a full plan-execute lane against a known-good fixture brief | 2-3h | low | proves the migration |
+| **Total** | | **18-26h** | | |
 
 ### Suggested order
 
@@ -512,6 +515,127 @@ The Colony repo (Phase 8) shrinks by:
   their existing JSON adapters under `.idiom/external_tools/`,
   unchanged
 
+## Holes identified in 2026-05-10 audit
+
+A review against the actual code state (`cmd/idiom/lane.go` + the
+embedded files under `cmd/idiom/lanes/`) found gaps between what the
+design described as "shipped" and what the completed phases actually
+delivered. This section enumerates them so the roadmap reflects
+reality.
+
+### Phase 3 — partially shipped (rules-embed backfill)
+
+The Phase 3 architecture diagram lists both `prompts/lanes/<mode>/...`
+AND `prompts/rules/{loop-protocol, brief-skeleton,
+known-traps-generic, orchestrator-workflow}.md` as embedded resources.
+Only the lane preambles/postambles actually shipped — the canonical
+rules were never embedded.
+
+**Backfill (this session):** embed three canonical generic rule files
+(`loop-protocol`, `brief-skeleton`, `known-traps-generic`) at
+`cmd/idiom/lanes/rules/<name>.md` and prepend them to the lane
+wrapper's composed prompt. Project overlay at
+`<root>/.idiom/prompts/rules/<name>.md` with same-name semantics:
+matching project files replace the canonical entry, extras append after
+the canonical block in alphabetical order. **Status: shipped 2026-05-10.**
+
+**Deferred — `orchestrator-workflow.md`:** the design's own
+"What about the dual-architect orchestrator loop?" answer recommends
+keeping the orchestrator out of idiom and sharing via skill templates.
+Embedding orchestrator-workflow as an executor-facing rule contradicts
+that recommendation — the executor doesn't need it. Move this content
+to `prompts/skills/orchestrator-workflow/SKILL.md` when Phase 7 ships
+skill templates (now listed under Phase 7 in the table).
+
+### Phase 5b — lane → postflight integration (NEW)
+
+`idiom lane postflight` ships as a standalone subcommand. There is no
+flag on `idiom lane <mode>` that auto-runs postflight after the lane
+returns; the success-criteria onboarding flow doesn't show postflight
+at all. Result: project orchestrators have to wire postflight
+separately, and many won't.
+
+**Proposed:** a new Phase 5b adds `idiom lane <mode> --postflight` that
+runs the lane normally, then invokes `runLanePostflight` against
+`git diff` (or a configurable base ref) before returning. Final exit
+is the worse of (lane exit, postflight exit). Pending.
+
+### Phase 7 — additional sub-items
+
+The original Phase 7 description covered only `idiom init` +
+`idiom skills install`. The audit identified two additional
+Phase-7-shaped items, now folded into the table row:
+
+1. **Canonical profile templates** — Colony's
+   `prompts/profiles/coding.md` and `prompts/profiles/claude-qwen-worker.md`
+   have no canonical idiom equivalent. New projects pointing
+   `chat.system_prompt_files` at `.idiom/prompts/profiles/coding.md`
+   today are pointing at a file they have to author from scratch.
+   Embed them as templates copied during `idiom init`.
+
+2. **Skill templates expanded** — alongside whatever skills ship with
+   `idiom skills install`, include the canonical
+   `orchestrator-workflow` deferred from Phase 3.
+
+### Phase 8 — verification gate (NEW sub-item)
+
+Phase 8 says "delete generic rules + scripts that idiom now provides
+and confirm the lane still runs clean." That confirmation was
+informal. Before deletion, the gate is:
+
+1. `idiom probe lane --mode plan-execute` and `--mode implement`
+   return clean.
+2. A full plan-execute lane against a known-good fixture brief (e.g.
+   the donkey-atom replay under `testdata/swe/`) completes green.
+3. Each canonical rule referenced in the design (3 embedded + 1
+   deferred to skills, see Phase 3 entry above) is surfaced where
+   expected: rules appear in the composed lane prompt;
+   orchestrator-workflow is reachable via `idiom skills install`.
+
+Recorded here so a future Colony-deletion PR can't run ahead of the
+canonical replacement.
+
+### Open question — base prompt ownership
+
+`docs/lane-architecture.md` documents that the chat-side base prompt
+(loaded via `chat.system_prompt_files`) is fully project-owned today: a
+project's `.idiom/prompts/base.md` is the entire base, with no
+canonical idiom layer. The north-star drift recommendation says
+"Base/profile prompts own general working style," which implies a
+centralized authority. These two views aren't reconciled.
+
+Options:
+
+1. **Status quo** — projects own `base.md` fully; idiom updates
+   working-style guidance only via canonical rules (now embedded) and
+   lane preambles. Pro: clean ownership, no new overlay slot. Con:
+   projects drift independently on stable working-style guidance.
+2. **Canonical base + project overlay** — symmetric to lanes/rules:
+   embed `prompts/base.md` in the binary, project file at
+   `.idiom/prompts/base.md` extends or replaces. Pro: idiom updates
+   propagate. Con: another overlay slot to design and test.
+
+**Recommendation pending.** The rules embed (above) covers most of
+the "shared working style" need; if real drift problems emerge after
+Phase 7 ships profile templates, revisit option 2.
+
+### Deferred — `brief-preflight.py` Go port
+
+`idiom brief lint` shells out to an embedded Python script at runtime
+(`cmd/idiom/brief-preflight.py`). The "single Go binary distribution"
+pitch under the "Backend launcher" open question doesn't account for
+this Python dependency. Schedule a Go port in a later phase; not
+blocking for project onboarding.
+
+### Deferred — atom-spec lane subcommand
+
+`docs/lane-architecture.md` lists three lanes (`implement`,
+`plan-execute`, `atom-spec`), but the reusability plan only schedules
+the first two. `atom-spec` drafting still rides on the low-level
+`idiom artifact --no-tools` command. Schedule `idiom atom-spec draft`
+(with the same canonical preamble/postamble + project overlay seam)
+when Phase 7 brings the rest of the brief-authoring loop into idiom.
+
 ## Migration safety
 
 Each phase is shippable independently. Old paths keep working:
@@ -524,6 +648,269 @@ Each phase is shippable independently. Old paths keep working:
   present, behavior matches today's Colony override pattern.
 - Phase 8 is the only "delete from Colony" phase, and it runs after
   every replacement is shipped and verified.
+
+## Beyond Phase 8 — Plug-and-Play Roadmap
+
+Phases 1-8 + 5b finish the "lift Colony plumbing into idiom" story: a
+project that authors `.idiom/config.json`, `.idiom/backends.json`, and
+a brief can run plan-execute lanes against any local LLM stack without
+copying scripts. That's a developer-grade onboarding — appropriate for
+engineers who already know what idiom is.
+
+To get to a true install-and-run experience — `brew install idiom`,
+`cd ~/projects/foo && idiom start`, run lanes — three more layers are
+needed: distribution, zero-config init, and lifecycle. Operator
+observability rounds out the experience. An optional thin orchestrator
+closes the brief-authoring blank-page gap for fresh-install users who
+don't have an orchestrator yet.
+
+These phases are explicitly *outside* the "lift Colony plumbing"
+charter of Phases 1-8; they are the path from "harness for engineers
+who already know what idiom is" to "tool a fresh user can install and
+use." Schedule them only after Phase 8 closes the migration loop and
+Colony validates the lifted plumbing.
+
+| Phase | What | Effort | Risk | Value |
+|---|---|---|---|---|
+| 9 | Distribution: goreleaser, brew formula, install.sh, signed darwin builds, `idiom version`/`idiom upgrade`, `idiom models pull` | 6-10h | medium | gates every other plug-and-play phase |
+| 10 | Zero-config `idiom init --auto`: scan backends, models, workspace; single `.idiom/idiom.toml`; user-level config at `~/.config/idiom/` | 4-6h | low | turns Phase 7 from "templated skeleton" into "first-run works" |
+| 11 | Lifecycle: `idiom start`/`idiom stop`/`idiom status`/`idiom doctor`/`idiom service install`; unified `idiom logs`; `idiom usage` | 4-6h | low (medium for `doctor`) | one-command runtime, recoverable failures, broken is easy to diagnose |
+| 12 | Optional thin orchestrator — `idiom run "<task>"` chaining atom-spec draft → brief lint → lane → postflight | 3-5h | medium | closes the brief-authoring gap if appetite exists; skip leaves the orchestrator-stays-consumer recommendation intact |
+| **Plug-and-play subtotal** | | **17-27h** (excl. Phase 12: 14-22h) | | |
+
+### Phase 9 — Distribution
+
+Until the binary is reachable to non-Go-developers, nothing else
+matters. Goal: `brew install idiom` on macOS, `curl
+https://idiom.sh/install.sh | sh` elsewhere, and signed releases on
+GitHub.
+
+**Status (2026-05-10):** core release pipeline shipped — `.goreleaser.yaml`,
+`.github/workflows/release.yml`, `install.sh`, `idiom version` with
+`-ldflags`-injected build metadata. Pending: macOS signing/notarization
+(needs Apple Developer credentials provisioned in CI secrets), Homebrew
+tap (needs the `idiom-sh/tap` repo), `idiom upgrade` self-update
+subcommand, `idiom models pull` model fetcher.
+
+Deliverables:
+
+- **Release pipeline** ✓ — `.goreleaser.yaml` + `.github/workflows/release.yml`
+  build `darwin-{arm64,amd64}`, `linux-{amd64,arm64}`, `windows-amd64`
+  on tag push. Generates `SHA256SUMS` for `install.sh` to verify.
+- **Homebrew formula** — `brew install idiom` from a tap (likely
+  `idiom-sh/tap`) until criteria for homebrew-core are met. Pending
+  the tap repo creation; goreleaser's `brews:` section wires in once
+  it exists.
+- **Install script** ✓ — `install.sh` at the repo root resolves the
+  latest release, downloads the right asset for the host, verifies
+  the SHA256 checksum, drops the binary in `~/.local/bin` (or
+  `/usr/local/bin` if writable). POSIX sh; tested syntax-clean with
+  `sh -n`. Carries an `IDIOM_RELEASE_URL_BASE` override so the Docker
+  install test can point it at a local server.
+- **Docker install test** ✓ — `scripts/test-install-docker.sh` (host
+  orchestrator) + `scripts/test-install-entrypoint.sh` (in-container)
+  cross-build idiom for the docker arch, package the binary in
+  goreleaser archive format, serve the tarball + SHA256SUMS via a
+  local `python3 -m http.server` inside an `ubuntu:24.04` container,
+  run `install.sh` against the local URL, then run a three-tier
+  assurance pass:
+
+  - **Tier 1 — surface coverage:** all 14 subcommands listed in the
+    main.go dispatch table (`version`, `doctor`, `lane`, `backend`,
+    `brief`, `plan-execute`, `implement`, `artifact`, `context`,
+    `architect`, `audit`, `ranker`, `probe`, `tool`) respond to
+    `--help` with exit 0 or 2 and non-empty output. Catches
+    dispatch-table regressions and missing-flag panics.
+  - **Tier 2 — static functionality (no LLM):** `idiom brief lint`
+    against a fixture brief (Python brief-preflight integration),
+    `idiom lane postflight` against a fixture diff (Phase 5
+    pipeline), `idiom backend list` against a fixture
+    `backends.json` (Phase 4 resolver). Each asserts a
+    meaningful exit code and content.
+  - **Tier 3 — stub-LLM lane:** a Python mock chat-completions
+    server returns canonical OpenAI-shaped responses; idiom lane
+    implement runs against a workspace whose `.idiom/config.json`
+    points at the mock; the assertion is that the mock received at
+    least one POST during the run. Proves the lane runner — config
+    load, prompt composition, model dispatch — is intact end-to-end
+    after install. A no-op `llama-server` stub at
+    `/usr/local/bin/llama-server` satisfies the auto-start path so
+    the readiness check completes against the mock's listening port.
+
+  Wrapped by `make test-install-docker`. A passing run means a fresh
+  user installing via `install.sh` gets a binary whose entire
+  reachable surface — every subcommand, the static QC pipelines, and
+  the lane runner up to the LLM dispatch — actually works. The
+  remaining unchecked layer is real-LLM lane completion (edits land,
+  postflight passes), which would require pulling a real model in CI.
+- **macOS signing + notarization** — Developer ID code signature on
+  darwin assets so Gatekeeper accepts them without right-click.
+  Pending Apple Developer credentials in CI secrets; wire `gon` /
+  `quill` step into `release.yml` once provisioned.
+- **`idiom version`** ✓ — prints version, commit, build date, Go
+  toolchain version, and host os/arch. Build-time metadata via
+  `-ldflags '-X main.{version,commit,date}=...'`; falls back to
+  `debug.ReadBuildInfo()` for `go install` builds without ldflags.
+- **`idiom upgrade`** — fetches latest release and self-replaces.
+  Pending; can ship after the first tagged release exists.
+- **`idiom models pull <alias>`** — wraps `huggingface-cli download`
+  (or equivalent) to fetch a model file into the project-configured
+  cache dir. Model files are too large to ship in the binary; this is
+  the boundary. Resolves alias via `.idiom/backends.json`. Pending.
+- **Backend dependency posture** — `idiom doctor` (Phase 11) verifies
+  `mlx_lm.server` (or `llama-server`, `ollama`) is on `$PATH`. The
+  Python dependency is acknowledged and documented. Go-porting model
+  serving is non-goal: `mlx_lm.server` and `llama.cpp` are
+  research-velocity codebases and shipping a parallel implementation
+  is not worth tracking.
+
+### Phase 10 — Zero-config init
+
+Phase 7's `idiom init` ships a templated skeleton. For plug-and-play,
+init must *discover*, not template. A fresh user runs `idiom init
+--auto` and the `.idiom/` directory comes out wired to whatever they
+actually have installed.
+
+**Status (2026-05-10):** the `internal/autodetect` library landed
+parallel to canonical Phase 7. It exposes `DetectBackends()` (scans
+`$PATH` for `mlx_lm.server`, `llama-server`, `ollama`) and
+`DetectModels()` (walks `~/.cache/huggingface/hub`, `~/models`,
+`~/.ollama/models/manifests` and surfaces normalized aliases). Phase 7
+will wire this into `idiom init --auto`; until then `idiom doctor`
+already consumes the library to tell users what was found.
+
+Deliverables:
+
+- **Auto-detect backends** — scan `$PATH` for `mlx_lm.server`,
+  `llama-server` (llama.cpp), `ollama`. Generate the `backends.json`
+  profile from what's actually installed; one runner means one
+  profile, multiple means multiple.
+- **Auto-detect models** — walk `~/.cache/huggingface/`, `~/models/`,
+  `~/.ollama/models`. Pick a default executor by tags + size (smallest
+  coder ≥ 7B) and a default planner if a non-coder model is present.
+  Surface the picks; user can override interactively.
+- **Auto-detect workspace** — `cwd` becomes `workspace.root`; the
+  language registry (`internal/workspace/language_registry.go`)
+  already does the rest.
+- **Single config file** — collapse `.idiom/config.json` and
+  `.idiom/backends.json` into `.idiom/idiom.toml` (TOML is easier for
+  hand-editing; JSON also acceptable). Maintain backward
+  compatibility: the loader reads `.idiom/idiom.toml` if present, else
+  falls back to the legacy two-file split. Existing two-file projects
+  keep working.
+- **User-level config** — lookup order:
+  `<repo>/.idiom/idiom.toml` > `~/.config/idiom/idiom.toml` >
+  embedded defaults. Project files override per-key, not whole-file.
+  A user with one local-LLM setup configures backends *once* at the
+  user level and every project inherits.
+- **`idiom init --interactive`** — interactive flow for the 3-4
+  things autodetect can't infer (executor model choice when multiple
+  match, write enable, MCP servers, project name).
+- **Sample brief** — init drops `.planning/example-atom.md` so a fresh
+  user has something to lane against end-to-end.
+
+### Phase 11 — Lifecycle + observability
+
+Today: `idiom backend start`, then per-task `idiom lane`. Plug-and-play
+needs one entry, supervision, and a clear way to diagnose failures.
+
+**Status (2026-05-10):** `idiom doctor` shipped with checks for
+backend runners, local models, project config, workspace writability,
+python3 (warn), and git (warn). Each non-pass check carries an exact
+remedy line; `--json` emits a machine-parseable summary for CI / dashboard
+consumers. Pending: `idiom start`/`stop`/`status` umbrella subcommands,
+`idiom service install` for launchd/systemd unit generation,
+`idiom logs <session>` unified reader, `idiom usage` token/cost reporter.
+
+Deliverables:
+
+- **`idiom start`** — launches backends if not already up, warms
+  caches, prints a ready signal, optionally drops into a TUI or stays
+  foreground supervising. Idempotent: if backends are already running,
+  it re-attaches.
+- **`idiom stop`** — clean teardown of everything `idiom start`
+  brought up. SIGTERM with grace, SIGKILL on timeout (already the
+  Phase 4b shape; lift to umbrella).
+- **`idiom status`** — live state: which backends are up on which
+  ports, executor alias, last lane outcome, queue depth if a TUI is
+  running.
+- **`idiom doctor`** ✓ — preflight diagnostic. Checks backend
+  runners on PATH, local model presence, project config validity,
+  workspace writability, python3 + git availability. Each non-pass
+  check carries an exact remedy line; `--json` emits machine-parseable
+  output. Future expansion: port-collision detection (overlap with
+  `idiom backend status`).
+- **`idiom service install`** — generates `launchd` (macOS) /
+  `systemd` (Linux) units for backend supervision and
+  restart-on-crash. Optional; users running `idiom start` foreground
+  don't need it.
+- **`idiom logs <session>`** and **`idiom logs tail`** — unified
+  reader over the three streams documented in
+  `docs/lane-architecture.md` (conversation log, stdout JSONL,
+  telemetry stream). Selects events by role/type rather than asking
+  users to grep three files.
+- **`idiom usage`** — tokens/cost per lane / session / day. The
+  `model_session` telemetry events already carry the data; this is a
+  reader on top.
+
+### Phase 12 — Optional: thin orchestrator
+
+The design's existing recommendation (under "What about the
+dual-architect orchestrator loop?") keeps the orchestrator
+consumer-side. That stays correct for projects with a real
+orchestrator (Colony, etc.). But fresh-install users have no
+orchestrator — they have idiom, a brief template, and a blank page.
+
+To close that gap *without* re-coupling idiom to a specific
+orchestrator shape, ship a *thin* opinionated entry:
+
+- **`idiom run "<natural-language-task>"`** — drafts a brief via the
+  atom-spec lane (currently `idiom artifact --no-tools`, scheduled in
+  the audit deferrals as `idiom atom-spec draft`), lints it via
+  `idiom brief lint`, runs the chosen lane (default plan-execute),
+  runs `idiom lane postflight`, and reports a single result.
+- The thin orchestrator does NOT carry retry / re-route / escalation
+  smarts — those stay in dual-architect skill templates (Phase 7).
+  Failures surface as exit codes and diagnostic output; the user
+  decides what to do next.
+
+Status: optional. Ship only if Phase 11 lands cleanly and there's
+appetite for an opinionated entry. Skipping leaves the design's
+existing orchestrator-stays-consumer recommendation fully intact.
+
+### Out of scope for the plug-and-play roadmap
+
+Listed here so they don't leak into a phase by accident:
+
+- **IDE plugins** (VS Code, JetBrains) — value-add but a separate
+  product surface; depends on a stable CLI contract that Phases 1-12
+  establish first.
+- **Web UI / dashboard** — the CLI + TUI cover operator UX; a web
+  layer is over-investment until usage justifies it.
+- **Telemetry export to Grafana/Datadog/etc.** —
+  `logs/telemetry/*.jsonl` is the structured data; ship import
+  recipes for popular tools as docs, not a daemon.
+- **Go-porting model servers** — `mlx_lm.server`, `llama.cpp`,
+  `ollama` are the right boundary; idiom shells out via the
+  alias-routing proxy.
+- **Secret management beyond filesystem permissions** — `.idiom/`
+  config can carry endpoint tokens but idiom does not encrypt or
+  vault them. Projects with stricter requirements integrate their own
+  secret store and pass values via env.
+
+### Suggested order
+
+Phase 9 is the gate — without it, no fresh user can install, and the
+remaining phases produce code paths nobody runs. Phase 10 follows
+because zero-config is the second largest plug-and-play win once the
+binary is reachable. Phase 11 lands next because it converts "has a
+binary, has config" into "is actually running." Phase 12 is optional
+and can ship later (or never) depending on whether fresh-install
+users without orchestrators are a real audience.
+
+```
+9 → 10 → 11 → (12 optional)
+```
 
 ## What's already done in this session
 

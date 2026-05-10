@@ -14,6 +14,70 @@ implement / atom-spec lanes.
 - gives Qwen scoped workspace access for reads, search, writes, and shell commands
 - keeps model weights, caches, and harness logs out of the target repository
 
+## Quick install (binary)
+
+> Requires a published GitHub release. Phase 9 of the
+> [reusability roadmap](docs/reusability-design.md) ships the goreleaser
+> pipeline and `install.sh`; once the first release tag exists, the
+> command below resolves it automatically.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh
+```
+
+That fetches the latest release for your OS/arch (macOS or Linux,
+`amd64` or `arm64`), verifies the SHA256 checksum, and drops the
+binary in `~/.local/bin/idiom` (or `/usr/local/bin/idiom` if that's
+writable without sudo). Add `~/.local/bin` to your shell's `$PATH` if
+you don't already have it.
+
+Override knobs (env vars): `IDIOM_VERSION=v0.1.0` to pin a release,
+`IDIOM_INSTALL_DIR=~/bin` to change the destination,
+`IDIOM_REPO=owner/fork` to install from a fork.
+
+Windows: download the `.zip` from the
+[releases page](https://github.com/BLuchterhand/idiom/releases) and
+extract `idiom.exe` to a directory on `%PATH%`.
+
+## Quick start
+
+Verify the host is ready:
+
+```bash
+idiom doctor
+```
+
+`idiom doctor` checks for a backend runner (`mlx_lm.server`,
+`llama-server`, or `ollama` on `$PATH`), local model files in
+`~/.cache/huggingface`/`~/models`/`~/.ollama/models`, project config,
+and supporting tools (`python3`, `git`). Each non-pass result carries
+an exact remedy line; `--json` emits structured output for CI.
+
+Run a lane against a brief:
+
+```bash
+idiom lane plan-execute --title atom-001 .planning/atom-001.md
+```
+
+`idiom lane` is the recommended entry — it composes the prompt
+overlay, auto-routes plan-execute to the configured executor model,
+and forwards JSON events. See
+[docs/lane-architecture.md](docs/lane-architecture.md) for the lane
+shapes (`plan-execute`, `implement`, `atom-spec`) and brief format.
+
+Other useful subcommands:
+
+- `idiom version` — print binary version, commit, build date.
+- `idiom backend start | stop | status | list | proxy` — manage local
+  LLM runners.
+- `idiom brief lint <brief.md>` — pre-flight lint on an
+  implementation brief.
+- `idiom lane postflight --diff <patch>` — QC pipeline against a
+  returned diff.
+
+For the source-build path (cloning the repo, installing the
+toolchain, running from `bin/idiom`), see "Install from source" below.
+
 ## Layout
 
 - `config.json`: runtime config
@@ -23,7 +87,11 @@ implement / atom-spec lanes.
 - `logs/conversations/`: per-session JSONL debug logs
 - `transcripts/`: saved chats
 
-## Install
+## Install from source
+
+For development on idiom itself, or when you want the full toolchain
+(ripgrep, ast-grep, ctags, semgrep, joern, gopls) installed alongside
+the binary, build from a clone instead of using the curl install above.
 
 On macOS, run the master installer to install the required local toolchain,
 workspace discovery backends, build `bin/idiom`, and verify the active harness

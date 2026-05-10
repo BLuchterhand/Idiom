@@ -9,12 +9,28 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"idiom/internal/backends"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
+)
+
+// briefBodyStartMarker / briefBodyEndMarker bracket the project
+// brief inside the composed lane prompt so downstream extractors
+// (path detection, discovery handles, required_edit_paths) can
+// scope their scan to the brief and ignore prose tokens in the
+// surrounding preamble/postamble. Kept exported so the matching
+// pathparse-side scoping helper can reference the same string.
+//
+// Format is an HTML comment (invisible in rendered markdown) with
+// a stable IDIOM: prefix so the marker can never accidentally
+// collide with prose content from a brief author.
+const (
+	briefBodyStartMarker = "<!-- IDIOM:BRIEF-BODY-START -->"
+	briefBodyEndMarker   = "<!-- IDIOM:BRIEF-BODY-END -->"
 )
 
 // canonicalLanePromptsFS holds the idiom-canonical lane prompt
@@ -25,8 +41,24 @@ import (
 // and are concatenated AROUND the brief between idiom's canonical
 // preamble and postamble (see composeLanePromptToFile).
 //
-//go:embed lanes/implement/preamble.md lanes/implement/postamble.md lanes/plan-execute/preamble.md lanes/plan-execute/postamble.md
+//go:embed lanes/implement/preamble.md lanes/implement/postamble.md lanes/plan-execute/preamble.md lanes/plan-execute/postamble.md lanes/rules/loop-protocol.md lanes/rules/brief-skeleton.md lanes/rules/known-traps-generic.md
 var canonicalLanePromptsFS embed.FS
+
+// canonicalRuleNames is the ordered set of idiom-canonical generic
+// rules embedded under cmd/idiom/lanes/rules/. Order is stable: rules
+// are prepended to the composed lane prompt in this sequence so brief
+// authors and overlay authors can reason about where a replacement
+// falls inside the rules block.
+//
+// orchestrator-workflow.md is intentionally absent — per the
+// reusability design's "What about the dual-architect orchestrator
+// loop?" recommendation, that content belongs with skill templates
+// (Phase 7), not the executor's per-lane rules block.
+var canonicalRuleNames = []string{
+	"loop-protocol.md",
+	"brief-skeleton.md",
+	"known-traps-generic.md",
+}
 
 // laneSubcommandRunner is the function shape both runImplementMain
 // and runPlanExecuteMain expose. Capturing it as a type lets tests
@@ -58,12 +90,24 @@ type laneOptions struct {
 	PlannerOwnedVerification bool
 	AllowBuildTests          bool
 	ProjectRoot              string // overridable for tests; defaults to filepath.Dir(BriefPath)
+	NoLint                   bool   // skip the brief lint preflight (default: lint runs)
+	SlotKey                  string // if set, acquire a filesystem mutex named idiom-lane-<key>
 	// coderRequested is set when the caller asked for the coder
 	// alias either explicitly (`--coder`) or implicitly (plan-execute
 	// with no --model override). The actual alias is resolved later
 	// in runLaneMainWithDeps once backends.json has loaded so projects
 	// can override the default without changing every invocation.
 	coderRequested bool
+}
+
+// laneBriefLintRunner is the package-level indirection tests stub
+// out so the lane wrapper's default-on lint preflight doesn't need
+// python3 in the test environment. Production callers leave it as
+// runBriefLint; tests reassign before exercising the lane and
+// restore on cleanup. Mirrors the backendLaunch / backendStop
+// pattern from cmd/idiom/backend.go.
+var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
+	return runBriefLint(args, stdout, stderr, nil)
 }
 
 // runLaneMain is the production entry point for `idiom lane <mode>`.
@@ -142,6 +186,28 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	if opts.coderRequested && strings.TrimSpace(opts.Model) == "" {
 		opts.Model = resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RoleExecutor, stderr)
 	}
+	// Brief lint preflight: default-on. The wrapper that used to
+	// run this in shell is now redundant — every project that uses
+	// `idiom lane` benefits from catching unsafe briefs before
+	// dispatch. --no-lint is the escape hatch for callers that
+	// already lint upstream or want to test bypass.
+	if !opts.NoLint {
+		if code := laneBriefLintRunner([]string{opts.BriefPath}, stdout, stderr); code != 0 {
+			fmt.Fprintf(stderr, "lane: brief lint failed (exit %d); use --no-lint to skip preflight\n", code)
+			return code
+		}
+	}
+	// Slot mutex: opt-in concurrency guard for orchestrators that
+	// dispatch lanes in parallel. The KEY (what counts as "the same
+	// lane") is project policy, so the caller chooses; idiom owns
+	// only the primitive. Empty key = no mutex (today's behavior).
+	if key := strings.TrimSpace(opts.SlotKey); key != "" {
+		release, code := acquireLaneSlot(key, stderr)
+		if code != 0 {
+			return code
+		}
+		defer release()
+	}
 	composedPath, err := composeLanePromptToFile(opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -162,17 +228,45 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	}
 
 	forwardArgs := buildForwardedArgs(opts, composedPath)
+	// Tee stdout so the post-analysis can scan the JSON event stream
+	// the subcommand emits. Without --json the subcommand still prints
+	// human-readable output that contains the same markers, so the
+	// analyzer works either way; --json just makes it machine-precise.
+	tee := newTeeBuffer(stdout)
+	var subcode int
 	switch opts.Mode {
 	case "plan-execute":
-		return deps.runPlanExecute(forwardArgs, stdout, stderr, deps.defaultPromptRun)
+		subcode = deps.runPlanExecute(forwardArgs, tee, stderr, deps.defaultPromptRun)
 	case "implement":
-		return deps.runImplement(forwardArgs, stdout, stderr, deps.defaultPromptRun)
+		subcode = deps.runImplement(forwardArgs, tee, stderr, deps.defaultPromptRun)
 	default:
 		// parseLaneOptions already rejects unknown modes; defensive
 		// belt-and-suspenders.
 		fmt.Fprintf(stderr, "lane: unknown mode %q\n", opts.Mode)
 		return 2
 	}
+
+	// Post-analyze: detect three regression classes and emit a
+	// structured `idiom.lane.degraded` event for each. The event is
+	// the seam — projects subscribe to it from telemetry / stdout
+	// to drive their own audit ledger (e.g. Colony's
+	// harness_feedback). Idiom doesn't reach into project policy.
+	degraded := analyzeLaneOutput(tee.Bytes(), subcode)
+	for _, d := range degraded {
+		emitLaneJSONEvent(stdout, "degraded", map[string]any{
+			"kind":    d.kind,
+			"details": d.details,
+			"mode":    opts.Mode,
+		})
+		fmt.Fprintf(stderr, "lane: degraded kind=%s details=%s\n", d.kind, d.details)
+	}
+	if subcode != 0 {
+		return subcode
+	}
+	if len(degraded) > 0 {
+		return 4
+	}
+	return 0
 }
 
 // parseLaneOptions parses lane-specific flags + the positional brief
@@ -220,6 +314,8 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", true, "delegate build/test verification to the caller (default true for lane)")
 	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag forwarded to the underlying subcommand")
 	fs.StringVar(&opts.ProjectRoot, "project-root", "", "project root used to resolve .idiom/ overlays (defaults to the brief's directory)")
+	fs.BoolVar(&opts.NoLint, "no-lint", false, "skip the brief lint preflight (lint runs by default)")
+	fs.StringVar(&opts.SlotKey, "slot", "", "acquire a filesystem mutex idiom-lane-<key> to prevent concurrent dispatch of the same lane (caller picks the granularity)")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
@@ -295,6 +391,48 @@ func resolveRoleAlias(projectRoot, profileName, role string, stderr io.Writer) s
 	return alias
 }
 
+// acquireLaneSlot is the opt-in concurrency mutex Phase 6.5 ports
+// from Colony's run_idiom_impl.sh. The key chooses the granularity
+// (the wrapper used per-model lane keys: "35b", "coder"); idiom
+// owns only the mutex primitive. mkdir is atomic on POSIX-shaped
+// filesystems, which is enough to detect a held slot. Returns a
+// release callback the caller defers, plus the same exit code
+// shape the rest of the lane wrapper uses (0 acquired, 3 held).
+func acquireLaneSlot(key string, stderr io.Writer) (release func(), code int) {
+	dir := filepath.Join(os.TempDir(), "idiom-lane-"+sanitizeSlotKey(key))
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		if os.IsExist(err) {
+			fmt.Fprintf(stderr, "lane: slot %q already held at %s — another dispatch is in flight\n", key, dir)
+			return func() {}, 3
+		}
+		fmt.Fprintf(stderr, "lane: cannot acquire slot %q at %s: %v\n", key, dir, err)
+		return func() {}, 1
+	}
+	return func() { _ = os.Remove(dir) }, 0
+}
+
+// sanitizeSlotKey strips characters that would corrupt the slot
+// directory name. Mirrors the launcher's sanitizeAlias spirit but
+// kept local since we only need the alnum/dash/dot subset for a
+// short-lived temp dir name.
+func sanitizeSlotKey(key string) string {
+	var b strings.Builder
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '.', r == '_':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		default:
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "default"
+	}
+	return b.String()
+}
+
 // composeLanePromptToFile builds the composed prompt and writes it to
 // a temp file the underlying subcommand reads via --prompt-file. The
 // caller MUST defer os.Remove on the returned path — see
@@ -302,14 +440,21 @@ func resolveRoleAlias(projectRoot, profileName, role string, stderr io.Writer) s
 // this function clean up after themselves before returning.
 //
 // Layer order (top-to-bottom in the composed prompt):
-//  1. idiom canonical preamble  (cmd/idiom/lanes/<mode>/preamble.md, embed)
-//  2. project preamble overlay  (<root>/.idiom/prompts/lanes/<mode>/preamble.md)
-//  3. brief body                (the file at opts.BriefPath)
-//  4. project postamble overlay (<root>/.idiom/prompts/lanes/<mode>/postamble.md)
-//  5. idiom canonical postamble (cmd/idiom/lanes/<mode>/postamble.md, embed)
+//  1. canonical generic rules  (cmd/idiom/lanes/rules/*.md, embed; project
+//     files at .idiom/prompts/rules/<name>.md
+//     replace by name; non-canonical project
+//     files append alphabetically as extras)
+//  2. idiom canonical preamble (cmd/idiom/lanes/<mode>/preamble.md, embed)
+//  3. project preamble overlay (<root>/.idiom/prompts/lanes/<mode>/preamble.md)
+//  4. brief body               (the file at opts.BriefPath)
+//  5. project postamble overlay (<root>/.idiom/prompts/lanes/<mode>/postamble.md)
+//  6. idiom canonical postamble (cmd/idiom/lanes/<mode>/postamble.md, embed)
 //
-// Project layers are additive — they extend, never replace, idiom's
-// canonical text. Empty/missing files at any layer are skipped.
+// Preamble/postamble project layers are additive — they extend, never
+// replace, idiom's canonical text. For rules, project files matching a
+// canonical name replace the canonical entry in place; project files
+// with names NOT in the canonical set append after the canonical block.
+// Empty/missing files at any layer are skipped.
 func composeLanePromptToFile(opts laneOptions) (string, error) {
 	briefBody, err := os.ReadFile(opts.BriefPath)
 	if err != nil {
@@ -317,13 +462,24 @@ func composeLanePromptToFile(opts laneOptions) (string, error) {
 	}
 
 	parts := []string{}
+	if rules := canonicalLaneRules(opts.ProjectRoot); strings.TrimSpace(rules) != "" {
+		parts = append(parts, rules)
+	}
 	if pre := canonicalLanePreamble(opts.Mode); strings.TrimSpace(pre) != "" {
 		parts = append(parts, pre)
 	}
 	if pre := readProjectLaneOverlay(opts.ProjectRoot, opts.Mode, "preamble.md"); strings.TrimSpace(pre) != "" {
 		parts = append(parts, pre)
 	}
-	parts = append(parts, string(briefBody))
+	// Wrap the brief body in explicit boundary markers so downstream
+	// extractors (path detection, discovery handles) can scope to the
+	// brief and skip prose tokens in the surrounding preamble/postamble
+	// (which legitimately contain backtick-quoted instructional text
+	// like `start_line`/`end_line` that used to leak into the
+	// required_edit_paths surface). The markers are HTML comments so
+	// they're invisible in the rendered prompt; pathparse.BetweenBriefBodyMarkers
+	// is the matching extractor-side helper.
+	parts = append(parts, briefBodyStartMarker+"\n"+string(briefBody)+"\n"+briefBodyEndMarker)
 	if post := readProjectLaneOverlay(opts.ProjectRoot, opts.Mode, "postamble.md"); strings.TrimSpace(post) != "" {
 		parts = append(parts, post)
 	}
@@ -390,6 +546,99 @@ func readProjectLaneOverlay(projectRoot, mode, filename string) string {
 		return ""
 	}
 	return string(body)
+}
+
+// canonicalLaneRules returns the rules block prepended to every lane's
+// composed prompt: idiom-canonical generic rules in the order declared
+// by canonicalRuleNames, with project-side replacements at
+// .idiom/prompts/rules/<name>.md applied in place. Project rule files
+// whose names are NOT in canonicalRuleNames are appended after the
+// canonical block in alphabetical order ("extras"), so a project can
+// add project-specific rules without editing the canonical set.
+//
+// Returns "" when neither canonical rules nor project rules contribute
+// any text — keeps the composed prompt compact for projects that
+// haven't authored a rules layer.
+func canonicalLaneRules(projectRoot string) string {
+	canonicalSet := make(map[string]struct{}, len(canonicalRuleNames))
+	var blocks []string
+	for _, name := range canonicalRuleNames {
+		canonicalSet[name] = struct{}{}
+		if override := readProjectRulesFile(projectRoot, name); strings.TrimSpace(override) != "" {
+			blocks = append(blocks, override)
+			continue
+		}
+		if body := readEmbeddedRule(name); strings.TrimSpace(body) != "" {
+			blocks = append(blocks, body)
+		}
+	}
+	blocks = append(blocks, projectRulesExtras(projectRoot, canonicalSet)...)
+	return strings.Join(blocks, "\n\n")
+}
+
+// readEmbeddedRule loads a canonical rule by basename from the
+// embedded FS. Returns "" on miss so a stray reference to an unembedded
+// name in canonicalRuleNames cannot crash the lane — at worst the rule
+// is silently skipped.
+func readEmbeddedRule(name string) string {
+	body, err := canonicalLanePromptsFS.ReadFile("lanes/rules/" + name)
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+// readProjectRulesFile reads a single rule file from the project's
+// overlay directory. Returns "" when the file doesn't exist or fails
+// to read.
+func readProjectRulesFile(projectRoot, name string) string {
+	if strings.TrimSpace(projectRoot) == "" {
+		return ""
+	}
+	body, err := os.ReadFile(filepath.Join(projectRoot, ".idiom", "prompts", "rules", name))
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+// projectRulesExtras returns the bodies of project rule files whose
+// names are NOT in the canonical set, sorted alphabetically by name
+// for deterministic prompt composition. Returns nil when the project
+// has no overlay directory or only canonical replacements.
+func projectRulesExtras(projectRoot string, canonical map[string]struct{}) []string {
+	if strings.TrimSpace(projectRoot) == "" {
+		return nil
+	}
+	dir := filepath.Join(projectRoot, ".idiom", "prompts", "rules")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		if _, isCanonical := canonical[name]; isCanonical {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var extras []string
+	for _, name := range names {
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || strings.TrimSpace(string(body)) == "" {
+			continue
+		}
+		extras = append(extras, string(body))
+	}
+	return extras
 }
 
 // buildForwardedArgs constructs the args the lane wrapper hands to

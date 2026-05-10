@@ -92,6 +92,15 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "brief" {
 		return runBriefMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
+	if len(args) > 0 && args[0] == "probe" {
+		return runProbeMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
+	if len(args) > 0 && args[0] == "version" {
+		return runVersionMain(args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "doctor" {
+		return runDoctorMain(args[1:], stdout, stderr)
+	}
 	return runWithTelemetry(args, stdout, stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions, rec)
 }
 

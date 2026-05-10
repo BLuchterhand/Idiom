@@ -187,10 +187,15 @@ Idiom's context-graph database: `graph.json`, `graph.sqlite`,
 `graph.lock`, `manifest.json`. Persistent across runs. Generated and
 maintained by `idiom context build` / `--refresh`.
 
-### `.idiom/prompts/` (config-driven, no overlay yet)
+### `.idiom/prompts/` (mixed — chat side project-owned; lane wrapper has canonical + overlay)
 
-Today the prompt stack is fully config-driven via two `chat`-section
-keys (`internal/config/config.go`):
+The chat-side base prompt is fully project-owned today; lane
+preambles/postambles and the generic rules block ship as
+canonical-in-idiom (embedded), with project overlay at well-known
+paths. See the seam table at the end of this doc.
+
+Today the chat-side prompt stack is fully config-driven via two
+`chat`-section keys (`internal/config/config.go`):
 
 - `chat.system_prompt_files` — ordered list of files concatenated
   into the system prompt at runtime. Resolved relative to the config
@@ -214,6 +219,25 @@ deployment carries the canonical lane wrapper without needing a
 co-located prompts directory. Projects extend (never replace) that
 wrapper via `<repo>/.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`,
 inserted between the canonical text and the brief body.
+
+The lane wrapper also prepends a **canonical generic rules** block to
+every composed prompt, loaded via `go:embed` from
+`cmd/idiom/lanes/rules/{loop-protocol, brief-skeleton,
+known-traps-generic}.md` (Phase 3 backfill, 2026-05-10). Project
+overrides at `<repo>/.idiom/prompts/rules/<name>.md` use same-name
+semantics: a project file matching a canonical name **replaces** that
+entry in place; project files with names NOT in the canonical set
+**append** after the canonical block in alphabetical order. This lets
+a project drop in `cpp-safety.md`, `gdscript-patterns.md`, etc. as
+extras without editing the canonical files. The full layer order in
+the composed prompt is:
+
+1. canonical generic rules + project rule replacements/extras
+2. canonical lane preamble (mode-specific)
+3. project lane preamble overlay
+4. brief body
+5. project lane postamble overlay
+6. canonical lane postamble (mode-specific)
 
 For a fresh project starting from `idiom init`, the recommended
 seed is:
@@ -253,8 +277,17 @@ Phases shipped (`docs/reusability-design.md`):
   launcher whose CLI matches the MLX shape works without project
   scripts. Detached spawn (Setpgid) so backends survive idiom exit;
   ready-check is a TCP connect to the listening port; stop sends
-  SIGTERM with a configurable grace window before SIGKILL. The
-  proxy port still ships in Phase 4c.
+  SIGTERM with a configurable grace window before SIGKILL.
+- Phase 4c — `idiom backend proxy` alias-routing port. Listens on
+  `profile.proxy.listen`, picks a backend by the request's `model`
+  field (falling back to `default_alias`), rewrites that field to
+  the absolute model path mlx_lm.server expects, merges multiple
+  system messages into one leading entry for chat-completion
+  compatibility, and streams responses chunk-by-chunk to preserve
+  SSE for `stream: true`. `--listen` and `--default` flags override
+  the schema for ad-hoc runs; SIGINT/SIGTERM trigger graceful
+  shutdown. Replaces Colony's `mlx_alias_proxy.py`.
+
 - Phase 5 — `idiom lane postflight` runs a configurable QC pipeline
   against a unified diff. Three always-on generic checks
   (unresolved `<<QUESTION>>:` markers in modified files, write
@@ -264,19 +297,81 @@ Phases shipped (`docs/reusability-design.md`):
   `kind: ast_grep` reserved). Exit codes: `0` pass, `1` IO/setup,
   `2` flag error, `3` checks fired — separate so callers can tell
   "ran and found bugs" apart from "couldn't run."
+- Phase 6 — three project-onboarding helpers:
+  - `idiom probe lane [--mode implement|plan-execute|all]` runs a
+    synthetic-brief route probe in-process and asserts route shape
+    (initial=implement, contract=implementation_result,
+    reason=explicit_task_family) and a non-empty allowed-tools
+    surface. Replaces `idiom_route_probe.sh`.
+  - `idiom audit enum-mirrors --enum <Name> [--language cpp|go|rust|ts|any]`
+    walks the workspace, lists files referencing the symbol, and
+    scans each for high-signal mirror patterns (count assertions,
+    name tables, switch cases). Each --language profile bundles a
+    pattern set + extension filter; `--pattern <regex with {ENUM}>`
+    and `--ext <extension>` are escape hatches.
 
-Phases 4c/6/7 add these project-side hooks (not yet present today;
+    **Implementation note:** the audit uses token-bounded regex grep,
+    not the LSP-aware `*_references` tools the design doc imagined.
+    Trade-off: grep is language-agnostic and runs without an LSP
+    setup (cpp_references requires clangd) but produces lower-
+    precision results — string literals and comments containing
+    the symbol show up as references. Operators should treat the
+    file list as a starting point for a brief, not a precise
+    references query. A future `--lsp` mode could call into the
+    language-aware tools when the workspace has them wired.
+  - `idiom brief preload --kind <name>` (or `--list`) emits the
+    canonical atom-spec drafting guidance, with project overrides
+    at `<repo>/.idiom/prompts/brief/preload/<kind>.md`. Idiom ships
+    only `generic`; project-specific kinds live as overlays.
+
+- Phase 3 rules-embed backfill (2026-05-10) — canonical generic
+  rules `loop-protocol.md`, `brief-skeleton.md`, and
+  `known-traps-generic.md` are embedded under `cmd/idiom/lanes/rules/`
+  and prepended to every composed lane prompt. Project overlay at
+  `<repo>/.idiom/prompts/rules/<name>.md` uses same-name semantics:
+  matching project files **replace** the canonical entry in place;
+  files with names NOT in the canonical set **append** alphabetically
+  after the canonical block as project-specific extras (e.g.
+  `cpp-safety.md`, `gdscript-patterns.md`).
+
+- Phase 6.5 (2026-05-10) — `idiom lane <mode>` absorbs the wrapper-
+  side scaffolding Colony's `run_idiom_impl.sh` carried so the
+  shell wrapper can shrink from ~419 lines to ~15:
+  - **Brief lint preflight** runs by default; `--no-lint` opt-out
+    for callers that already lint upstream. Lint exit code
+    propagates to the lane wrapper and aborts dispatch on failure.
+  - **`--slot <key>`** opt-in concurrency mutex via mkdir on
+    `$TMPDIR/idiom-lane-<key>`. Empty default = no mutex. Caller
+    chooses the granularity (per-model, per-workspace, per-brief).
+    Held slot exits 3 with a clear "already held" message.
+  - **Post-analyze** scans the subcommand's stdout after dispatch
+    for two regression classes: write-capable brief routed to a
+    read-only contract (`read_only_lane`), and clean-exit run
+    that never attempted an edit / blocker (`no_edit_attempt`).
+    Each emits a structured `idiom.lane.degraded` JSONL event;
+    wrapper exit code is 4 when any degradation fires (and the
+    subcommand exited 0). The `no_edit_attempt` check is
+    suppressed when the subcommand exits non-zero — the failure
+    code already carries that signal.
+  - **Audit-feedback dispatch stays project-side.** Idiom emits
+    the `idiom.lane.degraded` event; projects subscribe (e.g.
+    Colony's wrapper pipes the event into `harness_feedback`).
+    This keeps idiom from carrying any single project's audit-
+    ledger schema.
+
+Phase 7 adds these project-side hooks (not yet present today;
 placeholder paths shown so projects can plan ahead):
 
-- `idiom backend proxy` — Phase 4c alias-routing port (a Go port
-  of, or a wrapper around, Colony's `mlx_alias_proxy.py`)
-- `.idiom/prompts/rules/<name>.md` — rule overrides for the
-  canonical generic rules (later phase)
+- canonical profile templates copied during `idiom init` (e.g.
+  `prompts/profiles/coding.md`, `prompts/profiles/claude-qwen-worker.md`)
+- `idiom skills install <name>` for orchestrator-side skill
+  templates (including `orchestrator-workflow`, deferred from
+  Phase 3 per the design's own recommendation)
 
 Until those phases ship, projects use today's overlay points
-(`.idiom/prompts/base.md` + the lane overlay seam + project-side
-scripts wrapping the existing `idiom plan-execute` /
-`idiom implement`).
+(`.idiom/prompts/base.md` + the lane overlay seam + the rules
+overlay seam + project-side scripts wrapping the existing
+`idiom plan-execute` / `idiom implement`).
 
 ## Always-on language support
 
@@ -311,19 +406,16 @@ binary picks it up automatically.
 |---|---|---|
 | Lane logic (planner/executor, gates, runner) | ✓ | |
 | Tool dispatch + workspace operations | ✓ | |
-| Generic prompts (base, addendum, lane preambles)* | ✓ | overlay |
-| Generic rules (loop protocol, brief skeleton, traps)* | ✓ | overlay |
+| Lane preambles/postambles | ✓ (embedded) | overlay at `.idiom/prompts/lanes/<mode>/{preamble,postamble}.md` |
+| Generic rules (loop-protocol, brief-skeleton, known-traps-generic) | ✓ (embedded) | overlay at `.idiom/prompts/rules/<name>.md` (replace by name; extras append) |
+| Chat-side base prompt + profiles | (not yet — open question) | ✓ (project-owned at `.idiom/prompts/base.md` + `prompts/profiles/`) |
 | Language tool families | ✓ | (auto-detect) |
 | Endpoint + workspace config | | ✓ |
 | Project-specific tool adapters | | ✓ |
-| Project-specific lint / postflight rules* | | ✓ |
+| Project-specific postflight rules | (generic checks ✓) | ✓ at `.idiom/postflight/checks/<name>.json` |
 | Discovery cache + context graph | | ✓ (auto) |
 | Brief files | | ✓ |
 | Project-specific rules + skills (e.g. cpp-safety, ears-specs) | | ✓ |
-
-\* Items marked with * become canonical-in-idiom after the
-reusability migration completes (Phases 2-3, 5 of
-`docs/reusability-design.md`).
 
 ## Lane invocation, today
 

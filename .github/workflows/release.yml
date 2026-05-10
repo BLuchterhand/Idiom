@@ -1,0 +1,53 @@
+# Release workflow — Phase 9 (distribution).
+#
+# Trigger: pushing a tag matching `v*`. Typical flow:
+#   git tag v0.1.0 && git push origin v0.1.0
+# OR via gh:
+#   gh release create v0.1.0 --generate-notes
+#
+# What this runs:
+#   1. checkout (with full history; goreleaser needs tags for changelog)
+#   2. Go toolchain matching go.mod
+#   3. goreleaser release  → uploads binaries, archives, SHA256SUMS to
+#      the GitHub release matching the tag
+#
+# Out of scope:
+#   - macOS notarization: add a `gon`/`quill` step here once Apple
+#     Developer credentials are provisioned in CI secrets
+#   - Homebrew tap publish: enable goreleaser's `brews:` section once
+#     the idiom-sh/tap repo exists, then add a `HOMEBREW_TAP_GITHUB_TOKEN`
+#     secret here
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write    # required by goreleaser to upload release assets
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # tags + history for goreleaser changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -14,24 +14,40 @@ import (
 // laneFakeRunner captures the arguments handed to the underlying
 // idiom subcommand so tests can assert on what the wrapper forwarded.
 type laneFakeRunner struct {
-	calledMode  string
-	calledArgs  []string
+	calledMode   string
+	calledArgs   []string
 	calledPrompt string
-	exitCode   int
+	exitCode     int
 }
 
-func (f *laneFakeRunner) plan(args []string, _, _ io.Writer, _ promptRunner) int {
+func (f *laneFakeRunner) plan(args []string, stdout, _ io.Writer, _ promptRunner) int {
 	f.calledMode = "plan-execute"
 	f.calledArgs = append([]string(nil), args...)
 	f.calledPrompt = readPromptFromArgs(args)
+	emitFakeEditAttempt(stdout, "submit_plan")
 	return f.exitCode
 }
 
-func (f *laneFakeRunner) implement(args []string, _, _ io.Writer, _ promptRunner) int {
+func (f *laneFakeRunner) implement(args []string, stdout, _ io.Writer, _ promptRunner) int {
 	f.calledMode = "implement"
 	f.calledArgs = append([]string(nil), args...)
 	f.calledPrompt = readPromptFromArgs(args)
+	emitFakeEditAttempt(stdout, "edit_file")
 	return f.exitCode
+}
+
+// emitFakeEditAttempt writes a minimal synthetic tool-call event to
+// stdout so the lane wrapper's Phase 6.5 post-analyzer sees a
+// satisfied edit-attempt contract. Without this, every test that
+// dispatches through laneFakeRunner would trigger the
+// `no_edit_attempt` degradation since the fake produces no real
+// tool calls. Tests that specifically want to exercise the
+// degradation path bypass this helper by using runLaneMainWithCustomRunners.
+func emitFakeEditAttempt(stdout io.Writer, tool string) {
+	if stdout == nil {
+		return
+	}
+	_, _ = stdout.Write([]byte(`{"type":"tool_call","tool":"` + tool + `"}` + "\n"))
 }
 
 func readPromptFromArgs(args []string) string {
@@ -788,6 +804,151 @@ func TestRunLaneMainMissingBriefRejected(t *testing.T) {
 	}
 }
 
+// TestRunLaneMainEmbedsCanonicalRules verifies the Phase 3 rules-embed
+// backfill: idiom-canonical generic rules (loop-protocol, brief-skeleton,
+// known-traps-generic) are embedded into the binary at build time and
+// prepended to every composed lane prompt. Without this layer, projects
+// would have to reinvent these working-style rules in every overlay.
+func TestRunLaneMainEmbedsCanonicalRules(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	if got := runLaneMainTest(t, []string{"plan-execute", briefPath}, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	prompt := fake.calledPrompt
+	required := []string{
+		"# Loop Protocol",
+		"# Brief Skeleton",
+		"# Known Traps — Generic",
+	}
+	for _, marker := range required {
+		if !strings.Contains(prompt, marker) {
+			t.Fatalf("composed prompt missing canonical rule header %q; head=%s", marker, prompt[:min(800, len(prompt))])
+		}
+	}
+}
+
+// TestRunLaneMainCanonicalRulesPrecedePreamble verifies the layer order
+// from composeLanePromptToFile: rules block is prepended ahead of the
+// canonical lane preamble so the model reads working-style rules before
+// lane-specific framing.
+func TestRunLaneMainCanonicalRulesPrecedePreamble(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	if got := runLaneMainTest(t, []string{"plan-execute", briefPath}, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d", got)
+	}
+	prompt := fake.calledPrompt
+	rulesIdx := strings.Index(prompt, "# Loop Protocol")
+	preambleIdx := strings.Index(prompt, "Plan-Then-Execute Lane Brief")
+	if rulesIdx < 0 || preambleIdx < 0 {
+		t.Fatalf("missing layer marker; rules=%d preamble=%d", rulesIdx, preambleIdx)
+	}
+	if rulesIdx >= preambleIdx {
+		t.Fatalf("rules block must precede canonical preamble; rules@%d preamble@%d", rulesIdx, preambleIdx)
+	}
+}
+
+// TestRunLaneMainProjectRuleReplacesCanonical verifies the same-name
+// override semantics for project rules: a file at
+// .idiom/prompts/rules/loop-protocol.md replaces the canonical entry
+// of the same name in place. The canonical body must NOT appear; the
+// project body must.
+func TestRunLaneMainProjectRuleReplacesCanonical(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	root := filepath.Dir(briefPath)
+	rulesDir := filepath.Join(root, ".idiom", "prompts", "rules")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatalf("mkdir rules: %v", err)
+	}
+	override := "PROJECT_LOOP_PROTOCOL_REPLACEMENT — project supplies its own loop rules"
+	if err := os.WriteFile(filepath.Join(rulesDir, "loop-protocol.md"), []byte(override), 0o644); err != nil {
+		t.Fatalf("write override: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"plan-execute", "--project-root", root, briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	prompt := fake.calledPrompt
+	if !strings.Contains(prompt, "PROJECT_LOOP_PROTOCOL_REPLACEMENT") {
+		t.Fatalf("project rule replacement must appear in composed prompt; head=%s", prompt[:min(800, len(prompt))])
+	}
+	// Canonical loop-protocol.md begins with "# Loop Protocol" — that
+	// header must be gone since the project replaced it. The other
+	// canonical rules' headers stay (those weren't replaced).
+	if strings.Contains(prompt, "# Loop Protocol") {
+		t.Fatalf("project replacement must displace canonical loop-protocol.md; canonical header still present")
+	}
+	if !strings.Contains(prompt, "# Brief Skeleton") || !strings.Contains(prompt, "# Known Traps") {
+		t.Fatalf("only the same-named canonical rule should be replaced; other canonical rules went missing")
+	}
+}
+
+// TestRunLaneMainProjectRuleExtrasAppend verifies the extras semantics:
+// project rule files whose names are NOT in the canonical set are
+// appended after the canonical block in alphabetical order. This lets
+// projects layer in project-specific rules (cpp-safety, gdscript-patterns,
+// etc.) without editing the canonical files.
+func TestRunLaneMainProjectRuleExtrasAppend(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	root := filepath.Dir(briefPath)
+	rulesDir := filepath.Join(root, ".idiom", "prompts", "rules")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatalf("mkdir rules: %v", err)
+	}
+	// Two extras with names that sort z-then-a — verifies alphabetical
+	// ordering rather than directory-listing order.
+	if err := os.WriteFile(filepath.Join(rulesDir, "z-late-rule.md"), []byte("EXTRA_Z_SENTINEL"), 0o644); err != nil {
+		t.Fatalf("write extra z: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "a-early-rule.md"), []byte("EXTRA_A_SENTINEL"), 0o644); err != nil {
+		t.Fatalf("write extra a: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"plan-execute", "--project-root", root, briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	prompt := fake.calledPrompt
+
+	canonicalLastIdx := strings.Index(prompt, "# Known Traps — Generic")
+	extraAIdx := strings.Index(prompt, "EXTRA_A_SENTINEL")
+	extraZIdx := strings.Index(prompt, "EXTRA_Z_SENTINEL")
+	if canonicalLastIdx < 0 || extraAIdx < 0 || extraZIdx < 0 {
+		t.Fatalf("missing layer marker; canonical=%d a=%d z=%d", canonicalLastIdx, extraAIdx, extraZIdx)
+	}
+	if !(canonicalLastIdx < extraAIdx && extraAIdx < extraZIdx) {
+		t.Fatalf("extras must follow canonical block in alphabetical order; canonical@%d a@%d z@%d", canonicalLastIdx, extraAIdx, extraZIdx)
+	}
+}
+
+// TestRunLaneMainEmptyProjectRulesDirGraceful verifies that a project
+// with an empty .idiom/prompts/rules/ directory degrades silently —
+// canonical rules still load, no panic, no error.
+func TestRunLaneMainEmptyProjectRulesDirGraceful(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	root := filepath.Dir(briefPath)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom", "prompts", "rules"), 0o755); err != nil {
+		t.Fatalf("mkdir empty rules dir: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"plan-execute", "--project-root", root, briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	if !strings.Contains(fake.calledPrompt, "# Loop Protocol") {
+		t.Fatalf("canonical rules must still load when the project rules dir is empty")
+	}
+}
+
 // argsContain returns true if the args slice contains the flag
 // followed immediately by the value.
 func argsContain(args []string, flag, value string) bool {
@@ -801,17 +962,30 @@ func argsContain(args []string, flag, value string) bool {
 
 // runLaneMainTest is the test-friendly entry to the lane wrapper. It
 // resolves the in-test config (a minimal default with no actual
-// LLM endpoint) and dispatches to the fake runner the test owns.
+// LLM endpoint), installs a no-op brief-lint stub so the default-on
+// preflight doesn't try to shell out to python3 in the test
+// environment, and dispatches to the fake runner the test owns.
 func runLaneMainTest(t *testing.T, args []string, stdout, stderr io.Writer, fake *laneFakeRunner) int {
 	t.Helper()
+	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	deps := laneDeps{
-		loadConfig:        func(string) (config.Config, error) { return cfg, nil },
-		runPlanExecute:    fake.plan,
-		runImplement:      fake.implement,
-		defaultPromptRun:  func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
+		runPlanExecute:   fake.plan,
+		runImplement:     fake.implement,
+		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 	}
 	return runLaneMainWithDeps(args, stdout, stderr, deps)
 }
 
+// stubLaneBriefLint swaps in a test-controlled lint runner and
+// restores the production one on cleanup. Tests that want to
+// exercise the lint preflight reassign before calling
+// runLaneMainTest; the helper installs a no-op stub by default.
+func stubLaneBriefLint(t *testing.T, stub func(args []string, stdout, stderr io.Writer) int) {
+	t.Helper()
+	orig := laneBriefLintRunner
+	laneBriefLintRunner = stub
+	t.Cleanup(func() { laneBriefLintRunner = orig })
+}

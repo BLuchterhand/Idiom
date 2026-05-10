@@ -14,7 +14,7 @@ CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
 
-.PHONY: run server opencode classifier-server route-classifier build install-path fmt tidy test coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset
+.PHONY: run server opencode classifier-server route-classifier build install-path fmt tidy test test-install-docker coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset
 
 run:
 	go run ./cmd/idiom -config $(CONFIG)
@@ -52,6 +52,9 @@ tidy:
 
 test:
 	go test ./...
+
+test-install-docker:
+	./scripts/test-install-docker.sh
 
 coverage:
 	go test ./... -cover
