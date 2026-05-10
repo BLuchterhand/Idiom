@@ -7,6 +7,12 @@ qwen-analyze
 *.prof
 coverage.out
 
+# Python bytecode (cmd/idiom/brief-preflight.py is the only Python file
+# we ship, but pytest/import runs leave __pycache__ next to it on dev
+# machines).
+__pycache__/
+*.pyc
+
 # Local runtime state
 .cache/
 .idiom/*
