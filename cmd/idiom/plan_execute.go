@@ -203,7 +203,7 @@ func planExecutePlannerSystemAddendum() string {
 		"Call `submit_plan` once with every brief-required edit; the executor dispatches them after you stop.",
 		"",
 		"1. Per-edit writes (edit_file / apply_patch / delegate_edit / write_file / append_file / mkdir / go_move_declarations) are blocked. Use `submit_plan`.",
-		"2. Each edit: `path` + (`old_text`+`new_text` | `start_line`+`end_line`+`content`) + one-sentence `purpose`.",
+		"2. Each edit: `path` + ONE of: (`old_text`+`new_text` | `start_line`+`end_line`+`content` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`.",
 		"3. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, do ONE `read_file` of the path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"5. At most one `read_file` per path, only when the brief's anchor needs verification. Never re-read the same file at a different range — if the brief is wrong, stop with `<<QUESTION>>:`.",
