@@ -306,16 +306,35 @@ func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, jsonEvents
 		"edits": len(plan.Edits),
 	})
 	for i, edit := range plan.Edits {
-		req := workspace.ToolRequest{
-			Tool:        "edit_file",
-			Path:        edit.Path,
-			OldText:     edit.OldText,
-			NewText:     edit.NewText,
-			StartLine:   edit.StartLine,
-			EndLine:     edit.EndLine,
-			Content:     edit.Content,
-			ReplaceAll:  edit.ReplaceAll,
-			Description: firstNonEmptyString(edit.Purpose, "executor phase: planned edit"),
+		// Whole-file / new-file shape: replace_all=true with empty
+		// old_text + new_text=full body. submit_plan accepts this
+		// shape (and the planner addendum tells the model to use it
+		// for new files), but edit_file rejects it — so we dispatch
+		// to write_file instead, mapping new_text → content. Without
+		// this branch the executor would fail every new-file edit
+		// with "edit_file requires old_text..." even though the plan
+		// validator accepted it.
+		isWholeFile := edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != ""
+		var req workspace.ToolRequest
+		if isWholeFile {
+			req = workspace.ToolRequest{
+				Tool:        "write_file",
+				Path:        edit.Path,
+				Content:     edit.NewText,
+				Description: firstNonEmptyString(edit.Purpose, "executor phase: whole-file write"),
+			}
+		} else {
+			req = workspace.ToolRequest{
+				Tool:        "edit_file",
+				Path:        edit.Path,
+				OldText:     edit.OldText,
+				NewText:     edit.NewText,
+				StartLine:   edit.StartLine,
+				EndLine:     edit.EndLine,
+				Content:     edit.Content,
+				ReplaceAll:  edit.ReplaceAll,
+				Description: firstNonEmptyString(edit.Purpose, "executor phase: planned edit"),
+			}
 		}
 		result := mgr.Execute(ctx, req)
 		status := "ok"

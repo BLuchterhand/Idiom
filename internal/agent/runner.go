@@ -1295,6 +1295,12 @@ func (r *Runner) Run(
 			default:
 				result = r.Workspace.Execute(ctx, req)
 			}
+			// Convert "file not found" errors on required_edit_paths
+			// into an actionable nudge that points the planner at the
+			// whole-file shape on submit_plan. Without this rewrite,
+			// the planner treats absent new-file paths as a blocker
+			// and gives up. See harness fix #7.
+			result = rewriteReadFileForPlannedNewFile(req, result, r.RuntimeBrief)
 		}
 		recorder.activeToolCall = activeToolCall
 		recorder.recordWithOptions(stepNumber, req, result, "tool_result", runnerRecordOptions{
@@ -8317,6 +8323,45 @@ func isMissingPathListFailure(req workspace.ToolRequest, result workspace.ToolRe
 	}
 	errText := strings.ToLower(strings.TrimSpace(result.Error))
 	return strings.Contains(errText, "no such file or directory") || strings.Contains(errText, "cannot find the path")
+}
+
+// rewriteReadFileForPlannedNewFile converts a "file not found" error
+// on a read_file targeting a required_edit_path into an actionable
+// nudge: the planner can create that file via submit_plan's whole-
+// file shape (replace_all=true with empty old_text + new_text=full
+// body). Without this rewrite the planner sees the bare "no such
+// file" error, treats it as a blocker, and gives up — exactly the
+// failure mode local Qwen hit on every Phase 7.1 dispatch attempt.
+//
+// The rewrite preserves the result as an Error (so the planner can't
+// use it as evidence of an actual file body) but replaces the
+// message with one that names the right next step. We intentionally
+// do NOT convert to a successful no-op: a successful read of a
+// non-existent file would leak into downstream "did the planner read
+// this path" heuristics in misleading ways.
+func rewriteReadFileForPlannedNewFile(req workspace.ToolRequest, result workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) workspace.ToolResult {
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return result
+	}
+	if strings.TrimSpace(result.Error) == "" {
+		return result
+	}
+	lower := strings.ToLower(result.Error)
+	if !strings.Contains(lower, "no such file") && !strings.Contains(lower, "does not exist") {
+		return result
+	}
+	target := normalizeRunnerPath(strings.TrimSpace(req.Path))
+	if target == "" {
+		return result
+	}
+	for _, p := range brief.RequiredEditPaths {
+		if normalizeRunnerPath(p) == target {
+			result.Summary = "Required new-file path does not exist yet"
+			result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to read it. In submit_plan, include this edit shape: {\"path\":%q, \"replace_all\": true, \"old_text\": \"\", \"new_text\": \"<full file body>\", \"purpose\": \"...\"}. The brief's Implementation Shape / Required Behavior section is the source for new_text.", target, target)
+			return result
+		}
+	}
+	return result
 }
 
 func changedPathsFromToolResults(results []workspace.ToolResult) map[string]struct{} {

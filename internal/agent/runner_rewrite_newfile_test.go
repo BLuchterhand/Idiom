@@ -1,0 +1,63 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+
+	"idiom/internal/frontier/workerruntime"
+	"idiom/internal/workspace"
+)
+
+// TestRewriteReadFileForPlannedNewFileFiresOnRequiredPath verifies
+// the Phase 7.3 / harness-fix-#7 contract: a "no such file" error
+// on a read targeting a required_edit_path becomes an actionable
+// nudge naming the whole-file shape on submit_plan, NOT a bare
+// "file not found" the planner treats as a blocker.
+func TestRewriteReadFileForPlannedNewFileFiresOnRequiredPath(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "read_file", Path: "cmd/idiom/init.go"}
+	result := workspace.ToolResult{Tool: "read_file", Error: "no such file or directory"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{"cmd/idiom/init.go", "cmd/idiom/main.go"},
+	}
+	got := rewriteReadFileForPlannedNewFile(req, result, brief)
+	if !strings.Contains(got.Error, "NEW FILE") {
+		t.Fatalf("rewrite should call out the new-file shape; got: %s", got.Error)
+	}
+	if !strings.Contains(got.Error, "replace_all") {
+		t.Fatalf("rewrite should mention replace_all; got: %s", got.Error)
+	}
+	if !strings.Contains(got.Error, "submit_plan") {
+		t.Fatalf("rewrite should point at submit_plan; got: %s", got.Error)
+	}
+}
+
+// TestRewriteReadFileForPlannedNewFileLeavesUnrelatedErrorsAlone
+// verifies the gate's selectivity: errors on paths NOT in
+// required_edit_paths pass through unchanged so the planner sees
+// the original "did-you-mean" diagnostics.
+func TestRewriteReadFileForPlannedNewFileLeavesUnrelatedErrorsAlone(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "read_file", Path: "some/other/path.go"}
+	original := workspace.ToolResult{Tool: "read_file", Error: "no such file"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{"cmd/idiom/init.go"},
+	}
+	got := rewriteReadFileForPlannedNewFile(req, original, brief)
+	if got.Error != original.Error {
+		t.Fatalf("error on unrelated path should pass through; got rewrite: %s", got.Error)
+	}
+}
+
+// TestRewriteReadFileForPlannedNewFileIgnoresNonReadFile verifies
+// the gate doesn't fire on other tools' errors — only read_file is
+// the path that triggers the new-file confusion.
+func TestRewriteReadFileForPlannedNewFileIgnoresNonReadFile(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "search_content", Path: "cmd/idiom/init.go"}
+	original := workspace.ToolResult{Tool: "search_content", Error: "no such file"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{"cmd/idiom/init.go"},
+	}
+	got := rewriteReadFileForPlannedNewFile(req, original, brief)
+	if got.Error != original.Error {
+		t.Fatalf("non-read_file tools should pass through; got: %s", got.Error)
+	}
+}
