@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,14 +16,6 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 )
-
-// fallbackCoderAlias is the model alias used by `--coder` and the
-// plan-execute auto-route when no `.idiom/backends.json` is present
-// (or is present but doesn't declare a coder). It matches the alias
-// Colony's run_idiom_impl.sh hardcodes today; once Phase 4b ships
-// `idiom init` with a templated backends.json, fresh projects will
-// declare their own and never see this fallback.
-const fallbackCoderAlias = "qwen3-coder-30b"
 
 // canonicalLanePromptsFS holds the idiom-canonical lane prompt
 // preambles/postambles, embedded into the binary at build time so
@@ -139,12 +132,15 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			opts.ProjectRoot = filepath.Dir(opts.BriefPath)
 		}
 	}
-	// Resolve the coder alias now that project root is known. This
-	// covers both --coder and the plan-execute auto-route; an
+	// Resolve the executor-role alias now that project root is known.
+	// This covers both --coder and the plan-execute auto-route; an
 	// explicit --model already short-circuited coderRequested in
 	// parseLaneOptions, so this doesn't fight a deliberate choice.
+	// When no backends.json declares an executor, opts.Model stays
+	// empty and the subcommand uses cfg.LlamaServer.Model — i.e. the
+	// project's single configured model handles the lane.
 	if opts.coderRequested && strings.TrimSpace(opts.Model) == "" {
-		opts.Model = resolveCoderAlias(opts.ProjectRoot, opts.BackendProfile, stderr)
+		opts.Model = resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RoleExecutor, stderr)
 	}
 	composedPath, err := composeLanePromptToFile(opts)
 	if err != nil {
@@ -214,9 +210,10 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.Title, "title", "", "atom title (carried through to telemetry)")
 	fs.StringVar(&opts.Model, "model", "", "override the model alias used for the lane")
 	// --coder records intent; the actual alias is resolved later in
-	// runLaneMainWithDeps from .idiom/backends.json, falling back to
-	// fallbackCoderAlias when no backends file declares one.
-	coderShortcut := fs.Bool("coder", false, "use the project's default coder alias (from .idiom/backends.json proxy.default_coder)")
+	// runLaneMainWithDeps from .idiom/backends.json. When no backends
+	// file declares an executor role, opts.Model stays empty and the
+	// subcommand uses the configured cfg.LlamaServer model.
+	coderShortcut := fs.Bool("coder", false, "use the project's executor-role alias from .idiom/backends.json (legacy spelling: proxy.default_coder)")
 	fs.StringVar(&opts.BackendProfile, "backend-profile", "", "select a named profile from .idiom/backends.json (omit to use the lone profile)")
 	fs.BoolVar(&opts.JSONEvents, "json", false, "emit structured JSONL events to stdout")
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id")
@@ -253,11 +250,13 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	// fallback, applied only when both --project-root and config
 	// workspace.root are empty.
 
-	// Auto-route plan-execute to the project's coder alias when no
-	// --model override is set. Implement mode keeps its 35B reasoning
-	// default. Record the intent here; the actual alias resolves in
-	// runLaneMainWithDeps once project root and backends.json are
-	// known.
+	// Auto-route plan-execute to the project's executor-role alias
+	// when no --model override is set. Record intent only; the alias
+	// resolves in runLaneMainWithDeps once project root and
+	// backends.json are loaded. When no executor role is declared,
+	// opts.Model stays empty and the subcommand falls through to
+	// cfg.LlamaServer — i.e. the lane runs on the single configured
+	// model, which is the desired behavior for single-model projects.
 	if opts.Mode == "plan-execute" && strings.TrimSpace(opts.Model) == "" {
 		opts.coderRequested = true
 	}
@@ -265,36 +264,35 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	return opts, nil
 }
 
-// resolveCoderAlias reads .idiom/backends.json for the resolved
-// project root and returns the appropriate coder alias for the
-// `--coder` shortcut and plan-execute auto-route. When the file is
-// missing, malformed, or the selected profile doesn't declare a
-// coder, the fallback alias is returned so existing single-machine
-// setups keep working without a config change.
-func resolveCoderAlias(projectRoot, profileName string, stderr io.Writer) string {
+// resolveRoleAlias reads .idiom/backends.json for the resolved
+// project root and returns the alias declared for the requested role
+// (executor today; planner / classifier reserved for future use).
+// Returns "" when the file is missing, the profile is not found, or
+// the role isn't declared — the caller leaves --model unset and the
+// underlying subcommand uses cfg.LlamaServer.Model. Malformed
+// backends.json surfaces to stderr but still returns "" so the lane
+// degrades gracefully to single-model behavior instead of crashing.
+func resolveRoleAlias(projectRoot, profileName, role string, stderr io.Writer) string {
 	file, ok, err := backends.LoadFromProjectRoot(projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return fallbackCoderAlias
+		return ""
 	}
 	if !ok {
-		return fallbackCoderAlias
+		return ""
 	}
 	prof, found := file.Profile(profileName)
 	if !found {
 		// A backends.json that exists but doesn't have the named
-		// profile is a project misconfiguration; surface it to
-		// stderr without erroring out the lane (the fallback alias
-		// is still likely to work for a typical local stack).
+		// profile is a project misconfiguration; surface it to stderr
+		// without erroring out the lane.
 		if profileName != "" {
-			fmt.Fprintf(stderr, "lane: backend profile %q not found in .idiom/backends.json — using fallback alias %q\n", profileName, fallbackCoderAlias)
+			fmt.Fprintf(stderr, "lane: backend profile %q not found in .idiom/backends.json\n", profileName)
 		}
-		return fallbackCoderAlias
+		return ""
 	}
-	if alias := prof.CoderAlias(); alias != "" {
-		return alias
-	}
-	return fallbackCoderAlias
+	alias, _ := prof.AliasForRole(role)
+	return alias
 }
 
 // composeLanePromptToFile builds the composed prompt and writes it to
@@ -431,9 +429,7 @@ func emitLaneJSONEvent(stdout io.Writer, eventType string, fields map[string]any
 		"type": "idiom.lane." + eventType,
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	for k, v := range fields {
-		payload[k] = v
-	}
+	maps.Copy(payload, fields)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return

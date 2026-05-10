@@ -219,21 +219,26 @@ func TestRunLaneMainCoderShortcutHonorsBackendsJSON(t *testing.T) {
 	}
 }
 
-// TestRunLaneMainFallsBackToHardcodedCoderWhenNoBackendsJSON
-// verifies the migration safety net: a project that hasn't migrated
-// to backends.json keeps getting the hardcoded `qwen3-coder-30b` so
-// existing Colony-style setups don't break the moment Phase 4
-// lands. Without this fallback the migration would force every
-// project to author backends.json before running plan-execute.
-func TestRunLaneMainFallsBackToHardcodedCoderWhenNoBackendsJSON(t *testing.T) {
+// TestRunLaneMainOmitsModelFlagWhenNoBackendsJSON verifies the
+// single-model contract: a project with no .idiom/backends.json runs
+// the lane on whatever cfg.LlamaServer.Model says, with NO forced
+// fallback alias. The `--model` flag is omitted from the forwarded
+// args so the subcommand reads the configured model from cfg.
+//
+// (This replaces the earlier TestRunLaneMainFallsBackToHardcodedCoder
+// behavior, which baked in `qwen3-coder-30b` and prevented other
+// projects from running idiom on a single configured model.)
+func TestRunLaneMainOmitsModelFlagWhenNoBackendsJSON(t *testing.T) {
 	briefPath := writeBrief(t, "# atom\n")
 	var stdout, stderr bytes.Buffer
 	fake := &laneFakeRunner{}
 	if got := runLaneMainTest(t, []string{"plan-execute", briefPath}, &stdout, &stderr, fake); got != 0 {
 		t.Fatalf("expected exit 0, got %d", got)
 	}
-	if !argsContain(fake.calledArgs, "--model", "qwen3-coder-30b") {
-		t.Fatalf("absent backends.json, plan-execute must use the fallback alias; forwarded: %v", fake.calledArgs)
+	for i, a := range fake.calledArgs {
+		if a == "--model" {
+			t.Fatalf("absent backends.json, plan-execute must NOT inject a --model flag; got %v at index %d", fake.calledArgs, i)
+		}
 	}
 }
 
@@ -471,18 +476,31 @@ func TestRunLaneMainConfigFlagBeatsEnv(t *testing.T) {
 	}
 }
 
-// TestRunLaneMainAutoRoutesPlanExecuteToCoder verifies the
-// auto-routing rule we shipped in Colony's script: when no --model is
-// explicit, plan-execute mode picks the configured coder model.
-func TestRunLaneMainAutoRoutesPlanExecuteToCoder(t *testing.T) {
+// TestRunLaneMainAutoRoutesPlanExecuteToBackendsExecutor verifies
+// the auto-routing rule for plan-execute: when backends.json declares
+// an executor-role alias, the lane forwards that alias as --model.
+// This replaces the earlier hardcoded qwen3-coder-30b assertion;
+// projects now declare their own executor in backends.json.
+func TestRunLaneMainAutoRoutesPlanExecuteToBackendsExecutor(t *testing.T) {
 	briefPath := writeBrief(t, "# atom")
+	root := filepath.Dir(briefPath)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"profiles": {"local": {"models": [
+		{"alias": "tagged-executor", "roles": ["executor"]}
+	]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 	var stdout, stderr bytes.Buffer
 	fake := &laneFakeRunner{}
-	if got := runLaneMainTest(t, []string{"plan-execute", briefPath}, &stdout, &stderr, fake); got != 0 {
-		t.Fatalf("expected exit 0, got %d", got)
+	args := []string{"plan-execute", "--project-root", root, briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
-	if !argsContain(fake.calledArgs, "--model", "qwen3-coder-30b") {
-		t.Fatalf("plan-execute must auto-route to qwen3-coder-30b when no --model given; forwarded args: %v", fake.calledArgs)
+	if !argsContain(fake.calledArgs, "--model", "tagged-executor") {
+		t.Fatalf("plan-execute must auto-route to backends.json executor role; forwarded: %v", fake.calledArgs)
 	}
 }
 
@@ -501,24 +519,39 @@ func TestRunLaneMainHonorsExplicitModelOverride(t *testing.T) {
 	}
 }
 
-// TestRunLaneMainImplementUsesDefaultModel verifies that implement
-// mode does NOT auto-route to the coder. Implement uses the
-// reasoning-first 35B by default.
-func TestRunLaneMainImplementUsesDefaultModel(t *testing.T) {
+// TestRunLaneMainImplementDoesNotAutoRoute verifies that implement
+// mode does NOT auto-route to the executor role; only plan-execute
+// does. Implement always honors the configured planner unless the
+// caller passes --model or --coder explicitly.
+func TestRunLaneMainImplementDoesNotAutoRoute(t *testing.T) {
 	briefPath := writeBrief(t, "# atom")
+	root := filepath.Dir(briefPath)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"profiles": {"local": {"models": [
+		{"alias": "tagged-executor", "roles": ["executor"]}
+	]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 	var stdout, stderr bytes.Buffer
 	fake := &laneFakeRunner{}
-	if got := runLaneMainTest(t, []string{"implement", briefPath}, &stdout, &stderr, fake); got != 0 {
+	args := []string{"implement", "--project-root", root, briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
 		t.Fatalf("expected exit 0, got %d", got)
 	}
-	if argsContain(fake.calledArgs, "--model", "qwen3-coder-30b") {
-		t.Fatalf("implement mode must NOT auto-route to coder; got: %v", fake.calledArgs)
+	if argsContain(fake.calledArgs, "--model", "tagged-executor") {
+		t.Fatalf("implement mode must NOT auto-route to the executor role; got: %v", fake.calledArgs)
 	}
 }
 
-// TestRunLaneMainCoderFlagSetsCoder verifies the legacy --coder flag
-// shortcut used by Colony's wrapper.
-func TestRunLaneMainCoderFlagSetsCoder(t *testing.T) {
+// TestRunLaneMainCoderFlagOmitsModelWithoutBackends verifies the
+// single-model contract for the legacy --coder flag: with no
+// .idiom/backends.json the flag has nothing to resolve and the lane
+// must NOT inject a hardcoded fallback alias. The subcommand falls
+// back to cfg.LlamaServer for whichever model is configured.
+func TestRunLaneMainCoderFlagOmitsModelWithoutBackends(t *testing.T) {
 	briefPath := writeBrief(t, "# atom")
 	var stdout, stderr bytes.Buffer
 	fake := &laneFakeRunner{}
@@ -526,8 +559,38 @@ func TestRunLaneMainCoderFlagSetsCoder(t *testing.T) {
 	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
 		t.Fatalf("expected exit 0, got %d", got)
 	}
-	if !argsContain(fake.calledArgs, "--model", "qwen3-coder-30b") {
-		t.Fatalf("--coder must set --model qwen3-coder-30b; got: %v", fake.calledArgs)
+	for i, a := range fake.calledArgs {
+		if a == "--model" {
+			t.Fatalf("--coder without backends.json must NOT inject --model; got %v at index %d", fake.calledArgs, i)
+		}
+	}
+}
+
+// TestRunLaneMainCoderFlagResolvesViaBackends verifies the new path
+// for --coder: when a backends.json declares an executor role, the
+// flag resolves to that alias. This is the modern equivalent of the
+// old "--coder always means qwen3-coder-30b" behavior, but driven by
+// project config rather than a hardcoded global.
+func TestRunLaneMainCoderFlagResolvesViaBackends(t *testing.T) {
+	briefPath := writeBrief(t, "# atom")
+	root := filepath.Dir(briefPath)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"profiles": {"local": {"models": [
+		{"alias": "project-executor", "roles": ["executor"]}
+	]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"implement", "--project-root", root, "--coder", briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	if !argsContain(fake.calledArgs, "--model", "project-executor") {
+		t.Fatalf("--coder must resolve via backends.json executor role; forwarded: %v", fake.calledArgs)
 	}
 }
 

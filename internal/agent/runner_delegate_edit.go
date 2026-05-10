@@ -19,10 +19,10 @@ import (
 // stops feeling responsible for confirming each landed edit.
 //
 // The implementation routes the planner's edit spec through a single
-// chat completion against ImplementerClient (the configured local
-// coder backend, typically the 30B coder model). The executor's job
-// is narrow: read the spec, emit a single edit_file or apply_patch
-// tool-call JSON, and stop. The runner parses that JSON, dispatches
+// chat completion against ImplementerClient (the configured executor-
+// role backend, sourced from .idiom/backends.json or cfg.Implementer).
+// The executor's job is narrow: read the spec, emit a single edit_file
+// or apply_patch tool-call JSON, and stop. The runner parses that JSON, dispatches
 // the underlying edit through Workspace.Execute, and returns the real
 // edit result back to the planner. If the executor fails for any
 // reason — model error, malformed reply, missing client — the runner
@@ -179,13 +179,11 @@ func parseDelegateEditReply(content string, planSpec workspace.ToolRequest) (wor
 // detected (caller falls back to the original string).
 func stripJSONFence(s string) string {
 	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "```") {
+	rest, ok := strings.CutPrefix(s, "```")
+	if !ok {
 		return ""
 	}
-	rest := strings.TrimPrefix(s, "```")
-	if strings.HasPrefix(rest, "json") {
-		rest = strings.TrimPrefix(rest, "json")
-	}
+	rest = strings.TrimPrefix(rest, "json")
 	rest = strings.TrimLeft(rest, "\r\n ")
 	end := strings.LastIndex(rest, "```")
 	if end < 0 {

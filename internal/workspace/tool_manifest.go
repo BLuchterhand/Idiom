@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -183,13 +184,7 @@ func WorkspaceWriteToolNames() []string {
 }
 
 func IsWorkspaceWriteTool(tool string) bool {
-	tool = strings.TrimSpace(tool)
-	for _, candidate := range WorkspaceWriteToolNames() {
-		if tool == candidate {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(WorkspaceWriteToolNames(), strings.TrimSpace(tool))
 }
 
 func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
@@ -327,7 +322,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "write_file", Request: `{"tool":"write_file","path":"relative/file","content":"full file contents"}`, Purpose: "write full file content"},
 		{Tool: "append_file", Request: `{"tool":"append_file","path":"relative/file","content":"text to append"}`, Purpose: "append text"},
 		{Tool: "apply_patch", Request: `{"tool":"apply_patch","content":"*** Begin Patch\n*** Update File: relative/file\n@@\n-old\n+new\n*** End Patch"}`, Purpose: "multi-file patch envelope. Use ONLY these *** directives: Begin Patch, End Patch, Add File, Update File, Delete File, Move to. Hunks (`@@`) inside Update File. Do not invent extras like *** Sanity Check / *** Note / *** Verification."},
-		{Tool: "delegate_edit", Request: `{"tool":"delegate_edit","path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}`, Purpose: "hand a single edit spec to the local executor model (typically the 30B coder) and return its dispatch result. Use this when you have already decided the exact change and want to keep your own context focused on planning the next edit instead of re-reading what you just wrote."},
+		{Tool: "delegate_edit", Request: `{"tool":"delegate_edit","path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}`, Purpose: "hand a single edit spec to the configured executor-role model and return its dispatch result. Use this when you have already decided the exact change and want to keep your own context focused on planning the next edit instead of re-reading what you just wrote. Falls back to direct dispatch when no executor is configured."},
 		{Tool: "submit_plan", Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}]}`, Purpose: "submit a structured edit plan (plan-then-execute mode only). The planner enumerates every edit up-front; the executor phase dispatches them in order. Use this in lieu of edit_file/apply_patch when the lane is plan-only."},
 		{Tool: "git_status", Request: `{"tool":"git_status","workdir":"."}`, Purpose: "inspect git state"},
 		{Tool: "git_diff", Request: `{"tool":"git_diff","workdir":".","path":"optional/path"}`, Purpose: "inspect git diff"},

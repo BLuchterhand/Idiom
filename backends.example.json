@@ -1,0 +1,67 @@
+{
+  "profiles": {
+    "single-model": {
+      "models": [
+        {
+          "alias": "qwen3-coder-30b",
+          "binary": "mlx_lm.server",
+          "model_path": "/path/to/qwen3-coder-30b",
+          "host": "127.0.0.1",
+          "port": 47780,
+          "kind": "mlx",
+          "max_tokens": 8192
+        }
+      ]
+    },
+    "planner-executor-split": {
+      "models": [
+        {
+          "alias": "qwen3.6-35b",
+          "binary": "mlx_lm.server",
+          "model_path": "/path/to/qwen3.6-35b",
+          "host": "127.0.0.1",
+          "port": 47780,
+          "kind": "mlx",
+          "max_tokens": 8192,
+          "roles": ["planner"]
+        },
+        {
+          "alias": "qwen3-coder-30b",
+          "binary": "mlx_lm.server",
+          "model_path": "/path/to/qwen3-coder-30b",
+          "host": "127.0.0.1",
+          "port": 47781,
+          "kind": "mlx",
+          "max_tokens": 8192,
+          "roles": ["executor"]
+        }
+      ]
+    },
+    "behind-alias-proxy": {
+      "models": [
+        {
+          "alias": "qwen3.6-35b",
+          "binary": "mlx_lm.server",
+          "model_path": "/path/to/qwen3.6-35b",
+          "host": "127.0.0.1",
+          "port": 47780,
+          "kind": "mlx"
+        },
+        {
+          "alias": "qwen3-coder-30b",
+          "binary": "mlx_lm.server",
+          "model_path": "/path/to/qwen3-coder-30b",
+          "host": "127.0.0.1",
+          "port": 47781,
+          "kind": "mlx"
+        }
+      ],
+      "proxy": {
+        "listen": 47680,
+        "default_alias": "qwen3.6-35b",
+        "default_planner": "qwen3.6-35b",
+        "default_executor": "qwen3-coder-30b"
+      }
+    }
+  }
+}

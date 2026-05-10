@@ -87,8 +87,9 @@ the conversation log.
 
 Adds a tool the planner can call instead of `edit_file` /
 `apply_patch`. The runner takes the spec, sends it to the configured
-executor model (`ImplementerClient`, typically the local 30B coder
-backend), parses the executor's reply for an `edit_file` /
+executor model (`Runner.ImplementerClient`, sourced from the executor
+role in `.idiom/backends.json` or the `Implementer` block of
+`config.json`), parses the executor's reply for an `edit_file` /
 `apply_patch` JSON tool call, and dispatches that against the
 workspace. The planner sees a normal tool result; the executor never
 sees the planner's context.
@@ -125,24 +126,69 @@ Two valid edit shapes (mirror `edit_file`):
 
 ### Configuration
 
-`delegate_edit` uses `Runner.ImplementerClient`. In a normal `idiom`
-session this comes from the `Implementer` block of the config:
+`delegate_edit` uses `Runner.ImplementerClient`, which the harness
+resolves from one of two sources at boot:
+
+**Preferred: `.idiom/backends.json`** with an executor-role tag.
+Either tag a model with `"roles": ["executor"]`, set
+`proxy.default_executor` (or the legacy `proxy.default_coder`), or
+leave a one-model profile untagged and let the lone-model fallback
+serve every role. See `backends.example.json` at the repo root for
+copy-paste-able single-model, planner+executor split, and
+proxy-fronted variants.
+
+```jsonc
+// One model that handles every role (planner, executor, classifier).
+// Single-model setups: .idiom/backends.json
+{
+  "profiles": {
+    "local": {
+      "models": [
+        {"alias": "qwen3-coder-30b", "binary": "mlx_lm.server",
+         "model_path": "/path/to/qwen3-coder-30b", "port": 47780}
+      ]
+    }
+  }
+}
+```
+
+```jsonc
+// Two-model split: dedicated planner + executor.
+{
+  "profiles": {
+    "local": {
+      "models": [
+        {"alias": "qwen3.6-35b",      "model_path": "...", "port": 47780,
+         "roles": ["planner"]},
+        {"alias": "qwen3-coder-30b",  "model_path": "...", "port": 47781,
+         "roles": ["executor"]}
+      ]
+    }
+  }
+}
+```
+
+**Fallback: `config.json`** `Implementer` block (and `LlamaServer` for
+the planner, `RouteClassifier` for the classifier). Still supported
+unchanged — when no backends.json declares the role, the harness
+reads these fields exactly as it always has:
 
 ```json
 {
   "llama_server": { ... },
   "implementer": {
-    "command": "...",
     "kind": "mlx",
-    "url": "http://127.0.0.1:8082"
+    "host": "127.0.0.1",
+    "port": 47781,
+    "model": "/path/to/qwen3-coder-30b"
   }
 }
 ```
 
-If `implementer` is unset, `delegate_edit` falls back to direct
-dispatch — still useful as a "this is delegated work, don't verify"
-mental hook for the planner. The runner deliberately does NOT fall
-back to the planner's own client; that would defeat the
+If neither source declares an executor, `delegate_edit` falls back to
+direct dispatch — still useful as a "this is delegated work, don't
+verify" mental hook for the planner. The runner deliberately does NOT
+fall back to the planner's own client; that would defeat the
 context-separation goal.
 
 ### Telemetry events
@@ -346,7 +392,9 @@ but B is independently useful inside `idiom implement`.
    conversation logs for `verification_intercept_already_edited`
    events and confirm the model pivots to a write on the next turn.
 2. **Once stable**: recommend `delegate_edit` in implementation
-   briefs and configure `Implementer` to point at the 30B coder.
+   briefs and declare an executor-role backend (either via
+   `roles: ["executor"]` in `.idiom/backends.json` or by setting the
+   `Implementer` block in `config.json`).
 3. **For larger atoms (8+ files)**: switch to `idiom plan-execute`.
    Rewrite the brief if necessary so it's planner-friendly (the
    planner never edits — it must enumerate every change).

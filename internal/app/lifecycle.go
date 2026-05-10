@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"idiom/internal/agent"
+	"idiom/internal/backends"
 	"idiom/internal/config"
 	"idiom/internal/llama"
 	"idiom/internal/projectartifacts"
@@ -21,6 +22,87 @@ import (
 	"idiom/internal/transcript"
 	"idiom/internal/workspace"
 )
+
+// backendsModelToLlamaServer converts a backends.Model entry into a
+// config.LlamaServer suitable for both client construction and the
+// llama.ServerController launcher. Fields the backends schema doesn't
+// carry (CtxSize, Threads, Reasoning*, LogFile, etc.) inherit from
+// `defaults` so a sparsely-declared backends.json entry still produces
+// a working spec — the project's existing config.json fields fill the
+// rest.
+//
+// out.Model resolves in this priority order: the Model entry's
+// ModelPath (direct-mode file path), then the Model entry's Alias
+// (proxy-mode identifier — overrides any inherited path because the
+// alias is what the proxy routes by), then the inherited defaults.
+//
+// When backends.Model.Host is empty, the host falls back to defaults
+// or 127.0.0.1 — every shipped config uses 127.0.0.1 and a missing
+// host in backends.json shouldn't be a hard error.
+func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) config.LlamaServer {
+	out := defaults
+	if k := strings.TrimSpace(m.Kind); k != "" {
+		out.Kind = k
+	}
+	if b := strings.TrimSpace(m.Binary); b != "" {
+		out.Binary = b
+	}
+	if h := strings.TrimSpace(m.Host); h != "" {
+		out.Host = h
+	} else if strings.TrimSpace(out.Host) == "" {
+		out.Host = "127.0.0.1"
+	}
+	if m.Port > 0 {
+		out.Port = m.Port
+	}
+	if mp := strings.TrimSpace(m.ModelPath); mp != "" {
+		out.Model = mp
+	} else if alias := strings.TrimSpace(m.Alias); alias != "" {
+		// Alias wins over an inherited model path. Proxy-fronted setups
+		// declare an alias and let the proxy route by that name; falling
+		// through to the inherited path here would silently send the
+		// planner's model identifier to the proxy and route the request
+		// to the wrong backend.
+		out.Model = alias
+	}
+	if len(m.ExtraArgs) > 0 {
+		out.ExtraArgs = append([]string(nil), m.ExtraArgs...)
+	}
+	return out
+}
+
+// roleSpec resolves a backends.json role to a config.LlamaServer, or
+// returns (defaults, false) when the role isn't declared. Errors from
+// backends.json parsing surface to stderr (the harness boots with the
+// fallback rather than crashing on a malformed sidecar file).
+func roleSpec(projectRoot, role string, defaults config.LlamaServer) (config.LlamaServer, bool) {
+	_, model, ok, err := backends.ResolveRoleFromProjectRoot(projectRoot, "", role)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lifecycle: backends role %q resolution failed: %v\n", role, err)
+		return defaults, false
+	}
+	if !ok {
+		return defaults, false
+	}
+	return backendsModelToLlamaServer(model, defaults), true
+}
+
+// sameLlamaTarget reports whether two LlamaServer specs would route
+// to functionally identical backends. Used to decide whether to skip
+// building a separate implementer client when backends.json's executor
+// role resolves to the same target as the planner — in that case
+// delegate_edit's direct-dispatch fallback gives identical behavior
+// without the extra round-trip.
+func sameLlamaTarget(a, b config.LlamaServer) bool {
+	return a.Host == b.Host && a.Port == b.Port && a.Model == b.Model && a.Kind == b.Kind
+}
+
+// llamaServerBaseURL renders the http://host:port URL for a
+// LlamaServer spec. Centralised so the planner / implementer /
+// classifier wiring all build URLs the same way.
+func llamaServerBaseURL(spec config.LlamaServer) string {
+	return fmt.Sprintf("http://%s:%d", spec.Host, spec.Port)
+}
 
 type serverStatusMsg struct {
 	running bool
@@ -52,16 +134,6 @@ func New(cfg config.Config) *Model {
 	spin.Spinner = spinner.Dot
 	spin.Style = lipgloss.NewStyle().Foreground(colorSpinner)
 
-	var summaryClient *llama.Client
-	var summaryController *llama.ServerController
-	if url := cfg.RouteClassifier.BaseURL; url != "" {
-		timeout := time.Duration(cfg.RouteClassifier.TimeoutSeconds) * time.Second
-		summaryClient = llama.NewClient(url, timeout).WithBackend(cfg.RouteClassifier.Kind)
-		if cfg.RouteClassifier.AutoStartServer && cfg.RouteClassifier.Binary != "" {
-			summaryController = llama.NewServerController(cfg.RouteClassifier.LlamaServerSpec(), summaryClient)
-		}
-	}
-
 	// Per-HTTP-call timeout on the primary and implementer llama clients.
 	// Bounds a single stuck chat request so it can't hang forever. This is
 	// decoupled from the turn-wide soft budget (Chat.MaxDurationSeconds)
@@ -69,16 +141,71 @@ func New(cfg config.Config) *Model {
 	// before cancelling the turn.
 	callTimeout := time.Duration(cfg.Chat.RequestTimeoutSeconds) * time.Second
 
+	// Each role (planner / executor / classifier) is resolved through
+	// backends.json first. When a role is declared there, the spec
+	// overrides the matching cfg.* field and that single source feeds
+	// both the client URL and the launcher controller. When the role
+	// isn't declared, the cfg.* field is the source of truth and the
+	// behavior is identical to the pre-roles wiring.
+	projectRoot := strings.TrimSpace(cfg.Workspace.Root)
+
+	plannerSpec, _ := roleSpec(projectRoot, backends.RolePlanner, cfg.LlamaServer)
+
+	// Executor inherits from cfg.Implementer when set, falling back to
+	// cfg.LlamaServer otherwise so a project can declare just the
+	// executor in backends.json without also setting up an implementer
+	// block in config.json.
+	implementerEnabled := cfg.Implementer != nil
+	executorDefaults := cfg.LlamaServer
+	if implementerEnabled {
+		executorDefaults = *cfg.Implementer
+	}
+	executorSpec, executorFromBackends := roleSpec(projectRoot, backends.RoleExecutor, executorDefaults)
+	if executorFromBackends {
+		// Only enable the implementer client when the resolved executor
+		// target is actually distinct from the planner. Single-model
+		// projects (lone-model fallback in AliasForRole) resolve both
+		// roles to the same target; building a separate client would
+		// add a round-trip on every delegate_edit for no benefit. The
+		// runner's direct-dispatch fallback handles that case.
+		if !sameLlamaTarget(executorSpec, plannerSpec) {
+			implementerEnabled = true
+		} else {
+			// Keep executorSpec aligned with the planner so resolveModelID
+			// renders the right label if status code reads it.
+			executorSpec = plannerSpec
+		}
+	}
+
+	classifierDefaults := cfg.RouteClassifier.LlamaServerSpec()
+	classifierSpec, classifierFromBackends := roleSpec(projectRoot, backends.RoleClassifier, classifierDefaults)
+
+	var summaryClient *llama.Client
+	var summaryController *llama.ServerController
+	classifierBaseURL := strings.TrimSpace(cfg.RouteClassifier.BaseURL)
+	if classifierFromBackends {
+		classifierBaseURL = llamaServerBaseURL(classifierSpec)
+	}
+	if classifierBaseURL != "" {
+		timeout := time.Duration(cfg.RouteClassifier.TimeoutSeconds) * time.Second
+		summaryClient = llama.NewClient(classifierBaseURL, timeout).WithBackend(classifierSpec.Kind)
+		if cfg.RouteClassifier.AutoStartServer && classifierSpec.Binary != "" {
+			summaryController = llama.NewServerController(classifierSpec, summaryClient)
+		}
+	}
+
 	var implementerClient *llama.Client
 	var implementerController *llama.ServerController
-	if url := cfg.ImplementerBaseURL(); url != "" {
-		implementerClient = llama.NewClient(url, callTimeout).WithBackend(cfg.Implementer.Kind)
-		implementerController = llama.NewServerController(*cfg.Implementer, implementerClient)
+	if implementerEnabled {
+		implementerClient = llama.NewClient(llamaServerBaseURL(executorSpec), callTimeout).WithBackend(executorSpec.Kind)
+		implementerController = llama.NewServerController(executorSpec, implementerClient)
 	}
 
 	m := &Model{
 		cfg:                   cfg,
-		client:                llama.NewClient(cfg.BaseURL(), callTimeout).WithBackend(cfg.LlamaServer.Kind),
+		plannerSpec:           plannerSpec,
+		executorSpec:          executorSpec,
+		client:                llama.NewClient(llamaServerBaseURL(plannerSpec), callTimeout).WithBackend(plannerSpec.Kind),
 		implementerClient:     implementerClient,
 		implementerController: implementerController,
 		summaryClient:         summaryClient,
@@ -92,7 +219,7 @@ func New(cfg config.Config) *Model {
 		traceMode:             traceDisplayCompact,
 		agentModeName:         strings.TrimSpace(cfg.Chat.AgentMode),
 	}
-	m.controller = llama.NewServerController(cfg.LlamaServer, m.client)
+	m.controller = llama.NewServerController(plannerSpec, m.client)
 	m.workspace = workspace.NewManager(cfg.Workspace)
 	if cfg.Chat.AttachInstructionFiles {
 		if candidates, explicit := instructionAttachmentCandidates(cfg.Chat); explicit {
@@ -250,10 +377,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// j / k line-scroll the panel when focused (vim-style).
 				switch string(msg.Runes) {
 				case "j":
-					m.historyViewport.LineDown(1)
+					m.historyViewport.ScrollDown(1)
 					return m, waitForEvent(m.events)
 				case "k":
-					m.historyViewport.LineUp(1)
+					m.historyViewport.ScrollUp(1)
 					return m, waitForEvent(m.events)
 				}
 			}
@@ -434,7 +561,7 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
 		m.serverUp = true
-		m.modelID = resolveModelID(m.cfg.LlamaServer, models[0].ID)
+		m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
 		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID})
 		return nil
 	}
@@ -453,12 +580,12 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	models, err = m.client.ListModels(ctx)
 	if err != nil || len(models) == 0 {
 		m.serverUp = true
-		m.modelID = resolveModelID(m.cfg.LlamaServer, "local-model")
+		m.modelID = resolveModelID(m.plannerSpec, "local-model")
 		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, owned: true})
 		return nil
 	}
 	m.serverUp = true
-	m.modelID = resolveModelID(m.cfg.LlamaServer, models[0].ID)
+	m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
 	m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, owned: true})
 	return nil
 }

@@ -133,6 +133,14 @@ type Model struct {
 	cfg        config.Config
 	client     *llama.Client
 	controller *llama.ServerController
+	// plannerSpec + executorSpec are the resolved LlamaServer specs for
+	// the planner and executor roles. They mirror cfg.LlamaServer /
+	// cfg.Implementer when no .idiom/backends.json declares those roles
+	// and reflect the backends.json entry otherwise. Status messages
+	// and resolveModelID lookups should read these instead of cfg.* so
+	// they stay correct under both wiring sources.
+	plannerSpec  config.LlamaServer
+	executorSpec config.LlamaServer
 	// implementerClient + implementerController are set only when the
 	// config has a separate Implementer llama-server. Nil when the app
 	// runs in single-model mode. Used by runChildTask to route write-
@@ -417,7 +425,7 @@ func (m *Model) bootstrap() {
 
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
-		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, models[0].ID)}
+		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, models[0].ID)}
 		return
 	}
 
@@ -438,7 +446,7 @@ func (m *Model) startImplementerAsync() {
 	defer cancel()
 
 	if models, err := m.implementerClient.ListModels(ctx); err == nil && len(models) > 0 {
-		m.events <- infoMsg{text: "Implementer ready: " + resolveModelID(*m.cfg.Implementer, models[0].ID)}
+		m.events <- infoMsg{text: "Implementer ready: " + resolveModelID(m.executorSpec, models[0].ID)}
 		return
 	}
 	if !m.cfg.Chat.AutoStartServer {
@@ -457,7 +465,7 @@ func (m *Model) startImplementerAsync() {
 	if err == nil && len(models) > 0 {
 		id = models[0].ID
 	}
-	m.events <- infoMsg{text: "Implementer ready: " + resolveModelID(*m.cfg.Implementer, id)}
+	m.events <- infoMsg{text: "Implementer ready: " + resolveModelID(m.executorSpec, id)}
 }
 
 func (m *Model) handleSlashCommand(raw string) bool {
@@ -600,8 +608,8 @@ func (m *Model) handleSlashCommand(raw string) bool {
 		}
 	case "/system":
 		prompt := strings.TrimSpace(strings.TrimPrefix(raw, "/system"))
-		switch {
-		case prompt == "":
+		switch prompt {
+		case "":
 			m.status = "Usage: /system <prompt>"
 		default:
 			m.cfg.Chat.SystemPrompt = prompt
@@ -748,11 +756,11 @@ func (m *Model) startServerAsync() {
 
 		models, err := m.client.ListModels(context.Background())
 		if err != nil || len(models) == 0 {
-			m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, "local-model"), owned: true}
+			m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, "local-model"), owned: true}
 			return
 		}
 
-		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, models[0].ID), owned: true}
+		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, models[0].ID), owned: true}
 	}()
 }
 
@@ -787,10 +795,10 @@ func (m *Model) restartServerAsync() {
 
 		models, err := m.client.ListModels(context.Background())
 		if err != nil || len(models) == 0 {
-			m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, "local-model"), owned: true}
+			m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, "local-model"), owned: true}
 			return
 		}
-		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.cfg.LlamaServer, models[0].ID), owned: true}
+		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, models[0].ID), owned: true}
 	}()
 }
 
@@ -891,10 +899,7 @@ func (m *Model) resize() {
 	dividerCount := 2 // one after header, one before input
 	inputHeight := 5
 	footerHeight := 4 // compact bar + up to 3 conditional lines
-	contentHeight := m.height - headerHeight - dividerCount - inputHeight - footerHeight
-	if contentHeight < 5 {
-		contentHeight = 5
-	}
+	contentHeight := max(m.height-headerHeight-dividerCount-inputHeight-footerHeight, 5)
 
 	var mainWidth, panelWidth int
 	if m.historyPanelOpen {
