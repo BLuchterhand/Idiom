@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"idiom/internal/config"
+	"idiom/internal/runner"
 	"idiom/internal/telemetry"
 )
 
@@ -41,10 +43,23 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
+	// Stamp a session UUID so concurrent `idiom implement` runs in the
+	// same workspace produce attributable conversation logs and (if
+	// they ever submit a plan) attributable plan artifacts. Mirrors
+	// the equivalent generation in runPlanExecuteMain.
+	cfg.Workspace.SessionID = newPlanExecuteSessionID()
 	logCLIPhase(rec, "implement_start", map[string]any{
 		"json_events": opts.JSONEvents,
 		"resume":      strings.TrimSpace(opts.Resume) != "",
+		"session_id":  cfg.Workspace.SessionID,
 	})
+
+	// Queue gate: same opportunistic acquire pattern as plan-execute.
+	// When the queue daemon is up, concurrent `idiom implement` runs
+	// serialize through the configured pool instead of trampling the
+	// MLX backend at once.
+	queueRelease := implementAcquireQueueSlot(cfg, opts, cfg.Workspace.SessionID, stderr)
+	defer queueRelease()
 
 	prompt, err := implementPrompt(opts)
 	if err != nil {
@@ -66,6 +81,30 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 		fmt.Fprintln(stdout, answer)
 	}
 	return 0
+}
+
+// implementAcquireQueueSlot mirrors planExecuteAcquireQueueSlot —
+// see that helper for the full contract. Resolves a pool from the
+// configured model alias (or IDIOM_QUEUE_POOL override) and acquires
+// from the daemon at IDIOM_QUEUE_SOCKET / DefaultSocketPath() when
+// reachable. Returns a no-op release on daemon absence.
+func implementAcquireQueueSlot(cfg config.Config, opts implementOptions, sessionID string, stderr io.Writer) func() {
+	pool := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_POOL"))
+	if pool == "" {
+		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)
+	}
+	if pool == "" {
+		return func() {}
+	}
+	socket := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_SOCKET"))
+	label := "implement:" + sessionID
+	client := fmt.Sprintf("idiom-implement/%d", os.Getpid())
+	release, err := runner.MaybeAcquire(context.Background(), socket, pool, label, client, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "[idiom queue %s] acquire failed: %v — proceeding un-gated\n", pool, err)
+		return func() {}
+	}
+	return release
 }
 
 func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, error) {

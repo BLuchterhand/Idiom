@@ -56,6 +56,9 @@ test:
 test-install-docker:
 	./scripts/test-install-docker.sh
 
+test-install-queue-daemon:
+	./scripts/test-install-queue-daemon.sh
+
 coverage:
 	go test ./... -cover
 

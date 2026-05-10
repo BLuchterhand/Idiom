@@ -3,16 +3,22 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/install-requirements.sh [--all] [--no-build] [--no-audit]
+Usage: scripts/install-requirements.sh [--all] [--no-build] [--no-audit] [--no-queue]
 
 Installs the macOS/Homebrew toolchain idiom expects for local development and
 workspace discovery, then builds bin/idiom and verifies the active harness audit
-backends.
+backends. Also installs the per-user queue daemon launchd agent so
+concurrent `idiom plan-execute` / `idiom implement` dispatches serialize
+through a single configurable pool cap.
 
 Options:
   --all       Also install optional language precision backends.
   --no-build  Skip make build.
   --no-audit  Skip the final harness_audit verification.
+  --no-queue  Skip the per-user queue daemon installation. The CLI still
+              works without the daemon (lanes proceed un-gated); skip
+              this step only when running on shared infra where launchd
+              agents aren't appropriate.
   -h, --help  Show this help.
 USAGE
 }
@@ -20,6 +26,7 @@ USAGE
 install_all=false
 build_idiom=true
 run_audit=true
+install_queue=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +38,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-audit)
       run_audit=false
+      ;;
+    --no-queue)
+      install_queue=false
       ;;
     -h|--help)
       usage
@@ -124,6 +134,11 @@ if $build_idiom; then
   make build
 elif [[ -x "./bin/idiom" ]]; then
   make install-path
+fi
+
+if $install_queue; then
+  echo "Installing per-user queue daemon (launchd agent)..."
+  scripts/install-queue-daemon.sh
 fi
 
 if $run_audit; then
