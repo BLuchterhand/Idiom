@@ -168,6 +168,12 @@ type ToolRequest struct {
 	// executor (and any reviewer) can read the plan as a single
 	// document.
 	Rationale string `json:"rationale,omitempty"`
+	// PackID is the content-addressed handle of the comprehension
+	// graph_views cache row the planner used when drafting the plan.
+	// Optional — when present, the executor can rehydrate the
+	// planner's packet via comprehension.LoadView instead of
+	// re-discovering the same files.
+	PackID string `json:"pack_id,omitempty"`
 }
 
 type GoDeclarationMove struct {
@@ -2151,6 +2157,19 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	end := req.EndLine
 	requestedStart := start
 	requestedEnd := end
+	// Reversed ranges (start > end) get auto-swapped rather than
+	// silently clamped to one line or rejected with an error. Smaller
+	// planners (local Qwen 35B) emit (start=356, end=1) when they
+	// want "tail of file" and don't self-correct on a strict error;
+	// they just retry the same shape. Swapping returns useful content
+	// and the summary suffix tells the model what we did so future
+	// calls can use the canonical order.
+	rangeWasSwapped := false
+	if start > 0 && end > 0 && start > end {
+		start, end = end, start
+		requestedStart, requestedEnd = start, end
+		rangeWasSwapped = true
+	}
 	if start <= 0 {
 		start = 1
 	}
@@ -2216,6 +2235,8 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		summary += fmt.Sprintf(" (file has %d lines total; open-ended log range capped to %d lines; pass an explicit end_line for a different bounded window)", len(lines), defaultLogReadLineCap)
 	} else if clampedToFileBounds {
 		summary += fmt.Sprintf(" (requested range %d-%d was clamped to file bounds; file has %d lines total)", displayRequestedLine(requestedStart, start), displayRequestedLine(requestedEnd, end), len(lines))
+	} else if rangeWasSwapped {
+		summary += fmt.Sprintf(" (start_line was greater than end_line; auto-swapped to lines %d-%d — pass start_line <= end_line on future calls)", start, end)
 	} else if truncated {
 		summary += fmt.Sprintf(" (file has %d lines total; output was capped; pass start_line/end_line for a different range)", len(lines))
 	}

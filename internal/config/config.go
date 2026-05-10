@@ -187,6 +187,15 @@ type Workspace struct {
 	MaxDirectoryEntries   int    `json:"max_directory_entries"`
 	EnableShell           bool   `json:"enable_shell"`
 	EnableWrites          bool   `json:"enable_writes"`
+	// SessionID is a runtime-only identifier for the current
+	// idiom session. Not persisted to config files (`json:"-"`); set
+	// by lane / plan-execute / implement entry points so workspace
+	// tools can stamp their artifacts (plan files, conversation
+	// logs) with an unambiguous owner. Lets concurrent dispatches in
+	// the same workspace avoid stomping on each other when looking
+	// up "the latest plan." Empty string = no session attribution
+	// (legacy behavior).
+	SessionID string `json:"-"`
 	// ToolRules implements Fix 6 (per-tool permission granularity). Map key
 	// is the tool name; each value is an ordered list of
 	// {pattern, decision} rules evaluated first-match-wins. Omitting a tool

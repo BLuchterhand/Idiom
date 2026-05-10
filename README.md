@@ -74,6 +74,9 @@ Other useful subcommands:
   without scraping the binary.
 - `idiom backend start | stop | status | list | proxy` — manage local
   LLM runners.
+- `idiom queue serve | run | status | ping | cancel` — local job queue
+  daemon for gating concurrent lanes/agents against an OOM-safe cap;
+  see [Local job queue](#local-job-queue) below.
 - `idiom brief lint <brief.md>` — pre-flight lint on an
   implementation brief.
 - `idiom lane postflight --diff <patch>` — QC pipeline against a
@@ -278,6 +281,50 @@ Each of the three server blocks (`llama_server`, `implementer`, `route_classifie
 
 The blocks are independent, so mixed setups work — for example, main chat on MLX and the route classifier still on llama.cpp. Set `binary` to `mlx_lm.server` (install via `pip install mlx-lm`) and pass any additional flags via `extra_args`.
 
+## Local job queue
+
+`idiom queue` is a small daemon that gates concurrent work against a configurable per-pool cap. It exists so multiple projects on the same machine can run lanes/agents in parallel without crashing or OOM'ing the local LLM backend(s) — each project asks the daemon for a slot, blocks until one is free, runs its command, and the slot releases when the command exits. Anyone with the socket path can also see the live queue.
+
+Start the daemon (foreground; one per machine):
+
+```bash
+idiom queue serve
+```
+
+By default it listens on `$XDG_RUNTIME_DIR/idiom-runner.sock` (or `$TMPDIR/idiom-runner.sock` on macOS) and reads `~/.idiom/runner.json` for pool config. Override either with `--socket` / `--config` or with `IDIOM_RUNNER_SOCKET` / `IDIOM_RUNNER_CONFIG`.
+
+Wrap any command in a slot acquisition:
+
+```bash
+# In any project:
+idiom queue run --pool qwen-35b --label "VL-13.4 lane" -- ./scripts/run_idiom_impl.sh ...
+```
+
+`queue run` blocks until a slot in the named pool is free, then execs the command. Closing the wrapper (clean exit, ctrl-C, or crash) releases the slot. Exit code mirrors the wrapped command, so this composes with shell-level error handling.
+
+Inspect the queue from anywhere:
+
+```bash
+idiom queue status        # human-readable table
+idiom queue status --json # for scripts and dashboards
+idiom queue ping          # daemon liveness + uptime
+idiom queue cancel <id>   # remove a waiting job (in-flight jobs aren't killed; ctrl-C the holder)
+```
+
+Config file (`~/.idiom/runner.json`) — omit it and you get a single `default` pool with `max_in_flight=1`:
+
+```json
+{
+  "pools": {
+    "default":    {"max_in_flight": 1},
+    "qwen-35b":   {"max_in_flight": 1},
+    "qwen-coder": {"max_in_flight": 1}
+  }
+}
+```
+
+Pools are independent caps, so `qwen-35b` and `qwen-coder` can each run one lane simultaneously without contending. Acquiring an unknown pool is rejected — pools must exist in the daemon's config before any project can submit to them.
+
 ## Route Classifier
 
 `route_classifier` runs a small structured classifier before execution so terse follow-ups and plan approvals can be reconciled against deterministic routing. It is enabled by default and returns JSON only; host-side control rails still own the final contract and tool permissions.
@@ -425,6 +472,65 @@ pre-write read budget.
 This was originally Colony's `scripts/qwen_brief_preflight.py`; the canonical
 implementation now lives with idiom so any project dispatching multi-file
 briefs through `idiom implement` can run the same lint pre-flight.
+
+## Queue Daemon
+
+`idiom queue serve` runs a per-user Unix-socket daemon that gates concurrent
+`idiom plan-execute` and `idiom implement` dispatches against a small set of
+named pools. Without it, two simultaneous lanes can both hit the same MLX
+backend and crash it under Metal command-buffer pressure; with it, the second
+lane blocks until the first releases.
+
+The macOS install path provisions it automatically via a per-user launchd
+agent:
+
+```bash
+./scripts/install-requirements.sh             # full install (queue daemon included)
+./scripts/install-requirements.sh --no-queue  # skip the daemon
+./scripts/install-queue-daemon.sh             # install / re-bootstrap just the daemon
+./scripts/install-queue-daemon.sh --reload    # restart after binary change
+./scripts/install-queue-daemon.sh --uninstall # remove the agent + plist
+make test-install-queue-daemon                # 5-test smoke check
+```
+
+Defaults the installer writes:
+
+- Config: `~/.idiom/runner.json` (two pools: `qwen-35b` and `qwen-coder`, each
+  `max_in_flight=1`, matching the qwen-pair backend profile)
+- Launchd agent: `~/Library/LaunchAgents/com.idiom.queue.plist`
+- Binary: copied to `~/.idiom/bin/idiom` (launchd-spawned processes hang in
+  dyld when their executable resolves through TCC-protected paths like
+  `~/Documents/`, so the copy lives in unrestricted user space)
+- Socket: `~/.idiom/runner.sock` (stable across shell / launchd / SSH sessions)
+- Logs: `~/.idiom/logs/queue-daemon.{log,err}`
+
+Once installed, `idiom plan-execute` and `idiom implement` automatically dial
+the daemon via `runner.MaybeAcquire`, choose a pool by model alias (`*coder*`
+→ `qwen-coder`; `*35b*` / `*planner*` → `qwen-35b`), and wait for a lease
+before starting the planner phase. When the daemon isn't running, both
+commands proceed un-gated — the gate is opportunistic, not required.
+
+Tune pool caps after install by editing `~/.idiom/runner.json` and running
+`scripts/install-queue-daemon.sh --reload`. Status: `idiom queue status`.
+
+## Context-Pack Cache
+
+`context_pack` results are persisted in the `graph_views` table inside
+`.idiom/comprehension/graph.sqlite`, keyed by content fingerprint (active
+graph `index_id` + canonical task/mode/query inputs). Identical requests are
+served from the cache instead of being recomputed; the planner's `pack_id`
+travels through `submit_plan` so the executor phase can rehydrate the same
+view via `comprehension.LoadViewByID(root, pack_id)`.
+
+Invalidation is path-aware. Scoped `context build --refresh` marks stale
+only the rows whose referenced files changed; full rebuilds blanket-stale
+the table. `idiom tool harness_audit --input '{"purpose":"behavior"}'`
+surfaces row count, fresh/stale split, bytes stored, and session-local
+hit/miss counters under `context_cache`.
+
+The `views/<pack_id>.json` files under `.idiom/comprehension/views/` are
+human-readable mirrors of the SQLite rows for inspection — the SQLite row
+is the source of truth.
 
 ## Ranker Learning
 

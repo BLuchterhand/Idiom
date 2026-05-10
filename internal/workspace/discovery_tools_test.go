@@ -1264,3 +1264,48 @@ func hasWorkspaceRelationshipEdge(edges []comprehension.Edge, kind string, sourc
 	}
 	return false
 }
+
+func TestHarnessAuditReportsContextCacheState(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/cache-audit\n\ngo 1.22\n")
+	writeWorkspaceFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\n")
+	// Seed an empty conversation log so the behavior-purpose audit can run.
+	writeWorkspaceFile(t, filepath.Join(root, "logs", "conversations", "seed.jsonl"), "")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	// Populate at least one cache row so the audit has something to report.
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_pack", Task: "audit cache exercise", Mode: "plan"}); result.Error != "" {
+		t.Fatalf("context_pack returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/conversations"})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.ContextCache == nil {
+		t.Fatalf("expected context_cache section in audit report, got %s", result.Output)
+	}
+	if report.ContextCache.Rows < 1 {
+		t.Fatalf("expected at least one graph_views row after context_pack, got %d", report.ContextCache.Rows)
+	}
+	if report.ContextCache.SessionWrites < 1 {
+		t.Fatalf("expected at least one session write counter, got %+v", report.ContextCache)
+	}
+	// Confirm the comprehension package's view stats type is the same shape
+	// the audit wraps; this catches drift if either side adds a field
+	// without updating the mirror.
+	stats, err := comprehension.ReadViewStats(root)
+	if err != nil {
+		t.Fatalf("ReadViewStats: %v", err)
+	}
+	if stats.Rows != report.ContextCache.Rows {
+		t.Fatalf("audit row count drifted from comprehension stats: audit=%d stats=%d", report.ContextCache.Rows, stats.Rows)
+	}
+}

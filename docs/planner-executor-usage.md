@@ -288,6 +288,7 @@ Plan artifact shape:
   "schema_version": "idiom.plan.v1",
   "created": "2026-05-09T20:11:20.123456789Z",
   "rationale": "free-text paragraph: why this plan, in this order",
+  "pack_id": "3c965b3c8fb10ccb",
   "edits": [
     {
       "path": "native/src/core/animal_types.h",
@@ -305,6 +306,14 @@ Plan artifact shape:
   ]
 }
 ```
+
+`pack_id` is optional. When the planner used `context_pack` to
+localize the work, passing the result's `pack_id` back through
+`submit_plan` lets the executor rehydrate the same context view from
+the `graph_views` cache via `comprehension.LoadViewByID(root,
+pack_id)` instead of re-discovering the same files. Older artifacts
+without a `pack_id` remain readable; the field is additive and
+schema_version stays at `idiom.plan.v1`.
 
 ### Stdout shape (non-`--json` mode)
 

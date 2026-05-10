@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/workspace"
 )
@@ -18,6 +19,80 @@ func mustTime(value string) time.Time {
 		panic(err)
 	}
 	return t
+}
+
+func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
+	// When the planner stamps a pack_id and the cache row exists, the
+	// executor phase emits an executor_inherits_pack JSON event so
+	// downstream tooling can attach the planner's ranked context.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	key := comprehension.ViewKey{IndexID: "test-index", Task: "exec inherits", Mode: "plan"}
+	cached := comprehension.PackResult{
+		PackID:         key.ID(),
+		IndexID:        "test-index",
+		Root:           root,
+		Task:           "exec inherits",
+		Mode:           "plan",
+		Fresh:          true,
+		CandidateFiles: []comprehension.PackFile{{Path: "a.txt", Role: "editable"}},
+		CandidateSymbols: []comprehension.PackSymbol{
+			{ID: "symbol://a.txt#A", Kind: "function", Path: "a.txt"},
+		},
+		Tests: []comprehension.PackTest{{Command: "go test ./...", Path: "a.txt"}},
+	}
+	if err := comprehension.SaveView(root, key, cached); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PackID:        key.ID(),
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"},
+		},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, true, &stdout); err != nil {
+		t.Fatalf("executor phase failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `idiom.plan_execute.executor_inherits_pack`) {
+		t.Fatalf("expected executor_inherits_pack JSON event in stdout, got: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"pack_id":"`+key.ID()+`"`) {
+		t.Fatalf("expected pack_id %s in event, got: %s", key.ID(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"candidate_files":1`) {
+		t.Fatalf("expected candidate_files:1 in event, got: %s", stdout.String())
+	}
+}
+
+func TestRunExecutorPhaseEmitsExecutorPackMissOnUnknownPackID(t *testing.T) {
+	// pack_id that doesn't match any graph_views row → executor_pack_miss
+	// event so downstream consumers know the planner's context wasn't
+	// available (rather than silently degrading).
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PackID:        "deadbeefcafef00d",
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"},
+		},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, true, &stdout); err != nil {
+		t.Fatalf("executor phase failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `idiom.plan_execute.executor_pack_miss`) {
+		t.Fatalf("expected executor_pack_miss JSON event when pack_id is unknown, got: %s", stdout.String())
+	}
 }
 
 func TestRunExecutorPhaseDispatchesEditsInOrder(t *testing.T) {
@@ -199,7 +274,7 @@ func TestFindLatestPlanArtifactReturnsMostRecent(t *testing.T) {
 	if err := os.Chtimes(old, mustTime("2026-01-01T00:00:00Z"), mustTime("2026-01-01T00:00:00Z")); err != nil {
 		t.Fatalf("chtimes old: %v", err)
 	}
-	got, err := findLatestPlanArtifact(root)
+	got, err := findLatestPlanArtifact(root, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("findLatestPlanArtifact: %v", err)
 	}
@@ -210,7 +285,73 @@ func TestFindLatestPlanArtifactReturnsMostRecent(t *testing.T) {
 
 func TestFindLatestPlanArtifactErrorsWhenNoneExist(t *testing.T) {
 	root := t.TempDir()
-	if _, err := findLatestPlanArtifact(root); err == nil {
+	if _, err := findLatestPlanArtifact(root, time.Time{}, ""); err == nil {
 		t.Fatalf("expected error when plans dir missing")
+	}
+}
+
+func TestFindLatestPlanArtifactFiltersBySessionID(t *testing.T) {
+	// The headline concurrency-isolation invariant: when a session ID
+	// is supplied, plans from other sessions (even newer ones) must be
+	// invisible. Without this filter, two concurrent plan-execute runs
+	// in the same workspace can load each other's plans and dispatch
+	// the wrong edits.
+	root := t.TempDir()
+	dir := filepath.Join(root, ".idiom", "plans")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mine := filepath.Join(dir, "20260510-180000000.plan.json")
+	otherNewer := filepath.Join(dir, "20260510-180100000.plan.json")
+	if err := os.WriteFile(mine, []byte(`{"schema_version":"idiom.plan.v1","session_id":"sid-mine","edits":[{"path":"a","old_text":"x","new_text":"y"}]}`), 0o644); err != nil {
+		t.Fatalf("seed mine: %v", err)
+	}
+	if err := os.WriteFile(otherNewer, []byte(`{"schema_version":"idiom.plan.v1","session_id":"sid-other","edits":[{"path":"a","old_text":"x","new_text":"y"}]}`), 0o644); err != nil {
+		t.Fatalf("seed other: %v", err)
+	}
+	if err := os.Chtimes(mine, mustTime("2026-05-10T18:00:00Z"), mustTime("2026-05-10T18:00:00Z")); err != nil {
+		t.Fatalf("chtimes mine: %v", err)
+	}
+	if err := os.Chtimes(otherNewer, mustTime("2026-05-10T18:01:00Z"), mustTime("2026-05-10T18:01:00Z")); err != nil {
+		t.Fatalf("chtimes other: %v", err)
+	}
+	// With sessionID filter: mine is selected even though other is newer.
+	got, err := findLatestPlanArtifact(root, time.Time{}, "sid-mine")
+	if err != nil {
+		t.Fatalf("findLatestPlanArtifact: %v", err)
+	}
+	if filepath.Base(got) != filepath.Base(mine) {
+		t.Fatalf("expected my session's plan even though other is newer, got %s", got)
+	}
+	// Without sessionID (legacy callers): newest wins regardless of attribution.
+	got, err = findLatestPlanArtifact(root, time.Time{}, "")
+	if err != nil {
+		t.Fatalf("findLatestPlanArtifact (no session): %v", err)
+	}
+	if filepath.Base(got) != filepath.Base(otherNewer) {
+		t.Fatalf("legacy lookup should return newest, got %s", got)
+	}
+	// Filter for an unknown session: error, even though other plans exist.
+	if _, err := findLatestPlanArtifact(root, time.Time{}, "sid-nobody"); err == nil {
+		t.Fatalf("expected error when no plan matches the requested session")
+	}
+}
+
+func TestFindLatestPlanArtifactSkipsArtifactsBeforeNotBefore(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".idiom", "plans")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	stale := filepath.Join(dir, "20260101-000000000.plan.json")
+	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+	if err := os.Chtimes(stale, mustTime("2026-01-01T00:00:00Z"), mustTime("2026-01-01T00:00:00Z")); err != nil {
+		t.Fatalf("chtimes stale: %v", err)
+	}
+	notBefore := mustTime("2026-04-01T00:00:00Z")
+	if _, err := findLatestPlanArtifact(root, notBefore, ""); err == nil {
+		t.Fatalf("expected error when only stale artifacts exist before notBefore")
 	}
 }

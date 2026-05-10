@@ -30,6 +30,14 @@ type DebugLoggerOptions struct {
 	// resume — the resumed session's own start record already lives
 	// at the top of the file.
 	ResumePath string
+	// SessionID, when non-empty, is appended to the timestamp in the
+	// generated log filename (e.g.
+	// `20260510-143000.000-<sid>.jsonl`). Without this, two
+	// concurrent sessions in the same workspace can generate logs
+	// whose timestamps round to the same millisecond, making
+	// per-session attribution best-effort. Ignored when ResumePath
+	// is set (resume reuses the existing filename verbatim).
+	SessionID string
 }
 
 type DebugLogger struct {
@@ -172,7 +180,11 @@ func NewDebugLogger(opts DebugLoggerOptions) (*DebugLogger, error) {
 		if err := os.MkdirAll(opts.Dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create debug log dir: %w", err)
 		}
-		filename = filepath.Join(opts.Dir, time.Now().Format("20060102-150405.000")+".jsonl")
+		stem := time.Now().Format("20060102-150405.000")
+		if sid := strings.TrimSpace(opts.SessionID); sid != "" {
+			stem = stem + "-" + sid
+		}
+		filename = filepath.Join(opts.Dir, stem+".jsonl")
 	}
 
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)

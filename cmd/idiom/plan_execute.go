@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,7 +15,9 @@ import (
 	"time"
 
 	"idiom/internal/agent"
+	"idiom/internal/comprehension"
 	"idiom/internal/config"
+	"idiom/internal/runner"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
@@ -66,9 +70,34 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
+	cleanupStalePlanArtifacts(cfg.Workspace.Root, 7*24*time.Hour, stderr)
+	// Capture session start time + a fresh session UUID so the
+	// executor phase only loads plan artifacts produced by THIS
+	// planner run. Without these guards, a planner failure (budget
+	// exhaustion, EOF, etc.) silently falls back to the most recent
+	// plan on disk — which may be from an unrelated prior session
+	// (or a CONCURRENT session running in the same workspace) and
+	// dispatches the wrong edits. The sessionStart filter is a
+	// belt-and-suspenders backup; the SessionID filter is the
+	// strict attribution.
+	sessionStart := time.Now().Add(-1 * time.Second)
+	sessionID := newPlanExecuteSessionID()
+	cfg.Workspace.SessionID = sessionID
 	logCLIPhase(rec, "plan_execute_start", map[string]any{
 		"json_events": opts.JSONEvents,
+		"session_id":  sessionID,
 	})
+
+	// Queue gate: if a `idiom queue serve` daemon is reachable, acquire
+	// a lease for the model's pool BEFORE the planner phase starts so
+	// concurrent dispatches don't both hammer the MLX backend at once
+	// (Metal command-buffer pressure crashes 47781 under simultaneous
+	// load — observed on 2026-05-10). The gate is best-effort: when no
+	// daemon is running, MaybeAcquire returns a no-op release function
+	// and we proceed un-gated, matching legacy behavior.
+	queueRelease := planExecuteAcquireQueueSlot(cfg, opts, sessionID, stdout, stderr)
+	defer queueRelease()
+
 	prompt, err := planExecutePrompt(opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -101,9 +130,9 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		return 1
 	}
 
-	// Phase 2: executor. Locate the most recent plan artifact written
-	// by submit_plan and dispatch its edits in order.
-	planPath, err := findLatestPlanArtifact(cfg.Workspace.Root)
+	// Phase 2: executor. Locate the plan artifact written by THIS
+	// session's planner phase and dispatch its edits in order.
+	planPath, err := findLatestPlanArtifact(cfg.Workspace.Root, sessionStart, sessionID)
 	if err != nil {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_missing", map[string]any{
 			"reason": err.Error(),
@@ -131,6 +160,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		"edits": len(plan.Edits),
 	})
 	report, runErr := runExecutorPhase(cfg, plan, opts.JSONEvents, stdout)
+	_ = sessionStart // findLatestPlanArtifact already filtered; keep referenced.
 	if !opts.JSONEvents {
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
@@ -212,9 +242,70 @@ func planExecutePlannerSystemAddendum() string {
 }
 
 // findLatestPlanArtifact returns the most recently written plan
-// artifact in <root>/.idiom/plans/. Used by the executor phase to
-// locate the planner's submit_plan output.
-func findLatestPlanArtifact(root string) (string, error) {
+// artifact in <root>/.idiom/plans/ whose mtime is at or after
+// notBefore. The notBefore guard scopes the lookup to the current
+// session's planner output — without it, a planner failure silently
+// falls back to a stale artifact from an unrelated prior session.
+// planExecuteAcquireQueueSlot wraps runner.MaybeAcquire with the
+// project's pool-name resolution and the entry-point's session/label
+// context. Returns the release function unconditionally — callers
+// defer it without nil-checking. When the daemon isn't reachable, or
+// when acquire surfaces an error, we emit a JSON event for visibility
+// but proceed un-gated; this is the "opportunistic" contract so a
+// missing daemon never blocks dispatch.
+func planExecuteAcquireQueueSlot(cfg config.Config, opts planExecuteOptions, sessionID string, stdout io.Writer, stderr io.Writer) func() {
+	pool := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_POOL"))
+	if pool == "" {
+		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)
+	}
+	if pool == "" {
+		return func() {}
+	}
+	socket := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_SOCKET"))
+	label := strings.TrimSpace(opts.Resume)
+	if label == "" {
+		label = "plan-execute:" + sessionID
+	}
+	client := fmt.Sprintf("idiom-plan-execute/%d", os.Getpid())
+	release, err := runner.MaybeAcquire(context.Background(), socket, pool, label, client, stderr)
+	if err != nil {
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "queue_acquire_failed", map[string]any{
+			"pool":   pool,
+			"reason": err.Error(),
+		})
+		return func() {}
+	}
+	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "queue_acquired", map[string]any{
+		"pool":  pool,
+		"label": label,
+	})
+	return release
+}
+
+// newPlanExecuteSessionID returns a fresh, unguessable session
+// identifier for this plan-execute run. Used by the executor phase
+// to filter `.idiom/plans/<stamp>.plan.json` artifacts to only those
+// produced by THIS session — see findLatestPlanArtifact for the
+// load-side guard. 16 hex bytes from crypto/rand: 64 bits of entropy
+// is overkill for collision avoidance but trivial to generate. Falls
+// back to a timestamp-derived hex on the (essentially impossible)
+// rand.Read failure path so the rest of the lane still runs.
+func newPlanExecuteSessionID() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return fmt.Sprintf("ts%016x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf[:])
+}
+
+// findLatestPlanArtifact picks the most recent .idiom/plans/<stamp>.plan.json
+// produced since notBefore. When sessionID is non-empty, the search is
+// narrowed to plans whose persisted SessionID matches — otherwise two
+// concurrent plan-execute runs in the same workspace race on the shared
+// plans directory and the executor phase silently loads the wrong plan.
+// Empty sessionID falls back to the legacy time-only filter for
+// backward compatibility with callers that don't yet stamp a session.
+func findLatestPlanArtifact(root string, notBefore time.Time, sessionID string) (string, error) {
 	dir := filepath.Join(strings.TrimSpace(root), ".idiom", "plans")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -224,6 +315,7 @@ func findLatestPlanArtifact(root string) (string, error) {
 		path  string
 		mtime time.Time
 	}
+	sessionID = strings.TrimSpace(sessionID)
 	var hits []candidate
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -240,10 +332,36 @@ func findLatestPlanArtifact(root string) (string, error) {
 		if err != nil {
 			continue
 		}
-		hits = append(hits, candidate{path: filepath.Join(dir, name), mtime: info.ModTime()})
+		if !notBefore.IsZero() && info.ModTime().Before(notBefore) {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		if sessionID != "" {
+			// Read the artifact's SessionID and skip plans from other
+			// sessions. Cheap (one ReadFile + Unmarshal of a small JSON
+			// header) compared to the cost of dispatching the wrong
+			// edits, which is what this filter prevents.
+			body, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var head struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal(body, &head); err != nil {
+				continue
+			}
+			if strings.TrimSpace(head.SessionID) != sessionID {
+				continue
+			}
+		}
+		hits = append(hits, candidate{path: path, mtime: info.ModTime()})
 	}
 	if len(hits) == 0 {
-		return "", fmt.Errorf("no plan artifacts under %s", dir)
+		if sessionID != "" {
+			return "", fmt.Errorf("no plan artifacts under %s written since %s with session_id=%s", dir, notBefore.Format(time.RFC3339), sessionID)
+		}
+		return "", fmt.Errorf("no plan artifacts under %s written since %s", dir, notBefore.Format(time.RFC3339))
 	}
 	sort.Slice(hits, func(i, j int) bool { return hits[i].mtime.After(hits[j].mtime) })
 	return hits[0].path, nil
@@ -300,6 +418,40 @@ func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, jsonEvents
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_ok", map[string]any{
 		"edits": len(plan.Edits),
 	})
+
+	// If the planner stamped a pack_id, surface that the executor
+	// inherited the planner's context view. The cached pack carries the
+	// planner's ranked candidate files / symbols / tests; downstream
+	// consumers (UIs, debug tooling, future smart-skipping) can read
+	// it via comprehension.LoadViewByID. The executor itself doesn't
+	// shortcut discovery yet — this hook proves the wire is connected
+	// and gives debug telemetry a hook to attach to.
+	if strings.TrimSpace(plan.PackID) != "" {
+		if view, hit, err := comprehension.LoadViewByID(cfg.Workspace.Root, plan.PackID); err == nil && hit {
+			emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_inherits_pack", map[string]any{
+				"pack_id":           plan.PackID,
+				"index_id":          view.IndexID,
+				"candidate_files":   len(view.CandidateFiles),
+				"candidate_symbols": len(view.CandidateSymbols),
+				"tests":             len(view.Tests),
+				"fresh":             view.Fresh,
+			})
+			if !jsonEvents {
+				fmt.Fprintf(stdout, "  executor inherits planner pack %s (%d files, %d symbols, %d tests)\n",
+					plan.PackID, len(view.CandidateFiles), len(view.CandidateSymbols), len(view.Tests))
+			}
+		} else {
+			emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_pack_miss", map[string]any{
+				"pack_id": plan.PackID,
+				"reason": func() string {
+					if err != nil {
+						return err.Error()
+					}
+					return "cache miss (row stale or absent)"
+				}(),
+			})
+		}
+	}
 
 	executorStartedAt := time.Now()
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_start", map[string]any{

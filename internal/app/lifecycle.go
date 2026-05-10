@@ -912,6 +912,7 @@ func (m *Model) initDebugLogger() {
 		Dir:           m.cfg.Chat.DebugLogDir,
 		Mode:          transcript.DebugLogMode(firstNonEmptyString(m.cfg.Chat.DebugLogMode, "redacted")),
 		WorkspaceRoot: m.workspace.Root(),
+		SessionID:     m.cfg.Workspace.SessionID,
 	})
 	if err != nil {
 		m.runtimeError = "Debug log failed: " + err.Error()

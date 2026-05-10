@@ -32,8 +32,27 @@ type harnessAuditReport struct {
 	LogBehavior             *harnessAuditLogBehavior     `json:"log_behavior,omitempty"`
 	PlanningQuality         *harnessAuditPlanningQuality `json:"planning_quality,omitempty"`
 	RankerLearning          *harnessAuditRankerLearning  `json:"ranker_learning,omitempty"`
+	ContextCache            *harnessAuditContextCache    `json:"context_cache,omitempty"`
 	ImprovementQuestions    []harnessAuditQuestion       `json:"improvement_questions,omitempty"`
 	ConsolidationCandidates []harnessAuditQuestion       `json:"consolidation_candidates,omitempty"`
+}
+
+// harnessAuditContextCache surfaces graph_views (context_pack cache)
+// state so audits can measure whether the cache is doing useful work.
+// The eval suite's "fewer broad reads / fewer repeated searches"
+// success criteria are otherwise unmeasurable.
+type harnessAuditContextCache struct {
+	Rows          int     `json:"rows"`
+	Fresh         int     `json:"fresh"`
+	Stale         int     `json:"stale"`
+	BytesStored   int64   `json:"bytes_stored"`
+	OldestCreated string  `json:"oldest_created,omitempty"`
+	NewestCreated string  `json:"newest_created,omitempty"`
+	SessionHits   int64   `json:"session_hits"`
+	SessionMisses int64   `json:"session_misses"`
+	SessionWrites int64   `json:"session_writes"`
+	HitRate       float64 `json:"hit_rate,omitempty"`
+	StaleRatio    float64 `json:"stale_ratio,omitempty"`
 }
 
 // harnessAuditRankerLearning surfaces the state of the per-workspace
@@ -214,6 +233,13 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 		report.RankerLearning = learning
 		report.Findings = append(report.Findings, rankerLearningFindings(learning)...)
 		report.ImprovementQuestions = append(report.ImprovementQuestions, rankerLearningQuestions(learning)...)
+	}
+	if purpose == "all" || purpose == "behavior" {
+		cache := buildContextCacheAudit(m.cfg.Root)
+		if cache != nil {
+			report.ContextCache = cache
+			report.Findings = append(report.Findings, contextCacheFindings(cache)...)
+		}
 	}
 
 	report.ImprovementQuestions = append(report.ImprovementQuestions, staticImprovementQuestions(report)...)
@@ -1586,4 +1612,71 @@ func rankerLearningQuestions(learning *harnessAuditRankerLearning) []harnessAudi
 		})
 	}
 	return questions
+}
+
+// buildContextCacheAudit reads graph_views statistics from the
+// comprehension SQLite store and combines them with the in-process
+// hit/miss counters. Returns nil when no SQLite store exists yet (no
+// `context_index` build has run), so an idle workspace doesn't surface
+// a misleading "0 rows" finding.
+func buildContextCacheAudit(root string) *harnessAuditContextCache {
+	stats, err := comprehension.ReadViewStats(root)
+	if err != nil {
+		return nil
+	}
+	cache := &harnessAuditContextCache{
+		Rows:          stats.Rows,
+		Fresh:         stats.Fresh,
+		Stale:         stats.Stale,
+		BytesStored:   stats.BytesStored,
+		OldestCreated: stats.OldestCreated,
+		NewestCreated: stats.NewestCreated,
+		SessionHits:   stats.Hits,
+		SessionMisses: stats.Misses,
+		SessionWrites: stats.Writes,
+	}
+	if total := stats.Hits + stats.Misses; total > 0 {
+		cache.HitRate = float64(stats.Hits) / float64(total)
+	}
+	if stats.Rows > 0 {
+		cache.StaleRatio = float64(stats.Stale) / float64(stats.Rows)
+	}
+	return cache
+}
+
+// contextCacheFindings surfaces low-effort signals about cache health.
+// "info"-level only — the cache is opportunistic; an empty or stale
+// cache is not a defect, just a hint that the comprehension graph
+// hasn't been exercised yet for this workspace.
+func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding {
+	if cache == nil {
+		return nil
+	}
+	var findings []harnessAuditFinding
+	if cache.Rows == 0 && cache.SessionMisses == 0 && cache.SessionWrites == 0 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "context_cache_idle",
+			Severity:       "info",
+			Evidence:       "graph_views table is empty and no Pack() calls have run this session",
+			Recommendation: "run `idiom context build` and a context_pack call to start populating the cache",
+		})
+		return findings
+	}
+	if cache.Rows > 0 && cache.StaleRatio > 0.5 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "context_cache_mostly_stale",
+			Severity:       "info",
+			Evidence:       fmt.Sprintf("%d of %d graph_views rows are stale (%.0f%%)", cache.Stale, cache.Rows, cache.StaleRatio*100),
+			Recommendation: "consider compacting the table or running `idiom context build` to refresh referenced files",
+		})
+	}
+	if cache.SessionHits+cache.SessionMisses >= 5 && cache.HitRate < 0.1 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "context_cache_low_hit_rate",
+			Severity:       "info",
+			Evidence:       fmt.Sprintf("%d hits / %d misses (%.0f%% hit rate) this session", cache.SessionHits, cache.SessionMisses, cache.HitRate*100),
+			Recommendation: "verify Pack() callers reuse identical task strings; new tasks legitimately miss the cache",
+		})
+	}
+	return findings
 }

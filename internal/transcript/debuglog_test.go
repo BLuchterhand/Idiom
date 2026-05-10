@@ -381,3 +381,41 @@ func readDebugLogRecords(t *testing.T, path string) []map[string]any {
 	}
 	return records
 }
+
+func TestDebugLoggerFilenameIncludesSessionIDWhenSet(t *testing.T) {
+	// SessionID in the filename lets us attribute logs to a specific
+	// idiom run when concurrent sessions write logs in the same
+	// directory at near-identical timestamps.
+	dir := t.TempDir()
+	logger, err := NewDebugLogger(DebugLoggerOptions{
+		Dir:       dir,
+		Mode:      DebugLogModeRedacted,
+		SessionID: "abc123def456",
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	path := logger.Path()
+	if !strings.HasSuffix(path, "-abc123def456.jsonl") {
+		t.Fatalf("expected filename to end with -abc123def456.jsonl, got %s", path)
+	}
+}
+
+func TestDebugLoggerFilenameOmitsSessionIDWhenEmpty(t *testing.T) {
+	// Backward compatibility: existing callers that don't pass
+	// SessionID get the legacy timestamp-only filename.
+	dir := t.TempDir()
+	logger, err := NewDebugLogger(DebugLoggerOptions{
+		Dir:  dir,
+		Mode: DebugLogModeRedacted,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	name := filepath.Base(logger.Path())
+	// Format is YYYYMMDD-HHMMSS.mmm.jsonl — exactly one hyphen,
+	// not two. A session-stamped filename would have two hyphens.
+	if strings.Count(name, "-") != 1 {
+		t.Fatalf("expected legacy single-hyphen filename, got %s", name)
+	}
+}

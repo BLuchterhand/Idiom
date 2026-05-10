@@ -32,10 +32,28 @@ type PlanEdit struct {
 // captures the full ordered edit list plus the planner's rationale
 // so the executor (and any reviewer) can read the plan as a single
 // document.
+//
+// PackID, when non-empty, is the content-addressed handle of the
+// graph_views cache row the planner used when drafting the plan. The
+// executor can rehydrate that packet via comprehension.LoadView
+// instead of re-discovering the same files. Optional and additive —
+// older v1 artifacts without it remain readable.
+//
+// SessionID identifies the idiom session that produced this plan.
+// Two concurrent plan-execute runs in the same workspace race on the
+// shared `.idiom/plans/` directory; without an explicit session
+// attribution, the executor phase's findLatestPlanArtifact would
+// return whichever plan happened to be written most recently — even
+// if it came from another session entirely. Stamping the SessionID
+// here lets findLatestPlanArtifact filter to plans this session
+// produced. Optional and additive: legacy artifacts have an empty
+// SessionID and are still loadable when the executor isn't filtering.
 type PlanArtifact struct {
 	SchemaVersion string     `json:"schema_version"`
 	Created       string     `json:"created"`
 	Rationale     string     `json:"rationale,omitempty"`
+	PackID        string     `json:"pack_id,omitempty"`
+	SessionID     string     `json:"session_id,omitempty"`
 	Edits         []PlanEdit `json:"edits"`
 }
 
@@ -60,6 +78,8 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		SchemaVersion: PlanArtifactSchemaVersion,
 		Created:       time.Now().UTC().Format(time.RFC3339Nano),
 		Rationale:     strings.TrimSpace(req.Rationale),
+		PackID:        strings.TrimSpace(req.PackID),
+		SessionID:     strings.TrimSpace(m.cfg.SessionID),
 		Edits:         req.Edits,
 	}
 	dir := m.planArtifactDir()
