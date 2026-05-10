@@ -187,6 +187,32 @@ Idiom's context-graph database: `graph.json`, `graph.sqlite`,
 `graph.lock`, `manifest.json`. Persistent across runs. Generated and
 maintained by `idiom context build` / `--refresh`.
 
+`graph.sqlite` is the active backend. It carries four tables:
+
+- `graph_nodes`, `graph_edges`, `graph_metadata` — the codebase index
+  (files, packages, symbols, imports, calls, tests).
+- `graph_views` — the `context_pack` cache, keyed by content
+  fingerprint (active graph `index_id` + canonical task/mode/query
+  inputs). `Pack()` consults this row before recomputing; identical
+  requests are served from the cache. Scoped refresh marks only the
+  rows whose referenced paths changed; full rebuilds blanket-stale
+  the table.
+
+`views/<pack_id>.json` are human-readable exports of `graph_views`
+rows, written alongside the SQLite row for inspection. The SQLite row
+is the source of truth — deleting a `views/*.json` file does not
+invalidate the cache.
+
+When the planner uses `context_pack` to localize a plan, it can pass
+the `pack_id` back through `submit_plan`. The executor finds it as
+`PlanArtifact.PackID` and can rehydrate the cached view via
+`comprehension.LoadViewByID(root, pack_id)` instead of re-discovering
+the same files.
+
+`harness_audit` reports cache state under `context_cache` (row count,
+fresh/stale split, bytes stored, oldest/newest timestamps, plus
+session-local hit/miss/write counters).
+
 ### `.idiom/prompts/` (mixed — chat side project-owned; lane wrapper has canonical + overlay)
 
 The chat-side base prompt is fully project-owned today; lane

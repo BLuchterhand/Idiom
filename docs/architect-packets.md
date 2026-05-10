@@ -73,6 +73,15 @@ view and records it as `context_view` evidence. `plan`, `critique`, and `brief`
 also only render prompts; use `idiom artifact` or another model runner to
 generate the actual plan, critique, or brief.
 
+`idiom context pack` results are cached under
+`.idiom/comprehension/graph.sqlite` in the `graph_views` table, keyed by
+content fingerprint (active graph `index_id` + canonical task/mode/query
+inputs). Re-running `context pack` with identical inputs returns the cached
+view without recomputation; scoped `context build --refresh` only invalidates
+the rows whose referenced paths changed. The `views/<pack_id>.json` files
+under `.idiom/comprehension/` are human-readable mirrors of the SQLite rows
+for inspection — they are not the source of truth.
+
 `--schema planning_v2` keeps the v1 packet fields and adds planner-quality
 sections: `contracts`, `repository_view`, `candidate_scope`, `freshness`,
 `language_capabilities`, `handoff`, and `context_budget`. This schema is

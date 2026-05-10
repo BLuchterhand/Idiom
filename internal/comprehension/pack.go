@@ -1,8 +1,6 @@
 package comprehension
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -131,6 +129,48 @@ func Pack(opts PackOptions) (PackResult, error) {
 		limit = defaultPackLimit
 	}
 
+	intent := opts.Intent
+	if intent == "" {
+		intent = DetectIntent(opts.Task)
+	}
+	cacheKey := viewKeyFromOptions(PackOptions{
+		Task:           task,
+		Path:           opts.Path,
+		Scope:          opts.Scope,
+		Limit:          limit,
+		BudgetTokens:   opts.BudgetTokens,
+		RequiredTests:  opts.RequiredTests,
+		ForbiddenPaths: opts.ForbiddenPaths,
+	}, graph.ID, mode, intent, ComprehensionStateFingerprint(root))
+
+	// Only serve from cache when the index is fresh. A cached PackResult
+	// captures status.Fresh at write time and per-file Stale flags from
+	// then; if the user edited a file since the cache was written
+	// (without refreshing the index) the cached freshness signal is now
+	// a lie. Recompute in that case so callers see the correct
+	// stale-paths picture.
+	//
+	// Known limitations of the cache key (intentional, follow-ups
+	// tracked in the design doc):
+	//   - opts.LearnedWeights and the on-disk ranker weights file
+	//     affect ranking but are not in the key. A weight bump won't
+	//     invalidate cached views until the index rebuilds.
+	//   - Runtime traces under .idiom/comprehension/traces/ enrich
+	//     PackResult.Evidence but don't influence the key. Adding a
+	//     trace doesn't bust cache.
+	if status.Fresh {
+		if cached, hit, err := LoadView(root, cacheKey); err != nil {
+			// I/O errors on the cache should not block the pack — drop
+			// the error and recompute.
+			_ = err
+		} else if hit {
+			// Mirror the export file in case it was deleted (cache row
+			// is the source of truth; on-disk JSON is for inspection).
+			_ = savePack(root, cached)
+			return cached, nil
+		}
+	}
+
 	nodesByID := packNodesByID(graph.Nodes)
 	stale := packStalePaths(status)
 	forbidden := cleanPackPaths(opts.ForbiddenPaths)
@@ -177,10 +217,6 @@ func Pack(opts PackOptions) (PackResult, error) {
 		testBuilder.add(test)
 	}
 
-	intent := opts.Intent
-	if intent == "" {
-		intent = DetectIntent(task)
-	}
 	learnedWeights := opts.LearnedWeights
 	if learnedWeights == nil {
 		loaded, _ := LoadLearnedWeights(root)
@@ -233,7 +269,7 @@ func Pack(opts PackOptions) (PackResult, error) {
 	result.Unknowns = append(result.Unknowns, runtimeOverlay.Unknowns...)
 	result.UnresolvedGaps = append(result.UnresolvedGaps, runtimeOverlay.UnresolvedGaps...)
 
-	result.PackID = contextPackID(graph.ID, task, mode, result.GeneratedAt)
+	result.PackID = cacheKey.ID()
 	result.ArtifactPath = filepath.ToSlash(filepath.Join(".idiom", "comprehension", "views", result.PackID+".json"))
 	result.Evidence = append(result.Evidence, PackEvidence{
 		Kind:    "context_view",
@@ -263,6 +299,9 @@ func Pack(opts PackOptions) (PackResult, error) {
 			Content:    symbol.Reason,
 			Stale:      symbol.Stale,
 		})
+	}
+	if err := SaveView(root, cacheKey, result); err != nil {
+		return PackResult{}, fmt.Errorf("save graph_views row: %w", err)
 	}
 	if err := savePack(root, result); err != nil {
 		return PackResult{}, err
@@ -655,11 +694,31 @@ func packReasonRank(reason string) int {
 	}
 }
 
-func contextPackID(indexID string, task string, mode string, generatedAt string) string {
-	sum := sha256.Sum256([]byte(indexID + "\x00" + task + "\x00" + mode + "\x00" + generatedAt))
-	return hex.EncodeToString(sum[:8])
+// viewKeyFromOptions builds the content-addressed cache key from
+// PackOptions. Identical option sets produce identical keys across
+// processes; the active graph index_id makes the key invalidate when
+// the codebase content shifts under the harness.
+func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, workspaceStateFingerprint string) ViewKey {
+	return ViewKey{
+		IndexID: indexID,
+		Task:    strings.TrimSpace(opts.Task),
+		Mode:    mode,
+		Query: ViewQueryInputs{
+			Path:                      strings.TrimSpace(opts.Path),
+			Scope:                     strings.TrimSpace(opts.Scope),
+			Limit:                     opts.Limit,
+			BudgetTokens:              opts.BudgetTokens,
+			RequiredTests:             opts.RequiredTests,
+			ForbiddenPaths:            opts.ForbiddenPaths,
+			Intent:                    string(intent),
+			WorkspaceStateFingerprint: workspaceStateFingerprint,
+		},
+	}
 }
 
+// savePack writes the human-readable JSON export under
+// .idiom/comprehension/views/<pack_id>.json. The SQLite graph_views
+// row is the source of truth; this file mirrors it for inspection.
 func savePack(root string, result PackResult) error {
 	path := filepath.Join(root, ".idiom", "comprehension", "views", result.PackID+".json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

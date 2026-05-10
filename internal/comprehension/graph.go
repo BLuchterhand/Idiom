@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -505,6 +506,18 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	}
 	if err := saveSQLiteGraph(root, graph); err != nil {
 		return BuildReport{}, err
+	}
+	// graph_views invalidation runs after the new graph is in place. Full
+	// rebuilds blanket-stale the cache; scoped refresh marks only the
+	// rows whose referenced paths changed, so the cache survives partial
+	// updates instead of starting cold every refresh.
+	if scopedBuild {
+		changedPaths := ChangedPathsBetween(previousGraph, graph)
+		if len(changedPaths) > 0 {
+			_, _ = MarkViewsStale(root, changedPaths)
+		}
+	} else {
+		_, _ = MarkAllViewsStale(root)
 	}
 	backends := storageBackends(root, sqliteStoreKind)
 	refreshedStaleFiles := statusBefore.StaleFiles
@@ -1651,9 +1664,44 @@ func genericPackageFingerprint(path string, language string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// graphID is content-addressed: identical (root, git head, file
+// path/fingerprint set) inputs produce identical IDs across builds,
+// regardless of when the build ran. This is the load-bearing property
+// for the graph_views packet cache — without it, every refresh would
+// invalidate the cache by minting a new index_id.
+//
+// We hash file nodes' (path, fingerprint) pairs in sorted order rather
+// than every node, because file fingerprints transitively cover symbol
+// nodes (a symbol inherits its containing file's fingerprint). Edge
+// count is included so a structural collector change that adds new
+// edges without changing files still produces a new ID.
 func graphID(graph Graph) string {
-	payload := fmt.Sprintf("%s:%s:%d:%d:%s", graph.Root, graph.GitHead, len(graph.Nodes), len(graph.Edges), graph.GeneratedAt)
-	sum := sha256.Sum256([]byte(payload))
+	type filePair struct {
+		path        string
+		fingerprint string
+	}
+	files := make([]filePair, 0, len(graph.Nodes))
+	for _, node := range graph.Nodes {
+		if node.Kind != "file" || node.Path == "" {
+			continue
+		}
+		files = append(files, filePair{path: node.Path, fingerprint: node.Fingerprint})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
+	h := sha256.New()
+	h.Write([]byte(graph.Root))
+	h.Write([]byte("\x00"))
+	h.Write([]byte(graph.GitHead))
+	h.Write([]byte("\x00"))
+	h.Write([]byte(strconv.Itoa(len(graph.Edges))))
+	h.Write([]byte("\x00"))
+	for _, f := range files {
+		h.Write([]byte(f.path))
+		h.Write([]byte("\x00"))
+		h.Write([]byte(f.fingerprint))
+		h.Write([]byte("\x00"))
+	}
+	sum := h.Sum(nil)
 	return hex.EncodeToString(sum[:8])
 }
 

@@ -1544,3 +1544,34 @@ func hasStorageBackend(backends []StoreBackendReport, kind string, status string
 func testTime() time.Time {
 	return time.Date(2026, 5, 7, 1, 0, 0, 0, time.UTC)
 }
+
+func TestGraphIDContentAddressedAcrossNoOpRebuilds(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/graphid\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+
+	first, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("first Build: %v", err)
+	}
+	// Sleep briefly so GeneratedAt would differ if it were still in the
+	// hash. The point of the test is that it isn't.
+	time.Sleep(2 * time.Millisecond)
+	second, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("second Build: %v", err)
+	}
+	if first.IndexID != second.IndexID {
+		t.Fatalf("graphID must be content-addressed; got %q vs %q across no-op rebuilds", first.IndexID, second.IndexID)
+	}
+
+	// Editing a file must change the index_id.
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"changed\" }\n")
+	third, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("third Build: %v", err)
+	}
+	if third.IndexID == first.IndexID {
+		t.Fatalf("graphID must change when file content changes; got %q identical across edit", third.IndexID)
+	}
+}

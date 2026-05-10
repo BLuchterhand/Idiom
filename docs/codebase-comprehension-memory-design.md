@@ -683,15 +683,22 @@ Use `.idiom/comprehension/`:
 ```text
 .idiom/comprehension/
   manifest.json
-  graph.sqlite        # active indexed backend
+  graph.sqlite        # active indexed backend (nodes, edges, views)
   graph.json          # compatibility/export copy
   views/
-    <view-id>.json
-  summaries/
-    <summary-id>.json
+    <view-id>.json    # human-readable export of a graph_views row
   traces/
     <trace-id>.json
 ```
+
+Summaries do not have a dedicated on-disk directory. They live in
+`graph.sqlite` as `graph_nodes` rows with `kind = "summary"` (or
+`"derived_summary"` for deterministic compressions), with provenance
+stored in the row's properties. The active implementation chose this
+over `summaries/<id>.json` flat files so summary invalidation can
+piggyback on the existing node fingerprint/staleness path. An earlier
+revision of this design listed a `summaries/` directory; the directory
+is not created and should not be relied on.
 
 Like `.idiom/discovery/`, this directory should be ignored by git.
 
@@ -1072,7 +1079,7 @@ Success criteria should be practical:
 - [x] Add rich Go, C++, Python, TypeScript/JavaScript, Rust, Java, and
   GDScript/Godot file/package/symbol/import/test collectors, plus a generic
   cross-language fallback collector.
-- [x] Add fingerprint and staleness detection.
+- [x] Add fingerprint and staleness detection (file/symbol level).
 - [x] Expose `context_index` and `context_status`.
 - [x] Expose `context_query` for file, package, symbol, import, and test
   relationships.
@@ -1083,19 +1090,43 @@ Success criteria should be practical:
 - [x] Add `context_pack` after the graph MVP is stable.
 - [x] Integrate context-view evidence with architect packets.
 - [x] Add packet lint/freshness checks.
-- [x] Teach `discovery_query` to use the index opportunistically.
+- [x] Teach `discovery_query` to use the index opportunistically (calls
+  `context_pack` and surfaces the artifact path; does not yet reuse cached
+  view rows — gated on the `graph_views` cache below).
 - [x] Add migration/version handling for `.idiom/comprehension/graph.sqlite`
   when incremental refresh or saved views require it.
 - [x] Add runtime trace packs.
 - [x] Expand collectors across language families.
 - [x] Add structured live-tool/LSP relationship payloads so deep-mode evidence
   can be normalized without parsing prose-only output.
-- [x] Add dependency-aware scoped refresh and reusable out-of-scope graph merge.
-- [x] Add deterministic summary quality/provenance metadata.
+- [x] Add dependency-aware scoped refresh and reusable out-of-scope graph merge
+  (for `graph_nodes` and `graph_edges`; `graph_views` invalidation is
+  separately tracked below).
+- [x] Add deterministic summary quality/provenance metadata (stored as
+  `graph_nodes` rows with `kind = "summary"`/`"derived_summary"`).
 - [x] Add audit/perf telemetry ingestion for collector versions, incremental
   refresh, dependency refresh files, summary nodes, and normalized
   relationship edges.
-- [x] Add eval scenarios for token/tool-call reduction and grounding quality.
+- [x] Add eval scenarios for token/tool-call reduction and grounding quality
+  (`internal/eval/comprehension_suite.go`).
+- [x] Materialize `graph_views` cache and key by content fingerprint, not
+  generation timestamp. (Wired 2026-05-10. `Pack()` reads/writes
+  `graph_views` keyed by `(index_id, task, mode, query_fingerprint)`; the
+  `views/<pack_id>.json` export is now derived from the cached row, not the
+  source of truth.)
+- [x] Plumb `pack_id` through `PlanArtifact` so the executor can rehydrate
+  the planner's packet from `graph_views` instead of re-discovering. (Wired
+  2026-05-10. Field is additive and optional; schema stays at
+  `idiom.plan.v1` since older artifacts remain readable with `PackID = ""`.)
+- [x] Per-row `graph_views` staleness keyed by referenced paths/symbols,
+  invoked from scoped refresh (not just full rebuild). (Wired 2026-05-10.
+  `replaceSQLiteGraph` keeps the blanket sweep for full rebuilds; the
+  scoped-refresh path now marks only the views whose `query_json` or
+  `output_json` references a changed path.)
+- [x] `harness_audit` reports `graph_views` row count, hit/miss counters,
+  stale ratio, and bytes stored. Required to make the eval section's
+  "fewer broad reads / fewer repeated searches" success criteria actually
+  measurable. (Wired 2026-05-10.)
 
 ## North-Star Alignment
 
@@ -1132,8 +1163,16 @@ This design follows the north star in these ways:
 
 ## Open Questions
 
-- Which SQLite-backed views should be materialized first: task packets,
-  subsystem summaries, or partial-refresh invalidation sets?
+- ~~Which SQLite-backed views should be materialized first: task packets,
+  subsystem summaries, or partial-refresh invalidation sets?~~ **Resolved
+  2026-05-10: task packets first.** `Pack()` is the highest-traffic builder
+  and the only one that already produces a stable, content-addressable
+  artifact, so it's the cheapest first writer of `graph_views`. Subsystem
+  summaries already live in `graph_nodes` (kind = "summary") and don't need
+  a separate view row. Partial-refresh invalidation sets are emergent: each
+  `graph_views` row records the paths/symbols its `output_json` references,
+  so scoped refresh can mark stale by path lookup without a dedicated
+  invalidation table.
 - Should tree-sitter be introduced directly, or should phase 1 rely entirely on
   existing language tool/index surfaces?
 - What is the minimum useful test mapping for Go: package-level tests, symbol
@@ -1142,6 +1181,98 @@ This design follows the north star in these ways:
   together?
 - How much model-assisted summarization is acceptable for default local-model
   runs, given token and latency constraints?
+
+## Process Rules
+
+- **Open questions gate dependent checklist items.** A checklist item must
+  not be marked complete while an Open Question it depends on is still open.
+  The 2026-05-10 audit (below) found that `context_pack`, `discovery_query`
+  backing, summary materialization, and audit telemetry were all marked
+  complete while Open Question #1 ("which SQLite-backed views should be
+  materialized first") remained unanswered. The honest checklist state was
+  "partially shipped, view materialization deferred" — not done. When in
+  doubt, use a `[~]` partial state with a follow-on bullet rather than a
+  premature `[x]`.
+
+## Reality vs Design Audit (2026-05-10)
+
+After ~6 months of incremental work, an audit found that several development
+checklist items were checked while their underlying implementation was either
+absent or substantially different from the design. The discrepancies and
+their resolution:
+
+| Claim | Reality at audit | Resolution |
+| --- | --- | --- |
+| `context_pack` shipped | `Pack()` writes `views/<id>.json` flat files only; `pack_id` keyed by `generatedAt` so identical inputs always miss any reuse. `graph_views` table created but never INSERTed/SELECTed (0 rows in idiom and Colony). | Wired `graph_views` read/write keyed by content fingerprint. Flat-file export retained for inspection. |
+| Plan-execute split documented | Executor receives only `Edits[]`; no handle to the planner's packet. Verification reads re-discover what the planner already ranked. | Added `PackID` to `PlanArtifact` as an additive optional field (schema stays at v1). Executor can `LoadView(pack_id)` lazily on demand. |
+| Fingerprint and staleness detection shipped | True for `graph_nodes` and `graph_edges`. `graph_views` had blanket "mark all stale on full rebuild" only — scoped refresh did not touch view rows. | Per-row invalidation by referenced path. Scoped refresh now marks dependent views stale. |
+| `discovery_query` uses index opportunistically | Calls `comprehension.Status()` for freshness; dispatches `context_pack` and surfaces the artifact path. Without the cache wired, every call rebuilt. | Now benefits from `Pack()` cache transparently. No code change needed in `discovery_query` itself — same call path, cached underneath. |
+| `summaries/<id>.json` directory documented | Directory does not exist anywhere. Implementation chose `graph_nodes` rows with `kind = "summary"` instead. | Design updated to reflect graph-node materialization. On-disk directory removed from spec. |
+| Audit/perf telemetry shipped | `harness_audit` reports collector versions, refresh sets, summary nodes, normalized edges — but no cache metrics, so the eval section's "fewer broad reads / fewer repeated searches" success criteria were unmeasurable. | Added `graph_views` row count, hit/miss counters, stale ratio, bytes stored. |
+
+The audit also found one strict win that wasn't credited: summaries were
+materialized as graph nodes with proper provenance (`internal/comprehension/summaries.go`),
+which is functionally equivalent to the documented `summaries/` directory
+and slightly better for invalidation. The audit normalized the design to
+the implementation's choice rather than the other way around.
+
+The architectural takeaway: a multi-resolution cache only pays off when its
+invalidation matches its writers. Materializing `graph_views` rows without
+content-addressed keys would have produced a cache that always missed; with
+content-addressed keys but no scoped invalidation, it would have served stale
+results. Both halves had to land together for the table to start carrying
+real load.
+
+### Known cache limitations (post-2026-05-10 audit)
+
+The audit surfaced three correctness/completeness gaps in the wired cache.
+All three are now closed; they're recorded here as a paper trail rather
+than as outstanding work:
+
+1. ~~**`graph.ID` hashes `GeneratedAt`, not node fingerprints.**~~ **Resolved
+   2026-05-10.** `graphID` now hashes the sorted (path, fingerprint) set of
+   file nodes plus `(root, git_head, len(edges))`. Identical content produces
+   identical IDs across builds, so cached rows survive no-op refreshes.
+   Regression: `TestGraphIDContentAddressedAcrossNoOpRebuilds` in
+   `internal/comprehension/graph_test.go`. The `MarkViewsStale(changedPaths)`
+   machinery is now genuinely load-bearing — it preserves cache rows whose
+   referenced paths didn't change while invalidating those that did.
+2. ~~**`opts.LearnedWeights` and the on-disk ranker weights file are not in the
+   cache key.**~~ **Resolved 2026-05-10.** `ViewQueryInputs` carries a
+   `WorkspaceStateFingerprint` field that hashes `os.Stat` of
+   `.idiom/ranker/weights.json` (mtime + size). A weight bump via
+   `idiom ranker boost`/`penalize` rewrites the file → mtime advances → next
+   `Pack()` derives a new `pack_id` and recomputes. Cheap (one stat per
+   lookup, no content read). Regression:
+   `TestComprehensionStateFingerprintChangesWhenWeightsChange`.
+3. ~~**Runtime traces under `.idiom/comprehension/traces/` aren't in the key.**~~
+   **Resolved 2026-05-10.** Same `WorkspaceStateFingerprint` field also
+   hashes the traces directory mtime plus the sorted set of trace filenames,
+   so `context_trace_pack` writing a new trace busts cached pack rows that
+   would otherwise miss the new evidence. Regression:
+   `TestComprehensionStateFingerprintChangesWhenTraceAdded`.
+
+The executor side is wired observably but not yet smart-skip-aware:
+`PlanArtifact.PackID` round-trips through `submit_plan`, and the executor
+phase emits `executor_inherits_pack` / `executor_pack_miss` JSON events with
+the cached candidate counts. The executor itself still does its own
+discovery — it doesn't yet shortcut reads based on the planner's ranked
+files. That hook is intentional first-cut scope; downstream consumers (UIs,
+debug tooling, future smart-skip logic) can attach to the JSON events
+without further harness changes.
+
+Pack still gates the cache hit on the current `status.Fresh` value as
+defense-in-depth. With limitations 1–3 closed, file fingerprint changes
+already shift `graph.ID` and bust the key, so the gate is largely
+redundant — but it stays as a belt-and-suspenders check against any future
+state that might be reflected in `status.Fresh` but not in the
+content-addressed key.
+
+The path-aware `MarkViewsStale` machinery used by scoped refresh, plus the
+content-addressed key derivation, plus the workspace-state fingerprint —
+together they make the `graph_views` cache survive both partial refreshes
+and orthogonal workspace-state changes (weights, traces) without serving
+stale data.
 
 ## Immediate Next Step
 

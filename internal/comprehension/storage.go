@@ -378,11 +378,13 @@ func createSQLiteSchema(tx *sql.Tx) error {
 }
 
 func replaceSQLiteGraph(tx *sql.Tx, graph Graph) error {
+	// graph_views invalidation is the caller's responsibility — full
+	// rebuilds use MarkAllViewsStale, scoped refresh uses MarkViewsStale
+	// with the changed-path set so the cache survives partial updates.
 	for _, statement := range []string{
 		`DELETE FROM graph_edges`,
 		`DELETE FROM graph_nodes`,
 		`DELETE FROM graph_metadata`,
-		`UPDATE graph_views SET stale = 1`,
 	} {
 		if _, err := tx.Exec(statement); err != nil {
 			return err
