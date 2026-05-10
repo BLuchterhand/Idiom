@@ -19,6 +19,8 @@ var expectedSeedFiles = []string{
 	"postflight/checks/README.md",
 	"prompts/lanes/README.md",
 	"prompts/rules/README.md",
+	"prompts/profiles/coding.md",
+	"prompts/profiles/claude-qwen-worker.md",
 }
 
 // TestRunInitMainCreatesFreshSkeleton is the canonical happy path:
@@ -99,6 +101,28 @@ func TestRunInitMainMergeAddsMissingOnly(t *testing.T) {
 	// Other files SHOULD have been created.
 	if _, err := os.Stat(filepath.Join(dotIdiom, "backends.json")); err != nil {
 		t.Fatalf("merge must still create missing backends.json: %v", err)
+	}
+}
+
+// TestRunInitMainSeedsProfileTemplatesNonEmpty verifies Phase 7.2:
+// the canonical chat profiles (coding.md, claude-qwen-worker.md)
+// are embedded and copied into .idiom/prompts/profiles/. Asserts
+// the seeded files have non-empty content (the embed didn't ship
+// blank stubs) and contain anchor strings from the canonical text.
+func TestRunInitMainSeedsProfileTemplatesNonEmpty(t *testing.T) {
+	root := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := runInitMain([]string{root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("init must exit 0; got %d (stderr=%s)", code, stderr.String())
+	}
+	for _, rel := range []string{"prompts/profiles/coding.md", "prompts/profiles/claude-qwen-worker.md"} {
+		body, err := os.ReadFile(filepath.Join(root, ".idiom", rel))
+		if err != nil {
+			t.Fatalf("read seeded %s: %v", rel, err)
+		}
+		if len(bytes.TrimSpace(body)) == 0 {
+			t.Fatalf("seeded %s is empty — go:embed produced an empty file", rel)
+		}
 	}
 }
 

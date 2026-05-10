@@ -1,12 +1,28 @@
 package main
 
 import (
+	_ "embed"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 )
+
+// initSeedCodingProfile / initSeedClaudeQwenWorkerProfile are the
+// canonical chat-profile templates `idiom init` seeds under
+// .idiom/prompts/profiles/. Embedded from the package-local
+// profiles/ directory; the canonical reference copies live at
+// prompts/profiles/<name>.md and are kept in sync (the embedded
+// versions here MUST match — there's no programmatic enforcement,
+// but the profile content rarely changes so a manual checkpoint
+// is sufficient until a Phase 7.x consolidates them).
+//
+//go:embed profiles/coding.md
+var initSeedCodingProfile string
+
+//go:embed profiles/claude-qwen-worker.md
+var initSeedClaudeQwenWorkerProfile string
 
 // runInitMain creates the .idiom/ skeleton in the target directory
 // with template config files and README placeholders. Phase 7.1 of
@@ -93,6 +109,8 @@ var initSeedFiles = []initSeedFile{
 	{relPath: "postflight/checks/README.md", body: initSeedPostflightChecksReadme},
 	{relPath: "prompts/lanes/README.md", body: initSeedPromptsLanesReadme},
 	{relPath: "prompts/rules/README.md", body: initSeedPromptsRulesReadme},
+	{relPath: "prompts/profiles/coding.md", body: initSeedCodingProfile},
+	{relPath: "prompts/profiles/claude-qwen-worker.md", body: initSeedClaudeQwenWorkerProfile},
 }
 
 const initSeedConfigJSON = `{
