@@ -201,7 +201,11 @@ func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
 // plan-execute test for the implement lane: the embedded preamble
 // must surface so the model sees idiom's write-capable contract
 // language (allowlist behavior, named_gap budget, harness_feedback
-// expectations) without relying on a project-side copy.
+// expectations) without relying on a project-side copy. It also
+// verifies the submit_plan exclusion language is present — implement
+// mode should not invoke the plan-execute planner-phase write tool,
+// and the reciprocal preamble guidance closes the asymmetry that
+// previously only the plan-execute side spelled out.
 func TestRunLaneMainEmbedsCanonicalImplementPreamble(t *testing.T) {
 	briefBody := "# atom\nFiles To Modify: x\n"
 	briefPath := writeBrief(t, briefBody)
@@ -215,6 +219,9 @@ func TestRunLaneMainEmbedsCanonicalImplementPreamble(t *testing.T) {
 		"Implementation Lane Brief",
 		"write-capable implementation contract",
 		"named_gap",
+		// submit_plan exclusion language — Phase 3 review #2 closeout.
+		"Do NOT call",
+		"submit_plan",
 	}
 	for _, marker := range required {
 		if !strings.Contains(prompt, marker) {
@@ -301,6 +308,41 @@ func TestRunLaneMainProjectOverlayWrappedByCanonical(t *testing.T) {
 		if idxs[i] < idxs[i-1] {
 			t.Fatalf("layer order violated at %d→%d; idxs=%v", i-1, i, idxs)
 		}
+	}
+}
+
+// TestRunLaneMainHonorsIdiomConfigEnv verifies that the IDIOM_CONFIG
+// env var (used by Colony's run_idiom_impl.sh wrapper) overrides the
+// `.idiom/config.json` default when no --config flag is passed. An
+// explicit --config still wins over the env var so callers can
+// override the env in the rare cases that need it.
+func TestRunLaneMainHonorsIdiomConfigEnv(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	t.Setenv("IDIOM_CONFIG", "/custom/idiom-config.json")
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	if got := runLaneMainTest(t, []string{"plan-execute", briefPath}, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	if !argsContain(fake.calledArgs, "--config", "/custom/idiom-config.json") {
+		t.Fatalf("IDIOM_CONFIG env must override the default --config; got: %v", fake.calledArgs)
+	}
+}
+
+// TestRunLaneMainConfigFlagBeatsEnv verifies the precedence: an
+// explicit --config wins over IDIOM_CONFIG. This matches the
+// principle that explicit flags always beat ambient env state.
+func TestRunLaneMainConfigFlagBeatsEnv(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	t.Setenv("IDIOM_CONFIG", "/from/env.json")
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"plan-execute", "--config", "/from/flag.json", briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	if !argsContain(fake.calledArgs, "--config", "/from/flag.json") {
+		t.Fatalf("--config must beat IDIOM_CONFIG env; got: %v", fake.calledArgs)
 	}
 }
 

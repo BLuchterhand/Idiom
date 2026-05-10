@@ -121,6 +121,10 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// composeLanePromptToFile creates a temp file under os.TempDir;
+	// this defer is the lifecycle boundary. The subcommand reads the
+	// path via --prompt-file before returning, so removing here runs
+	// strictly after the read completes — no race, no leak.
 	defer os.Remove(composedPath)
 
 	if opts.JSONEvents {
@@ -169,8 +173,14 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	// `idiom lane <mode> <brief>` runs from a project root without an
 	// explicit --config flag. Existing callers that pass --config or
 	// rely on cwd-local config.json keep working — this only changes
-	// what happens when the flag is omitted.
-	fs.StringVar(&opts.ConfigPath, "config", ".idiom/config.json", "path to config file (defaults to .idiom/config.json — the canonical project layout)")
+	// what happens when the flag is omitted. The IDIOM_CONFIG env var
+	// (used by Colony's run_idiom_impl.sh) overrides this default if
+	// set, but --config still wins when explicitly passed.
+	configDefault := ".idiom/config.json"
+	if envConfig := strings.TrimSpace(os.Getenv("IDIOM_CONFIG")); envConfig != "" {
+		configDefault = envConfig
+	}
+	fs.StringVar(&opts.ConfigPath, "config", configDefault, "path to config file (defaults to .idiom/config.json or $IDIOM_CONFIG)")
 	fs.StringVar(&opts.Title, "title", "", "atom title (carried through to telemetry)")
 	fs.StringVar(&opts.Model, "model", "", "override the model alias used for the lane")
 	// TODO(phase-4): once .idiom/backends.json lands, the coder
@@ -226,20 +236,21 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	return opts, nil
 }
 
-// composeLanePromptToFile builds the composed prompt (preamble +
-// project overlay + brief body + project postamble + postamble) and
-// writes it to a temp file the underlying subcommand reads via
-// --prompt-file. Returns the temp file path; caller is responsible
-// for cleanup.
+// composeLanePromptToFile builds the composed prompt and writes it to
+// a temp file the underlying subcommand reads via --prompt-file. The
+// caller MUST defer os.Remove on the returned path — see
+// runLaneMainWithDeps where that defer is wired. Error paths inside
+// this function clean up after themselves before returning.
 //
-// The seam:
-//   - Idiom-side preamble/postamble are starter content; Phase 3 of
-//     the reusability migration moves canonical text into go:embed
-//     under prompts/lanes/<mode>/.
-//   - Project overlays at <project>/.idiom/prompts/lanes/<mode>/
-//     {preamble,postamble}.md are inserted between idiom's text and
-//     the brief body. Concatenation merge — the project layer
-//     extends, never replaces, idiom's canonical text.
+// Layer order (top-to-bottom in the composed prompt):
+//  1. idiom canonical preamble  (cmd/idiom/lanes/<mode>/preamble.md, embed)
+//  2. project preamble overlay  (<root>/.idiom/prompts/lanes/<mode>/preamble.md)
+//  3. brief body                (the file at opts.BriefPath)
+//  4. project postamble overlay (<root>/.idiom/prompts/lanes/<mode>/postamble.md)
+//  5. idiom canonical postamble (cmd/idiom/lanes/<mode>/postamble.md, embed)
+//
+// Project layers are additive — they extend, never replace, idiom's
+// canonical text. Empty/missing files at any layer are skipped.
 func composeLanePromptToFile(opts laneOptions) (string, error) {
 	briefBody, err := os.ReadFile(opts.BriefPath)
 	if err != nil {
