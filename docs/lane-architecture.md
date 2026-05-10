@@ -242,11 +242,16 @@ Phases shipped (`docs/reusability-design.md`):
 - Phase 1-2 — `idiom lane <mode>` wrapper with overlay seam
 - Phase 3 — canonical lane preambles/postambles via `go:embed`,
   project overlay at `.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`
+- Phase 4 — `.idiom/backends.json` schema with `default_coder` resolution,
+  plus the `idiom backend list` introspection command. The lane
+  wrapper's `--coder` shortcut and plan-execute auto-route both pull
+  the alias from this file when present, falling back to the legacy
+  hardcoded `qwen3-coder-30b` so existing setups keep working.
 
-Phases 4-7 add these project-side hooks (not yet present today;
+Phases 4b/5/6/7 add these project-side hooks (not yet present today;
 placeholder paths shown so projects can plan ahead):
 
-- `.idiom/backends.json` — local LLM launcher profiles (Phase 4)
+- `idiom backend start|stop|proxy` — Phase 4b launcher port
 - `.idiom/postflight/checks/<name>.json` — per-project diff lint
   rules (Phase 5)
 - `.idiom/prompts/rules/<name>.md` — rule overrides for the
@@ -452,7 +457,7 @@ writes directly to the conversation log.
 
 - `docs/reusability-design.md` — phased plan to lift Colony-side
   plumbing into idiom.
-- `PLANNER_EXECUTOR_USAGE.md` — user guide for the three options
+- `docs/planner-executor-usage.md` — user guide for the three options
   (intercept, delegate_edit, plan-execute).
 - `docs/planner-executor-delegation-design.md` — original design
   doc for the three options.

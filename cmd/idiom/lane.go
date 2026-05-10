@@ -11,9 +11,18 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/backends"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 )
+
+// fallbackCoderAlias is the model alias used by `--coder` and the
+// plan-execute auto-route when no `.idiom/backends.json` is present
+// (or is present but doesn't declare a coder). It matches the alias
+// Colony's run_idiom_impl.sh hardcodes today; once Phase 4b ships
+// `idiom init` with a templated backends.json, fresh projects will
+// declare their own and never see this fallback.
+const fallbackCoderAlias = "qwen3-coder-30b"
 
 // canonicalLanePromptsFS holds the idiom-canonical lane prompt
 // preambles/postambles, embedded into the binary at build time so
@@ -50,11 +59,18 @@ type laneOptions struct {
 	ConfigPath               string
 	Title                    string
 	Model                    string
+	BackendProfile           string // names a profile in .idiom/backends.json
 	JSONEvents               bool
 	Resume                   string
 	PlannerOwnedVerification bool
 	AllowBuildTests          bool
 	ProjectRoot              string // overridable for tests; defaults to filepath.Dir(BriefPath)
+	// coderRequested is set when the caller asked for the coder
+	// alias either explicitly (`--coder`) or implicitly (plan-execute
+	// with no --model override). The actual alias is resolved later
+	// in runLaneMainWithDeps once backends.json has loaded so projects
+	// can override the default without changing every invocation.
+	coderRequested bool
 }
 
 // runLaneMain is the production entry point for `idiom lane <mode>`.
@@ -115,6 +131,13 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		} else {
 			opts.ProjectRoot = filepath.Dir(opts.BriefPath)
 		}
+	}
+	// Resolve the coder alias now that project root is known. This
+	// covers both --coder and the plan-execute auto-route; an
+	// explicit --model already short-circuited coderRequested in
+	// parseLaneOptions, so this doesn't fight a deliberate choice.
+	if opts.coderRequested && strings.TrimSpace(opts.Model) == "" {
+		opts.Model = resolveCoderAlias(opts.ProjectRoot, opts.BackendProfile, stderr)
 	}
 	composedPath, err := composeLanePromptToFile(opts)
 	if err != nil {
@@ -183,12 +206,11 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.ConfigPath, "config", configDefault, "path to config file (defaults to .idiom/config.json or $IDIOM_CONFIG)")
 	fs.StringVar(&opts.Title, "title", "", "atom title (carried through to telemetry)")
 	fs.StringVar(&opts.Model, "model", "", "override the model alias used for the lane")
-	// TODO(phase-4): once .idiom/backends.json lands, the coder
-	// shortcut and the plan-execute auto-route should both pull the
-	// alias from a `default_coder` field in the loaded backends
-	// config rather than hardcoding "qwen3-coder-30b". Until then the
-	// hardcoded name matches what Colony's run_idiom_impl.sh uses.
-	coderShortcut := fs.Bool("coder", false, "shortcut for --model qwen3-coder-30b")
+	// --coder records intent; the actual alias is resolved later in
+	// runLaneMainWithDeps from .idiom/backends.json, falling back to
+	// fallbackCoderAlias when no backends file declares one.
+	coderShortcut := fs.Bool("coder", false, "use the project's default coder alias (from .idiom/backends.json proxy.default_coder)")
+	fs.StringVar(&opts.BackendProfile, "backend-profile", "", "select a named profile from .idiom/backends.json (omit to use the lone profile)")
 	fs.BoolVar(&opts.JSONEvents, "json", false, "emit structured JSONL events to stdout")
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id")
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", true, "delegate build/test verification to the caller (default true for lane)")
@@ -198,12 +220,11 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
 	}
-	if *coderShortcut {
-		// --coder loses to --model when both are set, matching the
-		// Colony script's existing behavior.
-		if strings.TrimSpace(opts.Model) == "" {
-			opts.Model = "qwen3-coder-30b"
-		}
+	// --coder loses to --model when both are set, matching the
+	// Colony script's existing behavior. Record the intent here; the
+	// alias resolves in runLaneMainWithDeps once backends.json loads.
+	if *coderShortcut && strings.TrimSpace(opts.Model) == "" {
+		opts.coderRequested = true
 	}
 
 	tail := fs.Args()
@@ -225,15 +246,48 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	// fallback, applied only when both --project-root and config
 	// workspace.root are empty.
 
-	// Auto-route plan-execute to the configured coder when no model
-	// override is set. Implement mode keeps its 35B reasoning default.
-	// TODO(phase-4): replace this hardcoded alias with a value pulled
-	// from .idiom/backends.json once that lands.
+	// Auto-route plan-execute to the project's coder alias when no
+	// --model override is set. Implement mode keeps its 35B reasoning
+	// default. Record the intent here; the actual alias resolves in
+	// runLaneMainWithDeps once project root and backends.json are
+	// known.
 	if opts.Mode == "plan-execute" && strings.TrimSpace(opts.Model) == "" {
-		opts.Model = "qwen3-coder-30b"
+		opts.coderRequested = true
 	}
 
 	return opts, nil
+}
+
+// resolveCoderAlias reads .idiom/backends.json for the resolved
+// project root and returns the appropriate coder alias for the
+// `--coder` shortcut and plan-execute auto-route. When the file is
+// missing, malformed, or the selected profile doesn't declare a
+// coder, the fallback alias is returned so existing single-machine
+// setups keep working without a config change.
+func resolveCoderAlias(projectRoot, profileName string, stderr io.Writer) string {
+	file, ok, err := backends.LoadFromProjectRoot(projectRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return fallbackCoderAlias
+	}
+	if !ok {
+		return fallbackCoderAlias
+	}
+	prof, found := file.Profile(profileName)
+	if !found {
+		// A backends.json that exists but doesn't have the named
+		// profile is a project misconfiguration; surface it to
+		// stderr without erroring out the lane (the fallback alias
+		// is still likely to work for a typical local stack).
+		if profileName != "" {
+			fmt.Fprintf(stderr, "lane: backend profile %q not found in .idiom/backends.json — using fallback alias %q\n", profileName, fallbackCoderAlias)
+		}
+		return fallbackCoderAlias
+	}
+	if alias := prof.CoderAlias(); alias != "" {
+		return alias
+	}
+	return fallbackCoderAlias
 }
 
 // composeLanePromptToFile builds the composed prompt and writes it to

@@ -1,10 +1,10 @@
 # Reusability Design — Lift the Plan-Execute Workflow into Idiom
 
-**Status:** Design draft, 2026-05-09 (Phases 1-3 shipped 2026-05-09)
+**Status:** Design draft, 2026-05-09 (Phases 1-4 shipped 2026-05-09; Phase 4b/5/6/7/8 pending)
 **Author:** Idiom session log, Colony donkey-atom debugging
 **Related:** `docs/colony-extraction-plan.md` (raw inventory),
 `docs/planner-executor-delegation-design.md` (the lane shape this
-generalizes), `PLANNER_EXECUTOR_USAGE.md` (current user-facing docs).
+generalizes), `docs/planner-executor-usage.md` (current user-facing docs).
 
 ## Background
 
