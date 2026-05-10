@@ -1,5 +1,5 @@
 {
-  "app_name": "Qwen Bubbles",
+  "app_name": "Idiom",
   "llama_server": {
     "kind": "llama",
     "binary": "llama-server",

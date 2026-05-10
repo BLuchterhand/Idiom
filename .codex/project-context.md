@@ -2,7 +2,7 @@
 
 ## What This Repo Is
 
-`qwen-bubbles` builds `idiom`, a local coding-agent harness for Qwen models running through `llama.cpp`. The repo combines:
+`idiom` is a local coding-agent harness for Qwen models running through `llama.cpp` or MLX. The repo combines:
 
 - a terminal UI and session lifecycle
 - routing and control-rail logic

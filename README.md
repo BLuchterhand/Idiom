@@ -1,6 +1,9 @@
-# Qwen Bubbles
+# Idiom
 
-A small Bubble Tea harness for running `Qwen3.6-35B-A3B` locally through `llama.cpp`.
+A local coding-agent harness for running `Qwen3.6-35B-A3B` (and other
+local-LLM models) through `llama.cpp` or MLX, with a Bubble Tea
+terminal UI plus structured CLI subcommands for plan-execute /
+implement / atom-spec lanes.
 
 ## What it does
 

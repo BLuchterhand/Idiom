@@ -1,6 +1,6 @@
 # Codex Setup
 
-This directory holds repo-local Codex guidance for `qwen-bubbles`.
+This directory holds repo-local Codex guidance for `idiom`.
 
 ## Files
 

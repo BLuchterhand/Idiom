@@ -1,4 +1,4 @@
-# qwen-bubbles AGENTS
+# Idiom AGENTS
 
 This repository builds `idiom`, a local coding-agent harness around Qwen, `llama.cpp`, routing/control rails, workspace tools, and eval infrastructure.
 

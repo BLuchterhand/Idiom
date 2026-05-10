@@ -832,7 +832,7 @@ same per-Mode rules apply uniformly.
 
 OpenCode's standalone Go-internal `webfetch` (with HTML→Markdown,
 Cloudflare retry, image-as-attachment) is genuinely a different
-capability, but neither qwen-bubbles nor Exa's fetch tool is
+capability, but neither idiom nor Exa's fetch tool is
 attempting to replicate every feature. If the eval evidence later
 shows Exa's fetch is inadequate (paywalls, JS-rendered content,
 non-HTML), W11 in §15 covers shipping a Go fetcher then.
@@ -911,11 +911,11 @@ Track separately, do not bundle:
 - OpenCode permission evaluator: `packages/opencode/src/permission/evaluate.ts`
 - OpenCode public docs: `packages/web/src/content/docs/tools.mdx:255-285`
 - OpenCode env flag: `packages/core/src/flag/flag.ts:67`
-- qwen-bubbles MCP scaffolding: [internal/mcp/client.go](internal/mcp/client.go), [internal/mcp/registry.go](internal/mcp/registry.go)
-- qwen-bubbles tool schemas: [internal/workspace/tool_schemas.go:22](internal/workspace/tool_schemas.go:22)
-- qwen-bubbles dispatch: [internal/workspace/manager.go:359](internal/workspace/manager.go:359)
-- qwen-bubbles Mode rules: [internal/agent/modes.go](internal/agent/modes.go)
-- qwen-bubbles tool-rule evaluator: [internal/workspace/tool_rules.go](internal/workspace/tool_rules.go)
-- qwen-bubbles lane policy: [internal/agent/runner_lane_policy.go](internal/agent/runner_lane_policy.go)
+- idiom MCP scaffolding: [internal/mcp/client.go](internal/mcp/client.go), [internal/mcp/registry.go](internal/mcp/registry.go)
+- idiom tool schemas: [internal/workspace/tool_schemas.go:22](internal/workspace/tool_schemas.go:22)
+- idiom dispatch: [internal/workspace/manager.go:359](internal/workspace/manager.go:359)
+- idiom Mode rules: [internal/agent/modes.go](internal/agent/modes.go)
+- idiom tool-rule evaluator: [internal/workspace/tool_rules.go](internal/workspace/tool_rules.go)
+- idiom lane policy: [internal/agent/runner_lane_policy.go](internal/agent/runner_lane_policy.go)
 - Precedent design-doc style: [docs/opencode-fixes-design.md](docs/opencode-fixes-design.md)
 - Original Fix 8 (the MCP scaffold this completes): [docs/opencode-fixes-design.md](docs/opencode-fixes-design.md) §8

@@ -74,6 +74,9 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "plan-execute" {
 		return runPlanExecuteMainWithTelemetry(args[1:], stdout, stderr, runPromptOnce, rec)
 	}
+	if len(args) > 0 && args[0] == "lane" {
+		return runLaneMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
 	if len(args) > 0 && args[0] == "architect" {
 		return runArchitectMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
