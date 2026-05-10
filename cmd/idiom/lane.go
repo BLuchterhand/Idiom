@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -92,6 +93,7 @@ type laneOptions struct {
 	ProjectRoot              string // overridable for tests; defaults to filepath.Dir(BriefPath)
 	NoLint                   bool   // skip the brief lint preflight (default: lint runs)
 	SlotKey                  string // if set, acquire a filesystem mutex named idiom-lane-<key>
+	Postflight               bool   // run postflight against git diff after the lane returns
 	// coderRequested is set when the caller asked for the coder
 	// alias either explicitly (`--coder`) or implicitly (plan-execute
 	// with no --model override). The actual alias is resolved later
@@ -108,6 +110,20 @@ type laneOptions struct {
 // pattern from cmd/idiom/backend.go.
 var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
 	return runBriefLint(args, stdout, stderr, nil)
+}
+
+var lanePostflightRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
+	return runLanePostflight(args, stdout, stderr)
+}
+
+// laneGitDiff is a package-level indirection over the `git diff`
+// shell-out runLanePostflightAfterLane uses to capture the working-
+// tree diff. Tests stub this so they don't need an actual git repo
+// in the temp workspace; production calls into git via os/exec.
+var laneGitDiff = func(projectRoot string) ([]byte, error) {
+	cmd := exec.Command("git", "diff")
+	cmd.Dir = projectRoot
+	return cmd.Output()
 }
 
 // runLaneMain is the production entry point for `idiom lane <mode>`.
@@ -260,6 +276,12 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		})
 		fmt.Fprintf(stderr, "lane: degraded kind=%s details=%s\n", d.kind, d.details)
 	}
+	if opts.Postflight {
+		pfExit := runLanePostflightAfterLane(opts, stdout, stderr)
+		if pfExit > subcode {
+			subcode = pfExit
+		}
+	}
 	if subcode != 0 {
 		return subcode
 	}
@@ -316,6 +338,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.ProjectRoot, "project-root", "", "project root used to resolve .idiom/ overlays (defaults to the brief's directory)")
 	fs.BoolVar(&opts.NoLint, "no-lint", false, "skip the brief lint preflight (lint runs by default)")
 	fs.StringVar(&opts.SlotKey, "slot", "", "acquire a filesystem mutex idiom-lane-<key> to prevent concurrent dispatch of the same lane (caller picks the granularity)")
+	fs.BoolVar(&opts.Postflight, "postflight", false, "run idiom lane postflight against git diff after the lane returns; final exit is max(lane, postflight)")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
@@ -358,6 +381,29 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	}
 
 	return opts, nil
+}
+
+func runLanePostflightAfterLane(opts laneOptions, stdout io.Writer, stderr io.Writer) int {
+	out, err := laneGitDiff(opts.ProjectRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "lane: postflight: git diff failed: %v\n", err)
+		return 1
+	}
+	tmp, err := os.CreateTemp(os.TempDir(), "idiom-lane-postflight-*.diff")
+	if err != nil {
+		fmt.Fprintf(stderr, "lane: postflight: create temp file failed: %v\n", err)
+		return 1
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(out); err != nil {
+		fmt.Fprintf(stderr, "lane: postflight: write temp file failed: %v\n", err)
+		return 1
+	}
+	if err := tmp.Close(); err != nil {
+		fmt.Fprintf(stderr, "lane: postflight: close temp file failed: %v\n", err)
+		return 1
+	}
+	return lanePostflightRunner([]string{"--diff", tmp.Name(), "--project-root", opts.ProjectRoot}, stdout, stderr)
 }
 
 // resolveRoleAlias reads .idiom/backends.json for the resolved

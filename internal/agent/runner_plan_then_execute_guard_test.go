@@ -258,10 +258,10 @@ func TestPlanThenExecuteReadyToSubmitNudgeRecognizesLanguageSymbolReads(t *testi
 
 func TestPlanThenExecutePlannerReadBudgetScalesWithPathCount(t *testing.T) {
 	cases := []struct{ paths, want int }{
-		{1, 6},   // 2*1+4
-		{4, 12},  // 2*4+4
-		{8, 20},  // 2*8+4
-		{16, 32}, // 2*16+4 = 36 → capped at 32
+		{1, 8},   // 3*1+5
+		{4, 17},  // 3*4+5
+		{8, 29},  // 3*8+5
+		{16, 32}, // 3*16+5 = 53 → capped at 32
 		{0, planThenExecuteReadBudgetCeiling},
 	}
 	for _, tc := range cases {

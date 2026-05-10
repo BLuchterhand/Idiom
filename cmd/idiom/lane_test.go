@@ -989,3 +989,10 @@ func stubLaneBriefLint(t *testing.T, stub func(args []string, stdout, stderr io.
 	laneBriefLintRunner = stub
 	t.Cleanup(func() { laneBriefLintRunner = orig })
 }
+
+func stubLanePostflightRunner(t *testing.T, stub func(args []string, stdout, stderr io.Writer) int) {
+	t.Helper()
+	orig := lanePostflightRunner
+	lanePostflightRunner = stub
+	t.Cleanup(func() { lanePostflightRunner = orig })
+}

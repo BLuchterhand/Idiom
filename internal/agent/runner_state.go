@@ -199,15 +199,18 @@ func clampMutationReadBudget(policy RunPolicy) RunPolicy {
 }
 
 // planThenExecutePlannerReadBudget computes the planner-phase pre-write
-// read budget for plan-then-execute mode. The formula 2*N+4 gives the
-// model headroom to read each required path twice plus a small buffer
-// for the file-outline / cross-checks the addendum encourages. Capped
+// read budget for plan-then-execute mode. Per-file shape: one
+// file_outline / discovery hop, one or two anchor-confirmation reads,
+// and a small buffer for cross-file orientation. The formula 3*N+5
+// covers that comfortably for less-disciplined planners (local Qwen
+// averages ~4 reads per file in practice; the prior 2*N+4 starved
+// 3-file briefs at the lower end of the planner's variance). Capped
 // at planThenExecuteReadBudgetCeiling so no single brief can run away.
 func planThenExecutePlannerReadBudget(pathCount int) int {
 	if pathCount <= 0 {
 		return planThenExecuteReadBudgetCeiling
 	}
-	scaled := 2*pathCount + 4
+	scaled := 3*pathCount + 5
 	if scaled > planThenExecuteReadBudgetCeiling {
 		scaled = planThenExecuteReadBudgetCeiling
 	}
