@@ -23,6 +23,12 @@ type Options struct {
 	Args          []string
 	WorkspaceRoot string
 	Dir           string
+	// Version is the binary version stamp (the same string `idiom
+	// version` prints, e.g. "v0.1.0" or "dev"). When set, it lands in
+	// session_start and process_start records so a log-file reader can
+	// attribute behavior to a specific build without scraping the
+	// binary that produced it. Empty values are not emitted.
+	Version string
 }
 
 type Recorder struct {
@@ -57,20 +63,27 @@ func Open(opts Options) (*Recorder, error) {
 		command:   command,
 	}
 	workspaceRoot := filepath.Clean(strings.TrimSpace(opts.WorkspaceRoot))
-	_ = r.Log("session_start", map[string]any{
+	version := strings.TrimSpace(opts.Version)
+	sessionFields := map[string]any{
 		"app_name":       "Idiom",
 		"schema_version": schemaVersion,
 		"workspace_root": workspaceRoot,
 		"command":        command,
-	})
-	_ = r.Log("process_start", map[string]any{
+	}
+	processFields := map[string]any{
 		"schema_version": schemaVersion,
 		"command":        command,
 		"args":           sanitizeArgs(opts.Args),
 		"arg_count":      len(opts.Args),
 		"pid":            os.Getpid(),
 		"workspace_root": workspaceRoot,
-	})
+	}
+	if version != "" {
+		sessionFields["version"] = version
+		processFields["version"] = version
+	}
+	_ = r.Log("session_start", sessionFields)
+	_ = r.Log("process_start", processFields)
 	return r, nil
 }
 

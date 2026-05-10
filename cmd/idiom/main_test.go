@@ -316,6 +316,70 @@ func TestRunRejectsInvalidFlags(t *testing.T) {
 	}
 }
 
+// TestRunVersionFlagShortCircuits verifies that `idiom --version`
+// prints version info and exits 0 without touching the prompt, TUI,
+// server, or list-sessions runners. The flag must work against any
+// cwd — including ones without a config.json — so debugging questions
+// like "what version is this binary?" never depend on project state.
+func TestRunVersionFlagShortCircuits(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"--version"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) {
+			t.Fatal("prompt runner must not be called for --version")
+			return "", nil
+		},
+		nopPrompts,
+		func(config.Config, runOptions) error {
+			t.Fatal("TUI runner must not be called for --version")
+			return nil
+		},
+		func(config.Config, runOptions) error {
+			t.Fatal("server runner must not be called for --version")
+			return nil
+		},
+		func(config.Config, io.Writer) error {
+			t.Fatal("list-sessions runner must not be called for --version")
+			return nil
+		},
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0 for --version, got %d stderr=%q", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, marker := range []string{"version: ", "go: ", "os/arch: "} {
+		if !strings.Contains(out, marker) {
+			t.Fatalf("--version output missing %q line; got: %s", marker, out)
+		}
+	}
+}
+
+// TestRunSingleDashVersionFlagAlsoWorks verifies the `-version` form
+// (single dash, Go-flag-package-style) is equivalent to `--version`.
+// Go's flag package accepts both spellings; users debugging in a hurry
+// shouldn't have to remember which one is canonical.
+func TestRunSingleDashVersionFlagAlsoWorks(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"-version"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		nopPrompts,
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		nopList,
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0 for -version, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "version: ") {
+		t.Fatalf("-version output missing 'version: ' line; got: %s", stdout.String())
+	}
+}
+
 func TestSessionIDFromPath(t *testing.T) {
 	cases := map[string]string{
 		"logs/conversations/20260418-055543.504.jsonl": "20260418-055543.504",

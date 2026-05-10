@@ -67,7 +67,11 @@ shapes (`plan-execute`, `implement`, `atom-spec`) and brief format.
 
 Other useful subcommands:
 
-- `idiom version` — print binary version, commit, build date.
+- `idiom version` (or `idiom --version`) — print binary version,
+  commit, build date, Go runtime, and host os/arch. The same fields
+  are also stamped into telemetry's `session_start` / `process_start`
+  records, so log readers can attribute behavior to a specific build
+  without scraping the binary.
 - `idiom backend start | stop | status | list | proxy` — manage local
   LLM runners.
 - `idiom brief lint <brief.md>` — pre-flight lint on an

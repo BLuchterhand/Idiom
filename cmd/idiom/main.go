@@ -157,6 +157,7 @@ func runWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 	var resume string
 	var listSessionsFlag bool
 	var modelOverride string
+	var showVersion bool
 
 	fs := flag.NewFlagSet("idiom", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -168,8 +169,19 @@ func runWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 	fs.StringVar(&resume, "resume", "", "resume a prior session by id (filename without .jsonl) before running")
 	fs.BoolVar(&listSessionsFlag, "list-sessions", false, "print recent session ids from the debug log directory and exit")
 	fs.StringVar(&modelOverride, "model", "", "override llama_server.model from config (e.g. an alias the proxy resolves)")
+	fs.BoolVar(&showVersion, "version", false, "print version and exit (same output as `idiom version`)")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	// --version short-circuits before config load so `idiom --version`
+	// works against any cwd, including dirs without a config.json. This
+	// is the conventional CLI behavior (`tool --version` always prints
+	// version regardless of other state) and keeps the flag useful for
+	// debugging — pointing at the binary in $PATH and asking what
+	// version it is should never fail.
+	if showVersion {
+		return runVersionMain(nil, stdout, stderr)
 	}
 
 	cfg, err := config.Load(configPath)
@@ -637,6 +649,12 @@ func startCommandTelemetry(args []string) *telemetry.Recorder {
 		Command:       commandTelemetryName(args),
 		Args:          args,
 		WorkspaceRoot: wd,
+		// Stamp the binary version into telemetry so debugging from
+		// a log file alone can attribute behavior to a specific build
+		// (e.g. "this run was on v0.2.1"). The version variable is
+		// the same one `idiom version` and `idiom --version` print —
+		// see cmd/idiom/version.go.
+		Version: version,
 	})
 	if err != nil {
 		return nil

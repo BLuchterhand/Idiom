@@ -53,6 +53,79 @@ func TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs(t *testing.T) {
 	}
 }
 
+// TestRecorderStampsVersionWhenSet verifies the Phase 9 debugging
+// affordance: when Options.Version is non-empty, both session_start
+// and process_start records carry the version field. Log readers can
+// then attribute behavior to a specific build without scraping the
+// binary that produced the log.
+func TestRecorderStampsVersionWhenSet(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := Open(Options{
+		Dir:           dir,
+		Command:       "version-stamp-test",
+		Args:          []string{"version-stamp-test"},
+		WorkspaceRoot: "/workspace",
+		Version:       "v9.9.9-stamp",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := rec.Close(0); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	records := readTelemetryRecords(t, filepath.Join(dir, entries[0].Name()))
+	if records[0]["type"] != "session_start" {
+		t.Fatalf("first record must be session_start; got %v", records[0]["type"])
+	}
+	if records[0]["version"] != "v9.9.9-stamp" {
+		t.Fatalf("session_start missing version=v9.9.9-stamp; got %#v", records[0])
+	}
+	if records[1]["type"] != "process_start" {
+		t.Fatalf("second record must be process_start; got %v", records[1]["type"])
+	}
+	if records[1]["version"] != "v9.9.9-stamp" {
+		t.Fatalf("process_start missing version=v9.9.9-stamp; got %#v", records[1])
+	}
+}
+
+// TestRecorderOmitsEmptyVersion verifies the negative case: when
+// Options.Version is empty (the default), neither session_start nor
+// process_start carries an empty "version" field. We don't want
+// cluttering empty values in production telemetry.
+func TestRecorderOmitsEmptyVersion(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := Open(Options{
+		Dir:           dir,
+		Command:       "no-version-test",
+		Args:          []string{"no-version-test"},
+		WorkspaceRoot: "/workspace",
+		// Version intentionally empty.
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := rec.Close(0); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	records := readTelemetryRecords(t, filepath.Join(dir, entries[0].Name()))
+	if _, present := records[0]["version"]; present {
+		t.Fatalf("session_start should not carry an empty version key; got %#v", records[0])
+	}
+	if _, present := records[1]["version"]; present {
+		t.Fatalf("process_start should not carry an empty version key; got %#v", records[1])
+	}
+}
+
 func TestRecorderCloseWithFieldsIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	rec, err := Open(Options{Dir: dir, Command: "implement", WorkspaceRoot: "/workspace"})
