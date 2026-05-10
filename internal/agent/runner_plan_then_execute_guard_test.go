@@ -256,19 +256,17 @@ func TestPlanThenExecuteReadyToSubmitNudgeRecognizesLanguageSymbolReads(t *testi
 	}
 }
 
-func TestPlanThenExecutePlannerReadBudgetScalesWithPathCount(t *testing.T) {
-	cases := []struct{ paths, want int }{
-		{1, 8},   // 3*1+5
-		{4, 17},  // 3*4+5
-		{8, 29},  // 3*8+5
-		{16, 32}, // 3*16+5 = 53 → capped at 32
-		{0, planThenExecuteReadBudgetCeiling},
+func TestPlanThenExecutePlannerHasNoReadBudgetCap(t *testing.T) {
+	r := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+		Policy: RunPolicy{ReadBudgetHard: 0},
 	}
-	for _, tc := range cases {
-		got := planThenExecutePlannerReadBudget(tc.paths)
-		if got != tc.want {
-			t.Errorf("planThenExecutePlannerReadBudget(%d) = %d, want %d", tc.paths, got, tc.want)
-		}
+	got := r.effectivePolicy()
+	if got.ReadBudgetHard != 0 {
+		t.Fatalf("plan-then-execute planner phase must have no read budget cap; got ReadBudgetHard=%d", got.ReadBudgetHard)
 	}
 }
 

@@ -2,9 +2,9 @@ package backends
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -112,6 +112,26 @@ func TestBuildLaunchSpecRejectsInvalidPort(t *testing.T) {
 	if err == nil {
 		t.Fatalf("zero port must error")
 	}
+}
+
+// TestBuildLaunchSpecHonorsHostOverride verifies the Host field
+// reaches the spawned --host flag. Without this, multi-machine
+// setups (where mlx_lm.server runs on a different host) would bind
+// to 127.0.0.1 and silently be unreachable from the proxy.
+func TestBuildLaunchSpecHonorsHostOverride(t *testing.T) {
+	spec, err := BuildLaunchSpec(Model{Alias: "x", Binary: "b", ModelPath: "/m", Host: "10.0.0.4", Port: 9000})
+	if err != nil {
+		t.Fatalf("BuildLaunchSpec: %v", err)
+	}
+	for i, a := range spec.Argv {
+		if a == "--host" && i+1 < len(spec.Argv) {
+			if spec.Argv[i+1] != "10.0.0.4" {
+				t.Fatalf("--host should reflect Model.Host; got %q", spec.Argv[i+1])
+			}
+			return
+		}
+	}
+	t.Fatalf("no --host flag in argv: %v", spec.Argv)
 }
 
 // TestLaunchSpawnsEachModelInProfile is the integration test for
@@ -235,10 +255,11 @@ func TestLaunchPropagatesSpawnFailures(t *testing.T) {
 // the PID lookup mid-test.
 func TestStopSignalsListenerWithSIGTERMThenSIGKILL(t *testing.T) {
 	prof := Profile{Models: []Model{{Alias: "stuck", Binary: "x", Port: 9999}}}
-	var sigsSent []syscall.Signal
+	var sigsSent []Signal
 	opts := StopOptions{
-		PIDForPort:   func(int) (int, error) { return 4242, nil }, // always alive → forces SIGKILL
-		Kill:         func(_ int, sig syscall.Signal) error { sigsSent = append(sigsSent, sig); return nil },
+		PIDForPort:   func(int) (int, error) { return 4242, nil },
+		IsAlive:      func(int) bool { return true }, // simulate a stuck process → forces SIGKILL
+		Kill:         func(_ int, sig Signal) error { sigsSent = append(sigsSent, sig); return nil },
 		GraceTimeout: 50 * time.Millisecond,
 	}
 	res := Stop(prof, opts)
@@ -248,7 +269,7 @@ func TestStopSignalsListenerWithSIGTERMThenSIGKILL(t *testing.T) {
 	if !res[0].Stopped {
 		t.Fatalf("Stop should report Stopped=true after SIGKILL: %+v", res[0])
 	}
-	if len(sigsSent) != 2 || sigsSent[0] != syscall.SIGTERM || sigsSent[1] != syscall.SIGKILL {
+	if len(sigsSent) != 2 || sigsSent[0] != SignalTerm || sigsSent[1] != SignalKill {
 		t.Fatalf("expected SIGTERM then SIGKILL, got %v", sigsSent)
 	}
 }
@@ -262,7 +283,7 @@ func TestStopReturnsCleanlyWhenPortAlreadyFree(t *testing.T) {
 	var killed bool
 	opts := StopOptions{
 		PIDForPort: func(int) (int, error) { return 0, nil },
-		Kill:       func(int, syscall.Signal) error { killed = true; return nil },
+		Kill:       func(int, Signal) error { killed = true; return nil },
 	}
 	res := Stop(prof, opts)
 	if killed {
@@ -289,8 +310,8 @@ func TestStopSIGTERMCleanExitDoesNotEscalate(t *testing.T) {
 			}
 			return 0, nil // post-SIGTERM: gone
 		},
-		Kill: func(_ int, sig syscall.Signal) error {
-			if sig == syscall.SIGKILL {
+		Kill: func(_ int, sig Signal) error {
+			if sig == SignalKill {
 				t.Fatalf("clean exit must not escalate to SIGKILL")
 			}
 			return nil
@@ -328,6 +349,126 @@ func TestStatusReportsUpAndDownAccordingToPIDLookup(t *testing.T) {
 	}
 	if res[1].Up {
 		t.Fatalf("down backend should be Up=false: %+v", res[1])
+	}
+}
+
+// TestStopReVerifiesPIDBeforeSIGKILL is the TOCTOU regression
+// guard. The original PID quietly exits during the grace window;
+// the kernel could recycle that number for any other process by
+// the time we'd otherwise SIGKILL. Stop must notice the original
+// PID is gone and skip the SIGKILL — failing this test means we
+// could SIGKILL an unrelated user process.
+func TestStopReVerifiesPIDBeforeSIGKILL(t *testing.T) {
+	prof := Profile{Models: []Model{{Alias: "racy", Binary: "x", Port: 9000}}}
+	var sigsSent []Signal
+	// IsAlive returns true for the initial probe and the in-grace
+	// polling, then false for the pre-SIGKILL re-verify. The Kill
+	// stub records each signal so we can assert SIGKILL never fired.
+	var aliveCalls int32
+	opts := StopOptions{
+		PIDForPort: func(int) (int, error) { return 1234, nil },
+		IsAlive: func(int) bool {
+			n := atomic.AddInt32(&aliveCalls, 1)
+			return n < 2 // only the initial check sees alive
+		},
+		Kill:         func(_ int, sig Signal) error { sigsSent = append(sigsSent, sig); return nil },
+		GraceTimeout: 50 * time.Millisecond,
+	}
+	res := Stop(prof, opts)
+	for _, sig := range sigsSent {
+		if sig == SignalKill {
+			t.Fatalf("Stop must not SIGKILL a process that already exited; signals=%v", sigsSent)
+		}
+	}
+	if !res[0].Stopped {
+		t.Fatalf("clean SIGTERM exit must report Stopped=true: %+v", res[0])
+	}
+}
+
+// TestStopUsesPIDFileWhenPresent verifies the PID-file-as-source-
+// of-truth contract: when a recorded PID is alive, Stop targets it
+// directly instead of asking lsof what's on the port. This is the
+// load-bearing property that protects against "backend crashed,
+// something else grabbed the port" — Stop kills the spawned
+// process by PID rather than the squatter by port.
+func TestStopUsesPIDFileWhenPresent(t *testing.T) {
+	runDir := t.TempDir()
+	if err := writePIDFile(runDir, "racy", 4242); err != nil {
+		t.Fatalf("writePIDFile: %v", err)
+	}
+	prof := Profile{Models: []Model{{Alias: "racy", Binary: "x", Port: 9000}}}
+	var killedPID int
+	opts := StopOptions{
+		RunDir:     runDir,
+		IsAlive:    func(pid int) bool { return pid == 4242 },
+		PIDForPort: func(int) (int, error) { t.Fatal("PIDForPort must not be consulted when PID file is alive"); return 0, nil },
+		Kill: func(pid int, sig Signal) error {
+			killedPID = pid
+			return nil
+		},
+		GraceTimeout: 50 * time.Millisecond,
+	}
+	_ = Stop(prof, opts)
+	if killedPID != 4242 {
+		t.Fatalf("Stop should target PID-file PID 4242, got %d", killedPID)
+	}
+	// PID file must be gone after a successful stop so subsequent
+	// Status reports don't show a ghost.
+	if _, err := os.Stat(pidFilePath(runDir, "racy")); !os.IsNotExist(err) {
+		t.Fatalf("PID file should be removed after stop; stat err=%v", err)
+	}
+}
+
+// TestStopFallsBackToLsofWhenPIDFileMissing verifies the
+// back-compat path: a backend started before PID file tracking
+// existed (or one started out-of-band) still gets stopped via the
+// lsof lookup.
+func TestStopFallsBackToLsofWhenPIDFileMissing(t *testing.T) {
+	runDir := t.TempDir() // empty — no PID file
+	prof := Profile{Models: []Model{{Alias: "legacy", Binary: "x", Port: 9000}}}
+	var killedPID int
+	opts := StopOptions{
+		RunDir:     runDir,
+		IsAlive:    func(int) bool { return false }, // forces clean SIGTERM exit on first poll
+		PIDForPort: func(int) (int, error) { return 7777, nil },
+		Kill: func(pid int, sig Signal) error {
+			if sig == SignalTerm {
+				killedPID = pid
+			}
+			return nil
+		},
+		GraceTimeout: 50 * time.Millisecond,
+	}
+	_ = Stop(prof, opts)
+	if killedPID != 7777 {
+		t.Fatalf("Stop should target lsof PID 7777 when PID file is absent, got %d", killedPID)
+	}
+}
+
+// TestReadPIDFileDiscardsStaleEntries verifies the self-cleaning
+// property: a PID file naming a dead process is removed on read so
+// subsequent calls don't keep re-validating the same stale value.
+func TestReadPIDFileDiscardsStaleEntries(t *testing.T) {
+	runDir := t.TempDir()
+	if err := writePIDFile(runDir, "ghost", 99999); err != nil {
+		t.Fatalf("writePIDFile: %v", err)
+	}
+	pid, err := readPIDFile(runDir, "ghost", func(int) bool { return false })
+	if err != nil || pid != 0 {
+		t.Fatalf("stale PID file should resolve to (0, nil); got (%d, %v)", pid, err)
+	}
+	if _, err := os.Stat(pidFilePath(runDir, "ghost")); !os.IsNotExist(err) {
+		t.Fatalf("stale PID file should be removed on read; stat err=%v", err)
+	}
+}
+
+// TestReadPIDFileEmptyRunDirIsNoOp verifies the disabled path: an
+// empty RunDir means PID file tracking is off; reading must be a
+// silent (0, nil) so the lsof fallback can fire.
+func TestReadPIDFileEmptyRunDirIsNoOp(t *testing.T) {
+	pid, err := readPIDFile("", "anything", nil)
+	if err != nil || pid != 0 {
+		t.Fatalf("empty runDir should noop; got (%d, %v)", pid, err)
 	}
 }
 

@@ -108,9 +108,14 @@ func (r *Runner) effectivePolicy() RunPolicy {
 		policy.MaxNoProgressTurns = 6
 	}
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
-		if r.planThenExecutePlannerPhase() {
-			policy = clampPlanThenExecuteReadBudget(policy)
-		} else {
+		// Plan-then-execute planner phase intentionally has NO read
+		// budget cap. The planner produces a single submit_plan and
+		// stops; runaway exploration is caught by MaxToolSteps,
+		// DoomLoopGate (consecutive identical calls), and
+		// FingerprintNudge (non-consecutive repeats). A hard read
+		// cap was a bandaid that punished legitimate per-file
+		// orientation in established packages.
+		if !r.planThenExecutePlannerPhase() {
 			policy = clampMutationReadBudget(policy)
 		}
 		policy = scaleMaxToolStepsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
@@ -156,7 +161,6 @@ const (
 	// briefs with 8+ required paths. The closeout nudge fires earlier
 	// when state allows, so this ceiling rarely matters in practice — it
 	// just prevents a runaway scan when something goes wrong.
-	planThenExecuteReadBudgetCeiling = 32
 	// maxToolStepsBase is the conservative default budget for a single-file
 	// implementation atom. Multi-file briefs scale up via
 	// scaleMaxToolStepsByRequiredPaths so a 5-file atom doesn't run out of
@@ -194,35 +198,6 @@ func scaledRequiredEditPathPrewriteBudget(pathCount int) int {
 func clampMutationReadBudget(policy RunPolicy) RunPolicy {
 	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > mutationReadBudgetHard {
 		policy.ReadBudgetHard = mutationReadBudgetHard
-	}
-	return policy
-}
-
-// planThenExecutePlannerReadBudget computes the planner-phase pre-write
-// read budget for plan-then-execute mode. Per-file shape: one
-// file_outline / discovery hop, one or two anchor-confirmation reads,
-// and a small buffer for cross-file orientation. The formula 3*N+5
-// covers that comfortably for less-disciplined planners (local Qwen
-// averages ~4 reads per file in practice; the prior 2*N+4 starved
-// 3-file briefs at the lower end of the planner's variance). Capped
-// at planThenExecuteReadBudgetCeiling so no single brief can run away.
-func planThenExecutePlannerReadBudget(pathCount int) int {
-	if pathCount <= 0 {
-		return planThenExecuteReadBudgetCeiling
-	}
-	scaled := 3*pathCount + 5
-	if scaled > planThenExecuteReadBudgetCeiling {
-		scaled = planThenExecuteReadBudgetCeiling
-	}
-	return scaled
-}
-
-// clampPlanThenExecuteReadBudget caps the configured read budget by the
-// plan-execute ceiling. Mirror of clampMutationReadBudget for the
-// planner phase.
-func clampPlanThenExecuteReadBudget(policy RunPolicy) RunPolicy {
-	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > planThenExecuteReadBudgetCeiling {
-		policy.ReadBudgetHard = planThenExecuteReadBudgetCeiling
 	}
 	return policy
 }

@@ -240,6 +240,14 @@ type Scenario struct {
 	RequireEvidencePaths         []string                          `json:"require_evidence_paths,omitempty"`
 	RequireLanguageCapabilities  []LanguageCapabilityExpectation   `json:"require_language_capabilities,omitempty"`
 	RequireApproval              *bool                             `json:"require_approval,omitempty"`
+	// RequireRunEvents asserts each named event appears at least once,
+	// matched against either a type:"message" role (runner-emitted
+	// RunEvents like plan_then_execute_write_guard) or a top-level
+	// record type (orchestrator-emitted events like
+	// idiom.plan_execute.preflight_failed). One field, two valid
+	// sources — generic seam for gate coverage without per-event typed
+	// expectations.
+	RequireRunEvents []string `json:"require_run_events,omitempty"`
 }
 
 type PhaseSnapshot struct {
@@ -520,6 +528,8 @@ type Metrics struct {
 	ChangedFiles              []string                        `json:"changed_files,omitempty"`
 	EvidencePaths             []string                        `json:"evidence_paths,omitempty"`
 	LanguageCapabilities      []LanguageCapabilitySnapshot    `json:"language_capabilities,omitempty"`
+	MessageRoles              map[string]int                  `json:"message_roles,omitempty"`
+	RecordTypes               map[string]int                  `json:"record_types,omitempty"`
 	Errors                    []string                        `json:"errors,omitempty"`
 }
 
@@ -1030,6 +1040,12 @@ func Analyze(records []Record) Metrics {
 				lastTS = ts
 			}
 		}
+		if rtype := strings.TrimSpace(record.Type); rtype != "" {
+			if metrics.RecordTypes == nil {
+				metrics.RecordTypes = map[string]int{}
+			}
+			metrics.RecordTypes[rtype]++
+		}
 		switch record.Type {
 		case "session_start":
 			if root := strings.TrimSpace(stringField(record.Data, "workspace_root")); root != "" {
@@ -1038,6 +1054,12 @@ func Analyze(records []Record) Metrics {
 		case "message":
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
+			if trimmedRole := strings.TrimSpace(role); trimmedRole != "" {
+				if metrics.MessageRoles == nil {
+					metrics.MessageRoles = map[string]int{}
+				}
+				metrics.MessageRoles[trimmedRole]++
+			}
 			if strings.Contains(strings.ToLower(content), "summary rejected") {
 				metrics.SummaryRejections++
 				if lane := summaryRejectionLane(role); lane != "" {
@@ -1306,6 +1328,18 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 				latest.Contract,
 				latest.Thoroughness,
 			)
+		}
+	}
+	for _, role := range scenario.RequireRunEvents {
+		trimmed := strings.TrimSpace(role)
+		if trimmed == "" {
+			continue
+		}
+		// Match either a type:"message" role (runner-emitted RunEvents) or a
+		// top-level record type (orchestrator-emitted events such as
+		// idiom.plan_execute.preflight_failed). One field, two valid sources.
+		if metrics.MessageRoles[trimmed] == 0 && metrics.RecordTypes[trimmed] == 0 {
+			addFinding("required run event %q was not observed in log", trimmed)
 		}
 	}
 	if scenario.RequireReplan != nil {

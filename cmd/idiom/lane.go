@@ -94,6 +94,7 @@ type laneOptions struct {
 	NoLint                   bool   // skip the brief lint preflight (default: lint runs)
 	SlotKey                  string // if set, acquire a filesystem mutex named idiom-lane-<key>
 	Postflight               bool   // run postflight against git diff after the lane returns
+	AllowStaleBrief          bool   // override the deterministic stale-brief gate (default: gate fails if any required path has commits newer than brief mtime)
 	// coderRequested is set when the caller asked for the coder
 	// alias either explicitly (`--coder`) or implicitly (plan-execute
 	// with no --model override). The actual alias is resolved later
@@ -202,6 +203,13 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	if opts.coderRequested && strings.TrimSpace(opts.Model) == "" {
 		opts.Model = resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RoleExecutor, stderr)
 	}
+	if opts.Mode == "history" {
+		if err := printLaneHistorySummary(opts.ProjectRoot, stdout); err != nil {
+			fmt.Fprintf(stderr, "lane: history: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	// Brief lint preflight: default-on. The wrapper that used to
 	// run this in shell is now redundant — every project that uses
 	// `idiom lane` benefits from catching unsafe briefs before
@@ -212,6 +220,10 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			fmt.Fprintf(stderr, "lane: brief lint failed (exit %d); use --no-lint to skip preflight\n", code)
 			return code
 		}
+	}
+	if err := checkBriefStaleness(opts.BriefPath, opts.ProjectRoot, opts.AllowStaleBrief, stderr); err != nil {
+		fmt.Fprintf(stderr, "lane: %v\n", err)
+		return 1
 	}
 	// Slot mutex: opt-in concurrency guard for orchestrators that
 	// dispatch lanes in parallel. The KEY (what counts as "the same
@@ -261,6 +273,19 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		fmt.Fprintf(stderr, "lane: unknown mode %q\n", opts.Mode)
 		return 2
 	}
+	briefMtime := ""
+	if info, err := os.Stat(opts.BriefPath); err == nil {
+		briefMtime = info.ModTime().UTC().Format(time.RFC3339Nano)
+	}
+	if err := appendLaneHistory(opts.ProjectRoot, laneHistoryEvent{
+		Mode:       opts.Mode,
+		Brief:      opts.BriefPath,
+		BriefMtime: briefMtime,
+		Title:      opts.Title,
+		ExitCode:   subcode,
+	}); err != nil {
+		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
+	}
 
 	// Post-analyze: detect three regression classes and emit a
 	// structured `idiom.lane.degraded` event for each. The event is
@@ -300,10 +325,10 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	}
 	mode := strings.TrimSpace(args[0])
 	switch mode {
-	case "plan-execute", "implement":
+	case "plan-execute", "implement", "history":
 		// ok
 	default:
-		return laneOptions{}, fmt.Errorf("lane: --mode must be one of plan-execute, implement (got %q)", mode)
+		return laneOptions{}, fmt.Errorf("lane: --mode must be one of plan-execute, implement, history (got %q)", mode)
 	}
 
 	fs := flag.NewFlagSet("idiom lane", flag.ContinueOnError)
@@ -339,6 +364,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.BoolVar(&opts.NoLint, "no-lint", false, "skip the brief lint preflight (lint runs by default)")
 	fs.StringVar(&opts.SlotKey, "slot", "", "acquire a filesystem mutex idiom-lane-<key> to prevent concurrent dispatch of the same lane (caller picks the granularity)")
 	fs.BoolVar(&opts.Postflight, "postflight", false, "run idiom lane postflight against git diff after the lane returns; final exit is max(lane, postflight)")
+	fs.BoolVar(&opts.AllowStaleBrief, "allow-stale-brief", false, "override the deterministic stale-brief gate (default: fail if any required edit path has commits newer than brief mtime)")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
@@ -351,17 +377,24 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	}
 
 	tail := fs.Args()
-	if len(tail) == 0 {
-		return laneOptions{}, fmt.Errorf("lane: brief path is required (positional argument after the flags)")
-	}
-	if len(tail) > 1 {
-		return laneOptions{}, fmt.Errorf("lane: too many positional arguments (got %v)", tail)
-	}
-	opts.BriefPath = tail[0]
-	if info, err := os.Stat(opts.BriefPath); err != nil {
-		return laneOptions{}, fmt.Errorf("lane: brief not readable at %q: %w", opts.BriefPath, err)
-	} else if info.IsDir() {
-		return laneOptions{}, fmt.Errorf("lane: brief path %q is a directory", opts.BriefPath)
+	if opts.Mode == "history" {
+		// history is a metadata subcommand; brief is optional/ignored.
+		if len(tail) > 0 {
+			return laneOptions{}, fmt.Errorf("lane history: takes no positional arguments (got %v)", tail)
+		}
+	} else {
+		if len(tail) == 0 {
+			return laneOptions{}, fmt.Errorf("lane: brief path is required (positional argument after the flags)")
+		}
+		if len(tail) > 1 {
+			return laneOptions{}, fmt.Errorf("lane: too many positional arguments (got %v)", tail)
+		}
+		opts.BriefPath = tail[0]
+		if info, err := os.Stat(opts.BriefPath); err != nil {
+			return laneOptions{}, fmt.Errorf("lane: brief not readable at %q: %w", opts.BriefPath, err)
+		} else if info.IsDir() {
+			return laneOptions{}, fmt.Errorf("lane: brief path %q is a directory", opts.BriefPath)
+		}
 	}
 	// ProjectRoot stays empty here when --project-root isn't given;
 	// runLaneMainWithDeps fills it from config.Workspace.Root after

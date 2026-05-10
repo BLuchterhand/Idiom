@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,20 +57,37 @@ func TestRunBackendListPrintsProfilesFromProjectRoot(t *testing.T) {
 	}
 }
 
-// TestRunBackendListMissingFileExitsZero verifies the "no
-// backends.json yet" path is non-fatal: a project that hasn't
-// migrated to backends.json should still be able to run
-// `idiom backend list` without an error exit, since the lane
-// wrapper falls back to the hardcoded alias in that state.
-func TestRunBackendListMissingFileExitsZero(t *testing.T) {
+// TestRunBackendListMissingFileExitsOne verifies the unified exit
+// code: a missing backends.json is exit 1 across list/start/stop/
+// status. Earlier list returned 0 ("informational"), but mixing
+// exit codes for the same condition forced shell pipelines to
+// special-case list — which Phase 4/5 review flagged as a UX bug.
+func TestRunBackendListMissingFileExitsOne(t *testing.T) {
 	root := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	code := runBackendMain([]string{"list", "--project-root", root}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("missing backends.json must exit 0 (informational), got %d", code)
+	if code != 1 {
+		t.Fatalf("missing backends.json must exit 1 (parity with start/stop/status), got %d", code)
 	}
 	if !strings.Contains(stderr.String(), "no backends.json at") {
 		t.Fatalf("stderr should explain the missing file; got: %s", stderr.String())
+	}
+}
+
+// TestRunBackendListRejectsBothFileAndProjectRoot verifies the
+// mutual-exclusion contract added in the Phase 4/5 review fix.
+// Earlier the list command silently ignored --project-root when
+// --file was set; now passing both is a flag error (exit 2) so
+// the operator gets clear feedback rather than wondering which
+// flag won.
+func TestRunBackendListRejectsBothFileAndProjectRoot(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runBackendMain([]string{"list", "--file", "/x.json", "--project-root", "/y"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("--file + --project-root must exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "not both") {
+		t.Fatalf("error should explain the conflict; got: %s", stderr.String())
 	}
 }
 
@@ -97,12 +115,11 @@ func TestRunBackendListMalformedFileExitsOne(t *testing.T) {
 
 // TestRunBackendUnknownSubcommandExitsTwo verifies the dispatch
 // rejects unknown subcommands with the conventional flag-error
-// exit code. Phase 4c will add `proxy`; until that ships,
-// invoking it (or any typo) must surface a clear "unknown
-// subcommand" error rather than silently falling through to list.
+// exit code. The Phase 4c subcommand (`proxy`) is now wired, so
+// the unknown-subcommand probe uses a clearly-bogus name.
 func TestRunBackendUnknownSubcommandExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := runBackendMain([]string{"proxy"}, &stdout, &stderr)
+	code := runBackendMain([]string{"definitely-not-a-subcommand"}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("unknown subcommand must exit 2, got %d", code)
 	}
@@ -152,6 +169,18 @@ func withStubbedBackendOps(t *testing.T, launch func(backends.Profile, backends.
 	t.Cleanup(func() {
 		backendLaunch, backendStop, backendStatus = origLaunch, origStop, origStatus
 	})
+}
+
+// withStubbedProxyServe swaps in a stub ServeProxy callback so the
+// proxy CLI tests exercise flag parsing and config translation
+// without binding a real port. The stub captures the resolved
+// ProxyConfig the CLI computed so tests can assert on Listen /
+// DefaultAlias / Routes after the call.
+func withStubbedProxyServe(t *testing.T, serve func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error) {
+	t.Helper()
+	orig := backendServeProxy
+	backendServeProxy = serve
+	t.Cleanup(func() { backendServeProxy = orig })
 }
 
 // writeBackendsForRoot is a small helper that drops a sample
@@ -340,4 +369,174 @@ type alreadyRunningErr struct{}
 
 func (e *alreadyRunningErr) Error() string {
 	return "backends: port 47780 already in use; assuming qwen3.6-35b is already running"
+}
+
+// proxyCapturedConfig is what the proxy CLI tests assert on: the
+// final ProxyConfig the CLI handed to ServeProxy after applying
+// schema + flag overrides. Pulling it out into a helper keeps the
+// test bodies focused on the contract (what got resolved) rather
+// than the closure plumbing.
+type proxyCapturedConfig struct {
+	cfg    backends.ProxyConfig
+	called bool
+}
+
+func captureProxyServe(t *testing.T) *proxyCapturedConfig {
+	cap := &proxyCapturedConfig{}
+	withStubbedProxyServe(t, func(_ context.Context, cfg backends.ProxyConfig, _ backends.ProxyOptions, ready func(string)) error {
+		cap.cfg = cfg
+		cap.called = true
+		if ready != nil {
+			ready("127.0.0.1:fake")
+		}
+		return nil
+	})
+	return cap
+}
+
+// TestRunBackendProxyServesProfileWithReadyLine is the canonical
+// happy path: a complete profile resolves into a ProxyConfig that
+// matches the schema and the CLI prints the LISTEN line from the
+// ready callback. Exit 0 + STOPPED line confirm graceful shutdown.
+func TestRunBackendProxyServesProfileWithReadyLine(t *testing.T) {
+	root := t.TempDir()
+	body := `{
+  "profiles": {
+    "qwen-pair": {
+      "models": [
+        {"alias": "qwen3.6-35b", "binary": "mlx_lm.server", "model_path": "/abs/q35", "port": 47780},
+        {"alias": "qwen3-coder-30b", "binary": "mlx_lm.server", "model_path": "/abs/qcoder", "port": 47781}
+      ],
+      "proxy": {"listen": 47680, "default_alias": "qwen3.6-35b"}
+    }
+  }
+}`
+	writeBackendsForRoot(t, root, body)
+	cap := captureProxyServe(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runBackendMain([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("proxy must exit 0 on clean shutdown, got %d (stderr=%s)", code, stderr.String())
+	}
+	if !cap.called {
+		t.Fatal("ServeProxy stub was not invoked")
+	}
+	if cap.cfg.Listen != 47680 || cap.cfg.DefaultAlias != "qwen3.6-35b" || len(cap.cfg.Routes) != 2 {
+		t.Fatalf("resolved ProxyConfig wrong: %+v", cap.cfg)
+	}
+	if !strings.Contains(stdout.String(), "LISTEN 127.0.0.1:fake") || !strings.Contains(stdout.String(), "STOPPED proxy") {
+		t.Fatalf("stdout missing LISTEN/STOPPED markers: %s", stdout.String())
+	}
+}
+
+// TestRunBackendProxyListenFlagOverridesSchema verifies the flag
+// override contract: --listen wins over profile.proxy.listen so an
+// operator can run the proxy on a different port without editing
+// .idiom/backends.json.
+func TestRunBackendProxyListenFlagOverridesSchema(t *testing.T) {
+	root := t.TempDir()
+	writeBackendsForRoot(t, root, `{"profiles":{"p":{"models":[{"alias":"a","binary":"b","model_path":"/m","port":1000}],"proxy":{"listen":47680,"default_alias":"a"}}}}`)
+	cap := captureProxyServe(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runBackendMain([]string{"proxy", "--project-root", root, "--listen", "55555"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	if cap.cfg.Listen != 55555 {
+		t.Fatalf("--listen override should win: got %d", cap.cfg.Listen)
+	}
+}
+
+// TestRunBackendProxyDefaultFlagOverridesSchema covers the analog
+// override for default_alias. A misnamed override surfaces as exit
+// 2 with a helpful message rather than silently 404'ing requests.
+func TestRunBackendProxyDefaultFlagOverridesSchema(t *testing.T) {
+	root := t.TempDir()
+	writeBackendsForRoot(t, root, `{"profiles":{"p":{"models":[{"alias":"a","binary":"b","model_path":"/m","port":1},{"alias":"c","binary":"b","model_path":"/n","port":2}],"proxy":{"listen":1234,"default_alias":"a"}}}}`)
+
+	cap := captureProxyServe(t)
+	var stdout, stderr bytes.Buffer
+	code := runBackendMain([]string{"proxy", "--project-root", root, "--default", "c"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	if cap.cfg.DefaultAlias != "c" {
+		t.Fatalf("--default override should win: got %q", cap.cfg.DefaultAlias)
+	}
+
+	// Bogus override path — must reject before serving.
+	withStubbedProxyServe(t, func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error {
+		t.Fatal("ServeProxy must not be called with a bogus --default")
+		return nil
+	})
+	stdout.Reset()
+	stderr.Reset()
+	code = runBackendMain([]string{"proxy", "--project-root", root, "--default", "no-such"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("bogus --default must exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "not a registered alias") {
+		t.Fatalf("error must explain mismatch: %s", stderr.String())
+	}
+}
+
+// TestRunBackendProxyMissingListenExitsTwo covers the validation
+// shim: a profile without proxy.listen and no --listen override
+// must surface a clear flag error rather than binding port 0.
+func TestRunBackendProxyMissingListenExitsTwo(t *testing.T) {
+	root := t.TempDir()
+	writeBackendsForRoot(t, root, `{"profiles":{"p":{"models":[{"alias":"a","binary":"b","model_path":"/m","port":1}]}}}`)
+	withStubbedProxyServe(t, func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error {
+		t.Fatal("ServeProxy must not be called when listen is unconfigured")
+		return nil
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := runBackendMain([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("missing listen must exit 2, got %d (stderr=%s)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "proxy.listen") {
+		t.Fatalf("error must point at proxy.listen: %s", stderr.String())
+	}
+}
+
+// TestRunBackendProxyMissingBackendsJSONExitsOne verifies the
+// IO/setup-error contract is consistent with start/stop/status: a
+// missing schema file is exit 1, the same code shell pipelines
+// already special-case for the other backend subcommands.
+func TestRunBackendProxyMissingBackendsJSONExitsOne(t *testing.T) {
+	withStubbedProxyServe(t, func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error {
+		t.Fatal("ServeProxy must not be called when backends.json is missing")
+		return nil
+	})
+	var stdout, stderr bytes.Buffer
+	code := runBackendMain([]string{"proxy", "--project-root", t.TempDir()}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("missing backends.json must exit 1, got %d", code)
+	}
+}
+
+// TestRunBackendProxyBuildConfigFailureExitsOne verifies the
+// downstream BuildProxyConfig validation surface (e.g. a model
+// with no model_path) becomes exit 1, matching the "schema
+// loaded but unusable" failure class.
+func TestRunBackendProxyBuildConfigFailureExitsOne(t *testing.T) {
+	root := t.TempDir()
+	writeBackendsForRoot(t, root, `{"profiles":{"p":{"models":[{"alias":"a","binary":"b","port":1}],"proxy":{"listen":1}}}}`)
+	withStubbedProxyServe(t, func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error {
+		t.Fatal("ServeProxy must not be called when BuildProxyConfig fails")
+		return nil
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := runBackendMain([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("BuildProxyConfig failure must exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "model_path") {
+		t.Fatalf("error must explain the validation failure: %s", stderr.String())
+	}
 }

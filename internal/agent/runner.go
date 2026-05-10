@@ -4343,13 +4343,13 @@ func (r *Runner) readBudgetPolicyForCurrentState(policy RunPolicy, results []wor
 		if implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) {
 			return clampReadBudgetHard(policy, writeReadyPacketPrewriteReadBudgetHard)
 		}
-		// Plan-then-execute planner phase needs a higher pre-write read
-		// budget than regular implementation lanes because it reads
-		// every required path before submitting a single plan, instead
-		// of interleaving reads with edits. Use the wider 2*N+4
-		// formula instead of the implement-lane 5+2*(N-1).
+		// Plan-then-execute planner phase intentionally has NO
+		// pre-write read budget. The planner emits one submit_plan
+		// and stops; runaway exploration is caught by MaxToolSteps
+		// + DoomLoopGate + FingerprintNudge. A hard read cap punished
+		// legitimate per-file orientation in established packages.
 		if r.planThenExecutePlannerPhase() {
-			return clampReadBudgetHard(policy, planThenExecutePlannerReadBudget(len(r.RuntimeBrief.RequiredEditPaths)))
+			return policy
 		}
 		// Only clamp to the prewrite-5 budget when the brief actually
 		// carries inline anchors. An abstract implementation brief that

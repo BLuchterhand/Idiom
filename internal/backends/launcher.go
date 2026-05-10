@@ -2,6 +2,7 @@ package backends
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -9,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -62,7 +62,7 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 	if path := strings.TrimSpace(m.ModelPath); path != "" {
 		argv = append(argv, "--model", expandHome(path))
 	}
-	argv = append(argv, "--host", "127.0.0.1", "--port", strconv.Itoa(m.Port))
+	argv = append(argv, "--host", modelHost(m), "--port", strconv.Itoa(m.Port))
 	if m.CacheSize > 0 {
 		argv = append(argv, "--prompt-cache-size", strconv.Itoa(m.CacheSize))
 	}
@@ -74,6 +74,87 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 	}
 	argv = append(argv, m.ExtraArgs...)
 	return LaunchSpec{Alias: m.Alias, Argv: argv, Port: m.Port}, nil
+}
+
+// pidFilePath returns the canonical PID file path for an alias
+// under runDir. Empty runDir disables PID file tracking entirely;
+// callers must check the empty case before reading or writing.
+func pidFilePath(runDir, alias string) string {
+	if strings.TrimSpace(runDir) == "" {
+		return ""
+	}
+	return filepath.Join(runDir, "backend-"+sanitizeAlias(alias)+".pid")
+}
+
+// writePIDFile records the spawned backend's PID under runDir so
+// subsequent Stop/Status calls can locate the process directly
+// instead of going through `lsof`. Best-effort: a write failure
+// surfaces on the LaunchResult but doesn't unwind the spawn,
+// because the backend is already running and the lsof fallback
+// still works.
+func writePIDFile(runDir, alias string, pid int) error {
+	path := pidFilePath(runDir, alias)
+	if path == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("backends: create run dir %q: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(strconv.Itoa(pid)), 0o644); err != nil {
+		return fmt.Errorf("backends: write pid file %q: %w", path, err)
+	}
+	return nil
+}
+
+// readPIDFile returns the PID stored at runDir/backend-<alias>.pid
+// or 0 when the file is absent / unparseable / stale. A stale file
+// (PID no longer alive) is removed so subsequent calls don't keep
+// re-validating it. isAlive may be nil — callers that only want
+// the on-disk value can pass nil and check liveness themselves.
+func readPIDFile(runDir, alias string, isAlive func(int) bool) (int, error) {
+	path := pidFilePath(runDir, alias)
+	if path == "" {
+		return 0, nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("backends: read pid file %q: %w", path, err)
+	}
+	pid, parseErr := strconv.Atoi(strings.TrimSpace(string(body)))
+	if parseErr != nil || pid <= 0 {
+		_ = os.Remove(path)
+		return 0, nil
+	}
+	if isAlive != nil && !isAlive(pid) {
+		_ = os.Remove(path)
+		return 0, nil
+	}
+	return pid, nil
+}
+
+// removePIDFile deletes the alias's PID file. Used after a clean
+// stop so a subsequent status doesn't report the now-dead process
+// as up. Missing-file errors are intentionally swallowed.
+func removePIDFile(runDir, alias string) {
+	path := pidFilePath(runDir, alias)
+	if path == "" {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// modelHost returns the host the backend should bind to (for the
+// launcher's --host flag) or the proxy should dial (for backend
+// addressing). Schema field wins; "127.0.0.1" is the fallback so
+// the most common local-only setup needs no schema entry.
+func modelHost(m Model) string {
+	if h := strings.TrimSpace(m.Host); h != "" {
+		return h
+	}
+	return "127.0.0.1"
 }
 
 // expandHome resolves a leading "~/" against the current user's
@@ -98,6 +179,11 @@ type LauncherOptions struct {
 	// the OS temp dir so backends produce no observable filesystem
 	// effect outside this process tree's lifetime.
 	LogDir string
+	// RunDir is where per-alias PID files land. When empty, PID file
+	// tracking is disabled and Stop/Status fall back to lsof. The
+	// CLI defaults this to <project-root>/.idiom/run so multi-project
+	// dev setups don't share PID-file state across workspaces.
+	RunDir string
 	// ReadyTimeout caps how long Launch waits for a backend's
 	// port to start accepting connections. Zero means "use the
 	// default of 90s" (matches Colony's start_local_qwen.sh).
@@ -172,6 +258,11 @@ func launchOne(m Model, logDir string, opts LauncherOptions) LaunchResult {
 	if err != nil {
 		return LaunchResult{Alias: spec.Alias, Port: spec.Port, LogPath: logPath, Err: err}
 	}
+	// Best-effort PID file write. The process is already running, so a
+	// write failure shouldn't fail the spawn — Stop will fall back to
+	// lsof when the file is missing. We surface the failure on the
+	// LaunchResult so the operator knows the safety net is degraded.
+	pidFileErr := writePIDFile(opts.RunDir, spec.Alias, pid)
 	deadline := time.Now().Add(opts.ReadyTimeout)
 	ready := opts.PortReady(spec.Port, deadline)
 	return LaunchResult{
@@ -180,6 +271,7 @@ func launchOne(m Model, logDir string, opts LauncherOptions) LaunchResult {
 		Port:    spec.Port,
 		LogPath: logPath,
 		Ready:   ready,
+		Err:     pidFileErr,
 	}
 }
 
@@ -203,37 +295,11 @@ func sanitizeAlias(alias string) string {
 	return b.String()
 }
 
-// realSpawn is the production launcher: open the log file, build
-// the command, set Setpgid so the child survives idiom exit, and
-// kick it off. Returns the PID; ready-check happens in the caller.
-func realSpawn(spec LaunchSpec, logPath string) (int, error) {
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return 0, fmt.Errorf("backends: open log %q: %w", logPath, err)
-	}
-	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
-	cmd.Stdin = nil
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		return 0, fmt.Errorf("backends: spawn %s: %w", spec.Alias, err)
-	}
-	// Detach the file handle from this process: the child still
-	// owns it via fork+exec, so closing here doesn't affect the
-	// child's writes. Keeping it open would tie idiom's lifetime
-	// to the child's stdout buffer.
-	_ = logFile.Close()
-	// Release the Go-side cmd state so we don't accumulate zombie
-	// metadata across invocations. The child's exit will be reaped
-	// by init once idiom exits.
-	if cmd.Process != nil {
-		_ = cmd.Process.Release()
-		return cmd.Process.Pid, nil
-	}
-	return 0, fmt.Errorf("backends: spawn %s: no process state after Start", spec.Alias)
-}
+// realSpawn / realStopSignal / realPIDForPort live in
+// launcher_unix.go and launcher_windows.go because Setpgid (used to
+// detach the child) and SIGTERM/SIGKILL (used by Stop) aren't
+// available on all platforms. The Stop function below uses
+// realStopSignal indirectly via opts.Kill.
 
 // portTCPReady returns true when 127.0.0.1:<port> accepts a TCP
 // connection at any point before deadline. Polls every 200ms.
@@ -257,6 +323,16 @@ func portTCPReady(port int, deadline time.Time) bool {
 	}
 }
 
+// Signal is the portable-ish process signal we accept on Stop.
+// On Unix it maps to syscall.SIGTERM/SIGKILL; on Windows the
+// stub launcher errors out and these constants are unused.
+type Signal int
+
+const (
+	SignalTerm Signal = 15 // SIGTERM on Unix
+	SignalKill Signal = 9  // SIGKILL on Unix
+)
+
 // StopResult captures the outcome of one stop attempt against a
 // backend identified by its listening port.
 type StopResult struct {
@@ -270,13 +346,24 @@ type StopResult struct {
 // StopOptions tunes Stop. Tests inject stubs to avoid actually
 // killing processes.
 type StopOptions struct {
+	// RunDir is the directory holding per-alias PID files. When set
+	// (and when a PID file exists for the alias), that PID is the
+	// source of truth — Stop targets the spawned process even if
+	// something else has since taken over the port. When the file
+	// is absent, Stop falls back to PIDForPort so backends launched
+	// out-of-band still get cleaned up.
+	RunDir string
+	// IsAlive reports whether a PID is still a live process.
+	// Production uses `kill(pid, 0)`; nil means "use the default."
+	IsAlive func(pid int) bool
 	// PIDForPort returns the PID of the process listening on the
 	// given port, or 0 if nothing's listening. Production uses
 	// `lsof -ti :<port>`; tests inject a stub.
 	PIDForPort func(port int) (int, error)
-	// Kill sends a signal to the given PID. Production uses
-	// syscall.Kill; tests inject a stub that records the call.
-	Kill func(pid int, sig syscall.Signal) error
+	// Kill sends a signal to the given PID. Production uses the
+	// platform-specific realStopSignal (Unix: syscall.Kill; Windows:
+	// stub error); tests inject a stub that records the call.
+	Kill func(pid int, sig Signal) error
 	// GraceTimeout is how long Stop waits between SIGTERM and
 	// SIGKILL. Zero means "use the default of 5s."
 	GraceTimeout time.Duration
@@ -291,7 +378,10 @@ func Stop(prof Profile, opts StopOptions) []StopResult {
 		opts.PIDForPort = realPIDForPort
 	}
 	if opts.Kill == nil {
-		opts.Kill = syscall.Kill
+		opts.Kill = realStopSignal
+	}
+	if opts.IsAlive == nil {
+		opts.IsAlive = realIsAlive
 	}
 	if opts.GraceTimeout == 0 {
 		opts.GraceTimeout = 5 * time.Second
@@ -303,42 +393,79 @@ func Stop(prof Profile, opts StopOptions) []StopResult {
 	return results
 }
 
+// resolvePID picks which PID a stop / status call should target for
+// an alias: the recorded PID file when present and still alive,
+// otherwise whatever is listening on the port. The PID file is the
+// source of truth when set so a backend that crashes and gets
+// replaced on its port doesn't trick stop into killing the wrong
+// process.
+func resolvePID(m Model, runDir string, isAlive func(int) bool, pidForPort func(int) (int, error)) (int, error) {
+	pid, err := readPIDFile(runDir, m.Alias, isAlive)
+	if err != nil {
+		return 0, err
+	}
+	if pid > 0 {
+		return pid, nil
+	}
+	return pidForPort(m.Port)
+}
+
 func stopOne(m Model, opts StopOptions) StopResult {
-	pid, err := opts.PIDForPort(m.Port)
+	pid, err := resolvePID(m, opts.RunDir, opts.IsAlive, opts.PIDForPort)
 	if err != nil {
 		return StopResult{Alias: m.Alias, Port: m.Port, Err: err}
 	}
 	if pid <= 0 {
 		// Nothing listening; report Stopped=true since the desired
-		// end-state ("port is free") is already satisfied.
+		// end-state ("port is free") is already satisfied. Clean up
+		// any stray PID file so a future Status doesn't report a
+		// ghost process.
+		removePIDFile(opts.RunDir, m.Alias)
 		return StopResult{Alias: m.Alias, Port: m.Port, Stopped: true}
 	}
-	if err := opts.Kill(pid, syscall.SIGTERM); err != nil {
+	if err := opts.Kill(pid, SignalTerm); err != nil {
 		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Err: fmt.Errorf("backends: SIGTERM pid %d: %w", pid, err)}
 	}
+	// Poll for liveness rather than port-freeing: with the PID-file
+	// path, "is the spawned process gone" is the question we actually
+	// care about. Port-only polling could be fooled by a fast restart
+	// from another supervisor grabbing the slot.
 	deadline := time.Now().Add(opts.GraceTimeout)
 	for time.Now().Before(deadline) {
-		alive, _ := opts.PIDForPort(m.Port)
-		if alive == 0 {
+		if !opts.IsAlive(pid) {
+			removePIDFile(opts.RunDir, m.Alias)
 			return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	// Last-resort SIGKILL. We don't follow up — if SIGKILL doesn't
-	// clear the port within a fraction of a second, the process is
-	// stuck in kernel space and idiom can't help.
-	if err := opts.Kill(pid, syscall.SIGKILL); err != nil {
+	// Re-verify before SIGKILL: if the original PID is already gone,
+	// we must NOT signal it — Linux can recycle the PID for an
+	// unrelated process and SIGKILL would land on whatever is now in
+	// that slot (the user's shell, another backend, etc). This is
+	// the documented "Process kills: the pid > 0 rule" hazard.
+	if !opts.IsAlive(pid) {
+		removePIDFile(opts.RunDir, m.Alias)
+		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
+	}
+	if err := opts.Kill(pid, SignalKill); err != nil {
 		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Err: fmt.Errorf("backends: SIGKILL pid %d: %w", pid, err)}
 	}
+	removePIDFile(opts.RunDir, m.Alias)
 	return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 }
 
-// realPIDForPort shells out to `lsof -ti :<port>` to find the
-// listener PID. Returns (0, nil) when nothing is listening.
-func realPIDForPort(port int) (int, error) {
+// pidForPortViaLsof is the cross-platform PID lookup. Shells out
+// to `lsof -ti :<port>` and parses the first line. Returns (0, nil)
+// when nothing's listening or when `lsof` itself isn't available
+// (the binary-not-found case is not an error — callers will fall
+// back to the next strategy).
+func pidForPortViaLsof(port int) (int, error) {
 	cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port))
 	out, err := cmd.Output()
 	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return 0, errLsofUnavailable
+		}
 		// `lsof` exits non-zero when nothing's listening; that's the
 		// "no PID found" path, not an error.
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
@@ -357,6 +484,11 @@ func realPIDForPort(port int) (int, error) {
 	return pid, nil
 }
 
+// errLsofUnavailable signals "the lsof binary isn't on PATH." On
+// Linux, realPIDForPort falls through to a /proc-based lookup; on
+// other platforms the caller treats this as "no PID found."
+var errLsofUnavailable = errors.New("backends: lsof not available")
+
 // StatusResult is one row of the status table.
 type StatusResult struct {
 	Alias string
@@ -366,15 +498,19 @@ type StatusResult struct {
 }
 
 // Status reports which backends in a profile are currently
-// listening. It uses the same PID lookup Stop does so the two
-// agree on what counts as "up."
+// listening. It uses the same PID resolution Stop does (PID file
+// preferred when present + alive; lsof fallback otherwise) so the
+// two agree on what counts as "up."
 func Status(prof Profile, opts StopOptions) []StatusResult {
 	if opts.PIDForPort == nil {
 		opts.PIDForPort = realPIDForPort
 	}
+	if opts.IsAlive == nil {
+		opts.IsAlive = realIsAlive
+	}
 	results := make([]StatusResult, 0, len(prof.Models))
 	for _, m := range prof.Models {
-		pid, _ := opts.PIDForPort(m.Port)
+		pid, _ := resolvePID(m, opts.RunDir, opts.IsAlive, opts.PIDForPort)
 		results = append(results, StatusResult{
 			Alias: m.Alias,
 			Port:  m.Port,

@@ -88,6 +88,8 @@ func runAuditMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer
 	switch args[0] {
 	case "watch":
 		return runAuditWatch(args[1:], stdout, stderr, rec)
+	case "enum-mirrors":
+		return runAuditEnumMirrors(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown audit command: %s\n", args[0])
 		printAuditUsage(stderr)
@@ -543,8 +545,10 @@ func saveAuditWatchState(path string, state auditWatchState) error {
 func printAuditUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  idiom audit watch [--config config.json] [--once] [--review-existing]")
+	fmt.Fprintln(stderr, "  idiom audit enum-mirrors --enum <Name> [--root <path>] [--pattern <regex>] [--ext <ext>]")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Watch idiom telemetry/conversation logs, debounce trigger events, run harness_audit, and write deterministic review packets.")
+	fmt.Fprintln(stderr, "enum-mirrors: surface every site that breaks if a named symbol changes (atom-drafting aid).")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Flags:")
 	fmt.Fprintln(stderr, "  -config string           path to config file (default \"config.json\")")

@@ -1,0 +1,10 @@
+{"type":"session_start","ts":"2026-05-09T10:15:00.000-04:00","app_name":"Idiom","workspace_root":"/tmp/plan-execute-executor-success"}
+{"type":"message","ts":"2026-05-09T10:15:00.005-04:00","role":"user","content":"Run the executor phase for plan .idiom/plans/2026-05-09-100000.plan.json."}
+{"type":"message","ts":"2026-05-09T10:15:00.010-04:00","role":"route_plan","content":"initial=plan_then_execute_executor reason=plan_artifact_dispatch contract=executor_dispatch_result"}
+{"type":"idiom.plan_execute.plan_artifact_loaded","ts":"2026-05-09T10:15:00.020-04:00","path":".idiom/plans/2026-05-09-100000.plan.json","edits":2}
+{"type":"idiom.plan_execute.preflight_ok","ts":"2026-05-09T10:15:00.030-04:00","edits":2}
+{"type":"idiom.plan_execute.executor_start","ts":"2026-05-09T10:15:00.040-04:00","edits":2}
+{"type":"idiom.plan_execute.executor_edit","ts":"2026-05-09T10:15:00.050-04:00","step":1,"total":2,"path":"cmd/idiom/lane.go","status":"applied"}
+{"type":"idiom.plan_execute.executor_edit","ts":"2026-05-09T10:15:00.060-04:00","step":2,"total":2,"path":"internal/agent/runner_plan_then_execute_guard.go","status":"applied"}
+{"type":"idiom.plan_execute.executor_complete","ts":"2026-05-09T10:15:00.070-04:00","total":2,"succeeded":2,"failed":0,"duration_ms":50}
+{"type":"message","ts":"2026-05-09T10:15:00.080-04:00","role":"assistant","content":"Executor dispatched 2 edit(s) successfully across cmd/idiom/lane.go and internal/agent/runner_plan_then_execute_guard.go."}

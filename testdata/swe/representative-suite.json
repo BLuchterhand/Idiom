@@ -2,7 +2,7 @@
   "name": "representative-swe-frontier-suite",
   "version": 1,
   "coverage": {
-    "min_tasks": 35,
+    "min_tasks": 41,
     "required_families": [
       "direct_question",
       "debug_logs",
@@ -23,7 +23,10 @@
       "docs_edit",
       "prompt_edit_security",
       "failure_injection",
-      "multi_turn_state"
+      "multi_turn_state",
+      "plan_then_execute_planner",
+      "plan_then_execute_executor",
+      "atom_spec"
     ],
     "required_tags": [
       "read-only",
@@ -92,7 +95,8 @@
       "tool_failure_confidence",
       "changed_files",
       "evidence_paths",
-      "approval_expected"
+      "approval_expected",
+      "run_events"
     ],
     "required_oracle_assertions": [
       "no_changed_files",
@@ -137,7 +141,10 @@
     ],
     "min_tasks_per_family": {
       "failure_injection": 2,
-      "multi_turn_state": 3
+      "multi_turn_state": 3,
+      "plan_then_execute_planner": 3,
+      "plan_then_execute_executor": 2,
+      "atom_spec": 1
     }
   },
   "tasks": [
@@ -1649,6 +1656,218 @@
           "prompts/base.md"
         ],
         "max_tool_requests": 35
+      }
+    },
+    {
+      "id": "plan-execute-clean-submit",
+      "family": "plan_then_execute_planner",
+      "prompt": "Add the atom_spec lane to cmd/idiom/lane.go and the registry in internal/agent/runner_plan_then_execute_guard.go.",
+      "tags": [
+        "plan-execute",
+        "planner",
+        "short-circuit",
+        "go"
+      ],
+      "scenario": {
+        "name": "plan-execute-clean-submit",
+        "prompt_contains": [
+          "atom_spec lane",
+          "cmd/idiom/lane.go"
+        ],
+        "require_route_plan": {
+          "initial_lane": "plan_then_execute_planner",
+          "reason": "plan_then_execute_request",
+          "contract": "implementation_result"
+        },
+        "require_run_events": [
+          "plan_then_execute_short_circuit"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 4
+      }
+    },
+    {
+      "id": "plan-execute-write-guard-rejection",
+      "family": "plan_then_execute_planner",
+      "prompt": "Rename the constant DefaultLane to InitialLane across cmd/idiom/lane.go and cmd/idiom/lane_test.go.",
+      "tags": [
+        "plan-execute",
+        "planner",
+        "guard",
+        "short-circuit",
+        "go"
+      ],
+      "scenario": {
+        "name": "plan-execute-write-guard-rejection",
+        "prompt_contains": [
+          "DefaultLane",
+          "InitialLane"
+        ],
+        "require_route_plan": {
+          "initial_lane": "plan_then_execute_planner",
+          "reason": "plan_then_execute_request",
+          "contract": "implementation_result"
+        },
+        "require_run_events": [
+          "plan_then_execute_write_guard",
+          "plan_then_execute_short_circuit"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 5
+      }
+    },
+    {
+      "id": "plan-execute-readiness-nudge",
+      "family": "plan_then_execute_planner",
+      "prompt": "Update the lane preamble for plan-execute mode in cmd/idiom/lanes/plan-execute/preamble.md and the matching postamble.md.",
+      "tags": [
+        "plan-execute",
+        "planner",
+        "nudge",
+        "short-circuit",
+        "docs"
+      ],
+      "scenario": {
+        "name": "plan-execute-readiness-nudge",
+        "prompt_contains": [
+          "preamble.md",
+          "postamble.md"
+        ],
+        "require_route_plan": {
+          "initial_lane": "plan_then_execute_planner",
+          "reason": "plan_then_execute_request",
+          "contract": "implementation_result"
+        },
+        "require_run_events": [
+          "plan_then_execute_readiness_nudge",
+          "plan_then_execute_short_circuit"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 4
+      }
+    },
+    {
+      "id": "plan-execute-executor-success",
+      "family": "plan_then_execute_executor",
+      "prompt": "Run the executor phase for plan .idiom/plans/2026-05-09-100000.plan.json.",
+      "tags": [
+        "plan-execute",
+        "executor",
+        "orchestrator"
+      ],
+      "scenario": {
+        "name": "plan-execute-executor-success",
+        "prompt_contains": [
+          "executor phase"
+        ],
+        "require_route_plan": {
+          "initial_lane": "plan_then_execute_executor",
+          "reason": "plan_artifact_dispatch",
+          "contract": "executor_dispatch_result"
+        },
+        "require_run_events": [
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.preflight_ok",
+          "idiom.plan_execute.executor_complete"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_approval": true,
+        "require_no_summary_rejections": true
+      }
+    },
+    {
+      "id": "plan-execute-preflight-failure",
+      "family": "plan_then_execute_executor",
+      "prompt": "Run the executor phase for plan .idiom/plans/2026-05-09-101500.plan.json.",
+      "tags": [
+        "plan-execute",
+        "executor",
+        "orchestrator",
+        "preflight-failure",
+        "negative-evidence"
+      ],
+      "scenario": {
+        "name": "plan-execute-preflight-failure",
+        "prompt_contains": [
+          "executor phase"
+        ],
+        "final_assistant_contains": [
+          "preflight failed",
+          "Aborted before any edit"
+        ],
+        "require_route_plan": {
+          "initial_lane": "plan_then_execute_executor",
+          "reason": "plan_artifact_dispatch",
+          "contract": "executor_dispatch_result"
+        },
+        "require_run_events": [
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.preflight_failed"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_summary_rejections": true
+      }
+    },
+    {
+      "id": "atom-spec-drafting",
+      "family": "atom_spec",
+      "prompt": "Draft an atom-spec brief for adding go_move_declarations support to the plan-execute preamble registry. No edits — produce the brief artifact only.",
+      "tags": [
+        "atom-spec",
+        "drafting",
+        "read-only",
+        "docs"
+      ],
+      "scenario": {
+        "name": "atom-spec-drafting",
+        "prompt_contains": [
+          "atom-spec brief",
+          "go_move_declarations"
+        ],
+        "final_assistant_contains": [
+          "Files To Modify",
+          "Required Behavior",
+          "HARD PROHIBITIONS"
+        ],
+        "require_route_plan": {
+          "initial_lane": "atom_spec",
+          "reason": "brief_artifact_request",
+          "contract": "brief_artifact"
+        },
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_summary_rejections": true,
+        "max_tool_requests": 0
       }
     }
   ]

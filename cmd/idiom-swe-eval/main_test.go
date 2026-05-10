@@ -325,3 +325,24 @@ func smokeSWETask(logPath string) eval.SWETask {
 func quoteJSON(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 }
+
+// TestRepresentativeSuiteLintsClean is the per-PR drift sentinel: it runs the
+// real testdata/swe/representative-suite.json through `-suite-only` so that
+// coverage-contract violations (a required family lost its only task, a
+// fixture path renamed, a tag dropped) fail `go test ./...` instead of waiting
+// for a manual `make swe-suite` invocation.
+func TestRepresentativeSuiteLintsClean(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "testdata", "swe", "representative-suite.json")
+	if _, err := os.Stat(suitePath); err != nil {
+		t.Fatalf("representative suite missing — drift sentinel cannot run: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("representative suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Lint: PASS") {
+		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
+	}
+}

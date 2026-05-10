@@ -44,11 +44,14 @@ type Check interface {
 
 // RunContext threads in the optional inputs a check might need.
 // Everything is optional — a check that doesn't need a brief or
-// project root just ignores those fields.
+// project root just ignores those fields. DiffPath and BriefPath
+// are surfaced so project-defined shell checks can reference them
+// via `{diff}` and `{brief}` placeholders.
 type RunContext struct {
-	ProjectRoot        string
-	RequiredEditPaths  []string
-	BriefPath          string
+	ProjectRoot       string
+	RequiredEditPaths []string
+	BriefPath         string
+	DiffPath          string
 }
 
 // GenericChecks returns the always-on set Phase 5 ships. Project
@@ -58,6 +61,7 @@ func GenericChecks() []Check {
 		UnresolvedQuestionMarker{},
 		FileAllowlistMismatch{},
 		NarratingTestComments{},
+		GoBuildPasses{},
 	}
 }
 
@@ -160,8 +164,8 @@ func (c NarratingTestComments) Run(d Diff, _ RunContext) ([]Finding, error) {
 		// Only freshly-added lines are interesting — we can't ask
 		// the model to fix something that was already in the file
 		// before the lane ran.
-		for i, line := range f.AddedLines {
-			trimmed := commentBody(line)
+		for _, added := range f.AddedLines {
+			trimmed := commentBody(added.Body)
 			if trimmed == "" {
 				continue
 			}
@@ -173,7 +177,7 @@ func (c NarratingTestComments) Run(d Diff, _ RunContext) ([]Finding, error) {
 				Check:    c.Name(),
 				Severity: SeverityWarning,
 				Path:     f.Path,
-				Line:     i + 1, // line within the added block; not the file line
+				Line:     added.Line,
 				Message:  fmt.Sprintf("narrating test comment %q — assertions and test names should carry the intent", trimmed),
 			})
 		}

@@ -109,10 +109,23 @@ func (r *projectCheckRunner) Run(d Diff, ctx RunContext) ([]Finding, error) {
 	}
 }
 
+// shellOutputCap bounds how much of a shell check's combined
+// stdout+stderr is embedded in a finding's message. A misbehaving
+// rule that prints megabytes shouldn't inflate the postflight
+// report or flood downstream JSONL consumers; ~4 KB is enough to
+// see what the rule reported and tells the operator to rerun for
+// full output.
+const shellOutputCap = 4096
+
 // runShell invokes the configured command with substituted args
 // and treats a non-zero exit as a check failure (configurable via
-// fail_on_non_zero). Stdout is included in the finding so the
-// operator can read what the script reported without rerunning.
+// fail_on_non_zero). Combined stdout+stderr is truncated to
+// shellOutputCap bytes before embedding in the finding's message.
+//
+// Trust note: `kind: shell` rules execute arbitrary commands with
+// the operator's privileges. Reviewing pulled `.idiom/postflight/
+// checks/*.json` is the project's responsibility — see the
+// security note in docs/lane-architecture.md.
 func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error) {
 	cmd := strings.TrimSpace(r.spec.Command)
 	if cmd == "" {
@@ -159,23 +172,36 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
-			Message:  fmt.Sprintf("exit %d: %s", exitCode, strings.TrimSpace(string(out))),
+			Message:  fmt.Sprintf("exit %d: %s", exitCode, truncateOutput(out)),
 		}}, nil
 	}
 	if exitCode != 0 {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityWarning,
-			Message:  fmt.Sprintf("exit %d (non-blocking): %s", exitCode, strings.TrimSpace(string(out))),
+			Message:  fmt.Sprintf("exit %d (non-blocking): %s", exitCode, truncateOutput(out)),
 		}}, nil
 	}
 	return nil, nil
 }
 
+// truncateOutput trims the combined stdout+stderr to shellOutputCap
+// bytes and appends a marker so the operator knows there's more.
+// Whitespace is trimmed before the cap so a script that prints
+// trailing newlines doesn't waste budget on those.
+func truncateOutput(out []byte) string {
+	s := strings.TrimSpace(string(out))
+	if len(s) <= shellOutputCap {
+		return s
+	}
+	return s[:shellOutputCap] + "... (truncated; rerun the check for full output)"
+}
+
 // substituteShellArgs expands placeholders the project may pass in
 // `args`. Supported placeholders:
 //
-//	{diff}         path to the diff file (or empty if inline)
+//	{diff}         path to the diff file (RunContext.DiffPath)
+//	{brief}        path to the brief file (RunContext.BriefPath)
 //	{project_root} resolved project root
 //	{paths}        space-joined modified paths
 //
@@ -185,6 +211,8 @@ func substituteShellArgs(args []string, ctx RunContext, d Diff) []string {
 	out := make([]string, len(args))
 	paths := strings.Join(d.ModifiedPaths(), " ")
 	replacer := strings.NewReplacer(
+		"{diff}", ctx.DiffPath,
+		"{brief}", ctx.BriefPath,
 		"{project_root}", ctx.ProjectRoot,
 		"{paths}", paths,
 	)

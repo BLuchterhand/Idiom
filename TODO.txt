@@ -1,5 +1,0 @@
-- [ ] Add unit tests for the workspace package (internal/workspace)
-- [ ] Document the opencode protocol alignment in docs/
-- [ ] Add integration test for tool_request validation
-- [ ] Clean up stale entries in .planning/
-- [ ] Implement prompt caching for repeated tool calls

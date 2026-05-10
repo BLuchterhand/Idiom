@@ -364,6 +364,83 @@ func TestEvaluateScenarioAcceptsRequiredRoutePlan(t *testing.T) {
 	}
 }
 
+func TestEvaluateScenarioRequireRunEventsPassesWhenRolesPresent(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "rename the enum"}},
+		{Type: "message", Data: map[string]any{"role": "plan_then_execute_write_guard", "content": "plan-then-execute planner phase: write tool edit_file redirected to submit_plan"}},
+		{Type: "message", Data: map[string]any{"role": "plan_then_execute_short_circuit", "content": "submit_plan succeeded; synthesizing final answer from plan artifact instead of spending a second model turn"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Plan submitted with 3 edit(s); the executor phase will dispatch them."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name: "plan-execute write guard fired",
+		RequireRunEvents: []string{
+			"plan_then_execute_write_guard",
+			"plan_then_execute_short_circuit",
+			"  ", // blank entries are tolerated and ignored
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected scenario to pass when both required run events appear, got findings %v", report.Findings)
+	}
+	if got := report.Metrics.MessageRoles["plan_then_execute_write_guard"]; got != 1 {
+		t.Fatalf("expected MessageRoles to count plan_then_execute_write_guard once, got %d", got)
+	}
+}
+
+func TestEvaluateScenarioRequireRunEventsFailsWhenRoleMissing(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "rename the enum"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Plan submitted."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:             "plan-execute write guard expected but absent",
+		RequireRunEvents: []string{"plan_then_execute_write_guard"},
+	})
+	if report.Passed {
+		t.Fatalf("expected scenario to fail when required run event is absent, got pass")
+	}
+	var sawFinding bool
+	for _, finding := range report.Findings {
+		if strings.Contains(finding, `required run event "plan_then_execute_write_guard" was not observed`) {
+			sawFinding = true
+		}
+	}
+	if !sawFinding {
+		t.Fatalf("expected finding pointing at the missing run event, got %v", report.Findings)
+	}
+}
+
+// TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes covers the
+// second match source: orchestrator events emitted to stdout JSONL with the
+// event name as the top-level type (e.g. idiom.plan_execute.preflight_failed)
+// instead of role on a type:"message" record. RequireRunEvents must match
+// either source so a single field can cover runner gates and orchestrator
+// gates symmetrically.
+func TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "execute the plan"}},
+		{Type: "idiom.plan_execute.plan_artifact_loaded", Data: map[string]any{"path": ".idiom/plans/x.plan.json", "edits": 3}},
+		{Type: "idiom.plan_execute.preflight_failed", Data: map[string]any{"edit_index": 1, "path": "internal/foo.go", "reason": "old_text mismatch"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Preflight failed; aborted before any edit."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name: "orchestrator preflight failure detected",
+		RequireRunEvents: []string{
+			"idiom.plan_execute.plan_artifact_loaded",
+			"idiom.plan_execute.preflight_failed",
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected scenario to pass when orchestrator events appear as top-level record types, got findings %v", report.Findings)
+	}
+	if got := report.Metrics.RecordTypes["idiom.plan_execute.preflight_failed"]; got != 1 {
+		t.Fatalf("expected RecordTypes to count preflight_failed once, got %d", got)
+	}
+}
+
 func TestEvaluateScenarioAcceptsFrontierControllerTelemetry(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "review routing thoroughly"}},

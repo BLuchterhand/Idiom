@@ -37,15 +37,20 @@ func runLanePostflight(args []string, stdout io.Writer, stderr io.Writer) int {
 		requiredEditPaths string
 		skipList          string
 		jsonOut           bool
+		listChecks        bool
 	)
-	fs.StringVar(&diffPath, "diff", "", "path to a unified diff (required)")
+	fs.StringVar(&diffPath, "diff", "", "path to a unified diff (required unless --list is set)")
 	fs.StringVar(&briefPath, "brief", "", "brief markdown — required_edit_paths are extracted via the same logic the runner uses")
 	fs.StringVar(&projectRoot, "project-root", "", "project root (defaults to cwd) — used for resolving paths and loading project checks")
 	fs.StringVar(&requiredEditPaths, "required-edit-paths", "", "comma-separated allowlist; overrides --brief extraction")
-	fs.StringVar(&skipList, "skip", "", "comma-separated check names to skip (use `idiom lane postflight --list` to see names)")
+	fs.StringVar(&skipList, "skip", "", "comma-separated check names to skip (use --list to see all available names)")
 	fs.BoolVar(&jsonOut, "json", false, "emit one JSONL event per finding instead of human-readable output")
+	fs.BoolVar(&listChecks, "list", false, "print the names of every check (generic + project) and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if listChecks {
+		return runLanePostflightList(projectRoot, stdout, stderr)
 	}
 	if strings.TrimSpace(diffPath) == "" {
 		fmt.Fprintln(stderr, "lane postflight: --diff is required")
@@ -110,6 +115,7 @@ func runLanePostflight(args []string, stdout io.Writer, stderr io.Writer) int {
 		ProjectRoot:       root,
 		RequiredEditPaths: allow,
 		BriefPath:         briefPath,
+		DiffPath:          diffPath,
 	}
 	res := postflight.Run(d, ctx, checks)
 
@@ -126,14 +132,23 @@ func runLanePostflight(args []string, stdout io.Writer, stderr io.Writer) int {
 
 func emitPostflightJSON(stdout io.Writer, res postflight.Result) {
 	for _, f := range res.Findings {
-		body, err := json.Marshal(map[string]any{
+		event := map[string]any{
 			"type":     "idiom.lane.postflight.finding",
 			"check":    f.Check,
 			"severity": f.Severity,
-			"path":     f.Path,
-			"line":     f.Line,
 			"message":  f.Message,
-		})
+		}
+		// Honor the Finding struct's omitempty intent for path/line:
+		// whole-diff findings without positional info shouldn't emit
+		// noisy `"path":""` / `"line":0` keys downstream consumers
+		// have to filter.
+		if f.Path != "" {
+			event["path"] = f.Path
+		}
+		if f.Line > 0 {
+			event["line"] = f.Line
+		}
+		body, err := json.Marshal(event)
 		if err != nil {
 			continue
 		}
@@ -145,6 +160,34 @@ func emitPostflightJSON(stdout io.Writer, res postflight.Result) {
 		"findings": len(res.Findings),
 	})
 	fmt.Fprintln(stdout, string(summary))
+}
+
+// runLanePostflightList prints the names of every check the
+// postflight pipeline would run for the resolved project root,
+// then exits. Operators use this to discover names for `--skip`
+// without having to author a fake diff.
+func runLanePostflightList(projectRoot string, stdout io.Writer, stderr io.Writer) int {
+	root := projectRoot
+	if strings.TrimSpace(root) == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		root = cwd
+	}
+	for _, c := range postflight.GenericChecks() {
+		fmt.Fprintf(stdout, "generic %s\n", c.Name())
+	}
+	projectChecks, err := postflight.LoadProjectChecks(root)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	for _, c := range projectChecks {
+		fmt.Fprintf(stdout, "project %s\n", c.Name())
+	}
+	return 0
 }
 
 func emitPostflightHuman(stdout io.Writer, res postflight.Result, root string) {

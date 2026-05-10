@@ -102,7 +102,7 @@ def main() -> int:
             "Confirm tight coupling; otherwise consider decomposing into sub-atoms."
         )
     for file_path, action in rows:
-        if action and looks_like_combined_action(action):
+        if action and not is_newfile_action(action) and looks_like_combined_action(action):
             failures.append(
                 "file-allowlist row combines multiple actions: "
                 f"{file_path} -> {action!r}. Split includes, declarations, bodies, callsites, "
@@ -131,6 +131,18 @@ def main() -> int:
         warnings.append(
             f"language-tagged content fence found: ```{tag}. "
             "Prefer ```text for content the lane writes verbatim; cpp/etc. fences are tolerated by current lanes but can still confuse stricter parsers."
+        )
+
+    if looks_like_outer_fenced(text):
+        failures.append(
+            "outer code-fence wrapper detected: the brief is entirely "
+            "wrapped in a ``` fence. Unwrap the brief content before dispatch."
+        )
+
+    if looks_like_outer_fenced(text):
+        failures.append(
+            "outer code-fence wrapper detected: the brief is entirely "
+            "wrapped in a ``` fence. Unwrap the brief content before dispatch."
         )
 
     if re.search(r"(?m)^>\s*(//|\*)", text):
@@ -165,8 +177,8 @@ def main() -> int:
     # orientation reads that burn the pre-write budget — this is the gap that
     # caused VL-13.3b to leave 2 of 3 required edits unwritten.
     paths_without_anchors = [
-        file_path for file_path in files
-        if not has_exact_anchor_for_path(text, file_path)
+        file_path for file_path, action in rows
+        if not is_newfile_action(action) and not has_exact_anchor_for_path(text, file_path)
     ]
     if paths_without_anchors:
         failures.append(
@@ -340,6 +352,38 @@ def looks_like_combined_action(action: str) -> bool:
     ]
     hits = sum(1 for verb in verbs if re.search(rf"\b{verb}\b", lower))
     return hits >= 2 and " and " in lower
+
+
+def is_newfile_action(action: str) -> bool:
+    if not action:
+        return False
+    return action.strip().lower().startswith(("new file:", "create file:"))
+
+
+def looks_like_outer_fenced(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    first = lines[0].rstrip()
+    last = lines[-1].rstrip()
+    if not re.match(r"^```[A-Za-z0-9_+.#-]*\s*$", first):
+        return False
+    if not re.match(r"^```\s*$", last):
+        return False
+    return True
+
+
+def looks_like_outer_fenced(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    first = lines[0].rstrip()
+    last = lines[-1].rstrip()
+    if not re.match(r"^```[A-Za-z0-9_+.#-]*\s*$", first):
+        return False
+    if not re.match(r"^```\s*$", last):
+        return False
+    return True
 
 
 def language_tagged_content_fences(text: str) -> list[str]:

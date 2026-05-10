@@ -128,16 +128,18 @@ func TestFileAllowlistMismatchNormalizesPathSeparators(t *testing.T) {
 
 // TestNarratingTestCommentsFlagsAddedNarration is the canonical
 // detection: a `_test.go` file that adds a comment matching one of
-// the narratingPhrase patterns must produce a warning. The signal
-// covers the most common narration shapes ("// This test verifies
-// X") but stays conservative on borderline phrases.
+// the narratingPhrase patterns must produce a warning. The inputs
+// here use case-and-spacing variants (capital "T", trailing
+// whitespace, leading spaces) of the real-world phrases the
+// regex was designed to catch — earlier this test fed the regex
+// its exact pattern verbatim, which made the assertion tautological.
 func TestNarratingTestCommentsFlagsAddedNarration(t *testing.T) {
 	d := Diff{Files: []FileChange{{
 		Path: "foo/bar_test.go",
-		AddedLines: []string{
-			"// This test verifies that Foo returns 7",
-			"func TestFooReturnsSeven(t *testing.T) {",
-			"\tif Foo() != 7 { t.Fatal() }",
+		AddedLines: []AddedLine{
+			{Line: 1, Body: "//   This Test verifies   that Foo returns 7"},
+			{Line: 2, Body: "func TestFooReturnsSeven(t *testing.T) {"},
+			{Line: 3, Body: "\tif Foo() != 7 { t.Fatal() }"},
 		},
 	}}}
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
@@ -150,6 +152,68 @@ func TestNarratingTestCommentsFlagsAddedNarration(t *testing.T) {
 	if findings[0].Severity != SeverityWarning {
 		t.Fatalf("narration is a warning, not error: %s", findings[0].Severity)
 	}
+	if findings[0].Line != 1 {
+		t.Fatalf("finding should carry the post-image line number: %+v", findings[0])
+	}
+}
+
+// TestNarratingTestCommentsBorderlinePhrasesDoNotFire verifies the
+// false-positive ceiling: phrases that resemble narration but
+// aren't exactly the patterns the regex targets must NOT trigger.
+// Catches the regex getting too greedy in a future edit (e.g.
+// dropping the leading anchor or broadening the alternation).
+func TestNarratingTestCommentsBorderlinePhrasesDoNotFire(t *testing.T) {
+	d := Diff{Files: []FileChange{{
+		Path: "foo/bar_test.go",
+		AddedLines: []AddedLine{
+			// Gerund, not "verifies that"
+			{Line: 1, Body: "// verifying invariants below"},
+			// Buried in the middle of a sentence
+			{Line: 2, Body: "// when we test the parser, make sure to seed"},
+			// Question, not assertion
+			{Line: 3, Body: "// does this test cover the empty case?"},
+			// Cross-reference; legitimate context
+			{Line: 4, Body: "// see issue #123 for a related test"},
+			// TODO that mentions tests
+			{Line: 5, Body: "// TODO: add a test that handles negative input"},
+		},
+	}}}
+	findings, err := NarratingTestComments{}.Run(d, RunContext{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("borderline phrases must not trigger; got %v", findings)
+	}
+}
+
+// TestNarratingTestCommentsCarriesPostImageLineNumber verifies the
+// load-bearing fix from the Phase 4/5 review: the Line field
+// reflects the actual post-image file line (parsed from the hunk
+// header), not the index within AddedLines. A diff with non-
+// contiguous adds and non-zero starting line previously produced
+// off-by-many line numbers.
+func TestNarratingTestCommentsCarriesPostImageLineNumber(t *testing.T) {
+	d := Diff{Files: []FileChange{{
+		Path: "foo/bar_test.go",
+		AddedLines: []AddedLine{
+			{Line: 42, Body: "// This test verifies parsing"},
+			{Line: 99, Body: "// makes sure the result is non-nil"},
+		},
+	}}}
+	findings, err := NarratingTestComments{}.Run(d, RunContext{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(findings))
+	}
+	if findings[0].Line != 42 {
+		t.Fatalf("first finding line wrong: %+v", findings[0])
+	}
+	if findings[1].Line != 99 {
+		t.Fatalf("second finding line wrong: %+v", findings[1])
+	}
 }
 
 // TestNarratingTestCommentsIgnoresNonTestFiles verifies the
@@ -161,7 +225,7 @@ func TestNarratingTestCommentsFlagsAddedNarration(t *testing.T) {
 func TestNarratingTestCommentsIgnoresNonTestFiles(t *testing.T) {
 	d := Diff{Files: []FileChange{{
 		Path:       "foo/bar.go",
-		AddedLines: []string{"// This function ensures that the Foo invariant holds"},
+		AddedLines: []AddedLine{{Line: 1, Body: "// This function ensures that the Foo invariant holds"}},
 	}}}
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
 	if err != nil {
@@ -180,10 +244,10 @@ func TestNarratingTestCommentsIgnoresNonTestFiles(t *testing.T) {
 func TestNarratingTestCommentsAcceptsLegitimateComments(t *testing.T) {
 	d := Diff{Files: []FileChange{{
 		Path: "foo/bar_test.go",
-		AddedLines: []string{
-			"// see issue #123 for context",
-			"// TODO(2026-06-01): tighten the bound here",
-			"// Copyright 2026 Acme",
+		AddedLines: []AddedLine{
+			{Line: 1, Body: "// see issue #123 for context"},
+			{Line: 2, Body: "// TODO(2026-06-01): tighten the bound here"},
+			{Line: 3, Body: "// Copyright 2026 Acme"},
 		},
 	}}}
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
@@ -200,8 +264,8 @@ func TestNarratingTestCommentsAcceptsLegitimateComments(t *testing.T) {
 // also fire, since postflight runs against multi-language repos.
 func TestNarratingTestCommentsRecognizesPythonAndCppTests(t *testing.T) {
 	d := Diff{Files: []FileChange{
-		{Path: "tests/test_foo.py", AddedLines: []string{"# This test verifies parsing"}},
-		{Path: "tests/foo_test.cpp", AddedLines: []string{"// Make sure the parser handles UTF-8"}},
+		{Path: "tests/test_foo.py", AddedLines: []AddedLine{{Line: 1, Body: "# This test verifies parsing"}}},
+		{Path: "tests/foo_test.cpp", AddedLines: []AddedLine{{Line: 1, Body: "// Make sure the parser handles UTF-8"}}},
 	}}
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
 	if err != nil {
