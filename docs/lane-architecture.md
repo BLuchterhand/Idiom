@@ -247,6 +247,14 @@ Phases shipped (`docs/reusability-design.md`):
   wrapper's `--coder` shortcut and plan-execute auto-route both pull
   the alias from this file when present, falling back to the legacy
   hardcoded `qwen3-coder-30b` so existing setups keep working.
+- Phase 4b — `idiom backend start|stop|status` launcher port. Argv
+  is constructed from the schema (`binary` + `--model` + `--port` +
+  optional cache/token flags + `extra_args`), so any local-LLM
+  launcher whose CLI matches the MLX shape works without project
+  scripts. Detached spawn (Setpgid) so backends survive idiom exit;
+  ready-check is a TCP connect to the listening port; stop sends
+  SIGTERM with a configurable grace window before SIGKILL. The
+  proxy port still ships in Phase 4c.
 - Phase 5 — `idiom lane postflight` runs a configurable QC pipeline
   against a unified diff. Three always-on generic checks
   (unresolved `<<QUESTION>>:` markers in modified files, write
@@ -257,10 +265,11 @@ Phases shipped (`docs/reusability-design.md`):
   `2` flag error, `3` checks fired — separate so callers can tell
   "ran and found bugs" apart from "couldn't run."
 
-Phases 4b/6/7 add these project-side hooks (not yet present today;
+Phases 4c/6/7 add these project-side hooks (not yet present today;
 placeholder paths shown so projects can plan ahead):
 
-- `idiom backend start|stop|proxy` — Phase 4b launcher port
+- `idiom backend proxy` — Phase 4c alias-routing port (a Go port
+  of, or a wrapper around, Colony's `mlx_alias_proxy.py`)
 - `.idiom/prompts/rules/<name>.md` — rule overrides for the
   canonical generic rules (later phase)
 

@@ -7,15 +7,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"idiom/internal/backends"
 	"idiom/internal/telemetry"
 )
 
+// Test-friendly indirections. Phase 4b's launcher functions take
+// option-based DI, but the CLI plumbing wants a single-call shape;
+// these vars let lane_postflight-style tests stub Launch/Stop/
+// Status without spawning real processes. Production callers
+// shouldn't reassign them.
+var (
+	backendLaunch = backends.Launch
+	backendStop   = backends.Stop
+	backendStatus = backends.Status
+)
+
 // runBackendMain dispatches `idiom backend <subcommand>`. Phase 4
 // ships `list` (introspect the loaded backends.json) so projects
-// have visibility into what idiom is reading; `start`, `stop`, and
-// `proxy` ship in Phase 4b once the launcher port is finalized.
+// have visibility into what idiom is reading; Phase 4b adds
+// `start`, `stop`, and `status`. `proxy` is deferred to Phase 4c
+// since the existing Python proxy is a 150-line HTTP router that
+// needs its own port.
 func runBackendMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	return runBackendMainWithTelemetry(args, stdout, stderr, nil)
 }
@@ -29,11 +43,170 @@ func runBackendMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 	switch args[0] {
 	case "list":
 		return runBackendList(args[1:], stdout, stderr)
+	case "start":
+		return runBackendStart(args[1:], stdout, stderr)
+	case "stop":
+		return runBackendStop(args[1:], stdout, stderr)
+	case "status":
+		return runBackendStatus(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "backend: unknown subcommand %q\n", args[0])
 		printBackendUsage(stderr)
 		return 2
 	}
+}
+
+// loadProfileFromFlags resolves --project-root + --profile into a
+// loaded backends.json profile. Shared by start/stop/status so the
+// flag set and error messages stay consistent across them.
+func loadProfileFromFlags(projectRoot, profileName string, stderr io.Writer) (backends.Profile, int) {
+	root := projectRoot
+	if strings.TrimSpace(root) == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return backends.Profile{}, 1
+		}
+		root = cwd
+	}
+	file, ok, err := backends.LoadFromProjectRoot(root)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return backends.Profile{}, 1
+	}
+	if !ok {
+		fmt.Fprintf(stderr, "backend: no .idiom/backends.json under %s\n", root)
+		return backends.Profile{}, 1
+	}
+	prof, found := file.Profile(profileName)
+	if !found {
+		if profileName == "" {
+			fmt.Fprintln(stderr, "backend: backends.json has multiple profiles; pass --profile <name>")
+		} else {
+			fmt.Fprintf(stderr, "backend: profile %q not found\n", profileName)
+		}
+		return backends.Profile{}, 2
+	}
+	return prof, 0
+}
+
+// runBackendStart spawns each model in the selected profile,
+// waits for each port to accept connections, and prints a status
+// line per model. Exit code: 0 when every backend reaches Ready,
+// non-zero when any spawn or readiness check fails.
+func runBackendStart(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("idiom backend start", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var (
+		projectRoot string
+		profileName string
+		logDir      string
+		readyTO     time.Duration
+	)
+	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/backends.json (defaults to cwd)")
+	fs.StringVar(&profileName, "profile", "", "named profile to launch (omit to use the lone profile)")
+	fs.StringVar(&logDir, "log-dir", "", "directory for backend logs (defaults to OS temp dir)")
+	fs.DurationVar(&readyTO, "ready-timeout", 90*time.Second, "how long to wait for each backend to start accepting connections")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	prof, code := loadProfileFromFlags(projectRoot, profileName, stderr)
+	if code != 0 {
+		return code
+	}
+	if len(prof.Models) == 0 {
+		fmt.Fprintln(stderr, "backend: profile declares no models")
+		return 1
+	}
+
+	results := backendLaunch(prof, backends.LauncherOptions{
+		LogDir:       logDir,
+		ReadyTimeout: readyTO,
+	})
+	exit := 0
+	for _, r := range results {
+		switch {
+		case r.Err != nil && !r.Ready:
+			fmt.Fprintf(stdout, "FAIL %s :%d — %v\n", r.Alias, r.Port, r.Err)
+			exit = 1
+		case r.Err != nil && r.Ready:
+			// "already running" path: report as note, not failure.
+			fmt.Fprintf(stdout, "NOTE %s :%d — %v\n", r.Alias, r.Port, r.Err)
+		case !r.Ready:
+			fmt.Fprintf(stdout, "TIMEOUT %s :%d (pid=%d) — log=%s\n", r.Alias, r.Port, r.PID, r.LogPath)
+			exit = 1
+		default:
+			fmt.Fprintf(stdout, "READY %s :%d (pid=%d) — log=%s\n", r.Alias, r.Port, r.PID, r.LogPath)
+		}
+	}
+	return exit
+}
+
+// runBackendStop signals each model's listening process. Exit
+// code: 0 when every backend ends up stopped (whether it was
+// running or already free), non-zero on signal failures.
+func runBackendStop(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("idiom backend stop", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var (
+		projectRoot string
+		profileName string
+		grace       time.Duration
+	)
+	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/backends.json (defaults to cwd)")
+	fs.StringVar(&profileName, "profile", "", "named profile to stop (omit to use the lone profile)")
+	fs.DurationVar(&grace, "grace", 5*time.Second, "wait between SIGTERM and SIGKILL")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	prof, code := loadProfileFromFlags(projectRoot, profileName, stderr)
+	if code != 0 {
+		return code
+	}
+	results := backendStop(prof, backends.StopOptions{GraceTimeout: grace})
+	exit := 0
+	for _, r := range results {
+		switch {
+		case r.Err != nil:
+			fmt.Fprintf(stdout, "FAIL %s :%d — %v\n", r.Alias, r.Port, r.Err)
+			exit = 1
+		case r.PID == 0:
+			fmt.Fprintf(stdout, "FREE %s :%d\n", r.Alias, r.Port)
+		default:
+			fmt.Fprintf(stdout, "STOPPED %s :%d (pid=%d)\n", r.Alias, r.Port, r.PID)
+		}
+	}
+	return exit
+}
+
+// runBackendStatus prints which backends in the selected profile
+// are currently listening, with their PIDs.
+func runBackendStatus(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("idiom backend status", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var (
+		projectRoot string
+		profileName string
+	)
+	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/backends.json (defaults to cwd)")
+	fs.StringVar(&profileName, "profile", "", "named profile to inspect (omit to use the lone profile)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	prof, code := loadProfileFromFlags(projectRoot, profileName, stderr)
+	if code != 0 {
+		return code
+	}
+	results := backendStatus(prof, backends.StopOptions{})
+	for _, r := range results {
+		if r.Up {
+			fmt.Fprintf(stdout, "UP   %s :%d (pid=%d)\n", r.Alias, r.Port, r.PID)
+		} else {
+			fmt.Fprintf(stdout, "DOWN %s :%d\n", r.Alias, r.Port)
+		}
+	}
+	return 0
 }
 
 // runBackendList prints the parsed contents of .idiom/backends.json
@@ -132,6 +305,12 @@ func printBackendUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "subcommands:")
 	fmt.Fprintln(stderr, "  list            print the parsed .idiom/backends.json")
 	fmt.Fprintln(stderr, "                  flags: --project-root <path> | --file <path>")
+	fmt.Fprintln(stderr, "  start           launch each model in the selected profile")
+	fmt.Fprintln(stderr, "                  flags: --profile <name> --log-dir <path> --ready-timeout <duration>")
+	fmt.Fprintln(stderr, "  stop            signal each model's listening process (SIGTERM, then SIGKILL after --grace)")
+	fmt.Fprintln(stderr, "                  flags: --profile <name> --grace <duration>")
+	fmt.Fprintln(stderr, "  status          show which backends in the profile are listening")
+	fmt.Fprintln(stderr, "                  flags: --profile <name>")
 	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, "Phase 4b will add: start, stop, proxy.")
+	fmt.Fprintln(stderr, "Phase 4c (deferred) will add: proxy.")
 }
