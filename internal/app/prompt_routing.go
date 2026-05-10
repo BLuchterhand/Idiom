@@ -182,6 +182,11 @@ func RequiredEditPathsFromPrompt(prompt string) []string {
 }
 
 func requiredEditPathsFromPrompt(prompt string) []string {
+	// Scope to the brief body when the lane wrapper has wrapped it
+	// in IDIOM:BRIEF-BODY markers; otherwise scan the whole prompt
+	// (back-compat for chat / direct API). pathparse.ScopeToBriefBody
+	// is the authoritative helper.
+	prompt = pathparse.ScopeToBriefBody(prompt)
 	headings := []string{
 		"files to modify",
 		"files-to-modify",
@@ -243,6 +248,7 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 }
 
 func structuredRequiredEditPathsFromPrompt(prompt string) []string {
+	prompt = pathparse.ScopeToBriefBody(prompt)
 	keys := []string{
 		"files_to_modify",
 		"files_to_edit",

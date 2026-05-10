@@ -4498,9 +4498,21 @@ func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolReques
 	// brief's full required_edit_paths set; anything outside still fails.
 	readScope := r.RuntimeBrief.RequiredEditPaths
 	outOfScope := implementationScopedEditSurfaceActive(r.RuntimeBrief, results) && !readRequestTargetsRequiredEditPath(req, readScope)
-	if !missingGap && !outOfScope {
+	// In-scope reads (target one of the brief's required_edit_paths) are
+	// allowed without an explicit named_gap. The safety reason is
+	// implicit — "verify the anchor on a path we're about to edit" — and
+	// the schema describes named_gap as optional, so requiring it on
+	// in-scope reads contradicted the surface the planner sees. Local
+	// Qwen consistently calls code_navigate without named_gap and got
+	// stuck; the previous behavior also rejected the asymmetric case
+	// where read_file happened to include named_gap and code_navigate
+	// didn't (Phase 6.5 / Phase 5b dispatch debugging, 2026-05-10).
+	// Out-of-scope reads still get blocked regardless of named_gap —
+	// that's the protection the gate is meant to provide.
+	if !outOfScope {
 		return "", "", "", false, false
 	}
+	_ = missingGap // retained for the rejection-message switch below
 	missing := r.remainingRequiredEditPaths(results)
 	target := "the required edit path(s)"
 	if len(missing) > 0 {

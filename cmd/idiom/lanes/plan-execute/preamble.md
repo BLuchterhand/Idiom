@@ -28,6 +28,22 @@ Keep planned edits inside the brief's edit allowlist; idiom recognizes `Files
 To Modify`, `Files You May Edit`, and near-equivalent allowlist headings as
 `required_edit_paths` when present.
 
+Before any file read, re-read the brief packet. The brief is the authoritative
+source for required edits, anchors, and edit shapes; most "I need to look this
+up" reflexes are answered by re-scanning the brief, not by opening a new file.
+
+When you DO need to look something up, prefer language-aware discovery tools
+over raw read_file with line ranges. They return one full function/symbol per
+call, vs read_file which forces multi-call exploration of large files:
+
+- `code_navigate` — language-agnostic symbol jump (one call returns the symbol)
+- `<lang>_find_symbol`, `<lang>_read_symbol`, `<lang>_workspace_symbol` — per-language symbol surface
+- `<lang>_references` — every callsite of a symbol in one call
+- `*_file_outline` — a file's symbol map without reading the body
+
+Reserve `read_file` for verifying a specific anchor whose location is already
+known (e.g. confirming line N's exact whitespace before copying as `old_text`).
+
 Use bounded source reads only to refresh a required-path anchor or close one
 named edit-safety fact for an upcoming edit in the plan. If no plan can be
 assembled safely, stop with `<<QUESTION>>:` and name the blocker.

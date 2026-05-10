@@ -15,6 +15,16 @@ func LooksLikeWorkspacePathToken(candidate string) bool {
 	if strings.ContainsAny(candidate, "*?") {
 		return false
 	}
+	// Backticks inside a path token mean the token came from inside a
+	// markdown code span (e.g. the planner preamble's prose `start_line`/
+	// `end_line` becomes the candidate `start_line\`/\`end_line` after
+	// outer-trim; the inner backticks are not stripped and are never
+	// valid in workspace paths). Rejecting them here defends every
+	// downstream consumer (required_edit_paths, discovery handles, etc.)
+	// from picking up prose tokens as fake paths.
+	if strings.ContainsAny(candidate, "`") {
+		return false
+	}
 	if strings.Contains(candidate, "/") {
 		return true
 	}
@@ -115,7 +125,40 @@ func looksLikeMarkdownHeading(line string) bool {
 		strings.HasSuffix(trimmed, ":")
 }
 
+// briefBodyStartMarker / briefBodyEndMarker mirror the markers that
+// cmd/idiom/lane.go's composeLanePromptToFile wraps around the project
+// brief inside the composed lane prompt. When MentionedWorkspacePaths
+// (and its callers) see these markers in the input, they scope their
+// scan to the marked region — that's how the harness avoids picking
+// up prose tokens like `start_line`/`end_line` from the embedded
+// preamble. The markers are not present in non-lane prompts, so the
+// scan-everything fallback preserves behavior for chat / direct API.
+const (
+	briefBodyStartMarker = "<!-- IDIOM:BRIEF-BODY-START -->"
+	briefBodyEndMarker   = "<!-- IDIOM:BRIEF-BODY-END -->"
+)
+
+// ScopeToBriefBody returns the substring between the brief-body
+// markers when both are present in order; otherwise returns the
+// input unchanged. Centralized so every extractor that scans
+// composed prompts can opt in via one call. Exported so callers
+// outside pathparse (notably internal/app's required-edit-paths
+// extractor) can reuse the same scoping rule.
+func ScopeToBriefBody(text string) string {
+	start := strings.Index(text, briefBodyStartMarker)
+	if start < 0 {
+		return text
+	}
+	bodyStart := start + len(briefBodyStartMarker)
+	end := strings.Index(text[bodyStart:], briefBodyEndMarker)
+	if end < 0 {
+		return text
+	}
+	return text[bodyStart : bodyStart+end]
+}
+
 func MentionedWorkspacePaths(text string) []string {
+	text = ScopeToBriefBody(text)
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
