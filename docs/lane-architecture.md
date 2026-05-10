@@ -247,13 +247,20 @@ Phases shipped (`docs/reusability-design.md`):
   wrapper's `--coder` shortcut and plan-execute auto-route both pull
   the alias from this file when present, falling back to the legacy
   hardcoded `qwen3-coder-30b` so existing setups keep working.
+- Phase 5 — `idiom lane postflight` runs a configurable QC pipeline
+  against a unified diff. Three always-on generic checks
+  (unresolved `<<QUESTION>>:` markers in modified files, write
+  outside `required_edit_paths`, narrating comments in newly-added
+  test code) plus project rules under
+  `.idiom/postflight/checks/<name>.json` (`kind: shell` runner;
+  `kind: ast_grep` reserved). Exit codes: `0` pass, `1` IO/setup,
+  `2` flag error, `3` checks fired — separate so callers can tell
+  "ran and found bugs" apart from "couldn't run."
 
-Phases 4b/5/6/7 add these project-side hooks (not yet present today;
+Phases 4b/6/7 add these project-side hooks (not yet present today;
 placeholder paths shown so projects can plan ahead):
 
 - `idiom backend start|stop|proxy` — Phase 4b launcher port
-- `.idiom/postflight/checks/<name>.json` — per-project diff lint
-  rules (Phase 5)
 - `.idiom/prompts/rules/<name>.md` — rule overrides for the
   canonical generic rules (later phase)
 

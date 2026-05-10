@@ -171,6 +171,16 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 	return brief
 }
 
+// RequiredEditPathsFromPrompt is the exported view of the brief-
+// parsing logic the runner uses to populate brief.RequiredEditPaths.
+// External callers (today: cmd/idiom's `idiom lane postflight`) use
+// this so the postflight allowlist check matches exactly what the
+// runner saw — diverging implementations would produce different
+// allowlists for the same brief, which is a footgun.
+func RequiredEditPathsFromPrompt(prompt string) []string {
+	return requiredEditPathsFromPrompt(prompt)
+}
+
 func requiredEditPathsFromPrompt(prompt string) []string {
 	headings := []string{
 		"files to modify",

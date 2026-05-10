@@ -105,6 +105,13 @@ func runLaneMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 // the prompt with project overlays, writes the composed prompt to a
 // temp file, and forwards to the underlying lane subcommand.
 func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps laneDeps) int {
+	// Sub-subcommands (postflight today; later: probe, summarize)
+	// run before the mode parser since they aren't lane invocations
+	// — they don't compose a brief, don't dispatch to plan-execute
+	// or implement, and have their own flag set.
+	if len(args) > 0 && args[0] == "postflight" {
+		return runLanePostflight(args[1:], stdout, stderr)
+	}
 	opts, err := parseLaneOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
