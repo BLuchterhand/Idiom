@@ -403,7 +403,7 @@ func runLanePostflightAfterLane(opts laneOptions, stdout io.Writer, stderr io.Wr
 		fmt.Fprintf(stderr, "lane: postflight: close temp file failed: %v\n", err)
 		return 1
 	}
-	return lanePostflightRunner([]string{"--diff", tmp.Name(), "--project-root", opts.ProjectRoot}, stdout, stderr)
+	return lanePostflightRunner([]string{"--diff", tmp.Name(), "--project-root", opts.ProjectRoot, "--brief", opts.BriefPath}, stdout, stderr)
 }
 
 // resolveRoleAlias reads .idiom/backends.json for the resolved

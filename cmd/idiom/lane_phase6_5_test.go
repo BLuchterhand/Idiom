@@ -333,3 +333,43 @@ func TestLanePostflightFlagRunsAfterDispatch(t *testing.T) {
 		t.Fatalf("max(lane=0, postflight=3) should be 3; got %d", code)
 	}
 }
+
+func TestLanePostflightFlagPassesBrief(t *testing.T) {
+	briefPath := writeBrief(t, "# Test\n")
+	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+
+	origGitDiff := laneGitDiff
+	laneGitDiff = func(string) ([]byte, error) { return []byte(""), nil }
+	t.Cleanup(func() { laneGitDiff = origGitDiff })
+
+	var capturedArgs []string
+	stubLanePostflightRunner(t, func(args []string, _, _ io.Writer) int {
+		capturedArgs = append([]string(nil), args...)
+		return 0
+	})
+
+	fake := &laneFakeRunner{}
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	deps := laneDeps{
+		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
+		runPlanExecute:   fake.plan,
+		runImplement:     fake.implement,
+		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+	}
+	var stdout, stderr bytes.Buffer
+	runLaneMainWithDeps([]string{"plan-execute", "--postflight", briefPath}, &stdout, &stderr, deps)
+
+	sawBriefFlag := false
+	sawBriefPath := false
+	for i, a := range capturedArgs {
+		if a == "--brief" && i+1 < len(capturedArgs) && capturedArgs[i+1] == briefPath {
+			sawBriefFlag = true
+			sawBriefPath = true
+			break
+		}
+	}
+	if !sawBriefFlag || !sawBriefPath {
+		t.Fatalf("postflight should receive --brief %s; got args: %v", briefPath, capturedArgs)
+	}
+}
