@@ -166,6 +166,144 @@ func TestRunLaneMainComposesProjectOverlay(t *testing.T) {
 	}
 }
 
+// TestRunLaneMainEmbedsCanonicalPlanExecutePreamble verifies the
+// idiom-canonical plan-execute preamble (lifted from Colony's
+// run_idiom_impl.sh) is embedded into the binary at build time and
+// prepended to every plan-execute composed prompt. The "PLANNER" /
+// "submit_plan" framing is the load-bearing instruction for the
+// plan-execute lane — losing it converts the lane into a write-mode
+// run that the harness will then reject.
+func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
+	briefBody := "# atom\nFiles To Modify: x\n"
+	briefPath := writeBrief(t, briefBody)
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	if got := runLaneMainTest(t, []string{"plan-execute", briefPath}, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	prompt := fake.calledPrompt
+	required := []string{
+		"Plan-Then-Execute Lane Brief",
+		"You are the PLANNER",
+		"submit_plan",
+	}
+	for _, marker := range required {
+		if !strings.Contains(prompt, marker) {
+			t.Fatalf("plan-execute composed prompt missing canonical preamble marker %q; head=%s", marker, prompt[:min(400, len(prompt))])
+		}
+	}
+	if strings.Index(prompt, "Plan-Then-Execute Lane Brief") > strings.Index(prompt, briefBody) {
+		t.Fatalf("canonical preamble must precede the brief body")
+	}
+}
+
+// TestRunLaneMainEmbedsCanonicalImplementPreamble mirrors the
+// plan-execute test for the implement lane: the embedded preamble
+// must surface so the model sees idiom's write-capable contract
+// language (allowlist behavior, named_gap budget, harness_feedback
+// expectations) without relying on a project-side copy.
+func TestRunLaneMainEmbedsCanonicalImplementPreamble(t *testing.T) {
+	briefBody := "# atom\nFiles To Modify: x\n"
+	briefPath := writeBrief(t, briefBody)
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	if got := runLaneMainTest(t, []string{"implement", briefPath}, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	prompt := fake.calledPrompt
+	required := []string{
+		"Implementation Lane Brief",
+		"write-capable implementation contract",
+		"named_gap",
+	}
+	for _, marker := range required {
+		if !strings.Contains(prompt, marker) {
+			t.Fatalf("implement composed prompt missing canonical preamble marker %q; head=%s", marker, prompt[:min(400, len(prompt))])
+		}
+	}
+}
+
+// TestRunLaneMainEmbedsCanonicalPostamble verifies the closeout
+// postamble (which tells the model what "done" looks like for each
+// lane) is embedded and appended after the brief / project overlay.
+func TestRunLaneMainEmbedsCanonicalPostamble(t *testing.T) {
+	cases := []struct {
+		mode   string
+		marker string
+	}{
+		{"plan-execute", "Plan-Then-Execute Closeout"},
+		{"implement", "Implementation Closeout"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			briefPath := writeBrief(t, "# atom\n")
+			var stdout, stderr bytes.Buffer
+			fake := &laneFakeRunner{}
+			if got := runLaneMainTest(t, []string{tc.mode, briefPath}, &stdout, &stderr, fake); got != 0 {
+				t.Fatalf("expected exit 0, got %d", got)
+			}
+			prompt := fake.calledPrompt
+			if !strings.Contains(prompt, tc.marker) {
+				t.Fatalf("composed prompt missing canonical %s postamble marker %q", tc.mode, tc.marker)
+			}
+			// Postamble must follow the brief — closeout language ahead of
+			// the brief would mislead the model about what's expected.
+			briefIdx := strings.Index(prompt, "# atom")
+			postIdx := strings.Index(prompt, tc.marker)
+			if briefIdx < 0 || postIdx < 0 || postIdx < briefIdx {
+				t.Fatalf("canonical postamble must follow brief body; brief@%d post@%d", briefIdx, postIdx)
+			}
+		})
+	}
+}
+
+// TestRunLaneMainProjectOverlayWrappedByCanonical verifies the
+// concatenation order specified in lane-architecture.md §"Prompt
+// composition layers": idiom canonical preamble → project preamble
+// overlay → brief → project postamble overlay → idiom canonical
+// postamble. The project layer extends, never replaces, idiom's
+// canonical text.
+func TestRunLaneMainProjectOverlayWrappedByCanonical(t *testing.T) {
+	briefBody := "# atom\n"
+	briefPath := writeBrief(t, briefBody)
+	overlayDir := filepath.Join(filepath.Dir(briefPath), ".idiom", "prompts", "lanes", "plan-execute")
+	if err := os.MkdirAll(overlayDir, 0o755); err != nil {
+		t.Fatalf("mkdir overlay: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(overlayDir, "preamble.md"), []byte("PROJECT_PREAMBLE_OVERLAY"), 0o644); err != nil {
+		t.Fatalf("write preamble overlay: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(overlayDir, "postamble.md"), []byte("PROJECT_POSTAMBLE_OVERLAY"), 0o644); err != nil {
+		t.Fatalf("write postamble overlay: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"plan-execute", "--project-root", filepath.Dir(briefPath), briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	prompt := fake.calledPrompt
+
+	canonicalPreIdx := strings.Index(prompt, "Plan-Then-Execute Lane Brief")
+	projectPreIdx := strings.Index(prompt, "PROJECT_PREAMBLE_OVERLAY")
+	briefIdx := strings.Index(prompt, briefBody)
+	projectPostIdx := strings.Index(prompt, "PROJECT_POSTAMBLE_OVERLAY")
+	canonicalPostIdx := strings.Index(prompt, "Plan-Then-Execute Closeout")
+
+	idxs := []int{canonicalPreIdx, projectPreIdx, briefIdx, projectPostIdx, canonicalPostIdx}
+	for i, idx := range idxs {
+		if idx < 0 {
+			t.Fatalf("missing layer %d in composed prompt; idxs=%v\n--- prompt head ---\n%s", i, idxs, prompt[:min(800, len(prompt))])
+		}
+	}
+	for i := 1; i < len(idxs); i++ {
+		if idxs[i] < idxs[i-1] {
+			t.Fatalf("layer order violated at %d→%d; idxs=%v", i-1, i, idxs)
+		}
+	}
+}
+
 // TestRunLaneMainAutoRoutesPlanExecuteToCoder verifies the
 // auto-routing rule we shipped in Colony's script: when no --model is
 // explicit, plan-execute mode picks the configured coder model.

@@ -202,11 +202,18 @@ keys (`internal/config/config.go`):
   loads the matching one when it selects a profile.
 
 The lane runner concatenates only what `system_prompt_files` lists
-— there is **no embedded canonical base prompt** that idiom prepends
-automatically today. Projects own the full text. Phase 3 of the
-reusability migration (`docs/reusability-design.md`) introduces the
-canonical-in-idiom + project-overlay pattern; until then,
-`.idiom/prompts/*.md` is the sole source.
+for the chat-side system prompt; that part still has no embedded
+canonical base. Projects own the full text via
+`.idiom/prompts/base.md`.
+
+Lane preambles/postambles are different. As of Phase 3 of the
+reusability migration, `idiom lane <mode>` wraps the brief with
+canonical-in-idiom mode-specific text loaded via `go:embed` from
+`cmd/idiom/lanes/<mode>/{preamble,postamble}.md`. A binary-only
+deployment carries the canonical lane wrapper without needing a
+co-located prompts directory. Projects extend (never replace) that
+wrapper via `<repo>/.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`,
+inserted between the canonical text and the brief body.
 
 For a fresh project starting from `idiom init`, the recommended
 seed is:
@@ -230,21 +237,25 @@ lane subcommand reads via `--prompt-file <path>`. Convention:
 
 ## What's coming after the reusability migration
 
-Phases 2-7 of `docs/reusability-design.md` add these project-side
-hooks (not yet present today; placeholder paths shown so projects
-can plan ahead):
+Phases shipped (`docs/reusability-design.md`):
+
+- Phase 1-2 — `idiom lane <mode>` wrapper with overlay seam
+- Phase 3 — canonical lane preambles/postambles via `go:embed`,
+  project overlay at `.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`
+
+Phases 4-7 add these project-side hooks (not yet present today;
+placeholder paths shown so projects can plan ahead):
 
 - `.idiom/backends.json` — local LLM launcher profiles (Phase 4)
 - `.idiom/postflight/checks/<name>.json` — per-project diff lint
   rules (Phase 5)
-- `.idiom/prompts/lanes/<mode>/{preamble,postamble}.md` — lane
-  prompt overlays (Phase 3)
 - `.idiom/prompts/rules/<name>.md` — rule overrides for the
-  canonical generic rules (Phase 3)
+  canonical generic rules (later phase)
 
 Until those phases ship, projects use today's overlay points
-(`.idiom/prompts/base.md` + project-side scripts wrapping the
-existing `idiom plan-execute` / `idiom implement`).
+(`.idiom/prompts/base.md` + the lane overlay seam + project-side
+scripts wrapping the existing `idiom plan-execute` /
+`idiom implement`).
 
 ## Always-on language support
 
@@ -339,9 +350,10 @@ idiom artifact \
   --no-tools
 ```
 
-Phase 3 of the reusability migration adds canonical lane
-preambles/postambles via `go:embed`, and a project overlay seam
-at `<repo>/.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`.
+Phase 3 of the reusability migration is shipped: canonical lane
+preambles/postambles ship in the binary via `go:embed`, with a
+project overlay seam at
+`<repo>/.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`.
 Atom-spec drafting will gain its own subcommand
 (`idiom atom-spec draft`) in a later phase.
 

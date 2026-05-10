@@ -1,8 +1,42 @@
+# Build artifacts
 bin/
+/idiom
+qwen-analyze
+*.test
+*.out
+*.prof
+coverage.out
+
+# Local runtime state
 .cache/
+.idiom/
+.planning/
 logs/
 models/
 transcripts/
-.planning/
-.idiom/
-/idiom
+
+# Local agent / IDE state
+.claude/
+.aider*
+.cursor/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Local config (use config.example.json as the template)
+config.json
+config.*.backup.json
+.env
+.env.local
+.env.*.local
+
+# Ephemeral review / session notes
+REVIEW_*.md
+NOTES_*.md
+SCRATCH_*.md

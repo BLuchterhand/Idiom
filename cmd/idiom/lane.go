@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,6 +14,17 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 )
+
+// canonicalLanePromptsFS holds the idiom-canonical lane prompt
+// preambles/postambles, embedded into the binary at build time so
+// `idiom lane <mode>` works against any project without depending on
+// a co-located prompts/ directory or per-project copy. Project-side
+// extensions still live at <project>/.idiom/prompts/lanes/<mode>/
+// and are concatenated AROUND the brief between idiom's canonical
+// preamble and postamble (see composeLanePromptToFile).
+//
+//go:embed lanes/implement/preamble.md lanes/implement/postamble.md lanes/plan-execute/preamble.md lanes/plan-execute/postamble.md
+var canonicalLanePromptsFS embed.FS
 
 // laneSubcommandRunner is the function shape both runImplementMain
 // and runPlanExecuteMain expose. Capturing it as a type lets tests
@@ -262,34 +274,36 @@ func composeLanePromptToFile(opts laneOptions) (string, error) {
 	return f.Name(), nil
 }
 
-// canonicalLanePreamble returns idiom's mode-specific preamble. In
-// Phase 2 these are minimal placeholders that defer almost
-// everything to the brief itself; Phase 3 replaces them with the
-// canonical text currently embedded in run_idiom_impl.sh.
+// canonicalLanePreamble returns idiom's mode-specific preamble. The
+// canonical text is embedded at build time from
+// cmd/idiom/lanes/<mode>/preamble.md so the binary is self-contained
+// and a project consuming idiom needs no per-project preamble copy.
+// Unknown modes (or modes without an embedded preamble) return "".
 func canonicalLanePreamble(mode string) string {
-	switch mode {
-	case "plan-execute":
-		// Plan-execute already prepends its own system addendum at
-		// the runner level (see cmd/idiom/plan_execute.go's
-		// planExecutePlannerSystemAddendum). The lane preamble adds
-		// nothing to avoid double-wrapping; project overlays via
-		// .idiom/prompts/lanes/plan-execute/preamble.md still apply.
-		return ""
-	case "implement":
-		// Phase 3 moves the implement-lane preamble from
-		// Colony/scripts/run_idiom_impl.sh into idiom; for now the
-		// lane wrapper relies on idiom implement's existing prompt
-		// shape and the project overlay (if any).
-		return ""
-	default:
-		return ""
-	}
+	return readEmbeddedLanePrompt(mode, "preamble.md")
 }
 
 // canonicalLanePostamble mirrors canonicalLanePreamble for the
-// trailing text. Same Phase 3 caveat.
+// trailing text appended after the brief and any project overlay.
 func canonicalLanePostamble(mode string) string {
-	return ""
+	return readEmbeddedLanePrompt(mode, "postamble.md")
+}
+
+// readEmbeddedLanePrompt returns the canonical prompt fragment for a
+// (mode, filename) pair from the embedded FS. Returns "" if the mode
+// has no embedded fragment of that kind. Errors other than not-found
+// fall through to "" so a build/embed mismatch at most produces an
+// empty preamble rather than crashing the lane dispatch — the brief
+// body itself remains the load-bearing instruction.
+func readEmbeddedLanePrompt(mode, filename string) string {
+	if strings.TrimSpace(mode) == "" {
+		return ""
+	}
+	body, err := canonicalLanePromptsFS.ReadFile("lanes/" + mode + "/" + filename)
+	if err != nil {
+		return ""
+	}
+	return string(body)
 }
 
 // readProjectLaneOverlay reads an optional overlay file from the
