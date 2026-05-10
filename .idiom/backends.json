@@ -1,0 +1,48 @@
+{
+  "_comment": "idiom's own backend config for self-hosted dispatch. Mirrors Colony's qwen-pair profile (Phase 8 sibling) so design-doc work on this repo can run through the same local Qwen lanes Colony uses. 35B reasoning lane has thinking on; coder lane has thinking off. `idiom backend start --profile qwen-pair` brings both up; `idiom backend proxy --profile qwen-pair` runs the alias router on :47680 (matching the port idiom's existing config.json talks to).",
+  "profiles": {
+    "qwen-pair": {
+      "models": [
+        {
+          "alias": "qwen3.6-35b",
+          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-mlx-4bit-ud",
+          "port": 47780,
+          "cache_size": 4,
+          "cache_bytes": 21474836480,
+          "max_tokens": 8192,
+          "extra_args": [
+            "--temp", "1.0",
+            "--top-p", "0.95",
+            "--top-k", "20",
+            "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}"
+          ],
+          "roles": ["planner", "classifier"]
+        },
+        {
+          "alias": "qwen3-coder-30b",
+          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+          "model_path": "/Users/ben/models/qwen3-coder-30b-a3b-mlx-4bit-dwq",
+          "port": 47781,
+          "cache_size": 4,
+          "cache_bytes": 21474836480,
+          "max_tokens": 8192,
+          "extra_args": [
+            "--temp", "0.7",
+            "--top-p", "0.8",
+            "--top-k", "20"
+          ],
+          "roles": ["executor"]
+        }
+      ],
+      "proxy": {
+        "listen": 47680,
+        "default_alias": "qwen3.6-35b",
+        "default_planner": "qwen3.6-35b",
+        "default_executor": "qwen3-coder-30b",
+        "default_coder": "qwen3-coder-30b",
+        "default_classifier": "qwen3.6-35b"
+      }
+    }
+  }
+}

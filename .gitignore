@@ -9,7 +9,11 @@ coverage.out
 
 # Local runtime state
 .cache/
-.idiom/
+.idiom/*
+!.idiom/backends.json
+!.idiom/config.json
+!.idiom/prompts/
+!.idiom/prompts/**
 .planning/
 logs/
 models/
