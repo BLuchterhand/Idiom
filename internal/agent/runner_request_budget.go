@@ -249,14 +249,12 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 	if label == "" {
 		label = "the same evidence path"
 	}
-	if count := s.postChildReadFamilies[family]; count >= 2 && s.postChildReadFamilyNudgeFired[family] {
-		return runnerRequestBudgetDecision{
-			Handled:          true,
-			RejectSummary:    "Post-child reread blocked",
-			RejectError:      fmt.Sprintf("you already revisited %s multiple times after the child packet. Answer now, or take one narrow probe on a different evidence path that names the exact missing claim.", label),
-			RejectStopReason: "post_child_reread_blocked",
-		}
-	}
+	// The post-child reread BLOCK was a bandaid budget that fired after
+	// the model re-read the same file family 2× post-packet. Per the
+	// no-bandaid memory, the structural enforcers (doom_loop_guard for
+	// exact-duplicate reads, MaxToolSteps for total budget, completion
+	// gate for mutation closure) own the closure contract. The nudge
+	// below (educational, fires once) is kept; the hard block is gone.
 	if count := s.postChildReadFamilies[family]; count >= 1 && !s.postChildReadFamilyNudgeFired[family] {
 		s.postChildReadFamilyNudgeFired[family] = true
 		return runnerRequestBudgetDecision{

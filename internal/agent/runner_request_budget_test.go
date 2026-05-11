@@ -154,7 +154,16 @@ func TestRunnerRequestBudgetAllowsPacketAnchoredPostChildDiscovery(t *testing.T)
 	}
 }
 
-func TestRunnerRequestBudgetNudgesThenBlocksPostChildRereads(t *testing.T) {
+// TestRunnerRequestBudgetNudgesPostChildRereadsButDoesNotBlock locks
+// in the no-bandaid memory: post-child reread used to nudge on the
+// first revisit and HARD-BLOCK on the second. The block fired
+// prematurely on mutation parents that legitimately re-read the
+// same file at different ranges to verify multiple anchors (see
+// #101's wedge chain). doom_loop_guard catches exact-duplicate
+// reads; MaxToolSteps caps total budget; completion_gate enforces
+// mutation closure. The nudge stays as a soft signal but the hard
+// block was removed.
+func TestRunnerRequestBudgetNudgesPostChildRereadsButDoesNotBlock(t *testing.T) {
 	state := newRunnerRequestBudgetState(4)
 	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/agent/discovery_redirect.go"})
@@ -170,7 +179,10 @@ func TestRunnerRequestBudgetNudgesThenBlocksPostChildRereads(t *testing.T) {
 	state.noteReadClassRequest(req)
 
 	decision = state.explorationDecision(&Runner{}, req, nil)
-	if !decision.Handled || decision.RejectSummary != "Post-child reread blocked" {
-		t.Fatalf("expected repeated post-child reread to be blocked, got %#v", decision)
+	if decision.Handled {
+		t.Fatalf("expected repeated post-child reread to be allowed (no hard block); got %#v", decision)
+	}
+	if decision.RejectStopReason != "" {
+		t.Fatalf("expected no stop reason on repeated post-child reread, got %q", decision.RejectStopReason)
 	}
 }
