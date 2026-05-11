@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,43 @@ import (
 	"strings"
 	"time"
 )
+
+// refineIterMetrics captures observable per-iteration data and is
+// persisted to <iter-N>/metrics.json. Lane-explain (#83) and any
+// downstream observability tooling read this rather than scraping
+// stderr. Fields stay zero/empty when the iteration didn't reach
+// them — a draft-dispatch failure leaves Verdict and BugCount unset.
+type refineIterMetrics struct {
+	Iter               int    `json:"iter"`
+	Phase              string `json:"phase"` // "draft" (iter 1) or "patch" (iter 2+)
+	StartedAt          string `json:"started_at,omitempty"`
+	EndedAt            string `json:"ended_at,omitempty"`
+	DurationMS         int64  `json:"duration_ms,omitempty"`
+	DraftDispatchExit  int    `json:"draft_dispatch_exit"`
+	ReviewDispatchExit int    `json:"review_dispatch_exit"`
+	Verdict            string `json:"verdict,omitempty"`
+	BugCount           int    `json:"bug_count,omitempty"`
+	Action             string `json:"action,omitempty"` // ship-as-is | continue | diverging | no-improvement | failsoft-<reason>
+	FailsoftReason     string `json:"failsoft_reason,omitempty"`
+}
+
+// writeRefineIterMetrics persists the per-iter metrics to a stable
+// path. Best-effort: errors are surfaced to stderr so the refine
+// loop keeps making progress when the state dir is read-only or
+// out of disk; downstream tooling treats missing metrics as "this
+// iter didn't write a record" rather than a hard failure.
+func writeRefineIterMetrics(iterDir string, m refineIterMetrics, stderr io.Writer) {
+	path := filepath.Join(iterDir, "metrics.json")
+	body, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "refine: marshal iter metrics: %v\n", err)
+		return
+	}
+	body = append(body, '\n')
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		fmt.Fprintf(stderr, "refine: write iter metrics %s: %v\n", path, err)
+	}
+}
 
 //go:embed lanes/refine/draft.md
 var refineDraftTemplate string
@@ -100,7 +138,25 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 	// even when earlier ones produced a clean reviewed draft. When
 	// nothing's been reviewed yet (iter-1 broke), there's no shippable
 	// artifact and we fail with the underlying exit code.
+	// activeMetrics points at the in-flight iter's record so
+	// failsoft / verdict branches can stamp Action/FailsoftReason
+	// before returning. Reset at the top of each iter.
+	var activeMetrics *refineIterMetrics
+	var activeIterDir string
+	stampMetricsAction := func(action, failsoftReason string) {
+		if activeMetrics == nil {
+			return
+		}
+		activeMetrics.Action = action
+		activeMetrics.FailsoftReason = failsoftReason
+		activeMetrics.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		if t, err := time.Parse(time.RFC3339Nano, activeMetrics.StartedAt); err == nil {
+			activeMetrics.DurationMS = time.Since(t).Milliseconds()
+		}
+		writeRefineIterMetrics(activeIterDir, *activeMetrics, stderr)
+	}
 	failsoft := func(iter int, reason string, failExit int) int {
+		stampMetricsAction("failsoft-"+reason, reason)
 		if bestDraftPath == "" {
 			fmt.Fprintf(stderr, "refine: failed at iter %d (%s) with no previously-reviewed draft to fall back on\n", iter, reason)
 			return failExit
@@ -118,6 +174,15 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		draftPath := filepath.Join(iterDir, "draft.md")
 		reviewPath := filepath.Join(iterDir, "review.md")
 
+		metrics := refineIterMetrics{Iter: iter, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+		if iter == 1 {
+			metrics.Phase = "draft"
+		} else {
+			metrics.Phase = "patch"
+		}
+		activeMetrics = &metrics
+		activeIterDir = iterDir
+
 		if iter == 1 {
 			metaPath := filepath.Join(iterDir, "meta-draft.md")
 			if err := writeRefineDraftMeta(metaPath, draftPath, opts, string(specBody)); err != nil {
@@ -125,7 +190,9 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 				return failsoft(iter, "draft-meta-write", 1)
 			}
 			fmt.Fprintf(stderr, "refine: iter %d — drafting (subprocess)\n", iter)
-			if code := dispatch(metaPath, stdout, stderr); code != 0 {
+			code := dispatch(metaPath, stdout, stderr)
+			metrics.DraftDispatchExit = code
+			if code != 0 {
 				fmt.Fprintf(stderr, "refine: draft dispatch exited %d at iter %d\n", code, iter)
 				return failsoft(iter, "draft-dispatch", code)
 			}
@@ -137,7 +204,9 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 				return failsoft(iter, "patch-meta-write", 1)
 			}
 			fmt.Fprintf(stderr, "refine: iter %d — patching (subprocess)\n", iter)
-			if code := dispatch(metaPath, stdout, stderr); code != 0 {
+			code := dispatch(metaPath, stdout, stderr)
+			metrics.DraftDispatchExit = code
+			if code != 0 {
 				fmt.Fprintf(stderr, "refine: patch dispatch exited %d at iter %d\n", code, iter)
 				return failsoft(iter, "patch-dispatch", code)
 			}
@@ -154,9 +223,11 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			return failsoft(iter, "review-meta-write", 1)
 		}
 		fmt.Fprintf(stderr, "refine: iter %d — reviewing (subprocess)\n", iter)
-		if code := dispatch(metaReviewPath, stdout, stderr); code != 0 {
-			fmt.Fprintf(stderr, "refine: review dispatch exited %d at iter %d\n", code, iter)
-			return failsoft(iter, "review-dispatch", code)
+		reviewCode := dispatch(metaReviewPath, stdout, stderr)
+		metrics.ReviewDispatchExit = reviewCode
+		if reviewCode != 0 {
+			fmt.Fprintf(stderr, "refine: review dispatch exited %d at iter %d\n", reviewCode, iter)
+			return failsoft(iter, "review-dispatch", reviewCode)
 		}
 		if _, err := os.Stat(reviewPath); err != nil {
 			fmt.Fprintf(stderr, "refine: iter %d produced no review at %s: %v\n", iter, reviewPath, err)
@@ -171,24 +242,31 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		verdict := parseRefineVerdict(string(reviewBody))
 		bugs := parseRefineBugTitles(string(reviewBody))
 		fmt.Fprintf(stderr, "refine: iter %d verdict=%s bugs=%d\n", iter, verdict, len(bugs))
+		metrics.Verdict = verdict
+		metrics.BugCount = len(bugs)
 		if bestBugCount < 0 || len(bugs) < bestBugCount {
 			bestDraftPath = lastDraftPath
 			bestBugCount = len(bugs)
 		}
 		if verdict == "ship-as-is" {
+			stampMetricsAction("ship-as-is", "")
 			return finalizeRefineWithTitle(lastDraftPath, opts.OutputPath, opts.Title, iter, "ship-as-is", stderr)
 		}
 		if iter > 1 && refineLoopDiverging(prevReviewBugs, bugs) {
 			fmt.Fprintf(stderr, "refine: loop diverging at iter %d (same bugs as iter %d); shipping best draft\n", iter, iter-1)
+			stampMetricsAction("diverging", "")
 			return finalizeRefineWithTitle(bestDraftPath, opts.OutputPath, opts.Title, iter, "diverging", stderr)
 		}
 		if iter > 1 && len(bugs) >= len(prevReviewBugs) && len(bugs) > 0 {
 			fmt.Fprintf(stderr, "refine: no improvement at iter %d (bugs went %d -> %d); stopping and shipping best draft\n", iter, len(prevReviewBugs), len(bugs))
+			stampMetricsAction("no-improvement", "")
 			return finalizeRefineWithTitle(bestDraftPath, opts.OutputPath, opts.Title, iter, "no-improvement", stderr)
 		}
+		stampMetricsAction("continue", "")
 		prevReviewBugs = bugs
 	}
 	fmt.Fprintf(stderr, "refine: max iters (%d) reached without ship-as-is verdict; shipping best draft (%d bugs)\n", opts.MaxIters, bestBugCount)
+	stampMetricsAction("max-iters-exhausted", "")
 	finalDraft := bestDraftPath
 	if finalDraft == "" {
 		finalDraft = lastDraftPath

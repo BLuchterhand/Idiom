@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -199,6 +200,71 @@ func TestRunLaneRefineConvergesOnShipAsIsVerdict(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "Drafted brief") {
 		t.Fatalf("output should contain the drafted brief content, got: %s", body)
+	}
+	// Confirm #79 per-iter metrics landed on disk for the iter that
+	// produced a ship-as-is verdict.
+	metricsPath := filepath.Join(refineStateDir(root, "test-atom"), "iter-1", "metrics.json")
+	metricsBody, err := os.ReadFile(metricsPath)
+	if err != nil {
+		t.Fatalf("read iter-1 metrics: %v", err)
+	}
+	var m refineIterMetrics
+	if err := json.Unmarshal(metricsBody, &m); err != nil {
+		t.Fatalf("unmarshal metrics: %v\nbody=%s", err, metricsBody)
+	}
+	if m.Iter != 1 || m.Phase != "draft" {
+		t.Fatalf("metrics iter/phase = %d/%q, want 1/draft", m.Iter, m.Phase)
+	}
+	if m.Action != "ship-as-is" {
+		t.Fatalf("metrics action = %q, want ship-as-is", m.Action)
+	}
+	if m.Verdict != "ship-as-is" {
+		t.Fatalf("metrics verdict = %q, want ship-as-is", m.Verdict)
+	}
+	if m.StartedAt == "" || m.EndedAt == "" {
+		t.Fatalf("metrics ts fields missing: started=%q ended=%q", m.StartedAt, m.EndedAt)
+	}
+}
+
+func TestRunLaneRefineWritesMetricsOnDraftDispatchFailure(t *testing.T) {
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	outPath := filepath.Join(root, "brief.md")
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  outPath,
+		Title:       "fail-atom",
+		MaxIters:    3,
+		ProjectRoot: root,
+	}
+	dispatch := func(_ string, _, _ io.Writer) int { return 7 }
+	var stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if code != 7 {
+		t.Fatalf("expected hard fail exit=7 (iter-1 dispatch failure with no fallback), got %d", code)
+	}
+	// Metrics file must still land even though dispatch failed —
+	// downstream tools should be able to diagnose why iter-1 broke.
+	metricsPath := filepath.Join(refineStateDir(root, "fail-atom"), "iter-1", "metrics.json")
+	body, err := os.ReadFile(metricsPath)
+	if err != nil {
+		t.Fatalf("metrics should be written even on dispatch failure: %v", err)
+	}
+	var m refineIterMetrics
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m.DraftDispatchExit != 7 {
+		t.Fatalf("DraftDispatchExit = %d, want 7", m.DraftDispatchExit)
+	}
+	if m.Action != "failsoft-draft-dispatch" {
+		t.Fatalf("Action = %q, want failsoft-draft-dispatch", m.Action)
+	}
+	if m.FailsoftReason != "draft-dispatch" {
+		t.Fatalf("FailsoftReason = %q", m.FailsoftReason)
 	}
 }
 
