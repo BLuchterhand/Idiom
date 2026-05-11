@@ -25,7 +25,7 @@ section below in this order:
 
 | File | Change |
 |------|--------|
-| `<workspace/relative/path.go>` | <ADD/MODIFY/NEW FILE: one action per row; NEW FILE rows are exempt from the one-action rule> |
+| `RELATIVE_PATH` | <one action per row; NEW FILE rows are exempt from the one-action rule (ADD, MODIFY, or NEW FILE: ...)> |
 
 ## Verified Current State
 
