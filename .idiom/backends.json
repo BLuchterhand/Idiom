@@ -34,6 +34,22 @@
             "--chat-template-args", "{\"enable_thinking\":false}"
           ],
           "roles": ["executor"]
+        },
+        {
+          "alias": "qwen3.6-35b-nothink",
+          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-mlx-4bit-ud",
+          "port": 47782,
+          "cache_size": 4,
+          "cache_bytes": 8589934592,
+          "max_tokens": 8192,
+          "extra_args": [
+            "--temp", "0.6",
+            "--top-p", "0.95",
+            "--top-k", "20",
+            "--chat-template-args", "{\"enable_thinking\":false}"
+          ],
+          "roles": ["executor"]
         }
       ],
       "proxy": {

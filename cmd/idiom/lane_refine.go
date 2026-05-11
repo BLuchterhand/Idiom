@@ -74,23 +74,18 @@ type laneRefineOptions struct {
 // out to `idiom lane implement`; tests inject a fake.
 type refineDispatchFn func(metaBriefPath string, stdout, stderr io.Writer) int
 
-// Refine routes ALL phases (draft, patch, review) to Coder-30B.
-// Originally draft+patch ran on Coder and review on 35B-with-thinking
-// for judgment quality, but the review phase consistently wedged
-// because 35B-thinking spent the entire generation budget inside
-// <think> blocks and emitted empty visible content (the auto-salvage
-// recovery from #95 helped some cases but not when the reasoning
-// itself lacks a recognizable deliverable shape — see #96 v8 run).
-//
-// Coder-30B-A3B is non-thinking: every token is visible output. For
-// the review template, which is highly structured (`## Bugs found`
-// / `## OK` / `## Verdict`), Coder's format reliability beats 35B's
-// thinking-when-it-can-finish quality. If review quality regresses
-// materially on real specs, a future change can split the review
-// phase back out — the inferRefinePhase / refinePhaseRouting seam
-// supports that.
-const refineDefaultPool = "qwen-coder"
-const refineDefaultModel = "qwen3-coder-30b"
+// Refine routes ALL phases to a 35B-A3B instance running with
+// enable_thinking=false (alias qwen3.6-35b-nothink, pool
+// qwen-35b-nothink). Earlier iterations tried Coder-30B with
+// thinking off (#98); Coder's chat-template-args weren't fully
+// suppressing <think> emission (#100), producing intermittent
+// runaway-reasoning even when explicitly disabled. 35B has the
+// reasoning capacity to handle the refine work in one pass —
+// running it WITHOUT thinking gives us model capability without
+// the budget hog. Same skeleton-first templates, same per-phase
+// max_tokens.
+const refineDefaultPool = "qwen-35b-nothink"
+const refineDefaultModel = "qwen3.6-35b-nothink"
 
 // inferRefinePhase examines the meta-brief filename to decide which
 // refine phase is dispatching. lane_refine.go names these files
