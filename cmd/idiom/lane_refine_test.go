@@ -658,6 +658,179 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 // behavior. A draft file that's empty, under the byte floor, or
 // has no markdown section heading must be classified trivial so
 // the wrapper exits non-zero rather than silently shipping nothing.
+// TestResolveRefineDraftTemplateProjectOverrideWins exercises the
+// §2.2.1 resolution chain: when a project drops a well-formed draft
+// template at .idiom/prompts/refine/draft-<mode>.md, it is loaded
+// instead of the embedded canonical template. The override body is
+// returned verbatim (only substitutions happen later).
+func TestResolveRefineDraftTemplateProjectOverrideWins(t *testing.T) {
+	root := t.TempDir()
+	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
+	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	overrideBody := "# {{TITLE}}\n\n## Custom mode body\n\n{{SPEC_BODY}}\n\nCall write_file with {{DRAFT_PATH}}.\n"
+	overridePath := filepath.Join(overrideDir, "draft-notebook.md")
+	if err := os.WriteFile(overridePath, []byte(overrideBody), 0o644); err != nil {
+		t.Fatalf("seed override: %v", err)
+	}
+	tmpl, source, err := resolveRefineDraftTemplate(root, "notebook")
+	if err != nil {
+		t.Fatalf("resolveRefineDraftTemplate: %v", err)
+	}
+	if tmpl != overrideBody {
+		t.Fatalf("expected override body, got:\n%s", tmpl)
+	}
+	if !strings.HasPrefix(source, "project-override:") {
+		t.Fatalf("expected project-override source tag, got %q", source)
+	}
+}
+
+// TestResolveRefineDraftTemplateFallsBackToEmbedded confirms the
+// embedded canonical templates serve when no project override exists
+// for a canonical mode. Bare repos see no behavior change.
+func TestResolveRefineDraftTemplateFallsBackToEmbedded(t *testing.T) {
+	root := t.TempDir() // no overrides
+	tmpl, source, err := resolveRefineDraftTemplate(root, refineModeAnchored)
+	if err != nil {
+		t.Fatalf("resolveRefineDraftTemplate anchored: %v", err)
+	}
+	if source != "embedded:anchored" {
+		t.Fatalf("expected embedded:anchored source, got %q", source)
+	}
+	if !strings.Contains(tmpl, "Verified Current State") {
+		t.Fatalf("expected anchored template body, got:\n%s", tmpl)
+	}
+	tmpl, source, err = resolveRefineDraftTemplate(root, refineModeMarkdown)
+	if err != nil {
+		t.Fatalf("resolveRefineDraftTemplate markdown: %v", err)
+	}
+	if source != "embedded:markdown" {
+		t.Fatalf("expected embedded:markdown source, got %q", source)
+	}
+	if !strings.Contains(tmpl, "Inline content") {
+		t.Fatalf("expected markdown template body, got:\n%s", tmpl)
+	}
+}
+
+// TestResolveRefineDraftTemplateUnknownModeErrors confirms a
+// non-canonical mode with no override yields an actionable error
+// pointing at the override convention path.
+func TestResolveRefineDraftTemplateUnknownModeErrors(t *testing.T) {
+	root := t.TempDir()
+	_, _, err := resolveRefineDraftTemplate(root, "phantom")
+	if err == nil {
+		t.Fatalf("expected error for unknown mode, got nil")
+	}
+	expectedPath := filepath.Join(root, ".idiom/prompts/refine/draft-phantom.md")
+	if !strings.Contains(err.Error(), expectedPath) {
+		t.Fatalf("expected error to mention override path %q, got: %v", expectedPath, err)
+	}
+}
+
+// TestResolveRefineDraftTemplateMalformedOverrideRejected confirms
+// the §2.2.1 safety lint: a project override missing required
+// placeholders or section headings fails at load time, not after a
+// wasted draft dispatch.
+func TestResolveRefineDraftTemplateMalformedOverrideRejected(t *testing.T) {
+	root := t.TempDir()
+	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
+	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cases := []struct {
+		name string
+		body string
+		want string // substring expected in error
+	}{
+		{
+			name: "missing-draft-path",
+			body: "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nCall write_file please.\n",
+			want: "{{DRAFT_PATH}}",
+		},
+		{
+			name: "missing-spec-body",
+			body: "# {{TITLE}}\n\n## Body\n\nCall write_file at {{DRAFT_PATH}}.\n",
+			want: "{{SPEC_BODY}}",
+		},
+		{
+			name: "no-section-heading",
+			body: "{{TITLE}} {{SPEC_BODY}} {{DRAFT_PATH}} — call write_file.\n",
+			want: "section heading",
+		},
+		{
+			name: "no-write-file-instruction",
+			body: "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nWrite to {{DRAFT_PATH}}.\n",
+			want: "write_file",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(overrideDir, "draft-"+tc.name+".md")
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			_, _, err := resolveRefineDraftTemplate(root, tc.name)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error mentioning %q, got: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestRunLaneRefineUsesProjectOverrideTemplate ensures the resolution
+// chain is exercised end-to-end: a project with a custom mode
+// override at .idiom/prompts/refine/draft-notebook.md, invoked with
+// --mode notebook, produces a meta-draft built from the override.
+func TestRunLaneRefineUsesProjectOverrideTemplate(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir()
+	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
+	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	overrideBody := "# {{TITLE}}\n\n## Notebook deliverable\n\nSPEC: {{SPEC_BODY}}\n\nCall write_file({{DRAFT_PATH}}) with the experiment.\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `{{DRAFT_PATH}}` | NEW FILE |\n"
+	overridePath := filepath.Join(overrideDir, "draft-notebook.md")
+	if err := os.WriteFile(overridePath, []byte(overrideBody), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Sweep hyperparameters and pick best F1.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "override-test",
+		MaxIters:    1,
+		ProjectRoot: root,
+		Mode:        "notebook",
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if !strings.Contains(stderr.String(), "project-override:") {
+		t.Fatalf("expected stderr to log project-override source, got: %s", stderr.String())
+	}
+	metaDraftPath := filepath.Join(refineStateDir(root, "override-test"), "iter-1", "meta-draft.md")
+	body, err := os.ReadFile(metaDraftPath)
+	if err != nil {
+		t.Fatalf("read meta-draft: %v", err)
+	}
+	if !strings.Contains(string(body), "## Notebook deliverable") {
+		t.Fatalf("expected override template body in meta-draft, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "SPEC: Sweep hyperparameters") {
+		t.Fatalf("expected substitutions to happen, got:\n%s", body)
+	}
+}
+
 // TestRefineDetectModeClassifiesSpecShape locks in the §2.2
 // auto-detection heuristic: if a spec mentions any source-class
 // extension, route anchored. If it ONLY mentions markdown-class

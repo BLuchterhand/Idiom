@@ -256,7 +256,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 
 		if iter == 1 {
 			metaPath := filepath.Join(iterDir, "meta-draft.md")
-			if err := writeRefineDraftMeta(metaPath, draftPath, opts, string(specBody), mode); err != nil {
+			if err := writeRefineDraftMeta(metaPath, draftPath, opts, string(specBody), mode, stderr); err != nil {
 				fmt.Fprintf(stderr, "refine: write draft meta: %v\n", err)
 				return failsoft(iter, "draft-meta-write", 1)
 			}
@@ -387,10 +387,13 @@ func refineSanitizeTitle(title string) string {
 	return cleaned
 }
 
-func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, specBody, mode string) error {
-	template := refineDraftTemplate
-	if mode == refineModeMarkdown {
-		template = refineDraftMarkdownTemplate
+func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, specBody, mode string, stderr io.Writer) error {
+	template, source, err := resolveRefineDraftTemplate(opts.ProjectRoot, mode)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(source, "project-override:") {
+		fmt.Fprintf(stderr, "refine: draft template = %s\n", source)
 	}
 	body := strings.NewReplacer(
 		"{{SPEC_BODY}}", strings.TrimSpace(specBody),
@@ -398,6 +401,72 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 		"{{TITLE}}", opts.Title,
 	).Replace(template)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
+}
+
+// resolveRefineDraftTemplate walks the §2.2.1 resolution chain:
+//  1. Project override at <projectRoot>/.idiom/prompts/refine/draft-<mode>.md
+//  2. Embedded canonical template (anchored or markdown)
+//  3. Unknown mode → actionable error pointing at the override convention
+//
+// The override file is lint-checked at load time (validateRefineDraftOverride)
+// so a malformed template fails loud rather than silently shipping a
+// template-fragment as a brief.
+func resolveRefineDraftTemplate(projectRoot, mode string) (template, source string, err error) {
+	if strings.TrimSpace(mode) == "" {
+		return "", "", fmt.Errorf("resolveRefineDraftTemplate: mode is required")
+	}
+	if projectRoot != "" {
+		overridePath := filepath.Join(projectRoot, refineOverrideDir, "draft-"+mode+".md")
+		if body, readErr := os.ReadFile(overridePath); readErr == nil {
+			if lintErr := validateRefineDraftOverride(string(body), overridePath); lintErr != nil {
+				return "", "", lintErr
+			}
+			return string(body), "project-override:" + overridePath, nil
+		}
+	}
+	switch mode {
+	case refineModeAnchored:
+		return refineDraftTemplate, "embedded:anchored", nil
+	case refineModeMarkdown:
+		return refineDraftMarkdownTemplate, "embedded:markdown", nil
+	}
+	overrideHint := filepath.Join(projectRoot, refineOverrideDir, "draft-"+mode+".md")
+	return "", "", fmt.Errorf("unknown refine mode %q: no project override at %s and not in canonical set [%s, %s]", mode, overrideHint, refineModeAnchored, refineModeMarkdown)
+}
+
+// refineOverrideDir is the project-side convention path where override
+// templates live. Kept separate from .idiom/prompts/brief/ (which §2.4
+// uses for prohibitions + traps overlay) because modes are a different
+// abstraction — templates, not augmentations.
+const refineOverrideDir = ".idiom/prompts/refine"
+
+// refineDraftRequiredPlaceholders lists the substitution tokens a
+// project override draft template MUST contain. Missing any one means
+// the substituted body would be malformed (no destination path, no
+// content guidance) and the dispatched model would wedge. Better to
+// fail at template-load time than after a 90s draft phase.
+var refineDraftRequiredPlaceholders = []string{"{{DRAFT_PATH}}", "{{SPEC_BODY}}", "{{TITLE}}"}
+
+// validateRefineDraftOverride enforces the §2.2.1 safety lint: every
+// project override must carry the placeholders the substitution
+// pipeline will replace, OR the resulting meta-brief loses its
+// destination path / spec body / title. Also requires at least one
+// `## ` heading (a brief without sections won't lint-pass downstream
+// anyway) and an explicit write instruction (the lane is told to
+// emit via write_file; templates without that wording wedge).
+func validateRefineDraftOverride(body, path string) error {
+	for _, ph := range refineDraftRequiredPlaceholders {
+		if !strings.Contains(body, ph) {
+			return fmt.Errorf("refine override template %s is missing required placeholder %s", path, ph)
+		}
+	}
+	if !strings.Contains(body, "\n## ") && !strings.HasPrefix(strings.TrimSpace(body), "## ") {
+		return fmt.Errorf("refine override template %s has no `## ` section heading", path)
+	}
+	if !strings.Contains(strings.ToLower(body), "write_file") {
+		return fmt.Errorf("refine override template %s contains no `write_file` instruction", path)
+	}
+	return nil
 }
 
 // refineMode constants — anchored-edits is the historical default
