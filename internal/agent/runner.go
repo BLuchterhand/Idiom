@@ -1398,7 +1398,13 @@ func (r *Runner) Run(
 				return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
 			}
 		}
-		if postChildPacketActive && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
+		if postChildPacketActive && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" && !runnerBriefRequiresMutation(r.RuntimeBrief) {
+			// Mutation parents (refine draft, plan-execute, etc.) get
+			// the same exemption as #101's gap-scope guard: the
+			// post-child-packet "answer now" budget is designed for
+			// parents whose deliverable is an answer, not a write. The
+			// completion gate owns mutation closure via
+			// RequiredEditPaths instead.
 			postChildFollowupReads++
 			budgetWillForce := postChildReadBudget > 0 && postChildFollowupReads >= postChildReadBudget
 			if !budgetWillForce && postChildFollowupReads > postChildDiminishingNudgeStage {
