@@ -293,9 +293,11 @@ func emitStatusTable(w io.Writer, snap runner.StatusPayload) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "IN FLIGHT")
 		jw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(jw, "POOL\tJOB\tCLIENT\tLABEL\tSTARTED")
+		fmt.Fprintln(jw, "POOL\tJOB\tCLIENT\tLABEL\tSTARTED\tAGE")
 		for _, j := range snap.InFlight {
-			fmt.Fprintf(jw, "%s\t%s\t%s\t%s\t%s\n", j.Pool, j.ID, orDash(j.Client), orDash(j.Label), orDash(j.StartedAt))
+			fmt.Fprintf(jw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+				j.Pool, j.ID, orDash(j.Client), orDash(j.Label),
+				orDash(j.StartedAt), formatJobAge(j.AgeSeconds, j.Idle))
 		}
 		jw.Flush()
 	}
@@ -314,6 +316,29 @@ func emitStatusTable(w io.Writer, snap runner.StatusPayload) {
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "-"
+	}
+	return s
+}
+
+// formatJobAge renders an in-flight job's age in a compact form,
+// appending IDLE when the daemon flagged it past the pool's idle
+// threshold. Zero ages (status arrived faster than 1s resolution)
+// render as "0s" rather than dash so the column stays comparable.
+func formatJobAge(seconds int, idle bool) string {
+	if seconds < 0 {
+		seconds = 0
+	}
+	var s string
+	switch {
+	case seconds >= 3600:
+		s = fmt.Sprintf("%dh%dm", seconds/3600, (seconds%3600)/60)
+	case seconds >= 60:
+		s = fmt.Sprintf("%dm%ds", seconds/60, seconds%60)
+	default:
+		s = fmt.Sprintf("%ds", seconds)
+	}
+	if idle {
+		s += " IDLE"
 	}
 	return s
 }

@@ -38,11 +38,18 @@ type Server struct {
 // pool tracks one named concurrency bucket. Slot accounting is
 // "in-flight count vs max"; the in-flight slice exists for status
 // reporting only — we never index into it for grant decisions.
+//
+// idleThresholdSeconds is the per-pool window for #81's idle flag —
+// when a job's StartedAt is older than this, status reports surface
+// it as idle so a human watcher notices the deadlock-class wedges
+// well before the bisect-style 16 min discovery that motivated the
+// feature.
 type pool struct {
-	name        string
-	maxInFlight int
-	inFlight    []*job
-	waiting     []*job
+	name                 string
+	maxInFlight          int
+	idleThresholdSeconds int
+	inFlight             []*job
+	waiting              []*job
 }
 
 // job is the runner-internal view of a queued or running task. The
@@ -73,7 +80,11 @@ type job struct {
 func NewServer(cfg Config, socketPath string) *Server {
 	pools := make(map[string]*pool, len(cfg.Pools))
 	for name, pc := range cfg.Pools {
-		pools[name] = &pool{name: name, maxInFlight: pc.MaxInFlight}
+		idle := pc.IdleThresholdSeconds
+		if idle <= 0 {
+			idle = DefaultIdleThresholdSeconds
+		}
+		pools[name] = &pool{name: name, maxInFlight: pc.MaxInFlight, idleThresholdSeconds: idle}
 	}
 	return &Server{
 		cfg:        cfg,
@@ -453,6 +464,10 @@ func (s *Server) snapshot() StatusPayload {
 			Waiting:     len(p.waiting),
 		})
 		for _, j := range p.inFlight {
+			age := 0
+			if !j.StartedAt.IsZero() {
+				age = int(time.Since(j.StartedAt).Seconds())
+			}
 			out.InFlight = append(out.InFlight, JobStatus{
 				ID:          j.ID,
 				Pool:        j.Pool,
@@ -460,6 +475,8 @@ func (s *Server) snapshot() StatusPayload {
 				Client:      j.Client,
 				SubmittedAt: FormatTime(j.SubmittedAt),
 				StartedAt:   FormatTime(j.StartedAt),
+				AgeSeconds:  age,
+				Idle:        p.idleThresholdSeconds > 0 && age >= p.idleThresholdSeconds,
 			})
 		}
 		for i, j := range p.waiting {
@@ -506,4 +523,3 @@ func (s *Server) Run(ctx context.Context) error {
 	s.Stop()
 	return nil
 }
-

@@ -584,3 +584,77 @@ func contains(haystack, needle string) bool {
 		return false
 	})()
 }
+
+// TestStatusReportsAgeAndIdleFlag verifies #81: in-flight jobs
+// carry AgeSeconds and an Idle flag set when age exceeds the
+// pool's IdleThresholdSeconds. The threshold defaults to
+// DefaultIdleThresholdSeconds (600s); we set a tiny 1s threshold
+// here and sleep briefly so the test stays fast.
+func TestStatusReportsAgeAndIdleFlag(t *testing.T) {
+	_, sock := startTestServer(t, Config{
+		Pools: map[string]PoolConfig{
+			"fast-idle": {MaxInFlight: 1, IdleThresholdSeconds: 1},
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	lease, err := Acquire(ctx, sock, "fast-idle", "first", "test")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer lease.Close()
+	<-lease.Granted()
+
+	// First snapshot: just-granted, age=0 (or close), not idle.
+	snap, err := Status(sock)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if len(snap.InFlight) != 1 {
+		t.Fatalf("expected 1 in-flight job, got %d", len(snap.InFlight))
+	}
+	if snap.InFlight[0].Idle {
+		t.Fatalf("expected Idle=false at age=0, got %+v", snap.InFlight[0])
+	}
+
+	// Sleep past the threshold, snap again — should now be flagged.
+	time.Sleep(1100 * time.Millisecond)
+	snap, err = Status(sock)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !snap.InFlight[0].Idle {
+		t.Fatalf("expected Idle=true after >1s, got %+v", snap.InFlight[0])
+	}
+	if snap.InFlight[0].AgeSeconds < 1 {
+		t.Fatalf("expected AgeSeconds>=1, got %d", snap.InFlight[0].AgeSeconds)
+	}
+}
+
+// TestStatusIdleThresholdDefaultsTo600s confirms PoolConfig with
+// IdleThresholdSeconds=0 (or unset) falls back to the default
+// 10-minute window — a job that just started doesn't get
+// erroneously flagged as idle.
+func TestStatusIdleThresholdDefaultsTo600s(t *testing.T) {
+	_, sock := startTestServer(t, Config{
+		Pools: map[string]PoolConfig{
+			"default": {MaxInFlight: 1}, // no IdleThresholdSeconds
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	lease, err := Acquire(ctx, sock, "default", "first", "test")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer lease.Close()
+	<-lease.Granted()
+
+	snap, err := Status(sock)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if snap.InFlight[0].Idle {
+		t.Fatalf("expected Idle=false on fresh job under default 600s threshold, got %+v", snap.InFlight[0])
+	}
+}

@@ -80,6 +80,13 @@ type PoolStatus struct {
 // JobStatus is the per-job projection used in StatusPayload. Times are
 // RFC3339 in UTC; clients format for display. Position is 0 for
 // in-flight jobs (slot held) and 1-indexed for waiting jobs.
+//
+// AgeSeconds and Idle are set only for in-flight jobs (#81 idle
+// detection). AgeSeconds is wall time since StartedAt; Idle is true
+// when AgeSeconds exceeds the pool's IdleThresholdSeconds. The flag
+// is purely observational — the daemon never auto-kills idle jobs,
+// since "no MLX activity for N min" can be a legitimately long
+// inference; the user decides whether to cancel.
 type JobStatus struct {
 	ID          string `json:"id"`
 	Pool        string `json:"pool"`
@@ -88,6 +95,8 @@ type JobStatus struct {
 	SubmittedAt string `json:"submitted_at"`
 	StartedAt   string `json:"started_at,omitempty"`
 	Position    int    `json:"position,omitempty"`
+	AgeSeconds  int    `json:"age_seconds,omitempty"`
+	Idle        bool   `json:"idle,omitempty"`
 }
 
 // Config is the on-disk shape of the runner config (see DefaultConfigPath).
@@ -100,9 +109,22 @@ type Config struct {
 
 // PoolConfig holds the per-pool cap. Future fields (priority classes,
 // rate limits) plug in here; clients tolerate unknown fields.
+//
+// IdleThresholdSeconds gates the #81 idle-flag in JobStatus. 0 means
+// "use DefaultIdleThresholdSeconds" — projects opt out by setting an
+// explicit large value (e.g. 86400). The threshold is per-pool because
+// long-running planner work (35B) tolerates more silent decode time
+// than fast coder turns (30B coder).
 type PoolConfig struct {
-	MaxInFlight int `json:"max_in_flight"`
+	MaxInFlight          int `json:"max_in_flight"`
+	IdleThresholdSeconds int `json:"idle_threshold_seconds,omitempty"`
 }
+
+// DefaultIdleThresholdSeconds is the fallback idle-flag threshold
+// (10 minutes). Empirical basis: the cross-pool deadlock that
+// motivated #81 took 16 min to surface; a 10 min flag would have
+// alerted at the 10 min mark, well inside the recovery window.
+const DefaultIdleThresholdSeconds = 600
 
 // DefaultConfig is what the daemon uses when no config file is found
 // or when the file lists no pools. One pool, capacity one — the
