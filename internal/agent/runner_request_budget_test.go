@@ -9,6 +9,16 @@ import (
 	"idiom/internal/workspace"
 )
 
+func mutationRunner() *Runner {
+	return &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			RequiredEditPaths: []string{"some/output.md"},
+		},
+	}
+}
+
 func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 	req := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
@@ -136,6 +146,51 @@ func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
 	}
 	if !strings.Contains(decision.RejectError, "discovery_redirect.go") {
 		t.Fatalf("expected rejection to mention packet evidence paths, got %#v", decision)
+	}
+}
+
+// TestRunnerRequestBudgetMutationParentSuppressesPostChildBlocks
+// locks in the same #101 mutation-parent rule for the post-child
+// broad-inspection and unrelated-discovery rejections: when the
+// parent's deliverable is a WRITE (not an answer), the child's
+// evidence packet is a hint, not a hard wall. The parent may need
+// to broaden or search outside the packet's evidence paths to find
+// callsites or related symbols for its RequiredEditPaths. The
+// completion gate owns mutation closure; doom_loop_guard +
+// MaxToolSteps own the runaway-exploration ceiling.
+func TestRunnerRequestBudgetMutationParentSuppressesPostChildBlocks(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	state.readOnlyChildTaskSatisfied = true
+	state.noteReadOnlyChildPacket([]string{"internal/agent/discovery_redirect.go"})
+
+	// Mutation parent doing a broad inspection after child packet — allowed.
+	decision := state.explorationDecision(
+		mutationRunner(),
+		workspace.ToolRequest{Tool: "list_files", Path: "."},
+		nil,
+	)
+	if decision.Handled {
+		t.Fatalf("mutation parent post-child broad inspection should be allowed, got %#v", decision)
+	}
+
+	// Mutation parent doing an unrelated discovery search after child packet — allowed.
+	decision = state.explorationDecision(
+		mutationRunner(),
+		workspace.ToolRequest{Tool: "search_files", Pattern: "*harness*", Path: "."},
+		nil,
+	)
+	if decision.Handled {
+		t.Fatalf("mutation parent post-child unrelated discovery should be allowed, got %#v", decision)
+	}
+
+	// Read-only parent — both blocks still fire (regression guard).
+	decision = state.explorationDecision(
+		&Runner{},
+		workspace.ToolRequest{Tool: "search_files", Pattern: "*harness*", Path: "."},
+		nil,
+	)
+	if !decision.Handled || decision.RejectSummary != "Post-child unrelated discovery blocked" {
+		t.Fatalf("read-only parent should still block unrelated post-child search, got %#v", decision)
 	}
 }
 

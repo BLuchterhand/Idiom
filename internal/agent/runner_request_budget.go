@@ -156,7 +156,8 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			RejectStopReason: "exploration_broad_inspection_after_nudge_blocked",
 		}
 	}
-	if s.postChildActive() && workspace.IsBroadInspectionRequest(req) {
+	mutationParent := runnerExplorationParentIsMutation(r)
+	if s.postChildActive() && workspace.IsBroadInspectionRequest(req) && !mutationParent {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Post-child broad inspection blocked",
@@ -173,11 +174,31 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 		}
 	}
 	if s.postChildActive() {
-		if decision := s.postChildGuidanceDecision(req); decision.Handled {
+		if decision := s.postChildGuidanceDecision(req, mutationParent); decision.Handled {
 			return decision
 		}
 	}
 	return decision
+}
+
+// runnerExplorationParentIsMutation reports whether the parent lane
+// observing this explorationDecision call has a mutation brief AND is
+// itself the parent (not a child:* delegated agent). Mutation parents
+// consume child packets to commit a WRITE — the child's evidence is a
+// hint, not a hard contract. Suppressing the post-child blocks for
+// these parents lets them broaden/probe outside the packet's evidence
+// paths when their own RequiredEditPaths need it. The completion gate
+// owns mutation closure; doom_loop_guard + MaxToolSteps own the
+// runaway-exploration ceiling. Same logic as
+// postReadinessGapScopeForBrief — keep child:* paths gated.
+func runnerExplorationParentIsMutation(r *Runner) bool {
+	if r == nil {
+		return false
+	}
+	if strings.HasPrefix(strings.TrimSpace(r.agentName()), "child:") {
+		return false
+	}
+	return runnerBriefRequiresMutation(r.RuntimeBrief)
 }
 
 func (s *runnerRequestBudgetState) synthesisDecision(policy RunPolicy, toolCalls int) runnerRequestBudgetDecision {
@@ -232,8 +253,8 @@ func (s *runnerRequestBudgetState) noteReadOnlyChildPacket(paths []string) {
 	s.postChildReadFamilyNudgeFired = make(map[string]bool)
 }
 
-func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolRequest) runnerRequestBudgetDecision {
-	if postChildUnrelatedDiscovery(req, s.postChildEvidencePaths) {
+func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolRequest, mutationParent bool) runnerRequestBudgetDecision {
+	if !mutationParent && postChildUnrelatedDiscovery(req, s.postChildEvidencePaths) {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Post-child unrelated discovery blocked",
