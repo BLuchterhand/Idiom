@@ -203,19 +203,18 @@ func (s *runnerRequestBudgetState) noteReadClassRequest(req workspace.ToolReques
 	}
 }
 
+// readBudgetDecision used to force-finish lanes after a fixed post-
+// child read budget. Per the project's "no bandaid budgets" memory:
+// budget-style caps are bandaids; the structural enforcers
+// (MaxToolSteps, doom_loop_guard, completion_gate) are the real
+// closure contract. The hard cap fired prematurely on mutation
+// parents that legitimately needed several anchor-verification reads
+// after a child:explorer evidence packet (see #101 wedges). The
+// completion gate enforces RequiredEditPaths on those parents, and
+// doom_loop_guard catches genuine read-loops. Returning the empty
+// decision here keeps the post-child counters tracking for telemetry
+// + diminishing-returns nudges without force-finishing the lane.
 func (s *runnerRequestBudgetState) readBudgetDecision(policy RunPolicy, req workspace.ToolRequest) runnerRequestBudgetDecision {
-	if s.postChildActive() && s.postChildReadCalls > s.postChildReadBudget {
-		return runnerRequestBudgetDecision{
-			Handled:           true,
-			EventRole:         "post_child_read_budget_block",
-			EventContent:      fmt.Sprintf("post-child read budget exhausted after %d targeted reads", s.postChildReadBudget),
-			RejectSummary:     "Post-child read budget exhausted",
-			RejectError:       fmt.Sprintf("the child evidence packet has already been gathered and the parent used %d targeted follow-up reads. Synthesize from the child packet and targeted follow-up evidence; mention only one unsupported claim if the answer still needs it.", s.postChildReadBudget),
-			RejectStopReason:  "post_child_read_budget_exhausted",
-			ForceAnswerReason: "post_child_read_budget_exhausted",
-			ForceAnswerPrompt: "Post-child read budget is exhausted. Tools are now disabled. Use the child packet and targeted follow-up evidence to write the normal final answer. If one exact claim remains unsupported, state that uncertainty after the answer.",
-		}
-	}
 	return runnerRequestBudgetDecision{}
 }
 

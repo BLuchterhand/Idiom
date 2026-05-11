@@ -762,10 +762,11 @@ func (r *Runner) Run(
 						answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
 						return finish(answer, err, "post_readiness_no_gap_repeated", true)
 					}
-					if prompt, exhausted := consumeRejectedPostReadinessProbe(scope, req, &delegatedReadOnlyPostReadyFollowups, &postChildFollowupReads, delegatedReadOnlyProbeBudget, postChildReadBudget); exhausted {
-						answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
-						return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
-					}
+					// Note: the consumeRejectedPostReadinessProbe budget cap was
+					// removed (see runnerRequestBudgetState.readBudgetDecision).
+					// The schema rejection below still nudges the model toward
+					// answer-now-or-named-gap; doom_loop_guard + MaxToolSteps
+					// handle pathological loops.
 					summary, errorText := missingPostReadinessGapMessage(scope)
 					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 					if done {
@@ -778,10 +779,9 @@ func (r *Runner) Run(
 				return finish(answer, err, "post_readiness_no_gap", true)
 			}
 			if summary, errorText, rejected := invalidPostReadinessGap(scope, r.RuntimeBrief.Objective, req, collectedResults); rejected {
-				if prompt, exhausted := consumeRejectedPostReadinessProbe(scope, req, &delegatedReadOnlyPostReadyFollowups, &postChildFollowupReads, delegatedReadOnlyProbeBudget, postChildReadBudget); exhausted {
-					answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
-					return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
-				}
+				// Note: per-rejection budget cap removed (see
+				// runnerRequestBudgetState.readBudgetDecision). The invalid-
+				// gap rejection itself remains as a per-call schema nudge.
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 				if done {
 					return finish(answer, err, "post_readiness_gap_invalid", true)
@@ -1375,53 +1375,30 @@ func (r *Runner) Run(
 		}
 		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
-			// Skip the diminishing-returns nudge on the very probe that
-			// will trigger the disclosed-budget force-answer below:
-			// firing both back-to-back wastes a turn message the model
-			// never gets to react to before tools are disabled.
-			budgetWillForce := postReadinessProbeBudget > 0 && delegatedReadOnlyPostReadyFollowups >= postReadinessProbeBudget
-			if !budgetWillForce && delegatedReadOnlyPostReadyFollowups > delegatedReadOnlyDiminishingNudgeStage {
+			// Diminishing-returns nudge stays as a soft signal; the hard
+			// budget force-finish was a bandaid (per the no-bandaid
+			// memory) and got removed. MaxToolSteps + doom_loop_guard
+			// catch pathological loops; the completion gate enforces
+			// mutation closure.
+			if delegatedReadOnlyPostReadyFollowups > delegatedReadOnlyDiminishingNudgeStage {
 				if nudge := delegatedReadOnlyDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, delegatedReadOnlyPostReadyFollowups); nudge != "" {
 					delegatedReadOnlyDiminishingNudgeStage = delegatedReadOnlyPostReadyFollowups
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "delegated_read_only_diminishing_returns_nudge", Content: nudge})
 				}
 			}
-			// Disclosed-budget enforcement: the readiness contract told
-			// the model "use at most N targeted probes." Once the count
-			// hits N, force-answer with a stop reason that names the
-			// disclosed budget — instead of letting MaxToolSteps end the
-			// lane on the (N+1)th attempt with a generic exhaustion.
-			if budgetWillForce {
-				prompt := forcedSynthesisPromptReadOnly(delegatedReadOnlyPostReadyFollowups, postReadinessProbeBudget)
-				answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
-				return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
-			}
 		}
-		if postChildPacketActive && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" && !runnerBriefRequiresMutation(r.RuntimeBrief) {
-			// Mutation parents (refine draft, plan-execute, etc.) get
-			// the same exemption as #101's gap-scope guard: the
-			// post-child-packet "answer now" budget is designed for
-			// parents whose deliverable is an answer, not a write. The
-			// completion gate owns mutation closure via
-			// RequiredEditPaths instead.
+		if postChildPacketActive && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			postChildFollowupReads++
-			budgetWillForce := postChildReadBudget > 0 && postChildFollowupReads >= postChildReadBudget
-			if !budgetWillForce && postChildFollowupReads > postChildDiminishingNudgeStage {
+			// Same removal: keep the soft nudge, drop the hard budget
+			// force-finish. The previous mutation-parent exemption is
+			// subsumed since no force-finish fires anymore.
+			if postChildFollowupReads > postChildDiminishingNudgeStage {
 				if nudge := postChildDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, postChildFollowupReads); nudge != "" {
 					postChildDiminishingNudgeStage = postChildFollowupReads
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "child_packet_diminishing_returns_nudge", Content: nudge})
 				}
-			}
-			// Same disclosed-budget enforcement on the parent side once
-			// the child packet is in hand. Caps at the live
-			// postChildReadBudget value (the same number disclosed in
-			// the boundary nudge).
-			if budgetWillForce {
-				prompt := forcedSynthesisPromptPostChild(postChildFollowupReads, postChildReadBudget)
-				answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
-				return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
 			}
 		}
 		if strings.TrimSpace(result.Error) != "" {

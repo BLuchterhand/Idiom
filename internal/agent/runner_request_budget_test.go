@@ -97,21 +97,27 @@ func TestRunnerRequestBudgetExplorationDecisionNudgesWithoutForcingDelegation(t 
 	}
 }
 
-func TestRunnerRequestBudgetReadBudgetBlocksAfterPostChildBudget(t *testing.T) {
+// TestRunnerRequestBudgetReadBudgetIsNoLongerEnforced validates the
+// no-bandaid memory: readBudgetDecision used to force-finish lanes
+// after a fixed post-child read count. That cap fired prematurely
+// on mutation parents that legitimately needed several anchor-
+// verification reads after a child:explorer packet (see #101). The
+// structural enforcers — MaxToolSteps, doom_loop_guard, completion
+// gate — are the real closure contract; the per-call budget cap was
+// the bandaid the project memory said to remove. This test locks in
+// the removal so a future re-introduction is caught.
+func TestRunnerRequestBudgetReadBudgetIsNoLongerEnforced(t *testing.T) {
 	state := newRunnerRequestBudgetState(1)
 	state.readOnlyChildTaskSatisfied = true
 	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
 	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
 
 	decision := state.readBudgetDecision(RunPolicy{}, workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
-	if !decision.Handled || decision.RejectSummary != "Post-child read budget exhausted" {
-		t.Fatalf("expected post-child read budget exhaustion, got %#v", decision)
+	if decision.Handled {
+		t.Fatalf("readBudgetDecision should no longer force-finish on post-child reads; got %#v", decision)
 	}
-	if !strings.Contains(decision.ForceAnswerPrompt, "child packet") {
-		t.Fatalf("expected forced-answer guidance to mention child packet, got %#v", decision)
-	}
-	if strings.Contains(strings.ToLower(decision.RejectError+decision.ForceAnswerPrompt), "verification") {
-		t.Fatalf("post-child read budget guidance should not inject verification requirements, got %#v", decision)
+	if decision.RejectStopReason != "" {
+		t.Fatalf("expected empty stop reason, got %q", decision.RejectStopReason)
 	}
 }
 
