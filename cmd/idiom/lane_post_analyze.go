@@ -172,3 +172,57 @@ func hasBlockedCompletionEvent(out []byte) bool {
 	}
 	return false
 }
+
+// laneSessionSummary holds the token-usage fields the lane wrapper
+// extracts from a `session_summary` JSON event emitted by the
+// subcommand at Close(). Only populated when the subcommand was
+// invoked with --json (the wrapper forwards user-supplied --json
+// today; #87's token tracking is opt-in by that flag).
+type laneSessionSummary struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+}
+
+// parseSessionSummary scans the JSONL output stream for the last
+// `session_summary` event and returns the token totals. Returns
+// ok=false when no such event is present (subcommand ran without
+// --json, or exited before Close()). The "last" choice is
+// deliberate: if a subcommand re-emits during error recovery, the
+// final summary is authoritative.
+func parseSessionSummary(out []byte) (laneSessionSummary, bool) {
+	var found bool
+	var result laneSessionSummary
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal(line, &ev); err != nil {
+			continue
+		}
+		if ev["type"] != "session_summary" {
+			continue
+		}
+		result = laneSessionSummary{
+			PromptTokens:     jsonInt(ev["prompt_tokens"]),
+			CompletionTokens: jsonInt(ev["completion_tokens"]),
+			TotalTokens:      jsonInt(ev["total_tokens"]),
+		}
+		found = true
+	}
+	return result, found
+}
+
+// jsonInt coerces a JSON-decoded value (which arrives as float64
+// from encoding/json) into an int. Returns 0 for any other type.
+func jsonInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	}
+	return 0
+}

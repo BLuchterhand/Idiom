@@ -253,3 +253,83 @@ func TestSummarizeLaneHistoryWithFilterNoFilterEqualsOriginal(t *testing.T) {
 		}
 	}
 }
+
+func TestSummarizeLaneHistoryAggregatesTokens(t *testing.T) {
+	root := t.TempDir()
+	mustAppend := func(evt laneHistoryEvent) {
+		t.Helper()
+		if err := appendLaneHistory(root, evt); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	mustAppend(laneHistoryEvent{Mode: "plan-execute", Brief: "a.md", ExitCode: 0, PromptTokens: 1000, CompletionTokens: 200, TotalTokens: 1200})
+	mustAppend(laneHistoryEvent{Mode: "implement", Brief: "b.md", ExitCode: 1, PromptTokens: 5000, CompletionTokens: 800, TotalTokens: 5800})
+	// Third dispatch ran without --json — no token data. Should not
+	// count toward EventsWithTokens but still increments Total.
+	mustAppend(laneHistoryEvent{Mode: "plan-execute", Brief: "c.md", ExitCode: 0})
+
+	s, err := summarizeLaneHistory(root)
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if s.Total != 3 {
+		t.Fatalf("Total = %d, want 3", s.Total)
+	}
+	if s.EventsWithTokens != 2 {
+		t.Fatalf("EventsWithTokens = %d, want 2 (third dispatch had no tokens)", s.EventsWithTokens)
+	}
+	if s.TotalPromptTokens != 6000 {
+		t.Fatalf("TotalPromptTokens = %d, want 6000", s.TotalPromptTokens)
+	}
+	if s.TotalCompletionTokens != 1000 {
+		t.Fatalf("TotalCompletionTokens = %d, want 1000", s.TotalCompletionTokens)
+	}
+	if s.TotalTokens != 7000 {
+		t.Fatalf("TotalTokens = %d, want 7000", s.TotalTokens)
+	}
+}
+
+func TestSummarizeLaneHistoryNoTokensReturnsZeros(t *testing.T) {
+	root := t.TempDir()
+	if err := appendLaneHistory(root, laneHistoryEvent{Mode: "plan-execute", Brief: "a.md", ExitCode: 0}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	s, err := summarizeLaneHistory(root)
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if s.EventsWithTokens != 0 || s.TotalTokens != 0 {
+		t.Fatalf("expected zero token aggregates, got EventsWithTokens=%d TotalTokens=%d", s.EventsWithTokens, s.TotalTokens)
+	}
+}
+
+func TestPrintLaneHistorySummaryIncludesTokenSection(t *testing.T) {
+	root := t.TempDir()
+	if err := appendLaneHistory(root, laneHistoryEvent{Mode: "plan-execute", Brief: "a.md", ExitCode: 0, PromptTokens: 1000, CompletionTokens: 200, TotalTokens: 1200}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := printLaneHistorySummary(root, &buf, laneHistoryFilter{}); err != nil {
+		t.Fatalf("print: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"token usage", "prompt: 1000", "completion: 200", "total: 1200"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in summary output, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintLaneHistorySummaryOmitsTokenSectionWhenNoData(t *testing.T) {
+	root := t.TempDir()
+	if err := appendLaneHistory(root, laneHistoryEvent{Mode: "plan-execute", Brief: "a.md", ExitCode: 0}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := printLaneHistorySummary(root, &buf, laneHistoryFilter{}); err != nil {
+		t.Fatalf("print: %v", err)
+	}
+	if strings.Contains(buf.String(), "token usage") {
+		t.Fatalf("expected no token section when all events lack tokens, got:\n%s", buf.String())
+	}
+}

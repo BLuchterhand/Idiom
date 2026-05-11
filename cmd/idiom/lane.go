@@ -301,14 +301,20 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	if info, err := os.Stat(opts.BriefPath); err == nil {
 		briefMtime = info.ModTime().UTC().Format(time.RFC3339Nano)
 	}
-	if err := appendLaneHistory(opts.ProjectRoot, laneHistoryEvent{
+	historyEvt := laneHistoryEvent{
 		Mode:            opts.Mode,
 		Brief:           opts.BriefPath,
 		BriefMtime:      briefMtime,
 		BriefProvenance: detectBriefProvenance(opts.BriefPath),
 		Title:           opts.Title,
 		ExitCode:        subcode,
-	}); err != nil {
+	}
+	if summary, ok := parseSessionSummary(tee.Bytes()); ok {
+		historyEvt.PromptTokens = summary.PromptTokens
+		historyEvt.CompletionTokens = summary.CompletionTokens
+		historyEvt.TotalTokens = summary.TotalTokens
+	}
+	if err := appendLaneHistory(opts.ProjectRoot, historyEvt); err != nil {
 		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
 	}
 

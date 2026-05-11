@@ -16,14 +16,24 @@ const laneHistoryRelPath = ".idiom/lane-history.jsonl"
 
 // laneHistoryEvent is one dispatch record. Fields are intentionally
 // flat so jq / shell tools can summarize without a parser.
+//
+// Token fields (PromptTokens/CompletionTokens/TotalTokens) are
+// populated only when the underlying subcommand was invoked with
+// --json (the wrapper extracts them from the session_summary stdout
+// event). When --json is off the fields stay zero and are omitted
+// from the on-disk record; lane history aggregations skip zero
+// values so the breakdown still works for mixed history.
 type laneHistoryEvent struct {
-	Timestamp       string `json:"ts"`
-	Mode            string `json:"mode"`
-	Brief           string `json:"brief"`
-	BriefMtime      string `json:"brief_mtime,omitempty"`
-	BriefProvenance string `json:"brief_provenance,omitempty"`
-	Title           string `json:"title,omitempty"`
-	ExitCode        int    `json:"exit_code"`
+	Timestamp        string `json:"ts"`
+	Mode             string `json:"mode"`
+	Brief            string `json:"brief"`
+	BriefMtime       string `json:"brief_mtime,omitempty"`
+	BriefProvenance  string `json:"brief_provenance,omitempty"`
+	Title            string `json:"title,omitempty"`
+	ExitCode         int    `json:"exit_code"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	TotalTokens      int    `json:"total_tokens,omitempty"`
 }
 
 // refineDraftedMarker is the HTML comment finalizeRefine prepends to
@@ -90,11 +100,15 @@ func appendLaneHistory(projectRoot string, evt laneHistoryEvent) error {
 // laneHistorySummary aggregates the on-disk history into a
 // human-readable report.
 type laneHistorySummary struct {
-	Total        int
-	ByMode       map[string]int
-	ByExitCode   map[int]int
-	BriefsByPath map[string]int
-	ByProvenance map[string]int
+	Total                 int
+	ByMode                map[string]int
+	ByExitCode            map[int]int
+	BriefsByPath          map[string]int
+	ByProvenance          map[string]int
+	TotalPromptTokens     int
+	TotalCompletionTokens int
+	TotalTokens           int
+	EventsWithTokens      int
 }
 
 // laneHistoryFilter constrains which events a summary includes.
@@ -157,8 +171,25 @@ func summarizeLaneHistoryWithFilter(projectRoot string, filter laneHistoryFilter
 		if evt.BriefProvenance != "" {
 			out.ByProvenance[evt.BriefProvenance]++
 		}
+		accumulateLaneHistoryTokens(&out, evt)
 	}
 	return out, nil
+}
+
+// accumulateLaneHistoryTokens folds one event's token totals into
+// the running summary. Zero-token events (subcommand ran without
+// --json) are skipped so EventsWithTokens reflects only events
+// that actually contributed numbers — the display layer uses this
+// to print the per-event-with-tokens average, not the per-total-
+// dispatch average.
+func accumulateLaneHistoryTokens(out *laneHistorySummary, evt laneHistoryEvent) {
+	if evt.PromptTokens == 0 && evt.CompletionTokens == 0 && evt.TotalTokens == 0 {
+		return
+	}
+	out.TotalPromptTokens += evt.PromptTokens
+	out.TotalCompletionTokens += evt.CompletionTokens
+	out.TotalTokens += evt.TotalTokens
+	out.EventsWithTokens++
 }
 
 // summarizeLaneHistory reads the history file and aggregates.
@@ -202,6 +233,7 @@ func summarizeLaneHistory(projectRoot string) (laneHistorySummary, error) {
 		if evt.BriefProvenance != "" {
 			out.ByProvenance[evt.BriefProvenance]++
 		}
+		accumulateLaneHistoryTokens(&out, evt)
 	}
 	return out, nil
 }
@@ -247,6 +279,7 @@ func summarizeLaneHistoryByMode(projectRoot string, mode string) (laneHistorySum
 		if evt.BriefProvenance != "" {
 			out.ByProvenance[evt.BriefProvenance]++
 		}
+		accumulateLaneHistoryTokens(&out, evt)
 	}
 	return out, nil
 }
@@ -283,6 +316,15 @@ func printLaneHistorySummary(projectRoot string, w io.Writer, filter laneHistory
 	}
 	if rerun > 0 {
 		fmt.Fprintf(w, "re-dispatched briefs: %d (paths dispatched ≥2 times)\n", rerun)
+	}
+	if s.EventsWithTokens > 0 {
+		fmt.Fprintf(w, "token usage (across %d dispatch(es) run with --json):\n", s.EventsWithTokens)
+		fmt.Fprintf(w, "  prompt: %d\n", s.TotalPromptTokens)
+		fmt.Fprintf(w, "  completion: %d\n", s.TotalCompletionTokens)
+		fmt.Fprintf(w, "  total: %d\n", s.TotalTokens)
+		if s.EventsWithTokens > 1 {
+			fmt.Fprintf(w, "  avg total/dispatch: %d\n", s.TotalTokens/s.EventsWithTokens)
+		}
 	}
 	return nil
 }

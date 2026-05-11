@@ -1428,9 +1428,6 @@ func (m *Model) logNestedToolResult(content string) bool {
 }
 
 func (m *Model) writeSessionSummary() {
-	if m.debugLogger == nil {
-		return
-	}
 	if m.sessionAgg.turns == 0 && m.sessionAgg.modelCalls == 0 && m.sessionAgg.toolCalls == 0 {
 		return
 	}
@@ -1443,21 +1440,41 @@ func (m *Model) writeSessionSummary() {
 	if !m.sessionStartedAt.IsZero() {
 		duration = time.Since(m.sessionStartedAt).Milliseconds()
 	}
-	_ = m.debugLogger.LogSessionSummary(transcript.SessionSummary{
-		Turns:            m.sessionAgg.turns,
-		ModelCalls:       m.sessionAgg.modelCalls,
-		ToolCalls:        m.sessionAgg.toolCalls,
-		PromptTokens:     m.sessionAgg.promptTokens,
-		CompletionTokens: m.sessionAgg.completionTokens,
-		TotalTokens:      m.sessionAgg.totalTokens,
-		PeakPromptTokens: m.sessionAgg.peakPromptTokens,
-		CtxSize:          ctxSize,
-		PeakCtxPct:       peakPct,
-		Compactions:      m.sessionAgg.compactions,
-		TopToolsByOutput: m.sessionAgg.topToolsByOutput(10),
-		DiscoveryByClass: discoveryAggregates(m.sessionAgg.discoveryClasses),
-		DiscoveryByCost:  discoveryAggregates(m.sessionAgg.discoveryCosts),
-		DurationMillis:   duration,
+	if m.debugLogger != nil {
+		_ = m.debugLogger.LogSessionSummary(transcript.SessionSummary{
+			Turns:            m.sessionAgg.turns,
+			ModelCalls:       m.sessionAgg.modelCalls,
+			ToolCalls:        m.sessionAgg.toolCalls,
+			PromptTokens:     m.sessionAgg.promptTokens,
+			CompletionTokens: m.sessionAgg.completionTokens,
+			TotalTokens:      m.sessionAgg.totalTokens,
+			PeakPromptTokens: m.sessionAgg.peakPromptTokens,
+			CtxSize:          ctxSize,
+			PeakCtxPct:       peakPct,
+			Compactions:      m.sessionAgg.compactions,
+			TopToolsByOutput: m.sessionAgg.topToolsByOutput(10),
+			DiscoveryByClass: discoveryAggregates(m.sessionAgg.discoveryClasses),
+			DiscoveryByCost:  discoveryAggregates(m.sessionAgg.discoveryCosts),
+			DurationMillis:   duration,
+		})
+	}
+	// Mirror to the stdout JSON event stream so wrappers (idiom lane,
+	// queue, etc.) can correlate aggregate token usage with the
+	// dispatch they spawned. Only fires when --json is on; debug-log
+	// path above is the always-on persistence layer.
+	m.emitJSONEvent(map[string]any{
+		"type":               "session_summary",
+		"turns":              m.sessionAgg.turns,
+		"model_calls":        m.sessionAgg.modelCalls,
+		"tool_calls":         m.sessionAgg.toolCalls,
+		"prompt_tokens":      m.sessionAgg.promptTokens,
+		"completion_tokens":  m.sessionAgg.completionTokens,
+		"total_tokens":       m.sessionAgg.totalTokens,
+		"peak_prompt_tokens": m.sessionAgg.peakPromptTokens,
+		"ctx_size":           ctxSize,
+		"peak_ctx_pct":       peakPct,
+		"compactions":        m.sessionAgg.compactions,
+		"duration_ms":        duration,
 	})
 }
 
