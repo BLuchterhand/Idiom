@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,7 @@ type refineIterMetrics struct {
 	EndedAt            string `json:"ended_at,omitempty"`
 	DurationMS         int64  `json:"duration_ms,omitempty"`
 	DraftDispatchExit  int    `json:"draft_dispatch_exit"`
+	LintExit           int    `json:"lint_exit,omitempty"` // §2.3 — captured before review
 	ReviewDispatchExit int    `json:"review_dispatch_exit"`
 	Verdict            string `json:"verdict,omitempty"`
 	BugCount           int    `json:"bug_count,omitempty"`
@@ -278,8 +280,11 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		}
 		lastDraftPath = draftPath
 
+		lintExit, lintOutput := captureRefineLintOutput(draftPath, stderr)
+		metrics.LintExit = lintExit
+		fmt.Fprintf(stderr, "refine: iter %d — lint exit=%d (preloaded to reviewer)\n", iter, lintExit)
 		metaReviewPath := filepath.Join(iterDir, "meta-review.md")
-		if err := writeRefineReviewMeta(metaReviewPath, draftPath, reviewPath, opts.ProjectRoot); err != nil {
+		if err := writeRefineReviewMeta(metaReviewPath, draftPath, reviewPath, opts.ProjectRoot, lintOutput); err != nil {
 			fmt.Fprintf(stderr, "refine: write review meta: %v\n", err)
 			return failsoft(iter, "review-meta-write", 1)
 		}
@@ -379,13 +384,34 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
-func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot string) error {
+func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOutput string) error {
+	if strings.TrimSpace(lintOutput) == "" {
+		lintOutput = "(no findings — lint pass was clean)"
+	}
 	body := strings.NewReplacer(
 		"{{DRAFT_PATH}}", refineWorkspaceRel(projectRoot, draftPath),
 		"{{REVIEW_PATH}}", refineWorkspaceRel(projectRoot, reviewPath),
 		"{{PROJECT_ROOT}}", projectRoot,
+		"{{LINT_OUTPUT}}", lintOutput,
 	).Replace(refineReviewTemplate)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
+}
+
+// captureRefineLintOutput runs idiom brief lint on the just-produced
+// draft and captures both exit code and stdout findings (§2.3). The
+// review meta-brief inlines the output so the reviewer sees lint
+// BLOCKs/WARNs as preloaded evidence rather than running the lint
+// itself (no shell access needed; deterministic; faster). Exit code
+// non-zero with empty stdout falls back to a short error note so the
+// reviewer doesn't silently treat lint as "clean".
+func captureRefineLintOutput(draftPath string, stderr io.Writer) (int, string) {
+	var out bytes.Buffer
+	code := laneBriefLintRunner([]string{draftPath}, &out, stderr)
+	text := out.String()
+	if code != 0 && strings.TrimSpace(text) == "" {
+		text = fmt.Sprintf("(lint exited %d with no captured findings — treat as BLOCK)", code)
+	}
+	return code, text
 }
 
 func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath string) error {

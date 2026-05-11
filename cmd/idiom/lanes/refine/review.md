@@ -5,6 +5,18 @@ review of the drafted brief. **Read the brief ONCE, then write the
 review.** The file IS the deliverable — a final-answer text
 containing the review WILL be rejected.
 
+## Pre-loaded lint findings
+
+The refine wrapper already ran `idiom brief lint` on the draft and
+captured the output below. Treat each BLOCK as a required edit
+target and each WARN as a recommended one. A verdict of
+`ship-as-is` REQUIRES zero BLOCKs (WARNs may be waived in the OK
+section with a one-sentence rationale per warning).
+
+```text
+{{LINT_OUTPUT}}
+```
+
 ## Hard tool budget
 
 - **Exactly ONE `read_file`** of the drafted brief is required.
@@ -42,14 +54,26 @@ emit the file with "Bugs found: none" and verdict "ship-as-is".
 1. **<short title>**: <description>. <how to fix>.
 2. <next bug, if any; or write "none" if no bugs found>
 
+## Lint findings
+
+<copy each BLOCK and WARN from the pre-loaded lint output above
+verbatim, OR write "none" if the lint pass was clean. The patch
+phase consumes both this section and "Bugs found" as edit targets.>
+
 ## OK
 
 - <what the brief gets right>
+- <if you waive any WARN-level lint finding, justify here with
+  the warning text + one-sentence rationale>
 
 ## Verdict
 
 <ship-as-is | fix-bugs-then-ship | reject-and-redraft>
 ```
+
+**Verdict rules**: `ship-as-is` is permitted ONLY when (a) "Bugs
+found" is empty AND (b) "Lint findings" contains no BLOCK entries.
+Any BLOCK forces at least `fix-bugs-then-ship`.
 
 ## What to check (from the brief alone)
 

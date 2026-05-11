@@ -173,7 +173,7 @@ func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
 	metaPath := filepath.Join(iterDir, "meta-review.md")
 	draftPath := filepath.Join(iterDir, "draft.md")
 	reviewPath := filepath.Join(iterDir, "review.md")
-	if err := writeRefineReviewMeta(metaPath, draftPath, reviewPath, root); err != nil {
+	if err := writeRefineReviewMeta(metaPath, draftPath, reviewPath, root, "(no findings)"); err != nil {
 		t.Fatalf("writeRefineReviewMeta: %v", err)
 	}
 	body, err := os.ReadFile(metaPath)
@@ -658,6 +658,100 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 // behavior. A draft file that's empty, under the byte floor, or
 // has no markdown section heading must be classified trivial so
 // the wrapper exits non-zero rather than silently shipping nothing.
+// TestRunLaneRefineInlinesLintOutputIntoReviewMeta locks in §2.3 of
+// docs/refine-end-to-end-loop.md: the refine wrapper runs idiom
+// brief lint between draft and review, captures the output, and
+// inlines it into the review meta-brief via the {{LINT_OUTPUT}}
+// placeholder. The reviewer then has lint findings as preloaded
+// evidence and the verdict rules require zero BLOCKs for
+// ship-as-is — convergence on a lint-passing brief by construction.
+func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
+		_, _ = stdout.Write([]byte("BLOCK: anchor at foo.go:42 doesn't match source\nWARN: append-to-end-of-file edit is wedge-prone\n"))
+		return 1
+	})
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "lint-preload",
+		MaxIters:    1, // ship-as-is on iter 1 so we don't loop
+		ProjectRoot: root,
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Lint findings\n\nBLOCK: anchor at foo.go:42 doesn't match source\n\n## OK\n\n- nice\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	metaReviewPath := filepath.Join(refineStateDir(root, "lint-preload"), "iter-1", "meta-review.md")
+	body, err := os.ReadFile(metaReviewPath)
+	if err != nil {
+		t.Fatalf("read meta-review: %v", err)
+	}
+	if !strings.Contains(string(body), "BLOCK: anchor at foo.go:42 doesn't match source") {
+		t.Fatalf("expected lint BLOCK to be inlined in review meta, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "Pre-loaded lint findings") {
+		t.Fatalf("expected 'Pre-loaded lint findings' section in review meta, got:\n%s", body)
+	}
+	metricsPath := filepath.Join(refineStateDir(root, "lint-preload"), "iter-1", "metrics.json")
+	metricsBody, err := os.ReadFile(metricsPath)
+	if err != nil {
+		t.Fatalf("read metrics: %v", err)
+	}
+	var m refineIterMetrics
+	if err := json.Unmarshal(metricsBody, &m); err != nil {
+		t.Fatalf("unmarshal metrics: %v\n%s", err, metricsBody)
+	}
+	if m.LintExit != 1 {
+		t.Fatalf("expected metrics.lint_exit=1, got %d", m.LintExit)
+	}
+}
+
+// TestRunLaneRefineHandlesCleanLintGracefully checks the empty-lint
+// path: when lint exits 0 with no findings, the {{LINT_OUTPUT}}
+// substitution falls back to a "no findings" note so the reviewer
+// doesn't silently treat empty as "clean by default".
+func TestRunLaneRefineHandlesCleanLintGracefully(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
+		return 0
+	})
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "lint-clean",
+		MaxIters:    1,
+		ProjectRoot: root,
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0 on clean lint + ship-as-is, got %d; stderr=%s", code, stderr.String())
+	}
+	metaReviewPath := filepath.Join(refineStateDir(root, "lint-clean"), "iter-1", "meta-review.md")
+	body, err := os.ReadFile(metaReviewPath)
+	if err != nil {
+		t.Fatalf("read meta-review: %v", err)
+	}
+	if !strings.Contains(string(body), "no findings") {
+		t.Fatalf("expected 'no findings' fallback in review meta, got:\n%s", body)
+	}
+}
+
 func TestRefineDraftIsTrivialRejectsSmallAndStructurelessBodies(t *testing.T) {
 	root := t.TempDir()
 	cases := []struct {
