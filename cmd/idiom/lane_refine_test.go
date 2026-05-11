@@ -407,15 +407,21 @@ func TestRunLaneRefineShipsBestDraftOnDivergingLoop(t *testing.T) {
 	})
 	var stderr bytes.Buffer
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
-	if code != 0 {
-		t.Fatalf("expected exit 0 (ship bestDraft) on divergence, got %d; stderr=%s", code, stderr.String())
+	// Colony Q4 (2026-05-11): save best draft AND exit non-zero on
+	// non-ship-as-is convergence; orchestrator must inspect before
+	// piping to plan-execute.
+	if code == 0 {
+		t.Fatalf("expected non-zero exit on diverging convergence; got 0. stderr=%s", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "loop diverging") {
 		t.Fatalf("expected diverging-loop message in stderr, got: %s", stderr.String())
 	}
 	body, _ := os.ReadFile(opts.OutputPath)
+	if !strings.HasPrefix(string(body), "> WARNING:") {
+		t.Fatalf("expected saved best-draft to lead with WARNING blockquote header, got: %s", body)
+	}
 	if !strings.Contains(string(body), "# Draft v1 (best") {
-		t.Fatalf("expected iter-1 draft to be shipped on divergence, got: %s", body)
+		t.Fatalf("expected iter-1 draft to be saved on divergence, got: %s", body)
 	}
 }
 
@@ -508,15 +514,20 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 
 	var stderr bytes.Buffer
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
-	if code != 0 {
-		t.Fatalf("expected exit 0 (failsoft ships bestDraft) on iter-2 review wedge, got %d; stderr=%s", code, stderr.String())
+	// Failsoft saves the best draft AND exits non-zero — orchestrator
+	// inspects before piping (Colony Q4, 2026-05-11).
+	if code == 0 {
+		t.Fatalf("expected non-zero exit on iter-2 review wedge failsoft; got 0. stderr=%s", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "failsoft at iter 2") {
 		t.Fatalf("expected failsoft message in stderr, got: %s", stderr.String())
 	}
 	body, _ := os.ReadFile(opts.OutputPath)
+	if !strings.HasPrefix(string(body), "> WARNING:") {
+		t.Fatalf("expected saved failsoft draft to lead with WARNING blockquote, got: %s", body)
+	}
 	if !strings.Contains(string(body), "# Draft v1 (will be shipped via failsoft)") {
-		t.Fatalf("expected iter-1 draft shipped via failsoft, got: %s", body)
+		t.Fatalf("expected iter-1 draft saved via failsoft, got: %s", body)
 	}
 }
 
@@ -573,10 +584,15 @@ func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 	})
 	var stderr bytes.Buffer
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
-	if code != 0 {
-		t.Fatalf("expected exit 0 on max-iters exhaust (ship best), got %d; stderr=%s", code, stderr.String())
+	// max-iters-exhausted is non-zero (Colony Q4): unresolved bugs
+	// remained, orchestrator must inspect.
+	if code == 0 {
+		t.Fatalf("expected non-zero exit on max-iters exhaust; got 0. stderr=%s", stderr.String())
 	}
 	body, _ := os.ReadFile(opts.OutputPath)
+	if !strings.HasPrefix(string(body), "> WARNING:") {
+		t.Fatalf("expected saved best-draft to lead with WARNING, got: %s", body)
+	}
 	if !strings.Contains(string(body), "# Draft v2 (final, fewer bugs)") {
 		t.Fatalf("output should be the best draft (v2, 1 bug), got: %s", body)
 	}
@@ -610,11 +626,17 @@ func TestRunLaneRefineStopsOnNoImprovement(t *testing.T) {
 	})
 	var stderr bytes.Buffer
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
-	if code != 0 {
-		t.Fatalf("expected exit 0 (no-improvement → ship best), got %d; stderr=%s", code, stderr.String())
+	// no-improvement saves best AND exits non-zero — orchestrator
+	// inspects (Colony Q4).
+	if code == 0 {
+		t.Fatalf("expected non-zero exit on no-improvement convergence; got 0. stderr=%s", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "no improvement") {
 		t.Fatalf("expected 'no improvement' message in stderr, got: %s", stderr.String())
+	}
+	body, _ := os.ReadFile(opts.OutputPath)
+	if !strings.HasPrefix(string(body), "> WARNING:") {
+		t.Fatalf("expected saved best-draft to lead with WARNING, got: %s", body)
 	}
 }
 
@@ -641,15 +663,241 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 	})
 	var stderr bytes.Buffer
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	// max-iters with regressed final → non-zero exit (Colony Q4).
+	if code == 0 {
+		t.Fatalf("expected non-zero exit on max-iters with no ship-as-is; got 0. stderr=%s", stderr.String())
 	}
 	body, err := os.ReadFile(opts.OutputPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
+	if !strings.HasPrefix(string(body), "> WARNING:") {
+		t.Fatalf("expected saved best-draft to lead with WARNING, got: %s", body)
+	}
 	if !strings.Contains(string(body), "# Draft v1 (BEST") {
 		t.Fatalf("output should be the best draft (v1), not the regressed latest (v2). Got: %s", body)
+	}
+}
+
+// TestClassifyBriefAtomShapeEmitsCanonicalTags exercises §2.4's
+// 4-tag canonical taxonomy (test-code, multi-file,
+// markdown-deliverable, generic). Project-specific tags (save-load,
+// c++-system, etc.) are deliberately NOT in the canonical set per
+// Colony Q3 (2026-05-11) — those live in project overlay traps'
+// applies_to fields.
+func TestClassifyBriefAtomShapeEmitsCanonicalTags(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{
+			name: "single-source-file-generic",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `cmd/idiom/foo.go` | MODIFY |\n",
+			want: []string{refineTagGeneric},
+		},
+		{
+			name: "test-file",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `internal/agent/runner_test.go` | ADD test |\n",
+			want: []string{refineTagTestCode},
+		},
+		{
+			name: "multi-file-different-dirs",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `cmd/idiom/foo.go` | MODIFY |\n| `internal/foo/bar.go` | MODIFY |\n",
+			want: []string{refineTagMultiFile},
+		},
+		{
+			name: "test-and-multi-file",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `cmd/idiom/foo.go` | MODIFY |\n| `internal/foo/bar_test.go` | ADD test |\n",
+			want: []string{refineTagTestCode, refineTagMultiFile},
+		},
+		{
+			name: "markdown-only",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `.planning/inventory.md` | NEW FILE |\n",
+			want: []string{refineTagMarkdownDeliverable},
+		},
+		{
+			name: "mixed-markdown-and-source-is-not-markdown-deliverable",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `README.md` | MODIFY |\n| `cmd/foo.go` | ADD |\n",
+			want: []string{refineTagMultiFile},
+		},
+		{
+			name: "empty-table-falls-back-to-generic",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n",
+			want: []string{refineTagGeneric},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyBriefAtomShape([]byte(tc.body))
+			if !equalStringSlices(got, tc.want) {
+				t.Fatalf("classifyBriefAtomShape: got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestParseTrapFrontmatterExtractsAppliesTo exercises the narrow
+// frontmatter parser. Tolerant of missing frontmatter; strict about
+// the applies_to: [a, b, c] line shape.
+func TestParseTrapFrontmatterExtractsAppliesTo(t *testing.T) {
+	cases := []struct {
+		name        string
+		raw         string
+		wantApplies []string
+		wantBody    string
+	}{
+		{
+			name:        "basic",
+			raw:         "---\napplies_to: [test-code, multi-file]\n---\n\n# trap body\n",
+			wantApplies: []string{"test-code", "multi-file"},
+			wantBody:    "# trap body",
+		},
+		{
+			name:        "no-frontmatter",
+			raw:         "# trap body only\n",
+			wantApplies: nil,
+			wantBody:    "# trap body only\n",
+		},
+		{
+			name:        "single-tag",
+			raw:         "---\napplies_to: [generic]\n---\n# body\n",
+			wantApplies: []string{"generic"},
+			wantBody:    "# body",
+		},
+		{
+			name:        "quoted-tags",
+			raw:         "---\napplies_to: [\"test-code\", 'multi-file']\n---\nbody\n",
+			wantApplies: []string{"test-code", "multi-file"},
+			wantBody:    "body",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			applies, body := parseTrapFrontmatter([]byte(tc.raw))
+			if !equalStringSlices(applies, tc.wantApplies) {
+				t.Fatalf("applies_to: got %v, want %v", applies, tc.wantApplies)
+			}
+			gotBody := strings.TrimSpace(string(body))
+			wantBody := strings.TrimSpace(tc.wantBody)
+			if gotBody != wantBody {
+				t.Fatalf("body: got %q, want %q", gotBody, wantBody)
+			}
+		})
+	}
+}
+
+// TestRunLaneRefineAppliesProjectOverlay verifies the §2.4 end-to-
+// end flow: project drops hard-prohibitions.md + matching traps,
+// refine appends them to the final brief on ship-as-is. Bare repos
+// (no overlay dir) see zero behavior change.
+func TestRunLaneRefineAppliesProjectOverlay(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir()
+	overlayDir := filepath.Join(root, refineOverlayDir)
+	trapsDir := filepath.Join(overlayDir, "traps")
+	if err := os.MkdirAll(trapsDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	hardProhibitions := "## HARD PROHIBITIONS (project)\n\n- No interactive question tool — use `<<QUESTION>>:` markers.\n- No builds, tests, or commits.\n"
+	if err := os.WriteFile(filepath.Join(overlayDir, "hard-prohibitions.md"), []byte(hardProhibitions), 0o644); err != nil {
+		t.Fatalf("seed prohibitions: %v", err)
+	}
+	testTrap := "---\napplies_to: [test-code]\n---\n\n## Trap — test-code\n\nWatch for goroutine leaks in t.Cleanup.\n"
+	if err := os.WriteFile(filepath.Join(trapsDir, "test-code.md"), []byte(testTrap), 0o644); err != nil {
+		t.Fatalf("seed trap: %v", err)
+	}
+	multiFileTrap := "---\napplies_to: [multi-file]\n---\n\n## Trap — multi-file\n\nOrder edits so callers ship before callees.\n"
+	if err := os.WriteFile(filepath.Join(trapsDir, "multi-file.md"), []byte(multiFileTrap), 0o644); err != nil {
+		t.Fatalf("seed trap: %v", err)
+	}
+	saveLoadTrap := "---\napplies_to: [save-load]\n---\n\n## Trap — save-load\n\nProject-specific tag; should NOT fire on this brief.\n"
+	if err := os.WriteFile(filepath.Join(trapsDir, "save-load.md"), []byte(saveLoadTrap), 0o644); err != nil {
+		t.Fatalf("seed trap: %v", err)
+	}
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "overlay-test",
+		MaxIters:    1,
+		ProjectRoot: root,
+	}
+	// Brief body cites both a test file (test-code tag) AND a
+	// different-dir source file (multi-file tag).
+	draftBody := "# Drafted brief\n\n## Problem\n\nWiring change.\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `cmd/idiom/foo.go` | MODIFY |\n| `internal/foo/bar_test.go` | ADD test |\n\n## Acceptance\n\n- `go test ./...`\n"
+	dispatch, _ := stubDispatcher(t, []string{
+		draftBody,
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0 (ship-as-is), got %d; stderr=%s", code, stderr.String())
+	}
+	body, err := os.ReadFile(opts.OutputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !strings.Contains(string(body), "HARD PROHIBITIONS (project)") {
+		t.Fatalf("expected hard-prohibitions overlay in output, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "Trap — test-code") {
+		t.Fatalf("expected test-code trap inlined, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "Trap — multi-file") {
+		t.Fatalf("expected multi-file trap inlined, got:\n%s", body)
+	}
+	if strings.Contains(string(body), "Trap — save-load") {
+		t.Fatalf("save-load trap should NOT fire (not in canonical tags for this brief), got:\n%s", body)
+	}
+	if !strings.Contains(stderr.String(), "atom-shape tags") {
+		t.Fatalf("expected stderr to log atom-shape tags, got: %s", stderr.String())
+	}
+}
+
+// TestRunLaneRefineBareRepoSkipsOverlay confirms zero behavior
+// change for projects without an .idiom/prompts/brief/ directory.
+func TestRunLaneRefineBareRepoSkipsOverlay(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir() // bare — no overlay dir
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "bare",
+		MaxIters:    1,
+		ProjectRoot: root,
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if strings.Contains(stderr.String(), "appended hard-prohibitions") {
+		t.Fatalf("bare repo should not log overlay activity, got: %s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "inlined trap") {
+		t.Fatalf("bare repo should not inline traps, got: %s", stderr.String())
 	}
 }
 
@@ -758,11 +1006,6 @@ func TestResolveRefineDraftTemplateMalformedOverrideRejected(t *testing.T) {
 			body: "{{TITLE}} {{SPEC_BODY}} {{DRAFT_PATH}} — call write_file.\n",
 			want: "section heading",
 		},
-		{
-			name: "no-write-file-instruction",
-			body: "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nWrite to {{DRAFT_PATH}}.\n",
-			want: "write_file",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -778,6 +1021,117 @@ func TestResolveRefineDraftTemplateMalformedOverrideRejected(t *testing.T) {
 				t.Fatalf("expected error mentioning %q, got: %v", tc.want, err)
 			}
 		})
+	}
+}
+
+// TestEnsureRefineDraftWriteClosureAppendsWhenMissing locks in the
+// UX choice from the 2026-05-11 review: project authors don't have
+// to remember to include a write_file closure in their override
+// templates. If missing, idiom auto-appends a canonical closure
+// (matching the embedded templates) so the dispatched-model
+// contract is uniform across modes. Templates that already include
+// their own write directive are left untouched.
+func TestEnsureRefineDraftWriteClosureAppendsWhenMissing(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantAppended   bool
+		wantUntouched  bool
+		mustNotContain string
+	}{
+		{
+			name:         "body-without-write-file",
+			body:         "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nDescribe deliverable at {{DRAFT_PATH}}.\n",
+			wantAppended: true,
+		},
+		{
+			name:          "body-with-explicit-write-file",
+			body:          "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nCall write_file({{DRAFT_PATH}}).\n",
+			wantUntouched: true,
+		},
+		{
+			name:          "body-with-uppercase-WRITE_FILE",
+			body:          "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nCall WRITE_FILE({{DRAFT_PATH}}).\n",
+			wantUntouched: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ensureRefineDraftWriteClosure(tc.body, nil, "test")
+			if tc.wantUntouched && got != tc.body {
+				t.Fatalf("expected body untouched, got delta:\n%s", got)
+			}
+			if tc.wantAppended {
+				if got == tc.body {
+					t.Fatalf("expected closure appended, body unchanged")
+				}
+				if !strings.Contains(got, "## STOP AND WRITE NOW") {
+					t.Fatalf("expected canonical closure heading, got:\n%s", got)
+				}
+				if !strings.Contains(got, "write_file") {
+					t.Fatalf("expected appended closure to mention write_file, got:\n%s", got)
+				}
+				if !strings.Contains(got, "{{DRAFT_PATH}}") {
+					t.Fatalf("expected appended closure to reference {{DRAFT_PATH}} for later substitution, got:\n%s", got)
+				}
+			}
+		})
+	}
+}
+
+// TestRunLaneRefineAutoAppendsClosureToOverrideWithoutWriteFile
+// verifies the auto-append behavior is wired end-to-end: a project
+// override that omits write_file in its body produces a meta-draft
+// containing the canonical closure with the destination path
+// substituted in.
+func TestRunLaneRefineAutoAppendsClosureToOverrideWithoutWriteFile(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir()
+	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
+	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Note: NO write_file mention. Author focused on the body.
+	overrideBody := "# {{TITLE}}\n\n## Notebook deliverable\n\nSPEC: {{SPEC_BODY}}\n\nWrite the experiment at {{DRAFT_PATH}}.\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `{{DRAFT_PATH}}` | NEW FILE |\n"
+	if err := os.WriteFile(filepath.Join(overrideDir, "draft-notebook.md"), []byte(overrideBody), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Sweep hyperparams.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "closure-test",
+		MaxIters:    1,
+		ProjectRoot: root,
+		Mode:        "notebook",
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if !strings.Contains(stderr.String(), "no write_file directive; appending canonical closure") {
+		t.Fatalf("expected stderr to log auto-append, got: %s", stderr.String())
+	}
+	metaDraftPath := filepath.Join(refineStateDir(root, "closure-test"), "iter-1", "meta-draft.md")
+	body, err := os.ReadFile(metaDraftPath)
+	if err != nil {
+		t.Fatalf("read meta-draft: %v", err)
+	}
+	if !strings.Contains(string(body), "## STOP AND WRITE NOW") {
+		t.Fatalf("expected canonical closure in substituted meta-draft, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "write_file") {
+		t.Fatalf("expected write_file in substituted meta-draft, got:\n%s", body)
+	}
+	// The {{DRAFT_PATH}} in the closure must have been substituted
+	// with a real path during the standard substitution pipeline.
+	if strings.Contains(string(body), "{{DRAFT_PATH}}") {
+		t.Fatalf("expected {{DRAFT_PATH}} to be substituted in the appended closure, got:\n%s", body)
 	}
 }
 
@@ -849,6 +1203,11 @@ func TestRefineDetectModeClassifiesSpecShape(t *testing.T) {
 		{"cpp", "Modify src/save_fields.cpp to handle the new schema.", refineModeAnchored},
 		{"pathless", "Make the system faster.", refineModeAnchored},
 		{"json-only", "Generate config/settings.json with the new keys.", refineModeMarkdown},
+		// Colony Q2 fix: anchor-able sources beyond compiled langs.
+		{"shell-anchor", "Create .planning/postflight-inventory.md citing lane_postflight.sh:296.", refineModeAnchored},
+		{"sql-anchor", "Document the schema changes from db/migrations/0042_add_users.sql.", refineModeAnchored},
+		{"proto-anchor", "Add docs/api-changes.md tracking edits in api/service.proto.", refineModeAnchored},
+		{"terraform-anchor", "Update README.md to reflect the new infra/main.tf module.", refineModeAnchored},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

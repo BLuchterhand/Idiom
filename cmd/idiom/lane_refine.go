@@ -233,7 +233,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			return failExit
 		}
 		fmt.Fprintf(stderr, "refine: failsoft at iter %d (%s) — shipping last-reviewed draft (%d bugs)\n", iter, reason, bestBugCount)
-		return finalizeRefineWithTitle(bestDraftPath, opts.OutputPath, opts.Title, iter, "failsoft-"+reason, stderr)
+		return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "failsoft-"+reason, opts.ProjectRoot, stderr)
 	}
 
 	for iter := 1; iter <= opts.MaxIters; iter++ {
@@ -328,17 +328,17 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		}
 		if verdict == "ship-as-is" {
 			stampMetricsAction("ship-as-is", "")
-			return finalizeRefineWithTitle(lastDraftPath, opts.OutputPath, opts.Title, iter, "ship-as-is", stderr)
+			return finalizeRefineWithTitleAndOverlay(lastDraftPath, opts.OutputPath, opts.Title, iter, "ship-as-is", opts.ProjectRoot, stderr)
 		}
 		if iter > 1 && refineLoopDiverging(prevReviewBugs, bugs) {
 			fmt.Fprintf(stderr, "refine: loop diverging at iter %d (same bugs as iter %d); shipping best draft\n", iter, iter-1)
 			stampMetricsAction("diverging", "")
-			return finalizeRefineWithTitle(bestDraftPath, opts.OutputPath, opts.Title, iter, "diverging", stderr)
+			return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "diverging", opts.ProjectRoot, stderr)
 		}
 		if iter > 1 && len(bugs) >= len(prevReviewBugs) && len(bugs) > 0 {
 			fmt.Fprintf(stderr, "refine: no improvement at iter %d (bugs went %d -> %d); stopping and shipping best draft\n", iter, len(prevReviewBugs), len(bugs))
 			stampMetricsAction("no-improvement", "")
-			return finalizeRefineWithTitle(bestDraftPath, opts.OutputPath, opts.Title, iter, "no-improvement", stderr)
+			return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "no-improvement", opts.ProjectRoot, stderr)
 		}
 		stampMetricsAction("continue", "")
 		prevReviewBugs = bugs
@@ -349,7 +349,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 	if finalDraft == "" {
 		finalDraft = lastDraftPath
 	}
-	return finalizeRefineWithTitle(finalDraft, opts.OutputPath, opts.Title, opts.MaxIters, "max-iters-exhausted", stderr)
+	return finalizeRefineWithTitleAndOverlay(finalDraft, opts.OutputPath, opts.Title, opts.MaxIters, "max-iters-exhausted", opts.ProjectRoot, stderr)
 }
 
 func validateRefineOptions(opts *laneRefineOptions) error {
@@ -394,6 +394,7 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 	}
 	if strings.HasPrefix(source, "project-override:") {
 		fmt.Fprintf(stderr, "refine: draft template = %s\n", source)
+		template = ensureRefineDraftWriteClosure(template, stderr, source)
 	}
 	body := strings.NewReplacer(
 		"{{SPEC_BODY}}", strings.TrimSpace(specBody),
@@ -440,6 +441,297 @@ func resolveRefineDraftTemplate(projectRoot, mode string) (template, source stri
 // abstraction — templates, not augmentations.
 const refineOverrideDir = ".idiom/prompts/refine"
 
+// refineOverlayDir is the project-side convention path for §2.4 brief
+// overlays (HARD PROHIBITIONS + atom-shape-targeted traps). Files
+// under this directory augment the canonical brief at finalize time:
+//
+//	<projectRoot>/.idiom/prompts/brief/
+//	├── hard-prohibitions.md     # appended verbatim to every brief
+//	└── traps/
+//	    ├── test-code.md         # frontmatter: applies_to: [test-code]
+//	    └── multi-file.md        # applies_to: [multi-file]
+//
+// Bare projects (no overlay dir) see zero behavior change.
+const refineOverlayDir = ".idiom/prompts/brief"
+
+// Canonical atom-shape tags emitted by classifyBriefAtomShape. Kept
+// minimal and language-agnostic per Colony's Q3 review (2026-05-11):
+// `save-load`, `c++-system`, etc. live in project overlays, not in
+// idiom's canonical surface. Projects extend via their own trap
+// files' applies_to fields.
+const (
+	refineTagTestCode            = "test-code"
+	refineTagMultiFile           = "multi-file"
+	refineTagMarkdownDeliverable = "markdown-deliverable"
+	refineTagGeneric             = "generic"
+)
+
+// refineApplyProjectOverlay appends project HARD PROHIBITIONS and
+// atom-shape-matched trap entries to the final brief body. No-op on
+// bare projects (no overlay dir). Called from finalize time so the
+// output brief is the hardened version while iter-N drafts stay
+// clean. Stderr-logs which overlay components fired for debugging.
+func refineApplyProjectOverlay(body []byte, projectRoot string, stderr io.Writer) []byte {
+	if strings.TrimSpace(projectRoot) == "" {
+		return body
+	}
+	overlayDir := filepath.Join(projectRoot, refineOverlayDir)
+	if _, err := os.Stat(overlayDir); err != nil {
+		return body
+	}
+	augmented := body
+	if hp, ok := loadHardProhibitions(overlayDir); ok {
+		augmented = append(augmented, '\n', '\n')
+		augmented = append(augmented, hp...)
+		fmt.Fprintf(stderr, "refine: appended hard-prohibitions overlay (%d bytes)\n", len(hp))
+	}
+	tags := classifyBriefAtomShape(body)
+	fmt.Fprintf(stderr, "refine: atom-shape tags = %v\n", tags)
+	traps := loadProjectTraps(overlayDir, tags)
+	for _, trap := range traps {
+		augmented = append(augmented, '\n', '\n')
+		augmented = append(augmented, trap.body...)
+		fmt.Fprintf(stderr, "refine: inlined trap %s (applies_to=%v)\n", trap.name, trap.appliesTo)
+	}
+	return augmented
+}
+
+// loadHardProhibitions returns (body, true) if the project's
+// hard-prohibitions.md exists under overlayDir. Body is returned
+// verbatim — no substitution, no parsing. Projects own the wording.
+func loadHardProhibitions(overlayDir string) ([]byte, bool) {
+	path := filepath.Join(overlayDir, "hard-prohibitions.md")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil, false
+	}
+	return body, true
+}
+
+// trapEntry pairs a trap file's metadata with its body content
+// (frontmatter stripped). Used internally by loadProjectTraps.
+type trapEntry struct {
+	name      string
+	appliesTo []string
+	body      []byte
+}
+
+// loadProjectTraps scans <overlayDir>/traps/*.md, parses each file's
+// frontmatter, and returns the entries whose applies_to tags
+// intersect the supplied tag set. Traps with no frontmatter / no
+// applies_to are treated as `applies_to: [generic]` (always include).
+// Returned slice is sorted by filename for deterministic ordering.
+func loadProjectTraps(overlayDir string, tags []string) []trapEntry {
+	trapsDir := filepath.Join(overlayDir, "traps")
+	entries, err := os.ReadDir(trapsDir)
+	if err != nil {
+		return nil
+	}
+	tagSet := map[string]bool{}
+	for _, t := range tags {
+		tagSet[t] = true
+	}
+	var matched []trapEntry
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(trapsDir, entry.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		appliesTo, body := parseTrapFrontmatter(raw)
+		if len(appliesTo) == 0 {
+			appliesTo = []string{refineTagGeneric}
+		}
+		if !tagsIntersect(appliesTo, tagSet) {
+			continue
+		}
+		matched = append(matched, trapEntry{
+			name:      entry.Name(),
+			appliesTo: appliesTo,
+			body:      bytes.TrimSpace(body),
+		})
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].name < matched[j].name })
+	return matched
+}
+
+// parseTrapFrontmatter accepts a markdown file body with optional
+// `---` frontmatter and returns (applies_to, body-without-frontmatter).
+// The parser is intentionally narrow: it looks for an `applies_to:
+// [a, b, c]` line inside the first `---`-delimited block. No YAML
+// library; brittle on purpose — the format is documented and stable.
+func parseTrapFrontmatter(raw []byte) ([]string, []byte) {
+	text := string(raw)
+	if !strings.HasPrefix(strings.TrimLeft(text, "\n"), "---") {
+		return nil, raw
+	}
+	// Skip leading newlines.
+	stripped := strings.TrimLeft(text, "\n")
+	// Find the closing `---` after the opening one.
+	rest := stripped[3:]
+	endIdx := strings.Index(rest, "\n---")
+	if endIdx < 0 {
+		return nil, raw
+	}
+	frontmatter := rest[:endIdx]
+	body := strings.TrimLeft(rest[endIdx+4:], "\n")
+	var appliesTo []string
+	for _, line := range strings.Split(frontmatter, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "applies_to:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "applies_to:"))
+		value = strings.TrimPrefix(value, "[")
+		value = strings.TrimSuffix(value, "]")
+		for _, tok := range strings.Split(value, ",") {
+			tok = strings.TrimSpace(tok)
+			tok = strings.Trim(tok, `"'`)
+			if tok != "" {
+				appliesTo = append(appliesTo, tok)
+			}
+		}
+		break
+	}
+	return appliesTo, []byte(body)
+}
+
+func tagsIntersect(want []string, have map[string]bool) bool {
+	for _, t := range want {
+		if have[t] {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyBriefAtomShape emits canonical atom-shape tags by examining
+// the Files-to-Modify section of the brief body. Returns at least one
+// tag — `generic` is the fallback. Multiple tags may apply (a brief
+// that touches multiple test files in different packages emits both
+// `test-code` and `multi-file`). Per Colony Q3: canonical surface is
+// minimal and language-agnostic; project-specific tags live in
+// overlay traps' applies_to fields, not here.
+func classifyBriefAtomShape(body []byte) []string {
+	files := extractFilesToModify(string(body))
+	tags := []string{}
+	seen := map[string]bool{}
+	add := func(t string) {
+		if !seen[t] {
+			tags = append(tags, t)
+			seen[t] = true
+		}
+	}
+	if filesContainTestCode(files) {
+		add(refineTagTestCode)
+	}
+	if filesSpanMultipleDirs(files) {
+		add(refineTagMultiFile)
+	}
+	if filesAreAllMarkdownDeliverables(files) {
+		add(refineTagMarkdownDeliverable)
+	}
+	if len(tags) == 0 {
+		add(refineTagGeneric)
+	}
+	return tags
+}
+
+// extractFilesToModify pulls the file paths out of a brief's
+// "Files To Modify" table. The table shape is enforced by lint:
+//
+//	| File | Change |
+//	|------|--------|
+//	| `path/to/file.go` | ADD/MODIFY/NEW FILE: ... |
+//
+// Returns paths in document order, deduplicated. Skips meta-brief
+// paths (e.g. the refine output itself) by exempting paths under
+// the project's .idiom/ tree from the result — those are scaffolding,
+// not deliverables.
+func extractFilesToModify(text string) []string {
+	var files []string
+	seen := map[string]bool{}
+	inSection := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "## files to modify") || strings.HasPrefix(lower, "## files you may edit") {
+			inSection = true
+			continue
+		}
+		if inSection && strings.HasPrefix(trimmed, "## ") {
+			inSection = false
+		}
+		if !inSection {
+			continue
+		}
+		// Strict table row: needs a backtick-quoted path.
+		start := strings.Index(trimmed, "`")
+		if start < 0 {
+			continue
+		}
+		end := strings.Index(trimmed[start+1:], "`")
+		if end < 0 {
+			continue
+		}
+		candidate := strings.TrimSpace(trimmed[start+1 : start+1+end])
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		// Skip refine scaffolding paths (their own meta-brief etc.).
+		if strings.Contains(candidate, "/.idiom/refine/") {
+			continue
+		}
+		seen[candidate] = true
+		files = append(files, candidate)
+	}
+	return files
+}
+
+func filesContainTestCode(files []string) bool {
+	for _, f := range files {
+		base := strings.ToLower(filepath.Base(f))
+		dir := strings.ToLower(filepath.ToSlash(filepath.Dir(f)))
+		if strings.Contains(base, "_test.") || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, ".test.ts") || strings.HasSuffix(base, ".test.js") || strings.HasSuffix(base, ".spec.ts") || strings.HasSuffix(base, ".spec.js") {
+			return true
+		}
+		if strings.Contains(dir, "/tests/") || strings.Contains(dir, "/__tests__/") || strings.HasSuffix(dir, "/test") || strings.HasSuffix(dir, "/tests") {
+			return true
+		}
+	}
+	return false
+}
+
+func filesSpanMultipleDirs(files []string) bool {
+	dirs := map[string]bool{}
+	for _, f := range files {
+		dirs[filepath.ToSlash(filepath.Dir(f))] = true
+		if len(dirs) >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func filesAreAllMarkdownDeliverables(files []string) bool {
+	if len(files) == 0 {
+		return false
+	}
+	for _, f := range files {
+		ext := strings.ToLower(filepath.Ext(f))
+		if ext != ".md" && ext != ".txt" && ext != ".rst" && ext != ".adoc" {
+			return false
+		}
+	}
+	return true
+}
+
 // refineDraftRequiredPlaceholders lists the substitution tokens a
 // project override draft template MUST contain. Missing any one means
 // the substituted body would be malformed (no destination path, no
@@ -452,8 +744,10 @@ var refineDraftRequiredPlaceholders = []string{"{{DRAFT_PATH}}", "{{SPEC_BODY}}"
 // pipeline will replace, OR the resulting meta-brief loses its
 // destination path / spec body / title. Also requires at least one
 // `## ` heading (a brief without sections won't lint-pass downstream
-// anyway) and an explicit write instruction (the lane is told to
-// emit via write_file; templates without that wording wedge).
+// anyway). The write_file closure is NOT validated here — see
+// ensureRefineDraftWriteClosure: idiom auto-appends a canonical
+// write directive when missing so override authors can focus on the
+// body content without remembering closure boilerplate.
 func validateRefineDraftOverride(body, path string) error {
 	for _, ph := range refineDraftRequiredPlaceholders {
 		if !strings.Contains(body, ph) {
@@ -463,10 +757,51 @@ func validateRefineDraftOverride(body, path string) error {
 	if !strings.Contains(body, "\n## ") && !strings.HasPrefix(strings.TrimSpace(body), "## ") {
 		return fmt.Errorf("refine override template %s has no `## ` section heading", path)
 	}
-	if !strings.Contains(strings.ToLower(body), "write_file") {
-		return fmt.Errorf("refine override template %s contains no `write_file` instruction", path)
-	}
 	return nil
+}
+
+// refineCanonicalWriteClosure is the standard "STOP AND WRITE NOW"
+// block appended to override templates that don't include their own
+// write directive. Matches the canonical anchored/markdown templates'
+// closing section so the dispatched-model contract is consistent
+// across all modes — project authors write the body content; the
+// harness ensures closure. The {{DRAFT_PATH}} placeholder gets
+// substituted by the existing pipeline.
+const refineCanonicalWriteClosure = `
+
+## STOP AND WRITE NOW
+
+Your VERY NEXT TOOL CALL MUST be ` + "`write_file`" + ` with:
+
+- ` + "`path`" + `: ` + "`{{DRAFT_PATH}}`" + `
+- ` + "`content`" + `: the filled-in brief above, with every ` + "`<bracket>`" + ` replaced.
+
+Do not read files. Do not search. Do not think out loud. The file
+content goes inside the ` + "`write_file`" + ` call's ` + "`content`" + ` argument, not in a
+chat message. After ` + "`write_file`" + ` returns success, give a single-sentence
+final answer and stop.
+
+## Done when
+
+` + "`test -f {{DRAFT_PATH}}`" + ` returns 0.
+`
+
+// ensureRefineDraftWriteClosure appends the canonical write-closure
+// block when the template body has no write_file directive. The
+// project-author UX line: drop a markdown file with body content,
+// idiom handles closure boilerplate uniformly. If the override
+// author wants different closure wording (e.g. submit_plan instead
+// of write_file), they include it in their template and the closure
+// is left untouched.
+func ensureRefineDraftWriteClosure(body string, stderr io.Writer, source string) string {
+	if strings.Contains(strings.ToLower(body), "write_file") {
+		return body
+	}
+	if stderr != nil && source != "" {
+		fmt.Fprintf(stderr, "refine: %s has no write_file directive; appending canonical closure\n", source)
+	}
+	trimmed := strings.TrimRight(body, "\n") + refineCanonicalWriteClosure
+	return trimmed
 }
 
 // refineMode constants — anchored-edits is the historical default
@@ -479,11 +814,24 @@ const (
 )
 
 // refineSourceExtensions are paths that always force anchored-edits
-// mode regardless of how many markdown paths also appear.
+// mode regardless of how many markdown paths also appear. Covers
+// compiled and scripted languages, shell, SQL, IaC/config DSLs, and
+// schema languages — anything that's anchor-able source. Per
+// Colony's Q2 review (2026-05-11): "any source path → anchored,
+// regardless of where the output goes" — the inventory-of-source-
+// files-written-as-markdown case needs anchored mode even though
+// the output is .md.
 var refineSourceExtensions = []string{
+	// Compiled & scripted languages
 	".go", ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hh",
 	".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".java", ".kt",
 	".rb", ".php", ".swift", ".scala", ".cs", ".m", ".mm",
+	// Shell — anchor-able sources (lane_postflight.sh-style cases)
+	".sh", ".bash", ".zsh", ".fish",
+	// SQL — schema/migration files routinely cited by line
+	".sql", ".psql", ".plsql",
+	// Schema and IaC — anchor-shaped source content
+	".proto", ".tf", ".hcl", ".bicep",
 }
 
 // refineMarkdownExtensions are paths considered markdown-deliverable
@@ -790,7 +1138,25 @@ func finalizeRefine(draftPath, outputPath string, iter int, reason string, stder
 // becomes the FIRST line of the output brief so detectBriefProvenance
 // can identify refine-drafted briefs in lane history. Reads draft +
 // runs brief lint + writes output (with marker prepended).
+//
+// Exit-code contract (Colony's Q4 review, 2026-05-11): ONLY a
+// `ship-as-is` reason returns 0. Every other reason (failsoft-*,
+// diverging, no-improvement, max-iters-exhausted) returns non-zero
+// AND prepends a sentinel WARNING blockquote so the artifact is
+// self-documenting. The orchestrator must inspect rather than auto-
+// pipe to plan-execute on non-zero exits. Saving the best draft on
+// non-zero exit preserves debugging signal — the dichotomy isn't
+// "save vs. fail-loud", it's "save AND fail-loud."
 func finalizeRefineWithTitle(draftPath, outputPath, title string, iter int, reason string, stderr io.Writer) int {
+	return finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title, iter, reason, "", stderr)
+}
+
+// finalizeRefineWithTitleAndOverlay is the §2.4-aware finalize path.
+// Applies project overlay (HARD PROHIBITIONS + atom-shape-matched
+// traps) BEFORE the warning header so the hardened brief is what
+// downstream consumers see. Empty projectRoot disables overlay
+// (bare-repo behavior preserved).
+func finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title string, iter int, reason, projectRoot string, stderr io.Writer) int {
 	if trivial, why := refineDraftIsTrivial(draftPath); trivial {
 		fmt.Fprintf(stderr, "refine: refusing to finalize trivial draft %s (%s); exiting non-zero rather than writing a silent-failure output\n", draftPath, why)
 		return 1
@@ -800,6 +1166,7 @@ func finalizeRefineWithTitle(draftPath, outputPath, title string, iter int, reas
 		fmt.Fprintf(stderr, "refine: cannot read final draft %s: %v\n", draftPath, err)
 		return 1
 	}
+	body = refineApplyProjectOverlay(body, projectRoot, stderr)
 	if code := laneBriefLintRunner([]string{draftPath}, io.Discard, stderr); code != 0 {
 		fmt.Fprintf(stderr, "refine: WARN brief lint reported issues on final draft (continuing anyway)\n")
 	}
@@ -807,12 +1174,22 @@ func finalizeRefineWithTitle(draftPath, outputPath, title string, iter int, reas
 		fmt.Fprintf(stderr, "refine: cannot create output dir: %v\n", err)
 		return 1
 	}
+	isShipAsIs := reason == "ship-as-is"
+	var prefix []byte
+	if !isShipAsIs {
+		prefix = []byte(fmt.Sprintf("> WARNING: refine exited non-zero — reason=%s after iter %d. The brief below is the best draft the loop produced; review for unresolved bugs/BLOCKs before dispatching to plan-execute. Inspect `.idiom/refine/%s/iter-%d/{review.md,metrics.json}` for findings.\n\n", reason, iter, refineSanitizeTitle(title), iter))
+	}
 	marker := fmt.Sprintf("<!-- idiom:refine-drafted title=%s iter=%d reason=%s -->\n", refineSanitizeTitle(title), iter, reason)
-	finalBody := append([]byte(marker), body...)
+	finalBody := append(prefix, []byte(marker)...)
+	finalBody = append(finalBody, body...)
 	if err := os.WriteFile(outputPath, finalBody, 0o644); err != nil {
 		fmt.Fprintf(stderr, "refine: cannot write output %s: %v\n", outputPath, err)
 		return 1
 	}
-	fmt.Fprintf(stderr, "refine: converged after %d iter(s) [%s]; wrote %s (%d bytes) at %s\n", iter, reason, outputPath, len(finalBody), time.Now().Format(time.RFC3339))
-	return 0
+	if isShipAsIs {
+		fmt.Fprintf(stderr, "refine: converged ship-as-is after %d iter(s); wrote %s (%d bytes) at %s\n", iter, outputPath, len(finalBody), time.Now().Format(time.RFC3339))
+		return 0
+	}
+	fmt.Fprintf(stderr, "refine: did NOT reach ship-as-is (%s) after %d iter(s); wrote best-draft to %s (%d bytes) with WARNING header — exiting non-zero so orchestrator inspects before piping\n", reason, iter, outputPath, len(finalBody))
+	return 1
 }

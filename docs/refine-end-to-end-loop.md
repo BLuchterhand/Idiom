@@ -136,11 +136,17 @@ The harness machinery (lint, completion gate, overlay injection, honest exit cod
 
 Reject malformed override templates early. Required markers per template type:
 
-- `draft-<M>.md`: must contain `{{DRAFT_PATH}}` placeholder + at least one `## ` heading + a `write_file` instruction.
+- `draft-<M>.md`: must contain `{{DRAFT_PATH}}`, `{{SPEC_BODY}}`, `{{TITLE}}` placeholders + at least one `## ` heading.
 - `review-<M>.md`: must contain `{{REVIEW_PATH}}` placeholder + `{{LINT_OUTPUT}}` placeholder.
 - `patch-<M>.md`: must contain `{{NEW_DRAFT_PATH}}` placeholder.
 
 A missing placeholder is a hard error: `"override template draft-notebook.md is missing required placeholder {{DRAFT_PATH}}"`. Prevents the silent template-fragment-shipping failure mode.
+
+**Auto-append canonical write closure (UX choice, 2026-05-11):**
+
+The override validator does NOT check for `write_file` mention. Instead, if a project override template's body doesn't contain a `write_file` directive, idiom auto-appends a canonical closure (matching the embedded templates' "STOP AND WRITE NOW" section) with the destination path substituted in. The substitution happens through the normal pipeline.
+
+Rationale: project authors should focus on the body content of their custom mode (what the model writes). Closure boilerplate is harness concern. The author can override the closure by including their own `write_file` instruction (e.g. `submit_plan` instead) — auto-append only fires when truly missing. A one-line stderr message logs each auto-append so users know what idiom did.
 
 **Directory layout:**
 
@@ -276,11 +282,18 @@ Existing tests in `cmd/idiom/lane_refine_test.go` need updates for §2.1 (exit c
 
 ## 5. Sequencing
 
-1. **§2.1 — Honest exit codes**. ~2-hour change. Standalone bug fix. Lands first.
-2. **§2.3 — Wrapper runs `idiom brief lint`**. ~half-day. Convergence guarantee. Doesn't depend on anything.
-3. **§2.2 — Two-mode refine**. ~1-day. Mode detection + new markdown-deliverable template + tests. Unblocks Colony's small atoms.
-4. **§2.2.1 — Project-extensible modes**. ~half-day. Refactor `writeRefineDraftMeta` to a resolution chain + override safety lint + tests. Future-proofs the mode dimension without committing to a config-file schema.
-5. **§2.4 — Convention overlay**. ~1-day. Discovery + classifier + injection. Last; benefits most from previous steps in place.
+1. **§2.1 — Honest exit codes**. ~2-hour change. Standalone bug fix. Lands first. ✅
+2. **§2.3 — Wrapper runs `idiom brief lint`**. ~half-day. Convergence guarantee. Doesn't depend on anything. ✅
+3. **§2.2 — Two-mode refine**. ~1-day. Mode detection + new markdown-deliverable template + tests. Unblocks Colony's small atoms. ✅
+4. **§2.2.1 — Project-extensible modes**. ~half-day. Refactor `writeRefineDraftMeta` to a resolution chain + override safety lint + tests. Future-proofs the mode dimension without committing to a config-file schema. ✅
+5. **§2.4 — Convention overlay**. ~1-day. Discovery + classifier + injection. Last; benefits most from previous steps in place. ✅
+
+**Post-Colony-review corrections (2026-05-11):**
+
+- **Q2 bug-fix**: `refineSourceExtensions` extended with `.sh`/`.bash`/`.zsh`/`.fish`/`.sql`/`.psql`/`.plsql`/`.proto`/`.tf`/`.hcl`/`.bicep`. Specs citing `lane_postflight.sh:296`-style anchors now correctly route to anchored mode.
+- **Q4 failsoft semantics**: only `ship-as-is` returns exit 0. Failsoft / diverging / no-improvement / max-iters-exhausted all save the best draft AND exit non-zero, with a `> WARNING:` blockquote prepended to the artifact pointing at `.idiom/refine/<title>/iter-N/{review.md,metrics.json}` for findings. Preserves debugging signal while preventing auto-pipe-to-plan-execute.
+- **Q3 taxonomy**: canonical 4 tags shipped (`test-code`, `multi-file`, `markdown-deliverable`, `generic`). Project-specific tags (`save-load`, `c++-system`, etc.) live in overlay traps' `applies_to` fields.
+- **UX auto-append**: override templates without an explicit `write_file` directive get the canonical closure appended at substitution time. Project authors focus on body content; harness handles closure boilerplate.
 
 Each step ships independently and provides standalone value.
 
