@@ -43,10 +43,16 @@ func TestPostReadinessGapScopeForBriefSuppressesAnswerReadyOnMutation(t *testing
 		t.Fatalf("child:* agent should still trigger delegated path; got %q", scope)
 	}
 
-	// postChildPacketActive is unchanged — that's a separate scope
-	// driven by parent-side child packet, not delegated readiness.
-	if scope := postReadinessGapScopeForBrief("main", false, true, req, mutationBrief); scope != "child_packet_available" {
-		t.Fatalf("child_packet_available scope should still fire on mutation parent; got %q", scope)
+	// child_packet_available scope ALSO suppressed on mutation
+	// parents — same reasoning as answer_readiness_reached: the
+	// parent's deliverable is a write, not an answer.
+	if scope := postReadinessGapScopeForBrief("main", false, true, req, mutationBrief); scope != "" {
+		t.Fatalf("child_packet_available should also be suppressed on mutation parent; got %q", scope)
+	}
+
+	// But on a READ-ONLY parent, child_packet_available STILL fires.
+	if scope := postReadinessGapScopeForBrief("main", false, true, req, readOnlyBrief); scope != "child_packet_available" {
+		t.Fatalf("child_packet_available should fire on read-only parent; got %q", scope)
 	}
 
 	// Write-class tool — neither scope fires regardless of brief.

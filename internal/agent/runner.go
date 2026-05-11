@@ -2859,24 +2859,32 @@ func postReadinessGapScope(agent string, delegatedReadOnlyAnswerReady bool, post
 
 // postReadinessGapScopeForBrief is the brief-aware variant used by
 // the main loop. The plain postReadinessGapScope returns
-// "answer_readiness_reached" whenever a delegated read-only child
-// reported sufficient evidence — but for a mutation-required parent
-// (refine draft, refine patch, plan-execute, etc.) the parent's
-// deliverable is a write, not an answer. A child's read-readiness
-// doesn't imply the parent is done; it just means the parent has
-// the evidence it needs to commit the write. Suppressing the gap
-// scope in this case prevents the post-readiness gate from firing
-// on the parent's next read.
+// "answer_readiness_reached" or "child_packet_available" whenever a
+// delegated read-only child reported sufficient evidence (the former
+// when readiness propagated up directly, the latter after a `task`
+// tool returned a packet). Both gates were designed for parents
+// whose deliverable is an ANSWER from gathered evidence; they
+// punish post-readiness reads without a named_gap.
+//
+// For mutation parents (refine draft, refine patch, plan-execute,
+// etc.) the parent's deliverable is a WRITE, not an answer. The
+// child's evidence is consumed to commit the write — the parent
+// isn't done until RequiredEditPaths are satisfied. Suppressing
+// both gap scopes for mutation parents lets the completion gate
+// (which DOES check RequiredEditPaths) own the closure contract
+// instead.
 //
 // The child:* path is still gated normally — children that are
 // themselves read-only correctly answer-now.
 func postReadinessGapScopeForBrief(agent string, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) string {
 	scope := postReadinessGapScope(agent, delegatedReadOnlyAnswerReady, postChildPacketActive, req)
-	if scope == "answer_readiness_reached" && runnerBriefRequiresMutation(brief) {
-		// Parent is a mutation lane; the child's read-readiness doesn't
-		// fulfill the parent's write contract. Defer to the normal
-		// completion gate (which checks RequiredEditPaths) rather than
-		// the answer-now gate.
+	if scope == "" {
+		return scope
+	}
+	if runnerBriefRequiresMutation(brief) && !strings.HasPrefix(strings.TrimSpace(agent), "child:") {
+		// Parent is a mutation lane; child-readiness/packet scopes
+		// don't fulfill the parent's write contract. Defer to the
+		// normal completion gate.
 		return ""
 	}
 	return scope
