@@ -401,6 +401,10 @@ func (r *Runner) Run(
 		metrics.addUsage(assistantMessage.Usage)
 		r.emitModelCallTrace(stepNumber, "main_loop", turnMessages, assistantMessage, time.Since(modelStart).Milliseconds())
 		reply := assistantMessage.Content
+		// Capture the full message (including ReasoningContent) so the
+		// auto-salvage path can recover review prose that landed inside
+		// a runaway <think> block instead of visible content (#95).
+		r.LastAssistantMessage = assistantMessage
 		r.emitThinkingTrace(stepNumber, "model_reply", assistantMessage, opts, false)
 
 		activeToolCall = nil
@@ -3850,6 +3854,76 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 	return workspace.ToolResult{}, false
 }
 
+// extractStructuredMarkdownFromReasoning recovers a refine-shaped
+// markdown deliverable (review or draft) from inside a model's
+// reasoning content, used by tryAutoSalvageMarkdownDeliverable as
+// a fallback when the visible reply is empty. Returns "" when no
+// safe extraction is possible — the auto-salvage caller then skips
+// and the completion gate rejects normally.
+//
+// Safety preconditions (all must hold):
+//   - reasoning >= 200 chars (some signal there)
+//   - reasoning contains BOTH `## Bugs found` and `## Verdict`
+//     (the refine review structural markers — refusing to extract
+//     unstructured chatter)
+//   - extracted block is >= 100 chars
+//
+// Extraction strategy: find the LAST occurrence of `## Bugs found`
+// (or its preceding `## Draft`/`# ` header) and take from there to
+// the end. The model's thinking usually iterates a few times before
+// settling on the final review structure; the last occurrence is
+// closest to the model's final intent.
+func extractStructuredMarkdownFromReasoning(reasoning string) string {
+	r := strings.TrimSpace(reasoning)
+	if len(r) < 200 {
+		return ""
+	}
+	if !strings.Contains(r, "## Bugs found") || !strings.Contains(r, "## Verdict") {
+		return ""
+	}
+	// Find the last header that begins a structural section. Walk
+	// candidate markers from most-specific to most-general.
+	markers := []string{"\n# ", "\n## "}
+	bestIdx := -1
+	for _, m := range markers {
+		idx := strings.LastIndex(r, m)
+		if idx > bestIdx {
+			bestIdx = idx
+		}
+	}
+	// We want the start of a structural review block — back up to
+	// the LAST blank-line + `## ` that precedes the verdict. Find
+	// the last "\n## Bugs found" (or first if no `\n##` is earlier).
+	bugsIdx := strings.LastIndex(r, "## Bugs found")
+	if bugsIdx < 0 {
+		return ""
+	}
+	// Step back to the start of the line. Find the preceding `\n`
+	// (or start of string) so the extracted block begins on a
+	// fresh line.
+	startIdx := bugsIdx
+	if nl := strings.LastIndex(r[:bugsIdx], "\n"); nl >= 0 {
+		startIdx = nl + 1
+	}
+	// Walk a little further back to include a preceding `# ` title
+	// or `## OK` section, if any, but only when it's directly
+	// adjacent (separated by a blank line). Conservative: cap the
+	// look-back at 400 chars so we don't grab arbitrary thinking.
+	lookbackStart := startIdx - 400
+	if lookbackStart < 0 {
+		lookbackStart = 0
+	}
+	preceding := r[lookbackStart:startIdx]
+	if hdr := strings.LastIndex(preceding, "\n# "); hdr >= 0 {
+		startIdx = lookbackStart + hdr + 1
+	}
+	candidate := strings.TrimSpace(r[startIdx:])
+	if len(candidate) < 100 {
+		return ""
+	}
+	return candidate
+}
+
 // tryAutoSalvageMarkdownDeliverable handles a specific Qwen-at-low-temp
 // failure mode: the deliverable is a single new .md file (refine
 // review/draft/patch lanes), the model wrote the entire markdown
@@ -3883,8 +3957,23 @@ func (r *Runner) tryAutoSalvageMarkdownDeliverable(reply string) bool {
 		return false
 	}
 	body := strings.TrimSpace(reply)
+	source := "reply"
+	// Fallback path (#95): Qwen3 thinking mode sometimes burns the
+	// entire generation budget inside the <think> block and exits
+	// with empty visible content even when the thinking-text contains
+	// a structured review. Recover by extracting from
+	// LastAssistantMessage.ReasoningContent — bounded to the
+	// review-template structural markers so we don't ship random
+	// reasoning artifacts.
 	if len(body) < 100 {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body too short (%d chars)\n", len(body))
+		if salvaged := extractStructuredMarkdownFromReasoning(r.LastAssistantMessage.ReasoningContent); salvaged != "" {
+			body = salvaged
+			source = "reasoning"
+			fmt.Fprintf(os.Stderr, "[auto-salvage] recovering from reasoning content (reply was %d chars, reasoning yielded %d)\n", len(strings.TrimSpace(reply)), len(body))
+		}
+	}
+	if len(body) < 100 {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body too short (%d chars, source=%s)\n", len(body), source)
 		return false
 	}
 	if !strings.Contains(body, "\n## ") && !strings.HasPrefix(body, "## ") {
