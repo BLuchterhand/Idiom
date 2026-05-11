@@ -75,15 +75,39 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 // returns (defaults, false) when the role isn't declared. Errors from
 // backends.json parsing surface to stderr (the harness boots with the
 // fallback rather than crashing on a malformed sidecar file).
+//
+// When `defaults.Model` names a specific alias in backends.json (e.g.,
+// the caller passed `--model qwen3.6-35b-nothink`), that explicit
+// choice overrides the role-default lookup. Direct-mode wiring then
+// connects to that alias's backend (host + port from the alias entry)
+// while keeping the actual loaded model path on out.Model so mlx-lm
+// recognizes it. This is how setups with two backends sharing the same
+// weights but different chat-template-args disambiguate.
 func roleSpec(projectRoot, role string, defaults config.LlamaServer) (config.LlamaServer, bool) {
-	_, model, ok, err := backends.ResolveRoleFromProjectRoot(projectRoot, "", role)
+	file, found, err := backends.LoadFromProjectRoot(projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lifecycle: backends role %q resolution failed: %v\n", role, err)
 		return defaults, false
 	}
+	if !found {
+		return defaults, false
+	}
+	prof, profOK := file.Profile("")
+	if !profOK {
+		return defaults, false
+	}
+	// Explicit-alias override: when defaults.Model names a registered
+	// backend alias, that backend wins over the role default.
+	if explicit := strings.TrimSpace(defaults.Model); explicit != "" {
+		if model, ok := prof.ModelByAlias(explicit); ok {
+			return backendsModelToLlamaServer(model, defaults), true
+		}
+	}
+	alias, ok := prof.AliasForRole(role)
 	if !ok {
 		return defaults, false
 	}
+	model, _ := prof.ModelByAlias(alias)
 	return backendsModelToLlamaServer(model, defaults), true
 }
 
