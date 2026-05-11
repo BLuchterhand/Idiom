@@ -3854,8 +3854,34 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 	return workspace.ToolResult{}, false
 }
 
+// refineReasoningShape captures one recognized markdown structural
+// shape the auto-salvage can recover. anchor is the marker we search
+// for as the "primary" structural section start; corroborator is a
+// second marker that must ALSO appear so we don't extract on a
+// passing mention. Each shape's primary anchor defines where the
+// extracted block begins (we walk back from its last occurrence).
+type refineReasoningShape struct {
+	name         string
+	primary      string
+	corroborator string
+}
+
+var refineReasoningShapes = []refineReasoningShape{
+	// Refine review deliverable: structured bug list + verdict.
+	{name: "review", primary: "## Bugs found", corroborator: "## Verdict"},
+	// Refine draft / patch deliverable: implementation brief layout
+	// (the canonical brief skeleton sections). Required Behavior +
+	// Files To Modify both appear in every well-formed refine draft;
+	// requiring both lets us reject thinking chatter that mentions a
+	// section heading in passing.
+	{name: "draft", primary: "## Files To Modify", corroborator: "## Required Behavior"},
+	// Lowercase variant — the draft template uses "## Files to
+	// Modify" (small 't') in some renderings.
+	{name: "draft-alt", primary: "## Files to Modify", corroborator: "## Required Behavior"},
+}
+
 // extractStructuredMarkdownFromReasoning recovers a refine-shaped
-// markdown deliverable (review or draft) from inside a model's
+// markdown deliverable (review or draft/patch) from inside a model's
 // reasoning content, used by tryAutoSalvageMarkdownDeliverable as
 // a fallback when the visible reply is empty. Returns "" when no
 // safe extraction is possible — the auto-salvage caller then skips
@@ -3863,52 +3889,42 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 //
 // Safety preconditions (all must hold):
 //   - reasoning >= 200 chars (some signal there)
-//   - reasoning contains BOTH `## Bugs found` and `## Verdict`
-//     (the refine review structural markers — refusing to extract
-//     unstructured chatter)
+//   - reasoning matches one of refineReasoningShapes (primary +
+//     corroborator both present)
 //   - extracted block is >= 100 chars
 //
-// Extraction strategy: find the LAST occurrence of `## Bugs found`
-// (or its preceding `## Draft`/`# ` header) and take from there to
-// the end. The model's thinking usually iterates a few times before
-// settling on the final review structure; the last occurrence is
+// Extraction strategy: find the LAST occurrence of the matched
+// shape's primary anchor and take from there to the end (walking
+// back through any preceding `# Title`). Last-occurrence is
+// deliberate — the model's thinking often iterates a few times
+// before settling on the final structure; the last occurrence is
 // closest to the model's final intent.
 func extractStructuredMarkdownFromReasoning(reasoning string) string {
 	r := strings.TrimSpace(reasoning)
 	if len(r) < 200 {
 		return ""
 	}
-	if !strings.Contains(r, "## Bugs found") || !strings.Contains(r, "## Verdict") {
-		return ""
-	}
-	// Find the last header that begins a structural section. Walk
-	// candidate markers from most-specific to most-general.
-	markers := []string{"\n# ", "\n## "}
-	bestIdx := -1
-	for _, m := range markers {
-		idx := strings.LastIndex(r, m)
-		if idx > bestIdx {
-			bestIdx = idx
+	var matched refineReasoningShape
+	for _, shape := range refineReasoningShapes {
+		if strings.Contains(r, shape.primary) && strings.Contains(r, shape.corroborator) {
+			matched = shape
+			break
 		}
 	}
-	// We want the start of a structural review block — back up to
-	// the LAST blank-line + `## ` that precedes the verdict. Find
-	// the last "\n## Bugs found" (or first if no `\n##` is earlier).
-	bugsIdx := strings.LastIndex(r, "## Bugs found")
-	if bugsIdx < 0 {
+	if matched.primary == "" {
 		return ""
 	}
-	// Step back to the start of the line. Find the preceding `\n`
-	// (or start of string) so the extracted block begins on a
-	// fresh line.
-	startIdx := bugsIdx
-	if nl := strings.LastIndex(r[:bugsIdx], "\n"); nl >= 0 {
+	primaryIdx := strings.LastIndex(r, matched.primary)
+	if primaryIdx < 0 {
+		return ""
+	}
+	startIdx := primaryIdx
+	if nl := strings.LastIndex(r[:primaryIdx], "\n"); nl >= 0 {
 		startIdx = nl + 1
 	}
-	// Walk a little further back to include a preceding `# ` title
-	// or `## OK` section, if any, but only when it's directly
-	// adjacent (separated by a blank line). Conservative: cap the
-	// look-back at 400 chars so we don't grab arbitrary thinking.
+	// Walk back to a preceding `# Title` if one is directly above
+	// (within 400 chars). Conservative cap — beyond that we'd risk
+	// grabbing arbitrary thinking.
 	lookbackStart := startIdx - 400
 	if lookbackStart < 0 {
 		lookbackStart = 0

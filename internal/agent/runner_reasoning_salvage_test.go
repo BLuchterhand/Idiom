@@ -41,18 +41,53 @@ func TestExtractStructuredMarkdownFromReasoningHappyPath(t *testing.T) {
 
 func TestExtractStructuredMarkdownFromReasoningRefusesUnstructuredText(t *testing.T) {
 	cases := map[string]string{
-		"no markers":      "I think the draft is OK. No bugs to find. Done.",
-		"only Bugs found": "## Bugs found\n\n1. Bug A\n\nThat's all I have time for.",
-		"only Verdict":    "I'll think about this.\n\n## Verdict\n\nship-as-is\n",
-		"too short":       "## Bugs found\n## Verdict\nship-as-is\n",
-		"empty":           "",
-		"whitespace only": "   \n\n\t   ",
+		"no markers":        "I think the draft is OK. No bugs to find. Done.",
+		"only Bugs found":   "## Bugs found\n\n1. Bug A\n\nThat's all I have time for.",
+		"only Verdict":      "I'll think about this.\n\n## Verdict\n\nship-as-is\n",
+		"too short":         "## Bugs found\n## Verdict\nship-as-is\n",
+		"only Files Modify": "I should put it in ## Files To Modify section. But no Required Behavior to corroborate.",
+		"empty":             "",
+		"whitespace only":   "   \n\n\t   ",
 	}
 	for name, reasoning := range cases {
 		got := extractStructuredMarkdownFromReasoning(reasoning)
 		if got != "" {
 			t.Errorf("case %q: expected empty extraction, got %d chars: %q", name, len(got), got)
 		}
+	}
+}
+
+func TestExtractStructuredMarkdownFromReasoningRecognizesDraftShape(t *testing.T) {
+	reasoning := "OK so the spec asks for a --mode flag. Let me think through the brief...\n\n" +
+		"I'll need to touch lane.go and lane_history.go. Let me write it up:\n\n" +
+		"# Task lane-history-mode — Add `--lane-mode` filter\n\n" +
+		"## Problem\n\n" +
+		"`idiom lane history` lacks a mode filter. Add `--lane-mode <name>` to filter the summary.\n\n" +
+		"## Files To Modify\n\n" +
+		"| File | Change |\n|------|--------|\n" +
+		"| `cmd/idiom/lane.go` | ADD `--lane-mode` flag |\n" +
+		"| `cmd/idiom/lane_history.go` | ADD `ModeFilter` field |\n\n" +
+		"## Verified Current State\n\n" +
+		"`laneHistoryFilter` is at `cmd/idiom/lane_history.go:120`.\n\n" +
+		"## Required Behavior\n\n" +
+		"1. Add `ModeFilter string` to laneHistoryFilter.\n" +
+		"2. Skip events whose Mode doesn't match.\n\n" +
+		"## Acceptance\n\n`go test ./cmd/idiom/` passes.\n"
+	out := extractStructuredMarkdownFromReasoning(reasoning)
+	if out == "" {
+		t.Fatal("expected draft-shape extraction to succeed")
+	}
+	if !strings.Contains(out, "## Files To Modify") {
+		t.Fatalf("output missing Files To Modify: %s", out)
+	}
+	if !strings.Contains(out, "## Required Behavior") {
+		t.Fatalf("output missing Required Behavior: %s", out)
+	}
+	if !strings.Contains(out, "# Task lane-history-mode") {
+		t.Fatalf("output should include the # title from look-back: %s", out)
+	}
+	if strings.Contains(out, "OK so the spec asks") {
+		t.Fatalf("output should not include pre-title chatter: %s", out)
 	}
 }
 
