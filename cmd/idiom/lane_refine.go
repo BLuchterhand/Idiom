@@ -97,7 +97,15 @@ func defaultRefineDispatch(metaBriefPath string, stdout, stderr io.Writer) int {
 		"--label", "refine",
 		"--quiet",
 		"--",
-		binary, "lane", "implement", "--no-lint", "--json", metaBriefPath,
+		binary, "lane", "implement", "--no-lint", "--json",
+		// 16384 mirrors plan_execute.go's planner cap (#96). 35B in
+		// thinking mode regularly hits 8000+ tokens reasoning through
+		// a refine draft/review, and 8192 (the backend default) cuts
+		// off before the model can produce the visible deliverable.
+		// Same Qwen3 quickstart rationale as #70 — long structured
+		// outputs need 16K headroom.
+		"--max-tokens", "16384",
+		metaBriefPath,
 	)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
