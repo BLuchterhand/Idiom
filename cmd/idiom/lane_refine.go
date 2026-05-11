@@ -113,11 +113,21 @@ func inferRefinePhase(metaBriefPath string) string {
 
 // refinePhaseRouting picks pool + model for a refine subprocess
 // based on the phase inferred from the meta-brief filename. All
-// phases currently target Coder-30B (no thinking = predictable
-// visible output, format-reliable). Returns pool, model, maxTokens.
+// phases currently target Coder-30B. Coder still emits <think>
+// blocks despite no enable_thinking in chat-template-args (#97
+// finding) — the reasoning_content captures whatever the model
+// "thinks" through internally, and that eats into max_tokens just
+// like 35B thinking-mode. Draft is short enough at 8192; review +
+// patch need 16384 because they ingest prior artifacts and emit
+// long structured deliverables.
 func refinePhaseRouting(metaBriefPath string) (pool, model string, maxTokens int) {
-	_ = inferRefinePhase(metaBriefPath) // retained for future per-phase routing
-	return refineDefaultPool, refineDefaultModel, 8192
+	phase := inferRefinePhase(metaBriefPath)
+	switch phase {
+	case "review", "patch":
+		return refineDefaultPool, refineDefaultModel, 16384
+	default: // "draft"
+		return refineDefaultPool, refineDefaultModel, 8192
+	}
 }
 
 func defaultRefineDispatch(metaBriefPath string, stdout, stderr io.Writer) int {
