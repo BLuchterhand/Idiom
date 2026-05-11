@@ -3903,30 +3903,38 @@ func TestRunnerReadinessStateRequiresPlannerOwnedSourceSanityAfterPatchHygiene(t
 }
 
 // TestCompletionGateExemptsNonSourceWritesFromVerification asserts the
-// lane-aware-gate behavior added 2026-05-10: a write to a non-source
-// file (.md/.txt/etc.) does NOT trigger the post-write verification
-// gate, since there's no source-aware sanity check that would apply.
-// Refine drafts/reviews/patches all write markdown — without this
-// exemption every refine iteration deadlocks on the gate.
+// lane-aware-gate behavior: a write to a non-source file (.md/.txt/etc.)
+// in a doc-deliverable lane (refine drafts/reviews/patches, design
+// notes — brief.RequiredEditPaths is all non-source) does NOT trigger
+// the post-write verification gate. Implementation lanes that touch a
+// non-source file (e.g. README.md edited from an implementation atom)
+// still verify — patch hygiene is the available signal there.
 func TestCompletionGateExemptsNonSourceWritesFromVerification(t *testing.T) {
 	cases := []struct {
 		name      string
 		writePath string
+		required  []string
 		want      bool
 	}{
-		{"markdown write skips gate", "Wrote draft.md", false},
-		{"txt write skips gate", "Wrote notes.txt", false},
-		{"go source write requires verification", "Wrote main.go", true},
-		{"yaml write requires verification (no exemption yet)", "Wrote config.yaml", true},
+		{"doc-lane markdown write skips gate", "Wrote draft.md", []string{"draft.md"}, false},
+		{"doc-lane txt write skips gate", "Wrote notes.txt", []string{"notes.txt"}, false},
+		{"doc-lane go source write requires verification", "Wrote main.go", []string{"main.go"}, true},
+		{"doc-lane yaml write requires verification (no exemption yet)", "Wrote config.yaml", []string{"config.yaml"}, true},
+		{"implementation-lane markdown write still verifies", "Wrote README.md", nil, true},
+		{"implementation-lane markdown with source required path still verifies", "Wrote README.md", []string{"main.go"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			results := []workspace.ToolResult{
 				{Tool: "write_file", Summary: c.writePath},
 			}
-			got := hasPendingVerificationAfterWrites(results, "tests_passed_or_failed_or_skipped_with_blocker")
+			brief := workerruntime.WorkerRuntimeBrief{
+				VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+				RequiredEditPaths:    c.required,
+			}
+			got := hasPendingVerificationAfterWrites(results, brief)
 			if got != c.want {
-				t.Fatalf("hasPendingVerificationAfterWrites for %q = %v, want %v", c.writePath, got, c.want)
+				t.Fatalf("hasPendingVerificationAfterWrites for %q (required=%v) = %v, want %v", c.writePath, c.required, got, c.want)
 			}
 		})
 	}

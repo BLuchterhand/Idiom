@@ -1707,7 +1707,7 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 		}
 
 		switch {
-		case hasPendingVerificationAfterWrites(results, brief.VerificationContract):
+		case hasPendingVerificationAfterWrites(results, brief):
 			readiness.ReadyToAnswer = false
 			if plannerOwnsVerification(brief) {
 				if sourceVerificationGateApplies(brief, results) {
@@ -3825,7 +3825,7 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 	if verificationContractSkipsGate(r.RuntimeBrief.VerificationContract) {
 		return workspace.ToolResult{}, false
 	}
-	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief.VerificationContract) {
+	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) {
 		errorText := "workspace changes are present, but the latest successful write is not followed by successful verification. Run the relevant test/build/check command, or state the concrete verification blocker."
 		if plannerOwnsVerification(r.RuntimeBrief) {
 			errorText = "workspace changes are present, but the latest successful write is not followed by lane sanity. This route delegates build/test verification to the planner; for source edits use source_sanity, and for non-source edits use git diff --check only as patch-hygiene evidence or state the concrete planner-owned verification blocker."
@@ -4027,7 +4027,7 @@ func (r *Runner) completionGateMutationRecoveryApplies(results []workspace.ToolR
 	if len(r.missingRequiredEditSnippets(results)) > 0 {
 		return true
 	}
-	return hasPendingVerificationAfterWrites(results, r.RuntimeBrief.VerificationContract) ||
+	return hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results)
 }
 
@@ -4041,7 +4041,7 @@ func (r *Runner) completionGateRepeatedBlockerKind(results []workspace.ToolResul
 	if len(r.missingRequiredEditSnippets(results)) > 0 {
 		return "completion_gate_required_snippets_missing_repeated"
 	}
-	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief.VerificationContract) ||
+	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
 		if plannerOwnsVerification(r.RuntimeBrief) {
 			return "completion_gate_lane_sanity_repeated"
@@ -4064,7 +4064,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 	if missing := r.missingRequiredEditSnippets(results); len(missing) > 0 {
 		return fmt.Sprintf("The completion gate rejected a final answer while required edit snippet(s) are still missing: %s. Read/search tools are hidden for this turn. Apply the missing snippet evidence with an available write tool, or answer with <<QUESTION>> and name the exact blocker for each missing snippet; do not perform additional discovery.", strings.Join(missing, ", ")), true, true
 	}
-	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief.VerificationContract) ||
+	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
 		if plannerOwnsVerification(r.RuntimeBrief) {
 			return "The completion gate rejected a final answer because post-write lane sanity is still unresolved. Run source_sanity for changed source files, or answer with the changed paths plus a concrete source-sanity blocker. Do not repeat the same final answer.", false, true
@@ -4159,7 +4159,7 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 	}
 	b.WriteString("\nMissing completion evidence: ")
 	b.WriteString(reason)
-	if plannerOwnsVerification(r.RuntimeBrief) && hasPendingVerificationAfterWrites(results, r.RuntimeBrief.VerificationContract) {
+	if plannerOwnsVerification(r.RuntimeBrief) && hasPendingVerificationAfterWrites(results, r.RuntimeBrief) {
 		b.WriteString("\n\nRequired next evidence: run source_sanity for source edits, run one cheap non-build sanity check for non-source edits, or state a concrete planner-owned verification blocker. `git diff --check` is only patch hygiene for source edits.")
 	}
 	return strings.TrimSpace(b.String())
@@ -8142,7 +8142,7 @@ func mutationNoToolsFallbackReady(brief workerruntime.WorkerRuntimeBrief, result
 	if verificationContractSkipsGate(brief.VerificationContract) {
 		return true
 	}
-	return !hasPendingVerificationAfterWrites(results, brief.VerificationContract)
+	return !hasPendingVerificationAfterWrites(results, brief)
 }
 
 func deterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -8944,25 +8944,26 @@ func isVerificationRequest(req workspace.ToolRequest) bool {
 	return false
 }
 
-func hasPendingVerificationAfterWrites(results []workspace.ToolResult, verificationContract string) bool {
-	if verificationContractSkipsGate(verificationContract) {
+func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) bool {
+	if verificationContractSkipsGate(brief.VerificationContract) {
 		return false
 	}
+	docLane := briefIsDocDeliverableLane(brief)
 	pending := false
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
 		if workspace.IsWorkspaceWriteTool(result.Tool) {
-			// Non-source writes (markdown, txt, etc.) have no meaningful
-			// sanity check beyond patch hygiene — `git diff --check`
-			// catches whitespace nits but there's no equivalent of
-			// `source_sanity`/`go vet` for prose. Skip the pending flag
-			// so doc-deliverable lanes (refine drafts/reviews/patches,
-			// design notes, etc.) don't get rejected by a gate that
-			// can't be satisfied. A SUBSEQUENT source write still sets
-			// pending — mixed atoms still require source-aware sanity.
-			if writeTouchesOnlyNonSourcePaths(result) {
+			// Doc-deliverable lanes (refine drafts/reviews/patches, design
+			// notes, etc.) have RequiredEditPaths populated with .md/.txt
+			// targets. For those there's no source-aware sanity to run, so
+			// non-source writes don't set the pending flag. Implementation
+			// lanes that touch a markdown file still verify — patch hygiene
+			// (`git diff --check`) IS available and satisfies the gate. A
+			// SUBSEQUENT source write still sets pending — mixed atoms
+			// require source-aware sanity regardless of lane shape.
+			if docLane && writeTouchesOnlyNonSourcePaths(result) {
 				continue
 			}
 			pending = true
@@ -8973,6 +8974,24 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, verificat
 		}
 	}
 	return pending
+}
+
+// briefIsDocDeliverableLane reports whether the brief specs a doc-only
+// deliverable (refine draft/review/patch, design note write-up, etc.).
+// The signal is "every RequiredEditPath is a non-source file". Empty
+// RequiredEditPaths is treated as not-doc-only so implementation lanes
+// with no specced allowlist still trip the verification gate when they
+// happen to touch a markdown file.
+func briefIsDocDeliverableLane(brief workerruntime.WorkerRuntimeBrief) bool {
+	if len(brief.RequiredEditPaths) == 0 {
+		return false
+	}
+	for _, p := range brief.RequiredEditPaths {
+		if !writePathIsNonSource(p) {
+			return false
+		}
+	}
+	return true
 }
 
 // writeTouchesOnlyNonSourcePaths returns true when every path in a
@@ -9598,7 +9617,7 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		b.WriteString("Verification: ")
 		b.WriteString(summary)
 		b.WriteString("\n")
-	} else if hasPendingVerificationAfterWrites(results, brief.VerificationContract) {
+	} else if hasPendingVerificationAfterWrites(results, brief) {
 		if plannerOwnsVerification(brief) {
 			b.WriteString("Verification: pending lane sanity; build/test verification is planner-owned.\n")
 		} else {
@@ -10169,7 +10188,7 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 			return b.String()
 		}
 	}
-	if hasPendingVerificationAfterWrites(results, brief.VerificationContract) {
+	if hasPendingVerificationAfterWrites(results, brief) {
 		cmd := "git diff --check"
 		if len(brief.VerificationPlan) > 0 && strings.TrimSpace(brief.VerificationPlan[0]) != "" {
 			cmd = strings.TrimSpace(brief.VerificationPlan[0])
