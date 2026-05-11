@@ -100,6 +100,8 @@ type laneOptions struct {
 	RefineMaxIters           int    // refine mode: max draft+review+patch iterations (default 3)
 	Since                    string // history mode: duration string for --since (e.g. "1h", "24h")
 	FailedOnly               bool   // history mode: only show failed events
+	ExplainSessionID         string // explain mode: specific session id (empty = latest)
+	ExplainBriefFilter       string // explain mode: filter by brief path (empty = unfiltered)
 	// coderRequested is set when the caller asked for the coder
 	// alias either explicitly (`--coder`) or implicitly (plan-execute
 	// with no --model override). The actual alias is resolved later
@@ -223,6 +225,9 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			return 1
 		}
 		return 0
+	}
+	if opts.Mode == "explain" {
+		return runLaneExplain(opts, stdout, stderr)
 	}
 	if opts.Mode == "refine" {
 		refineOpts := laneRefineOptions{
@@ -356,10 +361,10 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	}
 	mode := strings.TrimSpace(args[0])
 	switch mode {
-	case "plan-execute", "implement", "history", "refine":
+	case "plan-execute", "implement", "history", "refine", "explain":
 		// ok
 	default:
-		return laneOptions{}, fmt.Errorf("lane: --mode must be one of plan-execute, implement, history, refine (got %q)", mode)
+		return laneOptions{}, fmt.Errorf("lane: --mode must be one of plan-execute, implement, history, refine, explain (got %q)", mode)
 	}
 
 	fs := flag.NewFlagSet("idiom lane", flag.ContinueOnError)
@@ -401,6 +406,8 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.IntVar(&opts.RefineMaxIters, "max-iters", 3, "refine mode: max draft+review+patch iterations (default 3)")
 	fs.StringVar(&opts.Since, "since", "", "history mode: show only events within the given duration (e.g. 1h, 24h)")
 	fs.BoolVar(&opts.FailedOnly, "failed", false, "history mode: show only events with non-zero exit code")
+	fs.StringVar(&opts.ExplainSessionID, "session", "", "explain mode: specific session id to diagnose (default: most recent)")
+	fs.StringVar(&opts.ExplainBriefFilter, "brief", "", "explain mode: filter to most-recent session for this brief path")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
@@ -417,6 +424,12 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 		// history is a metadata subcommand; brief is optional/ignored.
 		if len(tail) > 0 {
 			return laneOptions{}, fmt.Errorf("lane history: takes no positional arguments (got %v)", tail)
+		}
+	} else if opts.Mode == "explain" {
+		// explain takes no positional brief — selection is via --session /
+		// --brief flags or "the latest dispatch" when neither is set.
+		if len(tail) > 0 {
+			return laneOptions{}, fmt.Errorf("lane explain: takes no positional arguments (use --session or --brief); got %v", tail)
 		}
 	} else if opts.Mode == "refine" {
 		// refine takes --spec and --output rather than a positional brief.
