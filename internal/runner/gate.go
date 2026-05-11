@@ -160,6 +160,14 @@ func PoolForModelAlias(alias string) string {
 	if strings.Contains(a, "coder") {
 		return "qwen-coder"
 	}
+	// Check the nothink variant FIRST — both contain "35b" so the
+	// broader match below would otherwise capture nothink aliases
+	// into qwen-35b (the thinking pool), causing the cross-pool
+	// reentrancy guard to fire when the outer wrap targets
+	// qwen-35b-nothink. Subset-of-superset ordering is load-bearing.
+	if strings.Contains(a, "nothink") {
+		return "qwen-35b-nothink"
+	}
 	if strings.Contains(a, "35b") || strings.Contains(a, "planner") {
 		return "qwen-35b"
 	}
