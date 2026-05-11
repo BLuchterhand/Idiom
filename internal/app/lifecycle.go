@@ -31,16 +31,10 @@ import (
 // a working spec — the project's existing config.json fields fill the
 // rest.
 //
-// out.Model resolves in this priority order: the Model entry's Alias
-// (proxy-routed; the proxy rewrites alias→model_path before
-// forwarding, so this is what disambiguates two backends sharing
-// the same model weights), then ModelPath, then the inherited
-// defaults. The alias-first priority is required for setups where
-// multiple backend instances share a model_path (e.g. one with
-// thinking on, one with thinking off) — without it, the chat
-// request carries the path verbatim, the proxy doesn't recognize
-// paths as routing keys, and all requests fall back to the default
-// alias regardless of the --model flag.
+// out.Model resolves in this priority order: the Model entry's
+// ModelPath (direct-mode file path), then the Model entry's Alias
+// (proxy-mode identifier — overrides any inherited path because the
+// alias is what the proxy routes by), then the inherited defaults.
 //
 // When backends.Model.Host is empty, the host falls back to defaults
 // or 127.0.0.1 — every shipped config uses 127.0.0.1 and a missing
@@ -61,10 +55,15 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 	if m.Port > 0 {
 		out.Port = m.Port
 	}
-	if alias := strings.TrimSpace(m.Alias); alias != "" {
-		out.Model = alias
-	} else if mp := strings.TrimSpace(m.ModelPath); mp != "" {
+	if mp := strings.TrimSpace(m.ModelPath); mp != "" {
 		out.Model = mp
+	} else if alias := strings.TrimSpace(m.Alias); alias != "" {
+		// Alias wins over an inherited model path. Proxy-fronted setups
+		// declare an alias and let the proxy route by that name; falling
+		// through to the inherited path here would silently send the
+		// planner's model identifier to the proxy and route the request
+		// to the wrong backend.
+		out.Model = alias
 	}
 	if len(m.ExtraArgs) > 0 {
 		out.ExtraArgs = append([]string(nil), m.ExtraArgs...)
