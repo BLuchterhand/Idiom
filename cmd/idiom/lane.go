@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,6 +104,7 @@ type laneOptions struct {
 	ModeFilter               string // history mode: only show events for this lane mode
 	ExplainSessionID         string // explain mode: specific session id (empty = latest)
 	ExplainBriefFilter       string // explain mode: filter by brief path (empty = unfiltered)
+	MaxTokens                int    // forwarded to the wrapped subcommand's --max-tokens override
 	// coderRequested is set when the caller asked for the coder
 	// alias either explicitly (`--coder`) or implicitly (plan-execute
 	// with no --model override). The actual alias is resolved later
@@ -422,6 +424,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.ModeFilter, "lane-mode", "", "history mode: show only events for this lane mode (plan-execute, implement, refine, explain, history)")
 	fs.StringVar(&opts.ExplainSessionID, "session", "", "explain mode: specific session id to diagnose (default: most recent)")
 	fs.StringVar(&opts.ExplainBriefFilter, "brief", "", "explain mode: filter to most-recent session for this brief path")
+	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override max_tokens for the wrapped subprocess; 0 uses backend default")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
@@ -811,6 +814,9 @@ func buildForwardedArgs(opts laneOptions, composedPath string) []string {
 	}
 	if opts.AllowBuildTests {
 		out = append(out, "--allow-build-tests")
+	}
+	if opts.MaxTokens > 0 {
+		out = append(out, "--max-tokens", strconv.Itoa(opts.MaxTokens))
 	}
 	return out
 }
