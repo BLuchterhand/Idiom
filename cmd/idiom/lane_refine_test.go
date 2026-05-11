@@ -17,21 +17,34 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		if err != nil {
 			t.Fatalf("stub: read meta %s: %v", metaBriefPath, err)
 		}
+		// Find the output path the meta-brief targets. Prefer the
+		// path on the row immediately after "## Files To Modify"
+		// (the lane's authoritative output declaration). Fall back
+		// to the first .md path mention not equal to the meta brief.
 		var outPath string
+		inFilesToModify := false
 		for _, line := range strings.Split(string(body), "\n") {
-			line = strings.TrimSpace(line)
-			if !strings.Contains(line, ".md") {
+			trimmed := strings.TrimSpace(line)
+			lower := strings.ToLower(trimmed)
+			if strings.HasPrefix(lower, "## files to modify") {
+				inFilesToModify = true
 				continue
 			}
-			start := strings.Index(line, "`")
+			if inFilesToModify && strings.HasPrefix(trimmed, "## ") {
+				inFilesToModify = false
+			}
+			if !strings.Contains(trimmed, ".md") {
+				continue
+			}
+			start := strings.Index(trimmed, "`")
 			if start < 0 {
 				continue
 			}
-			end := strings.Index(line[start+1:], "`")
+			end := strings.Index(trimmed[start+1:], "`")
 			if end < 0 {
 				continue
 			}
-			candidate := line[start+1 : start+1+end]
+			candidate := trimmed[start+1 : start+1+end]
 			if !strings.HasSuffix(candidate, ".md") {
 				continue
 			}
@@ -39,7 +52,9 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 				continue
 			}
 			outPath = candidate
-			break
+			if inFilesToModify {
+				break // authoritative — stop looking
+			}
 		}
 		if outPath == "" {
 			t.Fatalf("stub: could not parse output path from meta %s", metaBriefPath)
@@ -254,9 +269,22 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 		if err != nil {
 			t.Fatalf("read meta: %v", err)
 		}
-		// Find the output path the meta refers to.
+		// Find the output path the meta refers to. Prefer the path
+		// in the "Files To Modify" section; fall back to first .md
+		// mention. (Mirrors the stubDispatcher logic — template
+		// restructure can put DRAFT_PATH before REVIEW_PATH in body.)
 		var outPath string
+		inFilesToModify := false
 		for _, line := range strings.Split(string(body), "\n") {
+			trimmed := strings.TrimSpace(line)
+			lower := strings.ToLower(trimmed)
+			if strings.HasPrefix(lower, "## files to modify") {
+				inFilesToModify = true
+				continue
+			}
+			if inFilesToModify && strings.HasPrefix(trimmed, "## ") {
+				inFilesToModify = false
+			}
 			if strings.Contains(line, "`") && strings.Contains(line, ".md") {
 				start := strings.Index(line, "`")
 				end := strings.Index(line[start+1:], "`")
@@ -264,7 +292,9 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 					candidate := line[start+1 : start+1+end]
 					if strings.HasSuffix(candidate, ".md") && candidate != metaBriefPath {
 						outPath = candidate
-						break
+						if inFilesToModify {
+							break
+						}
 					}
 				}
 			}

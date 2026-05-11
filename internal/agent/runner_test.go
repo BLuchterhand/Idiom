@@ -2708,7 +2708,6 @@ func TestModelErrorAfterPartialEditReturnsTypedBlocker(t *testing.T) {
 	}
 }
 
-
 // TestRequiredEditPathReadinessAllowsNoGapInScopeRead was renamed
 // from RejectsNoGapReadWithoutTargetPacket after harness fix #4
 // (commit 6fe6bce) dropped the named_gap requirement for in-scope
@@ -3935,22 +3934,55 @@ func TestCompletionGateExemptsNonSourceWritesFromVerification(t *testing.T) {
 
 func TestWritePathIsNonSource(t *testing.T) {
 	cases := map[string]bool{
-		"draft.md":            true,
-		"docs/design.md":      true,
-		"NOTES.txt":           true,
-		"design.markdown":     true,
-		"README.rst":          true,
-		"main.go":             false,
-		"config.yaml":         false,
-		"package.json":        false,
-		"":                    false,
-		"weird":               false,
-		"path/to/file.MD":     true, // case-insensitive
+		"draft.md":        true,
+		"docs/design.md":  true,
+		"NOTES.txt":       true,
+		"design.markdown": true,
+		"README.rst":      true,
+		"main.go":         false,
+		"config.yaml":     false,
+		"package.json":    false,
+		"":                false,
+		"weird":           false,
+		"path/to/file.MD": true, // case-insensitive
 	}
 	for path, want := range cases {
 		if got := writePathIsNonSource(path); got != want {
 			t.Errorf("writePathIsNonSource(%q) = %v, want %v", path, got, want)
 		}
+	}
+}
+
+// TestImplementationPreWriteNonWriteRecoveryAllowsSubmitPlanInPlannerPhase
+// asserts the fix for #91: when a plan-execute planner-phase lane has
+// a write-ready packet, the pre-write non-write-tool gate must accept
+// submit_plan (the planner's valid write surface). Before the fix,
+// every comprehensive plan-execute brief was rejected because
+// IsWorkspaceWriteTool doesn't recognize submit_plan.
+func TestImplementationPreWriteNonWriteRecoveryAllowsSubmitPlanInPlannerPhase(t *testing.T) {
+	r := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+			Constraints:       []string{"exact_anchor_implementation"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+				{Path: "a.go", Content: "func foo() {}"},
+			},
+		},
+	}
+	req := workspace.ToolRequest{Tool: "submit_plan"}
+	summary, errorText, prompt, reject := r.implementationPreWriteNonWriteRecovery(req, nil)
+	if reject {
+		t.Fatalf("plan-execute planner phase submit_plan must NOT be rejected by pre-write gate; got summary=%q error=%q prompt=%q", summary, errorText, prompt)
+	}
+
+	// Sanity: a non-write tool (read_file) in the same lane should still be rejected.
+	reqRead := workspace.ToolRequest{Tool: "read_file"}
+	_, _, _, rejectRead := r.implementationPreWriteNonWriteRecovery(reqRead, nil)
+	if !rejectRead {
+		t.Fatal("non-write tool (read_file) in write-ready planner phase should still be rejected")
 	}
 }
 
@@ -4489,10 +4521,10 @@ func TestRunnerBriefWithPhaseHintsPromotesTargetWritePhase(t *testing.T) {
 
 func TestRunnerBriefWithPhaseHintsPromotesRequiredPathWriteReadiness(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:           "implementation",
-		Contract:             "implementation_result",
-		PermissionProfile:    "guarded_workspace_write",
-		RequiredEditPaths:    []string{"native/src/system.cpp", "native/tests/test_system.cpp"},
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/system.cpp", "native/tests/test_system.cpp"},
 		RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
 			Path:    "native/src/system.cpp",
 			Content: "anchor",

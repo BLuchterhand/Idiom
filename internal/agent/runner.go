@@ -4448,6 +4448,18 @@ func (r *Runner) implementationPreWriteNonWriteRecovery(req workspace.ToolReques
 	if r == nil || !implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) || workspace.IsWorkspaceWriteTool(req.Tool) {
 		return "", "", "", false
 	}
+	// Plan-execute planner phase exemption: `submit_plan` is the
+	// planner's valid write (the executor phase dispatches the
+	// resulting plan against the workspace). `IsWorkspaceWriteTool`
+	// only recognizes per-edit tools (edit_file/write_file/etc.) —
+	// submit_plan isn't one. Without this guard, a write-ready
+	// plan-execute packet rejects submit_plan even though it's the
+	// only legal write in this lane shape. Documented in
+	// BUG_PLAN_EXECUTE_WRITE_READY_CONTRACT_COLLISION.md (Faultline,
+	// 2026-05-11): every comprehensive plan-execute brief wedged.
+	if r.planThenExecutePlannerPhase() && strings.TrimSpace(req.Tool) == "submit_plan" {
+		return "", "", "", false
+	}
 	missing := r.remainingRequiredEditPaths(results)
 	target := "the required edit path(s)"
 	if len(missing) > 0 {
