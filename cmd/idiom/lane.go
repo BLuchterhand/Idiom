@@ -99,6 +99,7 @@ type laneOptions struct {
 	RefineSpecPath           string // refine mode: path to 1-paragraph spec
 	RefineOutputPath         string // refine mode: where to write the converged brief
 	RefineMaxIters           int    // refine mode: max draft+review+patch iterations (default 3)
+	RefineMode               string // refine mode: deliverable shape override ("anchored" | "markdown"); empty = auto-detect
 	Since                    string // history mode: duration string for --since (e.g. "1h", "24h")
 	FailedOnly               bool   // history mode: only show failed events
 	ModeFilter               string // history mode: only show events for this lane mode
@@ -243,6 +244,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			Title:       opts.Title,
 			MaxIters:    opts.RefineMaxIters,
 			ProjectRoot: opts.ProjectRoot,
+			Mode:        opts.RefineMode,
 		}
 		return runLaneRefine(refineOpts, defaultRefineDispatch, stdout, stderr)
 	}
@@ -419,6 +421,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.RefineSpecPath, "spec", "", "refine mode: path to 1-paragraph spec file")
 	fs.StringVar(&opts.RefineOutputPath, "output", "", "refine mode: where to write the converged brief")
 	fs.IntVar(&opts.RefineMaxIters, "max-iters", 3, "refine mode: max draft+review+patch iterations (default 3)")
+	fs.StringVar(&opts.RefineMode, "mode", "", "refine mode: deliverable shape override (\"anchored\" | \"markdown\"); empty = auto-detect from spec")
 	fs.StringVar(&opts.Since, "since", "", "history mode: show only events within the given duration (e.g. 1h, 24h)")
 	fs.BoolVar(&opts.FailedOnly, "failed", false, "history mode: show only events with non-zero exit code")
 	fs.StringVar(&opts.ModeFilter, "lane-mode", "", "history mode: show only events for this lane mode (plan-execute, implement, refine, explain, history)")

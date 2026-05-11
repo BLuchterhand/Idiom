@@ -57,6 +57,9 @@ func writeRefineIterMetrics(iterDir string, m refineIterMetrics, stderr io.Write
 //go:embed lanes/refine/draft.md
 var refineDraftTemplate string
 
+//go:embed lanes/refine/draft-markdown.md
+var refineDraftMarkdownTemplate string
+
 //go:embed lanes/refine/review.md
 var refineReviewTemplate string
 
@@ -70,6 +73,10 @@ type laneRefineOptions struct {
 	Title       string
 	MaxIters    int
 	ProjectRoot string
+	// Mode overrides the auto-detected deliverable shape. Empty =
+	// auto-detect via refineDetectMode; "anchored" or "markdown"
+	// override the heuristic for ambiguous specs. See docs §2.2.
+	Mode string
 }
 
 // refineDispatchFn is the per-step dispatcher. Default impl shells
@@ -184,6 +191,11 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		fmt.Fprintf(stderr, "refine: cannot read spec %s: %v\n", opts.SpecPath, err)
 		return 1
 	}
+	mode := strings.TrimSpace(opts.Mode)
+	if mode == "" {
+		mode = refineDetectMode(string(specBody))
+	}
+	fmt.Fprintf(stderr, "refine: mode=%s (auto-detected from spec)\n", mode)
 
 	var prevReviewBugs []string
 	var lastDraftPath string
@@ -244,7 +256,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 
 		if iter == 1 {
 			metaPath := filepath.Join(iterDir, "meta-draft.md")
-			if err := writeRefineDraftMeta(metaPath, draftPath, opts, string(specBody)); err != nil {
+			if err := writeRefineDraftMeta(metaPath, draftPath, opts, string(specBody), mode); err != nil {
 				fmt.Fprintf(stderr, "refine: write draft meta: %v\n", err)
 				return failsoft(iter, "draft-meta-write", 1)
 			}
@@ -375,13 +387,93 @@ func refineSanitizeTitle(title string) string {
 	return cleaned
 }
 
-func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, specBody string) error {
+func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, specBody, mode string) error {
+	template := refineDraftTemplate
+	if mode == refineModeMarkdown {
+		template = refineDraftMarkdownTemplate
+	}
 	body := strings.NewReplacer(
 		"{{SPEC_BODY}}", strings.TrimSpace(specBody),
 		"{{DRAFT_PATH}}", refineWorkspaceRel(opts.ProjectRoot, draftPath),
 		"{{TITLE}}", opts.Title,
-	).Replace(refineDraftTemplate)
+	).Replace(template)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
+}
+
+// refineMode constants — anchored-edits is the historical default
+// (code edits with `<file>:LINE` anchors and old_text/new_text);
+// markdown is the §2.2 new mode for NEW markdown deliverables where
+// anchors don't apply and the brief just inlines the file content.
+const (
+	refineModeAnchored = "anchored"
+	refineModeMarkdown = "markdown"
+)
+
+// refineSourceExtensions are paths that always force anchored-edits
+// mode regardless of how many markdown paths also appear.
+var refineSourceExtensions = []string{
+	".go", ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hh",
+	".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".java", ".kt",
+	".rb", ".php", ".swift", ".scala", ".cs", ".m", ".mm",
+}
+
+// refineMarkdownExtensions are paths considered markdown-deliverable
+// candidates when no source paths are mentioned.
+var refineMarkdownExtensions = []string{".md", ".txt", ".json", ".yaml", ".yml", ".toml"}
+
+// refineDetectMode classifies the spec's deliverable shape. Returns
+// refineModeMarkdown ONLY when every cited path is a markdown-class
+// extension AND no source-class extension appears. Falls back to
+// anchored mode (the safer default) for mixed shapes or specs with
+// no path mentions at all. Heuristic — escape hatch via opts.Mode
+// override is the design's safety valve (see docs §2.2).
+func refineDetectMode(specBody string) string {
+	lower := strings.ToLower(specBody)
+	hasSource := false
+	hasMarkdown := false
+	for _, ext := range refineSourceExtensions {
+		if extensionMentioned(lower, ext) {
+			hasSource = true
+			break
+		}
+	}
+	for _, ext := range refineMarkdownExtensions {
+		if extensionMentioned(lower, ext) {
+			hasMarkdown = true
+			break
+		}
+	}
+	if hasMarkdown && !hasSource {
+		return refineModeMarkdown
+	}
+	return refineModeAnchored
+}
+
+// extensionMentioned reports whether `ext` (e.g. ".m") appears in
+// `text` as a real file extension — followed by a non-alphabetic
+// character or end-of-string. Plain strings.Contains fails here
+// because ".m" is a substring of ".md", which leaks Objective-C
+// matches into every Markdown-only spec.
+func extensionMentioned(text, ext string) bool {
+	i := 0
+	for {
+		idx := strings.Index(text[i:], ext)
+		if idx < 0 {
+			return false
+		}
+		end := i + idx + len(ext)
+		if end >= len(text) {
+			return true
+		}
+		c := text[end]
+		// Extension boundary: anything that's not an alphabetic
+		// character closes the extension. Digits, punctuation,
+		// whitespace, slashes all count as boundary.
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+			return true
+		}
+		i = end
+	}
 }
 
 func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOutput string) error {

@@ -658,6 +658,110 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 // behavior. A draft file that's empty, under the byte floor, or
 // has no markdown section heading must be classified trivial so
 // the wrapper exits non-zero rather than silently shipping nothing.
+// TestRefineDetectModeClassifiesSpecShape locks in the §2.2
+// auto-detection heuristic: if a spec mentions any source-class
+// extension, route anchored. If it ONLY mentions markdown-class
+// extensions, route markdown. Mixed shapes and pathless specs
+// fall back to anchored (the safer default).
+func TestRefineDetectModeClassifiesSpecShape(t *testing.T) {
+	cases := []struct {
+		name string
+		spec string
+		want string
+	}{
+		{"pure-markdown", "Create .planning/foo.md with the inventory of postflight checks.", refineModeMarkdown},
+		{"docs-folder", "Add docs/decision.md with the trade-off table.", refineModeMarkdown},
+		{"go-source", "Update cmd/idiom/lane.go to add a --top-briefs flag.", refineModeAnchored},
+		{"mixed", "Update README.md and add cmd/idiom/foo.go alongside it.", refineModeAnchored},
+		{"cpp", "Modify src/save_fields.cpp to handle the new schema.", refineModeAnchored},
+		{"pathless", "Make the system faster.", refineModeAnchored},
+		{"json-only", "Generate config/settings.json with the new keys.", refineModeMarkdown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := refineDetectMode(tc.spec)
+			if got != tc.want {
+				t.Fatalf("refineDetectMode(%q) = %q, want %q", tc.spec, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate confirms a
+// spec that asks for a NEW markdown file routes through the
+// markdown-deliverable template (containing "## Deliverable" +
+// "## Inline content" headings) rather than the anchored template
+// (containing "## Verified Current State" + "## Required Behavior").
+func TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Create .planning/inventory.md with all postflight checks.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "markdown-spec",
+		MaxIters:    1,
+		ProjectRoot: root,
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if !strings.Contains(stderr.String(), "mode=markdown") {
+		t.Fatalf("expected stderr to log markdown mode detection, got: %s", stderr.String())
+	}
+	metaDraftPath := filepath.Join(refineStateDir(root, "markdown-spec"), "iter-1", "meta-draft.md")
+	body, err := os.ReadFile(metaDraftPath)
+	if err != nil {
+		t.Fatalf("read meta-draft: %v", err)
+	}
+	if !strings.Contains(string(body), "## Deliverable") || !strings.Contains(string(body), "## Inline content") {
+		t.Fatalf("expected markdown-deliverable template headings in meta-draft, got:\n%s", body)
+	}
+	if strings.Contains(string(body), "## Verified Current State") {
+		t.Fatalf("markdown mode should NOT include anchored-mode headings, got:\n%s", body)
+	}
+}
+
+// TestRunLaneRefineModeOverrideForcesAnchored confirms the
+// --mode flag overrides the auto-detected mode. A markdown-shaped
+// spec with opts.Mode="anchored" routes to the anchored template.
+func TestRunLaneRefineModeOverrideForcesAnchored(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Create .planning/inventory.md.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "override-anchored",
+		MaxIters:    1,
+		ProjectRoot: root,
+		Mode:        refineModeAnchored,
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	metaDraftPath := filepath.Join(refineStateDir(root, "override-anchored"), "iter-1", "meta-draft.md")
+	body, err := os.ReadFile(metaDraftPath)
+	if err != nil {
+		t.Fatalf("read meta-draft: %v", err)
+	}
+	if !strings.Contains(string(body), "## Verified Current State") {
+		t.Fatalf("expected anchored template (forced via opts.Mode), got:\n%s", body)
+	}
+}
+
 // TestRunLaneRefineInlinesLintOutputIntoReviewMeta locks in §2.3 of
 // docs/refine-end-to-end-loop.md: the refine wrapper runs idiom
 // brief lint between draft and review, captures the output, and
