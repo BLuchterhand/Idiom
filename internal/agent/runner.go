@@ -10149,139 +10149,249 @@ func toolFailurePathStem(req workspace.ToolRequest) string {
 	return parts[0]
 }
 
-// buildRejectionRecoveryNudge gives the model one last closure-biased repair
-// after repeated rejected tool calls. It should state the contract and avoid
-// prescribing a copy-paste tool sequence unless a hard invariant requires it.
-func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.ToolResult, mgr *workspace.Manager, brief workerruntime.WorkerRuntimeBrief, agent string, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool) string {
-	tool := strings.TrimSpace(req.Tool)
-	var b strings.Builder
+// recoveryNudgeInputs bundles the rejection-recovery-nudge state so
+// each rule can be unit-tested in isolation without a 7-arg signature.
+type recoveryNudgeInputs struct {
+	req                          workspace.ToolRequest
+	results                      []workspace.ToolResult
+	mgr                          *workspace.Manager
+	brief                        workerruntime.WorkerRuntimeBrief
+	agent                        string
+	delegatedReadOnlyAnswerReady bool
+	postChildPacketActive        bool
+}
 
-	if strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_verification_shell") {
-		cmd := "go test ./..."
-		if len(brief.VerificationPlan) > 0 && strings.TrimSpace(brief.VerificationPlan[0]) != "" {
-			cmd = strings.TrimSpace(brief.VerificationPlan[0])
-		}
-		b.WriteString("This is a verification-only turn; the requested check has not yet run. Run it (the configured plan starts with `")
-		b.WriteString(cmd)
-		b.WriteString("`), then answer with the observed pass/fail. If the check has already run, answer with that result.\n")
-		return b.String()
+// recoveryNudgeRule is a priority-ordered rejection-recovery nudge.
+// Returns (nudge, true) when fired or ("", false) when the rule does
+// not apply. The dispatcher tries rules in order; first match wins.
+type recoveryNudgeRule func(in recoveryNudgeInputs) (string, bool)
+
+// recoveryNudgeRules lists each rule in priority order. Order is
+// load-bearing: a rule that fires returns before later rules get a
+// chance, so insertion position matters. When adding a new rule,
+// place it at the priority that matches the scenario it handles.
+//
+//  1. verification-only shell (read-only lanes need to run the check)
+//  2. exact-anchor pre-write (write-ready packet, no more discovery)
+//  3. missing required-edit paths (allowlist not yet covered)
+//  4. pending verification after writes (writes need sanity)
+//  5. debug-log investigation (deepen or pivot inside the same log)
+//  6. closure ready (delegated/child packet justifies answer)
+//  7. premature evidence-first target read (need non-target evidence)
+//  8. evidence-first target-write phase (in the write phase now)
+//
+// When every priority rule declines, lastChanceRecoveryNudge produces
+// the tool-shape-specific default.
+var recoveryNudgeRules = []recoveryNudgeRule{
+	verificationOnlyShellRecoveryNudge,
+	exactAnchorPreWriteRecoveryNudge,
+	missingRequiredEditPathsRecoveryNudge,
+	pendingVerificationAfterWritesRecoveryNudge,
+	debugLogInvestigationRecoveryNudge,
+	closureReadyRecoveryNudge,
+	prematureEvidenceFirstTargetRecoveryNudge,
+	evidenceFirstTargetWritePhaseRecoveryNudge,
+}
+
+// buildRejectionRecoveryNudge gives the model one last closure-biased repair
+// after repeated rejected tool calls. It states the contract and avoids
+// prescribing a copy-paste tool sequence unless a hard invariant requires it.
+// Behavior is decomposed into priority-ordered rules (recoveryNudgeRules);
+// the first rule that fires returns its nudge. If none fire, the
+// tool-shape-specific lastChanceRecoveryNudge always produces a default.
+func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.ToolResult, mgr *workspace.Manager, brief workerruntime.WorkerRuntimeBrief, agent string, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool) string {
+	in := recoveryNudgeInputs{
+		req:                          req,
+		results:                      results,
+		mgr:                          mgr,
+		brief:                        brief,
+		agent:                        agent,
+		delegatedReadOnlyAnswerReady: delegatedReadOnlyAnswerReady,
+		postChildPacketActive:        postChildPacketActive,
 	}
-	if exactAnchorPreWriteSurfaceActive(brief, results) {
-		target := "the supplied exact-anchor target"
-		if paths := nonEmptyRunnerStrings(brief.RequiredEditPaths, 3); len(paths) > 0 {
-			target = strings.Join(paths, ", ")
-		} else if refs := nonEmptyRunnerStrings(brief.TargetRefs, 3); len(refs) > 0 {
-			target = strings.Join(refs, ", ")
-		}
-		b.WriteString("This is an exact-anchor implementation pre-write turn. The target packet is the current-state path and source evidence for the first write; do not inspect, search, shell, or verify before that write.\n")
-		b.WriteString("Call edit_file or apply_patch with the supplied anchor for ")
-		b.WriteString(target)
-		b.WriteString(" now. If the supplied anchor is missing or stale, answer with <<QUESTION>> naming that exact anchor gap; no additional discovery is allowed in this lane.\n")
-		return b.String()
-	}
-	if runnerBriefRequiresMutation(brief) {
-		if missing := missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
-			b.WriteString("Recovery nudge — this implementation turn still has required edit path(s) without a successful write: ")
-			b.WriteString(strings.Join(missing, ", "))
-			b.WriteString(".\n")
-			b.WriteString("Do not answer with partial findings. Make an allowed write now, or answer with <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
-			return b.String()
-		}
-	}
-	if hasPendingVerificationAfterWrites(results, brief) {
-		cmd := "git diff --check"
-		if len(brief.VerificationPlan) > 0 && strings.TrimSpace(brief.VerificationPlan[0]) != "" {
-			cmd = strings.TrimSpace(brief.VerificationPlan[0])
-		}
-		if plannerOwnsVerification(brief) {
-			b.WriteString("This implementation turn has successful writes that are still pending lane sanity. Do not inspect or edit again yet. Build/test verification is planner-owned for this route, so run source_sanity for changed source files; for non-source edits run one cheap non-build sanity command such as `")
-			b.WriteString(cmd)
-			b.WriteString("`. For source edits, `git diff --check` is only patch hygiene. If source_sanity is forbidden or impossible, answer with the changed paths and the concrete lane-sanity blocker.\n")
-			return b.String()
-		}
-		b.WriteString("This implementation turn has successful writes that are still pending verification. Do not inspect or edit again yet. Run one focused verification shell command now, preferably `")
-		b.WriteString(cmd)
-		b.WriteString("`. If verification is forbidden or impossible, answer with the changed paths and the concrete verification blocker.\n")
-		return b.String()
-	}
-	if strings.TrimSpace(brief.TaskFamily) == "debug_logs" {
-		if selection, ok := latestDebugLogSelection(results); ok {
-			b.WriteString("This is a debug-log investigation. Stay on real log artifacts.\n")
-			if shouldDeepenDebugLogSearch(results, selection) {
-				if next, ok := nextDebugLogSelection(results, selection); ok {
-					b.WriteString("The current selected log did not yield a concrete hit. Deepen to the next newest log now:\n")
-					b.WriteString("  ")
-					b.WriteString(marshalToolRequestRaw(debugLogTailRequest(next)))
-					b.WriteString("\n")
-					b.WriteString("If that next log is still not useful, answer with the current uncertainty and name the missing symptom.\n")
-					return b.String()
-				}
-			}
-			b.WriteString("Answer from the selected log if it is already clear.\n")
-			redirected, redirectedOK := debugLogScopedSearchRedirect(req, selection)
-			if redirectedOK {
-				b.WriteString("Or search inside the same selected log with your current pattern:\n")
-				b.WriteString("  ")
-				b.WriteString(marshalToolRequestRaw(redirected))
-				b.WriteString("\n")
-			}
-			return b.String()
-		}
-	}
-	if scope := postReadinessGapScope(
-		agent,
-		delegatedReadOnlyAnswerReady || delegatedReadOnlyClosureReady(agent, brief, results),
-		postChildPacketActive || postChildPacketClosureReadyWithBrief(brief, results),
-		req,
-	); scope != "" {
-		if nudge := buildClosureRecoveryNudge(scope, req, results, brief); nudge != "" {
+	for _, rule := range recoveryNudgeRules {
+		if nudge, ok := rule(in); ok {
 			return nudge
 		}
 	}
-	if isPrematureEvidenceFirstTargetRead(req, results, brief) {
-		b.WriteString("This turn still needs source evidence before the named target file.\n")
-		candidates := nonTargetRecoveryFileCandidates(results, brief.TargetRefs)
-		if len(candidates) > 0 {
-			b.WriteString("Candidate source paths:\n")
-			for _, path := range candidates {
-				b.WriteString("  - ")
-				b.WriteString(path)
-				b.WriteString("\n")
-			}
-		} else {
-			b.WriteString("Use a non-target implementation file or search result that can explain the change before returning to the target.\n")
-		}
-		b.WriteString("\nIf the source evidence is already sufficient in prior results, answer the user directly instead of calling another tool.\n")
-		return b.String()
-	}
-	if evidenceFirstTargetWritePhaseActive(brief, results) {
-		target := firstNonEmptyNonEmpty(brief.TargetRefs...)
-		if target == "" {
-			target = strings.TrimSpace(req.Path)
-		}
-		b.WriteString("This turn is now in target-write phase.\n")
-		b.WriteString("Either edit the target now, or if one exact detail is still missing, stay inside the named target with one narrow read.\n")
-		if target != "" {
-			start, end := 1, 40
-			if window, ok := latestSuccessfulTargetReadWindow(results, brief.TargetRefs); ok {
-				start = window.End - 19
-				if start < 1 {
-					start = 1
-				}
-				end = window.End
-			}
-			b.WriteString("Relevant target window: ")
-			b.WriteString(target)
-			b.WriteString(fmt.Sprintf(" lines %d-%d\n", start, end))
-		}
-		b.WriteString("\nIf you already have enough evidence, answer the user now with what you observed.\n")
-		return b.String()
-	}
+	return lastChanceRecoveryNudge(in)
+}
 
+func verificationOnlyShellRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(in.brief.PermissionProfile), "read_only_verification_shell") {
+		return "", false
+	}
+	cmd := "go test ./..."
+	if len(in.brief.VerificationPlan) > 0 && strings.TrimSpace(in.brief.VerificationPlan[0]) != "" {
+		cmd = strings.TrimSpace(in.brief.VerificationPlan[0])
+	}
+	var b strings.Builder
+	b.WriteString("This is a verification-only turn; the requested check has not yet run. Run it (the configured plan starts with `")
+	b.WriteString(cmd)
+	b.WriteString("`), then answer with the observed pass/fail. If the check has already run, answer with that result.\n")
+	return b.String(), true
+}
+
+func exactAnchorPreWriteRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if !exactAnchorPreWriteSurfaceActive(in.brief, in.results) {
+		return "", false
+	}
+	target := "the supplied exact-anchor target"
+	if paths := nonEmptyRunnerStrings(in.brief.RequiredEditPaths, 3); len(paths) > 0 {
+		target = strings.Join(paths, ", ")
+	} else if refs := nonEmptyRunnerStrings(in.brief.TargetRefs, 3); len(refs) > 0 {
+		target = strings.Join(refs, ", ")
+	}
+	var b strings.Builder
+	b.WriteString("This is an exact-anchor implementation pre-write turn. The target packet is the current-state path and source evidence for the first write; do not inspect, search, shell, or verify before that write.\n")
+	b.WriteString("Call edit_file or apply_patch with the supplied anchor for ")
+	b.WriteString(target)
+	b.WriteString(" now. If the supplied anchor is missing or stale, answer with <<QUESTION>> naming that exact anchor gap; no additional discovery is allowed in this lane.\n")
+	return b.String(), true
+}
+
+func missingRequiredEditPathsRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if !runnerBriefRequiresMutation(in.brief) {
+		return "", false
+	}
+	missing := missingRequiredEditPaths(in.brief.RequiredEditPaths, changedPathsFromToolResults(in.results))
+	if len(missing) == 0 {
+		return "", false
+	}
+	var b strings.Builder
+	b.WriteString("Recovery nudge — this implementation turn still has required edit path(s) without a successful write: ")
+	b.WriteString(strings.Join(missing, ", "))
+	b.WriteString(".\n")
+	b.WriteString("Do not answer with partial findings. Make an allowed write now, or answer with <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
+	return b.String(), true
+}
+
+func pendingVerificationAfterWritesRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if !hasPendingVerificationAfterWrites(in.results, in.brief) {
+		return "", false
+	}
+	cmd := "git diff --check"
+	if len(in.brief.VerificationPlan) > 0 && strings.TrimSpace(in.brief.VerificationPlan[0]) != "" {
+		cmd = strings.TrimSpace(in.brief.VerificationPlan[0])
+	}
+	var b strings.Builder
+	if plannerOwnsVerification(in.brief) {
+		b.WriteString("This implementation turn has successful writes that are still pending lane sanity. Do not inspect or edit again yet. Build/test verification is planner-owned for this route, so run source_sanity for changed source files; for non-source edits run one cheap non-build sanity command such as `")
+		b.WriteString(cmd)
+		b.WriteString("`. For source edits, `git diff --check` is only patch hygiene. If source_sanity is forbidden or impossible, answer with the changed paths and the concrete lane-sanity blocker.\n")
+		return b.String(), true
+	}
+	b.WriteString("This implementation turn has successful writes that are still pending verification. Do not inspect or edit again yet. Run one focused verification shell command now, preferably `")
+	b.WriteString(cmd)
+	b.WriteString("`. If verification is forbidden or impossible, answer with the changed paths and the concrete verification blocker.\n")
+	return b.String(), true
+}
+
+func debugLogInvestigationRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if strings.TrimSpace(in.brief.TaskFamily) != "debug_logs" {
+		return "", false
+	}
+	selection, ok := latestDebugLogSelection(in.results)
+	if !ok {
+		return "", false
+	}
+	var b strings.Builder
+	b.WriteString("This is a debug-log investigation. Stay on real log artifacts.\n")
+	if shouldDeepenDebugLogSearch(in.results, selection) {
+		if next, nextOK := nextDebugLogSelection(in.results, selection); nextOK {
+			b.WriteString("The current selected log did not yield a concrete hit. Deepen to the next newest log now:\n")
+			b.WriteString("  ")
+			b.WriteString(marshalToolRequestRaw(debugLogTailRequest(next)))
+			b.WriteString("\n")
+			b.WriteString("If that next log is still not useful, answer with the current uncertainty and name the missing symptom.\n")
+			return b.String(), true
+		}
+	}
+	b.WriteString("Answer from the selected log if it is already clear.\n")
+	if redirected, redirectedOK := debugLogScopedSearchRedirect(in.req, selection); redirectedOK {
+		b.WriteString("Or search inside the same selected log with your current pattern:\n")
+		b.WriteString("  ")
+		b.WriteString(marshalToolRequestRaw(redirected))
+		b.WriteString("\n")
+	}
+	return b.String(), true
+}
+
+func closureReadyRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	scope := postReadinessGapScope(
+		in.agent,
+		in.delegatedReadOnlyAnswerReady || delegatedReadOnlyClosureReady(in.agent, in.brief, in.results),
+		in.postChildPacketActive || postChildPacketClosureReadyWithBrief(in.brief, in.results),
+		in.req,
+	)
+	if scope == "" {
+		return "", false
+	}
+	nudge := buildClosureRecoveryNudge(scope, in.req, in.results, in.brief)
+	if nudge == "" {
+		return "", false
+	}
+	return nudge, true
+}
+
+func prematureEvidenceFirstTargetRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if !isPrematureEvidenceFirstTargetRead(in.req, in.results, in.brief) {
+		return "", false
+	}
+	var b strings.Builder
+	b.WriteString("This turn still needs source evidence before the named target file.\n")
+	candidates := nonTargetRecoveryFileCandidates(in.results, in.brief.TargetRefs)
+	if len(candidates) > 0 {
+		b.WriteString("Candidate source paths:\n")
+		for _, path := range candidates {
+			b.WriteString("  - ")
+			b.WriteString(path)
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString("Use a non-target implementation file or search result that can explain the change before returning to the target.\n")
+	}
+	b.WriteString("\nIf the source evidence is already sufficient in prior results, answer the user directly instead of calling another tool.\n")
+	return b.String(), true
+}
+
+func evidenceFirstTargetWritePhaseRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if !evidenceFirstTargetWritePhaseActive(in.brief, in.results) {
+		return "", false
+	}
+	target := firstNonEmptyNonEmpty(in.brief.TargetRefs...)
+	if target == "" {
+		target = strings.TrimSpace(in.req.Path)
+	}
+	var b strings.Builder
+	b.WriteString("This turn is now in target-write phase.\n")
+	b.WriteString("Either edit the target now, or if one exact detail is still missing, stay inside the named target with one narrow read.\n")
+	if target != "" {
+		start, end := 1, 40
+		if window, ok := latestSuccessfulTargetReadWindow(in.results, in.brief.TargetRefs); ok {
+			start = window.End - 19
+			if start < 1 {
+				start = 1
+			}
+			end = window.End
+		}
+		b.WriteString("Relevant target window: ")
+		b.WriteString(target)
+		b.WriteString(fmt.Sprintf(" lines %d-%d\n", start, end))
+	}
+	b.WriteString("\nIf you already have enough evidence, answer the user now with what you observed.\n")
+	return b.String(), true
+}
+
+// lastChanceRecoveryNudge is the always-fires terminator. It produces
+// a tool-shape-specific default when no priority rule fired.
+func lastChanceRecoveryNudge(in recoveryNudgeInputs) string {
+	tool := strings.TrimSpace(in.req.Tool)
+	var b strings.Builder
 	b.WriteString("Recovery nudge — last chance before the harness ends the turn. Answer with the evidence already gathered. Only take one narrow next step if you can name the exact missing claim it closes. Do not repeat the rejected tool call.\n\n")
 	switch {
 	case tool == "list_files" || tool == "list_dir":
-		candidates := rejectionRecoveryFileCandidates(results)
+		candidates := rejectionRecoveryFileCandidates(in.results)
 		if len(candidates) > 0 {
 			b.WriteString("You already have a workspace overview. Choose one discovered path that can close a named gap:\n")
 			for _, path := range candidates {
@@ -10293,7 +10403,7 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 			b.WriteString("You already have a workspace overview. Either answer now or take one focused search/read step tied to a named gap.\n")
 		}
 	case tool == "read_file":
-		path := strings.TrimSpace(req.Path)
+		path := strings.TrimSpace(in.req.Path)
 		if path != "" {
 			b.WriteString("The repeated read should become a smaller window or a structured probe tied to a named gap on ")
 			b.WriteString(path)
@@ -10303,9 +10413,9 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 		}
 	case tool == "search_content":
 		b.WriteString("A follow-up search should change the claim being tested or narrow to a specific discovered path.\n")
-		if strings.TrimSpace(req.Path) != "" {
+		if strings.TrimSpace(in.req.Path) != "" {
 			b.WriteString("Current scope: ")
-			b.WriteString(req.Path)
+			b.WriteString(in.req.Path)
 			b.WriteString("\n")
 		}
 	default:
