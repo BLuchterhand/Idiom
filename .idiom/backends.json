@@ -9,7 +9,7 @@
           "model_path": "/Users/ben/models/qwen3.6-35b-a3b-mlx-4bit-ud",
           "port": 47780,
           "cache_size": 4,
-          "cache_bytes": 21474836480,
+          "cache_bytes": 12884901888,
           "max_tokens": 8192,
           "extra_args": [
             "--temp", "0.6",
@@ -25,7 +25,7 @@
           "model_path": "/Users/ben/models/qwen3-coder-30b-a3b-mlx-4bit-dwq",
           "port": 47781,
           "cache_size": 4,
-          "cache_bytes": 21474836480,
+          "cache_bytes": 12884901888,
           "max_tokens": 8192,
           "extra_args": [
             "--temp", "0.7",
