@@ -115,6 +115,14 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		fmt.Fprintf(stderr, "refine: %v\n", err)
 		return 2
 	}
+	// Sweep stale per-title refine state at session START (#73) and END
+	// (#77 — defer). Threshold matches plan-execute's 7-day window so
+	// recent debug-worthy state survives but long-forgotten title dirs
+	// don't accumulate. Defer fires even on early returns / failsoft
+	// paths — pure tidy-up, no behavioral effect on the current run.
+	cleanupStaleRefineState(opts.ProjectRoot, 7*24*time.Hour, stderr)
+	defer cleanupStaleRefineState(opts.ProjectRoot, 7*24*time.Hour, stderr)
+
 	stateDir := refineStateDir(opts.ProjectRoot, opts.Title)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		fmt.Fprintf(stderr, "refine: cannot create state dir %s: %v\n", stateDir, err)
