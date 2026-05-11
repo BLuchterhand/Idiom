@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -73,12 +74,62 @@ type laneRefineOptions struct {
 // out to `idiom lane implement`; tests inject a fake.
 type refineDispatchFn func(metaBriefPath string, stdout, stderr io.Writer) int
 
-// defaultRefinePool is the queue pool refine submits to. Refine's
-// subprocess is `lane implement`, which (in the current project
-// config) targets the 35B reasoning backend. Hardcoded for v1; if
-// projects start running implement against a different backend this
-// becomes a config knob.
-const defaultRefinePool = "qwen-35b"
+// Refine routes draft + patch phases to the non-thinking Coder-30B
+// model and the review phase to the thinking 35B model. Rationale:
+//
+//   - Draft + patch are mechanical writes (the skeleton-first
+//     templates spell out the shape; the model fills in brackets).
+//     Coder-30B-A3B doesn't emit <think> blocks, so every token in
+//     the generation budget is visible deliverable instead of
+//     reasoning chatter. Latency is also ~half (smaller model).
+//
+//   - Review is judgment-heavy (bug detection, anchor uniqueness
+//     reasoning, verdict). 35B's thinking mode pays off here — the
+//     critique quality is the main lever on refine convergence.
+//
+// Each phase routes through its own queue pool to keep MLX Metal
+// command buffers serialized per backend. The implement subprocess
+// receives --model so the proxy alias-routes to the right backend
+// even though both backends share the proxy endpoint.
+const (
+	refineDraftPatchPool  = "qwen-coder"
+	refineDraftPatchModel = "qwen3-coder-30b"
+	refineReviewPool      = "qwen-35b"
+	refineReviewModel     = "qwen3.6-35b"
+)
+
+// inferRefinePhase examines the meta-brief filename to decide which
+// refine phase is dispatching. lane_refine.go names these files
+// deterministically (meta-draft.md / meta-review.md / meta-patch.md)
+// so a simple suffix check is safe.
+func inferRefinePhase(metaBriefPath string) string {
+	base := filepath.Base(metaBriefPath)
+	switch {
+	case strings.HasPrefix(base, "meta-draft"):
+		return "draft"
+	case strings.HasPrefix(base, "meta-review"):
+		return "review"
+	case strings.HasPrefix(base, "meta-patch"):
+		return "patch"
+	default:
+		return "draft"
+	}
+}
+
+// refinePhaseRouting picks pool + model for a refine subprocess
+// based on the phase inferred from the meta-brief filename. Returns
+// pool, model, maxTokens.
+func refinePhaseRouting(metaBriefPath string) (pool, model string, maxTokens int) {
+	switch inferRefinePhase(metaBriefPath) {
+	case "review":
+		// 35B thinking mode needs the larger budget (#96).
+		return refineReviewPool, refineReviewModel, 16384
+	default:
+		// Draft + patch on Coder-30B; no thinking budget overhead so
+		// 8192 is plenty for a brief-sized deliverable.
+		return refineDraftPatchPool, refineDraftPatchModel, 8192
+	}
+}
 
 func defaultRefineDispatch(metaBriefPath string, stdout, stderr io.Writer) int {
 	binary, err := os.Executable()
@@ -86,25 +137,21 @@ func defaultRefineDispatch(metaBriefPath string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "refine: cannot locate idiom binary: %v\n", err)
 		return 2
 	}
+	pool, model, maxTokens := refinePhaseRouting(metaBriefPath)
 	// Route through the local queue daemon so concurrent refine
-	// sessions serialize access to the 35B Metal command buffer.
-	// `idiom queue run` exits non-zero with a clear "start the
-	// daemon" message if unreachable, which surfaces correctly to
-	// the caller via this function's exit code.
+	// sessions serialize access to whichever MLX backend the phase
+	// targets. `idiom queue run` exits non-zero with a clear
+	// "start the daemon" message if unreachable, which surfaces
+	// correctly to the caller via this function's exit code.
 	cmd := exec.Command(binary,
 		"queue", "run",
-		"--pool", defaultRefinePool,
+		"--pool", pool,
 		"--label", "refine",
 		"--quiet",
 		"--",
 		binary, "lane", "implement", "--no-lint", "--json",
-		// 16384 mirrors plan_execute.go's planner cap (#96). 35B in
-		// thinking mode regularly hits 8000+ tokens reasoning through
-		// a refine draft/review, and 8192 (the backend default) cuts
-		// off before the model can produce the visible deliverable.
-		// Same Qwen3 quickstart rationale as #70 — long structured
-		// outputs need 16K headroom.
-		"--max-tokens", "16384",
+		"--model", model,
+		"--max-tokens", strconv.Itoa(maxTokens),
 		metaBriefPath,
 	)
 	cmd.Stdout = stdout

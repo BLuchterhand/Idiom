@@ -10,6 +10,31 @@ import (
 	"testing"
 )
 
+// stripFencedBlocksForStub removes ```...``` code blocks from
+// meta-brief text so the stub's section-heading scanner doesn't
+// match headings inside example/skeleton fences. Mirrors what the
+// runtime brief-parser does (pathparse.ScopeToBriefBody + fence
+// stripping); without this the new skeleton-first templates (which
+// embed example "## Files To Modify" headings inside ```text fences)
+// confuse the simple line-by-line scanner.
+func stripFencedBlocksForStub(body string) string {
+	var out strings.Builder
+	inFence := false
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			out.WriteString("\n")
+			continue
+		}
+		if inFence {
+			continue
+		}
+		out.WriteString(line)
+		out.WriteString("\n")
+	}
+	return out.String()
+}
+
 func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 	t.Helper()
 	calls := 0
@@ -22,9 +47,10 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		// path on the row immediately after "## Files To Modify"
 		// (the lane's authoritative output declaration). Fall back
 		// to the first .md path mention not equal to the meta brief.
+		scanText := stripFencedBlocksForStub(string(body))
 		var outPath string
 		inFilesToModify := false
-		for _, line := range strings.Split(string(body), "\n") {
+		for _, line := range strings.Split(scanText, "\n") {
 			trimmed := strings.TrimSpace(line)
 			lower := strings.ToLower(trimmed)
 			if strings.HasPrefix(lower, "## files to modify") {
@@ -410,10 +436,13 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 		// Find the output path the meta refers to. Prefer the path
 		// in the "Files To Modify" section; fall back to first .md
 		// mention. (Mirrors the stubDispatcher logic — template
-		// restructure can put DRAFT_PATH before REVIEW_PATH in body.)
+		// restructure can put DRAFT_PATH before REVIEW_PATH in body
+		// and may embed example "## Files To Modify" headings inside
+		// ```text skeleton fences; strip fences first.)
+		scanText := stripFencedBlocksForStub(string(body))
 		var outPath string
 		inFilesToModify := false
-		for _, line := range strings.Split(string(body), "\n") {
+		for _, line := range strings.Split(scanText, "\n") {
 			trimmed := strings.TrimSpace(line)
 			lower := strings.ToLower(trimmed)
 			if strings.HasPrefix(lower, "## files to modify") {

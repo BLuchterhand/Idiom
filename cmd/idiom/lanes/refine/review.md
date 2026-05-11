@@ -1,28 +1,41 @@
 # META — Review brief (refine loop)
 
+Your only job: call `write_file` to create `{{REVIEW_PATH}}` with a
+review of the drafted brief. Read the brief, read at most 4 source
+files it cites, write the review file. The file IS the deliverable —
+a final-answer text containing the review WILL be rejected.
+
 ## Required steps (in order)
 
 1. **Read** `{{DRAFT_PATH}}` (the drafted brief).
-2. **Read** up to 4 source files cited in the brief (bounded
-   ranges only).
-3. **`write_file`** to `{{REVIEW_PATH}}` with the markdown review
-   (format below).
-4. Give a one-sentence final answer ("Done. Review at `{{REVIEW_PATH}}`.").
+2. **Read** up to 4 source files cited in the brief (bounded line
+   ranges only; do NOT whole-file-read).
+3. **`write_file`** to `{{REVIEW_PATH}}` with the content described
+   in "Write `{{REVIEW_PATH}}` with this exact shape" below.
+4. Single-sentence final answer ("Done. Review at `{{REVIEW_PATH}}`.").
 
-**The deliverable IS the file at `{{REVIEW_PATH}}`. A final-answer
-text containing the review is NOT the deliverable — the gate WILL
-reject it. If you find no bugs, still call `write_file` with
-"Bugs found: none" and verdict "ship-as-is".**
+## Write `{{REVIEW_PATH}}` with this exact shape
 
-If the brief is unreadable or you genuinely can't write a review,
-surface `<<QUESTION>>:` with the specific blocker. Do NOT just
-summarize without writing.
+Replace each `<bracket placeholder>` with your text. Keep the
+section headings exactly as shown. If you find zero bugs, still
+emit the file with "Bugs found: none" and verdict "ship-as-is".
 
-## What to read (BOUNDED — total ≤5 reads)
+```text
+# Review of brief
 
-1. The drafted brief: `{{DRAFT_PATH}}` (full read).
-2-5. Source files cited in the brief (prioritize files with line
-     anchors; bounded line ranges only — do NOT read whole files).
+## Bugs found
+
+1. **<short title>**: <description>. <how to fix>.
+2. <next bug, if any; or write "none" if no bugs found>
+
+## OK
+
+- <what the brief gets right>
+
+## Verdict
+
+<ship-as-is | fix-bugs-then-ship | reject-and-redraft>
+```
 
 ## What counts as a bug
 
@@ -35,32 +48,10 @@ summarize without writing.
   `grep -c '<old_text>' <target_file>` — if the anchor matches more
   than once, the executor will fail with "old_text matched N
   locations". Common offender: a test file's closing `}` (matches
-  every test). Flag and suggest a longer unique anchor like the
-  closing `}` of a SPECIFIC named test.
+  every test). Flag and suggest a longer unique anchor.
 - Acceptance commands that wouldn't actually trigger the behavior.
 - Outer ```text fence wrapping the whole brief (silent parse break).
 - Provenance / heuristic logic gaps.
-
-## Output format (write to `{{REVIEW_PATH}}`)
-
-```text
-# Review of brief
-
-## Bugs found
-
-1. **<short title>**: <description>. <how to fix>.
-
-## OK
-
-- <thing the brief gets right>
-
-## Verdict
-
-<ship-as-is | fix-bugs-then-ship | reject-and-redraft>
-```
-
-If zero bugs found, write the file with "Bugs found: none" and
-verdict "ship-as-is".
 
 ## Files To Modify
 
@@ -68,27 +59,25 @@ verdict "ship-as-is".
 |------|--------|
 | `{{REVIEW_PATH}}` | NEW FILE: review of the drafted brief |
 
-## Done when
-
-`test -f {{REVIEW_PATH}}` returns 0.
-
 ## STOP AND WRITE NOW
 
-You have everything you need. Your VERY NEXT TOOL CALL MUST be
-`write_file` with:
+After the bounded reads (≤ 5 total: brief + up to 4 source files),
+your VERY NEXT TOOL CALL MUST be `write_file` with:
 
 - `path`: `{{REVIEW_PATH}}`
-- `content`: the markdown review described in "Output format" above
+- `content`: the filled-in review from "Write `{{REVIEW_PATH}}` with
+  this exact shape" above, with every `<bracket>` replaced.
 
-Do NOT do another read. Do NOT do another grep / search /
-code_navigate. Do NOT put the review content into a final answer
-text message — the lane will reject the answer because no file
-was written. The deliverable IS the file at `{{REVIEW_PATH}}`,
-not a prose summary.
-
-After `write_file` returns success, give a one-sentence final
-answer (e.g. "Done. Review at `{{REVIEW_PATH}}`.") and stop.
+Do NOT continue thinking. Do NOT do another read / grep / search /
+code_navigate. Do NOT put the review content into a final-answer
+text — the gate will reject it. The deliverable IS the file. After
+`write_file` returns success, give the single-sentence final answer
+and stop.
 
 If you genuinely cannot write a review (e.g., the brief is
 unreadable), surface `<<QUESTION>>:` with the specific blocker —
 do NOT just stop or summarize without writing.
+
+## Done when
+
+`test -f {{REVIEW_PATH}}` returns 0.
