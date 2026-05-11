@@ -10,6 +10,22 @@ import (
 	"testing"
 )
 
+// nonTrivialDraftBody returns a canned draft body sized to clear the
+// refineDraftIsTrivial check (≥ refineMinDraftBytes, contains at
+// least one ## heading). Used by stub-dispatcher tests so the new
+// honest-exit-codes path (docs/refine-end-to-end-loop.md §2.1) sees
+// these fixtures as valid drafts rather than silent-failure trivials.
+func nonTrivialDraftBody(label string) string {
+	return "# " + label + "\n\n## Problem\n\n" +
+		"Synthetic test draft body — not a real brief. Padded above the\n" +
+		"refineMinDraftBytes floor so honest-exit-codes treats it as a\n" +
+		"valid draft. Real drafts are ~3-5KB; this stub matches the\n" +
+		"shape (heading + Problem + Files + Acceptance) without trying\n" +
+		"to be production-quality content.\n\n" +
+		"## Files To Modify\n\n| File | Change |\n|------|--------|\n" +
+		"| `foo.go` | MODIFY: stub |\n\n## Acceptance\n\n- run tests\n"
+}
+
 // stripFencedBlocksForStub removes ```...``` code blocks from
 // meta-brief text so the stub's section-heading scanner doesn't
 // match headings inside example/skeleton fences. Mirrors what the
@@ -281,7 +297,7 @@ func TestRunLaneRefineConvergesOnShipAsIsVerdict(t *testing.T) {
 		ProjectRoot: root,
 	}
 	dispatch, calls := stubDispatcher(t, []string{
-		"# Drafted brief\n\nbody",
+		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\n## OK\n\n## Verdict\n\nship-as-is\n",
 	})
 	var stderr bytes.Buffer
@@ -296,7 +312,7 @@ func TestRunLaneRefineConvergesOnShipAsIsVerdict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
-	if !strings.Contains(string(body), "Drafted brief") {
+	if !strings.Contains(string(body), "# Drafted brief") {
 		t.Fatalf("output should contain the drafted brief content, got: %s", body)
 	}
 	// Confirm #79 per-iter metrics landed on disk for the iter that
@@ -384,9 +400,9 @@ func TestRunLaneRefineShipsBestDraftOnDivergingLoop(t *testing.T) {
 	}
 	sameReview := "# Review\n\n## Bugs found\n\n1. **Persistent bug**: blah\n\n## Verdict\n\nfix-bugs-then-ship\n"
 	dispatch, _ := stubDispatcher(t, []string{
-		"# Draft v1 (best, will be shipped)",
+		nonTrivialDraftBody("Draft v1 (best, will be shipped)"),
 		sameReview,
-		"# Draft v2 (patch failed to fix)",
+		nonTrivialDraftBody("Draft v2 (patch failed to fix)"),
 		sameReview,
 	})
 	var stderr bytes.Buffer
@@ -398,7 +414,7 @@ func TestRunLaneRefineShipsBestDraftOnDivergingLoop(t *testing.T) {
 		t.Fatalf("expected diverging-loop message in stderr, got: %s", stderr.String())
 	}
 	body, _ := os.ReadFile(opts.OutputPath)
-	if !strings.Contains(string(body), "Draft v1 (best") {
+	if !strings.Contains(string(body), "# Draft v1 (best") {
 		t.Fatalf("expected iter-1 draft to be shipped on divergence, got: %s", body)
 	}
 }
@@ -478,9 +494,9 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 			return 1
 		}
 		responses := []string{
-			"# Draft v1 (will be shipped via failsoft)",
+			nonTrivialDraftBody("Draft v1 (will be shipped via failsoft)"),
 			"# Review\n\n## Bugs found\n\n1. **Bug A**: x\n2. **Bug B**: y\n3. **Bug C**: z\n\n## Verdict\n\nfix-bugs-then-ship\n",
-			"# Draft v2",
+			nonTrivialDraftBody("Draft v2"),
 		}
 		if calls > len(responses) {
 			t.Fatalf("more calls than responses: %d", calls)
@@ -499,7 +515,7 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 		t.Fatalf("expected failsoft message in stderr, got: %s", stderr.String())
 	}
 	body, _ := os.ReadFile(opts.OutputPath)
-	if !strings.Contains(string(body), "Draft v1 (will be shipped via failsoft)") {
+	if !strings.Contains(string(body), "# Draft v1 (will be shipped via failsoft)") {
 		t.Fatalf("expected iter-1 draft shipped via failsoft, got: %s", body)
 	}
 }
@@ -550,9 +566,9 @@ func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 	// no-improvement stop does NOT fire, and iter 2 IS best).
 	// Loop exhausts max-iters and ships iter 2's draft (best).
 	dispatch, _ := stubDispatcher(t, []string{
-		"# Draft v1",
+		nonTrivialDraftBody("Draft v1"),
 		"# Review\n\n## Bugs found\n\n1. **First bug**: blah\n2. **Second bug**: blah\n\n## Verdict\n\nfix-bugs-then-ship\n",
-		"# Draft v2 (final, fewer bugs)",
+		nonTrivialDraftBody("Draft v2 (final, fewer bugs)"),
 		"# Review\n\n## Bugs found\n\n1. **Different bug**: blah\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
 	var stderr bytes.Buffer
@@ -561,7 +577,7 @@ func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 		t.Fatalf("expected exit 0 on max-iters exhaust (ship best), got %d; stderr=%s", code, stderr.String())
 	}
 	body, _ := os.ReadFile(opts.OutputPath)
-	if !strings.Contains(string(body), "Draft v2") {
+	if !strings.Contains(string(body), "# Draft v2 (final, fewer bugs)") {
 		t.Fatalf("output should be the best draft (v2, 1 bug), got: %s", body)
 	}
 	if !strings.Contains(stderr.String(), "max iters") {
@@ -587,9 +603,9 @@ func TestRunLaneRefineStopsOnNoImprovement(t *testing.T) {
 	// The no-improvement stop should fire because bug count didn't
 	// drop, even though the bugs themselves changed.
 	dispatch, _ := stubDispatcher(t, []string{
-		"# Draft v1",
+		nonTrivialDraftBody("Draft v1"),
 		"# Review\n\n## Bugs found\n\n1. **Bug A**: x\n2. **Bug B**: y\n\n## Verdict\n\nfix-bugs-then-ship\n",
-		"# Draft v2",
+		nonTrivialDraftBody("Draft v2"),
 		"# Review\n\n## Bugs found\n\n1. **Bug C**: z\n2. **Bug D**: w\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
 	var stderr bytes.Buffer
@@ -618,9 +634,9 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 	// Iter 1: 1 bug. Iter 2: 5 bugs (regressed!). Loop should ship
 	// iter 1's draft, NOT iter 2's, because iter 1 had fewer bugs.
 	dispatch, _ := stubDispatcher(t, []string{
-		"# Draft v1 (BEST — 1 bug)",
+		nonTrivialDraftBody("Draft v1 (BEST — 1 bug)"),
 		"# Review\n\n## Bugs found\n\n1. **Bug A**: x\n\n## Verdict\n\nfix-bugs-then-ship\n",
-		"# Draft v2 (REGRESSED — 5 bugs)",
+		nonTrivialDraftBody("Draft v2 (REGRESSED — 5 bugs)"),
 		"# Review\n\n## Bugs found\n\n1. **Bug A**: x\n2. **Bug B**: y\n3. **Bug C**: z\n4. **Bug D**: w\n5. **Bug E**: v\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
 	var stderr bytes.Buffer
@@ -632,8 +648,78 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
-	if !strings.Contains(string(body), "Draft v1 (BEST") {
+	if !strings.Contains(string(body), "# Draft v1 (BEST") {
 		t.Fatalf("output should be the best draft (v1), not the regressed latest (v2). Got: %s", body)
+	}
+}
+
+// TestRefineDraftIsTrivialRejectsSmallAndStructurelessBodies locks
+// in the docs/refine-end-to-end-loop.md §2.1 honest-exit-codes
+// behavior. A draft file that's empty, under the byte floor, or
+// has no markdown section heading must be classified trivial so
+// the wrapper exits non-zero rather than silently shipping nothing.
+func TestRefineDraftIsTrivialRejectsSmallAndStructurelessBodies(t *testing.T) {
+	root := t.TempDir()
+	cases := []struct {
+		name        string
+		body        string
+		wantTrivial bool
+	}{
+		{"empty", "", true},
+		{"whitespace-only", "   \n\t\n", true},
+		{"single-line", "ERROR: lane wedged", true},
+		{"no-section-heading", strings.Repeat("padding line above the size floor.\n", 12), true},
+		{"valid-draft", nonTrivialDraftBody("test"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(root, tc.name+".md")
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			got, reason := refineDraftIsTrivial(path)
+			if got != tc.wantTrivial {
+				t.Fatalf("refineDraftIsTrivial(%q) = (%v, %q), want trivial=%v", tc.name, got, reason, tc.wantTrivial)
+			}
+		})
+	}
+}
+
+// TestRunLaneRefineFailsOnTrivialDraft locks in that a dispatch
+// which exits 0 but writes a trivially-empty draft.md (the silent-
+// failure shape from FEATURE_REQUEST_END_TO_END_QWEN_PARITY.md gap
+// 1) propagates as a non-zero wrapper exit. Without this guard,
+// orchestrators saw exit-0 success with no deliverable produced.
+func TestRunLaneRefineFailsOnTrivialDraft(t *testing.T) {
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "trivial-draft",
+		MaxIters:    3,
+		ProjectRoot: root,
+	}
+	// Dispatch exits 0 but writes only a 20-byte fragment to the
+	// draft path — the silent-failure shape.
+	dispatch := refineDispatchFn(func(metaBriefPath string, stdout, stderr io.Writer) int {
+		iterDir := filepath.Dir(metaBriefPath)
+		_ = os.WriteFile(filepath.Join(iterDir, "draft.md"), []byte("# stub\n"), 0o644)
+		return 0
+	})
+	var stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit on trivially-empty draft, got 0; stderr=%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "trivially-empty draft") {
+		t.Fatalf("expected trivially-empty-draft message in stderr, got: %s", stderr.String())
+	}
+	if _, err := os.Stat(opts.OutputPath); err == nil {
+		t.Fatalf("expected no output brief on trivial-draft failure, but %s exists", opts.OutputPath)
 	}
 }
 

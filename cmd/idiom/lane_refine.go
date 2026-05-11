@@ -272,6 +272,10 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			fmt.Fprintf(stderr, "refine: iter %d produced no draft at %s: %v\n", iter, draftPath, err)
 			return failsoft(iter, "draft-missing", 1)
 		}
+		if trivial, reason := refineDraftIsTrivial(draftPath); trivial {
+			fmt.Fprintf(stderr, "refine: iter %d produced a trivially-empty draft at %s (%s); treating as draft-missing\n", iter, draftPath, reason)
+			return failsoft(iter, "draft-trivial", 1)
+		}
 		lastDraftPath = draftPath
 
 		metaReviewPath := filepath.Join(iterDir, "meta-review.md")
@@ -555,6 +559,42 @@ func refineLoopDiverging(previous, current []string) bool {
 	return true
 }
 
+// refineMinDraftBytes is the minimum size for a draft to be considered
+// non-trivial. The smallest plausible brief — Problem + one Files row
+// + Acceptance — clears 400 bytes; 200 is a defensive floor that still
+// rejects 0-byte writes, single-line error messages, and unfilled
+// template fragments. Empirically observed real drafts are 3-5KB.
+const refineMinDraftBytes = 200
+
+// refineDraftIsTrivial returns true (with a one-word reason) when the
+// file at path is too small or shaped like an unfilled template to be
+// a real brief. A draft that passes os.Stat but is empty / template-
+// fragment-shaped historically slipped through and propagated as
+// exit-0 success even though no real deliverable existed (see
+// docs/refine-end-to-end-loop.md §2.1). The cheap content check below
+// catches the common shapes: zero-length, whitespace-only, or content
+// with no markdown section heading at all.
+func refineDraftIsTrivial(path string) (bool, string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return true, "stat-failed"
+	}
+	if info.Size() < refineMinDraftBytes {
+		return true, fmt.Sprintf("size=%dB<%dB", info.Size(), refineMinDraftBytes)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return true, "read-failed"
+	}
+	if strings.TrimSpace(string(body)) == "" {
+		return true, "whitespace-only"
+	}
+	if !strings.Contains(string(body), "\n## ") && !strings.HasPrefix(strings.TrimSpace(string(body)), "## ") {
+		return true, "no-section-heading"
+	}
+	return false, ""
+}
+
 func finalizeRefine(draftPath, outputPath string, iter int, reason string, stderr io.Writer) int {
 	return finalizeRefineWithTitle(draftPath, outputPath, "", iter, reason, stderr)
 }
@@ -564,6 +604,10 @@ func finalizeRefine(draftPath, outputPath string, iter int, reason string, stder
 // can identify refine-drafted briefs in lane history. Reads draft +
 // runs brief lint + writes output (with marker prepended).
 func finalizeRefineWithTitle(draftPath, outputPath, title string, iter int, reason string, stderr io.Writer) int {
+	if trivial, why := refineDraftIsTrivial(draftPath); trivial {
+		fmt.Fprintf(stderr, "refine: refusing to finalize trivial draft %s (%s); exiting non-zero rather than writing a silent-failure output\n", draftPath, why)
+		return 1
+	}
 	body, err := os.ReadFile(draftPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: cannot read final draft %s: %v\n", draftPath, err)
