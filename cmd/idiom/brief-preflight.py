@@ -15,6 +15,7 @@ the same lint before handoff.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -267,6 +268,33 @@ def main() -> int:
             "an explicit `line N` / `lines N-M` mention, or a quoted unique snippet from the file. "
             "Relational anchors (\"near X\", \"find the closing Y\") force the lane to spend reads "
             "locating the insertion site and frequently exhaust the pre-write budget."
+        )
+
+    # Atom-size estimation. The planner phase emits submit_plan with all
+    # inlined ```text content escaped as JSON `new_text` strings; once the
+    # estimated escaped size approaches the backend's max_tokens cap, the
+    # plan truncates mid-edit and the lane wedges at completion gate. We
+    # estimate from the raw text-fence character count, add a small escape
+    # overhead, and divide by the ~4 chars-per-token English/code heuristic.
+    # Thresholds assume the default planner max_tokens of 8192 from
+    # .idiom/backends.json; projects with a different cap can override via
+    # IDIOM_PLANNER_MAX_TOKENS env var.
+    estimated_tokens, heavy_blocks = estimate_output_token_load(text)
+    max_tokens_cap = planner_max_tokens_cap()
+    warn_threshold = max_tokens_cap // 2
+    fail_threshold = (max_tokens_cap * 4) // 5
+    if estimated_tokens >= fail_threshold:
+        failures.append(
+            f"atom-size estimate {estimated_tokens} tokens of inlined content "
+            f"exceeds {fail_threshold} (80% of planner max_tokens={max_tokens_cap}). "
+            f"submit_plan will likely truncate mid-edit. "
+            f"{decomposition_hint(heavy_blocks)}"
+        )
+    elif estimated_tokens >= warn_threshold:
+        warnings.append(
+            f"atom-size estimate {estimated_tokens} tokens of inlined content "
+            f"approaches {warn_threshold} (50% of planner max_tokens={max_tokens_cap}). "
+            f"Consider decomposing. {decomposition_hint(heavy_blocks)}"
         )
 
     structure_anchor_paths = sorted(structure_describing_anchor_paths(text, files))
@@ -562,6 +590,69 @@ def required_edit_blocks(text: str) -> list[tuple[str, str]]:
 
 def strip_fenced_blocks(text: str) -> str:
     return FENCE_RE.sub("", text)
+
+
+# Match ```text fences (the canonical content-fence the brief skeleton
+# requires for inlined code or file content). Captures the inner body so
+# we can sum its size. Other-language fences (```bash, ```sh, etc.) are
+# command snippets and excluded from the atom-size estimate.
+TEXT_FENCE_RE = re.compile(r"```text\s*\n(.*?)\n```", re.DOTALL)
+
+
+def planner_max_tokens_cap() -> int:
+    """Returns the planner's max_tokens cap used for size thresholds.
+
+    Defaults to 8192 (matches the shipped .idiom/backends.json for both
+    qwen3.6-35b and qwen3-coder-30b). Override via IDIOM_PLANNER_MAX_TOKENS
+    when a project uses a different backend cap.
+    """
+    raw = os.environ.get("IDIOM_PLANNER_MAX_TOKENS", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return 8192
+
+
+def estimate_output_token_load(text: str) -> tuple[int, list[tuple[int, str]]]:
+    """Estimate the tokens of inlined ``text`` content the planner must emit.
+
+    Returns (estimated_tokens, heavy_blocks) where heavy_blocks is a list of
+    (chars, preview) tuples sorted by size descending, useful for the
+    decomposition hint. The estimate sums the raw character count of every
+    ```text fence, applies a 1.2x JSON-escape overhead factor, and divides
+    by 4 (chars per token; standard English/code rule of thumb). This is
+    intentionally conservative — JSON-escaping `"` and `\\` and newlines
+    pushes overhead up; the 1.2x covers typical code.
+    """
+    blocks: list[tuple[int, str]] = []
+    total_chars = 0
+    for match in TEXT_FENCE_RE.finditer(text):
+        body = match.group(1)
+        body_len = len(body)
+        if body_len == 0:
+            continue
+        total_chars += body_len
+        preview = body.splitlines()[0][:60] if body else ""
+        blocks.append((body_len, preview))
+    blocks.sort(key=lambda b: b[0], reverse=True)
+    estimated_tokens = int((total_chars * 1.2) // 4)
+    return estimated_tokens, blocks
+
+
+def decomposition_hint(heavy_blocks: list[tuple[int, str]]) -> str:
+    """Render a top-3 heaviest-fences hint for the user."""
+    if not heavy_blocks:
+        return ""
+    top = heavy_blocks[:3]
+    parts = [
+        f"{chars} chars '{preview[:40]}...'" if preview else f"{chars} chars"
+        for chars, preview in top
+    ]
+    return "Heaviest inlined blocks: " + "; ".join(parts) + ". Split the brief along these boundaries into ADD-only / MODIFY-only / TEST-only sub-atoms."
 
 
 def resolve_workspace_root(start: Path) -> Path | None:

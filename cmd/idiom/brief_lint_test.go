@@ -332,3 +332,108 @@ func TestBriefLintAnchorVerificationWorkspaceSkipsCleanly(t *testing.T) {
 		t.Fatalf("stderr should carry the workspace-skip WARN: %s", out)
 	}
 }
+
+// buildInlinedContent constructs a ```text fence with `lineCount` lines
+// of ~25-char content each, for sizing the atom-size estimator near a
+// known threshold.
+func buildInlinedContent(lineCount int) string {
+	var b strings.Builder
+	b.WriteString("```text\n")
+	for i := 0; i < lineCount; i++ {
+		b.WriteString("    return 42 // synth line\n")
+	}
+	b.WriteString("```")
+	return b.String()
+}
+
+// TestBriefLintAtomSizeWarnsAroundHalfMaxTokens verifies the new
+// pre-dispatch atom-size estimator: an inlined-content payload that
+// approaches half the planner's max_tokens cap emits a WARN with a
+// decomposition hint (top-3 heaviest fences) but does not fail.
+func TestBriefLintAtomSizeWarnsAroundHalfMaxTokens(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"cmd/idiom/lane.go": "package main\nfunc Existing() {}\n",
+	})
+	// ~600 lines × 25 chars × 1.2 / 4 = ~4500 tokens → between
+	// WARN (4096) and FAIL (6553) at the default 8192 cap.
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `cmd/idiom/lane.go` | ADD `func added()` at line 2 |\n\n"+
+		"## Current state\n\nLine 2 is `func Existing() {}`.\n\n"+
+		buildInlinedContent(600)+"\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("expected exit=0 (WARN only), got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "atom-size estimate") {
+		t.Fatalf("expected atom-size WARN in output: %s", out)
+	}
+	if !strings.Contains(out, "Heaviest inlined blocks") {
+		t.Fatalf("expected decomposition hint in WARN: %s", out)
+	}
+}
+
+// TestBriefLintAtomSizeFailsAtEightyPercentCap verifies a brief whose
+// estimated output exceeds 80% of the planner's max_tokens cap is hard-
+// failed (exit 1), not warned. This is the threshold where submit_plan
+// will likely truncate mid-edit.
+func TestBriefLintAtomSizeFailsAtEightyPercentCap(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"cmd/idiom/lane.go": "package main\nfunc Existing() {}\n",
+	})
+	// ~1100 lines × 25 chars × 1.2 / 4 = ~8200 tokens → past FAIL
+	// threshold (6553 at 8192 cap).
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `cmd/idiom/lane.go` | ADD `func added()` at line 2 |\n\n"+
+		"## Current state\n\nLine 2 is `func Existing() {}`.\n\n"+
+		buildInlinedContent(1100)+"\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected exit=1 (FAIL), got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "submit_plan will likely truncate") {
+		t.Fatalf("expected truncation-warning in FAIL message: %s", out)
+	}
+}
+
+// TestBriefLintAtomSizeRespectsEnvOverride verifies that
+// IDIOM_PLANNER_MAX_TOKENS overrides the default cap of 8192. A small
+// cap (1024) should make even a tiny brief trip the FAIL threshold.
+func TestBriefLintAtomSizeRespectsEnvOverride(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"cmd/idiom/lane.go": "package main\nfunc Existing() {}\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `cmd/idiom/lane.go` | ADD `func added()` at line 2 |\n\n"+
+		"## Current state\n\nLine 2 is `func Existing() {}`.\n\n"+
+		buildInlinedContent(200)+"\n")
+	// 200 lines → ~1500 tokens. At cap=1024, threshold FAIL=819, so
+	// this should fail.
+	cmd := exec.Command("python3", script, brief)
+	cmd.Dir = ws
+	cmd.Env = append(os.Environ(), "IDIOM_PLANNER_MAX_TOKENS=1024")
+	out, err := cmd.CombinedOutput()
+	exit := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		exit = exitErr.ExitCode()
+	} else if err != nil {
+		t.Fatalf("preflight subprocess failed: %v (output=%s)", err, out)
+	}
+	if exit != 1 {
+		t.Fatalf("expected FAIL under cap=1024, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(string(out), "max_tokens=1024") {
+		t.Fatalf("expected env override to show in failure message: %s", out)
+	}
+}
