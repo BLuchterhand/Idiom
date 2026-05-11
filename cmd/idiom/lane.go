@@ -98,6 +98,8 @@ type laneOptions struct {
 	RefineSpecPath           string // refine mode: path to 1-paragraph spec
 	RefineOutputPath         string // refine mode: where to write the converged brief
 	RefineMaxIters           int    // refine mode: max draft+review+patch iterations (default 3)
+	Since                    string // history mode: duration string for --since (e.g. "1h", "24h")
+	FailedOnly               bool   // history mode: only show failed events
 	// coderRequested is set when the caller asked for the coder
 	// alias either explicitly (`--coder`) or implicitly (plan-execute
 	// with no --model override). The actual alias is resolved later
@@ -207,7 +209,16 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		opts.Model = resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RoleExecutor, stderr)
 	}
 	if opts.Mode == "history" {
-		if err := printLaneHistorySummary(opts.ProjectRoot, stdout); err != nil {
+		filter := laneHistoryFilter{FailedOnly: opts.FailedOnly}
+		if opts.Since != "" {
+			dur, err := time.ParseDuration(opts.Since)
+			if err != nil {
+				fmt.Fprintf(stderr, "lane: history: invalid --since value %q: %v\n", opts.Since, err)
+				return 2
+			}
+			filter.Since = time.Now().UTC().Add(-dur)
+		}
+		if err := printLaneHistorySummary(opts.ProjectRoot, stdout, filter); err != nil {
 			fmt.Fprintf(stderr, "lane: history: %v\n", err)
 			return 1
 		}
@@ -382,6 +393,8 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.RefineSpecPath, "spec", "", "refine mode: path to 1-paragraph spec file")
 	fs.StringVar(&opts.RefineOutputPath, "output", "", "refine mode: where to write the converged brief")
 	fs.IntVar(&opts.RefineMaxIters, "max-iters", 3, "refine mode: max draft+review+patch iterations (default 3)")
+	fs.StringVar(&opts.Since, "since", "", "history mode: show only events within the given duration (e.g. 1h, 24h)")
+	fs.BoolVar(&opts.FailedOnly, "failed", false, "history mode: show only events with non-zero exit code")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err

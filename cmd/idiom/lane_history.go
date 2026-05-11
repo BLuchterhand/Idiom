@@ -97,6 +97,70 @@ type laneHistorySummary struct {
 	ByProvenance map[string]int
 }
 
+// laneHistoryFilter constrains which events a summary includes.
+// Zero values mean "no filter" — every event is included.
+type laneHistoryFilter struct {
+	Since      time.Time // include events with ts >= Since; zero time = no filter
+	FailedOnly bool      // include only events with non-zero exit_code
+}
+
+// summarizeLaneHistoryWithFilter reads the history file and aggregates,
+// applying the given filter. Reuses the same JSONL parsing as
+// summarizeLaneHistory but skips events that don't match the filter.
+func summarizeLaneHistoryWithFilter(projectRoot string, filter laneHistoryFilter) (laneHistorySummary, error) {
+	path := filepath.Join(projectRoot, laneHistoryRelPath)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return laneHistorySummary{
+				ByMode:       map[string]int{},
+				ByExitCode:   map[int]int{},
+				BriefsByPath: map[string]int{},
+				ByProvenance: map[string]int{},
+			}, nil
+		}
+		return laneHistorySummary{}, err
+	}
+	out := laneHistorySummary{
+		ByMode:       map[string]int{},
+		ByExitCode:   map[int]int{},
+		BriefsByPath: map[string]int{},
+		ByProvenance: map[string]int{},
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var evt laneHistoryEvent
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+		if !filter.Since.IsZero() {
+			evtTs, err := time.Parse(time.RFC3339Nano, evt.Timestamp)
+			if err != nil {
+				continue
+			}
+			if evtTs.Before(filter.Since) {
+				continue
+			}
+		}
+		if filter.FailedOnly && evt.ExitCode == 0 {
+			continue
+		}
+		out.Total++
+		out.ByMode[evt.Mode]++
+		out.ByExitCode[evt.ExitCode]++
+		if evt.Brief != "" {
+			out.BriefsByPath[evt.Brief]++
+		}
+		if evt.BriefProvenance != "" {
+			out.ByProvenance[evt.BriefProvenance]++
+		}
+	}
+	return out, nil
+}
+
 // summarizeLaneHistory reads the history file and aggregates.
 // Malformed lines are skipped. A missing file returns an empty
 // summary with nil error.
@@ -188,8 +252,8 @@ func summarizeLaneHistoryByMode(projectRoot string, mode string) (laneHistorySum
 }
 
 // printLaneHistorySummary writes a human-readable breakdown to w.
-func printLaneHistorySummary(projectRoot string, w io.Writer) error {
-	s, err := summarizeLaneHistory(projectRoot)
+func printLaneHistorySummary(projectRoot string, w io.Writer, filter laneHistoryFilter) error {
+	s, err := summarizeLaneHistoryWithFilter(projectRoot, filter)
 	if err != nil {
 		return err
 	}
