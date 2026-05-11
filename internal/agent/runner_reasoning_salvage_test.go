@@ -149,6 +149,25 @@ func TestAutoSalvageRecoversFromReasoningWhenReplyIsEmpty(t *testing.T) {
 	_ = context.Background()
 }
 
+func TestExtractStructuredMarkdownFromReasoningRejectsUnfilledTemplate(t *testing.T) {
+	// Real shape observed in v10 dispatch: the model emits 0 visible
+	// content and its reasoning contains a copy of the meta-brief
+	// skeleton with `<bracket>` placeholders still unfilled. The
+	// salvage must refuse to ship that as a deliverable.
+	reasoning := "OK so the user wants me to write a brief. Let me look at the template structure.\n\n" +
+		"The skeleton says:\n\n" +
+		"## Files To Modify\n\n" +
+		"| File | Change |\n|------|--------|\n" +
+		"| `RELATIVE_PATH` | <one action per row; NEW FILE rows are exempt from the one-action rule (ADD, MODIFY, or NEW FILE: ...)> |\n\n" +
+		"## Verified Current State\n\n<quote relevant existing code with `<file:LINE>` anchors. Verify line numbers exist before citing.>\n\n" +
+		"## Required Behavior\n\n1. <numbered step with EXACT old_text/new_text or full new-file content in ```text fences>\n2. <next step>\n\n" +
+		"## Acceptance\n\n- `<shell command that verifies the change>`\n\nI need to fill in the placeholders.\n"
+	got := extractStructuredMarkdownFromReasoning(reasoning)
+	if got != "" {
+		t.Fatalf("expected salvage to refuse unfilled-template content; got %d chars: %q", len(got), got)
+	}
+}
+
 func TestAutoSalvageStillSkipsWhenNeitherReplyNorReasoningHasMarkdown(t *testing.T) {
 	dir := t.TempDir()
 	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})

@@ -3937,7 +3937,46 @@ func extractStructuredMarkdownFromReasoning(reasoning string) string {
 	if len(candidate) < 100 {
 		return ""
 	}
+	if reasoningCandidateLooksLikeUnfilledTemplate(candidate) {
+		return ""
+	}
 	return candidate
+}
+
+// reasoningCandidateLooksLikeUnfilledTemplate rejects salvaged
+// content that's the meta-brief's skeleton placeholder itself —
+// observed during refine v10 (#97): Coder-30B emitted 0 visible
+// content and 69KB of reasoning content that turned out to be the
+// model "thinking about" the template (copy-pasting `<RELATIVE_PATH>`
+// and `<numbered step...>` markers). The salvage matched the
+// structural anchors and would have shipped that garbage as a draft.
+//
+// Markers checked are the exact placeholder strings the refine
+// templates ship. If two or more appear in the candidate, treat it
+// as model-didn't-actually-fill-it and refuse to salvage.
+func reasoningCandidateLooksLikeUnfilledTemplate(candidate string) bool {
+	markers := []string{
+		"RELATIVE_PATH",
+		"<numbered step",
+		"<workspace/relative",
+		"<bracket placeholder>",
+		"<short title>",
+		"<description>",
+		"<how to fix>",
+		"<one or two sentences",
+		"<quote relevant existing code",
+		"<shell command that verifies",
+	}
+	hits := 0
+	for _, m := range markers {
+		if strings.Contains(candidate, m) {
+			hits++
+			if hits >= 2 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // tryAutoSalvageMarkdownDeliverable handles a specific Qwen-at-low-temp
