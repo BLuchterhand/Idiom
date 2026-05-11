@@ -60,6 +60,14 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		if outPath == "" {
 			t.Fatalf("stub: could not parse output path from meta %s", metaBriefPath)
 		}
+		// Resolve workspace-relative paths against the project root.
+		// The refine templates now substitute relative paths so the
+		// runner's RequiredEditPathsFromPrompt picks them up (#86
+		// auto-salvage failure analysis); the stub mirrors the
+		// runner's resolution to keep the test layout faithful.
+		if !filepath.IsAbs(outPath) {
+			outPath = filepath.Join(refineProjectRootFromIterDir(filepath.Dir(metaBriefPath)), outPath)
+		}
 		if calls >= len(responses) {
 			t.Fatalf("stub: more dispatch calls than canned responses (%d)", calls)
 		}
@@ -72,6 +80,70 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		calls++
 		return 0
 	}, &calls
+}
+
+func TestRefineWorkspaceRelConvertsAbsoluteToRelative(t *testing.T) {
+	cases := []struct {
+		root string
+		path string
+		want string
+	}{
+		{"/Users/ben/proj", "/Users/ben/proj/.idiom/refine/atom/iter-1/draft.md", ".idiom/refine/atom/iter-1/draft.md"},
+		{"/Users/ben/proj", "/Users/ben/proj/cmd/idiom/lane.go", "cmd/idiom/lane.go"},
+		// Different ancestor — refuse to coerce, return input.
+		{"/Users/ben/proj", "/elsewhere/file.md", "/elsewhere/file.md"},
+		// Empty projectRoot — pass through.
+		{"", "/some/path.md", "/some/path.md"},
+		// Empty path — pass through.
+		{"/x", "", ""},
+	}
+	for _, c := range cases {
+		got := refineWorkspaceRel(c.root, c.path)
+		if got != c.want {
+			t.Errorf("refineWorkspaceRel(%q, %q) = %q, want %q", c.root, c.path, got, c.want)
+		}
+	}
+}
+
+func TestRefineProjectRootFromIterDirWalksUpFourLevels(t *testing.T) {
+	cases := map[string]string{
+		"/Users/ben/proj/.idiom/refine/my-atom/iter-1": "/Users/ben/proj",
+		"/a/b/c/d/.idiom/refine/x/iter-7":              "/a/b/c/d",
+	}
+	for in, want := range cases {
+		got := refineProjectRootFromIterDir(in)
+		if got != want {
+			t.Errorf("refineProjectRootFromIterDir(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
+	// End-to-end: write the meta brief and confirm the rendered
+	// "Files To Modify" row has a workspace-relative path, not an
+	// absolute one. This is what lets RequiredEditPathsFromPrompt
+	// populate the runtime brief so auto-salvage (#86) can fire.
+	root := t.TempDir()
+	iterDir := filepath.Join(root, ".idiom", "refine", "atom", "iter-1")
+	if err := os.MkdirAll(iterDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	metaPath := filepath.Join(iterDir, "meta-review.md")
+	draftPath := filepath.Join(iterDir, "draft.md")
+	reviewPath := filepath.Join(iterDir, "review.md")
+	if err := writeRefineReviewMeta(metaPath, draftPath, reviewPath, root); err != nil {
+		t.Fatalf("writeRefineReviewMeta: %v", err)
+	}
+	body, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+	if strings.Contains(string(body), root+"/") {
+		t.Fatalf("meta should not contain absolute project root path; body contains %q\n%s", root+"/", body)
+	}
+	if !strings.Contains(string(body), ".idiom/refine/atom/iter-1/review.md") {
+		t.Fatalf("expected workspace-relative review path in meta body:\n%s", body)
+	}
 }
 
 func TestParseRefineVerdict(t *testing.T) {
@@ -364,6 +436,12 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 					}
 				}
 			}
+		}
+		// Resolve workspace-relative paths against the project root
+		// — meta-brief paths are now relative (see stubDispatcher
+		// rationale).
+		if !filepath.IsAbs(outPath) {
+			outPath = filepath.Join(refineProjectRootFromIterDir(filepath.Dir(metaBriefPath)), outPath)
 		}
 		// Simulate iter-2 review wedge: don't write the output file
 		// and return non-zero exit (matches real wedge shape).

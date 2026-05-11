@@ -320,7 +320,7 @@ func refineSanitizeTitle(title string) string {
 func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, specBody string) error {
 	body := strings.NewReplacer(
 		"{{SPEC_BODY}}", strings.TrimSpace(specBody),
-		"{{DRAFT_PATH}}", draftPath,
+		"{{DRAFT_PATH}}", refineWorkspaceRel(opts.ProjectRoot, draftPath),
 		"{{TITLE}}", opts.Title,
 	).Replace(refineDraftTemplate)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
@@ -328,20 +328,58 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 
 func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot string) error {
 	body := strings.NewReplacer(
-		"{{DRAFT_PATH}}", draftPath,
-		"{{REVIEW_PATH}}", reviewPath,
+		"{{DRAFT_PATH}}", refineWorkspaceRel(projectRoot, draftPath),
+		"{{REVIEW_PATH}}", refineWorkspaceRel(projectRoot, reviewPath),
 		"{{PROJECT_ROOT}}", projectRoot,
 	).Replace(refineReviewTemplate)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
 func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath string) error {
+	projectRoot := refineProjectRootFromIterDir(filepath.Dir(metaPath))
 	body := strings.NewReplacer(
-		"{{PREV_DRAFT_PATH}}", prevDraftPath,
-		"{{PREV_REVIEW_PATH}}", prevReviewPath,
-		"{{NEW_DRAFT_PATH}}", newDraftPath,
+		"{{PREV_DRAFT_PATH}}", refineWorkspaceRel(projectRoot, prevDraftPath),
+		"{{PREV_REVIEW_PATH}}", refineWorkspaceRel(projectRoot, prevReviewPath),
+		"{{NEW_DRAFT_PATH}}", refineWorkspaceRel(projectRoot, newDraftPath),
 	).Replace(refinePatchTemplate)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
+}
+
+// refineWorkspaceRel converts an absolute path into a workspace-
+// relative one when projectRoot is its ancestor. This is critical
+// for RequiredEditPathsFromPrompt — pathparse's
+// LooksLikeWorkspacePathToken rejects any token starting with "/",
+// so absolute paths in the meta-brief's "Files To Modify" table
+// never populate RuntimeBrief.RequiredEditPaths. Empty required-
+// edit-paths means the auto-salvage path (#86) skips with
+// `count=0, want 1`, and the lane wedges on the completion gate
+// when the model forgets to call write_file. Returns the input
+// unchanged when the relative computation fails (different drive,
+// projectRoot empty, etc.) so the substitution stays well-formed.
+func refineWorkspaceRel(projectRoot, p string) string {
+	if strings.TrimSpace(projectRoot) == "" || strings.TrimSpace(p) == "" {
+		return p
+	}
+	rel, err := filepath.Rel(projectRoot, p)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return p
+	}
+	return rel
+}
+
+// refineProjectRootFromIterDir derives the project root from a
+// state-dir iter path. The state dir layout is fixed:
+// <projectRoot>/.idiom/refine/<title>/iter-N/. Walking up four
+// segments recovers projectRoot. Used by writeRefinePatchMeta which
+// otherwise doesn't have a projectRoot argument; rather than thread
+// it through every iter, derive it from the path the caller already
+// computed.
+func refineProjectRootFromIterDir(iterDir string) string {
+	dir := iterDir
+	for i := 0; i < 4; i++ {
+		dir = filepath.Dir(dir)
+	}
+	return dir
 }
 
 var refineVerdictRe = regexp.MustCompile(`(?im)^##\s*Verdict\s*$`)
