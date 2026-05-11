@@ -100,6 +100,7 @@ type laneOptions struct {
 	RefineMaxIters           int    // refine mode: max draft+review+patch iterations (default 3)
 	Since                    string // history mode: duration string for --since (e.g. "1h", "24h")
 	FailedOnly               bool   // history mode: only show failed events
+	ModeFilter               string // history mode: only show events for this lane mode
 	ExplainSessionID         string // explain mode: specific session id (empty = latest)
 	ExplainBriefFilter       string // explain mode: filter by brief path (empty = unfiltered)
 	// coderRequested is set when the caller asked for the coder
@@ -211,7 +212,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		opts.Model = resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RoleExecutor, stderr)
 	}
 	if opts.Mode == "history" {
-		filter := laneHistoryFilter{FailedOnly: opts.FailedOnly}
+		filter := laneHistoryFilter{FailedOnly: opts.FailedOnly, ModeFilter: opts.ModeFilter}
 		if opts.Since != "" {
 			dur, err := time.ParseDuration(opts.Since)
 			if err != nil {
@@ -219,6 +220,10 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 				return 2
 			}
 			filter.Since = time.Now().UTC().Add(-dur)
+		}
+		if opts.ModeFilter != "" && !isKnownLaneMode(opts.ModeFilter) {
+			fmt.Fprintf(stderr, "lane: history: unknown --lane-mode %q (valid: plan-execute, implement, refine, explain, history)\n", opts.ModeFilter)
+			return 2
 		}
 		if err := printLaneHistorySummary(opts.ProjectRoot, stdout, filter); err != nil {
 			fmt.Fprintf(stderr, "lane: history: %v\n", err)
@@ -352,6 +357,17 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	return 0
 }
 
+// isKnownLaneMode reports whether mode is one of the lane subcommand
+// names. Used both for first-arg validation in parseLaneOptions and
+// for --lane-mode filter validation in history.
+func isKnownLaneMode(mode string) bool {
+	switch strings.TrimSpace(mode) {
+	case "plan-execute", "implement", "history", "refine", "explain":
+		return true
+	}
+	return false
+}
+
 // parseLaneOptions parses lane-specific flags + the positional brief
 // path. Mode is required as the first positional argument and must
 // be one of {plan-execute, implement}.
@@ -360,10 +376,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 		return laneOptions{}, fmt.Errorf("lane: usage: idiom lane <mode> [flags] <brief>")
 	}
 	mode := strings.TrimSpace(args[0])
-	switch mode {
-	case "plan-execute", "implement", "history", "refine", "explain":
-		// ok
-	default:
+	if !isKnownLaneMode(mode) {
 		return laneOptions{}, fmt.Errorf("lane: --mode must be one of plan-execute, implement, history, refine, explain (got %q)", mode)
 	}
 
@@ -406,6 +419,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.IntVar(&opts.RefineMaxIters, "max-iters", 3, "refine mode: max draft+review+patch iterations (default 3)")
 	fs.StringVar(&opts.Since, "since", "", "history mode: show only events within the given duration (e.g. 1h, 24h)")
 	fs.BoolVar(&opts.FailedOnly, "failed", false, "history mode: show only events with non-zero exit code")
+	fs.StringVar(&opts.ModeFilter, "lane-mode", "", "history mode: show only events for this lane mode (plan-execute, implement, refine, explain, history)")
 	fs.StringVar(&opts.ExplainSessionID, "session", "", "explain mode: specific session id to diagnose (default: most recent)")
 	fs.StringVar(&opts.ExplainBriefFilter, "brief", "", "explain mode: filter to most-recent session for this brief path")
 

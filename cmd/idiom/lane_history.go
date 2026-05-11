@@ -116,6 +116,7 @@ type laneHistorySummary struct {
 type laneHistoryFilter struct {
 	Since      time.Time // include events with ts >= Since; zero time = no filter
 	FailedOnly bool      // include only events with non-zero exit_code
+	ModeFilter string    // include only events whose Mode equals this (empty = no filter)
 }
 
 // summarizeLaneHistoryWithFilter reads the history file and aggregates,
@@ -160,6 +161,9 @@ func summarizeLaneHistoryWithFilter(projectRoot string, filter laneHistoryFilter
 			}
 		}
 		if filter.FailedOnly && evt.ExitCode == 0 {
+			continue
+		}
+		if filter.ModeFilter != "" && evt.Mode != filter.ModeFilter {
 			continue
 		}
 		out.Total++

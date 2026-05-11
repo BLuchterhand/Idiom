@@ -254,6 +254,61 @@ func TestSummarizeLaneHistoryWithFilterNoFilterEqualsOriginal(t *testing.T) {
 	}
 }
 
+func TestSummarizeLaneHistoryWithFilterModeFilter(t *testing.T) {
+	root := t.TempDir()
+	mustAppend := func(mode, brief string, exit int) {
+		t.Helper()
+		if err := appendLaneHistory(root, laneHistoryEvent{Mode: mode, Brief: brief, ExitCode: exit}); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	mustAppend("plan-execute", "a.md", 0)
+	mustAppend("plan-execute", "b.md", 1)
+	mustAppend("implement", "c.md", 0)
+	mustAppend("refine", "d.md", 0)
+
+	filter := laneHistoryFilter{ModeFilter: "plan-execute"}
+	s, err := summarizeLaneHistoryWithFilter(root, filter)
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if s.Total != 2 {
+		t.Fatalf("Total = %d, want 2 (filtered to plan-execute)", s.Total)
+	}
+	if s.ByMode["implement"] != 0 || s.ByMode["refine"] != 0 {
+		t.Fatalf("non-plan-execute modes should be filtered out: %+v", s.ByMode)
+	}
+}
+
+func TestSummarizeLaneHistoryWithFilterCombinesAllThree(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+	mustAppend := func(mode string, exit int, ago time.Duration) {
+		t.Helper()
+		evt := laneHistoryEvent{Mode: mode, ExitCode: exit, Timestamp: now.Add(-ago).Format(time.RFC3339Nano)}
+		if err := appendLaneHistory(root, evt); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	mustAppend("plan-execute", 1, 2*time.Hour) // wrong since, right mode+failed
+	mustAppend("plan-execute", 0, 30*time.Minute) // wrong failed, right since+mode
+	mustAppend("implement", 1, 30*time.Minute)    // wrong mode, right since+failed
+	mustAppend("plan-execute", 1, 30*time.Minute) // matches all
+
+	filter := laneHistoryFilter{
+		Since:      now.Add(-1 * time.Hour),
+		FailedOnly: true,
+		ModeFilter: "plan-execute",
+	}
+	s, err := summarizeLaneHistoryWithFilter(root, filter)
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if s.Total != 1 {
+		t.Fatalf("expected exactly 1 event matching all 3 filters, got %d", s.Total)
+	}
+}
+
 func TestSummarizeLaneHistoryAggregatesTokens(t *testing.T) {
 	root := t.TempDir()
 	mustAppend := func(evt laneHistoryEvent) {
