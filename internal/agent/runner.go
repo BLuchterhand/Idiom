@@ -753,7 +753,7 @@ func (r *Runner) Run(
 				continue
 			}
 		}
-		if scope := postReadinessGapScope(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req); scope != "" {
+		if scope := postReadinessGapScopeForBrief(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req, r.RuntimeBrief); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
 				requestBudget.postReadinessNoGapRejections++
 				if strings.HasPrefix(r.agentName(), "child:") {
@@ -2855,6 +2855,31 @@ func postReadinessGapScope(agent string, delegatedReadOnlyAnswerReady bool, post
 		return "answer_readiness_reached"
 	}
 	return ""
+}
+
+// postReadinessGapScopeForBrief is the brief-aware variant used by
+// the main loop. The plain postReadinessGapScope returns
+// "answer_readiness_reached" whenever a delegated read-only child
+// reported sufficient evidence — but for a mutation-required parent
+// (refine draft, refine patch, plan-execute, etc.) the parent's
+// deliverable is a write, not an answer. A child's read-readiness
+// doesn't imply the parent is done; it just means the parent has
+// the evidence it needs to commit the write. Suppressing the gap
+// scope in this case prevents the post-readiness gate from firing
+// on the parent's next read.
+//
+// The child:* path is still gated normally — children that are
+// themselves read-only correctly answer-now.
+func postReadinessGapScopeForBrief(agent string, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) string {
+	scope := postReadinessGapScope(agent, delegatedReadOnlyAnswerReady, postChildPacketActive, req)
+	if scope == "answer_readiness_reached" && runnerBriefRequiresMutation(brief) {
+		// Parent is a mutation lane; the child's read-readiness doesn't
+		// fulfill the parent's write contract. Defer to the normal
+		// completion gate (which checks RequiredEditPaths) rather than
+		// the answer-now gate.
+		return ""
+	}
+	return scope
 }
 
 func postReadinessGap(req workspace.ToolRequest) string {
