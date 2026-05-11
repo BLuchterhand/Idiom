@@ -63,9 +63,6 @@ Literal strings, comments, macro labels, doctest/test names, and single known
 sections in test/spec-like files are exact-text questions, not symbol questions:
 use one exact text/range confirmation if needed instead of broad file outlines
 or symbol reads.
-If a read/search is rejected because the pre-write budget is exhausted, use the
-gathered packet and tool evidence to attempt the scoped edit unless the exact
-edit location is still unknown.
 If idiom itself creates generic friction that changes the task outcome, call
 `harness_feedback` before closeout with category, component, expected, observed,
 impact, evidence, and confidence. Use it for harness/tool/prompt/context gaps

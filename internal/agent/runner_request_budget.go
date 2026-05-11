@@ -17,7 +17,6 @@ type runnerRequestBudgetState struct {
 	broadEvidenceDelegationSatisfied bool
 	readOnlyChildTaskSatisfied       bool
 	synthesisNudgeFired              bool
-	readBudgetNudgeFired             bool
 	readCallCount                    int
 	readCallsSinceWrite              int
 	postChildReadCalls               int
@@ -215,26 +214,6 @@ func (s *runnerRequestBudgetState) readBudgetDecision(policy RunPolicy, req work
 			RejectStopReason:  "post_child_read_budget_exhausted",
 			ForceAnswerReason: "post_child_read_budget_exhausted",
 			ForceAnswerPrompt: "Post-child read budget is exhausted. Tools are now disabled. Use the child packet and targeted follow-up evidence to write the normal final answer. If one exact claim remains unsupported, state that uncertainty after the answer.",
-		}
-	}
-	if policy.ReadBudgetSoft > 0 && s.readCallCount >= policy.ReadBudgetSoft && !s.readBudgetNudgeFired {
-		s.readBudgetNudgeFired = true
-		return runnerRequestBudgetDecision{
-			Handled:   true,
-			Nudge:     fmt.Sprintf("You have made %d read-class tool calls this turn. Before more reads, update your plan: summarize what you've learned, state the remaining unknown, and commit to the minimal next step. In plan mode, the output is the plan — not another round of reads.", s.readCallCount),
-			EventRole: "read_budget_nudge",
-		}
-	}
-	if policy.ReadBudgetHard > 0 && s.readCallsSinceWrite > policy.ReadBudgetHard {
-		return runnerRequestBudgetDecision{
-			Handled:           true,
-			EventRole:         "read_budget_hard_block",
-			EventContent:      fmt.Sprintf("read-class budget exhausted after %d read/search calls without a write", s.readCallsSinceWrite-1),
-			RejectSummary:     "Read budget exhausted",
-			RejectError:       fmt.Sprintf("you already used %d read/search tool calls without making a write. Use the gathered evidence to satisfy the active contract: write or report a concrete blocker in a write-capable lane, or answer in a read-only lane. Mention only one unsupported claim if completion is still blocked.", s.readCallsSinceWrite-1),
-			RejectStopReason:  "read_budget_exhausted",
-			ForceAnswerReason: "read_budget_exhausted",
-			ForceAnswerPrompt: "Read/search budget is exhausted. Tools are now disabled. Satisfy the active contract from the evidence already gathered. For write-capable lanes, report changed paths or the concrete blocker; for read-only lanes, answer directly. If one exact claim remains unsupported, state that uncertainty after the supported answer.",
 		}
 	}
 	return runnerRequestBudgetDecision{}

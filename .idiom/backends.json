@@ -12,7 +12,7 @@
           "cache_bytes": 21474836480,
           "max_tokens": 8192,
           "extra_args": [
-            "--temp", "1.0",
+            "--temp", "0.6",
             "--top-p", "0.95",
             "--top-k", "20",
             "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}"

@@ -115,18 +115,28 @@ func runQueueRun(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	// Reentrancy guard: if an ancestor process already holds a lease
-	// in this pool (signaled via IDIOM_QUEUE_HELD_POOLS), skip our
-	// own Acquire and exec the child directly. Otherwise chained
-	// wrappers like `queue run --pool X -- queue run --pool X --`
-	// or a parent that pre-acquires plus a child wrapper would
-	// self-deadlock on single-cap pools — the daemon doesn't know
-	// the second request is from inside the first lease's lifetime.
-	// See BUG_QUEUE_DUAL_ACQUIRE_DEADLOCK.md for the original repro.
+	// in ANY pool (signaled via IDIOM_QUEUE_HELD_POOLS), skip our
+	// own Acquire and exec the child directly. Same-pool nesting
+	// would self-deadlock on single-cap pools (the daemon doesn't
+	// know the second request is from inside the first lease's
+	// lifetime — see BUG_QUEUE_DUAL_ACQUIRE_DEADLOCK.md). Cross-pool
+	// nesting created a dining-philosophers deadlock when two
+	// sessions each held one pool and waited for the other (observed
+	// 2026-05-10: Colony held qwen-35b waiting on qwen-coder for its
+	// nested plan-execute; idiom held qwen-coder waiting on qwen-35b
+	// for its nested refine review). Treat any held lease as enough
+	// serialization for this session and skip nested acquires
+	// regardless of pool.
 	var lease *runner.Lease
 	resolvedPool := *pool
-	if runner.PoolHeldByAncestor(os.Getenv(runner.HeldPoolsEnv), *pool) {
+	heldPoolsEnv := os.Getenv(runner.HeldPoolsEnv)
+	if runner.PoolHeldByAncestor(heldPoolsEnv, *pool) {
 		if !*quiet {
-			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot; skipping nested acquire\n", *pool)
+			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot in same pool; skipping nested acquire\n", *pool)
+		}
+	} else if strings.TrimSpace(heldPoolsEnv) != "" {
+		if !*quiet {
+			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot in different pool(s) (%s); skipping nested acquire to prevent cross-pool deadlock — wrap the outer command with the pool the inner inference actually uses\n", *pool, heldPoolsEnv)
 		}
 	} else {
 		l, err := runner.Acquire(ctx, *socketPath, *pool, *label, *clientID)
@@ -184,8 +194,7 @@ func runQueueRun(args []string, stdout, stderr io.Writer) int {
 	cmd.Env = append(os.Environ(), runner.HeldPoolsEnv+"="+heldPools)
 
 	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return exitErr.ExitCode()
 		}
 		fmt.Fprintf(stderr, "queue run: %v\n", err)

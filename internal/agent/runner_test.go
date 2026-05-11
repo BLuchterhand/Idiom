@@ -2708,390 +2708,6 @@ func TestModelErrorAfterPartialEditReturnsTypedBlocker(t *testing.T) {
 	}
 }
 
-func TestMutationReadBudgetExhaustionReturnsImplementationBlocker(t *testing.T) {
-	root := t.TempDir()
-	var replies []string
-	for i := 0; i < mutationReadBudgetHard; i++ {
-		path := fmt.Sprintf("%c.txt", 'a'+rune(i))
-		if err := writeTestFile(root, path, "seed\n"); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":%q,"start_line":1,"end_line":1}`, path))
-	}
-	replies = append(replies, `{"tool":"search_content","path":".","pattern":"still looking"}`)
-	replies = append(replies, `{"tool":"read_file","path":"target.txt","start_line":1,"end_line":1}`)
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests >= len(replies) {
-			t.Fatalf("unexpected extra chat request")
-		}
-		reply := replies[requests]
-		requests++
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	var completion runnerCompletionStatus
-	var sawRecovery bool
-	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root: root,
-			CWD:  root,
-		}),
-		Policy: RunPolicy{MaxToolSteps: mutationReadBudgetHard + 4, MaxNoProgressTurns: 6},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "implementation",
-			Contract:          "implementation_result",
-			Objective:         "Update the target file.",
-			PermissionProfile: "guarded_workspace_write",
-			TargetRefs:        []string{"target.txt"},
-		},
-		OnEvent: func(event RunEvent) {
-			if event.Role == "implementation_write_only_recovery" {
-				sawRecovery = true
-			}
-			if event.Role == "completion_status" {
-				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
-					t.Fatalf("decode completion status: %v", err)
-				}
-			}
-		},
-	}
-	answer, err := runner.Run(
-		context.Background(),
-		[]llama.ChatMessage{{Role: "user", Content: "Update the target file."}},
-		llama.ChatOptions{},
-		nil,
-		nil,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !strings.HasPrefix(answer, "<<QUESTION>>:") {
-		t.Fatalf("expected implementation blocker marker, got %q", answer)
-	}
-	if !strings.Contains(answer, "Read/search budget exhausted") || !strings.Contains(answer, "target.txt") {
-		t.Fatalf("expected budget blocker with target context, got %q", answer)
-	}
-	if completion.Status != "blocked" || completion.BlockerKind != "read_budget_exhausted_before_write" || completion.EditAttempted {
-		t.Fatalf("unexpected completion status: %#v", completion)
-	}
-	if !completion.RequiresEdit || !completion.UserVisibleBlocker || completion.Contract != "implementation_result" {
-		t.Fatalf("completion status missing implementation contract: %#v", completion)
-	}
-	if !sawRecovery {
-		t.Fatalf("expected write-only recovery nudge before final blocker")
-	}
-	if requests != len(replies) {
-		t.Fatalf("expected %d executed reads plus one blocked read request, used %d/%d replies", mutationReadBudgetHard, requests, len(replies))
-	}
-}
-
-func TestMutationReadBudgetRecoveryHidesCppFileOutline(t *testing.T) {
-	root := t.TempDir()
-	for i := 0; i < mutationReadBudgetHard; i++ {
-		path := fmt.Sprintf("%c.txt", 'a'+rune(i))
-		if err := writeTestFile(root, path, "seed\n"); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	replies := make([]string, 0, mutationReadBudgetHard+2)
-	for i := 0; i < mutationReadBudgetHard; i++ {
-		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":"%c.txt","start_line":1,"end_line":1}`, 'a'+rune(i)))
-	}
-	replies = append(replies,
-		`{"tool":"search_content","path":".","pattern":"still looking"}`,
-		`{"tool":"cpp_file_outline","path":"native/tests/test_energy.cpp"}`,
-	)
-
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests >= len(replies) {
-			t.Fatalf("unexpected extra chat request")
-		}
-		reply := replies[requests]
-		requests++
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	var sawRecovery bool
-	var successfulCppOutlineResults int
-	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root: root,
-			CWD:  root,
-		}),
-		Policy: RunPolicy{MaxToolSteps: mutationReadBudgetHard + 4, MaxNoProgressTurns: 8},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "implementation",
-			Contract:          "implementation_result",
-			Objective:         "Update the target file.",
-			PermissionProfile: "guarded_workspace_write",
-			TargetRefs:        []string{"native/tests/test_energy.cpp"},
-		},
-		OnEvent: func(event RunEvent) {
-			if event.Role == "implementation_write_only_recovery" {
-				sawRecovery = true
-			}
-		},
-	}
-	answer, err := runner.Run(
-		context.Background(),
-		[]llama.ChatMessage{{Role: "user", Content: "Update the target file."}},
-		llama.ChatOptions{},
-		nil,
-		nil,
-		func(event ToolResultEvent) {
-			if event.Request.Tool == "cpp_file_outline" && event.Result.Error == "" {
-				successfulCppOutlineResults++
-			}
-		},
-	)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !strings.HasPrefix(answer, "<<QUESTION>>:") || !strings.Contains(answer, "Read/search budget exhausted") {
-		t.Fatalf("expected implementation budget blocker, got %q", answer)
-	}
-	if !sawRecovery {
-		t.Fatalf("expected write-only recovery nudge")
-	}
-	if successfulCppOutlineResults != 0 {
-		t.Fatalf("cpp_file_outline should be blocked by write-only recovery before execution, got %d successful result(s)", successfulCppOutlineResults)
-	}
-	if requests != len(replies) {
-		t.Fatalf("expected %d requests, got %d answer=%q", len(replies), requests, answer)
-	}
-}
-
-func TestMutationReadBudgetExhaustionAllowsImplementationRecoveryWrite(t *testing.T) {
-	root := t.TempDir()
-	if err := writeTestFile(root, "target.txt", "before\n"); err != nil {
-		t.Fatalf("write target: %v", err)
-	}
-	for i := 0; i < mutationReadBudgetHard; i++ {
-		path := fmt.Sprintf("%c.txt", 'a'+rune(i))
-		if err := writeTestFile(root, path, "seed\n"); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	replies := []string{`{"tool":"read_file","path":"target.txt","start_line":1,"end_line":1}`}
-	for i := 0; i < mutationReadBudgetHard-1; i++ {
-		replies = append(replies, fmt.Sprintf(`{"tool":"read_file","path":"%c.txt","start_line":1,"end_line":1}`, 'a'+rune(i)))
-	}
-	replies = append(replies,
-		`{"tool":"search_content","path":".","pattern":"still looking"}`,
-		`{"tool":"edit_file","path":"target.txt","start_line":1,"end_line":1,"content":"after\n","description":"update target"}`,
-		`{"tool":"shell","command":"git diff --check --no-index target.txt target.txt","workdir":"."}`,
-		"Changed paths:\n- target.txt\nVerification: git diff --check --no-index target.txt target.txt passed.",
-	)
-
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests >= len(replies) {
-			t.Fatalf("unexpected extra chat request")
-		}
-		reply := replies[requests]
-		requests++
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	var sawRecovery bool
-	var sawBlockedCompletion bool
-	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root:                  root,
-			CWD:                   root,
-			Shell:                 "/bin/sh",
-			CommandTimeoutSeconds: 5,
-			EnableShell:           true,
-			EnableWrites:          true,
-		}),
-		Policy: RunPolicy{MaxToolSteps: mutationReadBudgetHard + 4, MaxNoProgressTurns: 8},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "implementation",
-			Contract:          "implementation_result",
-			Objective:         "Update the target file.",
-			PermissionProfile: "guarded_workspace_write",
-			TargetRefs:        []string{"target.txt"},
-		},
-		OnEvent: func(event RunEvent) {
-			if event.Role == "implementation_write_only_recovery" {
-				sawRecovery = true
-			}
-			if event.Role == "completion_status" {
-				var completion runnerCompletionStatus
-				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
-					t.Fatalf("decode completion status: %v", err)
-				}
-				if completion.Status == "blocked" {
-					sawBlockedCompletion = true
-				}
-			}
-		},
-	}
-	answer, err := runner.Run(
-		context.Background(),
-		[]llama.ChatMessage{{Role: "user", Content: "Update the target file."}},
-		llama.ChatOptions{},
-		nil,
-		nil,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !strings.Contains(answer, "target.txt") {
-		t.Fatalf("expected normal implementation answer, got %q", answer)
-	}
-	if !sawRecovery {
-		t.Fatalf("expected write-only recovery nudge")
-	}
-	if sawBlockedCompletion {
-		t.Fatalf("did not expect blocked completion after successful recovery")
-	}
-	content, err := os.ReadFile(filepath.Join(root, "target.txt"))
-	if err != nil {
-		t.Fatalf("read target: %v", err)
-	}
-	if string(content) != "after\n" {
-		t.Fatalf("target not edited through recovery, got %q", content)
-	}
-	if requests != len(replies) {
-		t.Fatalf("expected %d requests, got %d answer=%q", len(replies), requests, answer)
-	}
-}
-
-func TestMutationReadBudgetRecoveryTargetsRemainingRequiredEditPaths(t *testing.T) {
-	root := t.TempDir()
-	if err := writeTestFile(root, "a.txt", "before a\n"); err != nil {
-		t.Fatalf("write a: %v", err)
-	}
-	if err := writeTestFile(root, "b.txt", "before b\n"); err != nil {
-		t.Fatalf("write b: %v", err)
-	}
-
-	replies := []string{
-		`{"tool":"write_file","path":"a.txt","content":"after a\n","description":"update first required file"}`,
-		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1,"named_gap":"refresh the current line in remaining required path b.txt before editing","why_not_answering":"the edit anchor for b.txt could be stale"}`,
-		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1,"named_gap":"double-check b.txt before editing","why_not_answering":"the edit anchor for b.txt could be stale"}`,
-		`{"tool":"write_file","path":"b.txt","content":"after b\n","description":"update remaining required file"}`,
-		`{"tool":"shell","command":"git diff --check --no-index a.txt a.txt","workdir":"."}`,
-		"Changed paths:\n- a.txt\n- b.txt\nVerification: not required for this test fixture.",
-	}
-
-	requests := 0
-	extraRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var reply string
-		if requests >= len(replies) {
-			extraRequests++
-			reply = "Changed paths:\n- a.txt\n- b.txt\nVerification: not required for this test fixture."
-		} else {
-			reply = replies[requests]
-		}
-		requests++
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	var recoveryPrompt string
-	var sawBlockedCompletion bool
-	var eventLog []string
-	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root:                  root,
-			CWD:                   root,
-			Shell:                 "/bin/sh",
-			CommandTimeoutSeconds: 5,
-			EnableShell:           true,
-			EnableWrites:          true,
-		}),
-		Policy: RunPolicy{MaxToolSteps: 12, MaxNoProgressTurns: 8, ReadBudgetHard: 1},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:           "implementation",
-			Contract:             "implementation_result",
-			VerificationContract: "not_required_for_text_mutations",
-			Objective:            "Update both required files.",
-			PermissionProfile:    "guarded_workspace_write",
-			RequiredEditPaths:    []string{"a.txt", "b.txt"},
-		},
-		OnEvent: func(event RunEvent) {
-			if event.Role == "completion_gate_rejected" || event.Role == "completion_status" || event.Role == "implementation_write_only_recovery" {
-				eventLog = append(eventLog, event.Role+": "+event.Content)
-			}
-			if event.Role == "implementation_write_only_recovery" {
-				recoveryPrompt = event.Content
-			}
-			if event.Role == "completion_status" {
-				var completion runnerCompletionStatus
-				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
-					t.Fatalf("decode completion status: %v", err)
-				}
-				if completion.Status == "blocked" {
-					sawBlockedCompletion = true
-				}
-			}
-		},
-	}
-	answer, err := runner.Run(
-		context.Background(),
-		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt and b.txt."}},
-		llama.ChatOptions{},
-		nil,
-		nil,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if extraRequests != 0 {
-		t.Fatalf("unexpected extra chat request count=%d events=%v answer=%q", extraRequests, eventLog, answer)
-	}
-	if !strings.Contains(recoveryPrompt, "b.txt") || strings.Contains(recoveryPrompt, "a.txt, b.txt") {
-		t.Fatalf("expected recovery prompt to target only remaining required path, got %q", recoveryPrompt)
-	}
-	if sawBlockedCompletion {
-		t.Fatalf("did not expect blocked completion after remaining required path was edited")
-	}
-	if !strings.Contains(answer, "a.txt") || !strings.Contains(answer, "b.txt") {
-		t.Fatalf("expected final answer to report both changed paths, got %q", answer)
-	}
-	for path, want := range map[string]string{"a.txt": "after a\n", "b.txt": "after b\n"} {
-		content, err := os.ReadFile(filepath.Join(root, path))
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		if string(content) != want {
-			t.Fatalf("%s content = %q, want %q", path, string(content), want)
-		}
-	}
-}
 
 // TestRequiredEditPathReadinessAllowsNoGapInScopeRead was renamed
 // from RejectsNoGapReadWithoutTargetPacket after harness fix #4
@@ -4118,11 +3734,18 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	if result, rejected := runner.mutationCompletionRejection("Already done.", nil); !rejected || result.Summary == "" {
 		t.Fatalf("expected vague already-done answer rejection, got rejected=%v result=%#v", rejected, result)
 	}
-	write := workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md"}
+	// Source-file write (post-#74 lane-aware gate): verification is
+	// required for source paths. Markdown writes are exempt — see
+	// TestCompletionGateExemptsNonSourceWritesFromVerification.
+	write := workspace.ToolResult{Tool: "edit_file", Summary: "Edited foo.go"}
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write}); !rejected || !strings.Contains(result.Error, "verification") {
 		t.Fatalf("expected missing-verification rejection, got rejected=%v result=%#v", rejected, result)
 	}
-	verify := workspace.ToolResult{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\n"}
+	// Source-file edits need source-aware sanity (source_sanity), not
+	// just patch hygiene (`git diff --check`). Post-#74 the gate
+	// distinguishes these: patch hygiene alone is insufficient for
+	// source paths.
+	verify := workspace.ToolResult{Tool: "source_sanity", Summary: "Source sanity passed"}
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write, verify}); rejected {
 		t.Fatalf("expected verified mutation to pass, got %#v", result)
 	}
@@ -4134,7 +3757,10 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	if result, rejected := runner.mutationCompletionRejection(unsupportedChangesMadeAnswer, []workspace.ToolResult{write, verify}); !rejected || !strings.Contains(result.Error, "src/missing.go") {
 		t.Fatalf("expected unsupported changes-made claim rejection, got rejected=%v result=%#v", rejected, result)
 	}
-	laterWrite := workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md again"}
+	// Stale-verification: a NEW source-file write after the verify
+	// invalidates it (must re-verify). Use a source file so the gate
+	// fires; .md writes are exempt post-#74.
+	laterWrite := workspace.ToolResult{Tool: "edit_file", Summary: "Edited bar.go"}
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write, verify, laterWrite}); !rejected || !strings.Contains(result.Error, "latest successful write") {
 		t.Fatalf("expected stale-verification mutation rejection, got rejected=%v result=%#v", rejected, result)
 	}
@@ -4277,6 +3903,57 @@ func TestRunnerReadinessStateRequiresPlannerOwnedSourceSanityAfterPatchHygiene(t
 	}
 }
 
+// TestCompletionGateExemptsNonSourceWritesFromVerification asserts the
+// lane-aware-gate behavior added 2026-05-10: a write to a non-source
+// file (.md/.txt/etc.) does NOT trigger the post-write verification
+// gate, since there's no source-aware sanity check that would apply.
+// Refine drafts/reviews/patches all write markdown — without this
+// exemption every refine iteration deadlocks on the gate.
+func TestCompletionGateExemptsNonSourceWritesFromVerification(t *testing.T) {
+	cases := []struct {
+		name      string
+		writePath string
+		want      bool
+	}{
+		{"markdown write skips gate", "Wrote draft.md", false},
+		{"txt write skips gate", "Wrote notes.txt", false},
+		{"go source write requires verification", "Wrote main.go", true},
+		{"yaml write requires verification (no exemption yet)", "Wrote config.yaml", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			results := []workspace.ToolResult{
+				{Tool: "write_file", Summary: c.writePath},
+			}
+			got := hasPendingVerificationAfterWrites(results, "tests_passed_or_failed_or_skipped_with_blocker")
+			if got != c.want {
+				t.Fatalf("hasPendingVerificationAfterWrites for %q = %v, want %v", c.writePath, got, c.want)
+			}
+		})
+	}
+}
+
+func TestWritePathIsNonSource(t *testing.T) {
+	cases := map[string]bool{
+		"draft.md":            true,
+		"docs/design.md":      true,
+		"NOTES.txt":           true,
+		"design.markdown":     true,
+		"README.rst":          true,
+		"main.go":             false,
+		"config.yaml":         false,
+		"package.json":        false,
+		"":                    false,
+		"weird":               false,
+		"path/to/file.MD":     true, // case-insensitive
+	}
+	for path, want := range cases {
+		if got := writePathIsNonSource(path); got != want {
+			t.Errorf("writePathIsNonSource(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 	replies := []string{"Done.", "Done.", "Done."}
 	requests := 0
@@ -4302,12 +3979,16 @@ func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 			TaskFamily:           "implementation",
 			Contract:             "implementation_result",
 			PermissionProfile:    "guarded_workspace_write",
-			RequiredEditPaths:    []string{"README.md"},
+			RequiredEditPaths:    []string{"foo.go"},
 			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 			Constraints:          []string{"planner_owned_verification"},
 		},
 		SeedResults: []workspace.ToolResult{
-			{Tool: "edit_file", Summary: "Edited README.md"},
+			// Source-file write requires source-aware sanity; gate
+			// rejects "Done." and forces a typed blocker. Non-source
+			// writes (.md/.txt) are exempt by design — see
+			// hasPendingVerificationAfterWrites.
+			{Tool: "edit_file", Summary: "Edited foo.go"},
 		},
 		OnEvent: func(event RunEvent) {
 			if event.Role != "completion_status" {
@@ -4320,7 +4001,7 @@ func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 	}
 	answer, err := runner.Run(
 		context.Background(),
-		[]llama.ChatMessage{{Role: "user", Content: "Update README.md."}},
+		[]llama.ChatMessage{{Role: "user", Content: "Update foo.go."}},
 		llama.ChatOptions{},
 		nil,
 		nil,
@@ -4332,7 +4013,7 @@ func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 	if requests != 2 {
 		t.Fatalf("expected deterministic stop on second mutation gate rejection, got %d request(s)", requests)
 	}
-	for _, want := range []string{"<<QUESTION>>:", "Completion gate rejected", "README.md", "lane sanity"} {
+	for _, want := range []string{"<<QUESTION>>:", "Completion gate rejected", "foo.go", "lane sanity"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected blocker answer to contain %q, got:\n%s", want, answer)
 		}
@@ -4340,7 +4021,7 @@ func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 	if completion.Status != "blocked" || completion.BlockerKind != "completion_gate_lane_sanity_repeated" || !completion.UserVisibleBlocker {
 		t.Fatalf("unexpected completion status: %#v", completion)
 	}
-	if !completion.EditAttempted || !slices.Contains(completion.ChangedPaths, "README.md") {
+	if !completion.EditAttempted || !slices.Contains(completion.ChangedPaths, "foo.go") {
 		t.Fatalf("expected completion status to carry edited path, got %#v", completion)
 	}
 }
@@ -7509,7 +7190,7 @@ func TestFinalAnswerDecoratorPreservesBudgetExhaustionUncertainty(t *testing.T) 
 	runner := &Runner{}
 	answer := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
 		Answer:     raw,
-		StopReason: "read_budget_exhausted",
+		StopReason: "tool_step_budget_exhausted",
 		Brief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily: "delegated_read_only",
 			Objective:  "Explain how discovery tools are routed.",
@@ -10488,56 +10169,6 @@ func TestSynthesisNudgeFiresOnceAtThreshold(t *testing.T) {
 	}
 }
 
-// TestReadBudgetNudgeFiresOnceWhenReadsExceedCeiling verifies the plan-mode
-// read-ceiling nudge: once read-class calls cross the ceiling, exactly one
-// read_budget_nudge is emitted per turn.
-func TestReadBudgetNudgeFiresOnceWhenReadsExceedCeiling(t *testing.T) {
-	replies := []string{
-		`{"tool":"list_files","path":"internal/app","recursive":false}`,
-		`{"tool":"list_files","path":"internal/agent","recursive":false}`,
-		`{"tool":"list_files","path":".","recursive":false}`,
-		"plan drafted",
-	}
-	policy := RunPolicy{MaxNoProgressTurns: 8, ReadBudgetSoft: 2}
-	events, _ := runNudgeScenario(t, policy, replies)
-
-	if got := countEventsByRole(events, "read_budget_nudge"); got != 1 {
-		t.Fatalf("expected exactly 1 read_budget_nudge, got %d", got)
-	}
-}
-
-// TestReadBudgetHardForcesSynthesis verifies the OpenCode-style hard
-// ceiling: after the allowed number of read/search calls without a write,
-// the next read-class call is not executed; the runner forces a final
-// no-tools synthesis with the evidence already gathered.
-func TestReadBudgetHardForcesSynthesis(t *testing.T) {
-	replies := []string{
-		`{"tool":"read_file","path":"internal/app/app.go"}`,
-		`{"tool":"read_file","path":"internal/agent/runner.go"}`,
-		`{"tool":"search_content","pattern":"package","path":"internal"}`,
-		"read budget summary",
-	}
-	policy := RunPolicy{MaxNoProgressTurns: 8, ReadBudgetHard: 2}
-	events, requests := runNudgeScenario(t, policy, replies)
-
-	if got := countEventsByRole(events, "read_budget_hard_block"); got != 1 {
-		t.Fatalf("expected exactly 1 read_budget_hard_block, got %d; events: %v", got, eventRolesFor(events))
-	}
-	if requests != 4 {
-		t.Fatalf("expected third read request plus forced completion, got %d model requests", requests)
-	}
-	foundStop := false
-	for _, ev := range events {
-		if ev.Role == "budget_ledger" && strings.Contains(ev.Content, `"stop_reason":"read_budget_exhausted"`) {
-			foundStop = true
-			break
-		}
-	}
-	if !foundStop {
-		t.Fatalf("expected budget ledger stop_reason read_budget_exhausted, events: %v", eventRolesFor(events))
-	}
-}
-
 // TestNudgesDoNotFireWhenDisabled verifies that zero-valued thresholds
 // keep the nudges dormant — the feature is opt-in per mode.
 func TestNudgesDoNotFireWhenDisabled(t *testing.T) {
@@ -10551,23 +10182,17 @@ func TestNudgesDoNotFireWhenDisabled(t *testing.T) {
 	policy := RunPolicy{MaxNoProgressTurns: 8}
 	events, _ := runNudgeScenario(t, policy, replies)
 
-	for _, role := range []string{"fingerprint_nudge", "synthesis_nudge", "read_budget_nudge"} {
+	for _, role := range []string{"fingerprint_nudge", "synthesis_nudge"} {
 		if got := countEventsByRole(events, role); got != 0 {
 			t.Fatalf("expected no %s events when disabled, got %d", role, got)
 		}
 	}
 }
 
-// TestModePolicyPlanModeHasReadBudget documents the ModePolicy defaults so
-// future edits to the numbers are an explicit, reviewed change.
-func TestModePolicyPlanModeHasReadBudget(t *testing.T) {
+// TestModePolicyNudgeDefaults documents the ModePolicy defaults so future
+// edits to the numbers are an explicit, reviewed change.
+func TestModePolicyNudgeDefaults(t *testing.T) {
 	plan := ModePolicy(PlanMode())
-	if plan.ReadBudgetSoft != 8 {
-		t.Fatalf("plan ReadBudgetSoft: want 8, got %d", plan.ReadBudgetSoft)
-	}
-	if plan.ReadBudgetHard != 12 {
-		t.Fatalf("plan ReadBudgetHard: want 12, got %d", plan.ReadBudgetHard)
-	}
 	if plan.FingerprintNudgeAt != 3 {
 		t.Fatalf("plan FingerprintNudgeAt: want 3, got %d", plan.FingerprintNudgeAt)
 	}
@@ -10575,48 +10200,8 @@ func TestModePolicyPlanModeHasReadBudget(t *testing.T) {
 		t.Fatalf("plan SynthesisNudgeAt: want 10, got %d", plan.SynthesisNudgeAt)
 	}
 	build := ModePolicy(BuildMode())
-	if build.ReadBudgetSoft != 0 {
-		t.Fatalf("build ReadBudgetSoft should be 0, got %d", build.ReadBudgetSoft)
-	}
-	if build.ReadBudgetHard != 16 {
-		t.Fatalf("build ReadBudgetHard: want 16, got %d", build.ReadBudgetHard)
-	}
 	if build.FingerprintNudgeAt != 3 || build.SynthesisNudgeAt != 10 {
 		t.Fatalf("build nudge thresholds: want (3, 10), got (%d, %d)", build.FingerprintNudgeAt, build.SynthesisNudgeAt)
-	}
-}
-
-func TestEffectivePolicyClampsMutationReadBudget(t *testing.T) {
-	runner := &Runner{
-		Policy: RunPolicy{ReadBudgetHard: 16},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily: "implementation",
-			Contract:   "implementation_result",
-		},
-	}
-	if got := runner.effectivePolicy().ReadBudgetHard; got != mutationReadBudgetHard {
-		t.Fatalf("mutation ReadBudgetHard: want %d, got %d", mutationReadBudgetHard, got)
-	}
-
-	runner.Policy = RunPolicy{ReadBudgetHard: 2}
-	if got := runner.effectivePolicy().ReadBudgetHard; got != 2 {
-		t.Fatalf("stricter mutation ReadBudgetHard should be preserved, got %d", got)
-	}
-
-	runner.Policy = RunPolicy{}
-	if got := runner.effectivePolicy().ReadBudgetHard; got != mutationReadBudgetHard {
-		t.Fatalf("disabled mutation ReadBudgetHard should default to %d, got %d", mutationReadBudgetHard, got)
-	}
-
-	readOnly := &Runner{
-		Policy: RunPolicy{ReadBudgetHard: 16},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily: "architecture",
-			Contract:   "architecture_assessment",
-		},
-	}
-	if got := readOnly.effectivePolicy().ReadBudgetHard; got != 16 {
-		t.Fatalf("read-only ReadBudgetHard should keep base policy, got %d", got)
 	}
 }
 

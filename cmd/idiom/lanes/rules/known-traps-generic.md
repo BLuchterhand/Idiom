@@ -8,9 +8,8 @@ into regardless of mode. Project-specific traps belong in
 file via the rules-overlay seam).
 
 Per-mode rules — write-tool availability, build/test ownership,
-read-budget discipline, plan-execute write-guard, multi-file-refactor
-re-routing — live in the lane preambles, not here. This file does not
-restate them.
+plan-execute write-guard, multi-file-refactor re-routing — live in the
+lane preambles, not here. This file does not restate them.
 
 ### Anchor mismatch
 

@@ -17,12 +17,42 @@ const laneHistoryRelPath = ".idiom/lane-history.jsonl"
 // laneHistoryEvent is one dispatch record. Fields are intentionally
 // flat so jq / shell tools can summarize without a parser.
 type laneHistoryEvent struct {
-	Timestamp  string `json:"ts"`
-	Mode       string `json:"mode"`
-	Brief      string `json:"brief"`
-	BriefMtime string `json:"brief_mtime,omitempty"`
-	Title      string `json:"title,omitempty"`
-	ExitCode   int    `json:"exit_code"`
+	Timestamp       string `json:"ts"`
+	Mode            string `json:"mode"`
+	Brief           string `json:"brief"`
+	BriefMtime      string `json:"brief_mtime,omitempty"`
+	BriefProvenance string `json:"brief_provenance,omitempty"`
+	Title           string `json:"title,omitempty"`
+	ExitCode        int    `json:"exit_code"`
+}
+
+// refineDraftedMarker is the HTML comment finalizeRefine prepends to
+// every refine-produced brief. detectBriefProvenance greps for this
+// in the first 1024 bytes; cheap and robust to file renames.
+const refineDraftedMarker = "<!-- idiom:refine-drafted"
+
+// detectBriefProvenance returns "refine-drafted" if the brief at
+// briefPath starts with the refine marker (in its first 1KB),
+// "claude-direct" if the file is readable but the marker is absent,
+// and "unknown" if the path is empty or unreadable.
+func detectBriefProvenance(briefPath string) string {
+	if strings.TrimSpace(briefPath) == "" {
+		return "unknown"
+	}
+	f, err := os.Open(briefPath)
+	if err != nil {
+		return "unknown"
+	}
+	defer f.Close()
+	buf := make([]byte, 1024)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return "claude-direct"
+	}
+	if strings.Contains(string(buf[:n]), refineDraftedMarker) {
+		return "refine-drafted"
+	}
+	return "claude-direct"
 }
 
 // appendLaneHistory appends one event to the history log under
@@ -64,6 +94,7 @@ type laneHistorySummary struct {
 	ByMode       map[string]int
 	ByExitCode   map[int]int
 	BriefsByPath map[string]int
+	ByProvenance map[string]int
 }
 
 // summarizeLaneHistory reads the history file and aggregates.
@@ -78,6 +109,7 @@ func summarizeLaneHistory(projectRoot string) (laneHistorySummary, error) {
 				ByMode:       map[string]int{},
 				ByExitCode:   map[int]int{},
 				BriefsByPath: map[string]int{},
+				ByProvenance: map[string]int{},
 			}, nil
 		}
 		return laneHistorySummary{}, err
@@ -86,6 +118,7 @@ func summarizeLaneHistory(projectRoot string) (laneHistorySummary, error) {
 		ByMode:       map[string]int{},
 		ByExitCode:   map[int]int{},
 		BriefsByPath: map[string]int{},
+		ByProvenance: map[string]int{},
 	}
 	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)
@@ -101,6 +134,54 @@ func summarizeLaneHistory(projectRoot string) (laneHistorySummary, error) {
 		out.ByExitCode[evt.ExitCode]++
 		if evt.Brief != "" {
 			out.BriefsByPath[evt.Brief]++
+		}
+		if evt.BriefProvenance != "" {
+			out.ByProvenance[evt.BriefProvenance]++
+		}
+	}
+	return out, nil
+}
+
+func summarizeLaneHistoryByMode(projectRoot string, mode string) (laneHistorySummary, error) {
+	path := filepath.Join(projectRoot, laneHistoryRelPath)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return laneHistorySummary{
+				ByMode:       map[string]int{},
+				ByExitCode:   map[int]int{},
+				BriefsByPath: map[string]int{},
+				ByProvenance: map[string]int{},
+			}, nil
+		}
+		return laneHistorySummary{}, err
+	}
+	out := laneHistorySummary{
+		ByMode:       map[string]int{},
+		ByExitCode:   map[int]int{},
+		BriefsByPath: map[string]int{},
+		ByProvenance: map[string]int{},
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var evt laneHistoryEvent
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+		if evt.Mode != mode {
+			continue
+		}
+		out.Total++
+		out.ByMode[evt.Mode]++
+		out.ByExitCode[evt.ExitCode]++
+		if evt.Brief != "" {
+			out.BriefsByPath[evt.Brief]++
+		}
+		if evt.BriefProvenance != "" {
+			out.ByProvenance[evt.BriefProvenance]++
 		}
 	}
 	return out, nil
@@ -119,6 +200,12 @@ func printLaneHistorySummary(projectRoot string, w io.Writer) error {
 	fmt.Fprintln(w, "by mode:")
 	for mode, n := range s.ByMode {
 		fmt.Fprintf(w, "  %s: %d\n", mode, n)
+	}
+	if len(s.ByProvenance) > 0 {
+		fmt.Fprintln(w, "by provenance:")
+		for prov, n := range s.ByProvenance {
+			fmt.Fprintf(w, "  %s: %d\n", prov, n)
+		}
 	}
 	fmt.Fprintln(w, "by exit code:")
 	for code, n := range s.ByExitCode {

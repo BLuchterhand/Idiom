@@ -42,6 +42,8 @@ func runBriefMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer
 		return runBriefLint(args[1:], stdout, stderr, rec)
 	case "preload":
 		return runBriefPreload(args[1:], stdout, stderr)
+	case "preview":
+		return runBriefPreview(args[1:], stdout, stderr, rec)
 	default:
 		fmt.Fprintf(stderr, "unknown brief command: %s\n", args[0])
 		printBriefUsage(stderr)
@@ -52,6 +54,7 @@ func runBriefMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer
 func printBriefUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  idiom brief lint <brief.md>")
+	fmt.Fprintln(stderr, "  idiom brief preview <brief.md>")
 	fmt.Fprintln(stderr, "  idiom brief preload --kind <name>   (or --list to see available kinds)")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "lint: pre-dispatch lint for idiom implementation briefs. Checks single-purpose")
@@ -241,6 +244,163 @@ func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *teleme
 	}
 	logCLIPhase(rec, "brief_lint", map[string]any{"exit": 0})
 	return 0
+}
+
+func runBriefPreview(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "brief preview: exactly one brief path is required")
+		printBriefUsage(stderr)
+		return 2
+	}
+	briefPath := strings.TrimSpace(args[0])
+	if briefPath == "" {
+		fmt.Fprintln(stderr, "brief preview: empty brief path")
+		return 2
+	}
+	data, err := os.ReadFile(briefPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "brief preview: cannot read brief: %v\n", err)
+		return 2
+	}
+	content := string(data)
+
+	// H1 title.
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "# ") {
+			fmt.Fprintf(stdout, "Title: %s\n", strings.TrimPrefix(line, "# "))
+			break
+		}
+	}
+
+	// Files To Modify count and paths.
+	fmCount := 0
+	fmPaths := []string{}
+	inFM := false
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "## Files To Modify") {
+			inFM = true
+			continue
+		}
+		if inFM && strings.HasPrefix(line, "|") && !strings.HasPrefix(line, "|------") {
+			parts := strings.Split(line, "|")
+			if len(parts) >= 2 {
+				first := strings.TrimSpace(parts[1])
+				// Skip empty rows and the header (first cell == "File"/"Path").
+				if first == "" || strings.EqualFold(first, "File") || strings.EqualFold(first, "Path") {
+					continue
+				}
+				fmCount++
+				fmPaths = append(fmPaths, first)
+			}
+		}
+		if inFM && strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "## Files To Modify") {
+			inFM = false
+		}
+	}
+	fmt.Fprintf(stdout, "Files To Modify: %d\n", fmCount)
+	for _, p := range fmPaths {
+		fmt.Fprintf(stdout, "  - %s\n", p)
+	}
+
+	// Code-fence count.
+	fenceCount := 0
+	inFence := false
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "```") {
+			if inFence {
+				inFence = false
+			} else {
+				inFence = true
+				fenceCount++
+			}
+		}
+	}
+	fmt.Fprintf(stdout, "Code fences: %d\n", fenceCount)
+
+	// Required Behavior step count.
+	rbCount := 0
+	inRB := false
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "## Required Behavior") {
+			inRB = true
+			continue
+		}
+		if inRB && strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "## Required Behavior") {
+			inRB = false
+		}
+		if inRB && strings.HasPrefix(line, "### ") {
+			// subsections don't count as steps
+		}
+		if inRB {
+			// top-level numbered items: "1.", "2.", etc.
+			if strings.HasPrefix(line, "### Required Edit") {
+				rbCount++
+			}
+		}
+	}
+	fmt.Fprintf(stdout, "Required Behavior steps: %d\n", rbCount)
+
+	// Lint result.
+	fmt.Fprintln(stdout, "---")
+	lintExit, lintFailures := runBriefLintResult(content, stderr)
+	if lintExit == 0 {
+		fmt.Fprintln(stdout, "Lint: OK")
+	} else {
+		fmt.Fprintf(stdout, "Lint: FAIL (exit %d)\n", lintExit)
+		for _, f := range lintFailures {
+			fmt.Fprintf(stdout, "  - %s\n", f)
+		}
+	}
+
+	logCLIPhase(rec, "brief_preview", map[string]any{"path": briefPath})
+	return 0
+}
+
+func runBriefLintResult(content string, stderr io.Writer) (int, []string) {
+	scriptPath, cleanup, err := writeEmbeddedBriefPreflight()
+	if err != nil {
+		return 2, []string{fmt.Sprintf("cannot stage preflight script: %v", err)}
+	}
+	defer cleanup()
+
+	tmpBrief, err := os.CreateTemp("", "idiom-preview-*.md")
+	if err != nil {
+		return 2, []string{fmt.Sprintf("cannot create temp brief: %v", err)}
+	}
+	tmpPath := tmpBrief.Name()
+	tmpBrief.Close()
+	os.WriteFile(tmpPath, []byte(content), 0o644)
+	defer os.Remove(tmpPath)
+
+	cmd := exec.Command("python3", scriptPath, tmpPath)
+	var stderrBuf strings.Builder
+	cmd.Stderr = &stderrBuf
+	cmd.Stdout = io.Discard
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code := exitErr.ExitCode()
+			failures := parseLintFailures(stderrBuf.String())
+			return code, failures
+		}
+		return 2, []string{fmt.Sprintf("python3 failed: %v", err)}
+	}
+	return 0, nil
+}
+
+func parseLintFailures(output string) []string {
+	lines := strings.Split(output, "\n")
+	var failures []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		failures = append(failures, line)
+		if len(failures) >= 3 {
+			break
+		}
+	}
+	return failures
 }
 
 func writeEmbeddedBriefPreflight() (path string, cleanup func(), err error) {

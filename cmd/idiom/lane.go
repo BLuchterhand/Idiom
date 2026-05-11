@@ -95,6 +95,9 @@ type laneOptions struct {
 	SlotKey                  string // if set, acquire a filesystem mutex named idiom-lane-<key>
 	Postflight               bool   // run postflight against git diff after the lane returns
 	AllowStaleBrief          bool   // override the deterministic stale-brief gate (default: gate fails if any required path has commits newer than brief mtime)
+	RefineSpecPath           string // refine mode: path to 1-paragraph spec
+	RefineOutputPath         string // refine mode: where to write the converged brief
+	RefineMaxIters           int    // refine mode: max draft+review+patch iterations (default 3)
 	// coderRequested is set when the caller asked for the coder
 	// alias either explicitly (`--coder`) or implicitly (plan-execute
 	// with no --model override). The actual alias is resolved later
@@ -210,6 +213,16 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		}
 		return 0
 	}
+	if opts.Mode == "refine" {
+		refineOpts := laneRefineOptions{
+			SpecPath:    opts.RefineSpecPath,
+			OutputPath:  opts.RefineOutputPath,
+			Title:       opts.Title,
+			MaxIters:    opts.RefineMaxIters,
+			ProjectRoot: opts.ProjectRoot,
+		}
+		return runLaneRefine(refineOpts, defaultRefineDispatch, stdout, stderr)
+	}
 	// Brief lint preflight: default-on. The wrapper that used to
 	// run this in shell is now redundant — every project that uses
 	// `idiom lane` benefits from catching unsafe briefs before
@@ -278,11 +291,12 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		briefMtime = info.ModTime().UTC().Format(time.RFC3339Nano)
 	}
 	if err := appendLaneHistory(opts.ProjectRoot, laneHistoryEvent{
-		Mode:       opts.Mode,
-		Brief:      opts.BriefPath,
-		BriefMtime: briefMtime,
-		Title:      opts.Title,
-		ExitCode:   subcode,
+		Mode:            opts.Mode,
+		Brief:           opts.BriefPath,
+		BriefMtime:      briefMtime,
+		BriefProvenance: detectBriefProvenance(opts.BriefPath),
+		Title:           opts.Title,
+		ExitCode:        subcode,
 	}); err != nil {
 		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
 	}
@@ -325,10 +339,10 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	}
 	mode := strings.TrimSpace(args[0])
 	switch mode {
-	case "plan-execute", "implement", "history":
+	case "plan-execute", "implement", "history", "refine":
 		// ok
 	default:
-		return laneOptions{}, fmt.Errorf("lane: --mode must be one of plan-execute, implement, history (got %q)", mode)
+		return laneOptions{}, fmt.Errorf("lane: --mode must be one of plan-execute, implement, history, refine (got %q)", mode)
 	}
 
 	fs := flag.NewFlagSet("idiom lane", flag.ContinueOnError)
@@ -365,6 +379,9 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.SlotKey, "slot", "", "acquire a filesystem mutex idiom-lane-<key> to prevent concurrent dispatch of the same lane (caller picks the granularity)")
 	fs.BoolVar(&opts.Postflight, "postflight", false, "run idiom lane postflight against git diff after the lane returns; final exit is max(lane, postflight)")
 	fs.BoolVar(&opts.AllowStaleBrief, "allow-stale-brief", false, "override the deterministic stale-brief gate (default: fail if any required edit path has commits newer than brief mtime)")
+	fs.StringVar(&opts.RefineSpecPath, "spec", "", "refine mode: path to 1-paragraph spec file")
+	fs.StringVar(&opts.RefineOutputPath, "output", "", "refine mode: where to write the converged brief")
+	fs.IntVar(&opts.RefineMaxIters, "max-iters", 3, "refine mode: max draft+review+patch iterations (default 3)")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
@@ -381,6 +398,11 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 		// history is a metadata subcommand; brief is optional/ignored.
 		if len(tail) > 0 {
 			return laneOptions{}, fmt.Errorf("lane history: takes no positional arguments (got %v)", tail)
+		}
+	} else if opts.Mode == "refine" {
+		// refine takes --spec and --output rather than a positional brief.
+		if len(tail) > 0 {
+			return laneOptions{}, fmt.Errorf("lane refine: takes no positional arguments (use --spec and --output); got %v", tail)
 		}
 	} else {
 		if len(tail) == 0 {

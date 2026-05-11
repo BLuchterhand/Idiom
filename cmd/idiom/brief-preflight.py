@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Pre-dispatch checks for idiom implementation briefs.
 
-This intentionally enforces only the highest-signal lane-loop gates:
-single-purpose decomposition, no prompt-magic contract triggers, safe content
-fences, test-anchor preload presence, and exact-anchor specificity for every
-required edit path.
+Enforces the highest-signal lane-loop gates: single-purpose decomposition, no
+prompt-magic contract triggers, safe content fences, test-anchor preload
+presence, exact-anchor specificity for every required edit path, prose-anchor
+rejection in the file allowlist, branching-language warnings in Required
+Edits, discovery-mandate rejection, and (when the workspace can be resolved)
+file-existence + labeled-old_text anchor verification against the live tree.
 
 Originally adapted from Colony's qwen_brief_preflight.py; generalized so any
 project that dispatches multi-file briefs through `idiom implement` can run
@@ -30,6 +32,41 @@ BAD_CONTENT_PATTERNS = [
     "===END CONTENT===",
 ]
 
+# Prose anchors force the planner to spend discovery calls reconstructing the
+# insertion site at run time. The submit_plan schema expects exact
+# old_text/new_text substrings or start_line/end_line ranges; prose anchors
+# are not edit-safe and trip the search_content anti-chain gate when the
+# planner loops on them.
+PROSE_ANCHOR_PATTERNS = [
+    r"\bnear (?:the )?top(?: of (?:the )?file)?\b",
+    r"\bnear (?:the )?bottom(?: of (?:the )?file)?\b",
+    r"\balongside(?: (?:the )?existing)?\b",
+    r"\baround line \d+\b",
+    r"\bthe relevant section\b",
+    r"\bat the end of the file\b",
+    r"\bafter the existing [^.\n]{0,80}? includes?\b",
+]
+
+# Branching language in Required Edits forces the lane to design at run time.
+# Legitimate elsewhere (HARD PROHIBITIONS, test discussions); scope this check
+# to ### Edit N section bodies only.
+BRANCHING_PATTERNS = [
+    r"\bOption \d+\b",
+    r"\bAlternatively\b",
+    r"\bIf .{0,80}? doesn'?t\b",
+    r"\bIf neither\b",
+    r"\bEither .{0,80}? or\b",
+    r"\botherwise (?:try|use|add)\b",
+]
+
+# Discovery-mandate phrasing deflects work the brief-drafter should have
+# already done at draft time. The orchestrator owns discovery; the lane is
+# not asked to run lookup tools and consume their output.
+DISCOVERY_MANDATE_PATTERNS = [
+    r"\brun (?:\./scripts/|idiom (?:tool |context ))[a-z_]+ and (?:use|inline|paste|incorporate)\b",
+    r"\bverify .{0,120}? by (?:running|calling) (?:\./scripts/|idiom (?:tool |context ))",
+]
+
 COMMAND_FENCE_TAGS = {"", "text", "bash", "sh", "shell", "console"}
 ALLOWLIST_HEADINGS = {
     "files to modify",
@@ -53,7 +90,24 @@ WORKSPACE_PATH_RE = re.compile(
     r"`?([A-Za-z0-9_.@+%=-][A-Za-z0-9_.@+%=/:-]*\."
     r"(?:c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|"
     r"py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|"
-    r"md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|txt))`?"
+    r"go|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|txt))`?"
+)
+
+FENCE_RE = re.compile(r"```[^\n]*\n.*?\n```", re.DOTALL)
+
+# Match labeled old_text blocks. Accepted shapes:
+#   old_text:
+#   ```text
+#   ...
+#   ```
+#
+#   **old_text:**
+#   ```
+#   ...
+#   ```
+OLD_TEXT_BLOCK_RE = re.compile(
+    r"(?:\*\*)?old_text:?(?:\*\*)?\s*\n+```[A-Za-z0-9_+.#-]*\s*\n(.*?)\n```",
+    re.DOTALL | re.IGNORECASE,
 )
 
 
@@ -73,17 +127,11 @@ def main() -> int:
 
     rows = files_to_modify_rows(text)
     files = sorted({row[0] for row in rows})
+
     # Decomposition: hard fail only when the brief is genuinely sprawling
-    # (>=4 distinct edits AND >=3 files). A header+impl+test triplet for one
-    # feature (3 rows / 3 files) is allowed — the new idiom build's
-    # planner-owned-verification and read-budget contracts handle these
-    # cleanly. The hard-fail threshold was raised after the May-2026 idiom
-    # repairs landed (apply_patch tolerance + pre-flight, full-required-set
-    # read scope, post-completion verification cutoff, running progress
-    # checklist injection): with 256K ctx + those repairs, atomic 5-7 file
-    # atoms run cleanly in ~80 s at <10% peak ctx. The conservative
-    # 4-row/3-file threshold remains as a WARN so drafters notice
-    # multi-file work and confirm tight coupling.
+    # (>=8 distinct edits AND >=6 files). A header+impl+test triplet for one
+    # feature (3 rows / 3 files) is allowed — the planner-owned-verification
+    # and read-budget contracts handle these cleanly.
     if len(rows) >= 8 and len(files) >= 6:
         failures.append(
             "single-purpose decomposition failed: "
@@ -101,6 +149,7 @@ def main() -> int:
             f"{len(rows)} file-allowlist row(s) across {len(files)} files. "
             "Confirm tight coupling; otherwise consider decomposing into sub-atoms."
         )
+
     for file_path, action in rows:
         if action and not is_newfile_action(action) and looks_like_combined_action(action):
             failures.append(
@@ -108,6 +157,55 @@ def main() -> int:
                 f"{file_path} -> {action!r}. Split includes, declarations, bodies, callsites, "
                 "tests, and tracker stamping into separate rows/sub-atoms."
             )
+
+    # Prose-anchor BLOCK in allowlist row actions. Prose anchors here force
+    # the planner to spend discovery calls reconstructing the insertion site
+    # even when the brief later supplies an exact edit in a Required Edits
+    # section. This is the gap that caused the falldetect brief to wedge
+    # despite passing `has_exact_anchor_for_path` (which accepts a "line N"
+    # mention as an exact anchor).
+    for file_path, action in rows:
+        if not action:
+            continue
+        action_text = strip_fenced_blocks(action)
+        for pattern in PROSE_ANCHOR_PATTERNS:
+            match = re.search(pattern, action_text, re.IGNORECASE)
+            if match:
+                failures.append(
+                    f"prose anchor in allowlist row for {file_path}: "
+                    f"{match.group(0)!r}. Replace with `<path>:<line>`, an exact "
+                    "line number, or a unique snippet. Prose anchors force the "
+                    "planner to spend discovery calls finding the insertion site."
+                )
+                break
+
+    # Branching-language WARN inside Required Edits. Required Edits should
+    # be unconditional — branching turns the planner into a designer at run
+    # time, which costs reads and breaks the "planner thinks once" contract.
+    for heading, body in required_edit_blocks(text):
+        scannable = strip_fenced_blocks(body)
+        for pattern in BRANCHING_PATTERNS:
+            match = re.search(pattern, scannable, re.IGNORECASE)
+            if match:
+                warnings.append(
+                    f"branching language in Required Edit ({heading}): "
+                    f"{match.group(0)!r}. Required Edits should be unconditional; "
+                    "branching forces the planner to design at run time."
+                )
+                break
+
+    # Discovery-mandate BLOCK (global). The brief-drafter owns discovery;
+    # asking the lane to run tools and consume their output deflects work
+    # that should have been done at draft time and burns the lane's budget.
+    for pattern in DISCOVERY_MANDATE_PATTERNS:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            failures.append(
+                f"discovery-mandate phrasing: {match.group(0)!r}. The brief-drafter "
+                "owns discovery — run the tool yourself, inline the verified output, "
+                "and the lane's job becomes a single Write."
+            )
+            break
 
     for pattern in MAGIC_PROMPT_PATTERNS:
         if pattern in text:
@@ -124,19 +222,11 @@ def main() -> int:
             )
 
     # Language-tagged fences (cpp/python/etc.) historically wedged some
-    # tool-call parsers. Modern lanes handle them cleanly, so this is a WARN —
-    # briefs that paste reference code in language-tagged fences pass preflight
-    # but the signal is preserved for downstream lanes that still suffer.
+    # tool-call parsers. Modern lanes handle them cleanly, so this is a WARN.
     for tag in language_tagged_content_fences(text):
-        warnings.append(
-            f"language-tagged content fence found: ```{tag}. "
-            "Prefer ```text for content the lane writes verbatim; cpp/etc. fences are tolerated by current lanes but can still confuse stricter parsers."
-        )
-
-    if looks_like_outer_fenced(text):
         failures.append(
-            "outer code-fence wrapper detected: the brief is entirely "
-            "wrapped in a ``` fence. Unwrap the brief content before dispatch."
+            f"unknown fence tag ```{tag}: only COMMAND_FENCE_TAGS ({', '.join(sorted(COMMAND_FENCE_TAGS))}) are allowed. "
+            "Use ```text for content blocks or a command tag like ```bash or ```sh for shell snippets."
         )
 
     if looks_like_outer_fenced(text):
@@ -151,11 +241,6 @@ def main() -> int:
             "wrappers around content the lane may copy or edit."
         )
 
-    # Test-anchor preload was a hard fail historically because lanes would
-    # pattern-match against fixtures from other files. The current idiom build
-    # can spend its read budget on the test file directly, so this is a WARN;
-    # brief drafters still benefit from inlining the canonical setup, but it's
-    # not required.
     test_files = [f for f in files if f.startswith("native/tests/") or "/tests/" in f]
     if test_files and not has_test_anchor_pack(text):
         warnings.append(
@@ -170,12 +255,6 @@ def main() -> int:
             "inlined before dispatch."
         )
 
-    # Exact-anchor specificity: every required edit path must carry at least
-    # one path:line reference, "at line N" mention, or quoted unique snippet
-    # so the lane has a deterministic insertion point. Relational anchors
-    # ("near other small predicates", "find the closing brace") force
-    # orientation reads that burn the pre-write budget — this is the gap that
-    # caused VL-13.3b to leave 2 of 3 required edits unwritten.
     paths_without_anchors = [
         file_path for file_path, action in rows
         if not is_newfile_action(action) and not has_exact_anchor_for_path(text, file_path)
@@ -190,16 +269,6 @@ def main() -> int:
             "locating the insertion site and frequently exhaust the pre-write budget."
         )
 
-    # Structure-describing anchors: when a brief mentions two non-adjacent
-    # line numbers in the same file (e.g., "Line 247 is X. Line 256 is Y.")
-    # the planner tends to combine both insertion sites into a single
-    # multi-line `old_text` for `submit_plan`, which fails because the
-    # lines aren't actually adjacent in the file. The donkey atom
-    # 13.4 wedged on this twice (2026-05-09): the brief had
-    # "constants/animals.h:246 ... line 247 is blank. Similarly
-    # constants/animals.h:255 ... line 256 is blank." and the planner
-    # built an old_text spanning both line ranges. Suggest single-line
-    # unique anchors per insertion site instead.
     structure_anchor_paths = sorted(structure_describing_anchor_paths(text, files))
     if structure_anchor_paths:
         warnings.append(
@@ -212,6 +281,17 @@ def main() -> int:
             "anchors per insertion site (e.g., \"Use line N's exact text as "
             "old_text for the first edit; use line M's exact text for the second\")."
         )
+
+    # Canonical anchor verification — file existence + labeled old_text.
+    # Resolve workspace from cwd → walk up to a .git root; fall back to cwd.
+    # When no named file resolves under the chosen root, WARN explaining the
+    # skip rather than flooding existence failures (lint may be running from
+    # outside the target repo).
+    if rows:
+        workspace_root = resolve_workspace_root(Path.cwd())
+        verify_failures, verify_warnings = verify_anchors(text, rows, workspace_root)
+        failures.extend(verify_failures)
+        warnings.extend(verify_warnings)
 
     if failures:
         print(f"idiom brief preflight: FAIL {path}", file=sys.stderr)
@@ -260,6 +340,13 @@ def is_allowlist_heading(line: str) -> bool:
 def normalize_heading(line: str) -> str:
     value = line.strip().strip("#*: `\"'")
     value = value.rstrip(":")
+    # Strip parenthetical suffixes ("(EXHAUSTIVE allowlist)", "(scope: X)")
+    # so the canonical brief skeleton template
+    # ("## Files to Modify (EXHAUSTIVE allowlist)") matches the base form
+    # in ALLOWLIST_HEADINGS. Without this strip, the linter silently
+    # accepts any brief that follows the template by reporting zero
+    # allowlist rows and skipping every downstream check.
+    value = re.sub(r"\s*\([^)]*\)\s*", " ", value)
     value = re.sub(r"[-_/]+", " ", value.lower())
     return " ".join(value.split())
 
@@ -315,13 +402,7 @@ def has_test_anchor_pack(text: str) -> bool:
 
 
 def looks_like_header_impl_test_triplet(files: list[str]) -> bool:
-    """A clean (header, impl, test) triplet for one feature is allowed even at 3 rows.
-
-    Match when files are 3 of: one .h/.hpp, one .cpp/.cc, one in tests/. The
-    header+impl share a stem (same module) and the test references the same
-    domain. We approximate by stem overlap on the first two and a tests/ path
-    on the third.
-    """
+    """A clean (header, impl, test) triplet for one feature is allowed even at 3 rows."""
     if len(files) != 3:
         return False
     tests = [f for f in files if f.startswith("native/tests/") or "/tests/" in f]
@@ -373,19 +454,6 @@ def looks_like_outer_fenced(text: str) -> bool:
     return True
 
 
-def looks_like_outer_fenced(text: str) -> bool:
-    lines = [line for line in text.splitlines() if line.strip()]
-    if len(lines) < 2:
-        return False
-    first = lines[0].rstrip()
-    last = lines[-1].rstrip()
-    if not re.match(r"^```[A-Za-z0-9_+.#-]*\s*$", first):
-        return False
-    if not re.match(r"^```\s*$", last):
-        return False
-    return True
-
-
 def language_tagged_content_fences(text: str) -> list[str]:
     tags: list[str] = []
     for match in re.finditer(r"(?m)^```\s*([A-Za-z0-9_+.#-]+)\s*$", text):
@@ -406,24 +474,13 @@ def has_verified_current_state(text: str) -> bool:
 
 
 def has_exact_anchor_for_path(text: str, file_path: str) -> bool:
-    """A required edit path needs a deterministic insertion site.
-
-    Three accepted forms — any one is sufficient:
-      1. `<path>:<line>` or `<basename>:<line>` (e.g. `energy.cpp:805`).
-      2. `at line N`, `line N`, or `lines N-M` within ~120 chars of the path.
-      3. A fenced ```text/```cpp/```etc. snippet that includes the basename
-         OR a quoted line that includes the basename — these typically carry
-         a unique-enough anchor for an old_text/new_text edit.
-    """
     if not file_path:
         return False
     basename = file_path.rsplit("/", 1)[-1]
-    # Form 1: path:line — the strongest, deterministic.
     if re.search(rf"`?{re.escape(file_path)}`?\s*:\s*\d+", text):
         return True
     if re.search(rf"`?{re.escape(basename)}`?\s*:\s*\d+", text):
         return True
-    # Form 2: "at line N" / "line N" / "lines N-M" near a path mention.
     path_re = re.compile(rf"`?{re.escape(file_path)}`?|`?{re.escape(basename)}`?")
     for match in path_re.finditer(text):
         window_start = max(0, match.start() - 120)
@@ -431,7 +488,6 @@ def has_exact_anchor_for_path(text: str, file_path: str) -> bool:
         window = text[window_start:window_end]
         if re.search(r"\b(?:at\s+line|line|lines)\s+\d+", window, re.IGNORECASE):
             return True
-    # Form 3: fenced snippet that names the basename and contains code.
     fence_re = re.compile(r"```[A-Za-z0-9_+.#-]*\s*\n([\s\S]*?)\n```", re.MULTILINE)
     for match in fence_re.finditer(text):
         body = match.group(1)
@@ -441,25 +497,6 @@ def has_exact_anchor_for_path(text: str, file_path: str) -> bool:
 
 
 def structure_describing_anchor_paths(text: str, files: list[str]) -> set[str]:
-    """Return the set of required-edit paths whose anchors describe the
-    file structure across non-adjacent lines.
-
-    The trap shape we're catching: a brief mentions two distinct line
-    numbers in the same file ("Line 247 is X. Line 256 is Y.") and the
-    planner combines both insertion sites into a single multi-line
-    `old_text`. The combined substring assumes the lines are adjacent
-    (which they aren't — there's other content between them in the
-    actual file), so the executor's substring match fails.
-
-    Heuristic: for each required-edit path, find every "line N" /
-    "<path>:N" / "lines N-M" mention within ~200 chars of a basename
-    reference, collect the line numbers, and flag the path if any pair
-    of distinct line numbers differs by more than 2 (adjacent lines and
-    immediate next-line are fine — only non-adjacent pairs are the
-    trap shape).
-
-    Returns an empty set when no path trips the heuristic.
-    """
     flagged: set[str] = set()
     if not files:
         return flagged
@@ -491,6 +528,170 @@ def structure_describing_anchor_paths(text: str, files: list[str]) -> set[str]:
             if file_path in flagged:
                 break
     return flagged
+
+
+def required_edit_blocks(text: str) -> list[tuple[str, str]]:
+    """Return [(heading, body)] for each ### Edit N section.
+
+    A Required Edit block runs from a `### Edit ...` heading until the next
+    `### ` or `## ` heading or end-of-file. Used to scope branching-language
+    checks to where they matter (not HARD PROHIBITIONS or test discussion).
+    """
+    blocks: list[tuple[str, str]] = []
+    lines = text.splitlines()
+    current_heading: str | None = None
+    current_lines: list[str] = []
+    edit_re = re.compile(r"^###\s+Edit\s+", re.IGNORECASE)
+    for line in lines:
+        stripped = line.strip()
+        is_h2_or_h3 = stripped.startswith("## ") or stripped.startswith("### ")
+        if is_h2_or_h3:
+            if current_heading is not None:
+                blocks.append((current_heading, "\n".join(current_lines)))
+                current_heading = None
+                current_lines = []
+            if edit_re.match(stripped):
+                current_heading = stripped.lstrip("#").strip()
+            continue
+        if current_heading is not None:
+            current_lines.append(line)
+    if current_heading is not None:
+        blocks.append((current_heading, "\n".join(current_lines)))
+    return blocks
+
+
+def strip_fenced_blocks(text: str) -> str:
+    return FENCE_RE.sub("", text)
+
+
+def resolve_workspace_root(start: Path) -> Path | None:
+    """Walk up from `start` to find a directory containing `.git`.
+
+    Returns the resolved workspace root, or None if no ancestor contains
+    a `.git` directory or file (git worktrees use a `.git` file).
+    """
+    try:
+        current = start.resolve()
+    except OSError:
+        return None
+    for candidate in [current, *current.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def verify_anchors(
+    text: str,
+    rows: list[tuple[str, str]],
+    workspace_root: Path | None,
+) -> tuple[list[str], list[str]]:
+    """File-existence + labeled-old_text verification.
+
+    For each non-NEW-FILE row, the named file must exist under
+    workspace_root (BLOCK on miss). For each `old_text:`-labeled block in a
+    Required Edit section that names an allowlisted file, the literal text
+    is grep'd against the file (BLOCK on miss, WARN on non-unique).
+
+    Returns (failures, warnings). If the workspace can't be resolved, or if
+    no named file exists under the chosen root, both lists carry a single
+    WARN explaining the skip — lint may be running from outside the target
+    repo, and flooding existence failures would just be noise.
+    """
+    failures: list[str] = []
+    warnings: list[str] = []
+    if workspace_root is None:
+        warnings.append(
+            "anchor verification skipped: could not resolve workspace root "
+            "from cwd. Run `idiom brief lint` from inside the target repo."
+        )
+        return failures, warnings
+
+    nonfile_rows = [(fp, act) for fp, act in rows if not is_newfile_action(act)]
+    if not nonfile_rows:
+        return failures, warnings
+
+    resolvable_any = any(
+        (workspace_root / fp).exists() for fp, _ in nonfile_rows
+    )
+    if not resolvable_any:
+        sampled = ", ".join(fp for fp, _ in nonfile_rows[:3])
+        warnings.append(
+            "anchor verification skipped: no named files exist under "
+            f"workspace_root={workspace_root}. Sampled paths: {sampled}. "
+            "Run lint from inside the target repo, or the brief may "
+            "reference a different project."
+        )
+        return failures, warnings
+
+    missing_paths: set[str] = set()
+    for file_path, _action in nonfile_rows:
+        full_path = workspace_root / file_path
+        if not full_path.exists():
+            failures.append(
+                f"anchor verification: file not found in workspace: {file_path} "
+                f"(resolved to {full_path}). The brief references a path that "
+                "doesn't exist — either the path is stale or the lint is "
+                "running from the wrong workspace."
+            )
+            missing_paths.add(file_path)
+
+    # Labeled old_text verification.
+    rows_by_basename = {Path(fp).name: fp for fp, _ in nonfile_rows}
+    for heading, body in required_edit_blocks(text):
+        section_file = _file_for_edit_section(heading, body, rows_by_basename)
+        if not section_file or section_file in missing_paths:
+            continue
+        full_path = workspace_root / section_file
+        if not full_path.exists():
+            continue  # already reported above
+        try:
+            file_content = full_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            warnings.append(
+                f"anchor verification: could not read {section_file}: {exc}"
+            )
+            continue
+        for match in OLD_TEXT_BLOCK_RE.finditer(body):
+            old_text = match.group(1)
+            if not old_text.strip():
+                continue
+            count = file_content.count(old_text)
+            if count == 0:
+                failures.append(
+                    f"anchor verification: old_text block in '{heading}' "
+                    f"does not match {section_file}. The literal text in the "
+                    "brief's old_text block was not found in the file — "
+                    "either the anchor is stale or the file has been edited."
+                )
+            elif count > 1:
+                warnings.append(
+                    f"anchor not unique in {section_file} ({count} matches) "
+                    f"for '{heading}'. Extend the old_text block until it "
+                    "matches exactly once; otherwise the planner has to "
+                    "disambiguate at run time."
+                )
+    return failures, warnings
+
+
+def _file_for_edit_section(
+    heading: str,
+    body: str,
+    rows_by_basename: dict[str, str],
+) -> str | None:
+    """Pick which allowlist file an Edit section refers to.
+
+    Look for an allowlist basename in the heading first (canonical form:
+    "### Edit N -- <basename> ..."); fall back to a basename mentioned in
+    the first 200 chars of the body.
+    """
+    for basename, file_path in rows_by_basename.items():
+        if basename in heading:
+            return file_path
+    head = body[:200]
+    for basename, file_path in rows_by_basename.items():
+        if basename in head:
+            return file_path
+    return None
 
 
 if __name__ == "__main__":

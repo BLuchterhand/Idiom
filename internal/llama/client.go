@@ -82,9 +82,12 @@ type ChatOptions struct {
 	RepetitionPenalty float64
 	EnableThinking    *bool
 	PreserveThinking  bool
-	MaxTokens         int
-	Tools             []Tool
-	ToolChoice        string
+	// ThinkingBudget caps tokens spent inside <think>...</think>.
+	// 0 = uncapped. See chatTemplateKwargs.ThinkingBudget for why.
+	ThinkingBudget int
+	MaxTokens      int
+	Tools          []Tool
+	ToolChoice     string
 }
 
 type Usage struct {
@@ -121,6 +124,23 @@ type chatRequest struct {
 type chatTemplateKwargs struct {
 	EnableThinking   *bool `json:"enable_thinking,omitempty"`
 	PreserveThinking bool  `json:"preserve_thinking,omitempty"`
+	// ThinkingBudget caps how many tokens the model spends inside the
+	// <think>...</think> block before being forced to emit its actual
+	// response. Without this cap, Qwen3.6-35B-A3B has a documented
+	// endless-reasoning-loop wedge mode (HF discussion #20) where it
+	// keeps thinking until context runs out, producing zero tool calls.
+	// 0 = no cap (legacy behavior). Recommended: 4096-8192 for
+	// agentic harnesses where forward progress matters more than
+	// reasoning depth on hard problems.
+	//
+	// MLX caveat: this is forwarded as a chat_template_kwarg to the
+	// Qwen3 template. Whether MLX's bundled template version actually
+	// honors `thinking_budget` (vs silently ignoring it) is unverified
+	// — depends on the template baked into the model directory's
+	// tokenizer_config.json. If template doesn't honor it, this is a
+	// no-op (no harm, no benefit). vLLM's `--reasoning-budget` server
+	// flag is a different mechanism we don't have on MLX.
+	ThinkingBudget int `json:"thinking_budget,omitempty"`
 }
 
 // chatResponse captures both llama.cpp's `reasoning_content` field and MLX's
@@ -183,6 +203,7 @@ func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwar
 	return &chatTemplateKwargs{
 		EnableThinking:   cloneBoolPtr(opts.EnableThinking),
 		PreserveThinking: opts.PreserveThinking,
+		ThinkingBudget:   opts.ThinkingBudget,
 	}
 }
 

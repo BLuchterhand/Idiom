@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -67,6 +68,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	defer cleanupStalePlanArtifacts(cfg.Workspace.Root, 7*24*time.Hour, stderr)
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
@@ -115,14 +117,23 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		Resume:                   opts.Resume,
 		TaskFamily:               agent.PlanThenExecutePlannerTaskFamily,
 		PlannerOwnedVerification: true,
-		// Cap max_tokens at 4096 for the planner phase. The full
-		// thinking-on default of 8192 is generous for lanes that
-		// interleave reads + edits; the plan-execute planner emits a
-		// single submit_plan + a short final answer, so 4096 is more
-		// than enough headroom and roughly halves step-1 latency on
-		// local 35B (per donkey-atom run measurements: 60s thinking
-		// at 8192 vs ~30s expected at 4096).
-		MaxTokensOverride: 4096,
+		// max_tokens for the planner phase: 16384.
+		//
+		// Originally 4096 ("planner emits one submit_plan + short answer,
+		// 4096 is plenty"). That assumption broke when submit_plan's
+		// `new_text` field carries the full content of NEW FILE edits —
+		// a 400-line Go file plus structure overhead easily exceeds
+		// 4096 tokens, and the response truncates silently mid-JSON
+		// (manifesting as "completion gate rejected, no write present"
+		// because the truncated JSON failed to parse as a valid tool
+		// call). See task-64b for the failure repro.
+		//
+		// Qwen3 documents 32768 as the recommended default; 16384 is a
+		// middle ground that handles 1000+ line briefs while still
+		// constraining latency on small atoms (most planner responses
+		// stay well under 4096 anyway — the cap only matters when the
+		// content is large).
+		MaxTokensOverride: 16384,
 		Telemetry:         rec,
 	}, stdout)
 	if err != nil {
@@ -611,9 +622,7 @@ func emitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType strin
 		"type": "idiom.plan_execute." + eventType,
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	for k, v := range fields {
-		payload[k] = v
-	}
+	maps.Copy(payload, fields)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		// json.Marshal on a map[string]any with primitive values

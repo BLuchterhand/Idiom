@@ -170,12 +170,16 @@ func TestMaybeAcquireSkipsWhenAncestorHoldsPool(t *testing.T) {
 	}
 }
 
-func TestMaybeAcquireStillAcquiresForUnheldPool(t *testing.T) {
-	// Different-pool nested acquire: IDIOM_QUEUE_HELD_POOLS lists
-	// pool A; nested call requests pool B; child MUST acquire pool
-	// B normally. This is what lets a planner-pool wrapper invoke
-	// an executor-pool nested action without self-deadlock OR
-	// silently skipping the executor gate.
+func TestMaybeAcquireSkipsCrossPoolNestedAcquire(t *testing.T) {
+	// Cross-pool nested acquire: IDIOM_QUEUE_HELD_POOLS lists pool
+	// A; nested call requests pool B. The previous behavior was to
+	// acquire pool B normally, but that created a dining-philosophers
+	// deadlock when two sessions each held one pool and waited for
+	// the other (observed 2026-05-10: Colony held qwen-35b waiting on
+	// qwen-coder; idiom held qwen-coder waiting on qwen-35b).
+	// Current behavior: skip the nested acquire — the ancestor's
+	// outer lease is enough serialization for this session, and
+	// avoiding the daemon entirely cannot deadlock.
 	_, sock := startTestServer(t, Config{
 		Pools: map[string]PoolConfig{
 			"qwen-35b":   {MaxInFlight: 1},
@@ -185,17 +189,30 @@ func TestMaybeAcquireStillAcquiresForUnheldPool(t *testing.T) {
 	t.Setenv(HeldPoolsEnv, "qwen-35b")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	start := time.Now()
 	release, err := MaybeAcquire(ctx, sock, "qwen-coder", "nested", "test-nested", nil)
 	if err != nil {
-		t.Fatalf("MaybeAcquire on un-held pool: %v", err)
+		t.Fatalf("MaybeAcquire on cross-pool nested: %v", err)
 	}
 	defer release()
+	// Sub-millisecond return; if it tried to dial the daemon it
+	// would take longer than 50ms even on a localhost socket.
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("cross-pool reentrant skip took too long (%v); did it actually dial?", elapsed)
+	}
 	snap, err := Status(sock)
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if len(snap.InFlight) != 1 || snap.InFlight[0].Pool != "qwen-coder" {
-		t.Fatalf("expected qwen-coder in flight, got %+v", snap.InFlight)
+	// The daemon must show ZERO in-flight — the nested call did not
+	// acquire qwen-coder. Pool accounting is intentionally permissive
+	// for nested calls; the outer wrapper is responsible for picking
+	// the right pool.
+	if len(snap.InFlight) != 0 {
+		t.Fatalf("expected zero in-flight (nested call must not acquire), got %+v", snap.InFlight)
+	}
+	if len(snap.Waiting) != 0 {
+		t.Fatalf("nested call must not appear as a waiter; got %+v", snap.Waiting)
 	}
 }
 

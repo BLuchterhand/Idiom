@@ -355,3 +355,44 @@ func TestFindLatestPlanArtifactSkipsArtifactsBeforeNotBefore(t *testing.T) {
 		t.Fatalf("expected error when only stale artifacts exist before notBefore")
 	}
 }
+
+func TestCleanupStalePlanArtifactsRemovesOldArtifacts(t *testing.T) {
+	// cleanupStalePlanArtifacts must remove *.plan.json files older than
+	// the threshold while preserving recent artifacts and last.plan.json.
+	root := t.TempDir()
+	dir := filepath.Join(root, ".idiom", "plans")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Seed a stale plan artifact (older than 7 days).
+	stale := filepath.Join(dir, "20260101-000000000.plan.json")
+	staleContent := `{"schema_version":"idiom.plan.v1","pack_id":"abc123","edits":[]}`
+	if err := os.WriteFile(stale, []byte(staleContent), 0o644); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+	if err := os.Chtimes(stale, mustTime("2026-01-01T00:00:00Z"), mustTime("2026-01-01T00:00:00Z")); err != nil {
+		t.Fatalf("chtimes stale: %v", err)
+	}
+
+	// Seed a non-stale plan artifact (recent mtime) to verify it is preserved.
+	recent := filepath.Join(dir, "20260601-000000000.plan.json")
+	recentContent := `{"schema_version":"idiom.plan.v1","pack_id":"def456","edits":[]}`
+	if err := os.WriteFile(recent, []byte(recentContent), 0o644); err != nil {
+		t.Fatalf("seed recent: %v", err)
+	}
+
+	// Call cleanupStalePlanArtifacts directly with 7-day threshold.
+	var buf bytes.Buffer
+	cleanupStalePlanArtifacts(root, 7*24*time.Hour, &buf)
+
+	// Verify the stale plan artifact was removed.
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale plan should have been removed, but still exists")
+	}
+
+	// Verify the non-stale plan artifact was preserved.
+	if _, err := os.Stat(recent); os.IsNotExist(err) {
+		t.Fatalf("recent plan should have been preserved, but was removed")
+	}
+}

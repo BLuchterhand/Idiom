@@ -612,9 +612,8 @@ func (r *Runner) Run(
 					Error:   fmt.Sprintf("%s is not available while read/search budget recovery is active and required edit paths remain unchanged. Use an available write tool, or answer with <<QUESTION>> and the exact path-specific blocker.", strings.TrimSpace(req.Tool)),
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
-				decision := runnerRequestBudgetDecision{ForceAnswerReason: "read_budget_exhausted"}
-				if answer, ok := r.implementationReadBudgetBlockerAnswer(decision, collectedResults); ok {
-					blockerKind := r.implementationReadBudgetBlockerKind(collectedResults)
+				if answer, ok := r.writeOnlyRecoveryBlockerAnswer(collectedResults); ok {
+					blockerKind := r.writeOnlyRecoveryBlockerKind(collectedResults)
 					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
 					return finish(answer, nil, blockerKind, true)
 				}
@@ -863,17 +862,9 @@ func (r *Runner) Run(
 		if isReadClassTool(req) {
 			requestBudget.noteReadClassRequest(req)
 			metrics.ReadClassCalls++
-			readPolicy := r.readBudgetPolicyForCurrentState(policy, collectedResults)
-			r.emitReadBudgetDiag(stepNumber, req, readPolicy, collectedResults, requestBudget)
-			if decision := requestBudget.readBudgetDecision(readPolicy, req); decision.Handled {
+			if decision := requestBudget.readBudgetDecision(policy, req); decision.Handled {
 				if decision.EventRole != "" {
-					content := firstNonEmpty(decision.EventContent, decision.Nudge)
-					if decision.EventRole == "read_budget_hard_block" {
-						if payload := r.readBudgetHardBlockPayload(req, collectedResults, readPolicy, requestBudget, content); payload != "" {
-							content = payload
-						}
-					}
-					r.emitEvent(RunEvent{Role: decision.EventRole, Content: content})
+					r.emitEvent(RunEvent{Role: decision.EventRole, Content: firstNonEmpty(decision.EventContent, decision.Nudge)})
 				}
 				if decision.Nudge != "" {
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
@@ -885,23 +876,6 @@ func (r *Runner) Run(
 					}
 				}
 				if decision.ForceAnswerPrompt != "" {
-					if prompt, ok := r.implementationReadBudgetRecoveryPrompt(decision, collectedResults); ok && !implementationWriteOnlyRecoveryActive {
-						implementationWriteOnlyRecoveryActive = true
-						if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
-							requiredPathCompletionRecoveryActive = true
-						}
-						markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
-						hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
-						rebuildTools()
-						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-						r.emitEvent(RunEvent{Role: "implementation_write_only_recovery", Content: prompt})
-						continue
-					}
-					if answer, ok := r.implementationReadBudgetBlockerAnswer(decision, collectedResults); ok {
-						blockerKind := r.implementationReadBudgetBlockerKind(collectedResults)
-						emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
-						return finish(answer, nil, blockerKind, true)
-					}
 					answer, err = controller.completeWithoutMoreToolsWithReason(decision.ForceAnswerPrompt)
 					return finish(answer, err, decision.ForceAnswerReason, true)
 				}
@@ -2512,9 +2486,6 @@ func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopR
 	if policy.MaxToolSteps > 0 {
 		ledger.MaxToolSteps = policy.MaxToolSteps
 	}
-	if policy.ReadBudgetHard > 0 {
-		ledger.MaxReadBudget = policy.ReadBudgetHard
-	}
 	if exhausted {
 		ledger.NextAllowedActions = []string{"answer_with_explicit_uncertainty", "ask_user_for_narrower_scope", "resume_with_fresh_budget"}
 		ledger.UserVisibleUncertainty = "answer from gathered evidence and mention only unsupported claims that remain material"
@@ -3807,6 +3778,16 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		return workspace.ToolResult{}, false
 	}
 	if len(changedPathsFromToolResults(results)) == 0 {
+		// Auto-salvage: if the deliverable is a single new .md file
+		// and the model put the content in its final-answer text
+		// instead of calling write_file, write it on behalf of the
+		// model. Common for refine review/draft/patch lanes where
+		// Qwen at low temp sometimes skips the write step despite
+		// explicit instructions. Salvaging converts the wedge into
+		// a successful ship.
+		if r.tryAutoSalvageMarkdownDeliverable(reply) {
+			return workspace.ToolResult{}, false
+		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
@@ -3867,6 +3848,63 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		}, true
 	}
 	return workspace.ToolResult{}, false
+}
+
+// tryAutoSalvageMarkdownDeliverable handles a specific Qwen-at-low-temp
+// failure mode: the deliverable is a single new .md file (refine
+// review/draft/patch lanes), the model wrote the entire markdown
+// content into its final-answer text instead of calling write_file,
+// and the completion gate is about to reject for "no successful write."
+//
+// When the brief has exactly one required edit path that ends in .md,
+// the path doesn't yet exist on disk, and the reply is a non-trivial
+// markdown payload (>= 100 chars, contains at least one ## header),
+// we write the reply to that path on behalf of the model and return
+// true so the caller can skip the rejection. The salvage trades a
+// strict "tool call required" contract for a recovered ship — at low
+// temp Qwen ignores the explicit write instruction often enough that
+// salvaging is a net win.
+//
+// Returns false (no salvage) when the criteria don't match — caller
+// proceeds with the normal rejection. Salvage failures (file write
+// errors) also return false; the original gate rejection wins.
+func (r *Runner) tryAutoSalvageMarkdownDeliverable(reply string) bool {
+	if r == nil || r.Workspace == nil {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: nil runner or workspace\n")
+		return false
+	}
+	if len(r.RuntimeBrief.RequiredEditPaths) != 1 {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: required_edit_paths count=%d, want 1\n", len(r.RuntimeBrief.RequiredEditPaths))
+		return false
+	}
+	path := strings.TrimSpace(r.RuntimeBrief.RequiredEditPaths[0])
+	if path == "" || !strings.HasSuffix(strings.ToLower(path), ".md") {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: path %q is not a .md file\n", path)
+		return false
+	}
+	body := strings.TrimSpace(reply)
+	if len(body) < 100 {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body too short (%d chars)\n", len(body))
+		return false
+	}
+	if !strings.Contains(body, "\n## ") && !strings.HasPrefix(body, "## ") {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body has no markdown ## header (first 100 chars: %q)\n", body[:min(100, len(body))])
+		return false
+	}
+	ctx := context.Background()
+	req := workspace.ToolRequest{
+		Tool:        "write_file",
+		Path:        path,
+		Content:     body,
+		Description: "auto-salvage: model put deliverable in final-answer text instead of calling write_file",
+	}
+	result := r.Workspace.Execute(ctx, req)
+	if strings.TrimSpace(result.Error) != "" {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] FAILED: write_file %s: %s\n", path, result.Error)
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "[auto-salvage] SUCCESS: wrote %s (%d bytes)\n", path, len(body))
+	return true
 }
 
 func mutationReplyReportsConcreteNoopOrBlocker(lowerReply string) bool {
@@ -4334,46 +4372,6 @@ func runnerBriefRequiresMutation(brief workerruntime.WorkerRuntimeBrief) bool {
 		strings.Contains(permission, "write")
 }
 
-func (r *Runner) readBudgetPolicyForCurrentState(policy RunPolicy, results []workspace.ToolResult) RunPolicy {
-	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
-		return policy
-	}
-	changed := changedPathsFromToolResults(results)
-	if len(changed) == 0 {
-		if implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) {
-			return clampReadBudgetHard(policy, writeReadyPacketPrewriteReadBudgetHard)
-		}
-		// Plan-then-execute planner phase intentionally has NO
-		// pre-write read budget. The planner emits one submit_plan
-		// and stops; runaway exploration is caught by MaxToolSteps
-		// + DoomLoopGate + FingerprintNudge. A hard read cap punished
-		// legitimate per-file orientation in established packages.
-		if r.planThenExecutePlannerPhase() {
-			return policy
-		}
-		// Only clamp to the prewrite-5 budget when the brief actually
-		// carries inline anchors. An abstract implementation brief that
-		// only names required_edit_paths leaves the model to find the
-		// insertion sites by reading source, which the broader mutation
-		// default budget already covers.
-		if briefHasUsableEditAnchors(r.RuntimeBrief) {
-			return clampReadBudgetHard(policy, scaledRequiredEditPathPrewriteBudget(len(r.RuntimeBrief.RequiredEditPaths)))
-		}
-		return policy
-	}
-	if len(missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changed)) > 0 {
-		// Tight remainder budget assumes exact anchors point at each
-		// remaining file's edit site. Snippets alone describe what to
-		// add, not where, so the model still needs orientation reads in
-		// each unwritten file — fall through to the mutation default.
-		if exactAnchorImplementationActive(r.RuntimeBrief) {
-			return clampReadBudgetHard(policy, requiredEditPathRemainderReadBudgetHard)
-		}
-		return policy
-	}
-	return policy
-}
-
 func writeReadyPacketReadContractActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if !runnerBriefRequiresMutation(brief) || len(brief.RequiredEditPaths) == 0 {
 		return false
@@ -4543,25 +4541,17 @@ func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolReques
 	return summary, errorText, prompt, hideNonWrite, true
 }
 
-func clampReadBudgetHard(policy RunPolicy, ceiling int) RunPolicy {
-	if ceiling <= 0 {
-		return policy
-	}
-	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > ceiling {
-		policy.ReadBudgetHard = ceiling
-	}
-	return policy
-}
-
-func (r *Runner) implementationReadBudgetBlockerAnswer(decision runnerRequestBudgetDecision, results []workspace.ToolResult) (string, bool) {
-	if r == nil || decision.ForceAnswerReason != "read_budget_exhausted" {
-		return "", false
-	}
-	if !runnerBriefRequiresMutation(r.RuntimeBrief) {
+// writeOnlyRecoveryBlockerAnswer returns the <<QUESTION>> answer the runner
+// emits when write-only recovery is active and the model tried a non-write
+// tool that the bounded read allowance can no longer cover. Returns ok=false
+// when the situation doesn't warrant a recovery blocker (e.g. read-only
+// lane, no required edit paths remain).
+func (r *Runner) writeOnlyRecoveryBlockerAnswer(results []workspace.ToolResult) (string, bool) {
+	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) {
 		return "", false
 	}
 	if missing := r.remainingRequiredEditPaths(results); len(missing) > 0 {
-		return fmt.Sprintf("<<QUESTION>>: Read/search budget exhausted while required edit path(s) remain unchanged: %s. Complete those edits from the current packet/evidence, or re-dispatch with a narrower anchor for each skipped path.", strings.Join(missing, ", ")), true
+		return fmt.Sprintf("<<QUESTION>>: Write-only recovery is active and required edit path(s) remain unchanged: %s. Complete those edits from the current packet/evidence, or re-dispatch with a narrower anchor for each skipped path.", strings.Join(missing, ", ")), true
 	}
 	if len(changedPathsFromToolResults(results)) > 0 {
 		return "", false
@@ -4570,34 +4560,14 @@ func (r *Runner) implementationReadBudgetBlockerAnswer(decision runnerRequestBud
 	if refs := nonEmptyRunnerStrings(r.RuntimeBrief.TargetRefs, 3); len(refs) > 0 {
 		target = strings.Join(refs, ", ")
 	}
-	return fmt.Sprintf("<<QUESTION>>: Read/search budget exhausted before any edit attempt in this implementation lane. Provide a narrower target packet or preloaded current-state anchor for %s; no workspace change was made.", target), true
+	return fmt.Sprintf("<<QUESTION>>: Write-only recovery is active and no edit has been attempted. Provide a narrower target packet or preloaded current-state anchor for %s; no workspace change was made.", target), true
 }
 
-func (r *Runner) implementationReadBudgetRecoveryPrompt(decision runnerRequestBudgetDecision, results []workspace.ToolResult) (string, bool) {
-	if r == nil || decision.ForceAnswerReason != "read_budget_exhausted" {
-		return "", false
-	}
-	if !runnerBriefRequiresMutation(r.RuntimeBrief) {
-		return "", false
-	}
-	if missing := r.remainingRequiredEditPaths(results); len(missing) > 0 {
-		return fmt.Sprintf("Read/search budget is exhausted while required edit path(s) remain unchanged: %s. Read/search tools are now hidden for this turn. Use the target packet and gathered evidence to make the smallest safe edit to each remaining required path with edit_file, write_file, append_file, or apply_patch. If a remaining path genuinely cannot be edited safely from the available evidence, answer with <<QUESTION>> and name the exact missing anchor for that path; do not perform additional discovery.", strings.Join(missing, ", ")), true
-	}
-	if len(changedPathsFromToolResults(results)) > 0 {
-		return "", false
-	}
-	target := "the requested implementation target"
-	if refs := nonEmptyRunnerStrings(r.RuntimeBrief.TargetRefs, 3); len(refs) > 0 {
-		target = strings.Join(refs, ", ")
-	}
-	return fmt.Sprintf("Read/search budget is exhausted before any edit attempt. Read/search tools are now hidden for this turn. If the target packet and gathered evidence identify an exact safe edit to %s, make the smallest allowed edit with edit_file, write_file, append_file, or apply_patch. If the exact edit location is still genuinely unknown, answer with <<QUESTION>> and name the one missing fact or preloaded anchor needed; do not perform additional discovery.", target), true
-}
-
-func (r *Runner) implementationReadBudgetBlockerKind(results []workspace.ToolResult) string {
+func (r *Runner) writeOnlyRecoveryBlockerKind(results []workspace.ToolResult) string {
 	if r != nil && len(r.remainingRequiredEditPaths(results)) > 0 {
-		return "read_budget_exhausted_required_paths_remaining"
+		return "write_only_recovery_required_paths_remaining"
 	}
-	return "read_budget_exhausted_before_write"
+	return "write_only_recovery_no_edit_attempted"
 }
 
 func (r *Runner) remainingRequiredEditPaths(results []workspace.ToolResult) []string {
@@ -8972,6 +8942,17 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, verificat
 			continue
 		}
 		if workspace.IsWorkspaceWriteTool(result.Tool) {
+			// Non-source writes (markdown, txt, etc.) have no meaningful
+			// sanity check beyond patch hygiene — `git diff --check`
+			// catches whitespace nits but there's no equivalent of
+			// `source_sanity`/`go vet` for prose. Skip the pending flag
+			// so doc-deliverable lanes (refine drafts/reviews/patches,
+			// design notes, etc.) don't get rejected by a gate that
+			// can't be satisfied. A SUBSEQUENT source write still sets
+			// pending — mixed atoms still require source-aware sanity.
+			if writeTouchesOnlyNonSourcePaths(result) {
+				continue
+			}
 			pending = true
 			continue
 		}
@@ -8980,6 +8961,36 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, verificat
 		}
 	}
 	return pending
+}
+
+// writeTouchesOnlyNonSourcePaths returns true when every path in a
+// write result is a non-source file (markdown, plain text). Used to
+// exempt doc-deliverable lanes from the post-write verification gate.
+func writeTouchesOnlyNonSourcePaths(result workspace.ToolResult) bool {
+	paths := changedPathsFromToolResult(result)
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if !writePathIsNonSource(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// writePathIsNonSource returns true for paths whose verification has
+// no source-aware analog. Conservative list — adding extensions risks
+// silently bypassing real verification gates.
+func writePathIsNonSource(path string) bool {
+	p := strings.ToLower(strings.TrimSpace(path))
+	if p == "" {
+		return false
+	}
+	return strings.HasSuffix(p, ".md") ||
+		strings.HasSuffix(p, ".markdown") ||
+		strings.HasSuffix(p, ".txt") ||
+		strings.HasSuffix(p, ".rst")
 }
 
 func resultCountsAsSuccessfulVerification(result workspace.ToolResult) bool {

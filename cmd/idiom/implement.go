@@ -58,7 +58,7 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	// When the queue daemon is up, concurrent `idiom implement` runs
 	// serialize through the configured pool instead of trampling the
 	// MLX backend at once.
-	queueRelease := implementAcquireQueueSlot(cfg, opts, cfg.Workspace.SessionID, stderr)
+	queueRelease := implementAcquireQueueSlot(cfg, cfg.Workspace.SessionID, stderr)
 	defer queueRelease()
 
 	prompt, err := implementPrompt(opts)
@@ -88,7 +88,7 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 // configured model alias (or IDIOM_QUEUE_POOL override) and acquires
 // from the daemon at IDIOM_QUEUE_SOCKET / DefaultSocketPath() when
 // reachable. Returns a no-op release on daemon absence.
-func implementAcquireQueueSlot(cfg config.Config, opts implementOptions, sessionID string, stderr io.Writer) func() {
+func implementAcquireQueueSlot(cfg config.Config, sessionID string, stderr io.Writer) func() {
 	pool := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_POOL"))
 	if pool == "" {
 		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)

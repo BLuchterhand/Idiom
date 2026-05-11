@@ -328,13 +328,12 @@ func TestNormalizePathBehavior(t *testing.T) {
 	}
 }
 
-// TestGenericChecksReturnsCanonicalSet verifies the always-on set
-// is exactly the three Phase 5 checks. If a future phase adds a
-// fourth, this test should be updated alongside the docs — keeping
-// the set explicit prevents accidental check-set drift.
+// TestGenericChecksReturnsCanonicalSet verifies the always-on set.
+// Keeping it explicit prevents accidental check-set drift — any new
+// generic check must be added here alongside the docs.
 func TestGenericChecksReturnsCanonicalSet(t *testing.T) {
 	got := GenericChecks()
-	want := []string{"unresolved_question_marker", "file_allowlist_mismatch", "narrating_test_comments"}
+	want := []string{"unresolved_question_marker", "file_allowlist_mismatch", "narrating_test_comments", "go_build_passes"}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d generic checks, got %d", len(want), len(got))
 	}

@@ -50,10 +50,15 @@ func PoolHeldByAncestor(heldPools, pool string) bool {
 // blocks until a lease is granted; the returned release function
 // closes the lease.
 //
-// Reentrancy: if the IDIOM_QUEUE_HELD_POOLS env var lists the target
-// pool, an ancestor process already holds a lease in that pool. We
-// return immediately with a no-op release rather than re-acquiring,
-// which would deadlock on single-cap pools.
+// Reentrancy: if the IDIOM_QUEUE_HELD_POOLS env var lists ANY pool
+// (the same one OR a different one), an ancestor process already
+// holds a lease somewhere. We return immediately with a no-op release
+// rather than re-acquiring. The same-pool case prevents
+// self-deadlock on single-cap pools; the cross-pool case prevents
+// the dining-philosophers deadlock where two sessions each hold one
+// pool and wait for the other (observed 2026-05-10: Colony held
+// qwen-35b waiting on qwen-coder; idiom held qwen-coder waiting on
+// qwen-35b — neither could progress).
 //
 // socketPath empty → DefaultSocketPath() (XDG_RUNTIME_DIR or TMPDIR).
 // pool empty → "default".
@@ -68,13 +73,17 @@ func PoolHeldByAncestor(heldPools, pool string) bool {
 // run `idiom queue ping` separately first.
 func MaybeAcquire(ctx context.Context, socketPath, pool, label, client string, statusOut io.Writer) (release func(), err error) {
 	// Reentrant short-circuit: if an ancestor process already holds
-	// a lease in this pool, return a no-op release immediately. This
-	// is what prevents `idiom queue run -- <wrapper>` from
-	// self-deadlocking when the wrapper invokes another idiom
-	// subcommand that itself calls MaybeAcquire on the same pool.
-	if PoolHeldByAncestor(os.Getenv(HeldPoolsEnv), pool) {
+	// a lease in ANY pool, return a no-op release immediately.
+	heldPools := os.Getenv(HeldPoolsEnv)
+	if PoolHeldByAncestor(heldPools, pool) {
 		if statusOut != nil {
-			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot; nested acquire is no-op\n", pool)
+			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot in same pool; nested acquire is no-op\n", pool)
+		}
+		return func() {}, nil
+	}
+	if strings.TrimSpace(heldPools) != "" {
+		if statusOut != nil {
+			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot in different pool(s) (%s); skipping nested acquire to prevent cross-pool deadlock — wrap the outer command with the pool the inner inference actually uses\n", pool, heldPools)
 		}
 		return func() {}, nil
 	}

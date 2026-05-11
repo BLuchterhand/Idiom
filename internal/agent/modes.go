@@ -153,21 +153,11 @@ func ModeNames() []string {
 //     catches non-consecutive repeats.
 //   - SynthesisNudgeAt: 10 — fires on chatty turns; typical happy paths
 //     finish in 3–6 calls, so 10 indicates plateau risk.
-//   - ReadBudgetSoft: 8 in plan mode, 0 elsewhere. Plan mode output should
-//     be a plan, not another round of reads.
-//   - ReadBudgetHard: 12 in plan mode, 16 elsewhere. This is a hard
-//     OpenCode-style synthesis ceiling for read/search calls without a write.
-func ModePolicy(mode Mode) RunPolicy {
-	policy := RunPolicy{
+func ModePolicy(_ Mode) RunPolicy {
+	return RunPolicy{
 		FingerprintNudgeAt: 3,
 		SynthesisNudgeAt:   10,
-		ReadBudgetHard:     16,
 	}
-	if strings.EqualFold(mode.Name, "plan") {
-		policy.ReadBudgetSoft = 8
-		policy.ReadBudgetHard = 12
-	}
-	return policy
 }
 
 // Validate checks a Mode for obvious construction errors. Called at

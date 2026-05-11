@@ -18,17 +18,6 @@ type RunPolicy struct {
 	// message when ToolCalls first reaches this value. 0 disables. Mitigates
 	// long tool chains that produce short answers.
 	SynthesisNudgeAt int
-	// ReadBudgetSoft injects a one-shot "stop reading, update your plan"
-	// system message when the count of read-class tool calls (list_files,
-	// read_file, search_*, go_find_*, go_read_symbol, etc.) first reaches
-	// this value. 0 disables. Intended for plan-mode.
-	ReadBudgetSoft int
-	// ReadBudgetHard forces a no-more-tools synthesis when the model tries
-	// to make more than this many read-class calls without a successful
-	// write. 0 disables. Mirrors OpenCode's max-steps behavior, but scoped
-	// to runaway discovery loops so implementation turns can still verify
-	// after edits.
-	ReadBudgetHard int
 	// FingerprintNudgeAt injects a one-shot system message per fingerprint
 	// when a given tool+args pair has been called this many non-consecutive
 	// times. 0 disables. Complements the DoomLoopGate (which only catches
@@ -108,16 +97,6 @@ func (r *Runner) effectivePolicy() RunPolicy {
 		policy.MaxNoProgressTurns = 6
 	}
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
-		// Plan-then-execute planner phase intentionally has NO read
-		// budget cap. The planner produces a single submit_plan and
-		// stops; runaway exploration is caught by MaxToolSteps,
-		// DoomLoopGate (consecutive identical calls), and
-		// FingerprintNudge (non-consecutive repeats). A hard read
-		// cap was a bandaid that punished legitimate per-file
-		// orientation in established packages.
-		if !r.planThenExecutePlannerPhase() {
-			policy = clampMutationReadBudget(policy)
-		}
 		policy = scaleMaxToolStepsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
 	}
 	return policy
@@ -150,17 +129,6 @@ func scaleMaxToolStepsByRequiredPaths(policy RunPolicy, pathCount int) RunPolicy
 }
 
 const (
-	mutationReadBudgetHard                  = 12
-	requiredEditPathPrewriteReadBudgetHard  = 5
-	writeReadyPacketPrewriteReadBudgetHard  = 1
-	requiredEditPathRemainderReadBudgetHard = 2
-	// planThenExecuteReadBudgetCeiling caps the planner-phase read
-	// budget for plan-then-execute mode. The planner needs at least one
-	// read per required path (to confirm anchors and indentation) before
-	// it can submit a plan, so the regular mutation cap of 12 starves
-	// briefs with 8+ required paths. The closeout nudge fires earlier
-	// when state allows, so this ceiling rarely matters in practice — it
-	// just prevents a runaway scan when something goes wrong.
 	// maxToolStepsBase is the conservative default budget for a single-file
 	// implementation atom. Multi-file briefs scale up via
 	// scaleMaxToolStepsByRequiredPaths so a 5-file atom doesn't run out of
@@ -177,30 +145,6 @@ const (
 	// force-answers with a success completion.
 	postCompletionVerificationCutoff = 3
 )
-
-// scaledRequiredEditPathPrewriteBudget grows the pre-write read budget for
-// briefs that span more than one required edit path. With one required path
-// the baseline 5 reads is plenty for a single anchor confirmation; with two
-// or more, each additional path needs at least one orientation read of its
-// own. Capped at the broader mutation budget so this never invites unbounded
-// discovery.
-func scaledRequiredEditPathPrewriteBudget(pathCount int) int {
-	if pathCount <= 1 {
-		return requiredEditPathPrewriteReadBudgetHard
-	}
-	scaled := requiredEditPathPrewriteReadBudgetHard + 2*(pathCount-1)
-	if scaled > mutationReadBudgetHard {
-		return mutationReadBudgetHard
-	}
-	return scaled
-}
-
-func clampMutationReadBudget(policy RunPolicy) RunPolicy {
-	if policy.ReadBudgetHard == 0 || policy.ReadBudgetHard > mutationReadBudgetHard {
-		policy.ReadBudgetHard = mutationReadBudgetHard
-	}
-	return policy
-}
 
 func (p RunPolicy) unbounded() bool {
 	return p.MaxToolSteps <= 0
@@ -246,7 +190,6 @@ type runnerBudgetLedger struct {
 	CompletionGateRejections int      `json:"completion_gate_rejections"`
 	ContextCompactions       int      `json:"context_compactions"`
 	ReadClassCalls           int      `json:"read_class_calls,omitempty"`
-	MaxReadBudget            int      `json:"max_read_budget,omitempty"`
 	DurationMillis           int64    `json:"duration_millis"`
 	StopReason               string   `json:"stop_reason"`
 	BudgetExhausted          bool     `json:"budget_exhausted"`

@@ -115,26 +115,6 @@ func TestRunnerRequestBudgetReadBudgetBlocksAfterPostChildBudget(t *testing.T) {
 	}
 }
 
-func TestRunnerRequestBudgetHardBlockIsContractNeutral(t *testing.T) {
-	state := newRunnerRequestBudgetState(2)
-	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "a.go"})
-	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "b.go"})
-
-	decision := state.readBudgetDecision(RunPolicy{ReadBudgetHard: 1}, workspace.ToolRequest{Tool: "read_file", Path: "b.go"})
-	if !decision.Handled || decision.RejectSummary != "Read budget exhausted" {
-		t.Fatalf("expected read budget hard block, got %#v", decision)
-	}
-	combined := decision.RejectError + "\n" + decision.ForceAnswerPrompt
-	for _, want := range []string{"write or report a concrete blocker", "write-capable lanes", "read-only lanes"} {
-		if !strings.Contains(combined, want) {
-			t.Fatalf("expected hard-block guidance to contain %q, got:\n%s", want, combined)
-		}
-	}
-	if strings.Contains(combined, "answer or proceed") {
-		t.Fatalf("read budget guidance should not use answer-first fallback wording:\n%s", combined)
-	}
-}
-
 func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 	state.readOnlyChildTaskSatisfied = true

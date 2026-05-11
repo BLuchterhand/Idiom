@@ -256,20 +256,6 @@ func TestPlanThenExecuteReadyToSubmitNudgeRecognizesLanguageSymbolReads(t *testi
 	}
 }
 
-func TestPlanThenExecutePlannerHasNoReadBudgetCap(t *testing.T) {
-	r := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        PlanThenExecutePlannerTaskFamily,
-			RequiredEditPaths: []string{"a.go", "b.go"},
-		},
-		Policy: RunPolicy{ReadBudgetHard: 0},
-	}
-	got := r.effectivePolicy()
-	if got.ReadBudgetHard != 0 {
-		t.Fatalf("plan-then-execute planner phase must have no read budget cap; got ReadBudgetHard=%d", got.ReadBudgetHard)
-	}
-}
-
 func TestCanonicalMutationBlockerFinalAnswerExemptsPlanExecute(t *testing.T) {
 	// Decorator-side exemption: for plan-execute planner phase, the
 	// model's clean "plan submitted" answer must not be rewritten into

@@ -212,11 +212,11 @@ func TestAnalyzeLaneOutputAcceptsEditAttempt(t *testing.T) {
 
 // TestAnalyzeLaneOutputAcceptsTypedBlocker covers the typed-blocker
 // path: a completion_status=blocked event proves the lane reached a
-// defined stopping point (read budget exhausted, write guard
+// defined stopping point (tool-step budget exhausted, write guard
 // rejected, etc.) — counts as a legitimate completion, not a
 // silent no-op.
 func TestAnalyzeLaneOutputAcceptsTypedBlocker(t *testing.T) {
-	out := []byte(`{"type":"completion_status","status":"blocked","reason":"read_budget_exhausted"}`)
+	out := []byte(`{"type":"completion_status","status":"blocked","reason":"tool_step_budget_exhausted"}`)
 	deg := analyzeLaneOutput(out, 0)
 	if len(deg) != 0 {
 		t.Fatalf("typed blocked completion must satisfy the check; got %+v", deg)

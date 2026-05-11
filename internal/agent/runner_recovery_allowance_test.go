@@ -8,27 +8,6 @@ import (
 	"idiom/internal/workspace"
 )
 
-func TestScaledRequiredEditPathPrewriteBudgetCurve(t *testing.T) {
-	cases := []struct {
-		paths int
-		want  int
-	}{
-		{0, requiredEditPathPrewriteReadBudgetHard},
-		{1, requiredEditPathPrewriteReadBudgetHard},
-		{2, 7},                        // 5 + 2*1
-		{3, 9},                        // 5 + 2*2
-		{4, 11},                       // 5 + 2*3
-		{5, mutationReadBudgetHard},   // 5 + 2*4 = 13, capped at 12
-		{10, mutationReadBudgetHard},  // capped
-	}
-	for _, tc := range cases {
-		got := scaledRequiredEditPathPrewriteBudget(tc.paths)
-		if got != tc.want {
-			t.Errorf("scaledRequiredEditPathPrewriteBudget(%d) = %d, want %d", tc.paths, got, tc.want)
-		}
-	}
-}
-
 func TestScaleMaxToolStepsByRequiredPathsCurve(t *testing.T) {
 	cases := []struct {
 		paths    int

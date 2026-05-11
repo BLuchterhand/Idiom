@@ -120,7 +120,7 @@ func TestLogRunEventEmitsCompletionStatusJSON(t *testing.T) {
 
 	model.logRunEvent(agent.RunEvent{
 		Role:    "completion_status",
-		Content: `{"lane":"main","contract":"implementation_result","status":"blocked","blocker_kind":"read_budget_exhausted_before_write","edit_attempted":false}`,
+		Content: `{"lane":"main","contract":"implementation_result","status":"blocked","blocker_kind":"required_edit_paths_remaining","edit_attempted":false}`,
 	})
 
 	events := decodeJSONEvents(t, buf.String())
@@ -131,7 +131,7 @@ func TestLogRunEventEmitsCompletionStatusJSON(t *testing.T) {
 	if event["type"] != "completion_status" || event["status"] != "blocked" || event["contract"] != "implementation_result" {
 		t.Fatalf("bad completion_status event: %v", event)
 	}
-	if event["blocker_kind"] != "read_budget_exhausted_before_write" || event["edit_attempted"] != false {
+	if event["blocker_kind"] != "required_edit_paths_remaining" || event["edit_attempted"] != false {
 		t.Fatalf("missing blocker metadata: %v", event)
 	}
 	if event["session_id"] != "sess-1" {

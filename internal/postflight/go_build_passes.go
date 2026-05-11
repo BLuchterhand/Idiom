@@ -2,7 +2,9 @@ package postflight
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -28,6 +30,14 @@ func (c GoBuildPasses) Run(d Diff, ctx RunContext) ([]Finding, error) {
 		return nil, nil
 	}
 	if strings.TrimSpace(ctx.ProjectRoot) == "" {
+		return nil, nil
+	}
+	// Skip when the project root has no go.mod. Fixture-based tests and
+	// non-module Go trees ("GOPATH-style", or unrelated diffs that happen
+	// to touch .go files) would otherwise trip Go's "directory does not
+	// contain main module" error and surface it as a false-positive build
+	// failure.
+	if _, err := os.Stat(filepath.Join(ctx.ProjectRoot, "go.mod")); err != nil {
 		return nil, nil
 	}
 	cmd := exec.Command("go", "build", "./...")

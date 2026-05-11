@@ -459,7 +459,6 @@ func auditWatchHighRiskStopReason(reason string) bool {
 		"rejection_retry_blocked",
 		"source_edit_verification_required",
 		"tool_step_budget_exhausted",
-		"read_budget_exhausted",
 		"exact_anchor_prewrite_hidden_tool_repeated",
 		"exact_anchor_write_failure_repeated":
 		return true
