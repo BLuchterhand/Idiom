@@ -1049,6 +1049,156 @@ func TestRunBriefLintJSONFlagEmitsEnvelope(t *testing.T) {
 	}
 }
 
+// TestRefineCanonicalTagsCoverAllClassifierEmissions catches drift
+// between the canonical-tags list (used by the orphan-tag warning
+// in loadProjectTraps) and the actual set of tags the classifier
+// can emit. If a new tag is added to classifyBriefAtomShape but not
+// refineCanonicalTags, traps applying it would warn falsely. If it's
+// added to refineCanonicalTags but not the classifier, traps would
+// never fire silently. This test drives the classifier through
+// every shape that triggers each canonical tag and asserts the
+// union matches refineCanonicalTags exactly.
+func TestRefineCanonicalTagsCoverAllClassifierEmissions(t *testing.T) {
+	// Each entry: a brief body designed to trigger ONE canonical tag.
+	// If you add a new tag, add a row here AND to refineCanonicalTags.
+	probes := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "test-code-trigger",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `pkg/foo_test.go` | ADD |\n",
+			want: refineTagTestCode,
+		},
+		{
+			name: "multi-file-trigger",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `pkg/a/foo.go` | MODIFY |\n| `pkg/b/bar.go` | MODIFY |\n",
+			want: refineTagMultiFile,
+		},
+		{
+			name: "markdown-deliverable-trigger",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `.planning/foo.md` | NEW FILE |\n",
+			want: refineTagMarkdownDeliverable,
+		},
+		{
+			name: "generic-trigger",
+			body: "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `pkg/foo.go` | MODIFY |\n",
+			want: refineTagGeneric,
+		},
+	}
+	emitted := map[string]bool{}
+	for _, p := range probes {
+		for _, tag := range classifyBriefAtomShape([]byte(p.body)) {
+			emitted[tag] = true
+		}
+		// Each probe must produce its target tag.
+		if !contains(classifyBriefAtomShape([]byte(p.body)), p.want) {
+			t.Fatalf("probe %s: classifier did not emit %q for body:\n%s\nemitted=%v", p.name, p.want, p.body, classifyBriefAtomShape([]byte(p.body)))
+		}
+	}
+	canonical := map[string]bool{}
+	for _, t := range refineCanonicalTags {
+		canonical[t] = true
+	}
+	// Every classifier-emitted tag must be in canonical.
+	for tag := range emitted {
+		if !canonical[tag] {
+			t.Fatalf("classifier emits %q but refineCanonicalTags does not include it; the orphan-tag warning would fire falsely. Add %q to refineCanonicalTags.", tag, tag)
+		}
+	}
+	// Every canonical tag must be reachable from some classifier path.
+	for tag := range canonical {
+		if !emitted[tag] {
+			t.Fatalf("refineCanonicalTags lists %q but no classifier path emits it; project traps using applies_to=[%s] would never fire. Either add a classifier path or drop the tag from refineCanonicalTags.", tag, tag)
+		}
+	}
+}
+
+func contains(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPersistRefineLintJSONWritesEnvelopeToIterDir locks in Colony
+// §8's recommendation: the full JSON envelope lands at
+// <iterDir>/lint.json for orchestrator inspection, separate from
+// the BLOCK/WARN-filtered preload the reviewer consumes.
+func TestPersistRefineLintJSONWritesEnvelopeToIterDir(t *testing.T) {
+	iterDir := t.TempDir()
+	raw := []byte(`{"brief":"/tmp/x.md","exit":1,"findings":[{"severity":"BLOCK","category":"anchor-specificity","brief":"/tmp/x.md","message":"missing anchor"}]}`)
+	var stderr bytes.Buffer
+	persistRefineLintJSON(iterDir, raw, &stderr)
+	gotPath := filepath.Join(iterDir, "lint.json")
+	body, err := os.ReadFile(gotPath)
+	if err != nil {
+		t.Fatalf("expected lint.json written, got: %v", err)
+	}
+	if string(body) != string(raw) {
+		t.Fatalf("expected raw envelope persisted verbatim:\n got=%s\nwant=%s", body, raw)
+	}
+}
+
+// TestPersistRefineLintJSONLogsButContinuesOnError exercises the
+// best-effort contract: a write failure (read-only iterDir) logs to
+// stderr but does not propagate. The in-memory preload still works,
+// so the run continues — Colony §8 framing: the on-disk artifact is
+// for inspection, not control flow.
+func TestPersistRefineLintJSONLogsButContinuesOnError(t *testing.T) {
+	// Use a path that can't be written (parent doesn't exist).
+	iterDir := "/nonexistent-path-for-test/iter-1"
+	var stderr bytes.Buffer
+	persistRefineLintJSON(iterDir, []byte(`{}`), &stderr)
+	if !strings.Contains(stderr.String(), "WARN cannot persist") {
+		t.Fatalf("expected best-effort write failure to log WARN, got: %s", stderr.String())
+	}
+}
+
+// TestRunLaneRefinePersistLintJSONAlongMetricsJSON exercises the
+// end-to-end path: a clean ship-as-is iteration writes lint.json
+// alongside metrics.json so orchestrators can read both with one
+// directory listing.
+func TestRunLaneRefinePersistLintJSONAlongMetricsJSON(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
+		// Emit a well-formed JSON envelope so persistRefineLintJSON fires.
+		// (The test --json flag bypasses the real python preflight.)
+		_, _ = stdout.Write([]byte(`{"brief":"x.md","exit":0,"findings":[]}`))
+		return 0
+	})
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "persist-lint",
+		MaxIters:    1,
+		ProjectRoot: root,
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	iterDir := filepath.Join(refineStateDir(root, "persist-lint"), "iter-1")
+	if _, err := os.Stat(filepath.Join(iterDir, "lint.json")); err != nil {
+		t.Fatalf("expected lint.json persisted alongside metrics.json, got: %v\nstderr=%s", err, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(iterDir, "metrics.json")); err != nil {
+		t.Fatalf("expected metrics.json (regression check), got: %v", err)
+	}
+}
+
 // TestBriefLintJSONEnvelopeSchemaIsStable is a regression guard on
 // the JSON field names downstream consumers (refine review/patch
 // prompts, future tooling) depend on. Renaming or removing a field

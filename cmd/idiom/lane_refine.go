@@ -276,7 +276,8 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			// reviewer saw — eliminates the reviewer-transcription
 			// indirection layer that the convergence guarantee
 			// depended on.
-			_, prevLintOutput := captureRefineLintOutput(lastDraftPath, stderr)
+			prevIterDir := filepath.Join(stateDir, fmt.Sprintf("iter-%d", iter-1))
+			_, prevLintOutput := captureRefineLintOutput(lastDraftPath, prevIterDir, stderr)
 			if err := writeRefinePatchMeta(metaPath, lastDraftPath, prevReviewPath, draftPath, prevLintOutput); err != nil {
 				fmt.Fprintf(stderr, "refine: write patch meta: %v\n", err)
 				return failsoft(iter, "patch-meta-write", 1)
@@ -299,7 +300,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		}
 		lastDraftPath = draftPath
 
-		lintExit, lintOutput := captureRefineLintOutput(draftPath, stderr)
+		lintExit, lintOutput := captureRefineLintOutput(draftPath, iterDir, stderr)
 		metrics.LintExit = lintExit
 		fmt.Fprintf(stderr, "refine: iter %d — lint exit=%d (preloaded to reviewer)\n", iter, lintExit)
 		metaReviewPath := filepath.Join(iterDir, "meta-review.md")
@@ -952,19 +953,21 @@ func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOut
 
 // captureRefineLintOutput runs `idiom brief lint --json` on the
 // just-produced draft and returns the exit code + a review-ready
-// rendering of the JSON findings (§2.3 + §6.1 Gap 5). The JSON
-// envelope is also written to .idiom/refine/<title>/iter-N/lint.json
-// (best effort) for orchestrator inspection — see persistRefineLintJSON.
+// rendering of the JSON findings (§2.3 + §6.1 Gap 5). When persistDir
+// is non-empty AND the JSON parsed cleanly, the raw envelope is also
+// written to <persistDir>/lint.json (Colony §8 recommendation) so
+// orchestrators can inspect lint findings without re-running.
 //
 // The returned text is BLOCK + WARN findings formatted as a compact
 // human/LLM-readable list. INFO findings are dropped (signal-to-noise
 // per Colony Q1). When the JSON path can't be parsed (older lint
 // versions, json marshal failed, etc.), falls back to the text
 // envelope so the reviewer never silently treats lint as clean.
-func captureRefineLintOutput(draftPath string, stderr io.Writer) (int, string) {
+func captureRefineLintOutput(draftPath, persistDir string, stderr io.Writer) (int, string) {
 	var out bytes.Buffer
 	code := laneBriefLintRunner([]string{draftPath, "--json"}, &out, stderr)
-	rendered, ok := renderRefineLintFindings(out.Bytes())
+	rawJSON := bytes.TrimSpace(out.Bytes())
+	rendered, ok := renderRefineLintFindings(rawJSON)
 	if !ok {
 		// Fall back: try plain-text capture so the reviewer at least
 		// sees something. If even that is empty, emit the fallback
@@ -978,10 +981,28 @@ func captureRefineLintOutput(draftPath string, stderr io.Writer) (int, string) {
 		}
 		return code, text
 	}
+	if persistDir != "" && len(rawJSON) > 0 {
+		persistRefineLintJSON(persistDir, rawJSON, stderr)
+	}
 	if code != 0 && strings.TrimSpace(rendered) == "" {
 		rendered = "(lint exited non-zero but emitted zero BLOCK/WARN findings — investigate manually)"
 	}
 	return code, rendered
+}
+
+// persistRefineLintJSON writes the raw lint envelope to
+// <iterDir>/lint.json. Best-effort: any write failure logs to
+// stderr and proceeds — the run continues with the in-memory
+// preload regardless. Matches the failure-mode contract of
+// writeRefineIterMetrics: missing on-disk artifact is downgrade,
+// not blocker. Per Colony §8 the full JSON stays available for
+// orchestrator inspection; the review preload is the BLOCK/WARN
+// filter, not the source of truth.
+func persistRefineLintJSON(iterDir string, raw []byte, stderr io.Writer) {
+	path := filepath.Join(iterDir, "lint.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		fmt.Fprintf(stderr, "refine: WARN cannot persist %s: %v (continuing — in-memory preload still works)\n", path, err)
+	}
 }
 
 // renderRefineLintFindings parses the JSON envelope from `idiom

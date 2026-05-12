@@ -380,7 +380,7 @@ Three of five gaps shipped per Colony's loud-vs-quiet-failure heuristic; two sta
 | 2. Review/patch override paths | **Deferred** — confirmed mode-agnostic per Colony review | — |
 | 3. atom-shapes.yaml extending detection | **Loud-warning shipped; full feature deferred** — orphan `applies_to` tags emit stderr WARN at trap-load time naming the orphan tag + pointing at atom-shapes.yaml convention | follows |
 | 4. `--harden-from` / `--traps-from` flags | **Deferred** — convention path covers all known cases | — |
-| 5. JSON lint output | **Shipped** — `idiom brief lint --json` emits a stable schema (severity/category/brief/message); refine consumes JSON, drops INFO findings, falls back to plain text on malformed JSON | follows |
+| 5. JSON lint output | **Shipped** — `idiom brief lint --json` emits a stable schema (severity/category/brief/message); refine consumes JSON, drops INFO findings, falls back to plain text on malformed JSON. Raw envelope persisted to `<iterDir>/lint.json` alongside `metrics.json` (Colony §8) for orchestrator inspection. | follows |
 
 Colony's meta-insight (Refined principle): the "wait for empirical evidence" heuristic is correct for additive features but misapplied to gaps that fail silently, undermine architectural guarantees just shipped, or have retrofit costs that grow faster than the deferred-feature cost. Loud-failure → defer is safe; quiet-failure → ship the minimum signal-emitting version now, even when the full feature waits.
 
