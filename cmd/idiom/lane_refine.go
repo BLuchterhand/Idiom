@@ -270,7 +270,14 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		} else {
 			metaPath := filepath.Join(iterDir, "meta-patch.md")
 			prevReviewPath := filepath.Join(stateDir, fmt.Sprintf("iter-%d", iter-1), "review.md")
-			if err := writeRefinePatchMeta(metaPath, lastDraftPath, prevReviewPath, draftPath); err != nil {
+			// §6.1 Gap 1 (Colony shipped): patcher targets lint BLOCKs
+			// directly. Re-capture lint on the previous draft so the
+			// patcher consumes the same authoritative findings the
+			// reviewer saw — eliminates the reviewer-transcription
+			// indirection layer that the convergence guarantee
+			// depended on.
+			_, prevLintOutput := captureRefineLintOutput(lastDraftPath, stderr)
+			if err := writeRefinePatchMeta(metaPath, lastDraftPath, prevReviewPath, draftPath, prevLintOutput); err != nil {
 				fmt.Fprintf(stderr, "refine: write patch meta: %v\n", err)
 				return failsoft(iter, "patch-meta-write", 1)
 			}
@@ -487,7 +494,7 @@ func refineApplyProjectOverlay(body []byte, projectRoot string, stderr io.Writer
 	}
 	tags := classifyBriefAtomShape(body)
 	fmt.Fprintf(stderr, "refine: atom-shape tags = %v\n", tags)
-	traps := loadProjectTraps(overlayDir, tags)
+	traps := loadProjectTraps(overlayDir, tags, stderr)
 	for _, trap := range traps {
 		augmented = append(augmented, '\n', '\n')
 		augmented = append(augmented, trap.body...)
@@ -524,7 +531,16 @@ type trapEntry struct {
 // intersect the supplied tag set. Traps with no frontmatter / no
 // applies_to are treated as `applies_to: [generic]` (always include).
 // Returned slice is sorted by filename for deterministic ordering.
-func loadProjectTraps(overlayDir string, tags []string) []trapEntry {
+//
+// §6.1 Gap 3 (Colony loud-warning ship): when a trap declares
+// applies_to tags that aren't in the classifier's emitted tag set
+// (refineCanonicalTags), emit a loud stderr warning. Without this,
+// projects writing `applies_to: [save-load]` traps silently get
+// zero firings because the canonical classifier doesn't emit
+// `save-load`. The warning names the orphan tag and points at the
+// future atom-shapes.yaml extension point so authors can fix the
+// declaration or accept the deferral.
+func loadProjectTraps(overlayDir string, tags []string, stderr io.Writer) []trapEntry {
 	trapsDir := filepath.Join(overlayDir, "traps")
 	entries, err := os.ReadDir(trapsDir)
 	if err != nil {
@@ -533,6 +549,10 @@ func loadProjectTraps(overlayDir string, tags []string) []trapEntry {
 	tagSet := map[string]bool{}
 	for _, t := range tags {
 		tagSet[t] = true
+	}
+	canonicalSet := map[string]bool{}
+	for _, t := range refineCanonicalTags {
+		canonicalSet[t] = true
 	}
 	var matched []trapEntry
 	for _, entry := range entries {
@@ -548,6 +568,18 @@ func loadProjectTraps(overlayDir string, tags []string) []trapEntry {
 		if len(appliesTo) == 0 {
 			appliesTo = []string{refineTagGeneric}
 		}
+		// Orphan-tag detection (§6.1 Gap 3 loud-warning).
+		for _, tag := range appliesTo {
+			if canonicalSet[tag] {
+				continue
+			}
+			if stderr != nil {
+				fmt.Fprintf(stderr,
+					"refine: WARN trap %s declares applies_to=[%s] but no atom-shape classifier emits %q. Trap will never fire unless added to .idiom/prompts/brief/atom-shapes.yaml (deferred — see docs/refine-end-to-end-loop.md §6.1 Gap 3) or its applies_to is updated to a canonical tag [%s].\n",
+					entry.Name(), strings.Join(appliesTo, ", "), tag, strings.Join(refineCanonicalTags, ", "),
+				)
+			}
+		}
 		if !tagsIntersect(appliesTo, tagSet) {
 			continue
 		}
@@ -559,6 +591,18 @@ func loadProjectTraps(overlayDir string, tags []string) []trapEntry {
 	}
 	sort.Slice(matched, func(i, j int) bool { return matched[i].name < matched[j].name })
 	return matched
+}
+
+// refineCanonicalTags is the closed set of atom-shape tags the
+// classifier currently emits. Project trap declarations using tags
+// outside this set trigger the orphan-tag warning above. Until §6.1
+// Gap 3's full feature ships (atom-shapes.yaml project-extending
+// detection), only these four tags can drive trap injection.
+var refineCanonicalTags = []string{
+	refineTagTestCode,
+	refineTagMultiFile,
+	refineTagMarkdownDeliverable,
+	refineTagGeneric,
 }
 
 // parseTrapFrontmatter accepts a markdown file body with optional
@@ -906,29 +950,74 @@ func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOut
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
-// captureRefineLintOutput runs idiom brief lint on the just-produced
-// draft and captures both exit code and stdout findings (§2.3). The
-// review meta-brief inlines the output so the reviewer sees lint
-// BLOCKs/WARNs as preloaded evidence rather than running the lint
-// itself (no shell access needed; deterministic; faster). Exit code
-// non-zero with empty stdout falls back to a short error note so the
-// reviewer doesn't silently treat lint as "clean".
+// captureRefineLintOutput runs `idiom brief lint --json` on the
+// just-produced draft and returns the exit code + a review-ready
+// rendering of the JSON findings (§2.3 + §6.1 Gap 5). The JSON
+// envelope is also written to .idiom/refine/<title>/iter-N/lint.json
+// (best effort) for orchestrator inspection — see persistRefineLintJSON.
+//
+// The returned text is BLOCK + WARN findings formatted as a compact
+// human/LLM-readable list. INFO findings are dropped (signal-to-noise
+// per Colony Q1). When the JSON path can't be parsed (older lint
+// versions, json marshal failed, etc.), falls back to the text
+// envelope so the reviewer never silently treats lint as clean.
 func captureRefineLintOutput(draftPath string, stderr io.Writer) (int, string) {
 	var out bytes.Buffer
-	code := laneBriefLintRunner([]string{draftPath}, &out, stderr)
-	text := out.String()
-	if code != 0 && strings.TrimSpace(text) == "" {
-		text = fmt.Sprintf("(lint exited %d with no captured findings — treat as BLOCK)", code)
+	code := laneBriefLintRunner([]string{draftPath, "--json"}, &out, stderr)
+	rendered, ok := renderRefineLintFindings(out.Bytes())
+	if !ok {
+		// Fall back: try plain-text capture so the reviewer at least
+		// sees something. If even that is empty, emit the fallback
+		// "treat as BLOCK" message so empty + exit-non-zero doesn't
+		// look like "clean lint" to downstream consumers.
+		var plain bytes.Buffer
+		_ = laneBriefLintRunner([]string{draftPath}, &plain, stderr)
+		text := plain.String()
+		if code != 0 && strings.TrimSpace(text) == "" {
+			text = fmt.Sprintf("(lint exited %d with no parseable findings — treat as BLOCK)", code)
+		}
+		return code, text
 	}
-	return code, text
+	if code != 0 && strings.TrimSpace(rendered) == "" {
+		rendered = "(lint exited non-zero but emitted zero BLOCK/WARN findings — investigate manually)"
+	}
+	return code, rendered
 }
 
-func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath string) error {
+// renderRefineLintFindings parses the JSON envelope from `idiom
+// brief lint --json` and renders BLOCK + WARN findings as a compact
+// list (INFO dropped). Returns ok=false if the JSON is malformed so
+// the caller can fall back gracefully.
+func renderRefineLintFindings(raw []byte) (string, bool) {
+	var report briefLintReport
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &report); err != nil {
+		return "", false
+	}
+	var out strings.Builder
+	count := 0
+	for _, f := range report.Findings {
+		if f.Severity == "INFO" {
+			continue
+		}
+		count++
+		fmt.Fprintf(&out, "- [%s] (%s) %s\n", f.Severity, f.Category, f.Message)
+	}
+	if count == 0 && report.Exit == 0 {
+		out.WriteString("(no BLOCK/WARN findings; lint pass clean)\n")
+	}
+	return strings.TrimRight(out.String(), "\n"), true
+}
+
+func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath, lintOutput string) error {
 	projectRoot := refineProjectRootFromIterDir(filepath.Dir(metaPath))
+	if strings.TrimSpace(lintOutput) == "" {
+		lintOutput = "(no findings — lint pass was clean on the previous draft)"
+	}
 	body := strings.NewReplacer(
 		"{{PREV_DRAFT_PATH}}", refineWorkspaceRel(projectRoot, prevDraftPath),
 		"{{PREV_REVIEW_PATH}}", refineWorkspaceRel(projectRoot, prevReviewPath),
 		"{{NEW_DRAFT_PATH}}", refineWorkspaceRel(projectRoot, newDraftPath),
+		"{{LINT_OUTPUT}}", lintOutput,
 	).Replace(refinePatchTemplate)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }

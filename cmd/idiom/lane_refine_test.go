@@ -871,6 +871,226 @@ func TestRunLaneRefineAppliesProjectOverlay(t *testing.T) {
 	}
 }
 
+// TestRunLaneRefinePatchPhaseSeesLintPreload locks in §6.1 Gap 1
+// (Colony shipped 2026-05-11): when refine runs a patch iteration,
+// the patch meta-brief inlines the previous draft's lint output so
+// the patcher targets BLOCKs directly instead of relying on the
+// reviewer to transcribe every finding.
+func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
+		_, _ = stdout.Write([]byte("BLOCK: unfilled <placeholder> in Files To Modify row\nWARN: append-to-end-of-file edit shape\n"))
+		return 1
+	})
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "patch-lint",
+		MaxIters:    2,
+		ProjectRoot: root,
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Draft v1"),
+		"# Review\n\n## Bugs found\n\n1. **A bug**: fix it.\n\n## Verdict\n\nfix-bugs-then-ship\n",
+		nonTrivialDraftBody("Draft v2"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	metaPatchPath := filepath.Join(refineStateDir(root, "patch-lint"), "iter-2", "meta-patch.md")
+	body, err := os.ReadFile(metaPatchPath)
+	if err != nil {
+		t.Fatalf("read meta-patch: %v", err)
+	}
+	if !strings.Contains(string(body), "BLOCK: unfilled <placeholder>") {
+		t.Fatalf("expected lint BLOCK inlined in patch meta-brief, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "Pre-loaded lint findings") {
+		t.Fatalf("expected 'Pre-loaded lint findings' section in patch meta-brief, got:\n%s", body)
+	}
+}
+
+// TestRenderRefineLintFindingsFromJSONEnvelope locks in §6.1 Gap 5
+// (Colony shipped 2026-05-11): refine consumes the structured JSON
+// output of `idiom brief lint --json` and renders BLOCK+WARN
+// findings for the reviewer. INFO is dropped (Q1 signal-to-noise);
+// malformed JSON falls back to ok=false so the caller can switch
+// to plain-text capture.
+func TestRenderRefineLintFindingsFromJSONEnvelope(t *testing.T) {
+	envelope := `{
+  "brief": "/tmp/test.md",
+  "exit": 1,
+  "findings": [
+    {"severity": "BLOCK", "category": "anchor-specificity", "brief": "/tmp/test.md", "message": "exact-anchor failed for x.go"},
+    {"severity": "WARN", "category": "missing-current-state", "brief": "/tmp/test.md", "message": "no verified state"},
+    {"severity": "INFO", "category": "other", "brief": "/tmp/test.md", "message": "informational note (dropped)"}
+  ]
+}`
+	out, ok := renderRefineLintFindings([]byte(envelope))
+	if !ok {
+		t.Fatalf("expected ok=true on well-formed envelope")
+	}
+	if !strings.Contains(out, "[BLOCK] (anchor-specificity) exact-anchor failed for x.go") {
+		t.Fatalf("expected BLOCK rendered with severity+category+message, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[WARN] (missing-current-state) no verified state") {
+		t.Fatalf("expected WARN rendered, got:\n%s", out)
+	}
+	if strings.Contains(out, "INFO") || strings.Contains(out, "informational") {
+		t.Fatalf("expected INFO filtered out, got:\n%s", out)
+	}
+}
+
+// TestRenderRefineLintFindingsCleanPassEmitsClearNote: when lint
+// passes with zero BLOCK/WARN, render a clear "(clean)" note so the
+// reviewer never sees an empty preload (which would look like
+// silent failure).
+func TestRenderRefineLintFindingsCleanPassEmitsClearNote(t *testing.T) {
+	envelope := `{"brief": "/tmp/test.md", "exit": 0, "findings": []}`
+	out, ok := renderRefineLintFindings([]byte(envelope))
+	if !ok {
+		t.Fatalf("expected ok=true")
+	}
+	if !strings.Contains(out, "no BLOCK/WARN findings") {
+		t.Fatalf("expected clean-pass note, got: %s", out)
+	}
+}
+
+// TestRenderRefineLintFindingsMalformedJSONReturnsNotOK: junk
+// envelope yields ok=false so captureRefineLintOutput can fall back
+// gracefully.
+func TestRenderRefineLintFindingsMalformedJSONReturnsNotOK(t *testing.T) {
+	_, ok := renderRefineLintFindings([]byte("idiom brief preflight: FAIL /path\n"))
+	if ok {
+		t.Fatalf("expected ok=false for non-JSON output")
+	}
+}
+
+// TestParseBriefLintFindingsCategorizesByKeyword exercises the
+// keyword-driven category derivation (§6.1 Gap 5 schema). Each
+// known message shape lands in a stable category; unknown messages
+// fall to "other" rather than being silently dropped.
+func TestParseBriefLintFindingsCategorizesByKeyword(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want briefLintFinding
+	}{
+		{
+			name: "anchor-specificity-block",
+			raw:  "idiom brief preflight: FAIL /b.md\n- exact-anchor specificity failed for x.go.\n",
+			want: briefLintFinding{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/b.md", Message: "exact-anchor specificity failed for x.go."},
+		},
+		{
+			name: "warn-current-state",
+			raw:  "- WARN: no obvious verified-current-state section found.\n",
+			want: briefLintFinding{Severity: "WARN", Category: "missing-current-state", Brief: "/b.md", Message: "no obvious verified-current-state section found."},
+		},
+		{
+			name: "info-note",
+			raw:  "- INFO: noteworthy detail\n",
+			want: briefLintFinding{Severity: "INFO", Category: "other", Brief: "/b.md", Message: "noteworthy detail"},
+		},
+		{
+			name: "unfilled-placeholder-block",
+			raw:  "- some unfilled placeholder somewhere\n",
+			want: briefLintFinding{Severity: "BLOCK", Category: "unfilled-placeholder", Brief: "/b.md", Message: "some unfilled placeholder somewhere"},
+		},
+		{
+			name: "unknown-falls-through-to-other",
+			raw:  "- something nobody planned for\n",
+			want: briefLintFinding{Severity: "BLOCK", Category: "other", Brief: "/b.md", Message: "something nobody planned for"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseBriefLintFindings("/b.md", tc.raw)
+			if len(got) != 1 {
+				t.Fatalf("expected 1 finding, got %d: %+v", len(got), got)
+			}
+			if got[0] != tc.want {
+				t.Fatalf("finding mismatch:\n got=%+v\nwant=%+v", got[0], tc.want)
+			}
+		})
+	}
+}
+
+// TestRunBriefLintJSONFlagEmitsEnvelope is the end-to-end binding:
+// the CLI `idiom brief lint --json <path>` returns a JSON envelope
+// on stdout matching the schema, with the underlying preflight's
+// exit code propagated.
+func TestRunBriefLintJSONFlagEmitsEnvelope(t *testing.T) {
+	root := t.TempDir()
+	briefPath := filepath.Join(root, "tiny.md")
+	body := "# Title\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `x.go` | MODIFY |\n"
+	if err := os.WriteFile(briefPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	exit := runBriefLint([]string{briefPath, "--json"}, &stdout, &stderr, nil)
+	// The python preflight is expected to return non-zero on this
+	// minimal brief (missing anchors etc.) — we don't care about the
+	// exact exit, just that the JSON envelope is well-formed.
+	_ = exit
+	out := stdout.String()
+	if !strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Fatalf("expected JSON envelope on stdout, got: %s", out)
+	}
+	var report briefLintReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("expected valid JSON envelope, got: %v\n%s", err, out)
+	}
+	if report.Brief != briefPath {
+		t.Fatalf("expected brief field = %q, got %q", briefPath, report.Brief)
+	}
+}
+
+// TestLoadProjectTrapsWarnsOnOrphanAppliesToTag locks in §6.1 Gap 3
+// (Colony loud-warning ship): a trap declaring an applies_to tag
+// outside the canonical 4 emits a stderr warning naming the orphan
+// tag, so silently-broken projects authors learn their trap will
+// never fire (until atom-shapes.yaml is added, deferred).
+func TestLoadProjectTrapsWarnsOnOrphanAppliesToTag(t *testing.T) {
+	root := t.TempDir()
+	overlayDir := filepath.Join(root, refineOverlayDir)
+	trapsDir := filepath.Join(overlayDir, "traps")
+	if err := os.MkdirAll(trapsDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	orphanTrap := "---\napplies_to: [save-load]\n---\n\n# Save-load trap (project-specific)\n"
+	if err := os.WriteFile(filepath.Join(trapsDir, "save-load.md"), []byte(orphanTrap), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	canonicalTrap := "---\napplies_to: [test-code]\n---\n\n# Canonical trap (no warning expected)\n"
+	if err := os.WriteFile(filepath.Join(trapsDir, "test-code.md"), []byte(canonicalTrap), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var stderr bytes.Buffer
+	// Classify against test-code only — save-load is orphan; canonical
+	// trap (test-code) should fire and emit no warning.
+	matched := loadProjectTraps(overlayDir, []string{refineTagTestCode}, &stderr)
+	if len(matched) != 1 || matched[0].name != "test-code.md" {
+		t.Fatalf("expected only the test-code trap to fire, got %d traps: %+v", len(matched), matched)
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "save-load.md") {
+		t.Fatalf("expected warning to name the orphan trap file, got: %s", out)
+	}
+	if !strings.Contains(out, "save-load") {
+		t.Fatalf("expected warning to name the orphan tag, got: %s", out)
+	}
+	if !strings.Contains(out, "atom-shapes.yaml") {
+		t.Fatalf("expected warning to point at atom-shapes.yaml convention, got: %s", out)
+	}
+	if !strings.Contains(out, "Gap 3") {
+		t.Fatalf("expected warning to reference Gap 3 in design doc for traceability, got: %s", out)
+	}
+}
+
 // TestRunLaneRefineBareRepoSkipsOverlay confirms zero behavior
 // change for projects without an .idiom/prompts/brief/ directory.
 func TestRunLaneRefineBareRepoSkipsOverlay(t *testing.T) {

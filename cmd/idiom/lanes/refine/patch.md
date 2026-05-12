@@ -1,9 +1,20 @@
 # META — Patch brief (refine loop)
 
 Your only job: call `write_file` to create `{{NEW_DRAFT_PATH}}` with
-the previous draft modified to fix every bug in the review. Read the
-two inputs, apply the fixes, write the result. Do not analyze or
-summarize — write the file.
+the previous draft modified to fix every bug AND every lint BLOCK.
+Read the two inputs, apply the fixes, write the result. Do not
+analyze or summarize — write the file.
+
+## Pre-loaded lint findings (from previous draft)
+
+The refine wrapper captured `idiom brief lint` output on the
+previous draft. Each BLOCK below is a required edit target — treat
+on equal footing with reviewer bugs. Each WARN is a recommended
+target unless the review explicitly waived it with rationale.
+
+```text
+{{LINT_OUTPUT}}
+```
 
 ## Required reads (exactly 2)
 
@@ -12,19 +23,27 @@ summarize — write the file.
 
 ## What to write
 
-Take the previous draft and apply each fix listed in the review's
-"Bugs found" section. Preserve everything else from the previous
-draft — sections, anchors, OK content, structure. The output is the
-FULL corrected brief (not a diff), ready for re-review.
+Take the previous draft and apply **both** (a) every fix listed in
+the review's "Bugs found" section AND (b) every BLOCK in the
+pre-loaded lint findings above. Preserve everything else from the
+previous draft — sections, anchors, OK content, structure. The
+output is the FULL corrected brief (not a diff), ready for
+re-review.
 
-For each bug:
+For each reviewer bug:
 - Read the bug's "how to fix" text in the review.
 - Apply that fix to the corresponding part of the draft.
-- If the fix is unclear or contradictory, surface `<<QUESTION>>:`
-  with the specific gap — do NOT guess.
 
-Do NOT introduce new bugs not flagged by the review (no "while
-you're at it" refactors).
+For each lint BLOCK:
+- Identify the named issue (unfilled placeholder, missing anchor,
+  multi-action row, content fence with wrong language tag, etc.).
+- Edit the draft to resolve it.
+
+If a fix is unclear or contradictory, surface `<<QUESTION>>:`
+with the specific gap — do NOT guess.
+
+Do NOT introduce new bugs not flagged by the review or lint (no
+"while you're at it" refactors).
 
 ## Format constraints
 

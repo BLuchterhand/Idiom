@@ -320,6 +320,8 @@ Each gap below is framed as a feedback question for any project running the refi
 
 **Fix when needed**: ~30 min. Update `lanes/refine/patch.md` to add a "Pre-loaded lint findings" section (same shape as review.md's) and instruct the patcher to address each BLOCK alongside reviewer bugs.
 
+**Faultline-orchestrator comment**: ship now, do not defer. The "convergence by construction" guarantee §2.3 makes rests on the patcher reliably addressing every lint BLOCK. Routing through reviewer-transcription is exactly the indirection layer "by construction" guarantees are supposed to eliminate. The deferral's evidence trigger ("review listed BLOCKs but patch failed to address them") is a silent-failure path that requires auditing intermediate state to notice — most operators won't. 30-min fix; risk profile is asymmetric (if reviewer-transcription is reliable, this is a no-op; if it's not, we get silent convergence regressions that look like "lint passed but didn't"). See §9 for fuller reasoning.
+
 ### Gap 2 — Review and patch override paths not implemented
 
 **Current behavior**: §2.2.1 resolution chain works for `draft-<mode>.md` overrides. For `review-<mode>.md` and `patch-<mode>.md`, the resolution chain is not wired — custom modes (e.g., `notebook`, `runbook`, `hardware-loop`) always use the embedded canonical review/patch templates.
@@ -329,6 +331,8 @@ Each gap below is framed as a feedback question for any project running the refi
 **Question for projects**: when you add a custom mode (or stub one for an upcoming use case), do you need a different reviewer prompt? Or do the canonical review/patch templates cover the case because review-style concerns are mode-agnostic ("did the draft satisfy the spec, are there bugs, what's the verdict")?
 
 **Fix when needed**: ~half-day. Mirror the draft resolution chain for review and patch paths; same safety lint pattern; tests.
+
+**Faultline-orchestrator comment**: defer is fine. The argument that review concerns are mode-agnostic ("did the draft satisfy the spec, are there bugs, what's the verdict") is genuinely correct. Speculative mode-specific review needs (notebook cell execution, hardware-loop step ordering) should wait for someone to actually hit them. One subtle risk worth verifying when it bites: for markdown-deliverable mode the patch semantic is "rewrite the inline content section" not "fix specific edit anchors," and the canonical patch template is anchor-shaped. If a markdown-deliverable atom ever needs patching, the inherited patch prompt may produce confusing patches (looking for `old_text` that doesn't exist in the deliverable). Flag for the first markdown-deliverable patch-phase run.
 
 ### Gap 3 — `atom-shapes.yaml` project-extending detection not implemented
 
@@ -340,6 +344,8 @@ Each gap below is framed as a feedback question for any project running the refi
 
 **Fix when needed**: ~1 day. Define `<project>/.idiom/prompts/brief/atom-shapes.yaml` schema (`<tag>: { paths: [glob, ...] }`), load it in `classifyBriefAtomShape`, append matching project tags to the canonical set.
 
+**Faultline-orchestrator comment**: at minimum make it loud now; full feature can wait. Current state is silently broken: trap authors write `applies_to: [save-load]`, trust the contract the `applies_to` field implies, and the traps silently never fire. That's worse than the feature not existing — at least without it, authors wouldn't write project-specific tags. The deferral's evidence trigger requires auditing which traps fired on each brief, which operators won't do. **Minimum acceptable ship (~30 min)**: at trap-load time, emit a loud warning when an `applies_to` tag isn't in the active tag set, naming the tag and pointing at the `atom-shapes.yaml` convention. Converts silent failure into actionable signal even if the full feature waits.
+
 ### Gap 4 — `--harden-from` / `--traps-from` override flags not implemented
 
 **Current behavior**: §2.4 overlay only discovers via convention path (`<projectRoot>/.idiom/prompts/brief/`). No CLI flag to point at an alternate location.
@@ -350,6 +356,8 @@ Each gap below is framed as a feedback question for any project running the refi
 
 **Fix when needed**: ~hour. Add two flags + plumb to `refineApplyProjectOverlay`. Confusion risk: low (escape hatch only fires when set).
 
+**Faultline-orchestrator comment**: defer is correct. Convention path covers every Colony case I can think of. Multi-project monorepos and CI-environment redirection are real-but-speculative — wait for someone to actually need them. The escape hatch is cheap to add when motivated, and the surface-area cost of adding flags without a real use case is non-trivial (more docs, more test cases, more "which path takes precedence" questions).
+
 ### Gap 5 — Plain-text lint output instead of structured JSON (Colony Q1 carryover)
 
 **Current behavior**: §2.3 inlines `idiom brief lint` stdout verbatim into the review meta-brief. The lint output is human-readable text, not JSON with stable fields.
@@ -359,6 +367,22 @@ Each gap below is framed as a feedback question for any project running the refi
 **Question for projects**: has the text-format lint output caused a transcription/parsing problem in a real iteration? Or is the reviewer reliably converting it to actionable items?
 
 **Fix when needed**: ~half-day. Add `idiom brief lint --json` flag, switch §2.3 to capture JSON, define the schema in `cmd/idiom/brief_lint.go` alongside the rule definitions.
+
+**Faultline-orchestrator comment**: ship now, do not defer. This is an architectural ratchet — every new lint rule shipped against the text format, and every review/patch prompt built to parse it, makes the retrofit harder. The "wait for empirical evidence" framing requires a convergence failure to fire, by which point patches will have been built against the text shape. Half-day greenfield now beats 2-3 days retrofit later. Schema can be minimal at first (`severity`/`category`/`file`/`line`/`message`); category taxonomy extends over time. Cross-reference: §8's cross-cutting note already flagged Q1 as §2.3's most important dependency; §6.1 Gap 5 is the same finding from the implementation side and the answer is the same.
+
+### Resolution after Colony's §9 review (2026-05-11)
+
+Three of five gaps shipped per Colony's loud-vs-quiet-failure heuristic; two stay deferred.
+
+| Gap | Status | Commit |
+|---|---|---|
+| 1. Patch template targets lint BLOCKs | **Shipped** — patcher inlines lint output via new `{{LINT_OUTPUT}}` placeholder; lint re-captured at patch time | follows |
+| 2. Review/patch override paths | **Deferred** — confirmed mode-agnostic per Colony review | — |
+| 3. atom-shapes.yaml extending detection | **Loud-warning shipped; full feature deferred** — orphan `applies_to` tags emit stderr WARN at trap-load time naming the orphan tag + pointing at atom-shapes.yaml convention | follows |
+| 4. `--harden-from` / `--traps-from` flags | **Deferred** — convention path covers all known cases | — |
+| 5. JSON lint output | **Shipped** — `idiom brief lint --json` emits a stable schema (severity/category/brief/message); refine consumes JSON, drops INFO findings, falls back to plain text on malformed JSON | follows |
+
+Colony's meta-insight (Refined principle): the "wait for empirical evidence" heuristic is correct for additive features but misapplied to gaps that fail silently, undermine architectural guarantees just shipped, or have retrofit costs that grow faster than the deferred-feature cost. Loud-failure → defer is safe; quiet-failure → ship the minimum signal-emitting version now, even when the full feature waits.
 
 ### How to surface evidence
 
@@ -432,3 +456,81 @@ UX polish: write the draft with a sentinel header (e.g. `> WARNING: refine exite
 §2.3 (wrapper runs lint between draft and review) is the highest-leverage of the four §2 changes. Of the four open questions, Q1 (lint output format) is the one §2.3 most depends on — get the JSON schema right early because every future review-phase prompt will consume it.
 
 §2.2 (two-mode) is the lowest-priority of the four because the markdown-deliverable case is genuinely narrower than the anchored-edits case (per Q2 above). Once detection is tightened to "any source path → anchored-edits", markdown-deliverable mode handles only a few specific shapes (pure design docs, planning notes). Still worth shipping, but anchored-edits will cover the long tail.
+
+## 9. Faultline-orchestrator feedback on §6.1 deferred gaps (added 2026-05-11)
+
+Reviewed the five deferred gaps with fresh eyes. Position-summary first, then per-gap reasoning.
+
+| Gap | Defer? | Why |
+|---|---|---|
+| 1. Patch template doesn't target lint BLOCKs | **No — ship now** | 30-min fix; the convergence guarantee §2.3 promises depends on it |
+| 2. Review/patch override paths | Defer is fine | Custom-mode review concerns plausibly mode-agnostic |
+| 3. `atom-shapes.yaml` extending detection | **No — at minimum make it loud** | Silent failure (project tags never fire) is worse than no feature |
+| 4. `--harden-from` / `--traps-from` flags | Defer is correct | Genuine escape-hatch territory; convention covers Colony |
+| 5. Plain-text lint instead of JSON | **No — ship JSON now** | Architectural ratchet: schema cost compounds, retrofit is harder than greenfield |
+
+Three of five I'd push back on. The "wait for empirical evidence before fixing" principle is sound in general, but it's being mis-applied to cases where (a) architectural cost compounds with delay (Gap 5), (b) silent failure poisons trust without an obvious telltale (Gap 3), or (c) the gap directly undermines the architectural guarantee the section just shipped (Gap 1).
+
+### Gap 1 — patcher must explicitly target lint BLOCKs
+
+**Recommend: ship now, not deferred.**
+
+The convergence guarantee §2.3 makes ("every ship-as-is brief is lint-passing by construction") rests on the patcher reliably addressing every lint BLOCK. Routing lint findings through the reviewer's transcription is a layer of indirection where information can be lost — exactly the failure mode "by construction" guarantees are supposed to eliminate.
+
+The deferral argument ("maybe the reviewer transcribes reliably") is testable, but the test is: ship a 30-min fix that removes the dependency on reviewer-transcription quality. The risk profile is asymmetric — if reviewer-transcription is reliable, the explicit-BLOCKs target is a no-op; if it's NOT reliable, we get silent convergence failures that look like "lint passed at iter-N but didn't" because the patcher never saw what the reviewer missed.
+
+The "real-use evidence" trigger for this gap ("review correctly listed BLOCKs but patch failed to address them") requires noticing the omission — which is exactly the kind of thing operators miss unless they're auditing intermediate state. Better to remove the failure surface than to monitor for it.
+
+### Gap 2 — review/patch override paths
+
+**Defer is fine. Empirical-evidence framing applied correctly here.**
+
+The argument that "review-style concerns are mode-agnostic (did the draft satisfy the spec, are there bugs, what's the verdict)" is genuinely correct. The cases where mode-specific review matters (notebook cell execution, hardware-loop step ordering) are speculative until someone hits them.
+
+One subtle risk worth flagging in the doc: for markdown-deliverable mode, the "patch" semantic is "rewrite the inline content section" not "fix specific edit anchors". The canonical patch template is written around anchor-shaped edits. If the markdown-deliverable patcher inherits the anchor-shaped patch prompt verbatim, it may produce confusing patches (looking for `old_text` that doesn't exist in the deliverable). Worth verifying once a markdown-deliverable atom actually goes through patch phase.
+
+### Gap 3 — project-extending atom-shape detection
+
+**Recommend: at minimum make it loud. Ideally ship the feature.**
+
+The current state is silently broken: trap authors write `applies_to: [save-load]`, trust the contract the schema implies, and the traps silently don't fire. That's worse than the feature not existing — at least with no feature, authors wouldn't write project-specific tags.
+
+The "real-use evidence" trigger for this gap is "wrote traps that don't fire" — but the failure mode is silent, so the only way to notice is to audit which traps actually fired on a given brief. Most operators won't do that audit. The gap will accumulate in latent form (Colony writes 10 project-specific-tag traps, none fire, nobody notices, drift compounds).
+
+Minimum acceptable shipping behavior: at trap-load time, warn loudly when an `applies_to` tag isn't in the canonical-or-project tag set. Something like:
+
+```
+WARN: trap save-load.md declares applies_to=[save-load] but no atom-shape
+classifier emits that tag. Trap will never fire. Add 'save-load' to
+.idiom/prompts/brief/atom-shapes.yaml or use a canonical tag.
+```
+
+That converts silent failure into actionable signal. Full feature (~1 day per the estimate) can wait, but the loud-warning version is ~30 min and prevents the gap from biting unnoticed.
+
+### Gap 4 — override flags
+
+**Defer is correct.**
+
+Genuine escape-hatch territory. The convention path covers every Colony case. Multi-project monorepos and CI-environment redirection are real-but-speculative; wait for someone to actually need them. The escape hatch is cheap to add when motivated.
+
+### Gap 5 — JSON lint output (Q1 carryover)
+
+**Recommend: ship JSON now. The "wait for evidence" framing is misapplied here.**
+
+The architectural cost of plain-text lint output isn't paid by the projects discovering it — it's paid by every future review-phase prompt that has to parse heuristic text. Each new lint rule shipped against the text format makes the eventual retrofit harder because patch-phase parsers will have been built (and tuned) against the text shape. The longer the deferral, the more lock-in to a format that's strictly worse for the consumer.
+
+The "evidence trigger" criteria from §6.1 ("transcription/parsing problem in a real iteration") is essentially "the lint output was ambiguous enough that the patcher missed a finding." That evidence exists only after a convergence failure. By then, the cost of the retrofit is higher AND the failure has shipped.
+
+This is the standard case of "greenfield costs less than retrofit, even if today's behavior works." Half a day to ship JSON now. Probably 2-3 days to retrofit later, after review/patch prompts have been built around the text format. Schema can be minimal (severity / category / file / line / message); category taxonomy can extend over time.
+
+Cross-reference: the cross-cutting note in §8 already calls this out — Q1 (lint output format) is the one §2.3 most depends on. §6.1 Gap 5 is the same finding from the implementation side, and the answer is the same.
+
+### Meta-comment on the "evidence trigger" framing
+
+The general principle in §6.1 ("don't design for hypothetical future requirements; wait for real-use feedback") is correct for feature additions. It's mis-applied to:
+
+- Gaps that undermine an architectural guarantee just shipped (Gap 1 — convergence-by-construction)
+- Gaps with silent failure modes (Gap 3 — traps that never fire)
+- Gaps where the retrofit cost grows faster than the deferred-feature cost (Gap 5 — JSON schema)
+
+For these, the "evidence" the principle expects to trigger the fix arrives AFTER the system has accumulated damage. Better heuristic for "defer vs ship now": does the gap fail loudly when it bites, or quietly? Loud failure → defer is safe; quiet failure → ship the minimum loud-signaling version now, even if full feature waits.
