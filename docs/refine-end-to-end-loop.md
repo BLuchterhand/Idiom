@@ -304,6 +304,72 @@ Each step ships independently and provides standalone value.
 - **Atom-shape tag taxonomy default set**. How many tags should idiom ship out of the box? Lean: 6 (test-code, multi-file-go, c++-system, save-load, markdown-deliverable, generic). Projects extend.
 - **Failsoft vs. fail-loud for lint failures**. If iter-N's lint output has BLOCKs and patch phase fails to converge, do we ship the best-bug-count draft (current failsoft) or fail with non-zero? Lean: fail-loud — a lint-failing brief is worse than no brief, since plan-execute will reject it anyway.
 
+## 6.1 Deferred implementation gaps (pending real-use feedback, 2026-05-11)
+
+After shipping §2.1, §2.2, §2.2.1, §2.3, §2.4 + Colony Q2-Q4 corrections, an honest audit surfaced four gaps the implementation did NOT close. Each is **deliberately deferred** until a real project reports hitting it, per the "don't design for hypothetical future requirements" principle. Logging them here so they're not silently forgotten — and so they can be revisited with empirical evidence rather than speculation.
+
+Each gap below is framed as a feedback question for any project running the refine loop (Faultline/Colony, Idiom-on-Idiom, future adopters). Confirm or refute from real-use observation, not theoretical reasoning.
+
+### Gap 1 — Patch template doesn't explicitly target lint BLOCKs
+
+**Current behavior**: §2.3 captures lint output and inlines it into the review meta-brief. The reviewer reflects lint findings into the review's "Lint findings" section. The patch phase reads the review and addresses bugs, but the patch template only names "Bugs found" as an edit target — not "Lint findings."
+
+**Theoretical weakening**: a patcher might fix reviewer bugs while skipping unmentioned lint BLOCKs because the prompt doesn't name them as targets. The convergence guarantee depends on the reviewer correctly transcribing every BLOCK into both sections.
+
+**Question for projects**: have you observed a refine run where iter-N's review correctly listed lint BLOCKs but the iter-N+1 patch failed to address them? Or does the current "review-as-source-of-truth" path work reliably in practice?
+
+**Fix when needed**: ~30 min. Update `lanes/refine/patch.md` to add a "Pre-loaded lint findings" section (same shape as review.md's) and instruct the patcher to address each BLOCK alongside reviewer bugs.
+
+### Gap 2 — Review and patch override paths not implemented
+
+**Current behavior**: §2.2.1 resolution chain works for `draft-<mode>.md` overrides. For `review-<mode>.md` and `patch-<mode>.md`, the resolution chain is not wired — custom modes (e.g., `notebook`, `runbook`, `hardware-loop`) always use the embedded canonical review/patch templates.
+
+**Theoretical limitation**: a custom mode whose review/patch logic differs from canonical (e.g., notebook reviewer should validate cell execution sanity, not anchor uniqueness) can't customize the review/patch prompts without idiom-side support.
+
+**Question for projects**: when you add a custom mode (or stub one for an upcoming use case), do you need a different reviewer prompt? Or do the canonical review/patch templates cover the case because review-style concerns are mode-agnostic ("did the draft satisfy the spec, are there bugs, what's the verdict")?
+
+**Fix when needed**: ~half-day. Mirror the draft resolution chain for review and patch paths; same safety lint pattern; tests.
+
+### Gap 3 — `atom-shapes.yaml` project-extending detection not implemented
+
+**Current behavior**: §2.4 classifier emits canonical 4 tags (`test-code`, `multi-file`, `markdown-deliverable`, `generic`). Projects can write traps with `applies_to: [save-load]`, but those traps only fire if `save-load` happens to overlap with a canonical tag — which it doesn't, so they never fire on their own.
+
+**Theoretical limitation**: project-specific tags can't drive trap injection. Workaround today: project authors set `applies_to: [generic]` (always fires) or `applies_to: [multi-file]` (fires when 2+ dirs touched). Both are blunt — not actually atom-shape-targeted.
+
+**Question for projects**: are you writing traps with project-specific `applies_to` tags that don't fire, OR are you working around it by using canonical tags + accepting that traps fire on every brief (generic) or only the 2+ dir case (multi-file)?
+
+**Fix when needed**: ~1 day. Define `<project>/.idiom/prompts/brief/atom-shapes.yaml` schema (`<tag>: { paths: [glob, ...] }`), load it in `classifyBriefAtomShape`, append matching project tags to the canonical set.
+
+### Gap 4 — `--harden-from` / `--traps-from` override flags not implemented
+
+**Current behavior**: §2.4 overlay only discovers via convention path (`<projectRoot>/.idiom/prompts/brief/`). No CLI flag to point at an alternate location.
+
+**Theoretical limitation**: non-conventional repo layouts (CI environments where the overlay lives elsewhere, multi-project monorepos sharing one overlay) can't redirect.
+
+**Question for projects**: do you have any layout where the overlay can't live at `.idiom/prompts/brief/`? Or does the convention path cover every case you'd ship?
+
+**Fix when needed**: ~hour. Add two flags + plumb to `refineApplyProjectOverlay`. Confusion risk: low (escape hatch only fires when set).
+
+### Gap 5 — Plain-text lint output instead of structured JSON (Colony Q1 carryover)
+
+**Current behavior**: §2.3 inlines `idiom brief lint` stdout verbatim into the review meta-brief. The lint output is human-readable text, not JSON with stable fields.
+
+**Theoretical weakening**: Colony's Q1 recommendation (`severity`/`category`/`file`/`line`/`message` schema) is unrealized. The patch phase parses lint findings via the review's transcription, which is heuristic.
+
+**Question for projects**: has the text-format lint output caused a transcription/parsing problem in a real iteration? Or is the reviewer reliably converting it to actionable items?
+
+**Fix when needed**: ~half-day. Add `idiom brief lint --json` flag, switch §2.3 to capture JSON, define the schema in `cmd/idiom/brief_lint.go` alongside the rule definitions.
+
+### How to surface evidence
+
+For each gap, the "real-use feedback" trigger is one of:
+
+- A wedge or convergence failure with a clear post-mortem pointing at the gap as cause.
+- A workaround that's awkward enough the project would adopt the fix.
+- A new mode/use-case that genuinely needs the deferred capability.
+
+When a gap accumulates 2+ real-use reports of the same shape, prioritize the fix above other refine work.
+
 ## 7. Non-goals
 
 - Replacing the meta-draft contents directly. The meta-draft is the *contract* refine offers the dispatched model; we're adding a mode dimension, not rewriting the contract.
