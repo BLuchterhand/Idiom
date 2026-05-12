@@ -191,13 +191,13 @@ make build
 make eval LOG=logs/conversations/20260418-055543.504.jsonl
 ```
 
-`make build` also refreshes `~/.local/bin/idiom` as a symlink to the current
-`bin/idiom` build, so shells with `~/.local/bin` on `PATH` pick up each rebuild.
+`make build` compiles the single source-build binary at `~/.idiom/bin/idiom`,
+then refreshes `bin/idiom`, repo-root `./idiom`, and `~/.local/bin/idiom` as
+symlinks to that canonical file. Shells with `~/.local/bin` on `PATH`, direct
+repo invocations, and the queue daemon therefore use the same rebuilt binary.
 
-**Avoid the repo-root `./idiom` binary for development.** It is not updated by
-`make build` and can be stale when the source gains new flags or subcommands.
 For source-current runs, prefer `go run ./cmd/idiom <subcommand> <flags>` or
-run `make build` first and then use `bin/idiom` / `~/.local/bin/idiom` instead.
+run `make build` first and then use any of those symlinked entrypoints.
 
 ## In-app controls
 
@@ -498,9 +498,11 @@ Defaults the installer writes:
 - Config: `~/.idiom/runner.json` (two pools: `qwen-35b` and `qwen-coder`, each
   `max_in_flight=1`, matching the qwen-pair backend profile)
 - Launchd agent: `~/Library/LaunchAgents/com.idiom.queue.plist`
-- Binary: copied to `~/.idiom/bin/idiom` (launchd-spawned processes hang in
-  dyld when their executable resolves through TCC-protected paths like
-  `~/Documents/`, so the copy lives in unrestricted user space)
+- Binary: `~/.idiom/bin/idiom` (the canonical source-build binary; `make build`
+  refreshes this file and points `bin/idiom`, repo-root `./idiom`, and
+  `~/.local/bin/idiom` at it. Launchd-spawned processes hang in dyld when their
+  executable resolves through TCC-protected paths like `~/Documents/`, so the
+  real binary lives in unrestricted user space)
 - Socket: `~/.idiom/runner.sock` (stable across shell / launchd / SSH sessions)
 - Logs: `~/.idiom/logs/queue-daemon.{log,err}`
 

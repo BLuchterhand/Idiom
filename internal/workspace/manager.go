@@ -610,7 +610,7 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		result = annotateLanguagePrecisionTier(result)
 		result = annotateLanguageRelationships(result)
 	}()
-	timeout := toolTimeoutFor(strings.TrimSpace(req.Tool))
+	timeout := toolTimeoutForRequest(req)
 	if timeout <= 0 {
 		return m.executeDispatch(ctx, req)
 	}
@@ -673,6 +673,14 @@ func (m *Manager) executeWithTimeoutFn(ctx context.Context, req ToolRequest, tim
 // rest use a conservative 30s default. Returning 0 disables the
 // timeout for tools that legitimately need to stream long-running
 // output (none today).
+func toolTimeoutForRequest(req ToolRequest) time.Duration {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "context_status" && req.Refresh {
+		return toolTimeoutFor("context_index")
+	}
+	return toolTimeoutFor(tool)
+}
+
 func toolTimeoutFor(tool string) time.Duration {
 	switch tool {
 	// Indexing/build paths can legitimately take a couple of minutes on

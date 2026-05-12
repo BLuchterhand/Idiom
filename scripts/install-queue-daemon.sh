@@ -68,13 +68,13 @@ if [[ -z "$idiom_bin" ]]; then
 fi
 idiom_bin_src="$(readlink -f "$idiom_bin" 2>/dev/null || echo "$idiom_bin")"
 
-# Copy the binary into ~/.idiom/bin/ so launchd can spawn it without
-# crossing macOS TCC-protected paths. ~/Documents/ (where source
-# checkouts typically live) is TCC-controlled; launchd-spawned
-# processes hang indefinitely in dyld when their executable path
-# resolves through there because the consent prompt has no UI to
-# show. ~/.idiom/ is user-controlled and unrestricted. The copy is
-# idempotent — we only refresh when the source has a newer mtime.
+# Ensure the daemon binary lives in ~/.idiom/bin/ so launchd can spawn it
+# without crossing macOS TCC-protected paths. ~/Documents/ (where source
+# checkouts typically live) is TCC-controlled; launchd-spawned processes hang
+# indefinitely in dyld when their executable path resolves through there
+# because the consent prompt has no UI to show. Source builds make this path the
+# canonical real binary; release installs or older source builds are copied here
+# only when the PATH binary is newer.
 idiom_bin_real="$HOME/.idiom/bin/idiom"
 mkdir -p "$(dirname "$idiom_bin_real")"
 if [[ ! -f "$idiom_bin_real" || "$idiom_bin_src" -nt "$idiom_bin_real" ]]; then
