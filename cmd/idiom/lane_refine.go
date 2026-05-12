@@ -197,6 +197,10 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 	}
 	fmt.Fprintf(stderr, "refine: mode=%s (auto-detected from spec)\n", mode)
 
+	// §6.1 Gap 6 (Colony harness-side fix): extract the deliverable
+	// target once and validate every iter's draft against it.
+	specDeliverableTarget := extractDeliverableTarget(string(specBody))
+
 	var prevReviewBugs []string
 	var lastDraftPath string
 	bestDraftPath := ""
@@ -301,6 +305,18 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		lastDraftPath = draftPath
 
 		lintExit, lintOutput := captureRefineLintOutput(draftPath, iterDir, stderr)
+		// §6.1 Gap 6 (Colony harness-side fix): validate the draft's
+		// Files To Modify references the extracted deliverable target.
+		// If the model put refine's scratchpad path there instead, the
+		// brief is structurally broken — surface as a BLOCK so the
+		// reviewer + patcher both see it as a required edit target.
+		if mismatch := refineDeliverableTargetMismatch(draftPath, specDeliverableTarget); mismatch != "" {
+			lintOutput = mismatch + "\n" + lintOutput
+			if lintExit == 0 {
+				lintExit = 1
+			}
+			fmt.Fprintf(stderr, "refine: iter %d — deliverable-target mismatch detected; prepending BLOCK to review preload\n", iter)
+		}
 		metrics.LintExit = lintExit
 		fmt.Fprintf(stderr, "refine: iter %d — lint exit=%d (preloaded to reviewer)\n", iter, lintExit)
 		metaReviewPath := filepath.Join(iterDir, "meta-review.md")
@@ -404,12 +420,40 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 		fmt.Fprintf(stderr, "refine: draft template = %s\n", source)
 		template = ensureRefineDraftWriteClosure(template, stderr, source)
 	}
+	// §6.1 Gap 6 (Colony harness-side fix): extract the deliverable
+	// target from the spec text and inline it as a pre-filled context
+	// block so the model doesn't have to re-parse the spec. Eliminates
+	// the deliverable-vs-state-path conflation surface entirely on
+	// specs that name the target with one of the standard verbs.
+	target := extractDeliverableTarget(specBody)
+	deliverableContext := refineDeliverableContextBlock(target)
+	if target != "" {
+		fmt.Fprintf(stderr, "refine: extracted deliverable target from spec: %s\n", target)
+	}
 	body := strings.NewReplacer(
 		"{{SPEC_BODY}}", strings.TrimSpace(specBody),
 		"{{DRAFT_PATH}}", refineWorkspaceRel(opts.ProjectRoot, draftPath),
 		"{{TITLE}}", opts.Title,
+		"{{DELIVERABLE_TARGET}}", target,
+		"{{DELIVERABLE_TARGET_CONTEXT}}", deliverableContext,
 	).Replace(template)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
+}
+
+// refineDeliverableContextBlock renders the substitution block that
+// names the extracted deliverable target. When extraction succeeds,
+// the model sees a pre-filled "use THIS exact path" instruction. When
+// extraction fails (spec doesn't name a target with one of the
+// canonical verbs), the block falls back to a no-op note so the
+// template substitution leaves no orphan `{{DELIVERABLE_TARGET_CONTEXT}}`
+// placeholder. Templates that don't reference the placeholder ignore
+// this entirely.
+func refineDeliverableContextBlock(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "(no deliverable target detected in spec — infer from spec text below)"
+	}
+	return fmt.Sprintf("**Deliverable target (extracted from spec by harness): `%s`.** Use this exact path in the brief's `## Files To Modify` (anchored-edits mode) or `## Deliverable` Path (markdown-deliverable mode). Do NOT use `{{DRAFT_PATH}}` — that's where refine writes the brief, not where plan-execute writes the deliverable.", target)
 }
 
 // resolveRefineDraftTemplate walks the §2.2.1 resolution chain:
@@ -909,6 +953,109 @@ func refineDetectMode(specBody string) string {
 		return refineModeMarkdown
 	}
 	return refineModeAnchored
+}
+
+// refineDeliverableVerbRE captures verb+backtick-path phrasings that
+// the spec uses to name a deliverable target (Colony Bug 6,
+// 2026-05-11). The harness extracts the target deterministically so
+// the meta-draft can pre-fill it rather than asking the model to
+// guess from the spec text. Verbs cover the common forms; the path
+// is the second capture group.
+var refineDeliverableVerbRE = regexp.MustCompile(`(?i)\b(?:produce|create|write|generate|output\s+to|add)\b\s+` + "`" + `([^` + "`" + `]+)` + "`")
+
+// extractDeliverableTarget scans the spec body for the first
+// verb+backtick-path mention whose path does NOT look like a source
+// file. Returns "" when no match is found OR when every matched path
+// is source-shaped (anchored-edits mode handles those via Verified
+// Current State rather than a single deliverable target).
+//
+// Examples:
+//   - "audit `lane_postflight.sh` and produce `docs/foo.md`" → `docs/foo.md`
+//   - "modify `foo.go`" → "" (only source path mentioned)
+//   - "create `.planning/inventory.md`" → `.planning/inventory.md`
+//
+// Heuristic — the override `--mode` flag and the safety-lint check
+// at meta-draft load time backstop wrong guesses.
+func extractDeliverableTarget(specBody string) string {
+	matches := refineDeliverableVerbRE.FindAllStringSubmatch(specBody, -1)
+	for _, m := range matches {
+		path := strings.TrimSpace(m[1])
+		if path == "" {
+			continue
+		}
+		if !pathLooksLikeSource(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+// refineDeliverableTargetMismatch returns a formatted BLOCK string
+// (suitable for prepending to lint output) when the brief's Files To
+// Modify allowlist does NOT reference the extracted deliverable
+// target. Returns "" when the target was empty (extraction failed,
+// nothing to validate), when the brief can't be read, when the
+// brief's allowlist is empty (no rows yet to compare), or when the
+// brief DOES reference the target (success — silent).
+//
+// The mismatch shape lands in the review preload's BLOCK list so the
+// reviewer's `ship-as-is` gate forces a fix-bugs-then-ship verdict
+// AND the patcher (Gap 1 — patcher sees lint preload directly) gets
+// the mismatch as an explicit edit target.
+func refineDeliverableTargetMismatch(draftPath, specTarget string) string {
+	if strings.TrimSpace(specTarget) == "" {
+		return ""
+	}
+	body, err := os.ReadFile(draftPath)
+	if err != nil {
+		return ""
+	}
+	files := extractFilesToModify(string(body))
+	if len(files) == 0 {
+		// Markdown-deliverable mode often has no Files To Modify;
+		// the deliverable target lives in `## Deliverable Path:`
+		// instead. Try a string-search for the target path anywhere
+		// in the body — if present, no mismatch.
+		if strings.Contains(string(body), specTarget) {
+			return ""
+		}
+		return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) spec asks for deliverable at `%s` but the brief body does not reference that path. Edit the brief to name the deliverable target the spec gave.", specTarget)
+	}
+	for _, f := range files {
+		if pathsEquivalent(f, specTarget) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) brief's Files To Modify lists %v but spec asks for deliverable at `%s`. Replace the Files To Modify row(s) with the spec's target — refine's scratchpad path should never appear in a brief's edit allowlist.", files, specTarget)
+}
+
+// pathsEquivalent compares two path strings tolerantly: trim
+// whitespace, normalize slashes, ignore leading "./". Two paths that
+// reduce to the same string are equivalent. Used by the deliverable-
+// target mismatch check so cosmetic differences ("./foo.md" vs
+// "foo.md") don't trip the BLOCK.
+func pathsEquivalent(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.TrimSpace(s)
+		s = strings.ReplaceAll(s, "\\", "/")
+		s = strings.TrimPrefix(s, "./")
+		return s
+	}
+	return norm(a) == norm(b)
+}
+
+// pathLooksLikeSource returns true when the path ends in a known
+// source-extension. Used by extractDeliverableTarget to skip source
+// citations (anchored-edits mode) when looking for the deliverable
+// target of a markdown-shape atom.
+func pathLooksLikeSource(path string) bool {
+	lower := strings.ToLower(path)
+	for _, ext := range refineSourceExtensions {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // extensionMentioned reports whether `ext` (e.g. ".m") appears in

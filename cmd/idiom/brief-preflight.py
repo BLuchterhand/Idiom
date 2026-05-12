@@ -96,6 +96,83 @@ WORKSPACE_PATH_RE = re.compile(
 
 FENCE_RE = re.compile(r"```[^\n]*\n.*?\n```", re.DOTALL)
 
+# Brief mode taxonomy (matches §2.2 / §2.2.1 of
+# docs/refine-end-to-end-loop.md). The lint must be mode-aware so a
+# structurally-clean brief that's missing a required section gets a
+# BLOCK instead of passing vacuously (Colony Gap 7, 2026-05-11).
+BRIEF_MODE_ANCHORED = "anchored-edits"
+BRIEF_MODE_MARKDOWN = "markdown-deliverable"
+BRIEF_MODE_AMBIGUOUS = "ambiguous"
+BRIEF_MODE_UNKNOWN = "unknown"
+
+# Required section headings per mode. Each entry is a tuple of
+# acceptable heading variants — `Required Edits` and `Required
+# Behavior` are both accepted historically, so either satisfies the
+# requirement. The Acceptance section was undocumented as required
+# despite being in every canonical template — Bug 7 root cause #2.
+REQUIRED_SECTIONS_ANCHORED = [
+    ("## Files To Modify", "## Files to Modify", "## Files You May Edit"),
+    ("## Verified Current State", "## Verified Anchors", "## Current state", "## Current State"),
+    ("## Required Edits", "## Required Behavior"),
+    ("## Acceptance",),
+]
+REQUIRED_SECTIONS_MARKDOWN = [
+    ("## Deliverable",),
+    ("## Inline content", "## Inline Content"),
+    ("## Acceptance",),
+]
+
+
+def detect_brief_mode(text: str) -> str:
+    """Detect the brief's deliverable shape by section presence.
+    Section detection ignores fenced content (example templates inside
+    ```text blocks don't count as the brief's own structure).
+    Returns one of the BRIEF_MODE_* constants.
+    """
+    scannable = strip_fenced_blocks(text)
+    has_files = bool(re.search(r"^##\s+Files To Modify\b", scannable, re.MULTILINE | re.IGNORECASE))
+    has_deliverable = bool(re.search(r"^##\s+Deliverable\b", scannable, re.MULTILINE | re.IGNORECASE))
+    has_inline = bool(re.search(r"^##\s+Inline content\b", scannable, re.MULTILINE | re.IGNORECASE))
+    if has_deliverable and has_inline:
+        if has_files:
+            # Mixed shape — likely an authoring error. Caller emits WARN.
+            return BRIEF_MODE_AMBIGUOUS
+        return BRIEF_MODE_MARKDOWN
+    if has_files:
+        return BRIEF_MODE_ANCHORED
+    return BRIEF_MODE_UNKNOWN
+
+
+def find_section_body(text: str, heading: str) -> str | None:
+    """Return the body text between `heading` and the next `## ` heading.
+    Ignores fenced content (example templates inside fences don't count
+    as a real section). Returns None when the heading isn't present.
+    Body may be empty string when the heading is followed immediately
+    by another section heading.
+    """
+    scannable = strip_fenced_blocks(text)
+    # Allow trailing modifiers on the heading line (e.g. parenthetical
+    # clarifications like "## Files to Modify (EXHAUSTIVE allowlist)").
+    # The brief lint historically accepted those, and the structural-
+    # completeness check must too.
+    pattern = re.compile(
+        rf"^{re.escape(heading)}[^\n]*\n(.*?)(?=^##\s|\Z)",
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    )
+    match = pattern.search(scannable)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def required_sections_for_mode(mode: str) -> list[tuple[str, ...]]:
+    if mode == BRIEF_MODE_ANCHORED:
+        return REQUIRED_SECTIONS_ANCHORED
+    if mode == BRIEF_MODE_MARKDOWN:
+        return REQUIRED_SECTIONS_MARKDOWN
+    return []
+
+
 # Match labeled old_text blocks. Accepted shapes:
 #   old_text:
 #   ```text
@@ -125,6 +202,52 @@ def main() -> int:
     text = path.read_text(encoding="utf-8")
     failures: list[str] = []
     warnings: list[str] = []
+
+    # Mode-aware required-section check (Bug 7, 2026-05-11). The lint
+    # was previously anchored-edits-only and passed vacuously on
+    # markdown-deliverable briefs because they have no `## Files To
+    # Modify` rows for the row-based checks to trigger on. Each mode
+    # now declares its required sections; missing → BLOCK; present
+    # but empty body → BLOCK.
+    mode = detect_brief_mode(text)
+    if mode == BRIEF_MODE_AMBIGUOUS:
+        warnings.append(
+            "brief shape is ambiguous: contains both `## Files To Modify` "
+            "(anchored-edits) AND `## Deliverable`+`## Inline content` "
+            "(markdown-deliverable). Refine override templates should pick one "
+            "mode; mixing collapses the convergence guarantee. Force a mode "
+            "with `idiom lane refine --mode anchored|markdown` if intentional."
+        )
+    elif mode == BRIEF_MODE_UNKNOWN:
+        warnings.append(
+            "brief shape is unknown: no `## Files To Modify` (anchored-edits) "
+            "and no `## Deliverable`+`## Inline content` (markdown-deliverable). "
+            "Add the canonical section for your mode before dispatch."
+        )
+    for heading_variants in required_sections_for_mode(mode):
+        present_heading: str | None = None
+        body: str | None = None
+        for variant in heading_variants:
+            body = find_section_body(text, variant)
+            if body is not None:
+                present_heading = variant
+                break
+        if present_heading is None:
+            failures.append(
+                f"required section missing for {mode} mode: "
+                f"expected `{' or '.join(heading_variants)}`. "
+                "Every canonical refine template requires this section; a brief "
+                "without it is structurally incomplete even if other shape "
+                "checks pass."
+            )
+            continue
+        if not body.strip():
+            failures.append(
+                f"required section `{present_heading}` is present but empty. "
+                "A heading with no body content fails to satisfy the section's "
+                "contract (the downstream lane has no edit target / no acceptance "
+                "command / etc. to act on)."
+            )
 
     rows = files_to_modify_rows(text)
     files = sorted({row[0] for row in rows})

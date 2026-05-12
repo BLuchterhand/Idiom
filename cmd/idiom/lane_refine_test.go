@@ -1266,6 +1266,158 @@ func TestRunLaneRefinePersistLintJSONAlongMetricsJSON(t *testing.T) {
 	}
 }
 
+// TestExtractDeliverableTargetExtractsFirstNonSourcePath locks in
+// §6.1 Gap 6 (Colony harness-side fix): the harness scans the spec
+// for verb+backtick-path patterns and returns the first non-source
+// path. The model no longer needs to re-parse the spec — the
+// extracted target lands in the meta-draft as a pre-filled context
+// block.
+func TestExtractDeliverableTargetExtractsFirstNonSourcePath(t *testing.T) {
+	cases := []struct {
+		name string
+		spec string
+		want string
+	}{
+		{
+			name: "produce-after-source-reference",
+			spec: "audit `lane_postflight.sh` and produce `docs/research/lane-postflight-check-inventory.md` listing each check.",
+			want: "docs/research/lane-postflight-check-inventory.md",
+		},
+		{
+			name: "create-pure-markdown",
+			spec: "create `.planning/inventory.md` with the new design.",
+			want: ".planning/inventory.md",
+		},
+		{
+			name: "write-pure-markdown",
+			spec: "write `notes/foo.txt` summarizing the change.",
+			want: "notes/foo.txt",
+		},
+		{
+			name: "generate-json-config",
+			spec: "generate `config/settings.json` with default values.",
+			want: "config/settings.json",
+		},
+		{
+			name: "output-to-multiword-verb",
+			spec: "output to `output/report.md` after the analysis.",
+			want: "output/report.md",
+		},
+		{
+			name: "source-only-no-target",
+			spec: "modify `cmd/idiom/foo.go` to add a flag.",
+			want: "",
+		},
+		{
+			name: "no-verb-mention",
+			spec: "Make the system faster.",
+			want: "",
+		},
+		{
+			name: "skip-source-take-markdown",
+			spec: "modify `pkg/a.go` and create `docs/CHANGELOG.md`",
+			want: "docs/CHANGELOG.md",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractDeliverableTarget(tc.spec)
+			if got != tc.want {
+				t.Fatalf("extractDeliverableTarget(%q) = %q, want %q", tc.spec, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRefineDeliverableTargetMismatchSurfacesAsBlock locks in the
+// validation path: when refine extracts a target from the spec but
+// the produced brief's Files To Modify references a DIFFERENT path
+// (the C.1 bug shape — model put refine's scratchpad in the
+// allowlist), the mismatch becomes a [BLOCK] in the lint preload so
+// the reviewer's ship-as-is gate refuses convergence until the
+// patcher fixes the target.
+func TestRefineDeliverableTargetMismatchSurfacesAsBlock(t *testing.T) {
+	dir := t.TempDir()
+	draftPath := filepath.Join(dir, "draft.md")
+	// Draft's Files To Modify points at the WRONG path (refine's
+	// scratchpad path, mimicking the C.1 bug shape).
+	body := "# Brief\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `.idiom/refine/test/iter-1/draft.md` | NEW FILE |\n\n## Acceptance\n\n- test\n"
+	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	specTarget := "docs/research/lane-postflight-check-inventory.md"
+	got := refineDeliverableTargetMismatch(draftPath, specTarget)
+	if got == "" {
+		t.Fatalf("expected BLOCK on path mismatch, got empty")
+	}
+	if !strings.Contains(got, "[BLOCK]") || !strings.Contains(got, "deliverable-target-mismatch") {
+		t.Fatalf("expected BLOCK with deliverable-target-mismatch category, got: %s", got)
+	}
+	if !strings.Contains(got, specTarget) {
+		t.Fatalf("expected BLOCK to name the expected target, got: %s", got)
+	}
+}
+
+// TestRefineDeliverableTargetMatchReturnsEmpty: when the brief
+// correctly references the extracted target, no mismatch BLOCK is
+// emitted — silent success.
+func TestRefineDeliverableTargetMatchReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	draftPath := filepath.Join(dir, "draft.md")
+	body := "# Brief\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `docs/research/inventory.md` | NEW FILE |\n\n## Acceptance\n\n- test\n"
+	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got := refineDeliverableTargetMismatch(draftPath, "docs/research/inventory.md")
+	if got != "" {
+		t.Fatalf("expected silent success on match, got: %s", got)
+	}
+}
+
+// TestRefineDeliverableTargetEmptyTargetSkipsCheck: when the harness
+// couldn't extract a target from the spec (no canonical verb+path),
+// the mismatch check is a no-op — no false positives on specs that
+// just don't name a target.
+func TestRefineDeliverableTargetEmptyTargetSkipsCheck(t *testing.T) {
+	dir := t.TempDir()
+	draftPath := filepath.Join(dir, "draft.md")
+	body := "# Brief\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `whatever.md` | NEW FILE |\n"
+	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if got := refineDeliverableTargetMismatch(draftPath, ""); got != "" {
+		t.Fatalf("expected no-op when target is empty, got: %s", got)
+	}
+}
+
+// TestRefineDeliverableContextBlockRendersExtractedTarget verifies
+// the substitution block names the extracted path with the
+// "use this exact path" framing — gives the model an unambiguous
+// answer rather than asking it to derive the target.
+func TestRefineDeliverableContextBlockRendersExtractedTarget(t *testing.T) {
+	got := refineDeliverableContextBlock("docs/research/x.md")
+	if !strings.Contains(got, "docs/research/x.md") {
+		t.Fatalf("expected block to name the target, got: %s", got)
+	}
+	if !strings.Contains(got, "Use this exact path") {
+		t.Fatalf("expected directive framing, got: %s", got)
+	}
+	if !strings.Contains(got, "{{DRAFT_PATH}}") {
+		t.Fatalf("expected explicit warning about DRAFT_PATH conflation, got: %s", got)
+	}
+}
+
+// TestRefineDeliverableContextBlockEmptyFallsBack: when extraction
+// returns empty, the block emits a no-op note so the template
+// substitution doesn't leak an orphan {{DELIVERABLE_TARGET_CONTEXT}}
+// placeholder.
+func TestRefineDeliverableContextBlockEmptyFallsBack(t *testing.T) {
+	got := refineDeliverableContextBlock("")
+	if !strings.Contains(got, "no deliverable target detected") {
+		t.Fatalf("expected fallback note, got: %s", got)
+	}
+}
+
 // TestMarkdownDraftTemplateClarifiesTwoPaths locks in the
 // 2026-05-11 bug fix to lanes/refine/draft-markdown.md: the
 // markdown-deliverable mode has a known model-confusion source —

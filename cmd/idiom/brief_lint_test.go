@@ -77,6 +77,23 @@ func writeLintBrief(t *testing.T, dir, content string) string {
 	return briefPath
 }
 
+// withCanonicalSections appends stub `## Required Edits` and/or
+// `## Acceptance` sections to a test brief body if absent, so the
+// structural-completeness check added 2026-05-11 (Colony Bug 7) doesn't
+// block specific-behavior tests that focus on a different lint dimension.
+// Tests that want to verify the structural check itself should NOT use
+// this helper.
+func withCanonicalSections(body string) string {
+	out := body
+	if !strings.Contains(out, "## Required Edits") && !strings.Contains(out, "## Required Behavior") {
+		out += "\n## Required Edits\n\nApply the edit named in the Files to Modify row.\n"
+	}
+	if !strings.Contains(out, "## Acceptance") {
+		out += "\n## Acceptance\n\n- `go build ./...` succeeds.\n"
+	}
+	return out
+}
+
 // TestBriefLintParsesParentheticalHeading verifies the parser bug fix: the
 // canonical brief skeleton heading "## Files to Modify (EXHAUSTIVE
 // allowlist)" must be recognized as the file-allowlist section. Before the
@@ -88,13 +105,13 @@ func TestBriefLintParsesParentheticalHeading(t *testing.T) {
 	ws := makeWorkspace(t, map[string]string{
 		"internal/foo/bar.go": "package foo\nfunc Existing() {}\n",
 	})
-	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
 		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
 		"| File | Change |\n"+
 		"|------|--------|\n"+
 		"| `internal/foo/bar.go` | ADD `func Added()` at line 2 |\n\n"+
 		"## Verified Anchors\n\n"+
-		"Confirmed: `Existing` is at line 2.\n")
+		"Confirmed: `Existing` is at line 2.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
 	if exit != 0 {
 		t.Fatalf("expected lint OK on a well-formed brief, got exit=%d output=%s", exit, out)
@@ -141,7 +158,7 @@ func TestBriefLintWarnsOnBranchingInRequiredEdit(t *testing.T) {
 	ws := makeWorkspace(t, map[string]string{
 		"internal/foo/bar.go": "package foo\nfunc Existing() {}\n",
 	})
-	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
 		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
 		"| File | Change |\n"+
 		"|------|--------|\n"+
@@ -149,7 +166,7 @@ func TestBriefLintWarnsOnBranchingInRequiredEdit(t *testing.T) {
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n\n"+
 		"## Required Edits\n\n"+
 		"### Edit 1 — `bar.go` add Added\n\n"+
-		"Either add the function alongside Existing or define it in a new file.\n")
+		"Either add the function alongside Existing or define it in a new file.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
 	if exit != 0 {
 		t.Fatalf("branching should WARN, not FAIL, got exit=%d output=%s", exit, out)
@@ -192,12 +209,12 @@ func TestBriefLintAnchorVerificationFileExists(t *testing.T) {
 	ws := makeWorkspace(t, map[string]string{
 		"internal/foo/bar.go": "package foo\nfunc Existing() {}\n",
 	})
-	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
 		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
 		"| File | Change |\n"+
 		"|------|--------|\n"+
 		"| `internal/foo/bar.go` | ADD `func Added()` at line 2 |\n\n"+
-		"## Current state\n\nLine 2 is `func Existing() {}`.\n")
+		"## Current state\n\nLine 2 is `func Existing() {}`.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
 	if exit != 0 {
 		t.Fatalf("expected OK when named file exists, got exit=%d output=%s", exit, out)
@@ -242,7 +259,7 @@ func TestBriefLintAnchorVerificationOldTextMatches(t *testing.T) {
 	ws := makeWorkspace(t, map[string]string{
 		"internal/foo/bar.go": "package foo\n\nfunc Existing() int {\n\treturn 0\n}\n",
 	})
-	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
 		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
 		"| File | Change |\n"+
 		"|------|--------|\n"+
@@ -261,7 +278,7 @@ func TestBriefLintAnchorVerificationOldTextMatches(t *testing.T) {
 		"func Existing() int {\n"+
 		"\treturn 1\n"+
 		"}\n"+
-		"```\n")
+		"```\n"))
 	exit, out := runPreflight(t, script, brief, ws)
 	if exit != 0 {
 		t.Fatalf("expected OK when old_text matches file, got exit=%d output=%s", exit, out)
@@ -318,12 +335,12 @@ func TestBriefLintAnchorVerificationWorkspaceSkipsCleanly(t *testing.T) {
 	ws := makeWorkspace(t, map[string]string{
 		"unrelated.go": "package main\n",
 	})
-	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
 		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
 		"| File | Change |\n"+
 		"|------|--------|\n"+
 		"| `native/src/foo.cpp` | ADD `void bar()` at line 2 |\n\n"+
-		"## Current state\n\nLine 2 of native/src/foo.cpp.\n")
+		"## Current state\n\nLine 2 of native/src/foo.cpp.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
 	if exit != 0 {
 		t.Fatalf("expected OK with workspace-skip WARN, got exit=%d output=%s", exit, out)
@@ -357,13 +374,13 @@ func TestBriefLintAtomSizeWarnsAroundHalfMaxTokens(t *testing.T) {
 	})
 	// ~600 lines × 25 chars × 1.2 / 4 = ~4500 tokens → between
 	// WARN (4096) and FAIL (6553) at the default 8192 cap.
-	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
 		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
 		"| File | Change |\n"+
 		"|------|--------|\n"+
 		"| `cmd/idiom/lane.go` | ADD `func added()` at line 2 |\n\n"+
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n\n"+
-		buildInlinedContent(600)+"\n")
+		buildInlinedContent(600)+"\n"))
 	exit, out := runPreflight(t, script, brief, ws)
 	if exit != 0 {
 		t.Fatalf("expected exit=0 (WARN only), got exit=%d output=%s", exit, out)

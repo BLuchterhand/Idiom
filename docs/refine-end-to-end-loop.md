@@ -416,6 +416,52 @@ The 16-check enumeration with line anchors that the model produced inside the br
 
 **Where this lands in Colony's loud-vs-quiet taxonomy**: quiet failure. Refine exited code 0, produced a non-empty brief, and the brief passed §2.1's "non-trivial output" check. The defect only surfaced when an operator read the brief and noticed the target path was wrong. Per the loud-vs-quiet heuristic, this is exactly the case where shipping the minimum loud-signal version is preferable to deferring: the prompt-only fix above is ~10 lines of template edit; the harness-side and reviewer-side follow-ups are bigger but the prompt fix alone eliminates the conflation surface even without them.
 
+**Harness-side follow-up shipped (idiom commit follows)**: deterministic deliverable-target extraction is now wired into refine. `extractDeliverableTarget(specBody)` scans the spec for verb+backtick-path patterns (`produce|create|write|generate|output to|add` + backtick-quoted path) and returns the first non-source-extension match. The result substitutes into the meta-draft as `{{DELIVERABLE_TARGET_CONTEXT}}` — a pre-filled "**Deliverable target (extracted from spec by harness): `<path>`.** Use this exact path..." block above the schema example. Both canonical templates now include this placeholder. After each iter's draft, `refineDeliverableTargetMismatch` compares the brief's Files To Modify (and body text for markdown-deliverable mode) against the extracted target; mismatch produces a `- [BLOCK] (deliverable-target-mismatch) ...` prepended to the lint preload, forcing the reviewer's ship-as-is gate to refuse convergence until the patcher corrects the target. Tests: `TestExtractDeliverableTargetExtractsFirstNonSourcePath` (8 cases), `TestRefineDeliverableTargetMismatchSurfacesAsBlock`, `TestRefineDeliverableTargetMatchReturnsEmpty`, `TestRefineDeliverableTargetEmptyTargetSkipsCheck`, `TestRefineDeliverableContextBlockRendersExtractedTarget`, `TestRefineDeliverableContextBlockEmptyFallsBack`.
+
+### Gap 7 — `idiom brief lint` is mode-blind (added 2026-05-11 from Colony real-use)
+
+**Observed**: Colony re-ran refine on `idiom-evolution-C-bundling-spec.md` with the Gap 6 fix in the binary. Refine correctly detected markdown-deliverable mode, converged on `ship-as-is` in iter-1, and produced a structurally-clean brief. **But the brief was missing the required `## Acceptance` section** — present in the markdown-deliverable meta-draft template but absent from the generated brief. Neither `idiom brief lint` nor refine's reviewer caught it.
+
+The orchestrator added the section by hand (~30 seconds) and shipped, but the auto-catch path failed at every layer.
+
+**Three compounding bugs**:
+
+1. **`brief-preflight.py` is mode-blind.** The python preflight script was written for anchored-edits briefs only. It checks for `## Files To Modify` and `### Edit N` blocks. When fed a markdown-deliverable brief (which has `## Deliverable` + `## Inline content` instead), it reports `0 file-allowlist rows` and passes vacuously — no allowlist to check, no edits to verify, lint OK. The lint has no markdown-deliverable code path.
+
+2. **`## Acceptance` is not required in either mode.** Grep `cmd/idiom/brief-preflight.py` for "Acceptance" returns zero matches. The lint never required this section, in any mode — including anchored-edits, where it's documented as required in `lanes/refine/draft.md`.
+
+3. **Refine's reviewer doesn't compare draft against the meta-draft template.** §2.3 says the reviewer runs `idiom brief lint` and treats BLOCKs as patch targets. When lint passes vacuously (Bug 1), the reviewer falls back to its own judgment — which checks shape consistency between sections but not "did the draft include every required section per the meta-draft's template." That's how iter-1 converged on `ship-as-is` despite a section the template explicitly requires being absent.
+
+**Root cause shared with Gap 6**: idiom's verification surface (lint + reviewer prompts) was built for anchored-edits and has not been extended to cover the markdown-deliverable schema. The new mode shipped (§2.2) without matching lint coverage.
+
+**Minimum fix** (one commit, ~half-day):
+
+1. **Mode-aware lint**: detect mode by section presence in `brief-preflight.py`:
+   - `## Deliverable` present → markdown-deliverable rules
+   - `## Files To Modify` present → anchored-edits rules
+   - Both or neither present → emit a clear WARN ("brief shape is ambiguous; specify mode")
+2. **Required-section check per mode**:
+   - anchored-edits: `## Files To Modify`, `## Verified Current State`, `## Required Edits` (or near-equivalent `## Required Behavior`), `## Acceptance`
+   - markdown-deliverable: `## Deliverable` (with `Path:` and `Format:` body), `## Inline content`, `## Acceptance`
+3. **Non-empty body check**: each required section must have at least one non-heading line of content. Catches the "heading present, body empty" defect.
+4. **Reviewer cross-check**: extend `review.md`'s prompt to compare the draft's section headings against the meta-draft template's required sections. If a required section is missing, verdict is `fix-bugs-then-ship` regardless of lint output.
+
+**Loud-vs-quiet classification**: quiet failure, again. Brief shipped lint-OK and refine reviewer-OK with a documented-required section absent. Operator caught it by visual inspection. Same pattern as Gap 6 — the verification surface didn't model the new mode's shape.
+
+**Empirical context**: workflow validated end-to-end on the second attempt (`idiom-evolution-C-bundling-v2`, commit `18939960`). Refine → manual Acceptance add → lint OK → implement lane → 120-line markdown deliverable at `docs/research/idiom-evolution-postflight-migration-bundles.md`. The one orchestrator-normalize step (Acceptance section) is the only hand-edit standing between today's flow and the fully-automated end-state.
+
+**Fix shipped (idiom commit follows)**: `cmd/idiom/brief-preflight.py` is now mode-aware.
+
+- New `detect_brief_mode(text)` identifies anchored-edits, markdown-deliverable, ambiguous (both), or unknown (neither) by section presence (ignoring fenced example content).
+- New `REQUIRED_SECTIONS_ANCHORED` and `REQUIRED_SECTIONS_MARKDOWN` lists the required headings per mode (each entry is a tuple of acceptable variants — e.g., `## Required Edits` OR `## Required Behavior`).
+- `find_section_body` returns the body content between a heading and the next `## ` heading, tolerating trailing modifiers (`## Files to Modify (EXHAUSTIVE allowlist)`).
+- Main loop: missing required section → BLOCK; present-but-empty body → BLOCK.
+- `## Acceptance` is now required in BOTH modes (previously documented but unenforced).
+- Ambiguous shape (both anchored AND markdown-deliverable section markers) → WARN with a "pick one mode" hint.
+- Unknown shape (neither marker) → WARN suggesting the canonical section for the intended mode.
+
+Existing test fixtures gained a `withCanonicalSections` helper that appends stub `## Required Edits` + `## Acceptance` sections when absent, so specific-defect tests focus on the dimension they're testing instead of being blocked by the new structural-completeness check. Tests focused on the structural check itself do NOT use the helper.
+
 ### How to surface evidence
 
 For each gap, the "real-use feedback" trigger is one of:

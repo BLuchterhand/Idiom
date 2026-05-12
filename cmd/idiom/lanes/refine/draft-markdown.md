@@ -10,6 +10,10 @@ write the file.
 
 {{SPEC_BODY}}
 
+## Deliverable target
+
+{{DELIVERABLE_TARGET_CONTEXT}}
+
 ## Write `{{DRAFT_PATH}}` with this exact shape
 
 Replace each `<bracket placeholder>` with your text. Keep the
