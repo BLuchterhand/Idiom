@@ -96,6 +96,14 @@ Format: markdown / json / etc.
 
 No anchors, no Verified Current State, no old_text/new_text. The deliverable IS the inline content; refine's job is to compose it.
 
+**Two-path disambiguation (Colony bug fix, 2026-05-11):** the markdown-deliverable mode introduces a known model-confusion source. The brief contains a `Deliverable Path` field naming where plan-execute will eventually write the inline content, AND refine itself writes the brief to `{{DRAFT_PATH}}`. Without explicit disambiguation in the meta-draft, models conflate the two — writing the inline content to the deliverable path instead of writing the brief to `{{DRAFT_PATH}}`, or writing nothing at all because they can't reconcile the two-path shape.
+
+The canonical `draft-markdown.md` template (commit follows) includes a "Where you write THIS draft.md" section right before the write step:
+
+> Your output file (refine's scratchpad for this iteration) is `{{DRAFT_PATH}}`. This is unrelated to the brief's `Deliverable Path` field above. The downstream plan-execute lane will write `Inline content` to `Deliverable Path`; refine itself writes to `{{DRAFT_PATH}}`. Two different files, two different consumers.
+
+**Implication for custom modes:** any project-extension mode whose brief shape includes a deliverable-path-style field (the brief names a target path that's distinct from where refine writes the brief itself) MUST include a similar two-path disambiguation block. The `TestMarkdownDraftTemplateClarifiesTwoPaths` test locks in the canonical template; custom-mode authors should mirror the wording. Documenting this here so the pattern doesn't have to be rediscovered per project.
+
 ### 2.2.1 Project-extensible modes (added 2026-05-11)
 
 The two canonical modes (anchored, markdown) cover ~90% of software development. The remaining ~10% (hardware-in-loop, notebooks, runbooks, regulated-industry briefs, etc.) needs *different brief shapes*, not just project-specific augmentations of the existing shape. Rather than embedding every conceivable mode into idiom's binary, modes are **project-extensible** via a convention-based override path.
@@ -383,6 +391,30 @@ Three of five gaps shipped per Colony's loud-vs-quiet-failure heuristic; two sta
 | 5. JSON lint output | **Shipped** — `idiom brief lint --json` emits a stable schema (severity/category/brief/message); refine consumes JSON, drops INFO findings, falls back to plain text on malformed JSON. Raw envelope persisted to `<iterDir>/lint.json` alongside `metrics.json` (Colony §8) for orchestrator inspection. | follows |
 
 Colony's meta-insight (Refined principle): the "wait for empirical evidence" heuristic is correct for additive features but misapplied to gaps that fail silently, undermine architectural guarantees just shipped, or have retrofit costs that grow faster than the deferred-feature cost. Loud-failure → defer is safe; quiet-failure → ship the minimum signal-emitting version now, even when the full feature waits.
+
+### Gap 6 — deliverable-vs-state-path conflation in meta-draft (added 2026-05-11 from Colony real-use)
+
+**Observed**: Colony ran `idiom lane refine --spec .planning/idiom-evolution-C.1-spec.md ...` on a spec that asked: *"audit `scripts/_archive/2026-05-10-phase8/lane_postflight.sh` and produce `docs/research/lane-postflight-check-inventory.md` listing each check..."* The lane converged on three iterations, exit code 0, brief produced. **But the brief was structurally wrong**: Files To Modify pointed at `.idiom/refine/idiom-evolution-C.1/iter-2/draft.md` (refine's own scratchpad) instead of `docs/research/lane-postflight-check-inventory.md` (what the spec asked for). HARD PROHIBITIONS section explicitly forbade touching the spec's target. The brief was not dispatchable.
+
+The 16-check enumeration with line anchors that the model produced inside the brief was correct (verified by spot-checking lines 99, 117, 138, 305, 552, 620 against the archived script — all matched). So the model did the discovery work. It just packaged the work pointed at the wrong target.
+
+**Root cause** (`lanes/refine/draft.md` — also `draft-markdown.md`): the template had TWO `## Files To Modify` sections — one inside the brief schema (describing the brief's edit target), one at meta-state level (describing where the model writes ITS draft). Same heading, different semantics. Even a perfect model would conflate them — and across three iterations, neither the reviewer nor the patcher caught it because both reviewed shape consistency, not deliverable-vs-state alignment.
+
+**Why both reviewer and patcher missed it**:
+- Reviewer caught two structural bugs in iter-1 ("self-referential Verified Current State", "section count mismatch") and prescribed `fix-bugs-then-ship`. Both were real bugs. Neither flagged the deliverable-target mistake.
+- Iter-2 patched the structural bugs; deliverable target stayed wrong. Iter-3 review found no new bugs; verdict converged on `no-improvement`.
+- The deliverable-vs-state conflation is not a *shape* defect — the brief is well-formed; it just targets the wrong file. Reviewer prompts focused on shape; they don't ask "does the brief's Files To Modify match what the spec asked for?"
+
+**Fix shipped (prompt-only, this commit)**: disambiguate the meta-draft template's two semantics.
+
+- `lanes/refine/draft.md`: removed the second `## Files To Modify` (lines 50-54) that pointed at `{{DRAFT_PATH}}`. Renamed to `## Where you write THIS draft.md` so it doesn't collide with the brief schema's `## Files To Modify`. Added a `## Critical: two file paths, two different purposes` block BEFORE the schema is presented, with an explicit example showing the deliverable target (`docs/research/inventory.md`) vs the draft-write target (`{{DRAFT_PATH}}`).
+- `lanes/refine/draft-markdown.md`: same renaming. The markdown-deliverable variant didn't have the heading collision (its schema uses `## Deliverable Path` not `## Files To Modify`) but the meta-state section still benefited from the rename for consistency.
+
+**Harness-side follow-up (NOT in this commit, recommended next)**: deterministic deliverable-target extraction. Refine scans the spec for verb+backtick-path patterns (`produce \`<path>\``, `create \`<path>\``, `write \`<path>\``, `output to \`<path>\``, `generate \`<path>\``) and passes the first non-source-extension match as `{{DELIVERABLE_TARGET}}` placeholder to the meta-draft. The template's example Files To Modify row populates from that placeholder. Spec → harness extracts target → meta-draft instantiates with target → model fills schema. No model-side spec-parsing required. Aligns with idiom's north star ("harness owns contracts, model owns strategy"). Safety lint per §2.2.1 should require `{{DELIVERABLE_TARGET}}` placeholder in `draft-<mode>.md` overrides.
+
+**Reviewer-side follow-up (also recommended)**: extend `review.md`'s verdict criteria to check `brief['Files To Modify'][0].path` against the spec's stated deliverable path. If they don't match, reviewer verdict is `fix-bugs-then-ship` with the diagnostic *"brief Files To Modify points at X; spec asks for Y"*. This is the loud-signal that would have caught C.1's drift at iter-1.
+
+**Where this lands in Colony's loud-vs-quiet taxonomy**: quiet failure. Refine exited code 0, produced a non-empty brief, and the brief passed §2.1's "non-trivial output" check. The defect only surfaced when an operator read the brief and noticed the target path was wrong. Per the loud-vs-quiet heuristic, this is exactly the case where shipping the minimum loud-signal version is preferable to deferring: the prompt-only fix above is ~10 lines of template edit; the harness-side and reviewer-side follow-ups are bigger but the prompt fix alone eliminates the conflation surface even without them.
 
 ### How to surface evidence
 

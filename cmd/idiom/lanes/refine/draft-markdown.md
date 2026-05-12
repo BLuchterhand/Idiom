@@ -53,11 +53,9 @@ If it asks for a "design doc", write the doc.>
   Deliverable Path. Do not paraphrase, summarize, or substitute
   `<TODO: fill in>` placeholders — fill in real content now.
 
-## Files To Modify
+## Where you write THIS draft.md
 
-| File | Change |
-|------|--------|
-| `{{DRAFT_PATH}}` | NEW FILE: markdown-deliverable brief for {{TITLE}} |
+Your output file (refine's scratchpad for this iteration) is `{{DRAFT_PATH}}`. This is unrelated to the brief's `Deliverable Path` field above. The downstream plan-execute lane will write `Inline content` to `Deliverable Path`; refine itself writes to `{{DRAFT_PATH}}`. Two different files, two different consumers.
 
 ## STOP AND WRITE NOW
 

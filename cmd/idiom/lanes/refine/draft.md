@@ -42,16 +42,32 @@ section below in this order:
 - `<another shell command>`
 ```
 
+## Critical: two file paths, two different purposes
+
+The brief schema's `## Files To Modify` (inside the template above) is the **brief's edit target** — the file(s) the FUTURE `idiom lane plan-execute` will write when the brief is dispatched. Extract this from the spec text. Specs that say "produce `<path>`" / "create `<path>`" / "write `<path>`" / "output to `<path>`" name the target explicitly; use that path. If the spec doesn't name a target path, surface `<<QUESTION>>:` rather than guessing.
+
+Your own write location (`{{DRAFT_PATH}}` — refine's scratchpad for THIS iteration) is **separate** from the brief's edit target. Do NOT put `{{DRAFT_PATH}}` in the brief's `Files To Modify` — that confuses the future lane into editing the wrong file. The Files To Modify section describes what the brief asks for, not what you wrote.
+
+Example — for a spec that says "produce `docs/research/inventory.md` listing X":
+
+```text
+## Files To Modify
+
+| File | Change |
+|------|--------|
+| `docs/research/inventory.md` | NEW FILE: inventory of X per spec |
+```
+
+NOT `| `{{DRAFT_PATH}}` | ... |` — that's where YOU write, not where the brief's edit lands.
+
 ## Format constraints
 
 - Use ` ```text ` fences for inlined code (not ` ```go ` / ` ```python ` / etc.).
 - Do NOT wrap the entire brief in an outer ``` fence — start with the H1 heading directly.
 
-## Files To Modify
+## Where you write THIS draft.md
 
-| File | Change |
-|------|--------|
-| `{{DRAFT_PATH}}` | NEW FILE: implementation brief for {{TITLE}} |
+Your output file (refine's scratchpad for this iteration) is `{{DRAFT_PATH}}`. This is unrelated to the brief content's `Files To Modify` field above — those are two different paths with two different purposes. You write to `{{DRAFT_PATH}}`; the future plan-execute lane writes to whatever the brief's `Files To Modify` names.
 
 ## STOP AND WRITE NOW
 

@@ -51,6 +51,29 @@ func stripFencedBlocksForStub(body string) string {
 	return out.String()
 }
 
+// firstBacktickMDPath returns the first backtick-quoted token in
+// `line` that ends in `.md`, or empty string if none. Scans span by
+// span: lines like "- `path`: `<file.md>`" need to skip the first
+// span (`path`) and return the second.
+func firstBacktickMDPath(line string) string {
+	rest := line
+	for {
+		start := strings.Index(rest, "`")
+		if start < 0 {
+			return ""
+		}
+		end := strings.Index(rest[start+1:], "`")
+		if end < 0 {
+			return ""
+		}
+		candidate := rest[start+1 : start+1+end]
+		if strings.HasSuffix(candidate, ".md") {
+			return candidate
+		}
+		rest = rest[start+1+end+1:]
+	}
+}
+
 func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 	t.Helper()
 	calls := 0
@@ -59,45 +82,71 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		if err != nil {
 			t.Fatalf("stub: read meta %s: %v", metaBriefPath, err)
 		}
-		// Find the output path the meta-brief targets. Prefer the
-		// path on the row immediately after "## Files To Modify"
-		// (the lane's authoritative output declaration). Fall back
-		// to the first .md path mention not equal to the meta brief.
+		// Find the output path the meta-brief targets. Resolution
+		// order, most authoritative first:
+		//   1. `- ` + "`path`" + `: ` + "`<X.md>`" line under
+		//      `## STOP AND WRITE NOW` — literal write_file argument
+		//      the meta-draft tells the model to use. New 2026-05-11
+		//      after the anchored template gained a two-path example
+		//      that placed `docs/research/inventory.md` BEFORE the
+		//      substituted DRAFT_PATH; without this preference the
+		//      fallback heuristic finds the example path first and
+		//      tests write to the wrong location.
+		//   2. Row inside `## Files To Modify` (legacy).
+		//   3. Any other backtick-quoted `.md` outside the meta-brief
+		//      itself (last-resort fallback).
 		scanText := stripFencedBlocksForStub(string(body))
-		var outPath string
+		var outPath, stopAndWritePath, filesToModifyPath, fallbackPath string
 		inFilesToModify := false
+		inStopAndWrite := false
 		for _, line := range strings.Split(scanText, "\n") {
 			trimmed := strings.TrimSpace(line)
 			lower := strings.ToLower(trimmed)
 			if strings.HasPrefix(lower, "## files to modify") {
 				inFilesToModify = true
+				inStopAndWrite = false
 				continue
 			}
-			if inFilesToModify && strings.HasPrefix(trimmed, "## ") {
+			if strings.HasPrefix(lower, "## stop and write now") {
+				inStopAndWrite = true
 				inFilesToModify = false
+				continue
+			}
+			if (inFilesToModify || inStopAndWrite) && strings.HasPrefix(trimmed, "## ") {
+				inFilesToModify = false
+				inStopAndWrite = false
 			}
 			if !strings.Contains(trimmed, ".md") {
 				continue
 			}
-			start := strings.Index(trimmed, "`")
-			if start < 0 {
-				continue
-			}
-			end := strings.Index(trimmed[start+1:], "`")
-			if end < 0 {
-				continue
-			}
-			candidate := trimmed[start+1 : start+1+end]
-			if !strings.HasSuffix(candidate, ".md") {
+			// Pick the FIRST backtick-quoted .md path on this line.
+			// Some lines have multiple backtick spans (e.g. `path`:
+			// `<file.md>`); scan span by span until we find one that
+			// ends in .md.
+			candidate := firstBacktickMDPath(trimmed)
+			if candidate == "" {
 				continue
 			}
 			if candidate == metaBriefPath || strings.HasSuffix(candidate, "/"+filepath.Base(metaBriefPath)) {
 				continue
 			}
-			outPath = candidate
-			if inFilesToModify {
-				break // authoritative — stop looking
+			if inStopAndWrite && stopAndWritePath == "" {
+				stopAndWritePath = candidate
 			}
+			if inFilesToModify && filesToModifyPath == "" {
+				filesToModifyPath = candidate
+			}
+			if fallbackPath == "" {
+				fallbackPath = candidate
+			}
+		}
+		switch {
+		case stopAndWritePath != "":
+			outPath = stopAndWritePath
+		case filesToModifyPath != "":
+			outPath = filesToModifyPath
+		default:
+			outPath = fallbackPath
 		}
 		if outPath == "" {
 			t.Fatalf("stub: could not parse output path from meta %s", metaBriefPath)
@@ -455,38 +504,56 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 		if err != nil {
 			t.Fatalf("read meta: %v", err)
 		}
-		// Find the output path the meta refers to. Prefer the path
-		// in the "Files To Modify" section; fall back to first .md
-		// mention. (Mirrors the stubDispatcher logic — template
-		// restructure can put DRAFT_PATH before REVIEW_PATH in body
-		// and may embed example "## Files To Modify" headings inside
-		// ```text skeleton fences; strip fences first.)
+		// Find the output path the meta refers to using the same
+		// stop-and-write-first / files-to-modify / fallback chain
+		// stubDispatcher uses. Kept inline (not extracted into a
+		// helper) because this test exercises a 4th-call wedge
+		// scenario stubDispatcher doesn't support.
 		scanText := stripFencedBlocksForStub(string(body))
-		var outPath string
+		var outPath, stopAndWritePath, filesToModifyPath, fallbackPath string
 		inFilesToModify := false
+		inStopAndWrite := false
 		for _, line := range strings.Split(scanText, "\n") {
 			trimmed := strings.TrimSpace(line)
 			lower := strings.ToLower(trimmed)
 			if strings.HasPrefix(lower, "## files to modify") {
 				inFilesToModify = true
+				inStopAndWrite = false
 				continue
 			}
-			if inFilesToModify && strings.HasPrefix(trimmed, "## ") {
+			if strings.HasPrefix(lower, "## stop and write now") {
+				inStopAndWrite = true
 				inFilesToModify = false
+				continue
 			}
-			if strings.Contains(line, "`") && strings.Contains(line, ".md") {
-				start := strings.Index(line, "`")
-				end := strings.Index(line[start+1:], "`")
-				if end > 0 {
-					candidate := line[start+1 : start+1+end]
-					if strings.HasSuffix(candidate, ".md") && candidate != metaBriefPath {
-						outPath = candidate
-						if inFilesToModify {
-							break
-						}
-					}
-				}
+			if (inFilesToModify || inStopAndWrite) && strings.HasPrefix(trimmed, "## ") {
+				inFilesToModify = false
+				inStopAndWrite = false
 			}
+			if !strings.Contains(trimmed, ".md") {
+				continue
+			}
+			candidate := firstBacktickMDPath(trimmed)
+			if candidate == "" || candidate == metaBriefPath || strings.HasSuffix(candidate, "/"+filepath.Base(metaBriefPath)) {
+				continue
+			}
+			if inStopAndWrite && stopAndWritePath == "" {
+				stopAndWritePath = candidate
+			}
+			if inFilesToModify && filesToModifyPath == "" {
+				filesToModifyPath = candidate
+			}
+			if fallbackPath == "" {
+				fallbackPath = candidate
+			}
+		}
+		switch {
+		case stopAndWritePath != "":
+			outPath = stopAndWritePath
+		case filesToModifyPath != "":
+			outPath = filesToModifyPath
+		default:
+			outPath = fallbackPath
 		}
 		// Resolve workspace-relative paths against the project root
 		// — meta-brief paths are now relative (see stubDispatcher
@@ -1196,6 +1263,65 @@ func TestRunLaneRefinePersistLintJSONAlongMetricsJSON(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(iterDir, "metrics.json")); err != nil {
 		t.Fatalf("expected metrics.json (regression check), got: %v", err)
+	}
+}
+
+// TestMarkdownDraftTemplateClarifiesTwoPaths locks in the
+// 2026-05-11 bug fix to lanes/refine/draft-markdown.md: the
+// markdown-deliverable mode has a known model-confusion source —
+// the brief contains a `Deliverable Path` field (where plan-execute
+// will eventually write the inline content) AND refine itself
+// writes the brief to {{DRAFT_PATH}}. Without explicit
+// disambiguation, models conflate the two and write either nothing
+// or write content to the wrong path.
+//
+// The fix added a "Where you write THIS draft.md" section. This
+// test verifies the substituted meta-draft contains both:
+//
+//   - The actual {{DRAFT_PATH}} substitution (refine's scratchpad).
+//   - The "Deliverable Path" wording (the brief's internal field).
+//   - Disambiguating language ("Two different files, two different
+//     consumers") so the model sees the boundary explicitly.
+//
+// Removing the clarification or breaking the substitution breaks
+// this test — forcing the change to be deliberate.
+func TestMarkdownDraftTemplateClarifiesTwoPaths(t *testing.T) {
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Create .planning/inventory.md.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	metaPath := filepath.Join(root, "meta-draft.md")
+	draftPath := filepath.Join(root, "draft.md")
+	opts := laneRefineOptions{
+		Title:       "two-path-test",
+		ProjectRoot: root,
+	}
+	if err := writeRefineDraftMeta(metaPath, draftPath, opts, "Create a markdown inventory.", refineModeMarkdown, io.Discard); err != nil {
+		t.Fatalf("writeRefineDraftMeta: %v", err)
+	}
+	body, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+	bodyStr := string(body)
+	// DRAFT_PATH must be substituted; the workspace-relative form.
+	expectedDraftPath := refineWorkspaceRel(root, draftPath)
+	if !strings.Contains(bodyStr, expectedDraftPath) {
+		t.Fatalf("expected substituted DRAFT_PATH %q in meta-draft, got:\n%s", expectedDraftPath, bodyStr)
+	}
+	// The "Deliverable Path" wording must appear (the brief's internal
+	// field, NOT the model's output file).
+	if !strings.Contains(bodyStr, "Deliverable Path") {
+		t.Fatalf("expected 'Deliverable Path' wording in markdown template, got:\n%s", bodyStr)
+	}
+	// The disambiguating language must appear so the model sees the
+	// boundary explicitly.
+	if !strings.Contains(bodyStr, "Two different files") {
+		t.Fatalf("expected 'Two different files' disambiguation in template (Colony two-path bug fix), got:\n%s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "scratchpad") {
+		t.Fatalf("expected 'scratchpad' framing for refine's draft path, got:\n%s", bodyStr)
 	}
 }
 
