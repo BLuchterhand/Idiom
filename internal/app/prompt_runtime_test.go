@@ -47,6 +47,136 @@ func TestSystemPromptSkipsModePromptFilesAlreadyInPromptStack(t *testing.T) {
 	}
 }
 
+func TestSystemPromptAutoAppendsQwenCompatibilityOverlay(t *testing.T) {
+	model := &Model{
+		cfg: config.Config{
+			LlamaServer: config.LlamaServer{Model: "/models/Qwen3-Coder-30B"},
+			Chat:        config.Chat{ModelFamily: "auto"},
+		},
+		promptStack: promptstack.Stack{
+			Text: "Base behavior",
+			Sources: []promptstack.Source{{
+				Kind:        "baseline",
+				DisplayName: "base.md",
+			}},
+		},
+		agentModeName: "build",
+	}
+
+	prompt := model.systemPrompt()
+	if !strings.Contains(prompt, "[model compatibility: model:qwen]") {
+		t.Fatalf("expected qwen compatibility overlay, got:\n%s", prompt)
+	}
+	if !slices.Contains(model.contextSourceNames(), "model:qwen") {
+		t.Fatalf("expected qwen overlay in context sources, got %#v", model.contextSourceNames())
+	}
+}
+
+func TestSystemPromptSkipsQwenOverlayForGenericFamily(t *testing.T) {
+	model := &Model{
+		cfg: config.Config{
+			LlamaServer: config.LlamaServer{Model: "/models/Qwen3-Coder-30B"},
+			Chat:        config.Chat{ModelFamily: "generic"},
+		},
+		promptStack:   promptstack.Stack{Text: "Base behavior"},
+		agentModeName: "build",
+	}
+
+	prompt := model.systemPrompt()
+	if strings.Contains(prompt, "model:qwen") {
+		t.Fatalf("expected generic model family to suppress qwen overlay, got:\n%s", prompt)
+	}
+}
+
+func TestSystemPromptCanForceQwenOverlayForModelAlias(t *testing.T) {
+	model := &Model{
+		cfg: config.Config{
+			LlamaServer: config.LlamaServer{Model: "local-coder"},
+			Chat:        config.Chat{ModelFamily: "qwen"},
+		},
+		promptStack:   promptstack.Stack{Text: "Base behavior"},
+		agentModeName: "build",
+	}
+
+	prompt := model.systemPrompt()
+	if !strings.Contains(prompt, "model:qwen") {
+		t.Fatalf("expected explicit qwen family to append overlay, got:\n%s", prompt)
+	}
+}
+
+func TestContextSourcesIncludeModePromptFiles(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "prompts", "base.md")
+	planPath := filepath.Join(dir, "prompts", "plan-mode.md")
+	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	if err := os.WriteFile(basePath, []byte("Base behavior\n"), 0o644); err != nil {
+		t.Fatalf("write base prompt: %v", err)
+	}
+	if err := os.WriteFile(planPath, []byte("Plan behavior\n"), 0o644); err != nil {
+		t.Fatalf("write plan prompt: %v", err)
+	}
+
+	model := &Model{
+		cfg: config.Config{Chat: config.Chat{ProjectRoot: dir}},
+		promptStack: promptstack.Stack{
+			Text: "[baseline behavior: base.md]\nBase behavior",
+			Sources: []promptstack.Source{{
+				Kind:        "baseline",
+				DisplayName: "base.md",
+				Path:        filepath.Join("prompts", "base.md"),
+			}},
+		},
+		agentModeName: "plan",
+	}
+
+	prompt := model.systemPrompt()
+	if strings.Count(prompt, "Base behavior") != 1 || !strings.Contains(prompt, "Plan behavior") {
+		t.Fatalf("expected deduped base and loaded plan prompt, got:\n%s", prompt)
+	}
+	if !slices.Contains(model.contextSourceNames(), "mode:plan:plan-mode.md") {
+		t.Fatalf("expected mode prompt in context sources, got %#v", model.contextSourceNames())
+	}
+}
+
+func TestSystemPromptSourcesUseCachedModePromptUntilInvalidated(t *testing.T) {
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "prompts", "plan-mode.md")
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	if err := os.WriteFile(planPath, []byte("Plan behavior\n"), 0o644); err != nil {
+		t.Fatalf("write plan prompt: %v", err)
+	}
+
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: dir}},
+		promptStack:   promptstack.Stack{Text: "Base behavior"},
+		agentModeName: "plan",
+	}
+
+	first := model.systemPrompt()
+	if !strings.Contains(first, "Plan behavior") {
+		t.Fatalf("expected initial mode prompt, got:\n%s", first)
+	}
+	if err := os.Remove(planPath); err != nil {
+		t.Fatalf("remove plan prompt: %v", err)
+	}
+	if got := model.contextSummary(); !strings.Contains(got, "mode:plan:plan-mode.md") {
+		t.Fatalf("expected context summary to use cached prompt sources, got %q", got)
+	}
+	second := model.systemPrompt()
+	if second != first {
+		t.Fatalf("expected cached system prompt after mode file removal\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+
+	model.invalidateComposedPrompt()
+	if prompt := model.systemPrompt(); strings.Contains(prompt, "Plan behavior") {
+		t.Fatalf("expected invalidation to observe missing mode prompt, got:\n%s", prompt)
+	}
+}
+
 func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.T) {
 	thinkingOn := true
 	opts := llama.ChatOptions{

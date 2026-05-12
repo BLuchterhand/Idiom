@@ -235,6 +235,8 @@ func renderSection(kind, name, body string) string {
 		label = "user behavior"
 	case "inline":
 		label = "inline behavior"
+	case "model_overlay":
+		label = "model compatibility"
 	}
 	return fmt.Sprintf("[%s: %s]\n%s", label, name, body)
 }

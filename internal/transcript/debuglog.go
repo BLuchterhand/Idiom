@@ -52,15 +52,22 @@ type DebugLogger struct {
 }
 
 type SessionStart struct {
-	AppName             string   `json:"app_name,omitempty"`
-	ContextSources      []string `json:"context_sources,omitempty"`
-	SystemPrompt        string   `json:"system_prompt,omitempty"`
-	SystemPromptDigest  string   `json:"system_prompt_digest,omitempty"`
-	WorkspaceRoot       string   `json:"workspace_root,omitempty"`
-	WorkspaceCWD        string   `json:"workspace_cwd,omitempty"`
-	WorkspaceMode       string   `json:"workspace_mode,omitempty"`
-	ExploreThoroughness string   `json:"explore_thoroughness,omitempty"`
-	CtxSize             int      `json:"ctx_size,omitempty"`
+	AppName             string         `json:"app_name,omitempty"`
+	ContextSources      []string       `json:"context_sources,omitempty"`
+	PromptSources       []PromptSource `json:"prompt_sources,omitempty"`
+	SystemPrompt        string         `json:"system_prompt,omitempty"`
+	SystemPromptDigest  string         `json:"system_prompt_digest,omitempty"`
+	WorkspaceRoot       string         `json:"workspace_root,omitempty"`
+	WorkspaceCWD        string         `json:"workspace_cwd,omitempty"`
+	WorkspaceMode       string         `json:"workspace_mode,omitempty"`
+	ExploreThoroughness string         `json:"explore_thoroughness,omitempty"`
+	CtxSize             int            `json:"ctx_size,omitempty"`
+}
+
+type PromptSource struct {
+	Kind        string `json:"kind,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Path        string `json:"path,omitempty"`
 }
 
 // ToolResultDetail extends the basic tool_result record with size and
@@ -237,6 +244,7 @@ func (l *DebugLogger) LogSessionStart(start SessionStart) error {
 		"type":                 "session_start",
 		"app_name":             start.AppName,
 		"context_sources":      start.ContextSources,
+		"prompt_sources":       l.sanitizePromptSources(start.PromptSources),
 		"workspace_root":       l.sanitizeText(start.WorkspaceRoot),
 		"workspace_cwd":        l.sanitizeText(start.WorkspaceCWD),
 		"workspace_mode":       start.WorkspaceMode,
@@ -251,6 +259,21 @@ func (l *DebugLogger) LogSessionStart(start SessionStart) error {
 		record["system_prompt_digest"] = digest
 	}
 	return l.writeRecord(record)
+}
+
+func (l *DebugLogger) sanitizePromptSources(sources []PromptSource) []PromptSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]PromptSource, 0, len(sources))
+	for _, source := range sources {
+		out = append(out, PromptSource{
+			Kind:        strings.TrimSpace(source.Kind),
+			DisplayName: strings.TrimSpace(source.DisplayName),
+			Path:        l.sanitizeText(source.Path),
+		})
+	}
+	return out
 }
 
 func (l *DebugLogger) LogContext(contextSources []string, systemPrompt string, workspaceMode string, thoroughness string) error {

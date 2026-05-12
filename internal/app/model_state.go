@@ -161,6 +161,9 @@ type Model struct {
 
 	messages                      []llama.ChatMessage
 	promptStack                   promptstack.Stack
+	composedPrompt                string
+	composedPromptSources         []promptstack.Source
+	composedPromptCacheKey        string
 	activeProfiles                []string
 	streaming                     bool
 	bootingServer                 bool
@@ -540,6 +543,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 				return false
 			}
 			m.agentModeName = mode.Name
+			m.invalidateComposedPrompt()
 			m.applyModePermissions(mode)
 			m.status = "Agent mode set to " + mode.Name + "."
 		default:
@@ -1006,12 +1010,13 @@ func (m *Model) workingDots() string {
 }
 
 func (m *Model) contextSummary() string {
-	if len(m.promptStack.Sources) == 0 {
+	sources := m.systemPromptSources()
+	if len(sources) == 0 {
 		return "none"
 	}
 
-	parts := make([]string, 0, len(m.promptStack.Sources))
-	for _, source := range m.promptStack.Sources {
+	parts := make([]string, 0, len(sources))
+	for _, source := range sources {
 		parts = append(parts, source.DisplayName)
 	}
 	return strings.Join(parts, ", ")
@@ -1136,12 +1141,13 @@ func (m *Model) removePendingAssistant() {
 }
 
 func (m *Model) contextSourceNames() []string {
-	if len(m.promptStack.Sources) == 0 {
+	sources := m.systemPromptSources()
+	if len(sources) == 0 {
 		return nil
 	}
 
-	names := make([]string, 0, len(m.promptStack.Sources))
-	for _, source := range m.promptStack.Sources {
+	names := make([]string, 0, len(sources))
+	for _, source := range sources {
 		names = append(names, source.DisplayName)
 	}
 	return names

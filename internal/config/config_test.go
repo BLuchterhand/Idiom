@@ -204,6 +204,12 @@ func TestValidateRejectsUnsafeOrInvalidConfig(t *testing.T) {
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "workspace.cwd must be inside workspace.root") {
 		t.Fatalf("expected cwd containment error, got %v", err)
 	}
+
+	cfg = Default()
+	cfg.Chat.ModelFamily = "qwen-ish"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "chat.model_family") {
+		t.Fatalf("expected model_family validation error, got %v", err)
+	}
 }
 
 func TestApplyBuiltinChatPresetClonesThinkingPointer(t *testing.T) {

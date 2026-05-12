@@ -21,7 +21,12 @@ func TestDebugLoggerRedactedModeMasksPromptAndToolPayloads(t *testing.T) {
 	defer logger.Close()
 
 	if err := logger.LogSessionStart(SessionStart{
-		AppName:       "Idiom",
+		AppName: "Idiom",
+		PromptSources: []PromptSource{{
+			Kind:        "baseline",
+			DisplayName: "base.md",
+			Path:        "/tmp/workspace/prompts/base.md",
+		}},
 		SystemPrompt:  "hidden system prompt body",
 		WorkspaceRoot: "/tmp/workspace",
 		WorkspaceCWD:  "/tmp/workspace/internal/app",
@@ -48,6 +53,14 @@ func TestDebugLoggerRedactedModeMasksPromptAndToolPayloads(t *testing.T) {
 	}
 	if records[0]["workspace_root"] != "." {
 		t.Fatalf("expected workspace root to be redacted to '.', got %#v", records[0]["workspace_root"])
+	}
+	sourceRecords, ok := records[0]["prompt_sources"].([]any)
+	if !ok || len(sourceRecords) != 1 {
+		t.Fatalf("expected prompt source details, got %#v", records[0]["prompt_sources"])
+	}
+	sourceRecord, _ := sourceRecords[0].(map[string]any)
+	if sourceRecord["path"] != "./prompts/base.md" {
+		t.Fatalf("expected prompt source path to be workspace-relative, got %#v", sourceRecord["path"])
 	}
 	rawField, _ := records[1]["raw"].(string)
 	if strings.Contains(rawField, "top secret patch") || strings.Contains(rawField, "go test ./...") {

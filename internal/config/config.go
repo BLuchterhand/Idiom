@@ -152,6 +152,10 @@ type Chat struct {
 	ProjectPromptCandidates []string `json:"project_prompt_candidates,omitempty"`
 	ProjectPromptFiles      []string `json:"project_prompt_files"`
 	AttachInstructionFiles  bool     `json:"attach_instruction_files"`
+	// ModelFamily controls model-specific prompt compatibility overlays.
+	// Empty/"auto" infers from the active model id. Use "generic" or "none"
+	// to suppress auto overlays when an alias looks misleading.
+	ModelFamily string `json:"model_family,omitempty"`
 	Preset                  string   `json:"preset"`
 	Temperature             float64  `json:"temperature"`
 	TopP                    float64  `json:"top_p"`
@@ -509,6 +513,12 @@ func (c Config) Validate() error {
 		known := map[string]struct{}{"build": {}, "plan": {}, "general": {}}
 		if _, ok := known[strings.ToLower(trimmed)]; !ok {
 			return fmt.Errorf("chat.agent_mode must be one of build, plan, general (got %q)", trimmed)
+		}
+	}
+	if trimmed := strings.TrimSpace(c.Chat.ModelFamily); trimmed != "" {
+		known := map[string]struct{}{"auto": {}, "qwen": {}, "generic": {}, "none": {}}
+		if _, ok := known[strings.ToLower(trimmed)]; !ok {
+			return fmt.Errorf("chat.model_family must be one of auto, qwen, generic, none (got %q)", trimmed)
 		}
 	}
 	if c.Workspace.CommandTimeoutSeconds <= 0 {

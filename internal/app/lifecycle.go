@@ -949,6 +949,7 @@ func (m *Model) initDebugLogger() {
 	_ = m.debugLogger.LogSessionStart(transcript.SessionStart{
 		AppName:        m.cfg.AppName,
 		ContextSources: m.contextSourceNames(),
+		PromptSources:  transcriptPromptSources(m.systemPromptSources()),
 		SystemPrompt:   m.systemPrompt(),
 		WorkspaceRoot:  m.workspace.Root(),
 		WorkspaceCWD:   m.workspace.CWD(),
@@ -968,18 +969,63 @@ func (m *Model) initDebugLogger() {
 // The prompt stack is maintained by reloadPromptStack; Mode-specific prompt
 // files are layered on top of the base stack.
 func (m *Model) systemPrompt() string {
+	prompt, _ := m.composedSystemPrompt()
+	return prompt
+}
+
+func (m *Model) systemPromptSources() []promptstack.Source {
+	_, sources := m.composedSystemPrompt()
+	return sources
+}
+
+func (m *Model) composedSystemPrompt() (string, []promptstack.Source) {
+	if m == nil {
+		return "", nil
+	}
+	key := m.composedPromptKey()
+	if m.composedPromptCacheKey == key {
+		return m.composedPrompt, append([]promptstack.Source(nil), m.composedPromptSources...)
+	}
+	mode := m.currentMode()
+	stack := promptstack.AppendOverlays(
+		m.promptStack,
+		promptstack.ModelCompatibilityOverlays(m.cfg.Chat.ModelFamily, m.cfg.LlamaServer.Model),
+	)
+	sources := append([]promptstack.Source(nil), stack.Sources...)
+	parts := make([]string, 0, 4)
+	if base := strings.TrimSpace(stack.Text); base != "" {
+		parts = append(parts, base)
+	}
+	modeFragments := loadModeSystemPromptFragments(mode, m.projectRoot(), sources)
+	if extras := strings.TrimSpace(modeFragments.Text); extras != "" {
+		parts = append(parts, extras)
+		sources = append(sources, modeFragments.Sources...)
+	}
+	prompt := strings.Join(parts, "\n\n")
+	m.composedPrompt = prompt
+	m.composedPromptSources = append([]promptstack.Source(nil), sources...)
+	m.composedPromptCacheKey = key
+	return prompt, append([]promptstack.Source(nil), sources...)
+}
+
+func (m *Model) composedPromptKey() string {
 	if m == nil {
 		return ""
 	}
-	mode := m.currentMode()
-	parts := make([]string, 0, 4)
-	if base := strings.TrimSpace(m.promptStack.Text); base != "" {
-		parts = append(parts, base)
+	return strings.Join([]string{
+		m.currentMode().Name,
+		strings.TrimSpace(m.cfg.Chat.ModelFamily),
+		strings.TrimSpace(m.cfg.LlamaServer.Model),
+	}, "\x00")
+}
+
+func (m *Model) invalidateComposedPrompt() {
+	if m == nil {
+		return
 	}
-	if extras := strings.TrimSpace(loadModeSystemPrompts(mode, m.projectRoot(), m.promptStack.Sources)); extras != "" {
-		parts = append(parts, extras)
-	}
-	return strings.Join(parts, "\n\n")
+	m.composedPrompt = ""
+	m.composedPromptSources = nil
+	m.composedPromptCacheKey = ""
 }
 
 // projectRoot returns the directory that Mode.SystemPromptFiles paths
@@ -1005,10 +1051,20 @@ func (m *Model) projectRoot() string {
 // Unknown or unreadable files are skipped silently so a Mode can list
 // optional fragments without breaking when they're absent.
 func loadModeSystemPrompts(mode agent.Mode, projectRoot string, existing []promptstack.Source) string {
+	return loadModeSystemPromptFragments(mode, projectRoot, existing).Text
+}
+
+type systemPromptFragments struct {
+	Text    string
+	Sources []promptstack.Source
+}
+
+func loadModeSystemPromptFragments(mode agent.Mode, projectRoot string, existing []promptstack.Source) systemPromptFragments {
 	if len(mode.SystemPromptFiles) == 0 {
-		return ""
+		return systemPromptFragments{}
 	}
 	sections := make([]string, 0, len(mode.SystemPromptFiles))
+	sources := make([]promptstack.Source, 0, len(mode.SystemPromptFiles))
 	seen := make(map[string]struct{}, len(mode.SystemPromptFiles))
 	seenBodies := make(map[string]struct{}, len(existing))
 	for _, source := range existing {
@@ -1051,9 +1107,32 @@ func loadModeSystemPrompts(mode agent.Mode, projectRoot string, existing []promp
 			}
 			seenBodies[trimmed] = struct{}{}
 			sections = append(sections, trimmed)
+			sources = append(sources, promptstack.Source{
+				Kind:        "mode",
+				DisplayName: "mode:" + mode.Name + ":" + filepath.Base(path),
+				Path:        path,
+			})
 		}
 	}
-	return strings.Join(sections, "\n\n")
+	return systemPromptFragments{
+		Text:    strings.Join(sections, "\n\n"),
+		Sources: sources,
+	}
+}
+
+func transcriptPromptSources(sources []promptstack.Source) []transcript.PromptSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]transcript.PromptSource, 0, len(sources))
+	for _, source := range sources {
+		out = append(out, transcript.PromptSource{
+			Kind:        source.Kind,
+			DisplayName: source.DisplayName,
+			Path:        source.Path,
+		})
+	}
+	return out
 }
 
 // reloadPromptStack rebuilds the prompt stack from the active config and
@@ -1083,6 +1162,7 @@ func (m *Model) reloadPromptStackWithProfiles(profiles []string) error {
 		stack = lenientStack
 	}
 	m.promptStack = stack
+	m.invalidateComposedPrompt()
 	if len(stack.Warnings) > 0 {
 		m.setContextError(strings.Join(stack.Warnings, "; "))
 	}

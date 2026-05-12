@@ -85,6 +85,43 @@ func TestBuildIncludesNorthStarPromptGuidance(t *testing.T) {
 	}
 }
 
+func TestModelCompatibilityOverlaysAutoDetectQwen(t *testing.T) {
+	overlays := ModelCompatibilityOverlays("auto", "/models/Qwen3-Coder-30B")
+	if len(overlays) != 1 {
+		t.Fatalf("expected qwen overlay, got %#v", overlays)
+	}
+	if overlays[0].DisplayName != "model:qwen" {
+		t.Fatalf("unexpected overlay name: %#v", overlays[0])
+	}
+	if !strings.Contains(overlays[0].Body, "Qwen model/protocol compatibility") {
+		t.Fatalf("overlay body missing compatibility wording: %q", overlays[0].Body)
+	}
+}
+
+func TestModelCompatibilityOverlaysCanBeSuppressed(t *testing.T) {
+	overlays := ModelCompatibilityOverlays("generic", "/models/Qwen3-Coder-30B")
+	if len(overlays) != 0 {
+		t.Fatalf("expected generic family to suppress qwen overlay, got %#v", overlays)
+	}
+}
+
+func TestAppendOverlaysRecordsSourceAndSection(t *testing.T) {
+	stack := AppendOverlays(Stack{Text: "Base"}, []Overlay{{
+		Kind:        "model_overlay",
+		DisplayName: "model:qwen",
+		Body:        "Compatibility guidance",
+	}})
+	if !strings.Contains(stack.Text, "[model compatibility: model:qwen]") {
+		t.Fatalf("expected model overlay section, got:\n%s", stack.Text)
+	}
+	if got := len(stack.Sources); got != 1 {
+		t.Fatalf("expected one overlay source, got %d", got)
+	}
+	if stack.Sources[0].Kind != "model_overlay" || stack.Sources[0].DisplayName != "model:qwen" {
+		t.Fatalf("unexpected overlay source: %#v", stack.Sources[0])
+	}
+}
+
 func TestBuildDoesNotAutoIncludeGeneratedProjectContext(t *testing.T) {
 	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
 	dir := t.TempDir()
