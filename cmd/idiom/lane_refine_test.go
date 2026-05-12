@@ -1049,6 +1049,154 @@ func TestRunBriefLintJSONFlagEmitsEnvelope(t *testing.T) {
 	}
 }
 
+// TestBriefLintJSONEnvelopeSchemaIsStable is a regression guard on
+// the JSON field names downstream consumers (refine review/patch
+// prompts, future tooling) depend on. Renaming or removing a field
+// here is a breaking change and must be deliberate.
+func TestBriefLintJSONEnvelopeSchemaIsStable(t *testing.T) {
+	report := briefLintReport{
+		Brief: "/x.md",
+		Exit:  1,
+		Findings: []briefLintFinding{
+			{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/x.md", Message: "test"},
+		},
+	}
+	blob, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	wantSubstrings := []string{
+		`"brief":"/x.md"`,
+		`"exit":1`,
+		`"findings":[`,
+		`"severity":"BLOCK"`,
+		`"category":"anchor-specificity"`,
+		`"message":"test"`,
+	}
+	got := string(blob)
+	for _, want := range wantSubstrings {
+		if !strings.Contains(got, want) {
+			t.Fatalf("schema field missing or renamed: expected %q in JSON, got:\n%s", want, got)
+		}
+	}
+}
+
+// TestRunLaneRefineOverlayAndOverrideTemplateInteract verifies that
+// project overlay (§2.4) and project override templates (§2.2.1)
+// compose correctly: a project with both a custom mode template AND
+// a hard-prohibitions overlay should produce a final brief that
+// uses the custom template body AND carries the prohibitions block.
+func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir()
+	refineOverride := filepath.Join(root, ".idiom", "prompts", "refine")
+	briefOverlay := filepath.Join(root, ".idiom", "prompts", "brief")
+	if err := os.MkdirAll(refineOverride, 0o755); err != nil {
+		t.Fatalf("mkdir refine override: %v", err)
+	}
+	if err := os.MkdirAll(briefOverlay, 0o755); err != nil {
+		t.Fatalf("mkdir brief overlay: %v", err)
+	}
+	overrideBody := "# {{TITLE}}\n\n## Custom-mode body marker\n\nSPEC: {{SPEC_BODY}}\n\nWrite to {{DRAFT_PATH}} via write_file.\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `{{DRAFT_PATH}}` | NEW FILE |\n"
+	if err := os.WriteFile(filepath.Join(refineOverride, "draft-notebook.md"), []byte(overrideBody), 0o644); err != nil {
+		t.Fatalf("seed override: %v", err)
+	}
+	prohibitions := "## HARD PROHIBITIONS (project overlay marker)\n\n- Do not interact.\n"
+	if err := os.WriteFile(filepath.Join(briefOverlay, "hard-prohibitions.md"), []byte(prohibitions), 0o644); err != nil {
+		t.Fatalf("seed prohibitions: %v", err)
+	}
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Notebook experiment.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "interact-test",
+		MaxIters:    1,
+		ProjectRoot: root,
+		Mode:        "notebook",
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Drafted brief"),
+		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
+	})
+	var stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0 on clean ship-as-is, got %d; stderr=%s", code, stderr.String())
+	}
+	body, err := os.ReadFile(opts.OutputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	// The custom mode body markers should appear in the iter-1
+	// meta-draft (substituted from override).
+	metaDraftPath := filepath.Join(refineStateDir(root, "interact-test"), "iter-1", "meta-draft.md")
+	metaBody, err := os.ReadFile(metaDraftPath)
+	if err != nil {
+		t.Fatalf("read meta-draft: %v", err)
+	}
+	if !strings.Contains(string(metaBody), "Custom-mode body marker") {
+		t.Fatalf("expected custom mode template in meta-draft, got:\n%s", metaBody)
+	}
+	// The overlay should appear in the FINAL output (post-finalize).
+	if !strings.Contains(string(body), "HARD PROHIBITIONS (project overlay marker)") {
+		t.Fatalf("expected hard-prohibitions overlay in output, got:\n%s", body)
+	}
+}
+
+// TestRunLaneRefineFailsoftPreservesOverlay verifies the §2.4
+// overlay survives the failsoft path: when refine exits non-zero
+// after saving the best draft, the project overlay still gets
+// applied so the orchestrator-inspectable artifact is the hardened
+// version (with WARNING header on top).
+func TestRunLaneRefineFailsoftPreservesOverlay(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir()
+	overlayDir := filepath.Join(root, refineOverlayDir)
+	if err := os.MkdirAll(overlayDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	prohibitions := "## HARD PROHIBITIONS (overlay)\n\n- Marker line for the assertion.\n"
+	if err := os.WriteFile(filepath.Join(overlayDir, "hard-prohibitions.md"), []byte(prohibitions), 0o644); err != nil {
+		t.Fatalf("seed prohibitions: %v", err)
+	}
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "failsoft-overlay",
+		MaxIters:    2,
+		ProjectRoot: root,
+	}
+	// Iter 1 ships, iter 2 has same bugs → no-improvement failsoft.
+	dispatch, _ := stubDispatcher(t, []string{
+		nonTrivialDraftBody("Draft v1"),
+		"# Review\n\n## Bugs found\n\n1. **A bug**: x\n2. **B bug**: y\n\n## Verdict\n\nfix-bugs-then-ship\n",
+		nonTrivialDraftBody("Draft v2"),
+		"# Review\n\n## Bugs found\n\n1. **C bug**: z\n2. **D bug**: w\n\n## Verdict\n\nfix-bugs-then-ship\n",
+	})
+	var stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero on no-improvement failsoft, got 0; stderr=%s", stderr.String())
+	}
+	body, err := os.ReadFile(opts.OutputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !strings.HasPrefix(string(body), "> WARNING:") {
+		t.Fatalf("expected WARNING header on failsoft output, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "HARD PROHIBITIONS (overlay)") {
+		t.Fatalf("expected overlay applied even on failsoft path, got:\n%s", body)
+	}
+}
+
 // TestLoadProjectTrapsWarnsOnOrphanAppliesToTag locks in §6.1 Gap 3
 // (Colony loud-warning ship): a trap declaring an applies_to tag
 // outside the canonical 4 emits a stderr warning naming the orphan
