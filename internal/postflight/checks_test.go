@@ -1,30 +1,22 @@
 package postflight
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestUnresolvedQuestionMarkerFlagsModifiedFile is the load-bearing
+// TestUnresolvedQuestionMarkerFlagsAddedDiffLine is the load-bearing
 // "model left a question marker in the diff" detection. The brief
 // runner expects `<<QUESTION>>:` to live in chat output as a typed
 // blocker; a marker that survives into committed code means
 // either the model misused the marker or a copy-paste error left
 // an unresolved blocker in the patch.
-func TestUnresolvedQuestionMarkerFlagsModifiedFile(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "src", "broken.go")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	body := "package src\n// <<QUESTION>>: did the model resolve this?\nfunc Foo() {}\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	d := Diff{Files: []FileChange{{Path: "src/broken.go"}}}
-	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{ProjectRoot: root})
+func TestUnresolvedQuestionMarkerFlagsAddedDiffLine(t *testing.T) {
+	d := Diff{Files: []FileChange{{
+		Path:       "src/broken.go",
+		AddedLines: []AddedLine{{Line: 2, Body: "// <<QUESTION>>: did the model resolve this?"}},
+	}}}
+	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -39,9 +31,27 @@ func TestUnresolvedQuestionMarkerFlagsModifiedFile(t *testing.T) {
 	}
 }
 
+// TestUnresolvedQuestionMarkerIgnoresPreExistingMarkerInTouchedFile
+// captures the false-positive boundary: the check is about what the
+// lane introduced, not every old marker example already present in
+// a file that received an unrelated change.
+func TestUnresolvedQuestionMarkerIgnoresPreExistingMarkerInTouchedFile(t *testing.T) {
+	d := Diff{Files: []FileChange{{
+		Path:       "docs/protocol.md",
+		AddedLines: []AddedLine{{Line: 12, Body: "New prose about the protocol."}},
+	}}}
+	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("pre-existing marker outside added lines must not trigger, got %v", findings)
+	}
+}
+
 // TestUnresolvedQuestionMarkerSkipsDeletedFiles verifies the check
-// doesn't try to read deleted files (which would fail with ENOENT)
-// — a deletion is by definition free of QUESTION markers.
+// ignores deleted files. A deletion is by definition not adding a
+// new QUESTION marker.
 func TestUnresolvedQuestionMarkerSkipsDeletedFiles(t *testing.T) {
 	d := Diff{Files: []FileChange{{Path: "gone.go", Deleted: true}}}
 	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{ProjectRoot: t.TempDir()})
@@ -54,17 +64,15 @@ func TestUnresolvedQuestionMarkerSkipsDeletedFiles(t *testing.T) {
 }
 
 // TestUnresolvedQuestionMarkerCleanFileNoFindings verifies the
-// quiet path: a modified file without the marker produces zero
+// quiet path: a diff that does not add the marker produces zero
 // findings. A check that fires on every diff isn't useful — the
 // signal must be specific.
 func TestUnresolvedQuestionMarkerCleanFileNoFindings(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "ok.go")
-	if err := os.WriteFile(path, []byte("package x\nfunc OK() {}\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	d := Diff{Files: []FileChange{{Path: "ok.go"}}}
-	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{ProjectRoot: root})
+	d := Diff{Files: []FileChange{{
+		Path:       "ok.go",
+		AddedLines: []AddedLine{{Line: 2, Body: "func OK() {}"}},
+	}}}
+	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{})
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("clean file should produce no findings; got err=%v findings=%v", err, findings)
 	}

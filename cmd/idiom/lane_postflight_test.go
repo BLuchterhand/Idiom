@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// helper to write a brief + diff + working-tree file the question-
-// marker check can read.
+// helper to write a brief, diff, and optional working-tree files for
+// postflight integration tests.
 func setupPostflightProject(t *testing.T, briefBody, diffBody string, files map[string]string) (root, briefPath, diffPath string) {
 	t.Helper()
 	root = t.TempDir()
@@ -40,6 +40,15 @@ const cleanDiff = `diff --git a/src/foo.go b/src/foo.go
 @@ -1,2 +1,3 @@
  package src
 +// real fix
+ func Foo() {}
+`
+
+const questionMarkerDiff = `diff --git a/src/foo.go b/src/foo.go
+--- a/src/foo.go
++++ b/src/foo.go
+@@ -1,2 +1,3 @@
+ package src
++// <<QUESTION>>: did this resolve?
  func Foo() {}
 `
 
@@ -73,7 +82,7 @@ func TestLanePostflightCleanDiffPasses(t *testing.T) {
 // found problems," vs 1 ("checks couldn't even run"). Colony's
 // lane loop and CI scripts depend on this distinction.
 func TestLanePostflightUnresolvedQuestionMarkerFailsExitThree(t *testing.T) {
-	root, briefPath, diffPath := setupPostflightProject(t, cleanBrief, cleanDiff, map[string]string{
+	root, briefPath, diffPath := setupPostflightProject(t, cleanBrief, questionMarkerDiff, map[string]string{
 		"src/foo.go": "package src\n// <<QUESTION>>: did this resolve?\nfunc Foo() {}\n",
 	})
 
@@ -150,9 +159,9 @@ Files To Modify
 // a known false positive on a particular diff.
 func TestLanePostflightSkipFlagDisablesNamedCheck(t *testing.T) {
 	briefBody := cleanBrief
-	diffBody := cleanDiff
+	diffBody := questionMarkerDiff
 	root, briefPath, diffPath := setupPostflightProject(t, briefBody, diffBody, map[string]string{
-		// File contains a question marker, but we'll skip that check.
+		// The diff introduces a question marker, but we'll skip that check.
 		"src/foo.go": "package src\n// <<QUESTION>>: skip me\nfunc Foo() {}\n",
 	})
 	var stdout, stderr bytes.Buffer
@@ -171,7 +180,7 @@ func TestLanePostflightSkipFlagDisablesNamedCheck(t *testing.T) {
 // a final summary line. The orchestrator's lane loop parses these
 // to decide whether to retry or surface the diff to a human.
 func TestLanePostflightJSONEmitsFindingsAndSummary(t *testing.T) {
-	root, briefPath, diffPath := setupPostflightProject(t, cleanBrief, cleanDiff, map[string]string{
+	root, briefPath, diffPath := setupPostflightProject(t, cleanBrief, questionMarkerDiff, map[string]string{
 		"src/foo.go": "package src\n// <<QUESTION>>: trigger\nfunc Foo() {}\n",
 	})
 	var stdout, stderr bytes.Buffer

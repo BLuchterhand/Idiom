@@ -224,10 +224,10 @@ func TestSubstituteShellArgsExpandsKnownPlaceholders(t *testing.T) {
 // whose Pass reflects whether any were severity=error.
 func TestRunAggregatesFindingsAndComputesPass(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package x\n// <<QUESTION>>: marker\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	d := Diff{Files: []FileChange{{Path: "a.go"}, {Path: "b.go"}}}
+	d := Diff{Files: []FileChange{
+		{Path: "a.go", AddedLines: []AddedLine{{Line: 2, Body: "// <<QUESTION>>: marker"}}},
+		{Path: "b.go"},
+	}}
 	ctx := RunContext{ProjectRoot: root, RequiredEditPaths: []string{"a.go"}}
 	res := Run(d, ctx, GenericChecks())
 	if res.Pass {

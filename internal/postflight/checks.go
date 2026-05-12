@@ -2,7 +2,6 @@ package postflight
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -65,48 +64,31 @@ func GenericChecks() []Check {
 	}
 }
 
-// UnresolvedQuestionMarker fails when a modified file contains
-// `<<QUESTION>>:` on disk. The lane runner uses that marker to
-// stop with a typed blocker; the marker should NEVER survive into
-// committed code. Scoping to modified files only (not all repo
-// files) keeps the check fast and avoids false positives from
-// docs that intentionally describe the marker (like this comment).
+// UnresolvedQuestionMarker fails when a diff introduces
+// `<<QUESTION>>:`. The lane runner uses that marker to stop with a
+// typed blocker; the marker should NEVER survive into committed
+// code. Scoping to added diff lines keeps the check tied to the
+// current lane output and avoids false positives from old docs or
+// examples that happen to live in a touched file.
 type UnresolvedQuestionMarker struct{}
 
 func (UnresolvedQuestionMarker) Name() string { return "unresolved_question_marker" }
 
-func (c UnresolvedQuestionMarker) Run(d Diff, ctx RunContext) ([]Finding, error) {
+func (c UnresolvedQuestionMarker) Run(d Diff, _ RunContext) ([]Finding, error) {
 	const marker = "<<QUESTION>>:"
 	var findings []Finding
 	for _, f := range d.Files {
 		if f.Deleted {
 			continue
 		}
-		path := resolvePath(ctx.ProjectRoot, f.Path)
-		body, err := os.ReadFile(path)
-		if err != nil {
-			// File-on-disk read failure is treated as a soft error:
-			// the diff named a path but the working tree doesn't
-			// have it. Surface it as a finding so the operator
-			// knows something's off, but don't error out the whole
-			// pipeline — other checks may still produce useful
-			// signal.
-			findings = append(findings, Finding{
-				Check:    c.Name(),
-				Severity: SeverityWarning,
-				Path:     f.Path,
-				Message:  fmt.Sprintf("could not read modified file: %v", err),
-			})
-			continue
-		}
-		for i, line := range strings.Split(string(body), "\n") {
-			if strings.Contains(line, marker) {
+		for _, added := range f.AddedLines {
+			if strings.Contains(added.Body, marker) {
 				findings = append(findings, Finding{
 					Check:    c.Name(),
 					Severity: SeverityError,
 					Path:     f.Path,
-					Line:     i + 1,
-					Message:  "unresolved <<QUESTION>>: marker left in modified file",
+					Line:     added.Line,
+					Message:  "unresolved <<QUESTION>>: marker introduced by diff",
 				})
 			}
 		}
@@ -231,19 +213,6 @@ func looksLikeTestFile(path string) bool {
 		return true
 	}
 	return false
-}
-
-// resolvePath joins a project-root and a relative diff path. An
-// absolute path passes through unchanged; an empty root keeps the
-// path relative.
-func resolvePath(root, p string) string {
-	if filepath.IsAbs(p) {
-		return p
-	}
-	if strings.TrimSpace(root) == "" {
-		return p
-	}
-	return filepath.Join(root, p)
 }
 
 // normalizePath canonicalizes a path for allowlist comparison —
