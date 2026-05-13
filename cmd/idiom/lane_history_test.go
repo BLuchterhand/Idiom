@@ -290,7 +290,7 @@ func TestSummarizeLaneHistoryWithFilterCombinesAllThree(t *testing.T) {
 			t.Fatalf("append: %v", err)
 		}
 	}
-	mustAppend("plan-execute", 1, 2*time.Hour) // wrong since, right mode+failed
+	mustAppend("plan-execute", 1, 2*time.Hour)    // wrong since, right mode+failed
 	mustAppend("plan-execute", 0, 30*time.Minute) // wrong failed, right since+mode
 	mustAppend("implement", 1, 30*time.Minute)    // wrong mode, right since+failed
 	mustAppend("plan-execute", 1, 30*time.Minute) // matches all
@@ -341,6 +341,52 @@ func TestSummarizeLaneHistoryAggregatesTokens(t *testing.T) {
 	}
 	if s.TotalTokens != 7000 {
 		t.Fatalf("TotalTokens = %d, want 7000", s.TotalTokens)
+	}
+}
+
+func TestSummarizeLaneHistoryAggregatesRunMetricsAndFinalState(t *testing.T) {
+	root := t.TempDir()
+	events := []laneHistoryEvent{
+		{Mode: "plan-execute", Brief: "a.md", ExitCode: 0, FinalState: "success", ModelCalls: 3, ToolCalls: 2, DurationMS: 1000},
+		{Mode: "plan-execute", Brief: "b.md", ExitCode: 4, FinalState: "degraded", ModelCalls: 5, ToolCalls: 6, DurationMS: 3000, Degradations: []string{"no_edit_attempt"}},
+	}
+	for _, evt := range events {
+		if err := appendLaneHistory(root, evt); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	s, err := summarizeLaneHistory(root)
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if s.ByFinalState["success"] != 1 || s.ByFinalState["degraded"] != 1 {
+		t.Fatalf("ByFinalState = %#v", s.ByFinalState)
+	}
+	if s.EventsWithRunMetrics != 2 || s.TotalModelCalls != 8 || s.TotalToolCalls != 8 || s.TotalDurationMS != 4000 {
+		t.Fatalf("run metrics not aggregated: %#v", s)
+	}
+}
+
+func TestLaneHistoryEventFieldsOmitsTimestampForRunLedgerEvent(t *testing.T) {
+	fields := laneHistoryEventFields(laneHistoryEvent{
+		Timestamp:    "2026-05-13T00:00:00Z",
+		Mode:         "plan-execute",
+		Brief:        "atom.md",
+		ExitCode:     0,
+		FinalState:   "success",
+		SessionID:    "session-1",
+		QueuePool:    "qwen-35b",
+		ModelCalls:   1,
+		ToolCalls:    2,
+		TotalTokens:  300,
+		Degradations: []string{"x"},
+	})
+	if _, ok := fields["ts"]; ok {
+		t.Fatalf("run ledger event fields should not include ts: %#v", fields)
+	}
+	if fields["mode"] != "plan-execute" || fields["final_state"] != "success" || fields["queue_pool"] != "qwen-35b" {
+		t.Fatalf("unexpected fields: %#v", fields)
 	}
 }
 

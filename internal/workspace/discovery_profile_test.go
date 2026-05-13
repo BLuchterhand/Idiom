@@ -16,6 +16,7 @@ func TestDiscoveryProfileClassifiesGenericToolsForBalance(t *testing.T) {
 		{name: "context trace pack", req: ToolRequest{Tool: "context_trace_pack", Command: "pytest tests/test_app.py", Path: "."}, wantClass: "runtime_trace", wantScope: "targeted", wantCost: "medium"},
 		{name: "harness feedback", req: ToolRequest{Tool: "harness_feedback", Component: "context_pack"}, wantClass: "harness_feedback", wantScope: "targeted", wantCost: "low"},
 		{name: "code navigation", req: ToolRequest{Tool: "code_navigate", Capability: "definition", Path: "src/app.cpp", Pattern: "Run"}, wantClass: "language_relationship", wantScope: "targeted", wantCost: "medium"},
+		{name: "read-only capability", req: ToolRequest{Tool: "read_only_capability", Capability: "definition", Path: "src/app.cpp", Pattern: "Run"}, wantClass: "language_relationship", wantScope: "targeted", wantCost: "medium"},
 		{name: "source sanity", req: ToolRequest{Tool: "source_sanity", Path: "src/app.cpp"}, wantClass: "diagnostics", wantScope: "targeted", wantCost: "medium"},
 		{name: "structural", req: ToolRequest{Tool: "structural_search", Path: "internal", Pattern: "if $X { $Y }"}, wantClass: "ast_search", wantScope: "targeted", wantCost: "medium"},
 		{name: "dependency root", req: ToolRequest{Tool: "dependency_graph", Path: "."}, wantClass: "dependency_graph", wantScope: "broad", wantCost: "medium"},
@@ -77,6 +78,7 @@ func TestGenericDiscoveryToolsCountAsNarrowingEvidence(t *testing.T) {
 	for _, req := range []ToolRequest{
 		{Tool: "harness_feedback", Component: "context_pack", Expected: "x", Observed: "y", Impact: "z"},
 		{Tool: "code_navigate", Capability: "read_symbol", Path: "src/app.cpp", Pattern: "Run"},
+		{Tool: "read_only_capability", Capability: "definition", Path: "src/app.cpp", Pattern: "Run"},
 		{Tool: "source_sanity", Path: "src/app.cpp"},
 		{Tool: "context_pack", Task: "Plan Execute", Path: "."},
 		{Tool: "context_trace_pack", Command: "pytest tests/test_app.py", Path: "."},

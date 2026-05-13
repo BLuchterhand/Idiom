@@ -22,20 +22,24 @@ const (
 )
 
 type discoveryQueryPacket struct {
-	SchemaVersion  int                   `json:"schema_version"`
-	ID             string                `json:"id"`
-	Purpose        string                `json:"purpose"`
-	Query          string                `json:"query,omitempty"`
-	Target         string                `json:"target,omitempty"`
-	Pattern        string                `json:"pattern,omitempty"`
-	Language       string                `json:"language,omitempty"`
-	Depth          int                   `json:"depth"`
-	GeneratedAt    string                `json:"generated_at"`
-	ArtifactPath   string                `json:"artifact_path"`
-	ContextIndexID string                `json:"context_index_id,omitempty"`
-	ContextViews   []string              `json:"context_views,omitempty"`
-	Layers         []discoveryQueryLayer `json:"layers"`
-	Gaps           []string              `json:"gaps,omitempty"`
+	SchemaVersion        int                                  `json:"schema_version"`
+	ID                   string                               `json:"id"`
+	Purpose              string                               `json:"purpose"`
+	Query                string                               `json:"query,omitempty"`
+	Target               string                               `json:"target,omitempty"`
+	Pattern              string                               `json:"pattern,omitempty"`
+	Language             string                               `json:"language,omitempty"`
+	Depth                int                                  `json:"depth"`
+	GeneratedAt          string                               `json:"generated_at"`
+	ArtifactPath         string                               `json:"artifact_path"`
+	ContextIndexID       string                               `json:"context_index_id,omitempty"`
+	ContextViews         []string                             `json:"context_views,omitempty"`
+	ContextFreshness     *comprehension.FreshnessDecision     `json:"context_freshness,omitempty"`
+	ContextStaleEvidence *comprehension.StaleEvidenceSafety   `json:"context_stale_evidence,omitempty"`
+	ContextConfidence    *comprehension.GraphResultConfidence `json:"context_confidence,omitempty"`
+	ContextProvenance    *comprehension.GraphResultProvenance `json:"context_provenance,omitempty"`
+	Layers               []discoveryQueryLayer                `json:"layers"`
+	Gaps                 []string                             `json:"gaps,omitempty"`
 }
 
 type discoveryQueryLayer struct {
@@ -51,13 +55,17 @@ type discoveryQueryLayer struct {
 }
 
 type discoveryQuerySummary struct {
-	ID             string   `json:"id"`
-	Purpose        string   `json:"purpose"`
-	ArtifactPath   string   `json:"artifact_path"`
-	ContextIndexID string   `json:"context_index_id,omitempty"`
-	ContextViews   []string `json:"context_views,omitempty"`
-	LayersRun      []string `json:"layers_run"`
-	Evidence       []struct {
+	ID                   string                               `json:"id"`
+	Purpose              string                               `json:"purpose"`
+	ArtifactPath         string                               `json:"artifact_path"`
+	ContextIndexID       string                               `json:"context_index_id,omitempty"`
+	ContextViews         []string                             `json:"context_views,omitempty"`
+	ContextFreshness     *comprehension.FreshnessDecision     `json:"context_freshness,omitempty"`
+	ContextStaleEvidence *comprehension.StaleEvidenceSafety   `json:"context_stale_evidence,omitempty"`
+	ContextConfidence    *comprehension.GraphResultConfidence `json:"context_confidence,omitempty"`
+	ContextProvenance    *comprehension.GraphResultProvenance `json:"context_provenance,omitempty"`
+	LayersRun            []string                             `json:"layers_run"`
+	Evidence             []struct {
 		Name          string `json:"name"`
 		Tool          string `json:"tool"`
 		Summary       string `json:"summary"`
@@ -138,7 +146,7 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 	r.addContextLayer()
 	if isRegularFile(targetAbs) {
 		r.addFileOrientation(path, language)
-	} else if contextBacked {
+	} else if contextBacked && purpose != "security_review" {
 		r.packet.Gaps = append(r.packet.Gaps, "fresh context graph supplied target orientation; skipped live target listing")
 	} else {
 		r.addLayer("target_listing", ToolRequest{Tool: "list_files", Path: path, Recursive: true, MaxDepth: 2})
@@ -178,32 +186,64 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 }
 
 type discoveryContextPackSummary struct {
-	PackID         string   `json:"pack_id"`
-	IndexID        string   `json:"index_id"`
-	ArtifactPath   string   `json:"artifact_path"`
-	Fresh          bool     `json:"fresh"`
-	UnresolvedGaps []string `json:"unresolved_gaps"`
+	PackID         string                              `json:"pack_id"`
+	IndexID        string                              `json:"index_id"`
+	ArtifactPath   string                              `json:"artifact_path"`
+	Fresh          bool                                `json:"fresh"`
+	Freshness      *comprehension.FreshnessDecision    `json:"freshness,omitempty"`
+	Confidence     comprehension.GraphResultConfidence `json:"confidence"`
+	Provenance     comprehension.GraphResultProvenance `json:"provenance"`
+	UnresolvedGaps []string                            `json:"unresolved_gaps"`
 }
 
 func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string, pattern string, language string) bool {
 	status, err := comprehension.Status(r.manager.cfg.Root)
-	if err != nil || !status.Indexed {
+	if err != nil {
 		return false
 	}
 	if status.IndexID != "" {
 		r.packet.ContextIndexID = status.IndexID
 	}
-	if !status.Fresh && boundedContextRefreshScope(ToolRequest{Path: path}) == "" {
-		r.packet.Gaps = append(r.packet.Gaps, "context index is stale; skipped context graph backing and used live discovery layers")
+	task := discoveryContextPackTask(r.packet.Purpose, path, pattern, language, req.Query)
+	freshness, err := comprehension.EnsureFresh(r.ctx, comprehension.FreshnessRequest{
+		Root:      r.manager.cfg.Root,
+		Operation: "discovery_query",
+		Policy:    contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
+		Path:      path,
+		Query:     task,
+		Language:  language,
+		Mode:      "plan",
+		MaxFiles:  req.FreshnessMaxFiles,
+		Enrichers: r.manager.contextGraphEnrichers("plan"),
+		Status:    &status,
+	})
+	if err != nil {
+		r.packet.Gaps = append(r.packet.Gaps, "context freshness check failed: "+err.Error())
 		return false
 	}
-	task := discoveryContextPackTask(r.packet.Purpose, path, pattern, language, req.Query)
+	r.packet.ContextFreshness = &freshness
+	staleEvidence := comprehension.StaleEvidenceSafetyForFreshness(freshness)
+	r.packet.ContextStaleEvidence = &staleEvidence
+	status = comprehension.StatusReportWithMetadata(status, "discovery_query", &freshness)
+	contextConfidence := status.Confidence
+	contextProvenance := status.Provenance
+	r.packet.ContextConfidence = &contextConfidence
+	r.packet.ContextProvenance = &contextProvenance
+	if refreshed, err := comprehension.Status(r.manager.cfg.Root); err == nil && refreshed.IndexID != "" {
+		r.packet.ContextIndexID = refreshed.IndexID
+	}
+	if !freshness.FreshForScope && freshness.Policy != comprehension.FreshnessAllowStale {
+		r.packet.Gaps = append(r.packet.Gaps, comprehension.FreshnessGapForDecision(freshness))
+		return false
+	}
 	result, ok := r.addLayerResult("context_pack", ToolRequest{
-		Tool:  "context_pack",
-		Task:  task,
-		Path:  path,
-		Mode:  "plan",
-		Limit: 8,
+		Tool:              "context_pack",
+		Task:              task,
+		Path:              path,
+		Mode:              "plan",
+		Limit:             8,
+		FreshnessPolicy:   string(freshness.Policy),
+		FreshnessMaxFiles: req.FreshnessMaxFiles,
 	})
 	if !ok || strings.TrimSpace(result.Error) != "" {
 		return false
@@ -215,6 +255,21 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 	}
 	if pack.IndexID != "" {
 		r.packet.ContextIndexID = pack.IndexID
+	}
+	if r.packet.ContextFreshness == nil && pack.Freshness != nil {
+		r.packet.ContextFreshness = pack.Freshness
+	}
+	if r.packet.ContextStaleEvidence == nil {
+		packStaleEvidence := comprehension.StaleEvidenceSafetyForFreshness(freshness)
+		r.packet.ContextStaleEvidence = &packStaleEvidence
+	}
+	if pack.Confidence.Level != "" {
+		contextConfidence := pack.Confidence
+		r.packet.ContextConfidence = &contextConfidence
+	}
+	if pack.Provenance.Source != "" {
+		contextProvenance := pack.Provenance
+		r.packet.ContextProvenance = &contextProvenance
 	}
 	if pack.ArtifactPath != "" && !slices.Contains(r.packet.ContextViews, pack.ArtifactPath) {
 		r.packet.ContextViews = append(r.packet.ContextViews, pack.ArtifactPath)
@@ -393,12 +448,16 @@ func (r *discoveryQueryRunner) writeArtifact() error {
 
 func (r *discoveryQueryRunner) summaryJSON() string {
 	summary := discoveryQuerySummary{
-		ID:             r.packet.ID,
-		Purpose:        r.packet.Purpose,
-		ArtifactPath:   r.packet.ArtifactPath,
-		ContextIndexID: r.packet.ContextIndexID,
-		ContextViews:   slices.Clone(r.packet.ContextViews),
-		Gaps:           slices.Clone(r.packet.Gaps),
+		ID:                   r.packet.ID,
+		Purpose:              r.packet.Purpose,
+		ArtifactPath:         r.packet.ArtifactPath,
+		ContextIndexID:       r.packet.ContextIndexID,
+		ContextViews:         slices.Clone(r.packet.ContextViews),
+		ContextFreshness:     r.packet.ContextFreshness,
+		ContextStaleEvidence: r.packet.ContextStaleEvidence,
+		ContextConfidence:    r.packet.ContextConfidence,
+		ContextProvenance:    r.packet.ContextProvenance,
+		Gaps:                 slices.Clone(r.packet.Gaps),
 	}
 	for _, layer := range r.packet.Layers {
 		summary.LayersRun = append(summary.LayersRun, layer.Name+":"+layer.Tool)
@@ -448,10 +507,11 @@ func normalizeDiscoveryQueryPurpose(value string) string {
 
 func normalizeDiscoveryQueryLanguage(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimPrefix(value, ".")
 	switch value {
 	case "go", "golang":
 		return "go"
-	case "ts", "typescript", "js", "javascript":
+	case "ts", "tsx", "mts", "cts", "d.ts", "d.mts", "d.cts", "typescript", "js", "jsx", "mjs", "cjs", "javascript":
 		return "typescript"
 	case "py", "python":
 		return "python"
@@ -486,22 +546,34 @@ func discoveryLanguageToolPrefix(language string) string {
 }
 
 func globForDiscoveryLanguage(language string) string {
-	switch normalizeDiscoveryQueryLanguage(language) {
-	case "go":
-		return "*.go"
-	case "typescript":
-		return "*.{ts,tsx,js,jsx,mjs,cjs}"
-	case "python":
-		return "*.py"
-	case "cpp":
-		return "*.{c,cc,cpp,cxx,h,hpp,hxx}"
-	case "rust":
-		return "*.rs"
-	case "java":
-		return "*.java"
-	default:
+	lang, ok := LanguageForName(normalizeDiscoveryQueryLanguage(language))
+	if !ok {
 		return ""
 	}
+	return globForLanguageExtensions(lang.Extensions)
+}
+
+func globForLanguageExtensions(extensions []string) string {
+	seen := make(map[string]struct{}, len(extensions))
+	suffixes := make([]string, 0, len(extensions))
+	for _, ext := range extensions {
+		ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+		if ext == "" {
+			continue
+		}
+		if _, ok := seen[ext]; ok {
+			continue
+		}
+		seen[ext] = struct{}{}
+		suffixes = append(suffixes, ext)
+	}
+	if len(suffixes) == 0 {
+		return ""
+	}
+	if len(suffixes) == 1 {
+		return "*." + suffixes[0]
+	}
+	return "*.{" + strings.Join(suffixes, ",") + "}"
 }
 
 func discoveryQueryID(root string, purpose string, req ToolRequest, target string, language string, depth int) string {

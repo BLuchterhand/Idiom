@@ -178,6 +178,45 @@ func TestProfileEmptyNameAmbiguousWithMultipleProfiles(t *testing.T) {
 	}
 }
 
+func TestProfileUsesDefaultProfileWithMultipleProfiles(t *testing.T) {
+	body := `{
+		"default_profile": "b",
+		"profiles": {
+			"a": {"models": [{"alias": "alpha"}]},
+			"b": {"models": [{"alias": "bravo"}]}
+		}
+	}`
+	f, err := Load(writeTempJSON(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	prof, ok := f.Profile("")
+	if !ok {
+		t.Fatalf("expected empty profile lookup to use default_profile")
+	}
+	if len(prof.Models) != 1 || prof.Models[0].Alias != "bravo" {
+		t.Fatalf("default profile resolved wrong model: %+v", prof.Models)
+	}
+}
+
+func TestFileModelByAliasSearchesAllProfiles(t *testing.T) {
+	body := `{"profiles": {
+		"qwen-pair": {"models": [{"alias": "qwen3.6-35b", "port": 47780}]},
+		"qwen-27b-pair": {"models": [{"alias": "qwen3.6-27b", "port": 47783}]}
+	}}`
+	f, err := Load(writeTempJSON(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	model, ok := f.ModelByAlias("qwen3.6-27b")
+	if !ok {
+		t.Fatalf("expected alias in non-default profile to resolve")
+	}
+	if model.Port != 47783 {
+		t.Fatalf("port = %d, want 47783", model.Port)
+	}
+}
+
 // TestCoderAliasPrefersExplicitDefaultCoder is the load-bearing
 // resolver test for the lane wrapper's plan-execute auto-route. A
 // project that explicitly sets proxy.default_coder gets exactly

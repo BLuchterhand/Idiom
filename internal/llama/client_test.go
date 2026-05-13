@@ -107,7 +107,7 @@ func TestCompleteChatCapturesFinishReasonFromBothBackends(t *testing.T) {
 	}
 }
 
-func TestMLXBackendOmitsChatTemplateKwargs(t *testing.T) {
+func TestMLXBackendOmitsDefaultChatTemplateKwargs(t *testing.T) {
 	enableThinking := true
 	var got chatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,13 +123,51 @@ func TestMLXBackendOmitsChatTemplateKwargs(t *testing.T) {
 		Model:            "mlx-model",
 		EnableThinking:   &enableThinking,
 		PreserveThinking: true,
+		ThinkingBudget:   2048,
 		MaxTokens:        16,
 	}); err != nil {
 		t.Fatalf("CompleteChatMessage: %v", err)
 	}
 
 	if got.ChatTemplateKwargs != nil {
-		t.Fatalf("expected chat_template_kwargs to be omitted for MLX backend, got %#v", got.ChatTemplateKwargs)
+		t.Fatalf("expected default MLX request to omit chat_template_kwargs, got %#v", got.ChatTemplateKwargs)
+	}
+}
+
+func TestMLXBackendSendsExplicitChatTemplateKwargs(t *testing.T) {
+	enableThinking := false
+	var got chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(BackendMLX)
+	if _, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
+		Model:              "mlx-model",
+		EnableThinking:     &enableThinking,
+		PreserveThinking:   true,
+		ThinkingBudget:     2048,
+		ChatTemplateKwargs: true,
+		MaxTokens:          16,
+	}); err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+
+	if got.ChatTemplateKwargs == nil {
+		t.Fatalf("expected chat_template_kwargs for MLX backend")
+	}
+	if got.ChatTemplateKwargs.EnableThinking == nil || *got.ChatTemplateKwargs.EnableThinking {
+		t.Fatalf("expected enable_thinking=false in MLX kwargs, got %#v", got.ChatTemplateKwargs)
+	}
+	if !got.ChatTemplateKwargs.PreserveThinking {
+		t.Fatalf("expected preserve_thinking=true in MLX kwargs, got %#v", got.ChatTemplateKwargs)
+	}
+	if got.ChatTemplateKwargs.ThinkingBudget != 2048 {
+		t.Fatalf("expected thinking_budget=2048 in MLX kwargs, got %#v", got.ChatTemplateKwargs)
 	}
 }
 

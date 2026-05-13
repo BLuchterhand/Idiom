@@ -193,7 +193,7 @@ func TestStatusReportsCollectorVersionMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	if !hasGapContaining(query.UnresolvedGaps, "collector versions") {
+	if !hasGapContaining(query.UnresolvedGaps, "reason=collector_version_mismatch") {
 		t.Fatalf("expected collector-version gap, got %#v", query.UnresolvedGaps)
 	}
 
@@ -287,6 +287,194 @@ func TestPathScopedBuildMergesExistingGraph(t *testing.T) {
 	}
 	if !status.Fresh || status.FilesIndexed != 3 {
 		t.Fatalf("expected fresh merged graph with both files, got %#v", status)
+	}
+}
+
+func TestPathScopedBuildExactScopeSkipsDependencyExpansion(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/exactscope\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "a.go")
+	writeFile(t, sourcePath, "package pkg\n\nfunc OldName() string { return \"old\" }\n")
+	writeFile(t, filepath.Join(root, "pkg", "b.go"), "package pkg\n\nfunc KeepName() string { return OldName() }\n")
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	writeFile(t, sourcePath, "package pkg\n\nfunc NewName() string { return \"new\" }\n")
+
+	report, err := Build(context.Background(), BuildOptions{Root: root, Path: "pkg/a.go", Language: "go", ExactScope: true})
+	if err != nil {
+		t.Fatalf("exact-scope Build: %v", err)
+	}
+	if !report.Incremental || report.ExpandedScope != "" || len(report.DependencyRefreshFiles) != 0 || report.PartialRefreshReason != "exact_scope_refresh" {
+		t.Fatalf("expected exact scoped refresh without dependency expansion, got %#v", report)
+	}
+	if report.FilesIndexed != 1 {
+		t.Fatalf("expected exact scoped refresh to index one file, got %#v", report)
+	}
+	graph, err := LoadGraph(root)
+	if err != nil {
+		t.Fatalf("LoadGraph: %v", err)
+	}
+	if !hasNode(graph.Nodes, "symbol://pkg/a.go#NewName") || hasNode(graph.Nodes, "symbol://pkg/a.go#OldName") || !hasNode(graph.Nodes, "symbol://pkg/b.go#KeepName") {
+		t.Fatalf("expected refreshed target file and retained dependency graph, got nodes=%#v", graph.Nodes)
+	}
+}
+
+func TestPatchActiveStorePreservesInboundEdgesAndDropsSummaries(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/patchactive\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "a.go")
+	writeFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"old\" }\n")
+	writeFile(t, filepath.Join(root, "pkg", "b.go"), "package pkg\n\nfunc KeepName() string { return Run() }\n")
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	writeFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"new\" }\n")
+
+	report, err := Build(context.Background(), BuildOptions{Root: root, Path: "pkg/a.go", Language: "go", ExactScope: true, PatchActiveStore: true})
+	if err != nil {
+		t.Fatalf("patch-active Build: %v", err)
+	}
+	if !report.Incremental || report.PartialRefreshReason != "exact_scope_refresh" || report.IndexID == "" {
+		t.Fatalf("expected exact patch-active refresh, got %#v", report)
+	}
+	graph, err := LoadGraph(root)
+	if err != nil {
+		t.Fatalf("LoadGraph: %v", err)
+	}
+	if !hasNode(graph.Nodes, "symbol://pkg/a.go#Run") || !hasNode(graph.Nodes, "symbol://pkg/b.go#KeepName") {
+		t.Fatalf("expected refreshed target and retained caller nodes, got nodes=%#v", graph.Nodes)
+	}
+	if !hasEdge(graph.Edges, "calls", "symbol://pkg/b.go#KeepName", "symbol://pkg/a.go#Run") {
+		t.Fatalf("expected inbound caller edge to survive exact patch, got edges=%#v", graph.Edges)
+	}
+	for _, node := range graph.Nodes {
+		if node.Kind == "summary" || node.Collector == "summary_index" {
+			t.Fatalf("patch-active refresh must not leave stale summary nodes, got %#v", node)
+		}
+	}
+	status, err := Status(root)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	for _, report := range status.CollectorReports {
+		if report.Name == "summary_index" {
+			t.Fatalf("patch-active refresh must not advertise deleted summary_index reports, got %#v", status.CollectorReports)
+		}
+	}
+}
+
+func TestPatchActiveStoreExpandsDependenciesWithoutFullRewrite(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/patchdeps\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "a.go")
+	writeFile(t, sourcePath, "package pkg\n\nfunc OldName() string { return \"old\" }\n")
+	writeFile(t, filepath.Join(root, "pkg", "b.go"), "package pkg\n\nfunc KeepName() string { return OldName() }\n")
+	writeFile(t, filepath.Join(root, "cmd", "main.go"), "package main\n\nfunc main() {}\n")
+
+	initial, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	writeFile(t, sourcePath, "package pkg\n\nfunc NewName() string { return \"new\" }\n")
+
+	report, err := Build(context.Background(), BuildOptions{Root: root, Path: "pkg/a.go", Language: "go", PatchActiveStore: true})
+	if err != nil {
+		t.Fatalf("patch-active dependency Build: %v", err)
+	}
+	if !report.Incremental || report.IndexID != initial.IndexID || report.ExpandedScope != "pkg" || !hasString(report.DependencyRefreshFiles, "pkg/b.go") || report.PartialRefreshReason != "sqlite_scope_patch" {
+		t.Fatalf("expected dependency-aware sqlite patch, got %#v", report)
+	}
+	graph, err := LoadGraph(root)
+	if err != nil {
+		t.Fatalf("LoadGraph: %v", err)
+	}
+	if !hasNode(graph.Nodes, "symbol://pkg/a.go#NewName") || hasNode(graph.Nodes, "symbol://pkg/a.go#OldName") || !hasNode(graph.Nodes, "symbol://pkg/b.go#KeepName") || !hasNode(graph.Nodes, "symbol://cmd/main.go#main") {
+		t.Fatalf("expected refreshed dependency scope and retained out-of-scope graph, got nodes=%#v", graph.Nodes)
+	}
+	if hasEdge(graph.Edges, "calls", "symbol://pkg/b.go#KeepName", "symbol://pkg/a.go#OldName") {
+		t.Fatalf("stale dependency edge to removed symbol survived patch: %#v", graph.Edges)
+	}
+	status, err := Status(root)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !status.Fresh || status.FilesIndexed != 3 {
+		t.Fatalf("expected fresh total status after dependency-aware patch, got %#v", status)
+	}
+}
+
+func TestPatchActiveStoreRemovesDeletedScopeAndOrphans(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/patchdelete\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "a.go")
+	writeFile(t, sourcePath, "package pkg\n\nimport \"fmt\"\n\nfunc Run() string { return fmt.Sprint(\"old\") }\n")
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if err := os.Remove(sourcePath); err != nil {
+		t.Fatalf("remove source: %v", err)
+	}
+	report, err := Build(context.Background(), BuildOptions{Root: root, Path: "pkg/a.go", Language: "go", ExactScope: true, PatchActiveStore: true})
+	if err != nil {
+		t.Fatalf("patch-active delete Build: %v", err)
+	}
+	if !report.Incremental || report.FilesIndexed != 0 || report.PartialRefreshReason != "exact_scope_refresh" {
+		t.Fatalf("expected exact delete patch, got %#v", report)
+	}
+	graph, err := LoadGraph(root)
+	if err != nil {
+		t.Fatalf("LoadGraph: %v", err)
+	}
+	for _, id := range []string{"file://pkg/a.go", "symbol://pkg/a.go#Run", "package://pkg", "external://fmt"} {
+		if hasNode(graph.Nodes, id) {
+			t.Fatalf("deleted scope left stale node %s in graph: %#v", id, graph.Nodes)
+		}
+	}
+	for _, edge := range graph.Edges {
+		if strings.Contains(edge.SourceID, "pkg/a.go") || strings.Contains(edge.TargetID, "pkg/a.go") || edge.SourceID == "package://pkg" || edge.TargetID == "package://pkg" || edge.SourceID == "external://fmt" || edge.TargetID == "external://fmt" {
+			t.Fatalf("deleted scope left stale edge %#v", edge)
+		}
+	}
+	status, err := Status(root)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.FilesIndexed != 0 {
+		t.Fatalf("deleted final source file should clear indexed file counts, got %#v", status)
+	}
+}
+
+func TestPatchActiveStoreRemovesDeletedNativeLanguageScope(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "app.py")
+	writeFile(t, sourcePath, "def run():\n    return 'old'\n")
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "python"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if err := os.Remove(sourcePath); err != nil {
+		t.Fatalf("remove source: %v", err)
+	}
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Path: "app.py", Language: "python", ExactScope: true, PatchActiveStore: true}); err != nil {
+		t.Fatalf("patch-active python delete Build: %v", err)
+	}
+	graph, err := LoadGraph(root)
+	if err != nil {
+		t.Fatalf("LoadGraph: %v", err)
+	}
+	if hasNode(graph.Nodes, "file://app.py") {
+		t.Fatalf("deleted Python scope left stale file node: %#v", graph.Nodes)
+	}
+	status, err := Status(root)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(status.MissingFiles) != 0 || status.FilesIndexed != 0 {
+		t.Fatalf("deleted Python scope should be removed from status, got %#v", status)
 	}
 }
 
@@ -748,6 +936,47 @@ func TestRun(t *testing.T) {
 	}
 }
 
+func TestPackPrioritizesRequiredEditPaths(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/requiredpath\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "target.go"), `package pkg
+
+func Target() string {
+	return "target"
+}
+`)
+	writeFile(t, filepath.Join(root, "pkg", "noisy.go"), `package pkg
+
+func Noisy() string {
+	return "noisy"
+}
+`)
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	pack, err := Pack(PackOptions{
+		Root:              root,
+		Task:              "Plan a change to Noisy",
+		Mode:              "plan",
+		Limit:             1,
+		RequiredEditPaths: []string{"pkg/target.go"},
+		Now:               testTime(),
+	})
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	if len(pack.CandidateFiles) != 1 || pack.CandidateFiles[0].Path != "pkg/target.go" {
+		t.Fatalf("required edit path should outrank task-term matches, got %#v", pack.CandidateFiles)
+	}
+	if len(pack.RequiredEditPaths) != 1 || pack.RequiredEditPaths[0] != "pkg/target.go" {
+		t.Fatalf("expected required edit paths in result contract, got %#v", pack.RequiredEditPaths)
+	}
+	if !slicesContainsRankerReason(pack.CandidateFiles[0].RankerReasons, "required_edit_path") {
+		t.Fatalf("expected required_edit_path ranker reason, got %#v", pack.CandidateFiles[0].RankerReasons)
+	}
+}
+
 func TestPackBoundsFileHandlesForSmallModelPackets(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/bounded-pack\n\ngo 1.22\n")
@@ -861,6 +1090,88 @@ func TestRun(t *testing.T) {
 	}
 	if !hasPackTestCommand(pack.Tests, "go test ./pkg -json -coverprofile=cover.out") {
 		t.Fatalf("expected failing runtime command to be carried as a test, got %#v", pack.Tests)
+	}
+}
+
+func TestPackExcludesStaleRuntimeTraceEvidenceUntilRerun(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/staletrace\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "runner.go")
+	writeFile(t, sourcePath, `package pkg
+
+func Run() string {
+	return "old"
+}
+`)
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	stdout := `{"Action":"run","Package":"example.com/staletrace/pkg","Test":"TestRun"}
+{"Action":"output","Package":"example.com/staletrace/pkg","Test":"TestRun","Output":"    ` + filepath.ToSlash(sourcePath) + `:3: stale\n"}
+{"Action":"fail","Package":"example.com/staletrace/pkg","Test":"TestRun","Elapsed":0.01}
+`
+	staleTrace, err := Trace(TraceOptions{
+		Root:      root,
+		Command:   "go test ./pkg -json",
+		Language:  "auto",
+		Stdout:    stdout,
+		ExitCode:  1,
+		ExecError: "command failed: exit status 1",
+		Now:       testTime(),
+	})
+	if err != nil {
+		t.Fatalf("Trace: %v", err)
+	}
+
+	writeFile(t, sourcePath, `package pkg
+
+func Run() string {
+	return "new"
+}
+`)
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("refresh Build: %v", err)
+	}
+	pack, err := Pack(PackOptions{Root: root, Task: "Fix failing TestRun in runner", Now: testTime().Add(time.Minute)})
+	if err != nil {
+		t.Fatalf("Pack with stale trace: %v", err)
+	}
+	if hasPackEvidence(pack.Evidence, "runtime_trace", staleTrace.ArtifactPath) {
+		t.Fatalf("stale trace artifact should not be promoted into packet evidence: %#v", pack.Evidence)
+	}
+	if hasPackEvidence(pack.Evidence, "runtime_anchor", "pkg/runner.go") {
+		t.Fatalf("stale trace anchor should not be promoted into packet evidence: %#v", pack.Evidence)
+	}
+	if !hasGapContaining(pack.UnresolvedGaps, "reason=stale_runtime_trace") || !hasGapContaining(pack.UnresolvedGaps, "stale_path_count=1") {
+		t.Fatalf("expected stale trace gap, got %#v", pack.UnresolvedGaps)
+	}
+	debugPack, err := Pack(PackOptions{Root: root, Task: "Fix failing TestRun in runner", IncludeStaleRuntime: true, Now: testTime().Add(90 * time.Second)})
+	if err != nil {
+		t.Fatalf("debug Pack with stale trace: %v", err)
+	}
+	if !hasStalePackEvidence(debugPack.Evidence, "runtime_trace", staleTrace.ArtifactPath) {
+		t.Fatalf("debug stale-runtime opt-in should label stale trace evidence, got %#v", debugPack.Evidence)
+	}
+
+	freshTrace, err := Trace(TraceOptions{
+		Root:      root,
+		Command:   "go test ./pkg -json",
+		Language:  "auto",
+		Stdout:    stdout,
+		ExitCode:  1,
+		ExecError: "command failed: exit status 1",
+		Now:       testTime().Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("rerun Trace: %v", err)
+	}
+	pack, err = Pack(PackOptions{Root: root, Task: "Fix failing TestRun in runner", Now: testTime().Add(3 * time.Minute)})
+	if err != nil {
+		t.Fatalf("Pack with fresh trace: %v", err)
+	}
+	if !hasPackEvidence(pack.Evidence, "runtime_trace", freshTrace.ArtifactPath) {
+		t.Fatalf("fresh rerun trace should appear in packet evidence, got %#v", pack.Evidence)
 	}
 }
 
@@ -990,6 +1301,63 @@ end
 	}
 	if !hasNodeKind(graph.Nodes, "toolchain://ruby/generic_language_model", "toolchain_backend") {
 		t.Fatalf("expected generic backend node for Ruby, got %#v", graph.Nodes)
+	}
+}
+
+func TestSourceLanguageForPathCoversSupportedExtensionVariants(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "pkg/types.pyi", want: "python"},
+		{path: "src/entry.mts", want: "typescript"},
+		{path: "src/common.cts", want: "typescript"},
+		{path: "types/external.d.ts", want: "typescript"},
+		{path: "types/external.d.mts", want: "typescript"},
+		{path: "types/external.d.cts", want: "typescript"},
+		{path: "include/detail.hh", want: "cpp"},
+		{path: "include/detail.tpp", want: "cpp"},
+		{path: "scripts/player.gd", want: "gdscript"},
+	}
+	for _, tc := range tests {
+		if got := sourceLanguageForPath(tc.path); got != tc.want {
+			t.Fatalf("sourceLanguageForPath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestBuildIndexesTypeScriptModuleExtensions(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "src", "helper.cts"), `export function helper() {
+  return "ok";
+}
+`)
+	writeFile(t, filepath.Join(root, "src", "main.mts"), `import { helper } from "./helper";
+
+export function main() {
+  return helper();
+}
+`)
+
+	report, err := Build(context.Background(), BuildOptions{Root: root, Language: "typescript"})
+	if err != nil {
+		t.Fatalf("Build typescript module extensions: %v", err)
+	}
+	if !hasString(report.Languages, "typescript") || !hasString(report.CollectorCoverage, "typescript_index") {
+		t.Fatalf("expected TypeScript collector coverage, got languages=%#v collectors=%#v", report.Languages, report.CollectorCoverage)
+	}
+	graph, err := LoadGraph(root)
+	if err != nil {
+		t.Fatalf("LoadGraph typescript module extensions: %v", err)
+	}
+	if !hasFileLanguage(graph.Nodes, "src/main.mts", "typescript") || !hasFileLanguage(graph.Nodes, "src/helper.cts", "typescript") {
+		t.Fatalf("expected .mts/.cts files to be indexed as TypeScript, got %#v", graph.Nodes)
+	}
+	if !hasEdge(graph.Edges, "imports", "file://src/main.mts", "file://src/helper.cts") {
+		t.Fatalf("expected TypeScript .mts -> .cts import edge, got %#v", graph.Edges)
+	}
+	if !hasEdge(graph.Edges, "calls", "symbol://src/main.mts#main", "symbol://src/helper.cts#helper") {
+		t.Fatalf("expected TypeScript call edge across module extensions, got %#v", graph.Edges)
 	}
 }
 
@@ -1341,6 +1709,15 @@ func hasNodeKind(nodes []Node, id string, kind string) bool {
 	return false
 }
 
+func hasFileLanguage(nodes []Node, path string, language string) bool {
+	for _, node := range nodes {
+		if node.ID == "file://"+path && node.Kind == "file" && node.Language == language {
+			return true
+		}
+	}
+	return false
+}
+
 func hasNodeSummary(nodes []NodeSummary, id string) bool {
 	for _, node := range nodes {
 		if node.ID == id {
@@ -1469,6 +1846,15 @@ func hasPackFile(files []PackFile, path string, role string) bool {
 	return false
 }
 
+func slicesContainsRankerReason(reasons []RankerReason, reason string) bool {
+	for _, got := range reasons {
+		if got.Reason == reason {
+			return true
+		}
+	}
+	return false
+}
+
 func hasStalePackFile(files []PackFile, path string) bool {
 	for _, file := range files {
 		if file.Path == path && file.Stale {
@@ -1499,6 +1885,15 @@ func hasPackTestCommand(tests []PackTest, command string) bool {
 func hasPackEvidence(evidence []PackEvidence, kind string, path string) bool {
 	for _, ev := range evidence {
 		if ev.Kind == kind && ev.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStalePackEvidence(evidence []PackEvidence, kind string, path string) bool {
+	for _, ev := range evidence {
+		if ev.Kind == kind && ev.Path == path && ev.Stale {
 			return true
 		}
 	}
@@ -1573,5 +1968,28 @@ func TestGraphIDContentAddressedAcrossNoOpRebuilds(t *testing.T) {
 	}
 	if third.IndexID == first.IndexID {
 		t.Fatalf("graphID must change when file content changes; got %q identical across edit", third.IndexID)
+	}
+}
+
+func TestGraphIDChangesWhenCollectorVersionChanges(t *testing.T) {
+	graph := Graph{
+		Root:              "/repo",
+		GitHead:           "abc123",
+		CollectorVersion:  "collector-v1",
+		CollectorVersions: map[string]string{"context_index": "collector-v1", "go_index": "collector-v1"},
+		Nodes: []Node{{
+			ID:          "file://pkg/x.go",
+			Kind:        "file",
+			Path:        "pkg/x.go",
+			Fingerprint: "source-fingerprint",
+		}},
+		Edges: []Edge{{ID: "edge://one"}},
+	}
+	first := graphID(graph)
+	graph.CollectorVersion = "collector-v2"
+	graph.CollectorVersions = map[string]string{"context_index": "collector-v2", "go_index": "collector-v2"}
+	second := graphID(graph)
+	if first == second {
+		t.Fatalf("graphID must change when collector versions change; got %q for both", first)
 	}
 }

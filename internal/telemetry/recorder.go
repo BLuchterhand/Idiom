@@ -32,11 +32,14 @@ type Options struct {
 }
 
 type Recorder struct {
-	mu        sync.Mutex
-	file      *os.File
-	path      string
-	startedAt time.Time
-	command   string
+	mu              sync.Mutex
+	file            *os.File
+	path            string
+	startedAt       time.Time
+	command         string
+	closeoutMu      sync.Mutex
+	closeouts       []func()
+	closeoutsCalled bool
 }
 
 func Open(opts Options) (*Recorder, error) {
@@ -127,6 +130,47 @@ func (r *Recorder) Log(eventType string, fields map[string]any) error {
 	return nil
 }
 
+func (r *Recorder) RegisterCloseout(fn func()) func() {
+	if r == nil || fn == nil {
+		return func() {}
+	}
+	r.closeoutMu.Lock()
+	defer r.closeoutMu.Unlock()
+	if r.closeoutsCalled {
+		return func() {}
+	}
+	r.closeouts = append(r.closeouts, fn)
+	index := len(r.closeouts) - 1
+	return func() {
+		r.closeoutMu.Lock()
+		defer r.closeoutMu.Unlock()
+		if index >= 0 && index < len(r.closeouts) {
+			r.closeouts[index] = nil
+		}
+	}
+}
+
+func (r *Recorder) runCloseouts() {
+	if r == nil {
+		return
+	}
+	r.closeoutMu.Lock()
+	if r.closeoutsCalled {
+		r.closeoutMu.Unlock()
+		return
+	}
+	closeouts := append([]func(){}, r.closeouts...)
+	r.closeouts = nil
+	r.closeoutsCalled = true
+	r.closeoutMu.Unlock()
+
+	for i := len(closeouts) - 1; i >= 0; i-- {
+		if closeouts[i] != nil {
+			closeouts[i]()
+		}
+	}
+}
+
 func (r *Recorder) Close(exitCode int) error {
 	return r.CloseWithFields(exitCode, nil)
 }
@@ -135,6 +179,7 @@ func (r *Recorder) CloseWithFields(exitCode int, fields map[string]any) error {
 	if r == nil {
 		return nil
 	}
+	r.runCloseouts()
 	record := make(map[string]any, len(fields)+6)
 	record["ts"] = time.Now().Format(time.RFC3339Nano)
 	record["type"] = "process_exit"

@@ -61,7 +61,11 @@ idiom lane plan-execute --title atom-001 .planning/atom-001.md
 
 `idiom lane` is the recommended entry — it composes the prompt
 overlay, auto-routes plan-execute to the configured executor model,
-and forwards JSON events. See
+preloads a compact ranked `context_pack` for implement / plan-execute
+lanes, and forwards JSON events. Internal refine scratchpad meta-prompts
+keep their phase-specific evidence instead of receiving an extra repo map.
+Pass `--no-context-pack` only when a caller has already supplied an
+equivalent packet. See
 [docs/lane-architecture.md](docs/lane-architecture.md) for the lane
 shapes (`plan-execute`, `implement`, `atom-spec`) and brief format.
 
@@ -74,6 +78,14 @@ Other useful subcommands:
   without scraping the binary.
 - `idiom backend start | stop | status | list | proxy` — manage local
   LLM runners.
+- `idiom tool schemas` — export built-in workspace tool schemas plus
+  profile, side-effect, and policy metadata as JSON.
+- `idiom atom intake --spec <atom.md> [--project-root <root>] [--json]` —
+  classify an atom/spec before dispatch. Intake fails closed for complete,
+  source-satisfied, stale accepted-result, failed-refine best drafts, dirty
+  scoped-path, or unscoped artifacts, and rejects paths outside the workspace
+  root, so queue producers and lane wrappers do not spend tokens on
+  non-dispatchable work.
 - `idiom queue serve | run | status | ping | cancel` — local job queue
   daemon for gating concurrent lanes/agents against an OOM-safe cap;
   see [Local job queue](#local-job-queue) below.
@@ -141,15 +153,21 @@ Generate a standalone artifact while keeping the event stream separate:
   --prompt-file /tmp/spec-draft-prompt.md \
   --output /tmp/spec.md \
   --json-out /tmp/spec-events.jsonl \
+  --report-out /tmp/spec.report.json \
   --no-tools \
+  --mechanical-repair \
   --validator 'markdownlint "$IDIOM_ARTIFACT"'
 ```
 
 `artifact` is a generic drafting mode: idiom runs one model turn, writes the
-final answer as the artifact, optionally fails if the model used tools, and
-optionally runs a project-provided validator with `IDIOM_ARTIFACT` set to the
-artifact path. Project-specific rules belong in the prompt and validator, not
-in idiom core.
+final answer as the artifact, optionally fails if the model used tools, writes
+raw JSONL events, and can write a provenance/readiness report. The report
+records the prompt and answer hashes, model, output paths, no-tools contract,
+tool-use detection, validator exit, deterministic repair source, and
+`dispatch_ready`. `--mechanical-repair` is intentionally narrow: it unwraps one
+accidental outer Markdown fence before writing/validation and records that in
+the report. Project-specific rules belong in the prompt and validator, not in
+idiom core.
 
 Externalize planning context before asking a model to architect, critique, or
 brief a feature:
@@ -161,7 +179,13 @@ brief a feature:
 ./idiom architect lint --packet /tmp/packet.json
 ./idiom architect budget --packet /tmp/packet.json
 ./idiom architect plan --packet /tmp/packet.json --output /tmp/plan.prompt.md
-./idiom artifact --prompt-file /tmp/plan.prompt.md --output /tmp/plan.md --no-tools
+./idiom artifact \
+  --prompt-file /tmp/plan.prompt.md \
+  --output /tmp/plan.md \
+  --json-out /tmp/plan.events.jsonl \
+  --report-out /tmp/plan.report.json \
+  --no-tools \
+  --mechanical-repair
 ./idiom architect plan-audit --packet /tmp/packet.json --plan-file /tmp/plan.md
 ```
 
@@ -172,6 +196,9 @@ Use `--schema planning_v2` when you want ranked scope, freshness, language
 capability, handoff, and context budget sections for planner-quality review.
 Use `architect packet-compare` and `architect replay-compare` to compare v1 and
 V2 packet/plan variants from the same task and model run.
+`architect plan-audit` also checks unresolved placeholder tokens such as
+`<path>` and validation commands that cite missing workspace paths, so packet
+plans fail before a lane inherits fake commands or ambiguous follow-up work.
 
 List or resume prior sessions (sessions are the JSONL files in `chat.debug_log_dir`):
 
@@ -277,7 +304,7 @@ Notes:
 Each of the three server blocks (`llama_server`, `implementer`, `route_classifier`) accepts a `kind` field that selects the inference backend:
 
 - `"kind": "llama"` (default) — launches `llama-server` from llama.cpp with the existing GGUF model path and llama-specific flags (`jinja`, `flash_attention`, `reasoning*`, `cache-type-*`, etc).
-- `"kind": "mlx"` — launches `mlx_lm.server` from [mlx-lm](https://github.com/ml-explore/mlx-lm). On Apple Silicon this typically beats llama.cpp's Metal backend by ~15–30% throughput and ~10% memory. `model` becomes a Hugging Face ID (e.g. `Qwen/Qwen3.6-35B-A3B`) or a local MLX directory — not a GGUF path. Llama-specific flags (`jinja`, `flash_attention`, `reasoning*`) are ignored, and per-request `chat_template_kwargs` (`enable_thinking`, `preserve_thinking`) are omitted. For Qwen3.6 thinking preservation on MLX, set server defaults through `extra_args`, for example `--chat-template-args '{"enable_thinking":true,"preserve_thinking":true}'`.
+- `"kind": "mlx"` — launches `mlx_lm.server` from [mlx-lm](https://github.com/ml-explore/mlx-lm). On Apple Silicon this typically beats llama.cpp's Metal backend by ~15–30% throughput and ~10% memory. `model` becomes a Hugging Face ID (e.g. `Qwen/Qwen3.6-35B-A3B`) or a local MLX directory — not a GGUF path. Llama-specific flags (`jinja`, `flash_attention`, `reasoning*`) are ignored. Current `mlx_lm.server` builds honor per-request `chat_template_kwargs`, so idiom can intentionally switch `enable_thinking` / `preserve_thinking` for routes that need a different mode; keep server defaults in `extra_args` for fallback behavior, for example `--chat-template-args '{"enable_thinking":true,"preserve_thinking":true}'`.
 
 The blocks are independent, so mixed setups work — for example, main chat on MLX and the route classifier still on llama.cpp. Set `binary` to `mlx_lm.server` (install via `pip install mlx-lm`) and pass any additional flags via `extra_args`.
 
@@ -318,12 +345,13 @@ Config file (`~/.idiom/runner.json`) — omit it and you get a single `default` 
   "pools": {
     "default":    {"max_in_flight": 1},
     "qwen-35b":   {"max_in_flight": 1},
+    "qwen-27b":   {"max_in_flight": 1},
     "qwen-coder": {"max_in_flight": 1}
   }
 }
 ```
 
-Pools are independent caps, so `qwen-35b` and `qwen-coder` can each run one lane simultaneously without contending. Acquiring an unknown pool is rejected — pools must exist in the daemon's config before any project can submit to them.
+Pools are independent caps, so `qwen-35b`, `qwen-27b`, and `qwen-coder` can each run one lane simultaneously without contending. Acquiring an unknown pool is rejected — pools must exist in the daemon's config before any project can submit to them.
 
 ## Route Classifier
 
@@ -424,7 +452,10 @@ code search.
 Use `purpose:"tool_surface"` for static manifest/schema/backend checks, or
 `purpose:"behavior"` to scan behavior logs for efficiency and control-rail
 signals such as repeated rejected calls, zero-hit searches, or generic-read
-overuse. Agents can add task-grounded harness/tool/prompt observations with
+overuse. When autonomy contract events are present in the scanned JSONL logs,
+the same passive audit output includes `contract_coverage` for lifecycle,
+policy, obligation, reference, sidecar/tool-call, and product metadata coverage.
+Agents can add task-grounded harness/tool/prompt observations with
 `harness_feedback`; behavior audits aggregate those events by category,
 component, confidence, and severity.
 
@@ -495,8 +526,9 @@ make test-install-queue-daemon                # 5-test smoke check
 
 Defaults the installer writes:
 
-- Config: `~/.idiom/runner.json` (two pools: `qwen-35b` and `qwen-coder`, each
-  `max_in_flight=1`, matching the qwen-pair backend profile)
+- Config: `~/.idiom/runner.json` (planner pools `qwen-35b` / `qwen-27b` and
+  executor pool `qwen-coder`, each `max_in_flight=1`, matching the local Qwen
+  backend profiles)
 - Launchd agent: `~/Library/LaunchAgents/com.idiom.queue.plist`
 - Binary: `~/.idiom/bin/idiom` (the canonical source-build binary; `make build`
   refreshes this file and points `bin/idiom`, repo-root `./idiom`, and
@@ -508,9 +540,10 @@ Defaults the installer writes:
 
 Once installed, `idiom plan-execute` and `idiom implement` automatically dial
 the daemon via `runner.MaybeAcquire`, choose a pool by model alias (`*coder*`
-→ `qwen-coder`; `*35b*` / `*planner*` → `qwen-35b`), and wait for a lease
-before starting the planner phase. When the daemon isn't running, both
-commands proceed un-gated — the gate is opportunistic, not required.
+→ `qwen-coder`; `*27b*` → `qwen-27b`; `*35b*` / `*planner*` → `qwen-35b`),
+and wait for a lease before starting the planner phase. When the daemon isn't
+running, both commands proceed un-gated — the gate is opportunistic, not
+required.
 
 Tune pool caps after install by editing `~/.idiom/runner.json` and running
 `scripts/install-queue-daemon.sh --reload`. Status: `idiom queue status`.
@@ -533,6 +566,12 @@ hit/miss counters under `context_cache`.
 The `views/<pack_id>.json` files under `.idiom/comprehension/views/` are
 human-readable mirrors of the SQLite rows for inspection — the SQLite row
 is the source of truth.
+
+Graph-backed tool outputs (`context_status`, `context_query`, `context_zoom`,
+`context_pack`, and `context_impact`) include structured freshness,
+confidence, and provenance fields so sidecar callers can distinguish fresh
+graph evidence, scoped-fresh evidence, stale paths, and the backing index
+without parsing prose summaries.
 
 ## Ranker Learning
 

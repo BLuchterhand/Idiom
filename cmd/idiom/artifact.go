@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -24,13 +26,40 @@ type artifactOptions struct {
 	PromptFile string
 	OutputPath string
 	JSONOut    string
+	ReportOut  string
 	Validator  string
 	Model      string
 	Resume     string
 	MaxTokens  int
 
-	NoTools     bool
-	FailOnTools bool
+	NoTools          bool
+	FailOnTools      bool
+	MechanicalRepair bool
+}
+
+type artifactReport struct {
+	SchemaVersion            string `json:"schema_version"`
+	CreatedAt                string `json:"created_at"`
+	ArtifactContract         string `json:"artifact_contract"`
+	Model                    string `json:"model,omitempty"`
+	OutputPath               string `json:"output_path,omitempty"`
+	JSONOut                  string `json:"json_out,omitempty"`
+	ReportOut                string `json:"report_out,omitempty"`
+	Validator                string `json:"validator,omitempty"`
+	ValidatorExit            int    `json:"validator_exit"`
+	ValidatorError           string `json:"validator_error,omitempty"`
+	NoTools                  bool   `json:"no_tools"`
+	FailOnTools              bool   `json:"fail_on_tools"`
+	ToolUseDetected          bool   `json:"tool_use_detected"`
+	ToolName                 string `json:"tool_name,omitempty"`
+	PromptHash               string `json:"prompt_hash,omitempty"`
+	AnswerHash               string `json:"answer_hash,omitempty"`
+	AnswerBytes              int    `json:"answer_bytes,omitempty"`
+	RepairSource             string `json:"repair_source"`
+	MechanicalRepairApplied  bool   `json:"mechanical_repair_applied"`
+	ManualModifiedAfterModel bool   `json:"manual_modified_after_model"`
+	DispatchReady            bool   `json:"dispatch_ready"`
+	Error                    string `json:"error,omitempty"`
 }
 
 func runArtifactMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
@@ -55,19 +84,24 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 	logCLIPhase(rec, "artifact_start", map[string]any{
 		"has_output":          strings.TrimSpace(opts.OutputPath) != "",
 		"has_json_out":        strings.TrimSpace(opts.JSONOut) != "",
+		"has_report_out":      strings.TrimSpace(opts.ReportOut) != "",
 		"has_validator":       strings.TrimSpace(opts.Validator) != "",
 		"no_tools":            opts.NoTools,
+		"mechanical_repair":   opts.MechanicalRepair,
 		"max_tokens_override": opts.MaxTokens,
 	})
 
-	prompt, err := artifactPrompt(opts)
+	rawPrompt, err := artifactPrompt(opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	report := newArtifactReport(opts, cfg, rawPrompt)
+	prompt := rawPrompt
 	if opts.NoTools {
 		prompt = noToolsArtifactPrompt(prompt)
 		opts.FailOnTools = true
+		report.FailOnTools = true
 	}
 
 	runOpts := runOptions{JSONEvents: true, Resume: opts.Resume, MaxTokensOverride: opts.MaxTokens, Telemetry: rec}
@@ -81,17 +115,34 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 		return 1
 	}
 	if err != nil {
+		report.Error = err.Error()
+		_ = writeArtifactReport(opts.ReportOut, report)
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if opts.MechanicalRepair {
+		if repaired, changed := repairArtifactMechanically(answer); changed {
+			answer = repaired
+			report.RepairSource = "mechanical"
+			report.MechanicalRepairApplied = true
+		}
+	}
+	report.AnswerHash = sha256HexString(answer)
+	report.AnswerBytes = len(answer)
 	if opts.FailOnTools {
 		used, tool, err := artifactEventsUsedTools(events.Bytes())
 		if err != nil {
+			report.Error = err.Error()
+			_ = writeArtifactReport(opts.ReportOut, report)
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		if used {
-			fmt.Fprintf(stderr, "artifact run used tools despite no-tool contract: %s\n", tool)
+			report.ToolUseDetected = true
+			report.ToolName = tool
+			report.Error = "artifact run used tools despite no-tool contract: " + tool
+			_ = writeArtifactReport(opts.ReportOut, report)
+			fmt.Fprintln(stderr, report.Error)
 			return 1
 		}
 	}
@@ -101,11 +152,18 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 		defer cleanup()
 	}
 	if err != nil {
+		report.Error = err.Error()
+		_ = writeArtifactReport(opts.ReportOut, report)
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	if opts.Validator != "" {
-		if err := runArtifactValidator(opts.Validator, artifactPath, stderr); err != nil {
+		exit, err := runArtifactValidator(opts.Validator, artifactPath, stderr)
+		report.ValidatorExit = exit
+		if err != nil {
+			report.ValidatorError = err.Error()
+			report.Error = err.Error()
+			_ = writeArtifactReport(opts.ReportOut, report)
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -113,9 +171,22 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 	if opts.OutputPath == "" || opts.OutputPath == "-" {
 		fmt.Fprintln(stdout, answer)
 	}
+	report.DispatchReady = true
+	if err := writeArtifactReport(opts.ReportOut, report); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	logCLIPhase(rec, "artifact_written", map[string]any{
-		"output_path": strings.TrimSpace(opts.OutputPath),
-		"answer_len":  len(answer),
+		"output_path":         strings.TrimSpace(opts.OutputPath),
+		"report_out":          strings.TrimSpace(opts.ReportOut),
+		"answer_len":          len(answer),
+		"answer_hash":         report.AnswerHash,
+		"repair_source":       report.RepairSource,
+		"dispatch_ready":      report.DispatchReady,
+		"validator_exit":      report.ValidatorExit,
+		"tool_use_detected":   report.ToolUseDetected,
+		"artifact_contract":   report.ArtifactContract,
+		"mechanical_repaired": report.MechanicalRepairApplied,
 	})
 	return 0
 }
@@ -129,6 +200,7 @@ func parseArtifactOptions(args []string, stderr io.Writer) (artifactOptions, err
 	fs.StringVar(&opts.PromptFile, "prompt-file", "", "read artifact prompt from file")
 	fs.StringVar(&opts.OutputPath, "output", "", "write final artifact to path; default stdout")
 	fs.StringVar(&opts.JSONOut, "json-out", "", "write raw JSONL event transcript to path")
+	fs.StringVar(&opts.ReportOut, "report-out", "", "write artifact provenance/readiness report JSON to path")
 	fs.StringVar(&opts.Validator, "validator", "", "shell command to validate artifact; path is in $IDIOM_ARTIFACT")
 	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session before running")
@@ -136,6 +208,7 @@ func parseArtifactOptions(args []string, stderr io.Writer) (artifactOptions, err
 	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "alias for --max-token")
 	fs.BoolVar(&opts.NoTools, "no-tools", false, "ask the model not to use tools and fail if any tool events occur")
 	fs.BoolVar(&opts.FailOnTools, "fail-on-tools", false, "fail if any tool request/result events occur")
+	fs.BoolVar(&opts.MechanicalRepair, "mechanical-repair", false, "apply deterministic artifact-only cleanup before writing/validation")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
@@ -255,9 +328,79 @@ func materializeArtifactForValidation(answer string, outputPath string, validato
 	return path, cleanup, nil
 }
 
-func runArtifactValidator(command string, artifactPath string, stderr io.Writer) error {
+func newArtifactReport(opts artifactOptions, cfg config.Config, prompt string) artifactReport {
+	return artifactReport{
+		SchemaVersion:            "idiom.artifact.report.v1",
+		CreatedAt:                time.Now().UTC().Format(time.RFC3339Nano),
+		ArtifactContract:         artifactContract(opts),
+		Model:                    strings.TrimSpace(cfg.LlamaServer.Model),
+		OutputPath:               strings.TrimSpace(opts.OutputPath),
+		JSONOut:                  strings.TrimSpace(opts.JSONOut),
+		ReportOut:                strings.TrimSpace(opts.ReportOut),
+		Validator:                strings.TrimSpace(opts.Validator),
+		ValidatorExit:            0,
+		NoTools:                  opts.NoTools,
+		FailOnTools:              opts.FailOnTools,
+		PromptHash:               sha256HexString(prompt),
+		RepairSource:             "raw_model",
+		ManualModifiedAfterModel: false,
+	}
+}
+
+func artifactContract(opts artifactOptions) string {
+	if opts.NoTools {
+		return "artifact.no_tools.v1"
+	}
+	return "artifact.v1"
+}
+
+func writeArtifactReport(path string, report artifactReport) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal artifact report: %w", err)
+	}
+	data = append(data, '\n')
+	return writeOptionalFile(path, data)
+}
+
+func sha256HexString(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func repairArtifactMechanically(answer string) (string, bool) {
+	unwrapped, ok := unwrapSingleMarkdownFence(answer)
+	if ok {
+		return unwrapped, true
+	}
+	return answer, false
+}
+
+func unwrapSingleMarkdownFence(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) < 3 {
+		return "", false
+	}
+	if !strings.HasPrefix(strings.TrimSpace(lines[0]), "```") {
+		return "", false
+	}
+	if strings.TrimSpace(lines[len(lines)-1]) != "```" {
+		return "", false
+	}
+	body := strings.TrimSpace(strings.Join(lines[1:len(lines)-1], "\n"))
+	if body == "" {
+		return "", false
+	}
+	return body, true
+}
+
+func runArtifactValidator(command string, artifactPath string, stderr io.Writer) (int, error) {
 	if artifactPath == "" {
-		return fmt.Errorf("validator requires a materialized artifact path")
+		return 2, fmt.Errorf("validator requires a materialized artifact path")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -267,9 +410,12 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("artifact validator timed out: %w", ctx.Err())
+			return 124, fmt.Errorf("artifact validator timed out: %w", ctx.Err())
 		}
-		return fmt.Errorf("artifact validator failed: %w", err)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode(), fmt.Errorf("artifact validator failed: %w", err)
+		}
+		return 1, fmt.Errorf("artifact validator failed: %w", err)
 	}
-	return nil
+	return 0, nil
 }

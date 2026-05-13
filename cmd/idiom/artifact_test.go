@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
 	configPath := writeMainConfig(t)
 	outputPath := filepath.Join(t.TempDir(), "artifact.md")
 	jsonPath := filepath.Join(t.TempDir(), "events.jsonl")
+	reportPath := filepath.Join(t.TempDir(), "artifact.report.json")
 	var stdout, stderr bytes.Buffer
 	var gotOpts runOptions
 
@@ -24,6 +26,7 @@ func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
 			"-prompt", "draft a spec",
 			"-output", outputPath,
 			"-json-out", jsonPath,
+			"-report-out", reportPath,
 		},
 		&stdout,
 		&stderr,
@@ -51,6 +54,16 @@ func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
 	}
 	if got := readTestFile(t, jsonPath); !strings.Contains(got, `"type":"final"`) {
 		t.Fatalf("json-out missing final event: %q", got)
+	}
+	report := readArtifactReport(t, reportPath)
+	if !report.DispatchReady {
+		t.Fatalf("artifact report should be dispatch-ready: %#v", report)
+	}
+	if report.RepairSource != "raw_model" || report.AnswerHash == "" || report.PromptHash == "" {
+		t.Fatalf("artifact report missing provenance fields: %#v", report)
+	}
+	if report.OutputPath != outputPath || report.JSONOut != jsonPath {
+		t.Fatalf("artifact report paths = output %q json %q", report.OutputPath, report.JSONOut)
 	}
 }
 
@@ -100,12 +113,13 @@ func TestArtifactCommandRejectsNegativeMaxToken(t *testing.T) {
 
 func TestArtifactCommandNoToolsWrapsPromptAndFailsToolUse(t *testing.T) {
 	configPath := writeMainConfig(t)
+	reportPath := filepath.Join(t.TempDir(), "artifact.report.json")
 	var stdout, stderr bytes.Buffer
 	var gotPrompt string
 	var gotOpts runOptions
 
 	code := runArtifactMain(
-		[]string{"-config", configPath, "-prompt", "draft", "-no-tools"},
+		[]string{"-config", configPath, "-prompt", "draft", "-no-tools", "-report-out", reportPath},
 		&stdout,
 		&stderr,
 		func(_ config.Config, prompt string, opts runOptions, w io.Writer) (string, error) {
@@ -127,6 +141,46 @@ func TestArtifactCommandNoToolsWrapsPromptAndFailsToolUse(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "read_file") {
 		t.Fatalf("stderr should name offending tool, got %q", stderr.String())
+	}
+	report := readArtifactReport(t, reportPath)
+	if report.DispatchReady || !report.ToolUseDetected || report.ToolName != "read_file" {
+		t.Fatalf("tool-use failure report = %#v", report)
+	}
+	if report.ArtifactContract != "artifact.no_tools.v1" {
+		t.Fatalf("artifact contract = %q", report.ArtifactContract)
+	}
+}
+
+func TestArtifactCommandMechanicalRepairUnwrapsOuterFence(t *testing.T) {
+	configPath := writeMainConfig(t)
+	outputPath := filepath.Join(t.TempDir(), "artifact.md")
+	reportPath := filepath.Join(t.TempDir(), "artifact.report.json")
+	var stdout, stderr bytes.Buffer
+
+	code := runArtifactMain(
+		[]string{
+			"-config", configPath,
+			"-prompt", "draft",
+			"-output", outputPath,
+			"-report-out", reportPath,
+			"-mechanical-repair",
+		},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) {
+			return "```markdown\n# Artifact\n```", nil
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("expected mechanical repair success, got %d stderr=%s", code, stderr.String())
+	}
+	if got := readTestFile(t, outputPath); got != "# Artifact" {
+		t.Fatalf("artifact output = %q", got)
+	}
+	report := readArtifactReport(t, reportPath)
+	if report.RepairSource != "mechanical" || !report.MechanicalRepairApplied {
+		t.Fatalf("expected mechanical repair provenance, got %#v", report)
 	}
 }
 
@@ -155,6 +209,15 @@ func TestArtifactCommandRunsValidatorWithArtifactEnv(t *testing.T) {
 	if got := readTestFile(t, outputPath); got != "validated" {
 		t.Fatalf("artifact output = %q", got)
 	}
+}
+
+func readArtifactReport(t *testing.T, path string) artifactReport {
+	t.Helper()
+	var report artifactReport
+	if err := json.Unmarshal([]byte(readTestFile(t, path)), &report); err != nil {
+		t.Fatalf("parse artifact report: %v", err)
+	}
+	return report
 }
 
 func TestArtifactCommandRejectsPromptSourcesConflict(t *testing.T) {

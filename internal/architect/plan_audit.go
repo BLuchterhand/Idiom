@@ -23,9 +23,10 @@ type PlanAuditFinding struct {
 }
 
 var (
-	planPathPattern    = regexp.MustCompile(`(?:^|[\s'"\(\[` + "`" + `])([A-Za-z0-9_./-]+\.(?:go|rs|pyi|py|tsx|tscn|ts|jsx|json|js|java|cxx|cpp|cc|c|hxx|hpp|hh|h|gd|tres|md|ya?ml|toml|sh|sql)(?::\d+)?)(?:$|[\s'"\)\]\},;.` + "`" + `])`)
-	planHandlePattern  = regexp.MustCompile(`\b(?:file|symbol|test|trace|context_pack)://[^\s\]\),;` + "`" + `]+`)
-	planCommandPattern = regexp.MustCompile("`([^`]*(?:go test|make test|make build|go build|npm test|pnpm test|yarn test)[^`]*)`")
+	planPathPattern        = regexp.MustCompile(`(?:^|[\s'"\(\[` + "`" + `])([A-Za-z0-9_./-]+\.(?:go|rs|pyi|py|tsx|tscn|ts|jsx|json|js|java|cxx|cpp|cc|c|hxx|hpp|hh|h|gd|tres|md|ya?ml|toml|sh|sql)(?::\d+)?)(?:$|[\s'"\)\]\},;.` + "`" + `])`)
+	planHandlePattern      = regexp.MustCompile(`\b(?:file|symbol|test|trace|context_pack)://[^\s\]\),;` + "`" + `]+`)
+	planCommandPattern     = regexp.MustCompile("`([^`]*(?:go test|make test|make build|go build|npm test|pnpm test|yarn test|bash |sh |python |python3 |pytest|godot|scons|\\./scripts/|scripts/)[^`]*)`")
+	planPlaceholderPattern = regexp.MustCompile(`<(?:path|count|file|command|test|todo|unknown)>`)
 )
 
 func AuditPlan(packet Packet, plan string) PlanAuditResult {
@@ -43,9 +44,11 @@ func AuditPlan(packet Packet, plan string) PlanAuditResult {
 	findings = append(findings, auditPlanPaths(packet, plan)...)
 	findings = append(findings, auditPlanHandles(packet, plan)...)
 	findings = append(findings, auditPlanValidation(packet, plan)...)
+	findings = append(findings, auditPlanCommandReferences(packet, plan)...)
 	findings = append(findings, auditPlanFreshness(packet, plan)...)
 	findings = append(findings, auditProtectedPaths(packet, plan)...)
 	findings = append(findings, auditPlanReadiness(packet, plan)...)
+	findings = append(findings, auditPlanPlaceholders(plan)...)
 	ok := true
 	for _, finding := range findings {
 		if finding.Severity == "error" {
@@ -54,6 +57,44 @@ func AuditPlan(packet Packet, plan string) PlanAuditResult {
 		}
 	}
 	return PlanAuditResult{OK: ok, Findings: findings}
+}
+
+func auditPlanCommandReferences(packet Packet, plan string) []PlanAuditFinding {
+	root := strings.TrimSpace(packet.Workspace.Root)
+	if root == "" {
+		return nil
+	}
+	var findings []PlanAuditFinding
+	for _, command := range extractPlanCommands(plan) {
+		for _, rel := range commandReferencePaths(command) {
+			if pathExistsUnderRoot(root, rel) {
+				continue
+			}
+			findings = append(findings, PlanAuditFinding{
+				Severity:            "error",
+				Kind:                "unknown_command_path",
+				Message:             fmt.Sprintf("plan validation command %q references missing path %q", command, rel),
+				Evidence:            []string{command, rel},
+				SuggestedResolution: "Correct the command path, add the path as an explicit new artifact, or mark validation blocked with the exact missing command.",
+			})
+		}
+	}
+	return findings
+}
+
+func auditPlanPlaceholders(plan string) []PlanAuditFinding {
+	raw := planPlaceholderPattern.FindAllString(plan, -1)
+	if len(raw) == 0 {
+		return nil
+	}
+	placeholders := cleanStrings(raw)
+	return []PlanAuditFinding{{
+		Severity:            "error",
+		Kind:                "unresolved_placeholder",
+		Message:             "plan still contains unresolved placeholder token(s)",
+		Evidence:            placeholders,
+		SuggestedResolution: "Replace placeholders with packet-backed values or mark the exact unresolved fact as a blocker.",
+	}}
 }
 
 func auditPlanPaths(packet Packet, plan string) []PlanAuditFinding {
@@ -308,12 +349,85 @@ func fileExistsUnderRoot(root string, path string) bool {
 	if strings.TrimSpace(root) == "" || strings.TrimSpace(path) == "" {
 		return false
 	}
+	full, ok := pathUnderRoot(root, path)
+	if !ok {
+		return false
+	}
+	info, err := os.Stat(full)
+	return err == nil && !info.IsDir()
+}
+
+func pathExistsUnderRoot(root string, path string) bool {
+	if strings.TrimSpace(root) == "" || strings.TrimSpace(path) == "" {
+		return false
+	}
+	full, ok := pathUnderRoot(root, path)
+	if !ok {
+		return false
+	}
+	_, err := os.Stat(full)
+	return err == nil
+}
+
+func pathUnderRoot(root string, path string) (string, bool) {
+	cleanRoot, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return "", false
+	}
 	full := path
 	if !filepath.IsAbs(full) {
-		full = filepath.Join(root, path)
+		full = filepath.Join(cleanRoot, path)
 	}
-	info, err := os.Stat(filepath.Clean(full))
-	return err == nil && !info.IsDir()
+	cleanFull, err := filepath.Abs(filepath.Clean(full))
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(cleanRoot, cleanFull)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return cleanFull, true
+}
+
+func commandReferencePaths(command string) []string {
+	fields := strings.Fields(command)
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		token := strings.Trim(field, " \t\n\r'\"`")
+		if token == "" || strings.HasPrefix(token, "-") || strings.Contains(token, "...") {
+			continue
+		}
+		if strings.Contains(token, "=") && !strings.HasPrefix(token, "./") && !strings.HasPrefix(token, "scripts/") {
+			continue
+		}
+		token = strings.TrimPrefix(token, "./")
+		if token == "" || token == "." || token == ".." || filepath.IsAbs(token) || strings.HasPrefix(token, "../") || strings.Contains(token, "://") {
+			continue
+		}
+		if commandTokenIsWorkspaceReference(token) {
+			out = append(out, token)
+		}
+	}
+	return cleanStrings(out)
+}
+
+func commandTokenIsWorkspaceReference(token string) bool {
+	if strings.HasPrefix(token, "scripts/") {
+		return true
+	}
+	for _, prefix := range []string{"cmd/", "internal/", "pkg/", "native/", "test/", "tests/"} {
+		if strings.HasPrefix(token, prefix) {
+			return true
+		}
+	}
+	if !strings.Contains(token, "/") {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(token)) {
+	case ".bash", ".gd", ".go", ".js", ".json", ".md", ".py", ".rs", ".sh", ".ts", ".yaml", ".yml":
+		return true
+	}
+	return false
 }
 
 func lineFor(plan string, needle string, predicate func(string) bool) bool {

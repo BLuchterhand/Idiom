@@ -27,8 +27,9 @@ three lane shapes:
   (a planner target packet) without touching the workspace, then
   exits. Used when the orchestrator needs a clean spec to feed into
   a downstream `implement` or `plan-execute` lane. Driven by
-  `idiom artifact --no-tools` today; will be `idiom atom-spec draft`
-  after Phase 2 of the reusability migration.
+  `idiom artifact --no-tools --mechanical-repair --json-out ... --report-out ...`
+  today; will be `idiom atom-spec draft` after Phase 2 of the
+  reusability migration.
 
 Every lane consumes a **brief** (markdown describing the work) and
 produces some combination of: changed files, a plan artifact, a
@@ -87,8 +88,11 @@ final answer, structured telemetry events.
 │                                                          │
 │   plan-execute orchestrator (after planner exits)        │
 │         │                                                │
-│         ├── preflight: every edit's old_text matches     │
+│         ├── preflight: scope, anchors, proof contracts   │
 │         ├── executor: dispatch edits in order            │
+│         ├── post-write source_sanity on source edits     │
+│         ├── phase_evidence bundle for review-repair      │
+│         ├── review-repair gate with scoped repairs       │
 │         └── JSON telemetry stream (executor_edit, …)     │
 │                                                          │
 └──────────────────────┬───────────────────────────────────┘
@@ -172,6 +176,14 @@ The on-disk JSON schema mirrors `config.ExternalToolDef`
 (`internal/config/config.go`); idiom maps it to `workspace.ExternalTool`
 at load time (`internal/workspace/external_tool.go`). The JSON field
 for the parameter schema is `input_schema`.
+
+Set both `read_only: true` and `discovery: true` for external tools
+that only return lookup, trace, context, impact, or validation evidence.
+Scoped implementation lanes keep those declared project discovery tools
+available alongside context/language tools. Leave either flag unset for
+queue runners, generators, formatters, installers, or any tool that can
+mutate source, artifacts, daemon state, network state, or caches; idiom
+does not infer safety from a command or tool name.
 
 ### `.idiom/discovery/*` (auto-managed)
 
@@ -292,8 +304,9 @@ Phases shipped (`docs/reusability-design.md`):
 - Phase 1-2 — `idiom lane <mode>` wrapper with overlay seam
 - Phase 3 — canonical lane preambles/postambles via `go:embed`,
   project overlay at `.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`
-- Phase 4 — `.idiom/backends.json` schema with `default_coder` resolution,
-  plus the `idiom backend list` introspection command. The lane
+- Phase 4 — `.idiom/backends.json` schema with `default_profile` /
+  `default_coder` resolution, plus the `idiom backend list`
+  introspection command. The lane
   wrapper's `--coder` shortcut and plan-execute auto-route both pull
   the alias from this file when present, falling back to the legacy
   hardcoded `qwen3-coder-30b` so existing setups keep working.
@@ -527,6 +540,12 @@ audience and content:
   `idiom.plan_execute.*` events. Designed for downstream
   consumers (CI dashboards, lane-postflight tooling) that want a
   single stream without parsing the conversation log.
+- **Lane run ledger** (`<repo>/.idiom/lane-history.jsonl`) — one compact
+  append-only event per `idiom lane` dispatch. This is the first
+  diagnostic surface for repeated atom loops: it records the brief,
+  final state, exit code, selected queue pool when visible, session id,
+  model/tool calls, token totals, peak prompt size, duration, stop reason,
+  and degradation classes without storing raw prompts or file bodies.
 - **Telemetry stream** (`<repo>/logs/telemetry/<ts>-<cmd>-<pid>.jsonl`)
   — process-lifecycle records emitted by `internal/telemetry`:
   `session_start`, `process_start`, `process_exit`, `model_session`,
@@ -548,6 +567,14 @@ exits — emitted to stdout JSONL only when `--json` is set):
 | `idiom.plan_execute.executor_start` | `edits` | dispatching begins |
 | `idiom.plan_execute.executor_edit` | `step`, `total`, `path`, `status`, `error` | one edit dispatched (per edit) |
 | `idiom.plan_execute.executor_complete` | `total`, `succeeded`, `failed`, `duration_ms` | dispatch finished |
+
+Lane wrapper events:
+
+| Type | Fields | Meaning |
+|---|---|---|
+| `idiom.lane.atom_intake` | `state`, `dispatchable`, `scope_paths`, `existing_paths`, `missing_paths`, `invalid_paths`, `reasons`, `next_actions` | Pre-dispatch atom classification for atom-shaped briefs. Non-dispatchable states stop before lint, context-pack preload, queue acquisition, or model calls. |
+| `idiom.lane.run_ledger` | `mode`, `brief`, `title`, `exit_code`, `final_state`, `session_id`, `queue_pool`, `model_calls`, `tool_calls`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `peak_prompt_tokens`, `ctx_size`, `duration_ms`, `stop_reason`, `degradations` | Compact per-dispatch summary emitted when `idiom lane --json` is set and persisted in `.idiom/lane-history.jsonl` for every run. |
+| `idiom.lane.degraded` | `kind`, `details`, `mode` | Post-analysis detected a regression class such as read-only routing or no edit attempt. |
 
 Runner-side events emitted to the conversation log (non-exhaustive
 — grep `internal/agent/runner.go` for `RunEvent{Role:` and

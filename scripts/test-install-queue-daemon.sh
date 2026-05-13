@@ -61,6 +61,8 @@ restore() {
   fi
   if [[ -f "$snapshot_dir/config" ]]; then
     cp "$snapshot_dir/config" "$config_path"
+  else
+    rm -f "$config_path"
   fi
   if $pre_loaded; then
     launchctl bootstrap "gui/${uid}" "$plist_path" 2>/dev/null || true
@@ -91,6 +93,7 @@ echo "  ok"
 echo "test 2: install + daemon reachable"
 launchctl bootout "gui/${uid}/${agent_label}" 2>/dev/null || true
 rm -f "$plist_path"
+rm -f "$config_path"
 scripts/install-queue-daemon.sh >/tmp/idiom-queue-install-1.log 2>&1 \
   || { cat /tmp/idiom-queue-install-1.log; fail "first install failed"; }
 launchctl print "gui/${uid}/${agent_label}" >/dev/null 2>&1 \
@@ -106,6 +109,8 @@ done
 $ping_ok || fail "queue daemon never responded to ping after install"
 idiom queue status </dev/null 2>&1 | grep -q "qwen-35b" \
   || fail "queue status should list qwen-35b pool"
+idiom queue status </dev/null 2>&1 | grep -q "qwen-27b" \
+  || fail "queue status should list qwen-27b pool"
 idiom queue status </dev/null 2>&1 | grep -q "qwen-coder" \
   || fail "queue status should list qwen-coder pool"
 echo "  ok"

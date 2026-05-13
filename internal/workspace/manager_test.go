@@ -70,6 +70,45 @@ func TestSourceSanityRoutesKnownLanguagesThroughDiagnosticsTool(t *testing.T) {
 	}
 }
 
+func TestSourceSanityCatchesGDScriptFunctionWithoutBody(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "scripts", "panel_test.gd")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("extends Node\n\nfunc _assert_gte(value, minimum, label):\n\nfunc _run_case():\n\tpass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "source_sanity", Path: filepath.Join("scripts", "panel_test.gd")})
+
+	if result.Error == "" {
+		t.Fatalf("expected gdscript structural sanity failure, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "GDScript function declaration has no indented body") {
+		t.Fatalf("expected missing-body diagnostic, got %q", result.Error)
+	}
+}
+
+func TestSourceSanityAcceptsGDScriptFunctionBody(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "scripts", "panel_test.gd")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("extends Node\n\nfunc _assert_gte(value, minimum, label):\n\tif value < minimum:\n\t\tpush_error(label)\n\nfunc _run_case():\n\tpass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "source_sanity", Path: filepath.Join("scripts", "panel_test.gd")})
+
+	if result.Error != "" {
+		t.Fatalf("expected gdscript structural sanity to pass, got error=%v output=\n%s", result.Error, result.Output)
+	}
+}
+
 func TestCodeNavigateRoutesByPathLanguage(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nav\n\ngo 1.22\n"), 0o644); err != nil {
@@ -164,6 +203,27 @@ func TestGoReadSymbolWindowCapsAtMaxLines(t *testing.T) {
 	}
 	if end != 135 {
 		t.Fatalf("expected end capped at 120-line window (16+119), got %d", end)
+	}
+}
+
+func TestGoReadSymbolIgnoresMaxFileBytesForTargetedLines(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/target\n\ngo 1.22\n")
+	var b strings.Builder
+	b.WriteString("package test\n\n")
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&b, "// filler %03d keeps the target beyond MaxFileBytes\n", i)
+	}
+	b.WriteString("func TargetSymbol() string {\n\treturn \"ok\"\n}\n")
+	writeTestFile(t, filepath.Join(dir, "target.go"), b.String())
+
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, MaxFileBytes: 128})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_read_symbol", Pattern: "TargetSymbol"})
+	if result.Error != "" {
+		t.Fatalf("go_read_symbol returned error: %v", result.Error)
+	}
+	if !strings.Contains(result.Output, "func TargetSymbol() string") {
+		t.Fatalf("expected targeted symbol body beyond MaxFileBytes, got summary=%q output=\n%s", result.Summary, result.Output)
 	}
 }
 
@@ -282,9 +342,9 @@ func TestInstructionsPreferStructuredNarrowing(t *testing.T) {
 	})
 	instructions := mgr.Instructions()
 	for _, want := range []string{
-		"Use list_files, search_files, discovered handles, or structured symbol/navigation routes",
+		"Resolve a path-discovery capability, discovered handle, or structured symbol/navigation route",
 		"narrow with structured language-aware routes or discovered handles first",
-		"either answer directly or take one exact next tool step",
+		"either answer directly or take one exact evidence step tied to a named gap",
 	} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("expected instructions to contain %q, got:\n%s", want, instructions)
@@ -329,8 +389,35 @@ func TestResolveReadPathMissingFileSuggestsStructuredDiscovery(t *testing.T) {
 		t.Fatal("expected missing read path error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "structured symbol/navigation route") {
-		t.Fatalf("expected missing path error to mention structured symbol/navigation routes, got %q", msg)
+	if !strings.Contains(msg, "structured symbol/navigation") {
+		t.Fatalf("expected missing path error to mention structured symbol/navigation capabilities, got %q", msg)
+	}
+}
+
+func TestResolveReadTargetPrefersExplicitPathOverStaleHandle(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "old.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write old: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wanted.txt"), []byte("wanted\n"), 0o644); err != nil {
+		t.Fatalf("write wanted: %v", err)
+	}
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
+	mgr.PrimeDiscoveredPaths([]string{"old.txt"})
+	oldPath, err := mgr.ResolveHandlePath("f1")
+	if err != nil {
+		t.Fatalf("ResolveHandlePath f1: %v", err)
+	}
+	if filepath.Base(oldPath) != "old.txt" {
+		t.Fatalf("test setup expected f1 to point at old.txt, got %q", oldPath)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", ID: "f1", Path: "wanted.txt"})
+	if result.Error != "" {
+		t.Fatalf("read_file should prefer explicit path over stale handle, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "wanted") || strings.Contains(result.Output, "old") {
+		t.Fatalf("read_file should read explicit path content, got %#v", result)
 	}
 }
 
@@ -760,6 +847,95 @@ func TestWriteFileAndAppendRejectInvalidStructuredContent(t *testing.T) {
 	}
 	if got := readTestFile(t, jsonPath); got != original {
 		t.Fatalf("invalid append should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestWriteFileRejectsCompletedPlanningArtifactOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".planning", "atoms", "atom-a.md")
+	original := "# Atom A\n\n**Status**: complete\n\nExisting accepted spec.\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "write_file",
+		Path:    ".planning/atoms/atom-a.md",
+		Content: "# Atom A\n\nReplacement draft.\n",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "completed planning artifact") {
+		t.Fatalf("expected completed artifact overwrite rejection, got %#v", result)
+	}
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("completed artifact should remain unchanged\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestEditFileRejectsNewAdjacentDuplicateAssignment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sim.cpp")
+	original := "void tick() {\n    auto& c = entities_->colonists.data()[i];\n    c.cultural_work_mult = 1.0f;\n}\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+	mgr.MarkPathObserved("sim.cpp")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "sim.cpp",
+		OldText: "    c.cultural_work_mult = 1.0f;\n",
+		NewText: "    auto& c = entities_->colonists.data()[i];\n    c.cultural_work_mult = 1.0f;\n",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "adjacent duplicate code line") {
+		t.Fatalf("expected adjacent duplicate rejection, got %#v", result)
+	}
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("duplicate rejection should leave file unchanged\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestShellRejectsZeroSelectedDoctestCommand(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "zero_tests.sh")
+	writeTestFile(t, script, "#!/bin/sh\nprintf 'test cases: 0 | 0 passed | 0 failed\\n'\nexit 0\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatalf("chmod zero_tests.sh: %v", err)
+	}
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		Shell:                 "/bin/sh",
+		CommandTimeoutSeconds: 5,
+		MaxOutputBytes:        65536,
+		EnableShell:           true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "shell", Command: "./zero_tests.sh -tc=Missing"})
+	if result.Error == "" || !strings.Contains(result.Error, "selected zero tests") {
+		t.Fatalf("expected zero-selected test rejection, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "test cases: 0") {
+		t.Fatalf("shell output should preserve command output for debugging, got %#v", result)
+	}
+
+	mgr.cfg.MaxOutputBytes = 8
+	truncated := mgr.Execute(context.Background(), ToolRequest{Tool: "shell", Command: "./zero_tests.sh -tc=Missing"})
+	if truncated.Error == "" || !strings.Contains(truncated.Error, "selected zero tests") {
+		t.Fatalf("zero-test detection must use raw output before truncation, got %#v", truncated)
+	}
+	if !strings.Contains(truncated.Output, "[truncated]") {
+		t.Fatalf("small output cap should still truncate displayed output, got %#v", truncated)
+	}
+
+	control := mgr.Execute(context.Background(), ToolRequest{Tool: "shell", Command: "printf 'test cases: 0 | 0 passed | 0 failed\\n'"})
+	if control.Error != "" {
+		t.Fatalf("non-test command with matching text should not be reclassified, got %#v", control)
 	}
 }
 
@@ -1671,11 +1847,7 @@ func mustWriteOverview(t *testing.T, path, content string) {
 	}
 }
 
-// Review-lane read cap: when no explicit line range is given, large files
-// must be truncated and the summary must tell the model how to continue.
-// Prevents the "read full 1720-line runner.go into context" failure mode
-// documented in the review of logs/conversations/20260420-210101.488.jsonl.
-func TestReadFileCapsLargeFilesWhenNoRangeGiven(t *testing.T) {
+func TestReadFileReturnsFullLargeFilesWhenNoRangeGiven(t *testing.T) {
 	dir := t.TempDir()
 	lines := make([]string, 0, 700)
 	for i := 0; i < 700; i++ {
@@ -1688,17 +1860,15 @@ func TestReadFileCapsLargeFilesWhenNoRangeGiven(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("read_file failed: %#v", result)
 	}
-	if !strings.Contains(result.Summary, fmt.Sprintf("lines 1-%d", defaultLargeReadLineCap)) {
-		t.Fatalf("expected soft cap to truncate to lines 1-%d, summary=%q", defaultLargeReadLineCap, result.Summary)
+	if !strings.Contains(result.Summary, "lines 1-700") {
+		t.Fatalf("expected full range-less source read, summary=%q", result.Summary)
 	}
-	if !strings.Contains(result.Summary, "file has 700 lines total") {
-		t.Fatalf("expected hint to state full file size; summary=%q", result.Summary)
+	if strings.Contains(result.Summary, "file has 700 lines total") {
+		t.Fatalf("full source read should not include truncation hint; summary=%q", result.Summary)
 	}
 }
 
-// The cap must NOT apply when the caller explicitly asked for a larger
-// range — users can still opt in to full-file reads.
-func TestReadFileHonorsExplicitRangeOverSoftCap(t *testing.T) {
+func TestReadFileHonorsExplicitRangeForLargeFiles(t *testing.T) {
 	dir := t.TempDir()
 	lines := make([]string, 0, 700)
 	for i := 0; i < 700; i++ {
@@ -1712,7 +1882,7 @@ func TestReadFileHonorsExplicitRangeOverSoftCap(t *testing.T) {
 		t.Fatalf("read_file failed: %#v", result)
 	}
 	if !strings.Contains(result.Summary, "lines 1-700") {
-		t.Fatalf("explicit range must override soft cap; summary=%q", result.Summary)
+		t.Fatalf("explicit range should be preserved; summary=%q", result.Summary)
 	}
 	if strings.Contains(result.Summary, "file has ") && strings.Contains(result.Summary, "lines total") {
 		t.Fatalf("explicit range should not trigger truncation hint; summary=%q", result.Summary)

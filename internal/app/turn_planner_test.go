@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -171,6 +172,33 @@ func TestClassifyTurnRouteLetsModelUpgradeDirectQuestionFallback(t *testing.T) {
 	}
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestClassifyTurnRouteSkipsModelForDecisiveFallback(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"family":"direct_question"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	plan := m.classifyTurnRoute(context.Background(), "Update the README docs for the new workflow.", agent.BuildMode())
+	if plan.Family != "docs_edit" {
+		t.Fatalf("family = %q, want docs_edit", plan.Family)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("deterministic route should skip classifier model call, got %d calls", calls.Load())
 	}
 }
 

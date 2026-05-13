@@ -134,7 +134,7 @@ func emitText(reports []eval.PerfReport, aggregate bool, topN int, w io.Writer) 
 func printReport(r eval.PerfReport, w io.Writer) {
 	fmt.Fprintf(w, "── %s\n", firstNonEmpty(r.SessionID, r.LogPath))
 	if r.UserPrompt != "" {
-		fmt.Fprintf(w, "   user:         %s\n", trunc(r.UserPrompt, 120))
+		fmt.Fprintln(w, "   user:         [redacted]")
 	}
 	fmt.Fprintf(w, "   tool results: %d  (rejected %d)\n", r.ToolResults, r.RejectedActions)
 	if r.ModelCalls > 0 {
@@ -225,8 +225,8 @@ func printAggregate(a eval.PerfAggregate, topN int, w io.Writer) {
 		fmt.Fprintf(w, "worst offenders (by anti-pattern score, top %d):\n", topN)
 		for _, off := range a.WorstOffenders {
 			line := fmt.Sprintf("  score=%d  tools=%d  %s", off.AntiPatternScore, off.ToolResults, firstNonEmpty(off.SessionID, off.LogPath))
-			if off.UserPrompt != "" {
-				line += "   — " + trunc(off.UserPrompt, 80)
+			if off.LogExcerptRedacted {
+				line += " -- prompt excerpt redacted"
 			}
 			fmt.Fprintln(w, line)
 		}
@@ -291,11 +291,4 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
-}
-
-func trunc(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-3] + "..."
 }

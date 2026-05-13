@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/frontier"
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
@@ -36,11 +37,10 @@ var (
 	codeShapedLineRangePattern      = regexp.MustCompile(`(?i)\blines?\s+\d+(?:\s*[-–]\s*\d+)?\b`)
 )
 
-// delegatedReadOnlyProbeBudget is the soft cap on post-readiness probes the
-// child explorer lane is expected to use before answering. The
-// diminishing-returns nudge fires through followup count == 2 and stops
-// after; this is the same number, surfaced into the readiness contract so
-// the model and harness agree on the budget.
+// delegatedReadOnlyProbeBudget is the soft cap disclosed to post-readiness
+// read-only continuations. It is not a hard tool counter; the runner uses the
+// named-gap contract, diminishing-return nudges, loop fuses, and MaxToolSteps
+// for enforcement.
 const delegatedReadOnlyProbeBudget = 2
 
 type Runner struct {
@@ -102,6 +102,7 @@ func (r *Runner) Run(
 	implementationWriteOnlyRecoveryActive := false
 	requiredPathCompletionRecoveryActive := false
 	implementationWriteOnlyHiddenTools := make(map[string]bool)
+	scratchpadCloseoutNonWriteRejections := 0
 	// recoveryReadAllowanceUsed tracks paths that have already consumed
 	// their one bounded read during the current write-only recovery. The
 	// allowance lets an agent that exhausted its pre-write budget still
@@ -182,7 +183,7 @@ func (r *Runner) Run(
 		if writeOnlySurface {
 			allowed = implementationPreWriteAllowedTools(allowed)
 		} else if scopedEditSurface {
-			allowed = implementationScopedEditAllowedTools(allowed)
+			allowed = implementationScopedEditAllowedToolsWithRegistry(allowed, r.Workspace.ExternalToolsRegistry())
 		}
 		if len(turnHiddenTools) > 0 {
 			filtered := make([]string, 0, len(allowed))
@@ -223,6 +224,7 @@ func (r *Runner) Run(
 	metrics := runnerMetrics{startedAt: time.Now()}
 	stopReason := "completed"
 	budgetExhausted := false
+	var autonomyRecorder *runnerAutonomyRecorder
 	acceptedAnswerSignalsEmitted := false
 	completionStatusEmitted := false
 	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
@@ -230,15 +232,26 @@ func (r *Runner) Run(
 		r.emitCompletionStatus(status, reason, blockerKind, results, userVisibleBlocker)
 	}
 	defer func() {
+		if autonomyRecorder != nil {
+			autonomyRecorder.emitLoopCloseout(stopReason)
+			autonomyRecorder.emitBudgetGate(policy, metrics, stopReason, budgetExhausted)
+		}
 		r.emitBudgetLedger(policy, metrics, stopReason, budgetExhausted)
 	}()
 	emitAcceptedAnswerSignalsOnce := func(answer string) {
 		if acceptedAnswerSignalsEmitted || strings.TrimSpace(answer) == "" {
 			return
 		}
-		if blockerKind, _ := r.finalAnswerBlockerKind(answer, collectedResults); blockerKind != "" && completionStatusEmitted {
-			acceptedAnswerSignalsEmitted = true
-			return
+		if blockerKind, _ := r.finalAnswerBlockerKind(answer, collectedResults); blockerKind != "" {
+			if autonomyRecorder != nil {
+				autonomyRecorder.emitCompletionGate(autonomy.PolicyReject, blockerKind, collectedResults)
+			}
+			if completionStatusEmitted {
+				acceptedAnswerSignalsEmitted = true
+				return
+			}
+		} else if autonomyRecorder != nil {
+			autonomyRecorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", collectedResults)
 		}
 		r.emitAcceptedAnswerSignals(answer, collectedResults)
 		acceptedAnswerSignalsEmitted = true
@@ -288,6 +301,10 @@ func (r *Runner) Run(
 		rebuildTools()
 	}
 	visibleRuntimeBrief := r.visibleBriefForToolSurface(r.RuntimeBrief, collectedResults)
+	autonomyRecorder = newRunnerAutonomyRecorder(r, policy, visibleRuntimeBrief, collectedResults)
+	if autonomyRecorder != nil {
+		autonomyRecorder.emitContractStarted(visibleRuntimeBrief)
+	}
 	if initialBrief := workerruntime.RenderInitialRuntimeBrief(visibleRuntimeBrief); strings.TrimSpace(initialBrief) != "" {
 		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: initialBrief})
 	}
@@ -362,6 +379,13 @@ func (r *Runner) Run(
 		})
 		update := executionState.applyResult(req, result, toolRequestKey(req), r.Workspace, &requestBudget)
 		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
+		if autonomyRecorder != nil && update.VerificationState != "" {
+			decision := autonomy.PolicyAllow
+			if update.VerificationState == "failed" {
+				decision = autonomy.PolicyReject
+			}
+			autonomyRecorder.emitVerificationGate(req, decision, "verification_result_"+update.VerificationState, update.VerificationState)
+		}
 		answer := synthesizeVerificationOnlyAnswer(req, result)
 		emitAcceptedAnswerSignalsOnce(answer)
 		return finish(answer, nil, "verification_auto_answered", false)
@@ -436,6 +460,39 @@ func (r *Runner) Run(
 			continue
 		}
 		if !ok {
+			if len(changedPathsFromToolResults(collectedResults)) == 0 {
+				if req, result, salvaged := r.autoSalvageMarkdownDeliverable(reply); salvaged {
+					metrics.ToolCalls++
+					if onToolRequest != nil {
+						profile := workspace.DiscoveryProfileForRequest(req)
+						onToolRequest(ToolRequestEvent{
+							Step:           stepNumber,
+							Agent:          r.agentName(),
+							Raw:            marshalToolRequestRaw(req),
+							Request:        req,
+							Mode:           r.Workspace.Mode(),
+							Broad:          workspace.IsBroadInspectionRequest(req),
+							Narrowing:      workspace.IsNarrowingRequest(req),
+							Action:         toolActionClass(req),
+							DiscoveryClass: profile.Class,
+							DiscoveryScope: profile.Scope,
+							DiscoveryCost:  profile.Cost,
+						})
+					}
+					recorder.activeToolCall = activeToolCall
+					recorder.recordWithOptions(stepNumber, req, result, "auto_salvage_markdown_deliverable", runnerRecordOptions{
+						TrackProgress:  true,
+						ResetRejected:  true,
+						SetLastToolKey: true,
+					})
+					r.emitEvent(RunEvent{
+						Role:    "auto_salvage_markdown_deliverable",
+						Content: fmt.Sprintf("model emitted a single-file markdown deliverable as final-answer text; recorded it through write_file for %s", strings.TrimSpace(req.Path)),
+					})
+					emitCompletionStatus("completed", "auto_salvage_markdown_deliverable", "", collectedResults, false)
+					return finish(fmt.Sprintf("Done. Wrote %s via auto-salvage after the model emitted the deliverable as final-answer text.", strings.TrimSpace(req.Path)), nil, "auto_salvage_markdown_deliverable", false)
+				}
+			}
 			result, rejected := workspace.ToolResult{}, false
 			if requiredPathCompletionRecoveryActive {
 				result, rejected = r.requiredPathCompletionRecoveryRejection(reply, collectedResults)
@@ -450,6 +507,9 @@ func (r *Runner) Run(
 				// the same message N times. Generic — independent of
 				// task family or project.
 				result.Error = escalateCompletionGateMessage(result.Error, priorGateRejections)
+				if autonomyRecorder != nil {
+					autonomyRecorder.emitCompletionGate(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults)
+				}
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
 				if prompt, hideReads, ok := r.completionGateRecoveryPrompt(collectedResults); ok && priorGateRejections == 0 {
 					opts = completionGateRecoveryChatOptions(opts, r.RuntimeBrief)
@@ -563,6 +623,35 @@ func (r *Runner) Run(
 			}
 			continue
 		}
+		if summary, errorText, prompt, target, reject := r.scratchpadDeliverableCloseoutNonWriteRecovery(req, collectedResults); reject {
+			result := workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: summary,
+				Error:   errorText,
+			}
+			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+			scratchpadCloseoutNonWriteRejections++
+			if scratchpadCloseoutNonWriteRejections >= 2 {
+				blockerKind := "scratchpad_deliverable_closeout_non_write_repeated"
+				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+				answer := fmt.Sprintf("<<QUESTION>>: completion gate rejected a prose-only response for %s, but the model kept selecting non-write tools. The deliverable-write contract must be satisfied, recording uncertainty in the file, or the lane must be rerun with corrected evidence.", target)
+				return finish(answer, nil, blockerKind, true)
+			}
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_closeout_recovery", Content: prompt})
+			continue
+		}
+		if summary, errorText, prompt, reject := r.scratchpadDeliverableSourceDiscoveryRecovery(req, collectedResults); reject {
+			result := workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: summary,
+				Error:   errorText,
+			}
+			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_source_discovery_recovery", Content: prompt})
+			continue
+		}
 		if summary, errorText, prompt, reject := r.implementationScopedDisallowedToolRecovery(req, collectedResults); reject {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
@@ -613,7 +702,7 @@ func (r *Runner) Run(
 				result := workspace.ToolResult{
 					Tool:    req.Tool,
 					Summary: "Write-only recovery blocked non-write tool",
-					Error:   fmt.Sprintf("%s is not available while read/search budget recovery is active and required edit paths remain unchanged. Use an available write tool, or answer with <<QUESTION>> and the exact path-specific blocker.", strings.TrimSpace(req.Tool)),
+					Error:   fmt.Sprintf("%s is not available while write-ready recovery is active and required edit paths remain unchanged. Use an available write tool, or answer with <<QUESTION>> and the exact path-specific blocker.", strings.TrimSpace(req.Tool)),
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 				if answer, ok := r.writeOnlyRecoveryBlockerAnswer(collectedResults); ok {
@@ -707,6 +796,9 @@ func (r *Runner) Run(
 		currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		identicalCallRun := requestBudget.noteFingerprint(currentFingerprint)
 		if identicalCallRun >= 3 {
+			if autonomyRecorder != nil {
+				autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
+			}
 			if r.DoomLoopGate != nil {
 				r.emitEvent(RunEvent{Role: "doom_loop_guard", Content: fmt.Sprintf("model repeated %s %d times — approval required", req.Tool, identicalCallRun)})
 				if r.DoomLoopGate(req, identicalCallRun) {
@@ -762,8 +854,8 @@ func (r *Runner) Run(
 						answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
 						return finish(answer, err, "post_readiness_no_gap_repeated", true)
 					}
-					// Note: the consumeRejectedPostReadinessProbe budget cap was
-					// removed (see runnerRequestBudgetState.readBudgetDecision).
+					// Note: the hard post-readiness counter was removed (see
+					// runnerRequestBudgetState.readBudgetDecision).
 					// The schema rejection below still nudges the model toward
 					// answer-now-or-named-gap; doom_loop_guard + MaxToolSteps
 					// handle pathological loops.
@@ -779,7 +871,7 @@ func (r *Runner) Run(
 				return finish(answer, err, "post_readiness_no_gap", true)
 			}
 			if summary, errorText, rejected := invalidPostReadinessGap(scope, r.RuntimeBrief.Objective, req, collectedResults); rejected {
-				// Note: per-rejection budget cap removed (see
+				// Note: the per-rejection counter was removed (see
 				// runnerRequestBudgetState.readBudgetDecision). The invalid-
 				// gap rejection itself remains as a per-call schema nudge.
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
@@ -918,7 +1010,7 @@ func (r *Runner) Run(
 				activeToolCall,
 				req,
 				"Additional broad inspection rejected",
-				"explore mode already has a workspace overview for this turn. Use the existing overview plus search_files, search_content, or read_file on discovered handles instead of requesting another broad listing.",
+				"explore mode already has a workspace overview for this turn. Available contract outcomes are an answer from the existing overview, file-name search, exact text search, or bounded reads on discovered handles instead of another broad listing.",
 			)
 			if done {
 				return finish(answer, err, "broad_inspection_budget_exhausted", true)
@@ -950,11 +1042,6 @@ func (r *Runner) Run(
 			continue
 		}
 		if executionState.shouldConsumeSearchHitBeforeMoreSearch(req) {
-			if tool := strings.TrimSpace(req.Tool); (tool == "search_files" || tool == "search_content") && !turnHiddenTools[tool] {
-				turnHiddenTools[tool] = true
-				rebuildTools()
-				r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after chained-search gate fire", tool)})
-			}
 			answer, err, done := controller.rejectTool(
 				stepNumber,
 				activeToolCall,
@@ -1033,8 +1120,28 @@ func (r *Runner) Run(
 			continue
 		}
 		permissionDecision := r.PermissionPolicy.Decide(req)
+		if autonomyRecorder != nil {
+			autonomyRecorder.emitIntentClassified(req)
+			autonomyRecorder.emitPathRolesResolved(req)
+		}
 		if permissionDecision.Decision != PermissionAllow {
 			r.emitEvent(marshalRunEvent("permission_decision", permissionDecision))
+			if autonomyRecorder != nil {
+				decision := autonomy.PolicyDeny
+				resultLabel := "denied"
+				if permissionDecision.Decision == PermissionAsk {
+					decision = autonomy.PolicyAsk
+					resultLabel = "approval_required"
+				}
+				autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+					Decision:         decision,
+					ReasonCode:       "permission_policy",
+					ApprovalRequired: permissionDecision.Decision == PermissionAsk,
+					Result:           resultLabel,
+					ErrorClass:       "permission_policy",
+					Source:           "runner_permission_policy",
+				})
+			}
 			result := permissionDecision.ToolResult()
 			recorder.activeToolCall = activeToolCall
 			recorder.recordWithOptions(stepNumber, req, result, "permission_denied", runnerRecordOptions{
@@ -1048,6 +1155,14 @@ func (r *Runner) Run(
 			continue
 		}
 		r.emitEvent(marshalRunEvent("permission_decision", permissionDecision))
+		if autonomyRecorder != nil {
+			autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+				Decision:   autonomy.PolicyAllow,
+				ReasonCode: "permission_policy",
+				Result:     "no_approval_needed",
+				Source:     "runner_permission_policy",
+			})
+		}
 		if strings.TrimSpace(req.Tool) == "task" {
 			if r.DisableTaskTool {
 				answer, err, done := controller.rejectTool(
@@ -1140,6 +1255,16 @@ func (r *Runner) Run(
 					SetLastToolKey:          true,
 				})
 				if strings.TrimSpace(guarded.Summary) == "Write approval required" {
+					if autonomyRecorder != nil {
+						autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+							Decision:         autonomy.PolicyAsk,
+							ReasonCode:       "write_approval_required",
+							ApprovalRequired: true,
+							Result:           "approval_required",
+							ErrorClass:       "approval_guard",
+							Source:           "runner_pre_execute_guard",
+						})
+					}
 					answer, err := controller.completeWithoutMoreTools()
 					return finish(answer, err, "write_approval_required", false)
 				}
@@ -1173,6 +1298,16 @@ func (r *Runner) Run(
 			if exactAnchorWriteOnlyActive && workspace.IsWorkspaceWriteTool(req.Tool) {
 				exactAnchorWriteFailures++
 			}
+			if autonomyRecorder != nil {
+				autonomyRecorder.emitWriteGate(req, autonomy.PolicyReject, "required_edit_scope_rejected", mapKeys(changedPathsFromToolResults(collectedResults)))
+				autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+					Decision:   autonomy.PolicyDeny,
+					ReasonCode: "required_edit_scope_rejected",
+					Result:     "denied",
+					ErrorClass: "required_edit_scope",
+					Source:     "runner_required_edit_scope",
+				})
+			}
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if exactAnchorWriteOnlyActive && (rejectionRecoveryNudgeUsed || exactAnchorWriteFailures >= 3) {
 				result := workspace.ToolResult{Tool: req.Tool, Summary: summary, Error: errorText}
@@ -1196,6 +1331,9 @@ func (r *Runner) Run(
 		}
 
 		if summary, errorText, reject := sourceEditVerificationRejection(req, r.RuntimeBrief, collectedResults); reject {
+			if autonomyRecorder != nil {
+				autonomyRecorder.emitVerificationGate(req, autonomy.PolicyReject, "source_edit_verification_required", "pending")
+			}
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "source_edit_verification_required", true)
@@ -1229,6 +1367,9 @@ func (r *Runner) Run(
 
 		if executionState.shouldRequireVerification(req, r.RuntimeBrief) {
 			summary, errorText := verificationRequiredAfterWritesMessage(r.RuntimeBrief, executionState.writesSinceVerification)
+			if autonomyRecorder != nil {
+				autonomyRecorder.emitVerificationGate(req, autonomy.PolicyReject, "verification_required_after_writes", "pending")
+			}
 			answer, err, done := controller.rejectTool(
 				stepNumber,
 				activeToolCall,
@@ -1247,6 +1388,18 @@ func (r *Runner) Run(
 			result = guard.Result
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_write_guard",
+				Content: guard.Reason,
+			})
+		} else if guard := r.preflightPlanThenExecuteSubmitPlanCoverageGuard(req); guard.Intercepted {
+			result = guard.Result
+			r.emitEvent(RunEvent{
+				Role:    "plan_then_execute_plan_guard",
+				Content: guard.Reason,
+			})
+		} else if guard := r.preflightPlanThenExecutePlannerToolGuard(req); guard.Intercepted {
+			result = guard.Result
+			r.emitEvent(RunEvent{
+				Role:    "plan_then_execute_tool_guard",
 				Content: guard.Reason,
 			})
 		} else if intercept := r.preflightVerificationOnAlreadyEditedPath(req, collectedResults); intercept.Intercepted {
@@ -1287,12 +1440,22 @@ func (r *Runner) Run(
 			SetLastToolKey: true,
 		})
 		update := executionState.applyResult(req, result, currentFingerprint, r.Workspace, &requestBudget)
+		if autonomyRecorder != nil && workspaceWriteResultCompleted(req, result) {
+			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", mapKeys(changedPathsFromToolResults([]workspace.ToolResult{result})))
+		}
 		if update.ResetVerificationGuards {
 			clearVerificationGateFingerprints(requestBudget.rejectedFingerprints)
 			clearRunnerStringIntMap(rejectedActions)
 			rebuildTools()
 		}
 		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
+		if autonomyRecorder != nil && update.VerificationState != "" {
+			decision := autonomy.PolicyAllow
+			if update.VerificationState == "failed" {
+				decision = autonomy.PolicyReject
+			}
+			autonomyRecorder.emitVerificationGate(req, decision, "verification_result_"+update.VerificationState, update.VerificationState)
+		}
 		if exactAnchorWriteOnlyActive && workspaceWriteResultCompleted(req, result) {
 			exactAnchorWriteOnlyActive = false
 			releaseExactAnchorReadTools(turnHiddenTools, exactAnchorHiddenTools)
@@ -1314,6 +1477,10 @@ func (r *Runner) Run(
 			releaseHiddenTools(turnHiddenTools, implementationWriteOnlyHiddenTools)
 			rebuildTools()
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "non-write tools restored after required implementation writes completed"})
+		}
+		if prompt, ok := r.scratchpadDeliverableFailedEvidenceNudge(req, result, collectedResults); ok {
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_failed_evidence_nudge", Content: prompt})
 		}
 		if checklist := r.requiredEditPathsProgressMessage(req, result, collectedResults); checklist != "" {
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: checklist})
@@ -1678,13 +1845,13 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 			if exactAnchorPreWriteSurfaceActive(brief, results) {
 				readiness.FurtherReadsRequire = "no further reads before the first exact-anchor write; edit an in-scope required path or report <<QUESTION>> with the stale or missing exact anchor"
 			} else {
-				readiness.FurtherReadsRequire = "only one bounded required-path source read with named_gap for an exact edit-safety fact; otherwise edit an in-scope required path or report <<QUESTION>> with the exact path-specific blocker"
+				readiness.FurtherReadsRequire = "only semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact; otherwise edit an in-scope required path or report <<QUESTION>> with the exact path-specific blocker"
 			}
 		case len(missing) > 0:
 			readiness.ReadyToAnswer = false
 			readiness.ReadyToWrite = true
 			addOpen("required_edit_paths_remaining: " + strings.Join(missing, ", "))
-			readiness.FurtherReadsRequire = "resolve each remaining required path with a write, one bounded required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> naming the exact blocker"
+			readiness.FurtherReadsRequire = "resolve each remaining required path with a write, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> naming the exact blocker"
 		case len(brief.RequiredEditPaths) > 0:
 			addClosed("required_edit_paths_changed")
 		case len(changed) == 0 && targetPacketSupportsWrite(brief):
@@ -1715,7 +1882,7 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 				readiness.ReadyToAnswer = false
 				readiness.ReadyToVerify = true
 				addOpen("planner_owned_source_lane_sanity_pending")
-				readiness.FurtherReadsRequire = "source_sanity for the changed source path, or a concrete lane-sanity blocker if source sanity is unavailable"
+				readiness.FurtherReadsRequire = "source-sanity for the changed source path, or a concrete lane-sanity blocker if source sanity is unavailable"
 			} else {
 				readiness.ReadyToAnswer = false
 				readiness.ReadyToVerify = true
@@ -1771,24 +1938,24 @@ func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results [
 	case "latest_log_tail":
 		brief.Constraints = mergeRunnerStateStrings([]string{"latest_log_tail_phase"}, brief.Constraints)
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"read the newest selected log tail now",
-			"stay on the selected log until you can cite a weird decision or declare the missing datum",
+			"selected-log tail evidence is required before source inspection or broader log expansion",
+			"the selected log remains the evidence boundary until it supports a weird decision or an explicit missing datum",
 		}, brief.RequiredNext)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
-			"additional workspace discovery before the first selected-log read",
+			"additional workspace discovery before selected-log tail evidence",
 		}, brief.InvalidActions)
 		brief.SearchPolicy = mergeRunnerStateStrings([]string{
-			"read the selected log tail before any deeper search",
+			"selected-log tail evidence must precede deeper search or source inspection",
 		}, brief.SearchPolicy)
 	case "selected_log_analysis":
 		brief.Constraints = mergeRunnerStateStrings([]string{"selected_log_analysis_phase"}, brief.Constraints)
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
 			"answer from the selected log if the weird decision is already clear",
-			"otherwise stay inside the selected log with one targeted search_content before answering",
+			"otherwise close one named missing selected-log fact before answering",
 		}, brief.RequiredNext)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
 			"source-code inspection outside the selected log before answering",
-			"another blind read_file on the selected log before a concrete hit",
+			"another blind selected-log reread before a concrete marker",
 		}, brief.InvalidActions)
 		brief.SearchPolicy = mergeRunnerStateStrings([]string{
 			"stay inside the selected log until the answer is supported or the gap is explicit",
@@ -1796,13 +1963,13 @@ func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results [
 	case "failure_window":
 		brief.Constraints = mergeRunnerStateStrings([]string{"failure_window_phase"}, brief.Constraints)
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"read the bounded window around the concrete failure hit now",
+			"bounded failure-window evidence is required around the concrete failure hit",
 		}, brief.RequiredNext)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
-			"more log searching before reading the failure window",
+			"more log searching before failure-window evidence",
 		}, brief.InvalidActions)
 		brief.SearchPolicy = mergeRunnerStateStrings([]string{
-			"extract the failure window immediately after a concrete hit",
+			"failure-window evidence must follow a concrete hit before broader log expansion",
 		}, brief.SearchPolicy)
 	case "log_analysis":
 		brief.Constraints = mergeRunnerStateStrings([]string{"log_analysis_phase"}, brief.Constraints)
@@ -1814,11 +1981,11 @@ func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results [
 	case "source_evidence":
 		brief.Constraints = mergeRunnerStateStrings([]string{"source_evidence_phase"}, brief.Constraints)
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"inspect one non-target implementation file or symbol before the named target",
-			"after concrete non-target evidence, read one bounded window of the named target",
+			"non-target implementation evidence is required before named-target evidence",
+			"after concrete non-target evidence, one bounded named-target evidence window satisfies the target-entry contract",
 		}, brief.RequiredNext)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
-			"open-ended read_file on named target refs before source evidence",
+			"open-ended named-target read before source evidence",
 		}, brief.InvalidActions)
 		brief.SearchPolicy = mergeRunnerStateStrings([]string{
 			"prefer semantic inspection of discovered implementation files before target reads",
@@ -1826,8 +1993,8 @@ func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results [
 	case "target_entry":
 		brief.Constraints = mergeRunnerStateStrings([]string{"first_target_read_pending"}, brief.Constraints)
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"read one bounded window of the named target now",
-			"stay on the named target for the next step instead of resuming source discovery",
+			"one bounded named-target evidence window is required before renewed source discovery",
+			"the named target remains the evidence boundary for the next step",
 		}, brief.RequiredNext)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
 			"additional source discovery before the first target read",
@@ -1838,29 +2005,15 @@ func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results [
 	case "target_inspection":
 		brief.Constraints = mergeRunnerStateStrings([]string{"target_inspection_phase"}, brief.Constraints)
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"make the edit in the named target if the change is already clear",
-			"otherwise use search_content or a narrow read_file scoped to the named target only",
+			"make the edit in the named target once the change is supported by the target evidence",
+			"additional inspection is valid only for a named missing target fact and must stay scoped to named-target evidence",
 		}, brief.RequiredNext)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
 			"source discovery outside the named target during target inspection",
-			"open-ended read_file on the named target",
+			"open-ended target-body read during target inspection",
 		}, brief.InvalidActions)
 		brief.SearchPolicy = mergeRunnerStateStrings([]string{
-			"prefer target-scoped follow-up over renewed source discovery",
-		}, brief.SearchPolicy)
-	case "target_write":
-		brief.Constraints = mergeRunnerStateStrings([]string{"target_write_phase"}, brief.Constraints)
-		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"edit_file in the named target now or report a concrete blocker",
-			"if one exact anchor is missing, stay inside the named target with search_content or a narrow read_file",
-		}, brief.RequiredNext)
-		brief.InvalidActions = mergeRunnerStateStrings([]string{
-			"source discovery outside the named target after target inspection",
-			"broad workspace discovery after target inspection",
-			"open-ended read_file on the named target",
-		}, brief.InvalidActions)
-		brief.SearchPolicy = mergeRunnerStateStrings([]string{
-			"finish from the named target instead of reopening discovery",
+			"prefer target-scoped follow-up over renewed source discovery; do not keep reading once the edit is clear",
 		}, brief.SearchPolicy)
 	}
 	return workerruntime.NormalizeRuntimeBrief(brief)
@@ -1868,6 +2021,27 @@ func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results [
 
 func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
 	if !runnerBriefRequiresMutation(brief) || len(brief.RequiredEditPaths) == 0 {
+		return brief
+	}
+	if planThenExecutePlannerBrief(brief) {
+		if successfulSubmitPlanResultCount(results) > 0 {
+			return brief
+		}
+		brief.Constraints = mergeRunnerStateStrings([]string{"plan_then_execute_submit_plan_pending"}, brief.Constraints)
+		brief.RequiredNext = mergeRunnerStateStrings([]string{
+			"submit_plan with one ordered edit entry for every required_edit_paths entry, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker",
+		}, brief.RequiredNext)
+		brief.InvalidActions = mergeRunnerStateStrings([]string{
+			"final answer before submit_plan succeeds unless it is a source-satisfied closeout with current-state evidence for every required path",
+			"per-edit write tool in plan-execute planner phase",
+			"shell/git/source-sanity verification in plan-execute planner phase",
+			"new orientation read/search after enough anchor evidence to draft submit_plan",
+		}, brief.InvalidActions)
+		brief.SearchPolicy = mergeRunnerStateStrings([]string{
+			"required_edit_paths plus packet evidence define the submit_plan scope",
+			"if current source already matches requested final state, close as source-satisfied instead of submitting stale edits",
+			"use reads only for exact anchor confirmation before submit_plan",
+		}, brief.SearchPolicy)
 		return brief
 	}
 	changed := changedPathsFromToolResults(results)
@@ -1878,7 +2052,7 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 		}
 		if exactAnchorPreWriteSurfaceActive(brief, results) {
 			brief.RequiredNext = mergeRunnerStateStrings([]string{
-				"edit a required path now from the exact target-packet anchor",
+				"required-path write capability from the exact target-packet anchor",
 				"answer <<QUESTION>> only if the supplied exact anchor is stale or missing",
 			}, brief.RequiredNext)
 			brief.InvalidActions = mergeRunnerStateStrings([]string{
@@ -1889,15 +2063,15 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 			}, brief.SearchPolicy)
 		} else {
 			brief.RequiredNext = mergeRunnerStateStrings([]string{
-				"edit a required path from the packet evidence, take one bounded required-path source read with named_gap for an exact edit-safety fact, or answer <<QUESTION>> with the exact path-specific blocker",
+				"resolve a required path with packet evidence, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or answer <<QUESTION>> with the exact path-specific blocker",
 			}, brief.RequiredNext)
 			brief.InvalidActions = mergeRunnerStateStrings([]string{
 				"orientation read/search after required edit paths and packet evidence without a named missing fact",
-				"read/search outside required edit paths before resolving the required-path contract",
+				"raw read/search outside required edit paths before resolving the required-path contract",
 				"task_ledger planning before the first required-path write",
 			}, brief.InvalidActions)
 			brief.SearchPolicy = mergeRunnerStateStrings([]string{
-				"required_edit_paths plus packet evidence establish the edit scope; source inspection is bounded to required paths and named edit-safety gaps",
+				"required_edit_paths plus packet evidence establish the edit scope; prefer semantic/context/declared project discovery for named edit-safety gaps before raw source reads",
 			}, brief.SearchPolicy)
 		}
 		return brief
@@ -1905,7 +2079,7 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 	if len(missing) > 0 {
 		brief.Constraints = mergeRunnerStateStrings([]string{"implementation_required_paths_remaining"}, brief.Constraints)
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"edit each remaining required path, take one bounded required-path source read with named_gap for an exact edit-safety fact, or report <<QUESTION>> with the exact blocker for that path",
+			"resolve each remaining required path with an edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker for that path",
 		}, brief.RequiredNext)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
 			"final answer while required edit paths remain unchanged",
@@ -1931,12 +2105,12 @@ func runnerVisibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBrief, re
 
 func (r *Runner) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
 	visible := runnerVisibleBriefForToolSurface(brief, results)
-	if r == nil || r.Workspace == nil || (!implementationPreWriteToolSurfaceActive(brief, results) && !implementationScopedEditSurfaceActive(brief, results)) || len(visible.AllowedTools) > 0 {
+	if r == nil || r.Workspace == nil || (!implementationPreWriteToolSurfaceActive(brief, results) && !implementationScopedEditSurfaceActive(brief, results)) {
 		return visible
 	}
 	allowed := implementationPreWriteAllowedTools(r.advertisedAllowedTools(r.Workspace.AllowedTools()))
 	if implementationScopedEditSurfaceActive(brief, results) {
-		allowed = implementationScopedEditAllowedTools(r.advertisedAllowedTools(r.Workspace.AllowedTools()))
+		allowed = implementationScopedEditAllowedToolsWithRegistry(r.advertisedAllowedTools(r.Workspace.AllowedTools()), r.Workspace.ExternalToolsRegistry())
 	}
 	visible.AllowedTools = allowed
 	visible.ToolManifest = nil
@@ -1947,6 +2121,9 @@ func (r *Runner) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBri
 }
 
 func exactAnchorPreWriteSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if planThenExecutePlannerBrief(brief) {
+		return false
+	}
 	if !exactAnchorImplementationActive(brief) {
 		return false
 	}
@@ -1963,7 +2140,7 @@ func implementationPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) 
 	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
 	brief.Constraints = mergeRunnerStateStrings([]string{"implementation_prewrite_write_only"}, brief.Constraints)
 	brief.RequiredNext = mergeRunnerStateStrings([]string{
-		"call an allowed write tool on an exact-anchor required edit path now",
+		"exact-anchor required-path write capability",
 		"answer <<QUESTION>> only if the packet lacks the exact anchor needed for that required path",
 	}, brief.RequiredNext)
 	brief.InvalidActions = mergeRunnerStateStrings([]string{
@@ -1983,18 +2160,19 @@ func implementationScopedEditRuntimeBrief(brief workerruntime.WorkerRuntimeBrief
 	if len(allowed) > 0 {
 		brief.ToolManifest = workerruntime.BuildToolManifest(allowed)
 	}
-	brief.RequiredTools = []string{"edit_file_or_apply_patch", "read_file_or_code_navigate_for_named_gap"}
+	brief.RequiredTools = []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"}
 	brief.Constraints = mergeRunnerStateStrings([]string{"implementation_required_path_scoped_surface"}, brief.Constraints)
 	brief.RequiredNext = mergeRunnerStateStrings([]string{
-		"choose an allowed edit on a required path, one bounded required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker",
+		"required-path edit, semantic/context/project discovery or narrow required-path read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker",
 	}, brief.RequiredNext)
 	brief.InvalidActions = mergeRunnerStateStrings([]string{
 		"task_ledger or broad discovery before resolving the required-path contract",
-		"read/search outside required edit paths before resolving the required-path contract",
+		"raw read/search outside required edit paths before resolving the required-path contract",
 	}, brief.InvalidActions)
 	brief.SearchPolicy = mergeRunnerStateStrings([]string{
 		"required edit paths define the implementation scope",
-		"source inspection is only for named edit-safety gaps on required paths",
+		"prefer context, language, and declared read-only project discovery tools for named edit-safety gaps before raw source reads",
+		"raw source reads are only for exact anchor confirmation on required paths or explicit evidence paths",
 	}, brief.SearchPolicy)
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
@@ -2009,7 +2187,7 @@ func exactAnchorPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) wor
 	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
 	brief.Constraints = mergeRunnerStateStrings([]string{"exact_anchor_prewrite_write_first"}, brief.Constraints)
 	brief.RequiredNext = mergeRunnerStateStrings([]string{
-		"call edit_file or apply_patch with the supplied exact target-packet anchor now",
+		"exact-anchor write capability with the supplied target-packet anchor",
 		"answer <<QUESTION>> only if the supplied anchor is missing or stale",
 	}, brief.RequiredNext)
 	brief.InvalidActions = mergeRunnerStateStrings([]string{
@@ -2067,10 +2245,7 @@ func evidenceFirstMutationPhase(brief workerruntime.WorkerRuntimeBrief, results 
 	if targetReadCount == 0 {
 		return "target_entry"
 	}
-	if targetReadCount < maxEvidenceFirstTargetReadWindows {
-		return "target_inspection"
-	}
-	return "target_write"
+	return "target_inspection"
 }
 
 func buildRunnerNextActionState(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief) runnerNextActionState {
@@ -2100,6 +2275,9 @@ func buildRunnerNextActionState(agent string, step int, reason string, req works
 		ResultOutputChars: len(result.Output),
 		EvidencePaths:     promptEvidencePathsFromToolResults(results, 6),
 	}
+	if status := scratchpadDeliverableFailedEvidenceStatus(brief, results); status != "" {
+		state.EvidenceStatus = []string{status}
+	}
 	if strings.HasPrefix(strings.TrimSpace(agent), "child:") && delegatedReadOnlyClosureReady(agent, brief, results) {
 		state.EvidencePaths = delegatedClosureEvidencePaths(brief.Objective, results, 6)
 	}
@@ -2111,6 +2289,7 @@ func buildRunnerNextActionState(agent string, step int, reason string, req works
 	state.NextValidActions = mergeRunnerStateStrings(brief.RequiredNext, guidance.ValidNext)
 	state = applyDelegatedReadOnlyClosureBias(state, agent, brief, results)
 	state = applyPostChildClosureBias(state, agent, results)
+	state = applyScratchpadDeliverableCloseoutBias(state, brief, results)
 	state = applyClosurePromptRefinement(state)
 	state.StateSummary = runnerStateSummary(state)
 	return state
@@ -2130,6 +2309,14 @@ func buildRunnerFailureFeedbackPacket(agent string, step int, reason string, req
 		Objective:                 brief.Objective,
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
 	})
+	if scratchpadFailedEvidenceFeedbackApplies(brief, req, result, results) {
+		recovery.DoNotRepeat = appendUniqueRunnerState(recovery.DoNotRepeat, "same failed evidence lookup through a lower-level or raw read")
+		recovery.RequiredNext = appendUniqueRunnerState(recovery.RequiredNext, "record the failed, stale, ambiguous, or out-of-scope evidence as a deliverable gap")
+		recovery.ValidNext = []string{
+			"write the non-source deliverable with the evidence gap recorded",
+			"answer with <<QUESTION>> only if the evidence gap makes the deliverable impossible",
+		}
+	}
 	// failure_feedback is emitted right after next_action_state, which
 	// already carries Lane/Step/Reason/InvalidNext/ValidNext/StateSummary
 	// for the same step. Re-emitting those fields wastes context. Keep
@@ -2149,12 +2336,126 @@ func buildRunnerFailureFeedbackPacket(agent string, step int, reason string, req
 		FailureClass:       recovery.FailureClass,
 		ResultSummary:      state.ResultSummary,
 		ResultError:        state.ResultError,
+		EvidenceStatus:     append([]string(nil), state.EvidenceStatus...),
 		ValidNext:          append([]string(nil), recovery.ValidNext...),
 		UserVisibleBlocker: recovery.UserVisibleBlocker,
 	}
 	packet.DoNotRepeat = append([]string(nil), recovery.DoNotRepeat...)
 	packet.RequiredNext = append([]string(nil), recovery.RequiredNext...)
 	return packet
+}
+
+func applyScratchpadDeliverableCloseoutBias(state runnerNextActionState, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) runnerNextActionState {
+	if !scratchpadDeliverableCloseoutReady(brief, results) {
+		return state
+	}
+	target := strings.Join(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results)), ", ")
+	if target == "" {
+		target = "the required deliverable"
+	}
+	state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{
+		"scratchpad_deliverable_closeout_ready",
+		"non_source_deliverable_path_unwritten",
+	})
+	state.EvidenceStatus = mergeRunnerStateStrings(state.EvidenceStatus, []string{
+		fmt.Sprintf("non-source deliverable still unwritten: %s; gathered evidence and accepted gaps should be recorded in the deliverable", target),
+	})
+	state.NextValidActions = []string{
+		fmt.Sprintf("deliverable-write capability for %s with the corrected content, recording source uncertainty as Source verification pending or Scope Correction Required", target),
+		"answer <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty",
+	}
+	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+		"new source discovery after completion gate rejected a prose-only non-source deliverable",
+		"repairing an optional evidence lookup instead of recording the gap in the scratchpad deliverable",
+		"final answer without write_file for the required non-source deliverable",
+	})
+	return state
+}
+
+func scratchpadDeliverableCloseoutReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !briefIsScratchpadDeliverableLane(brief) {
+		return false
+	}
+	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) == 0 {
+		return false
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "completion_gate" {
+			continue
+		}
+		lower := strings.ToLower(strings.TrimSpace(result.Summary + " " + result.Error))
+		if strings.Contains(lower, "no successful write") ||
+			strings.Contains(lower, "no successful write tool") ||
+			strings.Contains(lower, "workspace change") ||
+			strings.Contains(lower, "remain unwritten") {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runner) scratchpadDeliverableCloseoutNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, target string, reject bool) {
+	if r == nil || !scratchpadDeliverableCloseoutReady(r.RuntimeBrief, results) || workspace.IsWorkspaceWriteTool(req.Tool) {
+		return "", "", "", "", false
+	}
+	missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
+	target = "the required deliverable"
+	if len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	}
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "the requested tool"
+	}
+	summary = "Scratchpad deliverable closeout blocked non-write tool"
+	errorText = fmt.Sprintf("%s is not available after the completion gate rejected a prose-only response for non-source deliverable path(s): %s. The available contract outcomes are deliverable-write capability with full content or <<QUESTION>> with the exact blocker.", tool, target)
+	prompt = fmt.Sprintf("The completion gate already determined that %s is still unwritten. Do not perform additional reads, searches, discovery, planning, or optional evidence repair from this recovery state. The deliverable-write contract records missing/stale/ambiguous evidence as `Source verification pending:` or `## Scope Correction Required`, or answers with <<QUESTION>> if the deliverable is impossible.", target)
+	return summary, errorText, prompt, target, true
+}
+
+func (r *Runner) scratchpadDeliverableSourceDiscoveryRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+	if r == nil || !briefIsScratchpadDeliverableLane(r.RuntimeBrief) || workspace.IsWorkspaceWriteTool(req.Tool) {
+		return "", "", "", false
+	}
+	if len(r.remainingRequiredEditPaths(results)) == 0 || !r.scopedReadClassTool(req) {
+		return "", "", "", false
+	}
+	if scratchpadDeliverablePrewriteReadAllowed(req) {
+		return "", "", "", false
+	}
+	missing := r.remainingRequiredEditPaths(results)
+	target := "the required deliverable"
+	if len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
+		target = strings.Join(paths, ", ")
+	}
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "read/discovery tool"
+	}
+	summary = "Scratchpad deliverable source discovery redirected to write"
+	errorText = fmt.Sprintf("%s is not available before writing non-source scratchpad deliverable path(s): %s. Read required scratchpad inputs only; record missing or uncertain source evidence in the deliverable instead of reopening source discovery.", tool, target)
+	prompt = fmt.Sprintf("This lane is a non-source scratchpad writer/reviewer phase for %s. Source discovery is closed here: the deliverable-write contract uses the preloaded evidence already in the brief, records missing/stale/ambiguous facts as `Source verification pending:` or `## Scope Correction Required`, or answers with <<QUESTION>> and the exact blocker if the deliverable cannot be written from the scratchpad inputs plus recorded uncertainty.", target)
+	return summary, errorText, prompt, true
+}
+
+func scratchpadDeliverablePrewriteReadAllowed(req workspace.ToolRequest) bool {
+	path := normalizeRunnerPath(req.Path)
+	if path == "" {
+		return false
+	}
+	return writePathIsNonSource(path)
+}
+
+func scratchpadFailedEvidenceFeedbackApplies(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) bool {
+	if !briefIsScratchpadDeliverableLane(brief) || strings.TrimSpace(result.Error) == "" {
+		return false
+	}
+	if workspace.IsWorkspaceWriteTool(req.Tool) || !isReadClassTool(req) {
+		return false
+	}
+	return len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) > 0
 }
 
 func renderRunnerFailureFeedbackPacket(packet runnerFailureFeedbackPacket) string {
@@ -2326,73 +2627,6 @@ func runnerClosureGuidanceActive(agent string, brief workerruntime.WorkerRuntime
 	return postChildPacketClosureReadyWithBrief(brief, results)
 }
 
-// forcedSynthesisPromptDelegated and forcedSynthesisPromptPostChild build
-// the prompts handed to the model when the disclosed post-readiness probe
-// budget is hit. These prompts have to elicit an actual synthesis — the
-// previous "Synthesize a direct answer from the inspected evidence" was
-// too soft and produced 100-token replies that left the user with a
-// fallback template instead of a real answer. The new prompts name the
-// concrete obligations: cite paths, use the body content, write at least
-// a substantive paragraph, and only fall back to gap-naming as a last
-// resort.
-func forcedSynthesisPromptDelegated(used, budget int) string {
-	return fmt.Sprintf(
-		"You have used your disclosed post-readiness probe budget (%d/%d). Tools are now disabled. Write the final answer to the delegated question now, citing each implementation path and symbol you inspected. Use the body content from your symbol/extract probes — do not just list paths. Aim for a substantive synthesis (a paragraph or two) anchored in what you actually read. Only after that, if a specific gap still remains, state it in prose at the end.",
-		used, budget,
-	)
-}
-
-func forcedSynthesisPromptReadOnly(used, budget int) string {
-	return fmt.Sprintf(
-		"You have used your disclosed post-readiness probe budget (%d/%d). Tools are now disabled. Write the final answer now from the inspected evidence, citing the implementation paths and symbols you actually read. Use the body content and call/reference evidence — do not just list paths. Aim for a substantive synthesis (a paragraph or two). Only after that, if a specific gap still remains, state it in prose at the end.",
-		used, budget,
-	)
-}
-
-func forcedSynthesisPromptPostChild(used, budget int) string {
-	return fmt.Sprintf(
-		"You have used your disclosed post-child probe budget (%d/%d). Tools are now disabled. Write the final answer to the user's question now, anchored in the child packet plus the bodies from your %d targeted probe(s). Cite each path and symbol you inspected. Use the body content — do not just list paths. Aim for a substantive synthesis (a paragraph or two). Only after that, if a specific gap still remains, state it in prose at the end.",
-		used, budget, used,
-	)
-}
-
-func consumeRejectedPostReadinessProbe(scope string, req workspace.ToolRequest, delegatedCount, postChildCount *int, delegatedBudget, postChildBudget int) (string, bool) {
-	if !isReadClassTool(req) {
-		return "", false
-	}
-	switch strings.TrimSpace(scope) {
-	case "delegated_read_only_answer_ready":
-		fallthrough
-	case "answer_readiness_reached":
-		if delegatedBudget <= 0 {
-			if strings.TrimSpace(scope) == "delegated_read_only_answer_ready" {
-				return "No further post-readiness probes are budgeted. Tools are now disabled. Write the final answer to the delegated question now from the evidence already gathered.", true
-			}
-			return "No further post-readiness probes are budgeted. Tools are now disabled. Write the final answer now from the evidence already gathered.", true
-		}
-		if delegatedCount != nil {
-			*delegatedCount++
-			if *delegatedCount >= delegatedBudget {
-				if strings.TrimSpace(scope) == "delegated_read_only_answer_ready" {
-					return forcedSynthesisPromptDelegated(*delegatedCount, delegatedBudget), true
-				}
-				return forcedSynthesisPromptReadOnly(*delegatedCount, delegatedBudget), true
-			}
-		}
-	case "child_packet_available":
-		if postChildBudget <= 0 {
-			return "No further post-child probes are budgeted. Tools are now disabled. Write the final answer to the user's question now from the child packet and the evidence already gathered.", true
-		}
-		if postChildCount != nil {
-			*postChildCount++
-			if *postChildCount >= postChildBudget {
-				return forcedSynthesisPromptPostChild(*postChildCount, postChildBudget), true
-			}
-		}
-	}
-	return "", false
-}
-
 func closureSynthesisAfterIgnoredNudgePrompt(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool, delegatedDiminishingNudges int, postChildDiminishingNudges int) (string, bool) {
 	if !isReadClassTool(req) || runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return "", false
@@ -2400,7 +2634,7 @@ func closureSynthesisAfterIgnoredNudgePrompt(agent string, brief workerruntime.W
 	// North-star contract: after readiness, the model is allowed "answer
 	// now or one exact probe with a named gap." If the model has declared
 	// a gap, it is satisfying the contract — let the upstream gap-shape
-	// validator and the budget caps do their work. Force-closing here
+	// validator and loop guards do their work. Force-closing here
 	// short-circuits the contract on a request that just complied with
 	// it, which is exactly the failure mode flagged in the in-flight log
 	// (a declared-gap go_read_symbol probe was force-completed before the
@@ -3345,16 +3579,11 @@ func postReadinessProbeBudgetForBrief(brief workerruntime.WorkerRuntimeBrief) in
 }
 
 // postReadinessContinuationContract returns the generic block that discloses,
-// up front, every constraint the harness will enforce on subsequent
-// read/search calls after readiness or a child packet. Putting this in the
-// readiness/boundary nudge — rather than letting the model discover each
-// constraint via a separate rejection — collapses the rejection ladder that
-// otherwise burns budget on retries the model could have avoided.
-//
-// budget is the number of post-readiness probes the harness will allow
-// before forcing the answer. Disclosing the real cap (rather than a
-// hard-coded "one") prevents the model/harness mismatch where the contract
-// implies one probe but the budget caps actually allow two.
+// up front, every constraint the harness will enforce on subsequent read/search
+// calls after readiness or a child packet. The numeric budget is a disclosed
+// soft cap that keeps the model and harness aligned with the diminishing-return
+// closeout path; hard stop behavior remains owned by the named-gap contract,
+// loop fuses, and MaxToolSteps.
 func postReadinessContinuationContract(scope string, budget int) string {
 	anchor := "file-level raw reads will be rejected as too broad; prefer a symbol, branch, body, or narrow line-range probe"
 	if strings.TrimSpace(scope) == "child_packet_available" {
@@ -3621,7 +3850,7 @@ func applyClosurePromptRefinement(state runnerNextActionState) runnerNextActionS
 			strings.Contains(lower, "continue from the latest evidence with a targeted tool"),
 			strings.Contains(lower, "choose a materially different tool or target"),
 			strings.Contains(lower, "use a targeted read-only shell search"),
-			strings.Contains(lower, "use a tool to gather or edit the missing evidence"),
+			strings.Contains(lower, "produce the missing evidence or edit required by the gate"),
 			strings.Contains(lower, "update task_ledger"),
 			strings.Contains(lower, "gather or edit the missing evidence"),
 			strings.Contains(lower, "edit_file"),
@@ -3794,38 +4023,52 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		return workspace.ToolResult{}, false
 	}
 	lowerReply := strings.ToLower(strings.TrimSpace(reply))
-	if mutationReplyReportsConcreteNoopOrBlocker(lowerReply) {
-		return workspace.ToolResult{}, false
+	if r.planThenExecutePlannerPhase() && len(changedPathsFromToolResults(results)) == 0 {
+		if r.planThenExecuteSourceSatisfiedAnswerCovers(reply, results) {
+			return workspace.ToolResult{}, false
+		}
+		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
+			if requiredPathBlockerAnswerCovers(reply, missing) {
+				return workspace.ToolResult{}, false
+			}
+		} else if mutationReplyReportsConcreteNoopOrBlocker(lowerReply) {
+			return workspace.ToolResult{}, false
+		}
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Plan-execute completion gate rejected final answer",
+			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names every required path and cites current-state evidence. Submit one edit entry for every required_edit_paths entry, answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact path-specific blocker.",
+		}, true
 	}
 	if len(changedPathsFromToolResults(results)) == 0 {
-		// Auto-salvage: if the deliverable is a single new .md file
-		// and the model put the content in its final-answer text
-		// instead of calling write_file, write it on behalf of the
-		// model. Common for refine review/draft/patch lanes where
-		// Qwen at low temp sometimes skips the write step despite
-		// explicit instructions. Salvaging converts the wedge into
-		// a successful ship.
-		if r.tryAutoSalvageMarkdownDeliverable(reply) {
+		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
+			if requiredPathBlockerAnswerCovers(reply, missing) {
+				return workspace.ToolResult{}, false
+			}
+		} else if mutationReplyReportsConcreteNoopOrBlocker(lowerReply) {
 			return workspace.ToolResult{}, false
 		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
-			Error:   "this task asks for a workspace change, but no successful write tool result is present. Make the smallest necessary edit, or state a concrete blocker/no-op reason.",
+			Error:   "this task asks for a workspace change, but no successful write tool result is present. The contract outcomes are the smallest necessary edit, or a concrete blocker/no-op reason.",
 		}, true
+	}
+	if mutationReplyReportsConcreteNoopOrBlocker(lowerReply) {
+		return workspace.ToolResult{}, false
 	}
 	if unsupported := unsupportedClaimedChangedPaths(reply, results); len(unsupported) > 0 {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
-			Error:   "final answer reports changed paths not backed by successful write tool results: " + quotedRunnerStrings(unsupported) + ". Make the missing edits, or correct the changed-paths summary to only include recorded edits.",
+			Error:   "final answer reports changed paths not backed by successful write tool results: " + quotedRunnerStrings(unsupported) + ". Satisfy the missing write contract, or correct the changed-paths summary to only include recorded edits.",
 		}, true
 	}
 	if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
-			Error:   "required edit path(s) were not changed: " + quotedRunnerStrings(missing) + ". Make the required edits, or state a concrete blocker/no-op reason for the skipped path(s).",
+			Error:   "required edit path(s) were not changed: " + quotedRunnerStrings(missing) + ". Satisfy the required-path write contract, or state a concrete blocker/no-op reason for the skipped path(s).",
 		}, true
 	}
 	if removed := r.unreportedRemovedTestDeclarations(reply, results); len(removed) > 0 {
@@ -3846,9 +4089,9 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		return workspace.ToolResult{}, false
 	}
 	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) {
-		errorText := "workspace changes are present, but the latest successful write is not followed by successful verification. Run the relevant test/build/check command, or state the concrete verification blocker."
+		errorText := "workspace changes are present, but the latest successful write is not followed by successful verification. Required evidence is a relevant test/build/check result, or the concrete verification blocker."
 		if plannerOwnsVerification(r.RuntimeBrief) {
-			errorText = "workspace changes are present, but the latest successful write is not followed by lane sanity. This route delegates build/test verification to the planner; for source edits use source_sanity, and for non-source edits use git diff --check only as patch-hygiene evidence or state the concrete planner-owned verification blocker."
+			errorText = "workspace changes are present, but the latest successful write is not followed by lane sanity. This route delegates build/test verification to the planner; source edits require source-sanity evidence, and non-source edits may use git diff --check only as patch-hygiene evidence or state the concrete planner-owned verification blocker."
 		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
@@ -3857,9 +4100,9 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		}, true
 	}
 	if sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
-		errorText := "source edits are present, but the available verification is only patch hygiene (`git diff --check`) or no source-aware check. Run source_sanity on the changed source path, a focused source-aware build/test, or state the concrete verification blocker; patch hygiene alone cannot certify source edits."
+		errorText := "source edits are present, but the available verification is only patch hygiene (`git diff --check`) or no source-aware check. Required evidence is source-sanity on the changed source path, a focused source-aware build/test, or the concrete verification blocker; patch hygiene alone cannot certify source edits."
 		if plannerOwnsVerification(r.RuntimeBrief) {
-			errorText = "source edits are present, but the available lane sanity is only patch hygiene (`git diff --check`) or no source-aware check. For planner-owned verification lanes, run source_sanity on the changed source path; it routes to language diagnostics when available and falls back to generic source syntax sanity. If source sanity is unavailable, answer with changed paths plus the concrete lane-sanity blocker. Do not claim patch hygiene certifies source edits."
+			errorText = "source edits are present, but the available lane sanity is only patch hygiene (`git diff --check`) or no source-aware check. planner-owned verification lanes require source-sanity evidence for the changed source path; the harness routes it to language diagnostics when available and falls back to generic source syntax sanity. If source sanity is unavailable, answer with changed paths plus the concrete lane-sanity blocker. Do not claim patch hygiene certifies source edits."
 		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
@@ -3885,6 +4128,9 @@ type refineReasoningShape struct {
 var refineReasoningShapes = []refineReasoningShape{
 	// Refine review deliverable: structured bug list + verdict.
 	{name: "review", primary: "## Bugs found", corroborator: "## Verdict"},
+	// Refine markdown-deliverable mode: the draft carries the target
+	// file's content in a dedicated inline-content section.
+	{name: "markdown-deliverable", primary: "## Inline content", corroborator: "## Deliverable"},
 	// Refine draft / patch deliverable: implementation brief layout
 	// (the canonical brief skeleton sections). Required Behavior +
 	// Files To Modify both appear in every well-formed refine draft;
@@ -3894,6 +4140,12 @@ var refineReasoningShapes = []refineReasoningShape{
 	// Lowercase variant — the draft template uses "## Files to
 	// Modify" (small 't') in some renderings.
 	{name: "draft-alt", primary: "## Files to Modify", corroborator: "## Required Behavior"},
+	// Some project and refine templates use "Required Edits" for the
+	// concrete implementation section. Treat that as the same
+	// corrected-brief shape so a prose preface does not strand a full
+	// markdown deliverable in the final answer.
+	{name: "draft-required-edits", primary: "## Files To Modify", corroborator: "## Required Edits"},
+	{name: "draft-required-edits-alt", primary: "## Files to Modify", corroborator: "## Required Edits"},
 }
 
 // extractStructuredMarkdownFromReasoning recovers a refine-shaped
@@ -3995,40 +4247,113 @@ func reasoningCandidateLooksLikeUnfilledTemplate(candidate string) bool {
 	return false
 }
 
-// tryAutoSalvageMarkdownDeliverable handles a specific Qwen-at-low-temp
+// extractStructuredMarkdownFromReply recovers a full markdown
+// deliverable from visible final-answer text. Unlike reasoning
+// salvage, visible reply salvage may walk back to a much earlier H1:
+// long refine drafts often place `## Files To Modify` near the end of
+// the document, well beyond the conservative reasoning lookback.
+func extractStructuredMarkdownFromReply(reply string) string {
+	r := strings.TrimSpace(reply)
+	if len(r) < 100 || strings.HasPrefix(r, "<<QUESTION>>") {
+		return ""
+	}
+	if recoverableMarkdownDeliverableShape(r) && markdownBodyStartsAsDeliverable(r) && !reasoningCandidateLooksLikeUnfilledTemplate(r) {
+		return r
+	}
+	var matched refineReasoningShape
+	for _, shape := range refineReasoningShapes {
+		if strings.Contains(r, shape.primary) && strings.Contains(r, shape.corroborator) {
+			matched = shape
+			break
+		}
+	}
+	if matched.primary == "" {
+		return ""
+	}
+	primaryIdx := strings.LastIndex(r, matched.primary)
+	if primaryIdx < 0 {
+		return ""
+	}
+	startIdx := primaryIdx
+	if strings.HasPrefix(r, "# ") {
+		startIdx = 0
+	} else if hdr := strings.LastIndex(r[:primaryIdx], "\n# "); hdr >= 0 {
+		startIdx = hdr + 1
+	} else if nl := strings.LastIndex(r[:primaryIdx], "\n"); nl >= 0 {
+		startIdx = nl + 1
+	}
+	candidate := strings.TrimSpace(r[startIdx:])
+	if len(candidate) < 100 || !recoverableMarkdownDeliverableShape(candidate) {
+		return ""
+	}
+	if reasoningCandidateLooksLikeUnfilledTemplate(candidate) {
+		return ""
+	}
+	return candidate
+}
+
+func recoverableMarkdownDeliverableShape(body string) bool {
+	body = strings.TrimSpace(body)
+	if len(body) < 100 {
+		return false
+	}
+	for _, shape := range refineReasoningShapes {
+		if strings.Contains(body, shape.primary) && strings.Contains(body, shape.corroborator) {
+			return true
+		}
+	}
+	return false
+}
+
+// autoSalvageMarkdownDeliverable handles a specific Qwen-at-low-temp
 // failure mode: the deliverable is a single new .md file (refine
 // review/draft/patch lanes), the model wrote the entire markdown
 // content into its final-answer text instead of calling write_file,
 // and the completion gate is about to reject for "no successful write."
 //
 // When the brief has exactly one required edit path that ends in .md,
-// the path doesn't yet exist on disk, and the reply is a non-trivial
-// markdown payload (>= 100 chars, contains at least one ## header),
-// we write the reply to that path on behalf of the model and return
-// true so the caller can skip the rejection. The salvage trades a
-// strict "tool call required" contract for a recovered ship — at low
-// temp Qwen ignores the explicit write instruction often enough that
-// salvaging is a net win.
+// the path doesn't yet exist on disk, and the reply is a recognizable
+// refine-shaped markdown payload, we write the reply to that path on
+// behalf of the model and return the synthetic write_file result so
+// the main runner can record it as normal completion evidence.
 //
 // Returns false (no salvage) when the criteria don't match — caller
 // proceeds with the normal rejection. Salvage failures (file write
 // errors) also return false; the original gate rejection wins.
-func (r *Runner) tryAutoSalvageMarkdownDeliverable(reply string) bool {
+func (r *Runner) autoSalvageMarkdownDeliverable(reply string) (workspace.ToolRequest, workspace.ToolResult, bool) {
 	if r == nil || r.Workspace == nil {
 		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: nil runner or workspace\n")
-		return false
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	if len(r.RuntimeBrief.RequiredEditPaths) != 1 {
 		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: required_edit_paths count=%d, want 1\n", len(r.RuntimeBrief.RequiredEditPaths))
-		return false
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	path := strings.TrimSpace(r.RuntimeBrief.RequiredEditPaths[0])
 	if path == "" || !strings.HasSuffix(strings.ToLower(path), ".md") {
 		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: path %q is not a .md file\n", path)
-		return false
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
-	body := strings.TrimSpace(reply)
+	cleanPath := filepath.ToSlash(filepath.Clean(path))
+	if filepath.IsAbs(path) || cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: path %q is not a safe relative path\n", path)
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
+	}
+	if root := strings.TrimSpace(r.Workspace.Root()); root != "" {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(cleanPath))); err == nil {
+			fmt.Fprintf(os.Stderr, "[auto-salvage] skip: path %q already exists\n", path)
+			return workspace.ToolRequest{}, workspace.ToolResult{}, false
+		} else if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "[auto-salvage] skip: cannot stat %q: %v\n", path, err)
+			return workspace.ToolRequest{}, workspace.ToolResult{}, false
+		}
+	}
+	body := extractStructuredMarkdownFromReply(reply)
 	source := "reply"
+	if body != "" && strings.TrimSpace(body) != strings.TrimSpace(reply) {
+		source = "reply-structured"
+		fmt.Fprintf(os.Stderr, "[auto-salvage] extracted structured markdown from reply prose (%d chars)\n", len(body))
+	}
 	// Fallback path (#95): Qwen3 thinking mode sometimes burns the
 	// entire generation budget inside the <think> block and exits
 	// with empty visible content even when the thinking-text contains
@@ -4045,11 +4370,11 @@ func (r *Runner) tryAutoSalvageMarkdownDeliverable(reply string) bool {
 	}
 	if len(body) < 100 {
 		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body too short (%d chars, source=%s)\n", len(body), source)
-		return false
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
-	if !strings.Contains(body, "\n## ") && !strings.HasPrefix(body, "## ") {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body has no markdown ## header (first 100 chars: %q)\n", body[:min(100, len(body))])
-		return false
+	if !recoverableMarkdownDeliverableShape(body) {
+		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body is not a recognized markdown deliverable shape (first 100 chars: %q)\n", body[:min(100, len(body))])
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	ctx := context.Background()
 	req := workspace.ToolRequest{
@@ -4061,10 +4386,24 @@ func (r *Runner) tryAutoSalvageMarkdownDeliverable(reply string) bool {
 	result := r.Workspace.Execute(ctx, req)
 	if strings.TrimSpace(result.Error) != "" {
 		fmt.Fprintf(os.Stderr, "[auto-salvage] FAILED: write_file %s: %s\n", path, result.Error)
-		return false
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	fmt.Fprintf(os.Stderr, "[auto-salvage] SUCCESS: wrote %s (%d bytes)\n", path, len(body))
-	return true
+	return req, result, true
+}
+
+// tryAutoSalvageMarkdownDeliverable is retained for focused unit tests
+// and callers that only care whether the recovery wrote a file. The
+// main runner uses autoSalvageMarkdownDeliverable so the synthetic
+// write_file result is recorded in collectedResults.
+func (r *Runner) tryAutoSalvageMarkdownDeliverable(reply string) bool {
+	_, _, ok := r.autoSalvageMarkdownDeliverable(reply)
+	return ok
+}
+
+func markdownBodyStartsAsDeliverable(body string) bool {
+	body = strings.TrimSpace(body)
+	return strings.HasPrefix(body, "# ") || strings.HasPrefix(body, "## ")
 }
 
 func mutationReplyReportsConcreteNoopOrBlocker(lowerReply string) bool {
@@ -4216,25 +4555,37 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 		return "", false, false
 	}
 	if missing := r.remainingRequiredEditPaths(results); len(missing) > 0 {
-		if implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) {
-			return fmt.Sprintf("The completion gate rejected a final answer while exact-anchor required edit path(s) remain unchanged: %s. Read/search tools are hidden for this turn. Use the supplied exact anchor with an available write tool, or answer with <<QUESTION>> and name the stale or missing anchor for each remaining path.", strings.Join(missing, ", ")), true, true
+		if r.planThenExecutePlannerPhase() {
+			return fmt.Sprintf("The completion gate rejected a final answer before the plan-submission contract (`submit_plan`) covered required edit path(s): %s. Read/search tools are hidden for this turn. Required evidence is one plan edit entry for every remaining required path, `Decision: source-satisfied` naming every required path plus current-state evidence if the requested final state is already present, or <<QUESTION>> naming the exact path-specific blocker. Do not repeat the final answer in prose.", strings.Join(missing, ", ")), true, true
 		}
-		return fmt.Sprintf("The completion gate rejected a final answer while required edit path(s) remain unchanged: %s. Use an available write tool on each remaining required path, one bounded read_file/code_navigate call inside a remaining required path with named_gap for the exact edit-safety fact, or answer with <<QUESTION>> and name the exact blocker for that path. Do not perform broad discovery or task planning.", strings.Join(missing, ", ")), false, true
+		if briefIsScratchpadDeliverableLane(r.RuntimeBrief) {
+			return fmt.Sprintf("The completion gate rejected a final answer while non-source deliverable path(s) remain unwritten: %s. The deliverable-write contract requires full corrected content with gathered evidence plus any missing, stale, ambiguous, or out-of-scope source fact recorded as `Source verification pending:` or `## Scope Correction Required`. Answer with <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty.", strings.Join(missing, ", ")), false, true
+		}
+		if implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) {
+			return fmt.Sprintf("The completion gate rejected a final answer while exact-anchor required edit path(s) remain unchanged: %s. Read/search tools are hidden for this turn. The available contract outcomes are exact-anchor write capability or <<QUESTION>> naming the stale or missing anchor for each remaining path.", strings.Join(missing, ", ")), true, true
+		}
+		return fmt.Sprintf("The completion gate rejected a final answer while required edit path(s) remain unchanged: %s. The available contract outcomes are a write capability on each remaining required path, semantic/context/declared project discovery or a narrow raw read inside a remaining required path with named_gap for the exact edit-safety fact, or <<QUESTION>> naming the exact blocker for that path. Do not perform broad discovery or task planning.", strings.Join(missing, ", ")), false, true
 	}
 	if missing := r.missingRequiredEditSnippets(results); len(missing) > 0 {
-		return fmt.Sprintf("The completion gate rejected a final answer while required edit snippet(s) are still missing: %s. Read/search tools are hidden for this turn. Apply the missing snippet evidence with an available write tool, or answer with <<QUESTION>> and name the exact blocker for each missing snippet; do not perform additional discovery.", strings.Join(missing, ", ")), true, true
+		return fmt.Sprintf("The completion gate rejected a final answer while required edit snippet(s) are still missing: %s. Read/search tools are hidden for this turn. The available contract outcomes are snippet-backed write capability or <<QUESTION>> naming the exact blocker for each missing snippet; do not perform additional discovery.", strings.Join(missing, ", ")), true, true
 	}
 	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
 		if plannerOwnsVerification(r.RuntimeBrief) {
-			return "The completion gate rejected a final answer because post-write lane sanity is still unresolved. Run source_sanity for changed source files, or answer with the changed paths plus a concrete source-sanity blocker. Do not repeat the same final answer.", false, true
+			return "The completion gate rejected a final answer because post-write lane sanity is still unresolved. Required evidence is source-sanity for changed source files, or changed paths plus a concrete source-sanity blocker. Do not repeat the same final answer.", false, true
 		}
-		return "The completion gate rejected a final answer because post-write verification is still unresolved. Run source_sanity for source edits or one relevant source-aware test/build/check, or answer with the concrete verification blocker. Do not repeat the same final answer.", false, true
+		return "The completion gate rejected a final answer because post-write verification is still unresolved. Required evidence is source-sanity for source edits, one relevant source-aware test/build/check, or the concrete verification blocker. Do not repeat the same final answer.", false, true
 	}
 	return "", false, false
 }
 
 func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief) llama.ChatOptions {
+	if briefIsScratchpadDeliverableLane(brief) {
+		if opts.MaxTokens <= 0 {
+			opts.MaxTokens = 16384
+		}
+		return opts
+	}
 	limit := 1536
 	if runnerBriefRequiresMutation(brief) {
 		limit = 1024
@@ -4250,10 +4601,20 @@ func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results [
 	if len(missing) == 0 || requiredPathBlockerAnswerCovers(reply, missing) {
 		return workspace.ToolResult{}, false
 	}
+	if r.planThenExecutePlannerPhase() && r.planThenExecuteSourceSatisfiedAnswerCovers(reply, results) {
+		return workspace.ToolResult{}, false
+	}
+	if r.planThenExecutePlannerPhase() {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Completion gate rejected non-specific submit_plan blocker",
+			Error:   "required edit path(s) remain uncovered by submit_plan: " + quotedRunnerStrings(missing) + ". After completion-gate recovery, the required contract outcome is submit_plan with one edit entry per remaining required path, `Decision: source-satisfied` with current-state evidence for every remaining required path, or <<QUESTION>> with one path-specific blocker reason for every remaining required path.",
+		}, true
+	}
 	return workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Completion gate rejected non-specific required-path blocker",
-		Error:   "required edit path(s) remain unchanged: " + quotedRunnerStrings(missing) + ". After completion-gate recovery, issue a concrete write tool call, or answer with <<QUESTION>> and one path-specific blocker reason for every remaining required path.",
+		Error:   "required edit path(s) remain unchanged: " + quotedRunnerStrings(missing) + ". After completion-gate recovery, the required contract outcome is a concrete write or <<QUESTION>> with one path-specific blocker reason for every remaining required path.",
 	}, true
 }
 
@@ -4314,13 +4675,17 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 		for _, path := range missing {
 			b.WriteString("- ")
 			b.WriteString(path)
-			b.WriteString(": no successful write was recorded for this path, and the recovery reply did not provide a path-specific blocker reason.\n")
+			if r.planThenExecutePlannerPhase() {
+				b.WriteString(": no successful submit_plan edit entry was recorded for this path, and the recovery reply did not provide source-satisfied evidence or a path-specific blocker reason.\n")
+			} else {
+				b.WriteString(": no successful write was recorded for this path, and the recovery reply did not provide a path-specific blocker reason.\n")
+			}
 		}
 	}
 	b.WriteString("\nMissing completion evidence: ")
 	b.WriteString(reason)
 	if plannerOwnsVerification(r.RuntimeBrief) && hasPendingVerificationAfterWrites(results, r.RuntimeBrief) {
-		b.WriteString("\n\nRequired next evidence: run source_sanity for source edits, run one cheap non-build sanity check for non-source edits, or state a concrete planner-owned verification blocker. `git diff --check` is only patch hygiene for source edits.")
+		b.WriteString("\n\nRequired next evidence: source-sanity for source edits, one cheap non-build sanity check for non-source edits, or a concrete planner-owned verification blocker. `git diff --check` is only patch hygiene for source edits.")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -4539,9 +4904,7 @@ func writeReadyPacketReadContractActive(brief workerruntime.WorkerRuntimeBrief, 
 	if len(changedPathsFromToolResults(results)) > 0 {
 		return false
 	}
-	return targetPacketSupportsWrite(brief) ||
-		len(brief.RequiredEditSnippets) > 0 ||
-		runtimeBriefDefinesWriteReadyReadContract(brief)
+	return true
 }
 
 // briefHasUsableEditAnchors reports whether the brief carries inline
@@ -4549,7 +4912,7 @@ func writeReadyPacketReadContractActive(brief workerruntime.WorkerRuntimeBrief, 
 // source. Required edit paths alone don't qualify — they're a write
 // allowlist, not evidence of where to put the change. Without anchors,
 // the harness shouldn't claim packet-driven write-readiness, and the
-// pre-write read budget should match an abstract brief.
+// pre-write read guidance should match an abstract brief.
 func briefHasUsableEditAnchors(brief workerruntime.WorkerRuntimeBrief) bool {
 	if len(brief.RequiredEditSnippets) > 0 {
 		return true
@@ -4589,6 +4952,9 @@ func implementationPreWriteToolSurfaceActive(brief workerruntime.WorkerRuntimeBr
 }
 
 func implementationScopedEditSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if planThenExecutePlannerBrief(brief) {
+		return false
+	}
 	if !runnerBriefRequiresMutation(brief) || len(brief.RequiredEditPaths) == 0 {
 		return false
 	}
@@ -4599,9 +4965,7 @@ func implementationScopedEditSurfaceActive(brief workerruntime.WorkerRuntimeBrie
 	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changed)) == 0 {
 		return false
 	}
-	return targetPacketSupportsWrite(brief) ||
-		len(brief.RequiredEditSnippets) > 0 ||
-		runtimeBriefDefinesWriteReadyReadContract(brief)
+	return true
 }
 
 func (r *Runner) implementationPreWriteNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
@@ -4632,13 +4996,17 @@ func (r *Runner) implementationPreWriteNonWriteRecovery(req workspace.ToolReques
 		tool = "non-write tool"
 	}
 	summary = "Write-ready implementation non-write tool rejected"
-	errorText = fmt.Sprintf("the target packet and required_edit_paths already establish write readiness for %s. %s does not satisfy the pre-write implementation contract; use an allowed write tool or answer with <<QUESTION>> and the exact path-specific blocker.", target, tool)
-	prompt = fmt.Sprintf("The exact-anchor implementation packet is write-first for %s. Non-write tools are now hidden for this turn. Use edit_file, write_file, append_file, or apply_patch for the smallest safe edit to each remaining required path. If the supplied anchor is stale or missing, answer with <<QUESTION>> and name that exact blocker; do not perform additional discovery or task planning.", target)
+	errorText = fmt.Sprintf("the target packet and required_edit_paths already establish write readiness for %s. %s does not satisfy the pre-write implementation contract; available outcomes are an allowed write capability or <<QUESTION>> with the exact path-specific blocker.", target, tool)
+	prompt = fmt.Sprintf("The exact-anchor implementation packet is write-first for %s. Non-write tools are now hidden for this turn. The available contract outcome is the smallest safe write capability for each remaining required path. If the supplied anchor is stale or missing, answer with <<QUESTION>> and name that exact blocker; do not perform additional discovery or task planning.", target)
 	return summary, errorText, prompt, true
 }
 
 func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
-	if r == nil || !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) || implementationScopedEditToolAllowed(req.Tool) {
+	var extReg *workspace.ExternalToolRegistry
+	if r != nil && r.Workspace != nil {
+		extReg = r.Workspace.ExternalToolsRegistry()
+	}
+	if r == nil || !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) || implementationScopedEditToolAllowedWithRegistry(req.Tool, extReg) {
 		return "", "", "", false
 	}
 	missing := r.remainingRequiredEditPaths(results)
@@ -4653,27 +5021,32 @@ func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRe
 		tool = "requested tool"
 	}
 	summary = "Scoped implementation tool rejected"
-	errorText = fmt.Sprintf("%s is outside the scoped required-path implementation surface for %s. Use an allowed write tool, read_file/code_navigate inside a remaining required path with named_gap, or answer with <<QUESTION>> and the exact blocker.", tool, target)
-	prompt = fmt.Sprintf("The implementation packet defines the edit scope for %s. The available contract menu is: edit a required path, use one bounded read_file/code_navigate call inside a remaining required path with named_gap and why_not_answering for the exact edit-safety fact, or answer with <<QUESTION>> and the exact blocker. Do not use broad discovery, task planning, shell, or external tools until the required-path contract is resolved.", target)
+	errorText = fmt.Sprintf("%s is outside the scoped required-path implementation surface for %s. The available contract outcomes are required-path write capability, semantic/context/declared project discovery for a named gap, a narrow raw read on a required path or evidence path, or <<QUESTION>> with the exact blocker.", tool, target)
+	prompt = fmt.Sprintf("The implementation packet defines the edit scope for %s. The available contract menu is: required-path edit, context/language/declared read-only project discovery for the exact edit-safety fact, narrow raw read only for anchor confirmation on a required path or evidence path, or <<QUESTION>> with the exact blocker. Do not use task planning, shell, opaque external tools, or broad raw search until the required-path contract is resolved.", target)
 	return summary, errorText, prompt, true
 }
 
 func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, hideNonWrite bool, reject bool) {
-	if r == nil || (!writeReadyPacketReadContractActive(r.RuntimeBrief, results) && !implementationScopedEditSurfaceActive(r.RuntimeBrief, results)) || !isReadClassTool(req) {
+	if r == nil || (!writeReadyPacketReadContractActive(r.RuntimeBrief, results) && !implementationScopedEditSurfaceActive(r.RuntimeBrief, results)) || !r.scopedReadClassTool(req) {
 		return "", "", "", false, false
 	}
 	hideNonWrite = implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results)
 	missingGap := postReadinessGap(req) == ""
-	// The read scope is the FULL required-edit-paths set, not just the
-	// remaining ones. Once the model has written one file in the brief,
-	// reads on that file are still legitimate — the model often needs to
-	// reference its own header to write the impl, verify a declaration it
-	// just landed, or mirror an existing pattern from a sibling required
-	// file. Broad codebase exploration is what we actually want to block,
-	// and that still works because path membership is checked against the
-	// brief's full required_edit_paths set; anything outside still fails.
-	readScope := r.RuntimeBrief.RequiredEditPaths
+	// The read scope is the FULL required-edit-paths set plus explicit
+	// packet evidence paths, not just the remaining edit paths. Once the
+	// model has written one file in the brief, reads on that file are still
+	// legitimate — the model often needs to reference its own header to write
+	// the impl, verify a declaration it just landed, or mirror an existing
+	// pattern from a sibling required file. Explicit evidence paths are also
+	// legitimate read-only inputs (for example refine's previous draft/review
+	// files). Tool-result evidence is intentionally not scope: context/query
+	// packets can mention candidate or related files, and those candidates
+	// must support reasoning without expanding the allowed read surface.
+	readScope := implementationScopedExplicitReadScope(r.RuntimeBrief)
 	outOfScope := implementationScopedEditSurfaceActive(r.RuntimeBrief, results) && !readRequestTargetsRequiredEditPath(req, readScope)
+	if outOfScope && r.scopedImplementationDiscoveryLookupAllowed(req, readScope) {
+		return "", "", "", false, false
+	}
 	// In-scope reads (target one of the brief's required_edit_paths) are
 	// allowed without an explicit named_gap. The safety reason is
 	// implicit — "verify the anchor on a path we're about to edit" — and
@@ -4688,6 +5061,7 @@ func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolReques
 	if !outOfScope {
 		return "", "", "", false, false
 	}
+	scratchpadDeliverable := briefIsScratchpadDeliverableLane(r.RuntimeBrief)
 	_ = missingGap // retained for the rejection-message switch below
 	missing := r.remainingRequiredEditPaths(results)
 	target := "the required edit path(s)"
@@ -4699,18 +5073,210 @@ func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolReques
 	summary = "Scoped implementation read rejected"
 	switch {
 	case missingGap && outOfScope:
-		errorText = fmt.Sprintf("the target packet and required_edit_paths establish the edit scope for %s. A read/search before resolving that contract must target a required edit path and include named_gap describing one exact edit-safety fact.", target)
+		errorText = fmt.Sprintf("the target packet, required_edit_paths, and evidence_paths establish the edit scope for %s. A read/search before resolving that contract must target a required edit path or explicit evidence path and include named_gap describing one exact edit-safety fact.", target)
 	case missingGap:
-		errorText = fmt.Sprintf("the target packet and required_edit_paths establish the edit scope for %s. A read/search before resolving that contract must include named_gap describing one exact edit-safety fact.", target)
+		errorText = fmt.Sprintf("the target packet, required_edit_paths, and evidence_paths establish the edit scope for %s. A read/search before resolving that contract must include named_gap describing one exact edit-safety fact.", target)
 	default:
-		errorText = fmt.Sprintf("the target packet and required_edit_paths establish the edit scope for %s. This read/search targets outside the required edit paths.", target)
+		errorText = fmt.Sprintf("the target packet, required_edit_paths, and evidence_paths establish the edit scope for %s. This read/search targets outside the required edit paths and explicit evidence paths.", target)
 	}
-	if hideNonWrite {
-		prompt = fmt.Sprintf("The exact-anchor implementation packet is write-first for %s, and the attempted read/search did not satisfy the contract. Read/search tools are now hidden for this turn. Use edit_file, write_file, append_file, or apply_patch for the smallest safe edit to each remaining required path. If the supplied anchor is stale or missing, answer with <<QUESTION>> and name that blocker.", target)
+	if scratchpadDeliverable {
+		prompt = fmt.Sprintf("The implementation packet defines a non-source deliverable for %s, and the attempted read/search was outside the required or evidence paths. Treat this as scope evidence for the deliverable: record the missing or out-of-scope path in a blocker or scope-correction section instead of broadening discovery.", target)
+	} else if hideNonWrite {
+		prompt = fmt.Sprintf("The exact-anchor implementation packet is write-first for %s, and the attempted read/search did not satisfy the contract. Read/search tools are now hidden for this turn. The available contract outcomes are the smallest safe write to each remaining required path, or <<QUESTION>> naming a stale or missing supplied anchor.", target)
 	} else {
-		prompt = fmt.Sprintf("The implementation packet defines the edit scope for %s. Use an allowed edit on a required path, or one bounded read_file/code_navigate call inside a required path with named_gap and why_not_answering for the exact edit-safety fact. If a remaining path cannot be edited safely from the packet plus scoped source evidence, answer with <<QUESTION>> and name that blocker.", target)
+		prompt = fmt.Sprintf("The implementation packet defines the edit scope for %s. The available contract outcomes are an allowed edit on a required path, semantic/context/declared project discovery for a named edit-safety gap, one narrow raw read inside a required path or explicit evidence path for anchor confirmation, or <<QUESTION>> naming the blocker when a remaining path cannot be edited safely from the packet plus scoped evidence.", target)
 	}
 	return summary, errorText, prompt, hideNonWrite, true
+}
+
+func implementationScopedExplicitReadScope(brief workerruntime.WorkerRuntimeBrief) []string {
+	return mergeRunnerStateStrings(brief.RequiredEditPaths, brief.EvidencePaths)
+}
+
+func (r *Runner) scratchpadDeliverableFailedEvidenceNudge(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) (string, bool) {
+	if r == nil || !briefIsScratchpadDeliverableLane(r.RuntimeBrief) || strings.TrimSpace(result.Error) == "" {
+		return "", false
+	}
+	if workspace.IsWorkspaceWriteTool(req.Tool) || !r.scopedReadClassTool(req) || len(r.remainingRequiredEditPaths(results)) == 0 {
+		return "", false
+	}
+	missing := r.remainingRequiredEditPaths(results)
+	target := "the required deliverable"
+	if len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
+		target = strings.Join(paths, ", ")
+	}
+	reason := strings.TrimSpace(result.Error)
+	if reason == "" {
+		reason = strings.TrimSpace(result.Summary)
+	}
+	if reason == "" {
+		reason = "the optional evidence request failed"
+	}
+	return fmt.Sprintf("The optional evidence request for %s failed: %s. For this non-source deliverable, treat that as an evidence fact: record the missing, stale, ambiguous, or out-of-scope evidence in the deliverable itself rather than repairing the lookup through another raw or lower-level read. The next action should be either writing the deliverable with the evidence gap recorded, or answering <<QUESTION>> if the gap makes the deliverable impossible.", target, reason), true
+}
+
+func scratchpadDeliverableFailedEvidenceResult(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if !briefIsScratchpadDeliverableLane(brief) {
+		return workspace.ToolResult{}, false
+	}
+	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) == 0 {
+		return workspace.ToolResult{}, false
+	}
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) == "" || workspace.IsWorkspaceWriteTool(result.Tool) {
+			continue
+		}
+		if strings.TrimSpace(result.Summary) == "Scratchpad evidence follow-up rejected" {
+			continue
+		}
+		if isReadClassTool(workspace.ToolRequest{Tool: result.Tool}) {
+			return result, true
+		}
+	}
+	return workspace.ToolResult{}, false
+}
+
+func scratchpadDeliverableFailedEvidenceStatus(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	failed, ok := scratchpadDeliverableFailedEvidenceResult(brief, results)
+	if !ok {
+		return ""
+	}
+	target := "the required deliverable"
+	if missing := missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	} else if paths := nonEmptyRunnerStrings(brief.RequiredEditPaths, 3); len(paths) > 0 {
+		target = strings.Join(paths, ", ")
+	}
+	reason := strings.TrimSpace(failed.Error)
+	if reason == "" {
+		reason = strings.TrimSpace(failed.Summary)
+	}
+	if reason == "" {
+		reason = "the optional evidence request failed"
+	}
+	tool := strings.TrimSpace(failed.Tool)
+	if tool == "" {
+		tool = "read/discovery tool"
+	}
+	return fmt.Sprintf("closed_negative_evidence: optional %s evidence for %s failed (%s); record this as an evidence gap in the non-source deliverable if the exact source fact remains unavailable", tool, target, truncateRunnerStateText(reason, 220))
+}
+
+func (r *Runner) scopedReadClassTool(req workspace.ToolRequest) bool {
+	if isReadClassTool(req) {
+		return true
+	}
+	return r != nil && r.externalReadOnlyDiscoveryTool(req.Tool)
+}
+
+func (r *Runner) externalReadOnlyDiscoveryTool(tool string) bool {
+	if r == nil || r.Workspace == nil {
+		return false
+	}
+	extReg := r.Workspace.ExternalToolsRegistry()
+	return extReg != nil && extReg.IsReadOnlyDiscovery(tool)
+}
+
+func (r *Runner) scopedImplementationDiscoveryLookupAllowed(req workspace.ToolRequest, pathScope []string) bool {
+	if !scopedImplementationDiscoveryPathAllowed(req, pathScope) {
+		return false
+	}
+	if r != nil && r.externalReadOnlyDiscoveryTool(req.Tool) {
+		return true
+	}
+	if scopedImplementationSymbolOwnerLookupAllowed(req) {
+		return true
+	}
+	if !implementationScopedSemanticDiscoveryToolAllowed(req.Tool) {
+		return false
+	}
+	if strings.TrimSpace(req.Tool) == "context_status" {
+		return true
+	}
+	target := strings.TrimSpace(firstNonEmpty(req.Pattern, req.Query, req.Task, req.ID, req.Handle, req.Path, req.Command))
+	if target == "" || len(target) < 3 {
+		return false
+	}
+	profile := workspace.DiscoveryProfileForRequest(req)
+	if profile.Scope == "broad" || profile.Cost == "high" {
+		return false
+	}
+	return true
+}
+
+func scopedImplementationDiscoveryPathAllowed(req workspace.ToolRequest, pathScope []string) bool {
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		return true
+	}
+	normalized := normalizeRunnerPath(path)
+	if normalized == "" {
+		return false
+	}
+	for _, scoped := range pathScope {
+		scoped = normalizeRunnerPath(scoped)
+		if scoped == "" {
+			continue
+		}
+		if normalized == scoped {
+			return true
+		}
+		if !runnerPathLooksLikeFile(scoped) && strings.HasPrefix(normalized, scoped+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func runnerPathLooksLikeFile(path string) bool {
+	base := filepath.Base(strings.TrimSpace(filepath.ToSlash(path)))
+	return strings.Contains(base, ".")
+}
+
+func scopedImplementationSymbolOwnerLookupAllowed(req workspace.ToolRequest) bool {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "code_navigate" || tool == "read_only_capability" {
+		capability := strings.ToLower(strings.TrimSpace(req.Capability))
+		switch capability {
+		case "find_symbol", "definition", "declaration", "workspace_symbol", "symbol", "symbol-lookup", "symbol_lookup":
+		default:
+			return false
+		}
+		return scopedImplementationLookupTargetAllowed(req)
+	}
+	_, suffix, ok := runnerLanguageToolParts(tool)
+	if !ok {
+		return false
+	}
+	switch suffix {
+	case "find_symbol", "find_function", "find_type", "find_const", "find_package",
+		"definition", "declaration", "workspace_symbol", "read_symbol":
+	default:
+		return false
+	}
+	return scopedImplementationLookupTargetAllowed(req)
+}
+
+func scopedImplementationLookupTargetAllowed(req workspace.ToolRequest) bool {
+	target := strings.TrimSpace(firstNonEmpty(req.Pattern, req.Query, req.ID, req.Handle))
+	if target == "" || len(target) < 3 {
+		return false
+	}
+	if strings.ContainsAny(target, "*?[]{}|") {
+		return false
+	}
+	return true
+}
+
+func runnerLanguageToolParts(tool string) (language string, suffix string, ok bool) {
+	for _, prefix := range []string{"go_", "cpp_", "python_", "ts_", "rust_", "java_"} {
+		if strings.HasPrefix(tool, prefix) {
+			return strings.TrimSuffix(prefix, "_"), strings.TrimPrefix(tool, prefix), true
+		}
+	}
+	return "", "", false
 }
 
 // writeOnlyRecoveryBlockerAnswer returns the <<QUESTION>> answer the runner
@@ -4850,7 +5416,7 @@ func (r *Runner) preflightApplyPatchAgainstChangedPaths(req workspace.ToolReques
 		case len(remaining) > 0:
 			output.WriteString(" The implementation contract is NOT yet fulfilled: required edit path(s) ")
 			output.WriteString(strings.Join(remaining, ", "))
-			output.WriteString(" are still unchanged. Use edit_file or a fresh apply_patch covering ONLY those remaining paths now; do not declare completion until each is written.")
+			output.WriteString(" are still unchanged. The remaining-path write contract requires a fresh edit covering ONLY those paths; do not declare completion until each is written.")
 		case len(r.RuntimeBrief.RequiredEditPaths) > 0:
 			output.WriteString(" All required edit paths are already in changed_paths from earlier writes; the implementation contract is fulfilled. Submit the standard final answer with the changed-paths summary instead of any further patches.")
 		}
@@ -4943,7 +5509,7 @@ func (r *Runner) exactAnchorHiddenToolBlockerAnswer(req workspace.ToolRequest, r
 	if tool == "" {
 		tool = "hidden tool"
 	}
-	return fmt.Sprintf("<<QUESTION>>: Exact-anchor implementation did not complete because %s was repeatedly requested before applying the supplied write anchor for %s. No workspace change was made. Re-dispatch with the same exact anchor as an edit_file/apply_patch call, or provide a narrower current-state packet if the anchor is stale.", tool, target), true
+	return fmt.Sprintf("<<QUESTION>>: Exact-anchor implementation did not complete because %s was repeatedly requested before applying the supplied write anchor for %s. No workspace change was made. Re-dispatch with the same exact anchor as a write-capability request, or provide a narrower current-state packet if the anchor is stale.", tool, target), true
 }
 
 func (r *Runner) exactAnchorRepeatedWriteFailureBlockerAnswer(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) (string, bool) {
@@ -4973,17 +5539,6 @@ func (r *Runner) exactAnchorRepeatedWriteFailureBlockerAnswer(req workspace.Tool
 	return fmt.Sprintf("<<QUESTION>>: Exact-anchor implementation did not complete because repeated %s write attempts for %s were rejected after the recovery nudge. No workspace change was made. Last rejection: %s", tool, target, reason), true
 }
 
-func hideReadClassToolsForTurn(hidden map[string]bool, manager *workspace.Manager) {
-	if hidden == nil || manager == nil {
-		return
-	}
-	for _, tool := range manager.AllowedTools() {
-		if isReadClassTool(workspace.ToolRequest{Tool: tool}) {
-			hidden[tool] = true
-		}
-	}
-}
-
 func hideImplementationWriteOnlyToolsForTurn(hidden map[string]bool, owned map[string]bool, manager *workspace.Manager) {
 	if hidden == nil || owned == nil || manager == nil {
 		return
@@ -5001,8 +5556,9 @@ func hideImplementationScopedToolsForTurn(hidden map[string]bool, owned map[stri
 	if hidden == nil || owned == nil || manager == nil {
 		return
 	}
+	extReg := manager.ExternalToolsRegistry()
 	for _, tool := range manager.AllowedTools() {
-		if implementationScopedEditToolAllowed(tool) {
+		if implementationScopedEditToolAllowedWithRegistry(tool, extReg) {
 			continue
 		}
 		hidden[tool] = true
@@ -5090,22 +5646,58 @@ func implementationScopedEditToolAllowed(tool string) bool {
 		// planner with only read tools and no way to finish.
 		return true
 	default:
-		return false
+		return implementationScopedSemanticDiscoveryToolAllowed(tool)
 	}
 }
 
+func implementationScopedEditToolAllowedWithRegistry(tool string, extReg *workspace.ExternalToolRegistry) bool {
+	tool = strings.TrimSpace(tool)
+	if implementationScopedEditToolAllowed(tool) {
+		return true
+	}
+	return extReg != nil && extReg.IsReadOnlyDiscovery(tool)
+}
+
 func implementationScopedEditAllowedTools(tools []string) []string {
+	return implementationScopedEditAllowedToolsWithRegistry(tools, nil)
+}
+
+func implementationScopedEditAllowedToolsWithRegistry(tools []string, extReg *workspace.ExternalToolRegistry) []string {
 	if len(tools) == 0 {
 		return nil
 	}
 	filtered := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		tool = strings.TrimSpace(tool)
-		if implementationScopedEditToolAllowed(tool) && !containsRunnerString(filtered, tool) {
+		if implementationScopedEditToolAllowedWithRegistry(tool, extReg) && !containsRunnerString(filtered, tool) {
 			filtered = append(filtered, tool)
 		}
 	}
 	return filtered
+}
+
+func implementationScopedSemanticDiscoveryToolAllowed(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return false
+	}
+	switch tool {
+	case "context_status", "context_query", "context_zoom", "context_pack", "context_impact",
+		"discovery_query", "structural_search", "dependency_graph", "ctags_symbols", "source_sanity":
+		return true
+	case "list_files", "search_files", "search_content", "rg", "grep", "file_stats",
+		"harness_audit", "harness_feedback", "context_index", "context_trace_pack",
+		"history_range", "history_symbol", "blame_range", "semgrep_scan", "joern_scan",
+		"git_status", "git_diff", "shell", "task", "task_ledger":
+		return false
+	}
+	profile := workspace.DiscoveryProfileForRequest(workspace.ToolRequest{Tool: tool})
+	switch profile.Class {
+	case "language_symbol", "language_relationship", "diagnostics":
+		return true
+	default:
+		return false
+	}
 }
 
 func releaseExactAnchorReadTools(hidden map[string]bool, exactHidden map[string]bool) {
@@ -5424,7 +6016,7 @@ func truncForRetryReason(s string) string {
 func isContentInspectionTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
 	case "search_content", "search_files", "rg", "grep", "read_file",
-		"code_navigate",
+		"code_navigate", "read_only_capability",
 		"go_file_outline", "go_read_symbol", "go_find_symbol", "go_find_type",
 		"go_find_const", "go_workspace_symbol", "go_definition", "go_references",
 		"go_implementations", "go_calls_from", "go_calls_into", "go_extract_body",
@@ -5442,7 +6034,7 @@ func isContentInspectionTool(tool string) bool {
 func isConcreteInspectionTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
 	case "read_file",
-		"code_navigate",
+		"code_navigate", "read_only_capability",
 		"go_file_outline", "go_read_symbol", "go_definition", "go_references", "go_calls_from", "go_calls_into", "go_extract_body", "go_related_files",
 		"cpp_read_symbol", "cpp_definition", "cpp_declaration", "cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body", "cpp_related_files", "cpp_file_outline",
 		"python_read_symbol", "python_definition", "python_references", "python_calls_from", "python_calls_into", "python_related_files", "python_file_outline",
@@ -5462,7 +6054,7 @@ func isReadClassTool(req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case "list_files", "read_file",
 		"search_files", "search_content", "rg", "grep",
-		"file_stats", "code_navigate", "source_sanity", "harness_audit",
+		"file_stats", "code_navigate", "read_only_capability", "source_sanity", "harness_audit",
 		"context_status", "context_index", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack",
 		"discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const",
@@ -5511,6 +6103,9 @@ func toolActionClass(req workspace.ToolRequest) string {
 	case "source_sanity":
 		return tool + ":" + normalizeActionToken(req.Path)
 	case "code_navigate":
+		target := firstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
+		return tool + ":" + normalizeActionToken(req.Capability) + ":" + normalizeActionToken(target)
+	case "read_only_capability":
 		target := firstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
 		return tool + ":" + normalizeActionToken(req.Capability) + ":" + normalizeActionToken(target)
 	case "edit_file":
@@ -5613,11 +6208,11 @@ func declarationMoveConstraintRejection(req workspace.ToolRequest, declarationMo
 	switch strings.TrimSpace(req.Tool) {
 	case "go_move_declarations":
 		return "Declaration move rejected by task constraint",
-			"the current task explicitly forbids moving declarations. Do not call go_move_declarations; continue with read_file, edit_file within the approved same-file target, verification, or report a concrete blocker.",
+			"the current task explicitly forbids moving declarations. Do not call go_move_declarations; allowed contract outcomes are narrow same-file read, approved same-file edit, verification evidence, or a concrete blocker.",
 			true
 	case "go_file_outline":
 		return "Go outline rejected by task constraint",
-			"the current task explicitly forbids declaration moves, and go_file_outline primarily suggests declaration-move batches. Do not call go_file_outline again; use read_file for exact lines, edit_file within the approved same-file target, verification, or report a concrete blocker.",
+			"the current task explicitly forbids declaration moves, and go_file_outline primarily suggests declaration-move batches. Do not call go_file_outline again; allowed contract outcomes are exact-line read, approved same-file edit, verification evidence, or a concrete blocker.",
 			true
 	default:
 		return "", "", false
@@ -6691,9 +7286,9 @@ func (r *Runner) requiredEditPathsProgressMessage(req workspace.ToolRequest, res
 	case len(pending) == 0:
 		b.WriteString("All required edit paths are written. Submit the standard final answer with the changed-paths summary now; do not call further tools beyond brief verification.")
 	case len(pending) == 1:
-		b.WriteString("One required edit path remains. Write it via edit_file or apply_patch (sections targeting only the remaining path), or report a concrete blocker for that path with <<QUESTION>>:.")
+		b.WriteString("One required edit path remains. The remaining-path write contract must target only that path, or report a concrete blocker for that path with <<QUESTION>>:.")
 	default:
-		b.WriteString(fmt.Sprintf("%d required edit paths remain. Continue with edit_file or apply_patch for each remaining path; do not declare completion until each is written or report a per-path concrete blocker with <<QUESTION>>:.", len(pending)))
+		b.WriteString(fmt.Sprintf("%d required edit paths remain. Continue with one remaining-path write contract per path; do not declare completion until each is written or report a per-path concrete blocker with <<QUESTION>>:.", len(pending)))
 	}
 	return b.String()
 }
@@ -6709,13 +7304,23 @@ func (r *Runner) finalAnswerBlockerErrorText(reason string, answer string, resul
 	switch reason {
 	case "required_edit_paths_remaining":
 		missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
+		if r.planThenExecutePlannerPhase() {
+			base := "the plan-execute planner contract is not fulfilled. The final answer claimed completion, but the harness has no successful submit_plan edit entry for the following required edit path(s): "
+			if len(missing) > 0 {
+				base += quotedRunnerStrings(missing)
+			} else {
+				base += "(see required_edit_paths in the brief)"
+			}
+			base += ". Submit one edit entry for every remaining required path, or report a concrete blocker per skipped path with <<QUESTION>>:."
+			return base
+		}
 		base := "the implementation contract is not fulfilled. The final answer claimed completion, but the harness has no successful write tool result for the following required edit path(s): "
 		if len(missing) > 0 {
 			base += quotedRunnerStrings(missing)
 		} else {
 			base += "(see required_edit_paths in the brief)"
 		}
-		base += ". Make the missing edits via edit_file or apply_patch (one section per remaining path), or report a concrete blocker per skipped path with <<QUESTION>>:."
+		base += ". Satisfy the remaining-path write contract one path at a time, or report a concrete blocker per skipped path with <<QUESTION>>:."
 		if unsupported := unsupportedClaimedChangedPaths(answer, results); len(unsupported) > 0 {
 			base += " The previous answer also reported changed paths not backed by tool results: " + quotedRunnerStrings(unsupported) + " — do not include those in any future answer until they are actually written."
 		}
@@ -6736,6 +7341,9 @@ func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolR
 	// with a "required edit paths remaining" narrative, even though the
 	// plan was submitted correctly.
 	if r != nil && r.planThenExecutePlannerPhase() && successfulSubmitPlanResultCount(results) > 0 {
+		return "", ""
+	}
+	if r != nil && r.planThenExecutePlannerPhase() && r.planThenExecuteSourceSatisfiedAnswerCovers(answer, results) {
 		return "", ""
 	}
 	if r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) {
@@ -6882,7 +7490,7 @@ func (r *Runner) initialBootstrapInstruction() string {
 		return strings.Join([]string{
 			"[delegated read-only bootstrap]",
 			"Consume the delegated scope first. Do not start with directory walking when the delegated prompt already names paths or components.",
-			"Use one targeted search_content or language symbol tool to locate the mechanism, then inspect the best hit directly with read_file or a symbol-read tool.",
+			"Use one exact-text or language-symbol capability to locate the mechanism, then inspect the best hit directly with a bounded read or symbol-read capability.",
 			"After any successful search hit, inspect that hit before doing another filename or content search.",
 			"Stop as soon as the delegated question is answered. Return concise grounded findings with inspected paths and confidence.",
 		}, "\n")
@@ -7023,27 +7631,6 @@ func prematureTargetReadRejection(req workspace.ToolRequest, results []workspace
 		true
 }
 
-func evidenceFirstTargetReadBudgetRejection(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (string, string, bool) {
-	if !isEvidenceFirstMutationTaskFamily(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
-		return "", "", false
-	}
-	if len(changedPathsFromToolResults(results)) > 0 {
-		return "", "", false
-	}
-	if strings.TrimSpace(req.Tool) != "read_file" || !containsRunnerString(brief.TargetRefs, strings.TrimSpace(req.Path)) {
-		return "", "", false
-	}
-	if successfulTargetReadCount(results, brief.TargetRefs) < maxEvidenceFirstTargetReadWindows {
-		return "", "", false
-	}
-	if !targetReadNeedsBounding(req) {
-		return "", "", false
-	}
-	return "Target-read budget exhausted",
-		fmt.Sprintf("you already inspected %d bounded windows of the named target file in this turn. Make the edit now, or if one exact detail is still missing, use a narrow line range or a targeted search anchored to that missing section.", maxEvidenceFirstTargetReadWindows),
-		true
-}
-
 func evidenceFirstTargetReadRedirect(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
 	if !isEvidenceFirstMutationTaskFamily(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
 		return workspace.ToolRequest{}, false
@@ -7068,28 +7655,10 @@ func evidenceFirstTargetReadRedirect(brief workerruntime.WorkerRuntimeBrief, res
 	if strings.TrimSpace(req.Tool) != "read_file" || !containsRunnerString(brief.TargetRefs, strings.TrimSpace(req.Path)) {
 		return workspace.ToolRequest{}, false
 	}
-	if targetReadCount >= maxEvidenceFirstTargetReadWindows {
-		return workspace.ToolRequest{}, false
-	}
 	if !targetReadNeedsBounding(req) {
 		return workspace.ToolRequest{}, false
 	}
 	return boundedFollowupTargetReadRequest(req, results, brief.TargetRefs), true
-}
-
-func evidenceFirstTargetWritePhaseRejection(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (string, string, bool) {
-	if !evidenceFirstTargetWritePhaseActive(brief, results) {
-		return "", "", false
-	}
-	if !isReadClassTool(req) {
-		return "", "", false
-	}
-	if postTargetInspectionReadAllowed(req, brief.TargetRefs) {
-		return "", "", false
-	}
-	return "Target-inspection phase complete",
-		"you already gathered source evidence and inspected the named target file in bounded windows. Make the edit now, or if one exact detail is still missing, stay scoped to the named target.",
-		true
 }
 
 func isEvidenceFirstMutationTaskFamily(family string) bool {
@@ -7161,17 +7730,9 @@ func evidenceFirstTargetReadUnlocked(brief workerruntime.WorkerRuntimeBrief, res
 		!hasSuccessfulTargetRead(results, brief.TargetRefs)
 }
 
-func evidenceFirstTargetWritePhaseActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return isEvidenceFirstMutationTaskFamily(brief.TaskFamily) &&
-		len(brief.TargetRefs) > 0 &&
-		len(changedPathsFromToolResults(results)) == 0 &&
-		successfulTargetReadCount(results, brief.TargetRefs) >= maxEvidenceFirstTargetReadWindows
-}
-
 const (
 	initialEvidenceFirstTargetReadWindowEnd = 220
 	followupEvidenceFirstTargetReadLines    = 140
-	maxEvidenceFirstTargetReadWindows       = 2
 )
 
 func firstTargetReadWindowRequest(targetRefs []string) workspace.ToolRequest {
@@ -7218,18 +7779,6 @@ func targetReadNeedsBounding(req workspace.ToolRequest) bool {
 		return true
 	}
 	return end-start+1 > followupEvidenceFirstTargetReadLines
-}
-
-func postTargetInspectionReadAllowed(req workspace.ToolRequest, targetRefs []string) bool {
-	path := strings.TrimSpace(req.Path)
-	switch strings.TrimSpace(req.Tool) {
-	case "read_file":
-		return containsRunnerString(targetRefs, path) && !targetReadNeedsBounding(req)
-	case "search_content":
-		return containsRunnerString(targetRefs, path)
-	default:
-		return false
-	}
 }
 
 func latestSuccessfulTargetReadWindow(results []workspace.ToolResult, targetRefs []string) (debugLogReadWindow, bool) {
@@ -7794,7 +8343,11 @@ func (r *Runner) controlRailsForBrief(messages []llama.ChatMessage, brief worker
 	if implementationPreWriteToolSurfaceActive(brief, nil) {
 		allowedTools = implementationPreWriteAllowedTools(allowedTools)
 	} else if implementationScopedEditSurfaceActive(brief, nil) {
-		allowedTools = implementationScopedEditAllowedTools(allowedTools)
+		var extReg *workspace.ExternalToolRegistry
+		if r.Workspace != nil {
+			extReg = r.Workspace.ExternalToolsRegistry()
+		}
+		allowedTools = implementationScopedEditAllowedToolsWithRegistry(allowedTools, extReg)
 	}
 	profile := strings.TrimSpace(brief.PermissionProfile)
 	if profile == "" {
@@ -7832,11 +8385,22 @@ func (r *Runner) controlRailsForBrief(messages []llama.ChatMessage, brief worker
 		rails.Contract = firstNonEmpty(strings.TrimSpace(brief.Contract), "implementation_result")
 		rails.TaskFamily = firstNonEmpty(strings.TrimSpace(brief.TaskFamily), "implementation")
 		rails.PermissionProfile = firstNonEmpty(strings.TrimSpace(brief.PermissionProfile), "guarded_workspace_write")
+		if planThenExecutePlannerBrief(brief) {
+			rails.RequiredEvidence = mergeRunnerStateStrings([]string{"plan_submitted_or_source_satisfied_or_blocker"}, rails.RequiredEvidence)
+			rails.RequiredTools = mergeRunnerStateStrings([]string{"submit_plan"}, rails.RequiredTools)
+			rails.ForbiddenTools = appendUniqueRunnerState(rails.ForbiddenTools, "unbounded_write")
+			rails.ReadinessGate = mergeRunnerStateStrings([]string{"submit_plan_or_source_satisfied_or_blocker_reported"}, rails.ReadinessGate)
+			rails.SearchPolicy = mergeRunnerStateStrings([]string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"}, rails.SearchPolicy)
+			rails.VerificationContract = firstNonEmpty(strings.TrimSpace(rails.VerificationContract), "not_required_for_text_mutations")
+			rails.StopConditions = mergeRunnerStateStrings([]string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"}, rails.StopConditions)
+			rails.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called_or_source_satisfied", "edits_or_source_satisfied_evidence_listed_in_summary"}
+			return rails
+		}
 		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{"changed_paths_or_noop_reason", "verification_status"})
 		if implementationPreWriteToolSurfaceActive(brief, nil) {
 			rails.RequiredTools = []string{"edit_file_or_apply_patch"}
 		} else if implementationScopedEditSurfaceActive(brief, nil) {
-			rails.RequiredTools = []string{"edit_file_or_apply_patch", "read_file_or_code_navigate_for_named_gap"}
+			rails.RequiredTools = []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"}
 		} else {
 			rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"})
 		}
@@ -8499,7 +9063,7 @@ func rewriteReadFileForPlannedNewFile(req workspace.ToolRequest, result workspac
 	for _, p := range brief.RequiredEditPaths {
 		if normalizeRunnerPath(p) == target {
 			result.Summary = "Required new-file path does not exist yet"
-			result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to read it. In submit_plan, include this edit shape: {\"path\":%q, \"replace_all\": true, \"old_text\": \"\", \"new_text\": \"<full file body>\", \"purpose\": \"...\"}. The brief's Implementation Shape / Required Behavior section is the source for new_text.", target, target)
+			result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to read it. In submit_plan, include this edit shape: {\"path\":%q, \"replace_all\": true, \"old_text\": \"\", \"new_text\": \"<full file body>\", \"purpose\": \"...\"}. The brief's Implementation Shape / Required Behavior section is the source for new_text; large bodies are moved to artifact refs after submission.", target, target)
 			return result
 		}
 	}
@@ -9123,7 +9687,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 			// (`git diff --check`) IS available and satisfies the gate. A
 			// SUBSEQUENT source write still sets pending — mixed atoms
 			// require source-aware sanity regardless of lane shape.
-			if docLane && writeTouchesOnlyNonSourcePaths(result) {
+			if docLane && (writeTouchesOnlyNonSourcePaths(result) || mkdirTouchesOnlyRequiredPathParents(result, brief.RequiredEditPaths)) {
 				continue
 			}
 			pending = true
@@ -9154,6 +9718,19 @@ func briefIsDocDeliverableLane(brief workerruntime.WorkerRuntimeBrief) bool {
 	return true
 }
 
+func briefIsScratchpadDeliverableLane(brief workerruntime.WorkerRuntimeBrief) bool {
+	if !briefIsDocDeliverableLane(brief) {
+		return false
+	}
+	for _, p := range brief.RequiredEditPaths {
+		normalized := normalizeRunnerPath(p)
+		if !strings.HasPrefix(normalized, ".idiom/refine/") {
+			return false
+		}
+	}
+	return true
+}
+
 // writeTouchesOnlyNonSourcePaths returns true when every path in a
 // write result is a non-source file (markdown, plain text). Used to
 // exempt doc-deliverable lanes from the post-write verification gate.
@@ -9168,6 +9745,40 @@ func writeTouchesOnlyNonSourcePaths(result workspace.ToolResult) bool {
 		}
 	}
 	return true
+}
+
+func mkdirTouchesOnlyRequiredPathParents(result workspace.ToolResult, requiredPaths []string) bool {
+	if strings.TrimSpace(result.Tool) != "mkdir" || len(requiredPaths) == 0 {
+		return false
+	}
+	paths := changedPathsFromToolResult(result)
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		if !mkdirPathIsRequiredParent(path, requiredPaths) {
+			return false
+		}
+	}
+	return true
+}
+
+func mkdirPathIsRequiredParent(path string, requiredPaths []string) bool {
+	path = strings.Trim(normalizeRunnerPath(path), "/")
+	if path == "" {
+		return false
+	}
+	for _, required := range requiredPaths {
+		required = strings.Trim(normalizeRunnerPath(required), "/")
+		if required == "" || !writePathIsNonSource(required) {
+			continue
+		}
+		parent := strings.Trim(filepath.ToSlash(filepath.Dir(required)), "/")
+		if path == parent || strings.HasPrefix(parent, path+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // writePathIsNonSource returns true for paths whose verification has
@@ -9218,11 +9829,11 @@ func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerrunt
 	}
 	if plannerOwnsVerification(brief) {
 		return "Source edit verification required",
-			fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no source-aware check at all. Run source_sanity on the changed source path; it routes to language diagnostics when available and falls back to generic source syntax sanity. If source sanity is unavailable, answer with the concrete lane-sanity blocker before doing more reads.", summarizeRunnerPaths(paths, 3)),
+			fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no source-aware check at all. Required evidence is source-sanity on the changed source path; the harness routes it to language diagnostics when available and falls back to generic source syntax sanity. If source sanity is unavailable, answer with the concrete lane-sanity blocker before doing more reads.", summarizeRunnerPaths(paths, 3)),
 			true
 	}
 	return "Source edit verification required",
-		fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no source-aware check at all. Run source_sanity on the changed source path; it routes to language diagnostics when available and falls back to generic source syntax sanity. Otherwise run a focused source-aware build/test or answer with the concrete verification blocker before doing more reads.", summarizeRunnerPaths(paths, 3)),
+		fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no source-aware check at all. Required evidence is source-sanity on the changed source path; the harness routes it to language diagnostics when available and falls back to generic source syntax sanity. A focused source-aware build/test or concrete verification blocker also satisfies this contract before more reads.", summarizeRunnerPaths(paths, 3)),
 		true
 }
 
@@ -9428,7 +10039,7 @@ func plannerOwnedVerificationShellRejection(req workspace.ToolRequest, brief wor
 		return "", "", false
 	}
 	return "Planner-owned verification shell rejected",
-		"this implementation lane delegates build/test verification to the caller. Use source_sanity for source edits, use git diff --check only as patch-hygiene evidence, or answer with the changed paths and the concrete planner-owned verification status.",
+		"this implementation lane delegates build/test verification to the caller. Source edits require source-sanity evidence; git diff --check is only patch-hygiene evidence. The other contract outcome is changed paths plus the concrete planner-owned verification status.",
 		true
 }
 
@@ -9436,11 +10047,11 @@ func verificationRequiredAfterWritesMessage(brief workerruntime.WorkerRuntimeBri
 	summary = "Verification required after workspace edits"
 	if plannerOwnsVerification(brief) {
 		return summary, fmt.Sprintf(
-			"the workspace has %d successful write(s) since the last lane sanity check. This route delegates build/test verification to the planner; do not run build or test commands. For source edits, run source_sanity so the harness routes to language diagnostics when available and falls back generically; use git diff --check only as patch-hygiene evidence; or answer with the changed paths and the concrete planner-owned verification status.",
+			"the workspace has %d successful write(s) since the last lane sanity check. This route delegates build/test verification to the planner; do not run build or test commands. Source edits require source-sanity evidence routed by the harness to language diagnostics when available and generic syntax sanity otherwise; git diff --check is only patch-hygiene evidence. The other contract outcome is changed paths plus the concrete planner-owned verification status.",
 			writesSinceVerification,
 		)
 	}
-	return summary, fmt.Sprintf("the workspace has %d successful write(s) since the last verification. Run a focused verification command (for example go test ./..., package tests, diagnostics, or the relevant build/test command) before more inspection or edits, or answer with the concrete blocker.", writesSinceVerification)
+	return summary, fmt.Sprintf("the workspace has %d successful write(s) since the last verification. Required evidence is a focused verification command (for example package tests, diagnostics, or the relevant build/test command) before more inspection or edits, or the concrete blocker.", writesSinceVerification)
 }
 
 func plannerOwnsVerification(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -10338,7 +10949,7 @@ type recoveryNudgeRule func(in recoveryNudgeInputs) (string, bool)
 //  5. debug-log investigation (deepen or pivot inside the same log)
 //  6. closure ready (delegated/child packet justifies answer)
 //  7. premature evidence-first target read (need non-target evidence)
-//  8. evidence-first target-write phase (in the write phase now)
+//  8. evidence-first target inspection (keep follow-up reads target-scoped)
 //
 // When every priority rule declines, lastChanceRecoveryNudge produces
 // the tool-shape-specific default.
@@ -10350,7 +10961,7 @@ var recoveryNudgeRules = []recoveryNudgeRule{
 	debugLogInvestigationRecoveryNudge,
 	closureReadyRecoveryNudge,
 	prematureEvidenceFirstTargetRecoveryNudge,
-	evidenceFirstTargetWritePhaseRecoveryNudge,
+	evidenceFirstTargetInspectionRecoveryNudge,
 }
 
 // buildRejectionRecoveryNudge gives the model one last closure-biased repair
@@ -10404,9 +11015,9 @@ func exactAnchorPreWriteRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
 	}
 	var b strings.Builder
 	b.WriteString("This is an exact-anchor implementation pre-write turn. The target packet is the current-state path and source evidence for the first write; do not inspect, search, shell, or verify before that write.\n")
-	b.WriteString("Call edit_file or apply_patch with the supplied anchor for ")
+	b.WriteString("Exact-anchor write capability is required for ")
 	b.WriteString(target)
-	b.WriteString(" now. If the supplied anchor is missing or stale, answer with <<QUESTION>> naming that exact anchor gap; no additional discovery is allowed in this lane.\n")
+	b.WriteString(". If the supplied anchor is missing or stale, answer with <<QUESTION>> naming that exact anchor gap; no additional discovery is allowed in this lane.\n")
 	return b.String(), true
 }
 
@@ -10422,7 +11033,7 @@ func missingRequiredEditPathsRecoveryNudge(in recoveryNudgeInputs) (string, bool
 	b.WriteString("Recovery nudge — this implementation turn still has required edit path(s) without a successful write: ")
 	b.WriteString(strings.Join(missing, ", "))
 	b.WriteString(".\n")
-	b.WriteString("Do not answer with partial findings. Make an allowed write now, or answer with <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
+	b.WriteString("Do not answer with partial findings. Required outcomes are an allowed write or <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
 	return b.String(), true
 }
 
@@ -10436,12 +11047,12 @@ func pendingVerificationAfterWritesRecoveryNudge(in recoveryNudgeInputs) (string
 	}
 	var b strings.Builder
 	if plannerOwnsVerification(in.brief) {
-		b.WriteString("This implementation turn has successful writes that are still pending lane sanity. Do not inspect or edit again yet. Build/test verification is planner-owned for this route, so run source_sanity for changed source files; for non-source edits run one cheap non-build sanity command such as `")
+		b.WriteString("This implementation turn has successful writes that are still pending lane sanity. Do not inspect or edit again yet. Build/test verification is planner-owned for this route, so required evidence is source-sanity for changed source files; for non-source edits one cheap non-build sanity command such as `")
 		b.WriteString(cmd)
-		b.WriteString("`. For source edits, `git diff --check` is only patch hygiene. If source_sanity is forbidden or impossible, answer with the changed paths and the concrete lane-sanity blocker.\n")
+		b.WriteString("`. For source edits, `git diff --check` is only patch hygiene. If source sanity is forbidden or impossible, answer with the changed paths and the concrete lane-sanity blocker.\n")
 		return b.String(), true
 	}
-	b.WriteString("This implementation turn has successful writes that are still pending verification. Do not inspect or edit again yet. Run one focused verification shell command now, preferably `")
+	b.WriteString("This implementation turn has successful writes that are still pending verification. Do not inspect or edit again yet. Required evidence is one focused verification shell command, preferably `")
 	b.WriteString(cmd)
 	b.WriteString("`. If verification is forbidden or impossible, answer with the changed paths and the concrete verification blocker.\n")
 	return b.String(), true
@@ -10515,8 +11126,16 @@ func prematureEvidenceFirstTargetRecoveryNudge(in recoveryNudgeInputs) (string, 
 	return b.String(), true
 }
 
-func evidenceFirstTargetWritePhaseRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
-	if !evidenceFirstTargetWritePhaseActive(in.brief, in.results) {
+func evidenceFirstTargetInspectionActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return isEvidenceFirstMutationTaskFamily(brief.TaskFamily) &&
+		len(brief.TargetRefs) > 0 &&
+		len(changedPathsFromToolResults(results)) == 0 &&
+		hasFocusedNonTargetEvidence(results, brief.TargetRefs) &&
+		hasSuccessfulTargetRead(results, brief.TargetRefs)
+}
+
+func evidenceFirstTargetInspectionRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if !evidenceFirstTargetInspectionActive(in.brief, in.results) {
 		return "", false
 	}
 	target := firstNonEmptyNonEmpty(in.brief.TargetRefs...)
@@ -10524,8 +11143,8 @@ func evidenceFirstTargetWritePhaseRecoveryNudge(in recoveryNudgeInputs) (string,
 		target = strings.TrimSpace(in.req.Path)
 	}
 	var b strings.Builder
-	b.WriteString("This turn is now in target-write phase.\n")
-	b.WriteString("Either edit the target now, or if one exact detail is still missing, stay inside the named target with one narrow read.\n")
+	b.WriteString("This turn already has source evidence and target-file evidence.\n")
+	b.WriteString("Either edit the target now, or if one exact detail is still missing, stay inside the named target with a named, narrow read or search.\n")
 	if target != "" {
 		start, end := 1, 40
 		if window, ok := latestSuccessfulTargetReadWindow(in.results, in.brief.TargetRefs); ok {

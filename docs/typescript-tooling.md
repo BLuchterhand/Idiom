@@ -2,9 +2,10 @@
 
 idiom exposes a `ts_*` toolset to the model whenever the workspace looks
 like a TypeScript/JavaScript project. The same toolset covers `.ts`,
-`.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, and `.d.ts` —
-`typescript-language-server` handles both languages from a single
-process, so splitting them would just duplicate code.
+`.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.d.ts`,
+`.d.mts`, and `.d.cts` — `typescript-language-server` handles both
+languages from a single process, so splitting them would just duplicate
+code.
 
 ## Install
 

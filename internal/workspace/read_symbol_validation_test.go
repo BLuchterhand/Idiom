@@ -45,10 +45,9 @@ func TestValidateSymbolPatternAcceptsRealSymbols(t *testing.T) {
 }
 
 func TestValidateSymbolPatternRejectsProseFromDonkeyRun(t *testing.T) {
-	// These are the patterns the model passed during the doom loop in
-	// the Colony donkey run, plus close cousins. Each must reject with
-	// a directional error pointing at search_content / ast_grep so the
-	// model can pivot on the next turn instead of looping.
+	// These are patterns previously passed during a read-symbol loop, plus
+	// close cousins. Each must reject with capability-shaped alternatives so
+	// the model can pivot on the next turn instead of looping.
 	cases := []string{
 		"animal treadmill outputs 5 EU while assigned donkey works",
 		"ANIMAL_FEED_CATTLE > ANIMAL_FEED_CHICKEN",
@@ -65,11 +64,11 @@ func TestValidateSymbolPatternRejectsProseFromDonkeyRun(t *testing.T) {
 			continue
 		}
 		msg := err.Error()
-		if !strings.Contains(msg, "search_content") {
-			t.Errorf("error for %q must name search_content as the alternative; got: %s", p, msg)
+		if !strings.Contains(msg, "exact-text search") {
+			t.Errorf("error for %q must name exact-text search as the alternative; got: %s", p, msg)
 		}
-		if !strings.Contains(msg, "ast_grep") {
-			t.Errorf("error for %q must name ast_grep as the alternative; got: %s", p, msg)
+		if !strings.Contains(msg, "AST-pattern capability") {
+			t.Errorf("error for %q must name AST-pattern capability as the alternative; got: %s", p, msg)
 		}
 		if !strings.Contains(msg, "cpp_read_symbol") {
 			t.Errorf("error for %q must name the rejecting tool; got: %s", p, msg)

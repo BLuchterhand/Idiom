@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -9,7 +10,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"idiom/internal/agent"
+	"idiom/internal/app"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/workspace"
@@ -64,6 +68,135 @@ func TestRunPlanExecuteMainUsesDefaultPlannerTokenBudget(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "Decision: source-satisfied\n- a.go: already implemented; no changes needed.\n- b.go: already implemented; no changes needed.", nil
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("source-satisfied planner answer should exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if strings.Contains(stderr.String(), "plan artifact") {
+		t.Fatalf("source-satisfied closeout should not report missing plan artifact, stderr=%s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "source-satisfied: executor skipped") {
+		t.Fatalf("source-satisfied closeout should be visible, stdout=%s", stdout.String())
+	}
+}
+
+func TestRunPlanExecuteMainStillFailsMissingArtifactWithoutSourceSatisfiedEvidence(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "Decision: source-satisfied\n- a.go: already implemented; no changes needed.", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("missing source-satisfied path evidence should still fail missing artifact, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
+		t.Fatalf("expected normal missing-artifact failure, stderr=%s", stderr.String())
+	}
+}
+
+func TestPlanExecuteInheritsPromptContextPackID(t *testing.T) {
+	prompt := "## Context Pack\n\n- Summary: context view artifact\n- Pack: `feedfacecafebeef`\n"
+	plan := workspace.PlanArtifact{SchemaVersion: workspace.PlanArtifactSchemaVersion}
+	got := inheritPlanExecutePromptPackID(&plan, prompt)
+	if got != "feedfacecafebeef" || plan.PackID != "feedfacecafebeef" {
+		t.Fatalf("expected inherited pack_id feedfacecafebeef, got %q plan=%#v", got, plan)
+	}
+	if got := extractPlanExecutePromptPackID("context_pack://0123456789abcdef"); got != "0123456789abcdef" {
+		t.Fatalf("expected context_pack URI extraction, got %q", got)
+	}
+}
+
+func TestTruncatePlanExecuteTextPreservesUTF8(t *testing.T) {
+	got := truncatePlanExecuteText("alpha βeta", 8)
+	if !strings.Contains(got, "[truncated") {
+		t.Fatalf("expected truncation marker, got %q", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncatePlanExecuteText must not split a UTF-8 rune, got %q", got)
+	}
+}
+
+func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
+		t.Fatalf("seed a.go: %v", err)
+	}
+	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "inherit pack", Mode: "plan"}
+	packID := key.ID()
+	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+		PackID:         packID,
+		IndexID:        build.IndexID,
+		Root:           root,
+		Task:           "inherit pack",
+		Mode:           "plan",
+		Fresh:          true,
+		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	configPath := filepath.Join(root, "config.json")
+	body := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q,"enable_writes":true}}`, root, root)
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	prompt := "## Context Pack\n\n- Pack: `" + packID + "`\n\nChange a.go from alpha to beta."
+	var stdout, stderr bytes.Buffer
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-json", "-skip-review-repair", "-prompt", prompt},
+		&stdout,
+		&stderr,
+		func(cfg config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "change marker",
+				Edits: []workspace.PlanEdit{
+					{Path: "a.go", OldText: "alpha", NewText: "beta", Purpose: "change marker"},
+				},
+			})
+			return "submitted", nil
+		},
+	)
+	if code != 0 {
+		t.Fatalf("runPlanExecuteMain exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `idiom.plan_execute.plan_artifact_pack_inherited`) {
+		t.Fatalf("expected inherited pack event, got:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `idiom.plan_execute.executor_inherits_pack`) {
+		t.Fatalf("expected executor to inherit pack after prompt inheritance, got:\n%s", stdout.String())
+	}
+}
+
 func writePlanExecuteConfig(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -83,6 +216,15 @@ func mustTime(value string) time.Time {
 	return t
 }
 
+func slicesContainString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
 	// When the planner stamps a pack_id and the cache row exists, the
 	// executor phase emits an executor_inherits_pack JSON event so
@@ -91,7 +233,7 @@ func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatalf("seed go.mod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
 		t.Fatalf("seed a.go: %v", err)
 	}
 	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
@@ -164,6 +306,590 @@ func TestRunExecutorPhaseEmitsExecutorPackMissOnUnknownPackID(t *testing.T) {
 	}
 }
 
+func TestCollectPlanExecutePhaseEvidenceLoadsPacketAndExecutorChecks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/evidence\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
+		t.Fatalf("seed a.go: %v", err)
+	}
+	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "phase evidence", Mode: "plan"}
+	cached := comprehension.PackResult{
+		PackID:         key.ID(),
+		IndexID:        build.IndexID,
+		Root:           root,
+		Task:           "phase evidence",
+		Mode:           "plan",
+		Fresh:          true,
+		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable", Reason: "matched task"}},
+		CandidateSymbols: []comprehension.PackSymbol{
+			{ID: "symbol://a.go#A", QualifiedName: "A", Kind: "function", Path: "a.go", Reason: "matched task"},
+		},
+		Tests:          []comprehension.PackTest{{Command: "go test ./...", Path: "a.go", Reason: "packet suggested test"}},
+		UnresolvedGaps: []string{"reason=stale_runtime_trace trace_id=t1"},
+	}
+	if err := comprehension.SaveView(root, key, cached); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	writePlanExecutePackArtifact(t, root, cached)
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"beta\" }\n"), 0o644); err != nil {
+		t.Fatalf("seed post-execute a.go: %v", err)
+	}
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PackID:        key.ID(),
+		Edits: []workspace.PlanEdit{
+			{Path: "a.go", OldText: "alpha", NewText: "beta", Purpose: "change return marker"},
+		},
+	}
+	evidence := collectPlanExecutePhaseEvidence(
+		root,
+		"review_repair",
+		plan,
+		[]string{"a.go"},
+		[]string{"a.go"},
+		[]string{"a.go"},
+		reviewRepairEvidence{DiffCheckExit: 0},
+		executorPhaseReport{SourceSanity: []phaseEvidenceCheck{{Kind: "source_sanity", Path: "a.go", Status: "ok", Summary: "Source sanity passed"}}},
+	)
+
+	if evidence.SchemaVersion != phaseEvidenceSchemaVersion {
+		t.Fatalf("schema version = %q", evidence.SchemaVersion)
+	}
+	if evidence.Packet.Status != "available_stale" || evidence.Packet.PackID != key.ID() {
+		t.Fatalf("expected stale packet artifact %s, got %#v", key.ID(), evidence.Packet)
+	}
+	if len(evidence.Packet.CandidateFiles) != 1 || evidence.Packet.CandidateFiles[0].Path != "a.go" {
+		t.Fatalf("candidate files missing from phase evidence: %#v", evidence.Packet.CandidateFiles)
+	}
+	if len(evidence.SuggestedTests) != 1 || evidence.SuggestedTests[0].Command != "go test ./..." {
+		t.Fatalf("suggested tests missing from phase evidence: %#v", evidence.SuggestedTests)
+	}
+	if len(evidence.SourceSanity) != 1 || evidence.SourceSanity[0].Status != "ok" {
+		t.Fatalf("source sanity missing from phase evidence: %#v", evidence.SourceSanity)
+	}
+	if len(evidence.SubmittedPlan) != 1 || evidence.SubmittedPlan[0].Status != "applied" {
+		t.Fatalf("submitted plan state should show applied edit, got %#v", evidence.SubmittedPlan)
+	}
+	if !slicesContainString(evidence.UnresolvedGaps, "reason=stale_runtime_trace trace_id=t1") {
+		t.Fatalf("packet gap should remain visible in unresolved gaps, got %#v", evidence.UnresolvedGaps)
+	}
+	if slicesContainString(evidence.OpenObligations, "packet_gap:reason=stale_runtime_trace trace_id=t1") {
+		t.Fatalf("informational packet gaps must not become repair obligations, got %#v", evidence.OpenObligations)
+	}
+	telemetry := phaseEvidenceTelemetry(evidence)
+	candidatePaths, ok := telemetry["candidate_file_paths"].([]string)
+	if !ok || !slicesContainString(candidatePaths, "a.go") {
+		t.Fatalf("telemetry should include bounded candidate paths, got %#v", telemetry["candidate_file_paths"])
+	}
+	testCommands, ok := telemetry["suggested_test_commands"].([]string)
+	if !ok || !slicesContainString(testCommands, "go test ./...") {
+		t.Fatalf("telemetry should include suggested test commands, got %#v", telemetry["suggested_test_commands"])
+	}
+}
+
+func TestCollectPlanExecutePhaseEvidenceReportsEvidenceGaps(t *testing.T) {
+	evidence := collectPlanExecutePhaseEvidence(
+		t.TempDir(),
+		"review_repair",
+		workspace.PlanArtifact{SchemaVersion: workspace.PlanArtifactSchemaVersion, PackID: "deadbeefdeadbeef"},
+		[]string{"a.go", "b.go"},
+		[]string{"a.go", "b.go"},
+		[]string{"a.go", "b.go"},
+		reviewRepairEvidence{DiffCheckExit: 128, DiffCheck: "fatal: not a git repository"},
+		executorPhaseReport{SourceSanity: []phaseEvidenceCheck{{Kind: "source_sanity", Path: "a.go", Status: "ok"}}},
+	)
+
+	for _, want := range []string{
+		"context_packet_unavailable:miss",
+		"patch_hygiene_unavailable",
+		"source_sanity_missing:b.go",
+	} {
+		if !slicesContainString(evidence.OpenObligations, want) {
+			t.Fatalf("expected obligation %q, got %#v", want, evidence.OpenObligations)
+		}
+	}
+	if slicesContainString(evidence.OpenObligations, "source_sanity_missing:a.go") {
+		t.Fatalf("source_sanity evidence should satisfy a.go, got %#v", evidence.OpenObligations)
+	}
+}
+
+func TestLoadPlanExecutePacketEvidenceRejectsInvalidPackID(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom", "comprehension", "views"), 0o755); err != nil {
+		t.Fatalf("mkdir views: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "comprehension", "secret.json"), []byte(`{"pack_id":"secret"}`), 0o644); err != nil {
+		t.Fatalf("seed escaped-looking artifact: %v", err)
+	}
+	got := loadPlanExecutePacketEvidence(root, "../secret")
+	if got.Status != "invalid_pack_id" {
+		t.Fatalf("invalid pack ids must be rejected before cache-path fallback, got %#v", got)
+	}
+}
+
+func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) {
+	prompt := planExecuteReviewRepairPrompt(
+		"Implement the required behavior.",
+		workspace.PlanArtifact{
+			Rationale: "change behavior",
+			Edits: []workspace.PlanEdit{
+				{Path: "a.go", Purpose: "update behavior"},
+			},
+		},
+		[]string{"a.go"},
+		[]string{"a.go"},
+		reviewRepairEvidence{
+			Diff:          "diff --git a/a.go b/a.go\n",
+			DiffCheckExit: 0,
+			PhaseEvidence: phaseEvidenceBundle{
+				SchemaVersion: phaseEvidenceSchemaVersion,
+				Phase:         "review_repair",
+				ChangedPaths:  []string{"a.go"},
+				Packet: phaseEvidencePacket{
+					Status:         "available",
+					PackID:         "abc123",
+					CandidateFiles: []phaseEvidenceFile{{Path: "a.go", Role: "editable", Reason: "matched task"}},
+				},
+				SuggestedTests: []phaseEvidenceTest{{Command: "go test ./...", Path: "a.go", Reason: "packet suggested test"}},
+				SubmittedPlan:  []phaseEvidenceCheck{{Kind: "submitted_edit", Path: "a.go", Status: "applied", Summary: "edit 1/1: submitted new_text is present"}},
+				SourceSanity:   []phaseEvidenceCheck{{Kind: "source_sanity", Path: "a.go", Status: "ok", Summary: "Source sanity passed"}},
+			},
+		},
+	)
+	for _, want := range []string{
+		"Verification Checklist",
+		"behavior, not just literal code correctness",
+		"Default/non-regression behavior",
+		"Data, lifecycle, state, persistence, concurrency/threading, and performance",
+		"Allowed Repair Paths",
+		"Phase Evidence Bundle",
+		"context_packet: status=available pack_id=abc123",
+		"submitted_plan_state",
+		"do not re-submit",
+		"`go test ./...`",
+		"source_sanity",
+		"tautology",
+		"_assert_true(true)",
+		"Decision: pass",
+		"submit_plan.rationale",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("review-repair prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestPlanExecuteReviewRepairPromptQuotesOriginalSpecAllowlist(t *testing.T) {
+	original := `# Atom
+
+## Files To Modify
+
+| File | Change |
+|------|--------|
+| ` + "`src/a.go`" + ` | MODIFY: original implementation target |
+`
+	prompt := planExecuteReviewRepairPrompt(
+		original,
+		workspace.PlanArtifact{
+			Rationale: "change behavior",
+			Edits: []workspace.PlanEdit{
+				{Path: "src/a.go", Purpose: "update behavior"},
+			},
+		},
+		[]string{"src/a.go"},
+		[]string{"src/a.go"},
+		reviewRepairEvidence{Diff: "diff --git a/src/a.go b/src/a.go\n", DiffCheckExit: 0},
+	)
+	if paths := app.RequiredEditPathsFromPrompt(prompt); len(paths) != 0 {
+		t.Fatalf("original spec allowlist should be quoted reference text, got active required paths %#v\nprompt:\n%s", paths, prompt)
+	}
+	if !strings.Contains(prompt, "> ## Files To Modify") {
+		t.Fatalf("original spec should remain visible as quoted reference text:\n%s", prompt)
+	}
+}
+
+func TestCollectReviewRepairEvidenceUsesExecutorBaselineNotGitHead(t *testing.T) {
+	root := initGitRepoForStaleness(t)
+	gitCommit(t, root, "a.txt", "head\n", "initial")
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("dirty-before-lane\n"), 0o644); err != nil {
+		t.Fatalf("seed dirty worktree: %v", err)
+	}
+	baseline := captureReviewRepairBaseline(root, []string{"a.txt"})
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("after-executor\n"), 0o644); err != nil {
+		t.Fatalf("seed executor result: %v", err)
+	}
+	evidence := collectReviewRepairEvidence(root, []string{"a.txt"}, &baseline)
+	if !strings.Contains(evidence.Diff, "-dirty-before-lane") || !strings.Contains(evidence.Diff, "+after-executor") {
+		t.Fatalf("current-run diff should compare against executor baseline, got:\n%s", evidence.Diff)
+	}
+	if strings.Contains(evidence.Diff, "-head") {
+		t.Fatalf("current-run diff must not compare against git HEAD, got:\n%s", evidence.Diff)
+	}
+}
+
+func TestCollectReviewRepairEvidenceChecksCurrentRunWhitespace(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\n"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	baseline := captureReviewRepairBaseline(root, []string{"a.txt"})
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\nbad   \n"), 0o644); err != nil {
+		t.Fatalf("seed executor result: %v", err)
+	}
+	evidence := collectReviewRepairEvidence(root, []string{"a.txt"}, &baseline)
+	if evidence.DiffCheckExit != 1 {
+		t.Fatalf("trailing whitespace should fail current-run hygiene, got exit %d diff=%s", evidence.DiffCheckExit, evidence.Diff)
+	}
+	if !strings.Contains(evidence.DiffCheck, "a.txt:2") {
+		t.Fatalf("whitespace finding should include current-run path and line, got:\n%s", evidence.DiffCheck)
+	}
+}
+
+func TestRunReviewRepairPhaseRejectsPassWithoutChecklist(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "old", NewText: "bad", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{},
+		&stdout,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "Decision: pass\nNo issues.", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected inconclusive review without checklist")
+	}
+	if !strings.Contains(err.Error(), "Verification Checklist") {
+		t.Fatalf("error should require checklist, got %v", err)
+	}
+}
+
+func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "bad", NewText: "good", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	var gotTaskFamily string
+	var gotPrompt string
+	report, err := runReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{},
+		&stdout,
+		func(_ config.Config, prompt string, opts runOptions, _ io.Writer) (string, error) {
+			gotTaskFamily = opts.TaskFamily
+			gotPrompt = prompt
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: good is present.\n- Scope safety: no corrective edit needed.", nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("review-repair pass should be accepted: %v", err)
+	}
+	if report.Status != "pass (no corrective edits)" {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+	if gotTaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+		t.Fatalf("review-repair should use review-repair task family, got %q", gotTaskFamily)
+	}
+	if strings.Contains(gotPrompt, "The plan-submission capability must cover every brief-required edit once") {
+		t.Fatalf("review-repair prompt must not include planner-phase submit_plan closeout addendum:\n%s", gotPrompt)
+	}
+}
+
+func TestRunReviewRepairPhaseAppliesChecklistRepairPlanWithinScope(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "old", NewText: "bad", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	report, err := runReviewRepairPhase(
+		cfg,
+		"Make a.txt say good.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{},
+		&stdout,
+		func(cfg config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "Verification Checklist:\n- Required behavior: a.txt must say good; current diff says bad.\n",
+				Edits: []workspace.PlanEdit{
+					{Path: "a.txt", OldText: "bad", NewText: "good", Purpose: "repair reviewed behavior"},
+				},
+			})
+			return "submitted repair", nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("review-repair should apply scoped repair: %v", err)
+	}
+	if report.Status != "repaired" || report.Repairs != 1 {
+		t.Fatalf("unexpected review report: %#v", report)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	if string(got) != "good\n" {
+		t.Fatalf("repair should update a.txt, got %q", string(got))
+	}
+}
+
+func TestRunReviewRepairPhaseRejectsOutOfScopeRepairBeforeWrites(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "surprise.txt"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatalf("seed surprise.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "old", NewText: "bad", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{},
+		&stdout,
+		func(cfg config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "Verification Checklist:\n- Scope safety failed.\n",
+				Edits: []workspace.PlanEdit{
+					{Path: "surprise.txt", OldText: "keep", NewText: "mutated", Purpose: "out-of-scope repair"},
+				},
+			})
+			return "submitted repair", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected out-of-scope review repair rejection")
+	}
+	if !strings.Contains(err.Error(), "allowed_edit_paths") {
+		t.Fatalf("expected allowed_edit_paths rejection, got %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "surprise.txt"))
+	if err != nil {
+		t.Fatalf("read surprise.txt: %v", err)
+	}
+	if string(got) != "keep\n" {
+		t.Fatalf("out-of-scope repair must not write surprise.txt, got %q", string(got))
+	}
+}
+
+func TestRunReviewRepairPhaseRejectsNoOpAssertionRepairBeforeWrites(t *testing.T) {
+	root := t.TempDir()
+	original := "extends Node\n\nfunc test_case():\n\tpass\n"
+	if err := os.WriteFile(filepath.Join(root, "suite.gd"), []byte(original), 0o644); err != nil {
+		t.Fatalf("seed suite.gd: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "suite.gd", OldText: "\tpass\n", NewText: "\t# missing behavioral assertion\n\tpass\n", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{},
+		&stdout,
+		func(cfg config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "Verification Checklist:\n- Required behavior still needs a concrete assertion.\n",
+				Edits: []workspace.PlanEdit{
+					{Path: "suite.gd", OldText: "\tpass\n", NewText: "\t_assert_true(true, \"contract validated\")\n", Purpose: "fake behavioral proof"},
+				},
+			})
+			return "submitted repair", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected no-op assertion repair rejection")
+	}
+	if !strings.Contains(err.Error(), "no-op assertion") {
+		t.Fatalf("expected no-op assertion rejection, got %v", err)
+	}
+	got, readErr := os.ReadFile(filepath.Join(root, "suite.gd"))
+	if readErr != nil {
+		t.Fatalf("read suite.gd: %v", readErr)
+	}
+	if string(got) != original {
+		t.Fatalf("review-repair preflight must reject before writes, got %q", string(got))
+	}
+}
+
+func writePlanExecuteTestArtifact(t *testing.T, root string, sessionID string, artifact workspace.PlanArtifact) string {
+	t.Helper()
+	dir := filepath.Join(root, ".idiom", "plans")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir plans: %v", err)
+	}
+	if artifact.Created == "" {
+		artifact.Created = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if artifact.SchemaVersion == "" {
+		artifact.SchemaVersion = workspace.PlanArtifactSchemaVersion
+	}
+	if artifact.SchemaVersion == workspace.PlanArtifactSchemaVersion {
+		if artifact.PlanID == "" {
+			artifact.PlanID = "test-plan"
+		}
+		if artifact.Task.Summary == "" && artifact.Task.ID == "" {
+			artifact.Task.Summary = "test plan-execute artifact"
+		}
+		if artifact.Contract.Kind == "" {
+			artifact.Contract.Kind = "plan_then_execute"
+		}
+		if artifact.Contract.StrategyOwner == "" {
+			artifact.Contract.StrategyOwner = "model"
+		}
+		if artifact.Contract.ContractOwner == "" {
+			artifact.Contract.ContractOwner = "harness"
+		}
+		if artifact.Packet.Status == "" {
+			if artifact.PackID != "" {
+				artifact.Packet.Status = "provided"
+				artifact.Packet.PackID = artifact.PackID
+			} else {
+				artifact.Packet.Status = "not_provided"
+			}
+		}
+		if len(artifact.Paths.Editable) == 0 {
+			artifact.Paths.Editable = planExecuteTestEditPaths(artifact.Edits)
+		}
+		if len(artifact.Paths.Changed) == 0 {
+			artifact.Paths.Changed = planExecuteTestEditPaths(artifact.Edits)
+		}
+		if len(artifact.Evidence) == 0 {
+			artifact.Evidence = []workspace.PlanArtifactEvidence{{Kind: "test_fixture", Summary: "bounded plan-execute test artifact"}}
+		}
+		if len(artifact.VerificationObligations) == 0 {
+			artifact.VerificationObligations = []workspace.PlanArtifactVerificationObligation{{Kind: "test_lane_sanity", Status: "open", Required: true}}
+		}
+		if artifact.Approval.Status == "" {
+			artifact.Approval.Status = "implicit"
+		}
+		if artifact.Handoff.Status == "" {
+			artifact.Handoff.Status = "ready"
+			artifact.Handoff.Ready = true
+		}
+	}
+	artifact.SessionID = sessionID
+	body, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal plan artifact: %v", err)
+	}
+	path := filepath.Join(dir, time.Now().UTC().Format("20060102-150405000")+".plan.json")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write plan artifact: %v", err)
+	}
+	return path
+}
+
+func planExecuteTestEditPaths(edits []workspace.PlanEdit) []string {
+	seen := map[string]struct{}{}
+	var paths []string
+	for _, edit := range edits {
+		path := strings.TrimSpace(edit.Path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func writePlanExecutePackArtifact(t *testing.T, root string, pack comprehension.PackResult) string {
+	t.Helper()
+	path := filepath.Join(root, ".idiom", "comprehension", "views", pack.PackID+".json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir pack artifact: %v", err)
+	}
+	body, err := json.MarshalIndent(pack, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal pack artifact: %v", err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
+		t.Fatalf("write pack artifact: %v", err)
+	}
+	return path
+}
+
 func TestRunExecutorPhaseDispatchesEditsInOrder(t *testing.T) {
 	// Seed two files, run the executor phase against a plan that
 	// mutates each, and verify both writes landed.
@@ -204,6 +930,40 @@ func TestRunExecutorPhaseDispatchesEditsInOrder(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "BETA") {
 		t.Fatalf("b.txt should contain BETA after edit, got %q", string(got))
+	}
+}
+
+func TestRunExecutorPhaseRunsSourceSanityAfterSourceEdits(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "suite.gd"), []byte("extends Node\n\nfunc helper():\n\tpass\n"), 0o644); err != nil {
+		t.Fatalf("seed suite.gd: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "suite.gd", OldText: "\tpass\n", NewText: "", Purpose: "remove helper body"},
+		},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	report, err := runExecutorPhase(cfg, plan, nil, true, &stdout)
+	if err == nil {
+		t.Fatalf("expected source_sanity failure after source edit")
+	}
+	if report.Succeeded != 1 || report.Failed != 0 {
+		t.Fatalf("source_sanity runs after successful dispatch; unexpected report %#v", report)
+	}
+	if len(report.SourceSanity) != 1 || report.SourceSanity[0].Path != "suite.gd" || report.SourceSanity[0].Status != "failed" {
+		t.Fatalf("executor report should retain failed source_sanity evidence, got %#v", report.SourceSanity)
+	}
+	if !strings.Contains(err.Error(), "source_sanity failed") {
+		t.Fatalf("expected source_sanity error, got %v", err)
+	}
+	if !strings.Contains(stdout.String(), `idiom.plan_execute.source_sanity`) {
+		t.Fatalf("expected source_sanity event, got %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"source_sanity_status":"failed"`) {
+		t.Fatalf("expected failed source_sanity status in executor_complete, got %s", stdout.String())
 	}
 }
 
@@ -396,6 +1156,59 @@ func TestPreflightPlanEditsAllowsReplaceAllRepeatedOldText(t *testing.T) {
 	}
 }
 
+func TestPreflightPlanUnsupportedProofClaimsRejectsNoOpAssertion(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{
+				Path:    "tests/panel_contract.gd",
+				NewText: "func test_contract():\n\t_assert_true(true, \"contract validated\")\n",
+			},
+		},
+	}
+	got := preflightPlanUnsupportedProofClaims(plan)
+	if got == nil {
+		t.Fatalf("expected unsupported proof preflight to reject no-op assertion")
+	}
+	if got.Path != "tests/panel_contract.gd" || !strings.Contains(got.Reason, "no-op assertion") {
+		t.Fatalf("unexpected mismatch: %#v", got)
+	}
+}
+
+func TestPreflightPlanUnsupportedProofClaimsRejectsSelfDisqualifyingProofComment(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{
+				Path:    "tests/panel_contract.gd",
+				NewText: "func test_contract():\n\t# simplified check: for now, we just verify that it exists and can be called\n\tpass\n",
+			},
+		},
+	}
+	got := preflightPlanUnsupportedProofClaims(plan)
+	if got == nil {
+		t.Fatalf("expected unsupported proof preflight to reject self-disqualifying proof comment")
+	}
+	if got.Path != "tests/panel_contract.gd" || !strings.Contains(got.Reason, "self-disqualifying") {
+		t.Fatalf("unexpected mismatch: %#v", got)
+	}
+}
+
+func TestPreflightPlanUnsupportedProofClaimsIgnoresProseFiles(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{
+				Path:    "docs/review.md",
+				NewText: "This retrospective says we cannot easily test the old behavior.\n",
+			},
+		},
+	}
+	if got := preflightPlanUnsupportedProofClaims(plan); got != nil {
+		t.Fatalf("prose files should not trigger source proof preflight, got %#v", got)
+	}
+}
+
 func TestPreflightPlanEditsSkipsRangeShapedEdits(t *testing.T) {
 	// Range-shaped edits (start_line+end_line+content, no old_text)
 	// don't depend on substring matching; preflight must skip them
@@ -412,6 +1225,70 @@ func TestPreflightPlanEditsSkipsRangeShapedEdits(t *testing.T) {
 	}
 	if got := preflightPlanEdits(root, plan); got != nil {
 		t.Fatalf("preflight must skip range-shaped edits, got mismatch %#v", got)
+	}
+}
+
+func TestPreflightPlanEditsRejectsAdjacentDuplicateCodeLine(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "sim.cpp"), []byte("void tick() {\n    auto& c = entities_->colonists.data()[i];\n    c.cultural_work_mult = 1.0f;\n}\n"), 0o644); err != nil {
+		t.Fatalf("seed sim.cpp: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{
+				Path:    "sim.cpp",
+				OldText: "    c.cultural_work_mult = 1.0f;\n",
+				NewText: "    auto& c = entities_->colonists.data()[i];\n    c.cultural_work_mult = 1.0f;\n",
+			},
+		},
+	}
+	got := preflightPlanEdits(root, plan)
+	if got == nil {
+		t.Fatalf("preflight must reject plans that introduce adjacent duplicate code")
+	}
+	if got.Index != 0 || got.Path != "sim.cpp" {
+		t.Fatalf("mismatch should point at edit 0 in sim.cpp, got %#v", got)
+	}
+	if !strings.Contains(got.Reason, "adjacent duplicate code line") {
+		t.Fatalf("mismatch reason should name adjacent duplicate code, got %q", got.Reason)
+	}
+}
+
+func TestRunExecutorPhaseRejectsCompletedArtifactOverwriteBeforeWrites(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	specPath := filepath.Join(root, ".planning", "atoms", "done.md")
+	if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+		t.Fatalf("mkdir spec parent: %v", err)
+	}
+	originalSpec := "# Done\n\nStatus: complete\n\nAccepted spec.\n"
+	if err := os.WriteFile(specPath, []byte(originalSpec), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "before", NewText: "after"},
+			{Path: ".planning/atoms/done.md", NewText: "# Done\n\nNew draft.\n", ReplaceAll: true},
+		},
+	}
+	var stdout bytes.Buffer
+	report, err := runExecutorPhase(cfg, plan, nil, false, &stdout)
+	if err == nil {
+		t.Fatalf("expected completed artifact overwrite preflight failure")
+	}
+	if report.Succeeded != 0 || report.Failed != 0 {
+		t.Fatalf("preflight failure should happen before dispatch, got %#v", report)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "a.txt")); string(got) != "before\n" {
+		t.Fatalf("preflight abort must leave earlier files untouched, got %q", string(got))
+	}
+	if got, _ := os.ReadFile(specPath); string(got) != originalSpec {
+		t.Fatalf("preflight abort must leave completed spec untouched, got %q", string(got))
 	}
 }
 

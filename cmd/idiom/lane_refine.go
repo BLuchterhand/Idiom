@@ -83,18 +83,15 @@ type laneRefineOptions struct {
 // out to `idiom lane implement`; tests inject a fake.
 type refineDispatchFn func(metaBriefPath string, stdout, stderr io.Writer) int
 
-// Refine routes ALL phases to a 35B-A3B instance running with
-// enable_thinking=false (alias qwen3.6-35b-nothink, pool
-// qwen-35b-nothink). Earlier iterations tried Coder-30B with
-// thinking off (#98); Coder's chat-template-args weren't fully
-// suppressing <think> emission (#100), producing intermittent
-// runaway-reasoning even when explicitly disabled. 35B has the
-// reasoning capacity to handle the refine work in one pass —
-// running it WITHOUT thinking gives us model capability without
-// the budget hog. Same skeleton-first templates, same per-phase
-// max_tokens.
-const refineDefaultPool = "qwen-35b-nothink"
-const refineDefaultModel = "qwen3.6-35b-nothink"
+// Refine routes ALL phases to the primary 35B-A3B backend while
+// passing --no-thinking to the wrapped implement lane. Earlier
+// iterations used a second qwen3.6-35b-nothink MLX process because
+// mlx_lm.server did not accept request-level chat_template_kwargs.
+// Current mlx-lm honors enable_thinking=false per request, so refine
+// keeps the no-thinking behavior without loading duplicate 35B
+// weights. Same skeleton-first templates, same per-phase max_tokens.
+const refineDefaultPool = "qwen-35b"
+const refineDefaultModel = "qwen3.6-35b"
 
 // inferRefinePhase examines the meta-brief filename to decide which
 // refine phase is dispatching. lane_refine.go names these files
@@ -116,21 +113,22 @@ func inferRefinePhase(metaBriefPath string) string {
 }
 
 // refinePhaseRouting picks pool + model for a refine subprocess
-// based on the phase inferred from the meta-brief filename. All
-// phases currently target Coder-30B. Coder still emits <think>
-// blocks despite no enable_thinking in chat-template-args (#97
-// finding) — the reasoning_content captures whatever the model
-// "thinks" through internally, and that eats into max_tokens just
-// like 35B thinking-mode. Draft is short enough at 8192; review +
-// patch need 16384 because they ingest prior artifacts and emit
-// long structured deliverables.
+// based on the phase inferred from the meta-brief filename. Review is
+// intentionally smaller to keep runaway prose contained if a model
+// ignores the write_file instruction; patch and draft need enough
+// room to emit the full corrected draft. Read/write discipline
+// belongs in the phase prompt and runner readiness guidance, not in a
+// wrapper-local fixed tool-step ceiling that can mask stale specs as
+// "budget" failures.
 func refinePhaseRouting(metaBriefPath string) (pool, model string, maxTokens int) {
 	phase := inferRefinePhase(metaBriefPath)
 	switch phase {
-	case "review", "patch":
+	case "review":
+		return refineDefaultPool, refineDefaultModel, 4096
+	case "patch":
 		return refineDefaultPool, refineDefaultModel, 16384
 	default: // "draft"
-		return refineDefaultPool, refineDefaultModel, 8192
+		return refineDefaultPool, refineDefaultModel, 16384
 	}
 }
 
@@ -154,6 +152,7 @@ func defaultRefineDispatch(metaBriefPath string, stdout, stderr io.Writer) int {
 		"--",
 		binary, "lane", "implement", "--no-lint", "--json",
 		"--model", model,
+		"--no-thinking",
 		"--max-tokens", strconv.Itoa(maxTokens),
 		metaBriefPath,
 	)
@@ -191,6 +190,10 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		fmt.Fprintf(stderr, "refine: cannot read spec %s: %v\n", opts.SpecPath, err)
 		return 1
 	}
+	if blocker := atomSpecDispatchBlocker(string(specBody)); blocker != "" {
+		fmt.Fprintf(stderr, "refine: refusing spec %s: %s\n", opts.SpecPath, blocker)
+		return 1
+	}
 	mode := strings.TrimSpace(opts.Mode)
 	if mode == "" {
 		mode = refineDetectMode(string(specBody))
@@ -198,12 +201,33 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 	fmt.Fprintf(stderr, "refine: mode=%s (auto-detected from spec)\n", mode)
 
 	// §6.1 Gap 6 (Colony harness-side fix): extract the deliverable
-	// target once and validate every iter's draft against it.
-	specDeliverableTarget := extractDeliverableTarget(string(specBody))
+	// targets once and validate every iter's draft against them.
+	// Gap 8 (Colony 2026-05-12): persist the targets as stateDir-level
+	// sidecars so downstream tooling (lane-history readers,
+	// plan-execute integrations, audit harness) can read the
+	// harness-extracted routing targets without re-parsing the brief.
+	// Empty target list = no sidecars (extraction failed at spec-parse
+	// time).
+	specDeliverableTargets := extractDeliverableTargets(string(specBody), mode)
+	if len(specDeliverableTargets) > 0 {
+		targetBody := strings.Join(specDeliverableTargets, "\n") + "\n"
+		if err := os.WriteFile(filepath.Join(stateDir, "deliverable_targets.txt"), []byte(targetBody), 0o644); err != nil {
+			fmt.Fprintf(stderr, "refine: cannot write deliverable_targets sidecar: %v\n", err)
+			// Non-fatal: the sidecar is observability, not behavior.
+		}
+		// Compatibility sidecar for older readers that only expect one
+		// target. Multi-file anchored specs read deliverable_targets.txt.
+		sidecarPath := filepath.Join(stateDir, "deliverable_target.txt")
+		if err := os.WriteFile(sidecarPath, []byte(specDeliverableTargets[0]+"\n"), 0o644); err != nil {
+			fmt.Fprintf(stderr, "refine: cannot write deliverable_target sidecar %s: %v\n", sidecarPath, err)
+			// Non-fatal: the sidecar is observability, not behavior.
+		}
+	}
 
 	var prevReviewBugs []string
 	var lastDraftPath string
 	bestDraftPath := ""
+	bestLintExit := -1
 	bestBugCount := -1 // -1 = "no draft scored yet"
 
 	// failsoft centralizes the "this iteration broke" path. When we have
@@ -237,7 +261,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			return failExit
 		}
 		fmt.Fprintf(stderr, "refine: failsoft at iter %d (%s) — shipping last-reviewed draft (%d bugs)\n", iter, reason, bestBugCount)
-		return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "failsoft-"+reason, opts.ProjectRoot, stderr)
+		return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "failsoft-"+reason, opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 	}
 
 	for iter := 1; iter <= opts.MaxIters; iter++ {
@@ -248,6 +272,14 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		}
 		draftPath := filepath.Join(iterDir, "draft.md")
 		reviewPath := filepath.Join(iterDir, "review.md")
+		if err := clearRefineOutputPath(draftPath, stderr); err != nil {
+			fmt.Fprintf(stderr, "refine: cannot clear stale draft %s: %v\n", draftPath, err)
+			return failsoft(iter, "draft-clear", 1)
+		}
+		if err := clearRefineOutputPath(reviewPath, stderr); err != nil {
+			fmt.Fprintf(stderr, "refine: cannot clear stale review %s: %v\n", reviewPath, err)
+			return failsoft(iter, "review-clear", 1)
+		}
 
 		metrics := refineIterMetrics{Iter: iter, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 		if iter == 1 {
@@ -281,8 +313,8 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			// indirection layer that the convergence guarantee
 			// depended on.
 			prevIterDir := filepath.Join(stateDir, fmt.Sprintf("iter-%d", iter-1))
-			_, prevLintOutput := captureRefineLintOutput(lastDraftPath, prevIterDir, stderr)
-			if err := writeRefinePatchMeta(metaPath, lastDraftPath, prevReviewPath, draftPath, prevLintOutput); err != nil {
+			_, prevLintOutput := captureRefineLintOutput(lastDraftPath, prevIterDir, opts.ProjectRoot, mode, specDeliverableTargets, stderr)
+			if err := writeRefinePatchMeta(metaPath, lastDraftPath, prevReviewPath, draftPath, prevLintOutput, specDeliverableTargets); err != nil {
 				fmt.Fprintf(stderr, "refine: write patch meta: %v\n", err)
 				return failsoft(iter, "patch-meta-write", 1)
 			}
@@ -304,13 +336,13 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		}
 		lastDraftPath = draftPath
 
-		lintExit, lintOutput := captureRefineLintOutput(draftPath, iterDir, stderr)
+		lintExit, lintOutput := captureRefineLintOutput(draftPath, iterDir, opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 		// §6.1 Gap 6 (Colony harness-side fix): validate the draft's
 		// Files To Modify references the extracted deliverable target.
 		// If the model put refine's scratchpad path there instead, the
 		// brief is structurally broken — surface as a BLOCK so the
 		// reviewer + patcher both see it as a required edit target.
-		if mismatch := refineDeliverableTargetMismatch(draftPath, specDeliverableTarget); mismatch != "" {
+		if mismatch := refineDeliverableTargetMismatch(draftPath, specDeliverableTargets); mismatch != "" {
 			lintOutput = mismatch + "\n" + lintOutput
 			if lintExit == 0 {
 				lintExit = 1
@@ -332,6 +364,16 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			return failsoft(iter, "review-dispatch", reviewCode)
 		}
 		if _, err := os.Stat(reviewPath); err != nil {
+			if wrote, fallbackErr := writeFallbackRefineReview(reviewPath, lintOutput, "review-missing", stderr); fallbackErr != nil {
+				fmt.Fprintf(stderr, "refine: fallback review write failed at iter %d: %v\n", iter, fallbackErr)
+			} else if wrote {
+				fmt.Fprintf(stderr, "refine: iter %d reviewer wrote no file; synthesized review from lint BLOCKs at %s\n", iter, reviewPath)
+			} else {
+				fmt.Fprintf(stderr, "refine: iter %d produced no review at %s: %v\n", iter, reviewPath, err)
+				return failsoft(iter, "review-missing", 1)
+			}
+		}
+		if _, err := os.Stat(reviewPath); err != nil {
 			fmt.Fprintf(stderr, "refine: iter %d produced no review at %s: %v\n", iter, reviewPath, err)
 			return failsoft(iter, "review-missing", 1)
 		}
@@ -346,34 +388,30 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		fmt.Fprintf(stderr, "refine: iter %d verdict=%s bugs=%d\n", iter, verdict, len(bugs))
 		metrics.Verdict = verdict
 		metrics.BugCount = len(bugs)
-		if bestBugCount < 0 || len(bugs) < bestBugCount {
+		if refineDraftScoreBetter(lintExit, len(bugs), bestLintExit, bestBugCount) {
 			bestDraftPath = lastDraftPath
+			bestLintExit = lintExit
 			bestBugCount = len(bugs)
 		}
 		if verdict == "ship-as-is" {
 			stampMetricsAction("ship-as-is", "")
-			return finalizeRefineWithTitleAndOverlay(lastDraftPath, opts.OutputPath, opts.Title, iter, "ship-as-is", opts.ProjectRoot, stderr)
+			return finalizeRefineWithTitleAndOverlay(lastDraftPath, opts.OutputPath, opts.Title, iter, "ship-as-is", opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 		}
 		if iter > 1 && refineLoopDiverging(prevReviewBugs, bugs) {
 			fmt.Fprintf(stderr, "refine: loop diverging at iter %d (same bugs as iter %d); shipping best draft\n", iter, iter-1)
 			stampMetricsAction("diverging", "")
-			return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "diverging", opts.ProjectRoot, stderr)
-		}
-		if iter > 1 && len(bugs) >= len(prevReviewBugs) && len(bugs) > 0 {
-			fmt.Fprintf(stderr, "refine: no improvement at iter %d (bugs went %d -> %d); stopping and shipping best draft\n", iter, len(prevReviewBugs), len(bugs))
-			stampMetricsAction("no-improvement", "")
-			return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "no-improvement", opts.ProjectRoot, stderr)
+			return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "diverging", opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 		}
 		stampMetricsAction("continue", "")
 		prevReviewBugs = bugs
 	}
-	fmt.Fprintf(stderr, "refine: max iters (%d) reached without ship-as-is verdict; shipping best draft (%d bugs)\n", opts.MaxIters, bestBugCount)
+	fmt.Fprintf(stderr, "refine: max iters (%d) reached without ship-as-is verdict; shipping best draft (lint exit=%d, %d bugs)\n", opts.MaxIters, bestLintExit, bestBugCount)
 	stampMetricsAction("max-iters-exhausted", "")
 	finalDraft := bestDraftPath
 	if finalDraft == "" {
 		finalDraft = lastDraftPath
 	}
-	return finalizeRefineWithTitleAndOverlay(finalDraft, opts.OutputPath, opts.Title, opts.MaxIters, "max-iters-exhausted", opts.ProjectRoot, stderr)
+	return finalizeRefineWithTitleAndOverlay(finalDraft, opts.OutputPath, opts.Title, opts.MaxIters, "max-iters-exhausted", opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 }
 
 func validateRefineOptions(opts *laneRefineOptions) error {
@@ -400,6 +438,22 @@ func refineStateDir(projectRoot, title string) string {
 	return filepath.Join(projectRoot, ".idiom", "refine", refineSanitizeTitle(title))
 }
 
+func clearRefineOutputPath(path string, stderr io.Writer) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if stderr != nil {
+		fmt.Fprintf(stderr, "refine: cleared stale output %s\n", path)
+	}
+	return nil
+}
+
 var refineUnsafeTitleChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 func refineSanitizeTitle(title string) string {
@@ -420,40 +474,161 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 		fmt.Fprintf(stderr, "refine: draft template = %s\n", source)
 		template = ensureRefineDraftWriteClosure(template, stderr, source)
 	}
-	// §6.1 Gap 6 (Colony harness-side fix): extract the deliverable
-	// target from the spec text and inline it as a pre-filled context
-	// block so the model doesn't have to re-parse the spec. Eliminates
-	// the deliverable-vs-state-path conflation surface entirely on
-	// specs that name the target with one of the standard verbs.
-	target := extractDeliverableTarget(specBody)
-	deliverableContext := refineDeliverableContextBlock(target)
-	if target != "" {
-		fmt.Fprintf(stderr, "refine: extracted deliverable target from spec: %s\n", target)
+	// §6.1 Gap 6 (Colony harness-side fix): extract deliverable
+	// targets from the spec text and inline them as pre-filled context
+	// so the model doesn't have to re-parse the spec. Anchored specs
+	// prefer the explicit Files To Modify table; markdown specs retain
+	// the older verb+path fallback.
+	targets := extractDeliverableTargets(specBody, mode)
+	target := firstRefineDeliverableTarget(targets)
+	deliverableContext := refineDeliverableContextBlock(targets)
+	if len(targets) > 0 {
+		fmt.Fprintf(stderr, "refine: extracted deliverable target(s) from spec: %s\n", strings.Join(targets, ", "))
 	}
 	body := strings.NewReplacer(
-		"{{SPEC_BODY}}", strings.TrimSpace(specBody),
+		"{{SPEC_BODY}}", refineQuotedSpecBody(specBody),
 		"{{DRAFT_PATH}}", refineWorkspaceRel(opts.ProjectRoot, draftPath),
 		"{{TITLE}}", opts.Title,
 		"{{DELIVERABLE_TARGET}}", target,
 		"{{DELIVERABLE_TARGET_CONTEXT}}", deliverableContext,
 	).Replace(template)
+	body = ensureRefineMetaDraftWriteScope(body, refineWorkspaceRel(opts.ProjectRoot, draftPath))
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
-// refineDeliverableContextBlock renders the substitution block that
-// names the extracted deliverable target. When extraction succeeds,
-// the model sees a pre-filled "use THIS exact path" instruction. When
-// extraction fails (spec doesn't name a target with one of the
-// canonical verbs), the block falls back to a no-op note so the
-// template substitution leaves no orphan `{{DELIVERABLE_TARGET_CONTEXT}}`
-// placeholder. Templates that don't reference the placeholder ignore
-// this entirely.
-func refineDeliverableContextBlock(target string) string {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return "(no deliverable target detected in spec — infer from spec text below)"
+// refineQuotedSpecBody renders the input spec as reference material,
+// not as active lane instructions. Refine meta-drafts embed arbitrary
+// implementation specs, many of which contain their own "Files To
+// Modify" tables. If those headings remain raw, the implementation
+// runtime extracts the implementation allowlist as this scratchpad
+// lane's required_edit_paths and the draft writer is blocked from
+// writing draft.md. Blockquote every spec line so humans/models still
+// see the source material while path extractors ignore its headings.
+func refineQuotedSpecBody(specBody string) string {
+	specBody = strings.TrimSpace(specBody)
+	if specBody == "" {
+		return "> (empty spec)"
 	}
-	return fmt.Sprintf("**Deliverable target (extracted from spec by harness): `%s`.** Use this exact path in the brief's `## Files To Modify` (anchored-edits mode) or `## Deliverable` Path (markdown-deliverable mode). Do NOT use `{{DRAFT_PATH}}` — that's where refine writes the brief, not where plan-execute writes the deliverable.", target)
+	lines := strings.Split(specBody, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ">"
+			continue
+		}
+		lines[i] = "> " + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ensureRefineMetaDraftWriteScope(body, draftPath string) string {
+	draftPath = strings.TrimSpace(draftPath)
+	if draftPath == "" {
+		return body
+	}
+	if strings.Contains(strings.ToLower(body), "## files to modify") && strings.Contains(body, "`"+draftPath+"`") {
+		return body
+	}
+	block := refineMetaDraftWriteScopeBlock(draftPath)
+	if idx := strings.Index(body, "\n\n"); idx >= 0 {
+		return body[:idx] + "\n\n" + block + "\n\n" + body[idx+2:]
+	}
+	return strings.TrimRight(body, "\n") + "\n\n" + block + "\n"
+}
+
+func refineMetaDraftWriteScopeBlock(draftPath string) string {
+	return fmt.Sprintf("## Files To Modify\n\n| File | Change |\n|------|--------|\n| `%s` | NEW FILE: refine scratchpad draft brief |", draftPath)
+}
+
+// refineDeliverableContextBlock renders the substitution block that
+// names the extracted deliverable target(s). Retained for backwards
+// compatibility with templates that still reference
+// `{{DELIVERABLE_TARGET_CONTEXT}}` (project overrides that haven't
+// migrated to the harness-injected block yet). The canonical
+// templates (`lanes/refine/draft.md`, `draft-markdown.md`) no longer
+// reference the placeholder — they emit the
+// `<!-- idiom:harness-deliverable-block -->` marker instead, which
+// refineInjectDeliverableBlock substitutes at finalize time.
+func refineDeliverableContextBlock(targets []string) string {
+	targets = normalizeRefineTargets(targets)
+	if len(targets) == 0 {
+		return "(no deliverable target detected in spec — harness will not pre-fill the deliverable block; model still owns content sections only)"
+	}
+	if len(targets) == 1 {
+		return fmt.Sprintf("Deliverable target extracted from spec by harness: `%s`. The harness will inject the canonical `## Files To Modify` / `## Deliverable` block at finalize time — emit the `<!-- idiom:harness-deliverable-block -->` marker verbatim, do NOT author the block yourself.", targets[0])
+	}
+	return fmt.Sprintf("Deliverable targets extracted from spec by harness: %s. The harness will inject the canonical `## Files To Modify` block at finalize time — emit the `<!-- idiom:harness-deliverable-block -->` marker verbatim, do NOT author the block yourself.", refineFormatBacktickList(targets))
+}
+
+// refineDeliverableMarker is the literal HTML comment templates emit
+// in place of the deliverable-path block. finalize substitutes it
+// with the canonical block populated from the harness-extracted
+// target. Keeping it as an HTML comment (rather than a placeholder
+// like `{{...}}`) means: (a) the model can copy it verbatim without
+// worrying about substitution syntax, (b) if the marker leaks into
+// a final brief (substitution fails / mode unknown), it's a visible
+// defect in the rendered output rather than a silent corruption.
+const refineDeliverableMarker = "<!-- idiom:harness-deliverable-block -->"
+
+// refineInjectDeliverableBlock substitutes the harness marker with
+// the canonical deliverable-path block. The block shape depends on
+// mode:
+//
+//   - anchored-edits:    `## Files To Modify` table with one row per
+//     extracted target path.
+//   - markdown-deliverable: `## Deliverable` section with `Path:`
+//     and `Format:` lines.
+//
+// Returns the body unchanged when:
+//
+//   - mode is empty or unknown (caller's responsibility to detect mode)
+//   - target list is empty (extraction failed at spec-parse time)
+//   - the marker isn't present in the body (the model authored its
+//     own block, OR an older template emitted a different schema —
+//     the lint catches the missing required sections downstream)
+//
+// Stderr-logs the substitution outcome for debugging.
+func refineInjectDeliverableBlock(body []byte, mode string, targets []string, stderr io.Writer) []byte {
+	targets = normalizeRefineTargets(targets)
+	if len(targets) == 0 {
+		fmt.Fprintf(stderr, "refine: deliverable injection skipped (no target extracted from spec)\n")
+		return body
+	}
+	if !bytes.Contains(body, []byte(refineDeliverableMarker)) {
+		fmt.Fprintf(stderr, "refine: deliverable injection skipped (marker %q absent from draft — model may have authored its own block; lint will validate)\n", refineDeliverableMarker)
+		return body
+	}
+	block := refineRenderDeliverableBlock(mode, targets)
+	if block == "" {
+		fmt.Fprintf(stderr, "refine: deliverable injection skipped (unknown mode %q)\n", mode)
+		return body
+	}
+	out := bytes.Replace(body, []byte(refineDeliverableMarker), []byte(block), 1)
+	fmt.Fprintf(stderr, "refine: injected deliverable block (mode=%s, targets=%s, %d bytes)\n", mode, strings.Join(targets, ", "), len(block))
+	return out
+}
+
+// refineRenderDeliverableBlock returns the mode-specific section text
+// the harness substitutes for the deliverable marker. Returns "" for
+// modes outside the canonical set so the caller can preserve the
+// marker as a visible defect rather than silently corrupt the brief.
+func refineRenderDeliverableBlock(mode string, targets []string) string {
+	targets = normalizeRefineTargets(targets)
+	if len(targets) == 0 {
+		return ""
+	}
+	switch mode {
+	case refineModeAnchored:
+		var b strings.Builder
+		b.WriteString("## Files To Modify\n\n| File | Change |\n|------|--------|\n")
+		for _, target := range targets {
+			fmt.Fprintf(&b, "| `%s` | MODIFY: harness-injected target (extracted from spec) |\n", target)
+		}
+		return strings.TrimRight(b.String(), "\n")
+	case refineModeMarkdown:
+		return fmt.Sprintf("## Deliverable\n\nPath: `%s`\nFormat: markdown", targets[0])
+	default:
+		return ""
+	}
 }
 
 // resolveRefineDraftTemplate walks the §2.2.1 resolution chain:
@@ -760,27 +935,59 @@ func extractFilesToModify(text string) []string {
 		if !inSection {
 			continue
 		}
-		// Strict table row: needs a backtick-quoted path.
-		start := strings.Index(trimmed, "`")
-		if start < 0 {
+		candidate, change, ok := parseFilesToModifyRow(trimmed)
+		if !ok {
 			continue
 		}
-		end := strings.Index(trimmed[start+1:], "`")
-		if end < 0 {
-			continue
-		}
-		candidate := strings.TrimSpace(trimmed[start+1 : start+1+end])
 		if candidate == "" || seen[candidate] {
 			continue
 		}
+		if refineChangeLooksNoop(change) {
+			continue
+		}
 		// Skip refine scaffolding paths (their own meta-brief etc.).
-		if strings.Contains(candidate, "/.idiom/refine/") {
+		if strings.Contains(candidate, "/.idiom/refine/") || strings.HasPrefix(normalizeRefinePath(candidate), ".idiom/refine/") {
 			continue
 		}
 		seen[candidate] = true
 		files = append(files, candidate)
 	}
 	return files
+}
+
+func parseFilesToModifyRow(row string) (path, change string, ok bool) {
+	// Strict table row: needs a backtick-quoted path in the first
+	// semantic cell. The change cell is advisory but lets the harness
+	// avoid over-authorizing rows that explicitly say "No change".
+	start := strings.Index(row, "`")
+	if start < 0 {
+		return "", "", false
+	}
+	end := strings.Index(row[start+1:], "`")
+	if end < 0 {
+		return "", "", false
+	}
+	path = strings.TrimSpace(row[start+1 : start+1+end])
+	parts := strings.Split(row, "|")
+	if len(parts) >= 3 {
+		change = strings.TrimSpace(parts[2])
+	}
+	return path, change, path != ""
+}
+
+func refineChangeLooksNoop(change string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(change))
+	normalized = strings.Trim(normalized, "`*_ \t.")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	switch normalized {
+	case "no change", "no changes", "none", "n/a", "na", "read only", "read-only", "reference only", "reference-only":
+		return true
+	}
+	return strings.HasPrefix(normalized, "no change required") ||
+		strings.HasPrefix(normalized, "no changes required") ||
+		strings.HasPrefix(normalized, "do not modify") ||
+		strings.HasPrefix(normalized, "do not edit") ||
+		strings.HasPrefix(normalized, "do not touch")
 }
 
 func filesContainTestCode(files []string) bool {
@@ -865,14 +1072,17 @@ Your VERY NEXT TOOL CALL MUST be ` + "`write_file`" + ` with:
 - ` + "`path`" + `: ` + "`{{DRAFT_PATH}}`" + `
 - ` + "`content`" + `: the filled-in brief above, with every ` + "`<bracket>`" + ` replaced.
 
-Do not read files. Do not search. Do not think out loud. The file
-content goes inside the ` + "`write_file`" + ` call's ` + "`content`" + ` argument, not in a
-chat message. After ` + "`write_file`" + ` returns success, give a single-sentence
+Stay on the draft deliverable: write the file from the embedded spec
+and recorded gaps instead of doing source discovery in this phase. The
+file content goes inside the ` + "`write_file`" + ` call's ` + "`content`" + ` argument, not in
+a chat message. After ` + "`write_file`" + ` returns success, give a single-sentence
 final answer and stop.
 
-## Done when
+## Completion
 
-` + "`test -f {{DRAFT_PATH}}`" + ` returns 0.
+The successful ` + "`write_file`" + ` result is the completion proof. Do not run
+` + "`test -f`" + `, ` + "`git diff`" + `, ` + "`shell`" + `, or any other follow-up check for this
+scratchpad file.
 `
 
 // ensureRefineDraftWriteClosure appends the canonical write-closure
@@ -927,6 +1137,29 @@ var refineSourceExtensions = []string{
 // candidates when no source paths are mentioned.
 var refineMarkdownExtensions = []string{".md", ".txt", ".json", ".yaml", ".yml", ".toml"}
 
+var refineKnownFileBasenames = map[string]bool{
+	"Dockerfile":         true,
+	"Makefile":           true,
+	"README":             true,
+	"LICENSE":            true,
+	".dockerignore":      true,
+	".editorconfig":      true,
+	".env":               true,
+	".env.example":       true,
+	".gitignore":         true,
+	".gitattributes":     true,
+	".prettierrc":        true,
+	".stylelintrc":       true,
+	"AGENTS.md":          true,
+	"CLAUDE.md":          true,
+	"CODEOWNERS":         true,
+	"CONTRIBUTING.md":    true,
+	"CHANGELOG.md":       true,
+	"SECURITY.md":        true,
+	"docker-compose":     true,
+	"docker-compose.yml": true,
+}
+
 // refineDetectMode classifies the spec's deliverable shape. Returns
 // refineModeMarkdown ONLY when every cited path is a markdown-class
 // extension AND no source-class extension appears. Falls back to
@@ -963,31 +1196,128 @@ func refineDetectMode(specBody string) string {
 // is the second capture group.
 var refineDeliverableVerbRE = regexp.MustCompile(`(?i)\b(?:produce|create|write|generate|output\s+to|add)\b\s+` + "`" + `([^` + "`" + `]+)` + "`")
 
-// extractDeliverableTarget scans the spec body for the first
-// verb+backtick-path mention whose path does NOT look like a source
-// file. Returns "" when no match is found OR when every matched path
-// is source-shaped (anchored-edits mode handles those via Verified
-// Current State rather than a single deliverable target).
+// extractDeliverableTargets returns the harness-owned path allowlist
+// implied by a spec. Anchored specs are table-first: an explicit
+// Files To Modify table is already the planner's edit contract, so
+// preserve every path rather than guessing one prose target. Markdown
+// specs retain the legacy verb+path extraction because many one-shot
+// docs specs name a single deliverable inline.
 //
 // Examples:
-//   - "audit `lane_postflight.sh` and produce `docs/foo.md`" → `docs/foo.md`
-//   - "modify `foo.go`" → "" (only source path mentioned)
-//   - "create `.planning/inventory.md`" → `.planning/inventory.md`
+//   - Files table with `a.cpp`, `a_test.cpp` → []string{"a.cpp", "a_test.cpp"}
+//   - "audit `lane_postflight.sh` and produce `docs/foo.md`" → []string{"docs/foo.md"}
+//   - "modify `foo.go`" → []string{"foo.go"} in anchored mode when tableless
+//   - "add `EventClass` mapping" → nil (symbol, not a path)
 //
 // Heuristic — the override `--mode` flag and the safety-lint check
 // at meta-draft load time backstop wrong guesses.
-func extractDeliverableTarget(specBody string) string {
-	matches := refineDeliverableVerbRE.FindAllStringSubmatch(specBody, -1)
-	for _, m := range matches {
+func extractDeliverableTargets(specBody, mode string) []string {
+	if targets := filterRefineFilePaths(extractFilesToModify(specBody)); len(targets) > 0 {
+		return targets
+	}
+	if targets := extractScopeFileTargets(specBody); len(targets) > 0 {
+		return targets
+	}
+
+	var targets []string
+	for _, m := range refineDeliverableVerbRE.FindAllStringSubmatch(specBody, -1) {
 		path := strings.TrimSpace(m[1])
-		if path == "" {
+		if !pathLooksLikeFile(path) {
 			continue
 		}
-		if !pathLooksLikeSource(path) {
-			return path
+		if mode == refineModeMarkdown && pathLooksLikeSource(path) {
+			continue
+		}
+		targets = append(targets, path)
+	}
+	return normalizeRefineTargets(targets)
+}
+
+func extractScopeFileTargets(specBody string) []string {
+	var targets []string
+	inScope := false
+	sawScopeBullet := false
+	for _, line := range strings.Split(specBody, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			level := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+			normalized := normalizeRefineHeading(trimmed)
+			if level == 2 && normalized == "scope" {
+				inScope = true
+				sawScopeBullet = false
+				continue
+			}
+			if inScope && level <= 2 {
+				break
+			}
+		}
+		if !inScope {
+			continue
+		}
+		if trimmed == "" {
+			continue
+		}
+		if scopeContextLabel(trimmed) {
+			break
+		}
+		if !isMarkdownBullet(trimmed) {
+			if sawScopeBullet {
+				break
+			}
+			continue
+		}
+		sawScopeBullet = true
+		if path := firstFilePathMention(trimmed); path != "" {
+			targets = append(targets, path)
+		}
+	}
+	return normalizeRefineTargets(targets)
+}
+
+func normalizeRefineHeading(line string) string {
+	value := strings.TrimSpace(line)
+	value = strings.TrimLeft(value, "#")
+	value = strings.Trim(value, " *:`\"'")
+	value = strings.TrimSuffix(value, ":")
+	value = regexp.MustCompile(`\s*\([^)]*\)\s*`).ReplaceAllString(value, " ")
+	value = strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(strings.ToLower(value))
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func scopeContextLabel(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	lower = strings.TrimSuffix(lower, ":")
+	return strings.Contains(lower, "acceptance") && strings.Contains(lower, "context")
+}
+
+func isMarkdownBullet(line string) bool {
+	return strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "+ ")
+}
+
+var refineBacktickPathRE = regexp.MustCompile("`([^`]+)`")
+
+func firstFilePathMention(line string) string {
+	for _, match := range refineBacktickPathRE.FindAllStringSubmatch(line, -1) {
+		candidate := strings.TrimSpace(match[1])
+		if pathLooksLikeFile(candidate) {
+			return candidate
+		}
+	}
+	for _, field := range strings.Fields(line) {
+		candidate := strings.Trim(field, "`'\".,;:()[]{}")
+		if pathLooksLikeFile(candidate) {
+			return candidate
 		}
 	}
 	return ""
+}
+
+// extractDeliverableTarget preserves the legacy single-target helper
+// contract for tests and older callers. New refine code should use
+// extractDeliverableTargets so anchored specs can carry a complete
+// multi-file allowlist.
+func extractDeliverableTarget(specBody string) string {
+	return firstRefineDeliverableTarget(extractDeliverableTargets(specBody, refineDetectMode(specBody)))
 }
 
 // refineDeliverableTargetMismatch returns a formatted BLOCK string
@@ -998,16 +1328,29 @@ func extractDeliverableTarget(specBody string) string {
 // brief's allowlist is empty (no rows yet to compare), or when the
 // brief DOES reference the target (success — silent).
 //
+// Gap 8 (Colony 2026-05-12): when the draft contains the harness
+// deliverable marker, the model is signaling it deferred path
+// authorship to the harness — which finalize will substitute with
+// the canonical block populated from the extracted target. No
+// mismatch is possible in that case; return "" silently.
+//
 // The mismatch shape lands in the review preload's BLOCK list so the
 // reviewer's `ship-as-is` gate forces a fix-bugs-then-ship verdict
 // AND the patcher (Gap 1 — patcher sees lint preload directly) gets
 // the mismatch as an explicit edit target.
-func refineDeliverableTargetMismatch(draftPath, specTarget string) string {
-	if strings.TrimSpace(specTarget) == "" {
+func refineDeliverableTargetMismatch(draftPath string, specTargets []string) string {
+	specTargets = normalizeRefineTargets(specTargets)
+	if len(specTargets) == 0 {
 		return ""
 	}
 	body, err := os.ReadFile(draftPath)
 	if err != nil {
+		return ""
+	}
+	// Gap 8: marker present → harness owns the path at finalize.
+	// Skip the mismatch check entirely; the model correctly deferred
+	// to the harness instead of authoring the block.
+	if bytes.Contains(body, []byte(refineDeliverableMarker)) {
 		return ""
 	}
 	files := extractFilesToModify(string(body))
@@ -1016,17 +1359,97 @@ func refineDeliverableTargetMismatch(draftPath, specTarget string) string {
 		// the deliverable target lives in `## Deliverable Path:`
 		// instead. Try a string-search for the target path anywhere
 		// in the body — if present, no mismatch.
-		if strings.Contains(string(body), specTarget) {
+		if bodyContainsAnyRefineTarget(string(body), specTargets) {
 			return ""
 		}
-		return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) spec asks for deliverable at `%s` but the brief body does not reference that path. Edit the brief to name the deliverable target the spec gave.", specTarget)
+		return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) spec asks for deliverable target(s) %s but the brief body does not reference any of those paths. The canonical templates emit a `%s` marker after `## Problem` so the harness owns the path — emit the marker verbatim instead of authoring the block yourself.", refineFormatBacktickList(specTargets), refineDeliverableMarker)
 	}
-	for _, f := range files {
-		if pathsEquivalent(f, specTarget) {
-			return ""
+	missing := missingRefineTargets(files, specTargets)
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) brief's Files To Modify lists %v but spec asks for deliverable target(s) %s; missing %s. The canonical templates emit a `%s` marker after `## Problem` so the harness owns the path — emit the marker verbatim instead of authoring the block yourself.", files, refineFormatBacktickList(specTargets), refineFormatBacktickList(missing), refineDeliverableMarker)
+}
+
+func firstRefineDeliverableTarget(targets []string) string {
+	targets = normalizeRefineTargets(targets)
+	if len(targets) == 0 {
+		return ""
+	}
+	return targets[0]
+}
+
+func normalizeRefineTargets(targets []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		key := normalizeRefinePath(target)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, target)
+	}
+	return out
+}
+
+func normalizeRefinePath(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.ReplaceAll(path, "\\", "/")
+	path = strings.TrimPrefix(path, "./")
+	return path
+}
+
+func filterRefineFilePaths(candidates []string) []string {
+	var targets []string
+	for _, candidate := range candidates {
+		if pathLooksLikeFile(candidate) {
+			targets = append(targets, candidate)
 		}
 	}
-	return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) brief's Files To Modify lists %v but spec asks for deliverable at `%s`. Replace the Files To Modify row(s) with the spec's target — refine's scratchpad path should never appear in a brief's edit allowlist.", files, specTarget)
+	return normalizeRefineTargets(targets)
+}
+
+func bodyContainsAnyRefineTarget(body string, targets []string) bool {
+	for _, target := range targets {
+		if strings.Contains(body, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func missingRefineTargets(files, targets []string) []string {
+	var missing []string
+	for _, target := range targets {
+		found := false
+		for _, file := range files {
+			if pathsEquivalent(file, target) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, target)
+		}
+	}
+	return missing
+}
+
+func refineFormatBacktickList(targets []string) string {
+	targets = normalizeRefineTargets(targets)
+	if len(targets) == 0 {
+		return "(none)"
+	}
+	quoted := make([]string, 0, len(targets))
+	for _, target := range targets {
+		quoted = append(quoted, "`"+target+"`")
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // pathsEquivalent compares two path strings tolerantly: trim
@@ -1035,13 +1458,7 @@ func refineDeliverableTargetMismatch(draftPath, specTarget string) string {
 // target mismatch check so cosmetic differences ("./foo.md" vs
 // "foo.md") don't trip the BLOCK.
 func pathsEquivalent(a, b string) bool {
-	norm := func(s string) string {
-		s = strings.TrimSpace(s)
-		s = strings.ReplaceAll(s, "\\", "/")
-		s = strings.TrimPrefix(s, "./")
-		return s
-	}
-	return norm(a) == norm(b)
+	return normalizeRefinePath(a) == normalizeRefinePath(b)
 }
 
 // pathLooksLikeSource returns true when the path ends in a known
@@ -1056,6 +1473,26 @@ func pathLooksLikeSource(path string) bool {
 		}
 	}
 	return false
+}
+
+func pathLooksLikeFile(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	if strings.ContainsAny(path, "\n\r\t<>|*?\"") {
+		return false
+	}
+	if strings.Contains(path, " ") && !strings.ContainsAny(path, "/\\.") {
+		return false
+	}
+	if strings.ContainsAny(path, "/\\") || strings.HasPrefix(path, ".") {
+		return true
+	}
+	if filepath.Ext(path) != "" {
+		return true
+	}
+	return refineKnownFileBasenames[path]
 }
 
 // extensionMentioned reports whether `ext` (e.g. ".m") appears in
@@ -1110,9 +1547,11 @@ func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOut
 // per Colony Q1). When the JSON path can't be parsed (older lint
 // versions, json marshal failed, etc.), falls back to the text
 // envelope so the reviewer never silently treats lint as clean.
-func captureRefineLintOutput(draftPath, persistDir string, stderr io.Writer) (int, string) {
+func captureRefineLintOutput(draftPath, persistDir, projectRoot, mode string, deliverableTargets []string, stderr io.Writer) (int, string) {
 	var out bytes.Buffer
-	code := laneBriefLintRunner([]string{draftPath, "--json"}, &out, stderr)
+	lintPath, cleanup := refineLintInputPath(draftPath, projectRoot, mode, deliverableTargets, stderr)
+	defer cleanup()
+	code := laneBriefLintRunner([]string{lintPath, "--json"}, &out, stderr)
 	rawJSON := bytes.TrimSpace(out.Bytes())
 	rendered, ok := renderRefineLintFindings(rawJSON)
 	if !ok {
@@ -1121,7 +1560,7 @@ func captureRefineLintOutput(draftPath, persistDir string, stderr io.Writer) (in
 		// "treat as BLOCK" message so empty + exit-non-zero doesn't
 		// look like "clean lint" to downstream consumers.
 		var plain bytes.Buffer
-		_ = laneBriefLintRunner([]string{draftPath}, &plain, stderr)
+		_ = laneBriefLintRunner([]string{lintPath}, &plain, stderr)
 		text := plain.String()
 		if code != 0 && strings.TrimSpace(text) == "" {
 			text = fmt.Sprintf("(lint exited %d with no parseable findings — treat as BLOCK)", code)
@@ -1135,6 +1574,106 @@ func captureRefineLintOutput(draftPath, persistDir string, stderr io.Writer) (in
 		rendered = "(lint exited non-zero but emitted zero BLOCK/WARN findings — investigate manually)"
 	}
 	return code, rendered
+}
+
+// refineLintInputPath renders the harness-owned final shape that brief
+// lint should judge: the model draft plus canonical deliverable block
+// injection. Project overlays are executor guidance, not deliverable
+// grammar, so they are appended only after linting.
+func refineLintInputPath(draftPath, _ string, mode string, deliverableTargets []string, stderr io.Writer) (string, func()) {
+	if strings.TrimSpace(mode) == "" && len(deliverableTargets) == 0 {
+		return draftPath, func() {}
+	}
+	body, err := os.ReadFile(draftPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "refine: WARN cannot render final-shape lint input from %s: %v (linting raw draft)\n", draftPath, err)
+		return draftPath, func() {}
+	}
+	body = refineInjectDeliverableBlock(body, mode, deliverableTargets, stderr)
+	tmpPath, cleanup, err := writeRefineTempBody(body, "idiom-refine-lint-*.md")
+	if err != nil {
+		fmt.Fprintf(stderr, "refine: WARN cannot create final-shape lint input: %v (linting raw draft)\n", err)
+		return draftPath, func() {}
+	}
+	return tmpPath, cleanup
+}
+
+func writeFallbackRefineReview(reviewPath, lintOutput, reason string, stderr io.Writer) (bool, error) {
+	blockLines := refineLintLinesBySeverity(lintOutput, "BLOCK")
+	if len(blockLines) == 0 {
+		return false, nil
+	}
+	allLines := refineLintFindingLines(lintOutput)
+	if len(allLines) == 0 {
+		allLines = blockLines
+	}
+
+	var body strings.Builder
+	body.WriteString("# Review of brief\n\n")
+	body.WriteString("## Bugs found\n\n")
+	for i, line := range blockLines {
+		category, message := parseRefineLintLine(line)
+		title := "Lint BLOCK"
+		if category != "" {
+			title += ": " + category
+		}
+		if message == "" {
+			message = strings.TrimSpace(line)
+		}
+		fmt.Fprintf(&body, "%d. **%s**: %s. Fix the drafted brief so this lint BLOCK is resolved.\n", i+1, title, strings.TrimRight(message, "."))
+	}
+	body.WriteString("\n## Lint findings\n\n")
+	for _, line := range allLines {
+		body.WriteString(line)
+		body.WriteByte('\n')
+	}
+	body.WriteString("\n## OK\n\n")
+	fmt.Fprintf(&body, "- Synthetic review generated because the review lane produced no file (%s); lint BLOCKs remain authoritative.\n", reason)
+	body.WriteString("\n## Verdict\n\nfix-bugs-then-ship\n")
+
+	if err := os.MkdirAll(filepath.Dir(reviewPath), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(reviewPath, []byte(body.String()), 0o644); err != nil {
+		return false, err
+	}
+	if stderr != nil {
+		fmt.Fprintf(stderr, "refine: WARN synthesized review from %d lint BLOCK(s) after %s\n", len(blockLines), reason)
+	}
+	return true, nil
+}
+
+var refineRenderedLintLineRe = regexp.MustCompile(`^\s*-\s+\[(BLOCK|WARN)\]\s*(?:\(([^)]+)\))?\s*(.*)$`)
+
+func refineLintFindingLines(lintOutput string) []string {
+	var out []string
+	for _, line := range strings.Split(lintOutput, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if refineRenderedLintLineRe.MatchString(trimmed) {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func refineLintLinesBySeverity(lintOutput, severity string) []string {
+	severity = strings.ToUpper(strings.TrimSpace(severity))
+	var out []string
+	for _, line := range refineLintFindingLines(lintOutput) {
+		m := refineRenderedLintLineRe.FindStringSubmatch(line)
+		if len(m) > 1 && strings.EqualFold(m[1], severity) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func parseRefineLintLine(line string) (category, message string) {
+	m := refineRenderedLintLineRe.FindStringSubmatch(strings.TrimSpace(line))
+	if len(m) == 0 {
+		return "", strings.TrimSpace(line)
+	}
+	return strings.TrimSpace(m[2]), strings.TrimSpace(m[3])
 }
 
 // persistRefineLintJSON writes the raw lint envelope to
@@ -1176,7 +1715,7 @@ func renderRefineLintFindings(raw []byte) (string, bool) {
 	return strings.TrimRight(out.String(), "\n"), true
 }
 
-func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath, lintOutput string) error {
+func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath, lintOutput string, evidencePaths []string) error {
 	projectRoot := refineProjectRootFromIterDir(filepath.Dir(metaPath))
 	if strings.TrimSpace(lintOutput) == "" {
 		lintOutput = "(no findings — lint pass was clean on the previous draft)"
@@ -1186,8 +1725,347 @@ func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath,
 		"{{PREV_REVIEW_PATH}}", refineWorkspaceRel(projectRoot, prevReviewPath),
 		"{{NEW_DRAFT_PATH}}", refineWorkspaceRel(projectRoot, newDraftPath),
 		"{{LINT_OUTPUT}}", lintOutput,
+		"{{EVIDENCE_PATHS}}", refineEvidencePathList(evidencePaths),
+		"{{SOURCE_EVIDENCE}}", refinePatchSourceEvidence(projectRoot, prevDraftPath, prevReviewPath, lintOutput, evidencePaths),
 	).Replace(refinePatchTemplate)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
+}
+
+func refineEvidencePathList(paths []string) string {
+	paths = normalizeRefineTargets(paths)
+	if len(paths) == 0 {
+		return "- (none)\n"
+	}
+	var b strings.Builder
+	for _, path := range paths {
+		fmt.Fprintf(&b, "- `%s`\n", path)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+var refineEvidenceTermRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)?`)
+
+const refinePatchSourceEvidenceAnchorsPerPath = 12
+
+func refinePatchSourceEvidence(projectRoot, prevDraftPath, prevReviewPath, lintOutput string, evidencePaths []string) string {
+	paths := normalizeRefineTargets(evidencePaths)
+	if len(paths) == 0 {
+		return "- (none)\n"
+	}
+	promptText := refinePatchEvidencePromptText(prevDraftPath, prevReviewPath, lintOutput)
+	globalTerms := refineEvidenceTerms(promptText)
+	var b strings.Builder
+	emitted := 0
+	for _, path := range paths {
+		full := path
+		if !filepath.IsAbs(full) {
+			full = filepath.Join(projectRoot, path)
+		}
+		data, err := os.ReadFile(filepath.Clean(full))
+		if err != nil {
+			fmt.Fprintf(&b, "- `%s`: source evidence unavailable: %v\n", path, err)
+			emitted++
+			continue
+		}
+		anchors := refineEvidenceAnchorsForPath(path, string(data), promptText, globalTerms)
+		if len(anchors) == 0 {
+			fmt.Fprintf(&b, "- `%s`: no identifier anchors matched the draft/review/lint terms\n", path)
+			emitted++
+			continue
+		}
+		for _, anchor := range anchors {
+			fmt.Fprintf(&b, "- `%s:%d`: `%s`\n", path, anchor.line, anchor.text)
+			emitted++
+		}
+	}
+	if emitted == 0 {
+		return "- (none)\n"
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func refinePatchEvidencePromptText(prevDraftPath, prevReviewPath, lintOutput string) string {
+	var b strings.Builder
+	for _, path := range []string{prevDraftPath, prevReviewPath} {
+		if data, err := os.ReadFile(filepath.Clean(path)); err == nil {
+			b.Write(data)
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteString(lintOutput)
+	return b.String()
+}
+
+type refineEvidenceAnchor struct {
+	line  int
+	text  string
+	score int
+}
+
+func refineEvidenceAnchorsForPath(path, source, promptText string, globalTerms []string) []refineEvidenceAnchor {
+	localTerms := refineEvidenceTerms(refinePromptLinesForPath(promptText, path))
+	terms := mergeRefineEvidenceTerms(localTerms, globalTerms)
+	if len(terms) == 0 {
+		return nil
+	}
+	local := map[string]bool{}
+	for _, term := range localTerms {
+		local[term] = true
+	}
+	lines := strings.Split(source, "\n")
+	var anchors []refineEvidenceAnchor
+	for i, line := range lines {
+		if refineEvidenceLineLooksNoisy(line) {
+			continue
+		}
+		score := refineEvidenceLineShapeWeight(line)
+		score += refineEvidenceBoundaryWeight(line, promptText, terms)
+		for _, term := range terms {
+			if !strings.Contains(line, term) {
+				continue
+			}
+			score += refineEvidenceTermWeight(term)
+			if local[term] {
+				score += 4
+			}
+		}
+		if score <= 0 {
+			continue
+		}
+		anchors = append(anchors, refineEvidenceAnchor{
+			line:  i + 1,
+			text:  refineEvidenceLineText(line),
+			score: score,
+		})
+	}
+	sort.SliceStable(anchors, func(i, j int) bool {
+		if anchors[i].score == anchors[j].score {
+			return anchors[i].line < anchors[j].line
+		}
+		return anchors[i].score > anchors[j].score
+	})
+	if len(anchors) > refinePatchSourceEvidenceAnchorsPerPath {
+		anchors = anchors[:refinePatchSourceEvidenceAnchorsPerPath]
+	}
+	sort.SliceStable(anchors, func(i, j int) bool {
+		return anchors[i].line < anchors[j].line
+	})
+	return anchors
+}
+
+func refinePromptLinesForPath(text, path string) string {
+	base := filepath.Base(path)
+	var b strings.Builder
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.Contains(line, path) || (base != "" && strings.Contains(line, base)) {
+			start := i - 1
+			if start < 0 {
+				start = 0
+			}
+			end := i + 2
+			if end >= len(lines) {
+				end = len(lines) - 1
+			}
+			for j := start; j <= end; j++ {
+				b.WriteString(lines[j])
+				b.WriteByte('\n')
+			}
+		}
+	}
+	return b.String()
+}
+
+func refineEvidenceTerms(text string) []string {
+	seen := map[string]int{}
+	for _, match := range refineEvidenceTermRe.FindAllString(text, -1) {
+		term := strings.TrimSpace(match)
+		if !refineEvidenceTermUseful(term) {
+			continue
+		}
+		seen[term] += refineEvidenceTermWeight(term)
+	}
+	terms := make([]string, 0, len(seen))
+	for term := range seen {
+		terms = append(terms, term)
+	}
+	sort.SliceStable(terms, func(i, j int) bool {
+		left, right := seen[terms[i]], seen[terms[j]]
+		if left == right {
+			return terms[i] < terms[j]
+		}
+		return left > right
+	})
+	return terms
+}
+
+func mergeRefineEvidenceTerms(primary, fallback []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(primary)+len(fallback))
+	for _, terms := range [][]string{primary, fallback} {
+		for _, term := range terms {
+			if seen[term] {
+				continue
+			}
+			seen[term] = true
+			out = append(out, term)
+		}
+	}
+	return out
+}
+
+func refineEvidenceTermUseful(term string) bool {
+	if len(term) < 3 || strings.ContainsAny(term, `/\.`) {
+		return false
+	}
+	switch strings.ToLower(term) {
+	case "the", "and", "for", "with", "that", "this", "from", "line", "lines", "path", "file", "source", "review", "draft", "brief", "block", "warn", "required", "edit", "existing", "add", "new", "case", "return", "enum", "class", "struct", "function", "native", "tests", "include", "namespace", "using", "const", "auto", "void", "bool", "int", "string", "colony", "core", "simulation", "appraisal":
+		return false
+	default:
+		return true
+	}
+}
+
+func refineEvidenceTermWeight(term string) int {
+	weight := 1
+	if strings.Contains(term, "::") {
+		weight += 8
+	}
+	if strings.Contains(term, "_") {
+		weight += 6
+	}
+	if term == strings.ToUpper(term) {
+		weight += 6
+	}
+	if r := rune(term[0]); r >= 'A' && r <= 'Z' {
+		weight += 4
+	}
+	if strings.HasSuffix(term, "()") {
+		weight += 3
+	}
+	return weight
+}
+
+func refineEvidenceLineLooksNoisy(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return true
+	}
+	switch trimmed {
+	case "{", "}", "};", "},", ");":
+		return true
+	}
+	if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "#include") || strings.HasPrefix(trimmed, "#pragma once") || strings.HasPrefix(trimmed, "#ifndef") || strings.HasPrefix(trimmed, "#endif") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "#define") && strings.HasSuffix(trimmed, "_H") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "using namespace ") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "namespace ") && strings.HasSuffix(trimmed, "{") {
+		return true
+	}
+	return false
+}
+
+func refineEvidenceBoundaryWeight(line, promptText string, terms []string) int {
+	trimmed := strings.TrimSpace(line)
+	promptLower := strings.ToLower(promptText)
+	needsBoundary := strings.Contains(promptText, "COUNT") ||
+		strings.Contains(promptLower, "sentinel") ||
+		strings.Contains(promptLower, "boundary") ||
+		strings.Contains(promptLower, "closing") ||
+		strings.Contains(promptLower, "top-of-file")
+	if needsBoundary && strings.Contains(trimmed, "COUNT") {
+		return 32
+	}
+	if refineEvidenceLooksLikeFunctionBoundary(trimmed, terms) {
+		return 24
+	}
+	if refineEvidenceLooksLikeCaseBoundary(trimmed, terms, promptLower) {
+		return 18
+	}
+	if (strings.Contains(promptLower, "end-of-file") ||
+		strings.Contains(promptLower, "last existing") ||
+		strings.Contains(promptLower, "last test")) &&
+		(strings.Contains(trimmed, "TEST") || strings.Contains(trimmed, "Describe(") || strings.Contains(trimmed, "it(")) {
+		return 10
+	}
+	return 0
+}
+
+func refineEvidenceLooksLikeFunctionBoundary(trimmed string, terms []string) bool {
+	if !strings.Contains(trimmed, "(") || !strings.Contains(trimmed, ")") {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "if ") ||
+		strings.HasPrefix(trimmed, "for ") ||
+		strings.HasPrefix(trimmed, "while ") ||
+		strings.HasPrefix(trimmed, "switch ") ||
+		strings.HasPrefix(trimmed, "catch ") {
+		return false
+	}
+	for _, term := range terms {
+		if strings.Contains(term, "::") || strings.ToUpper(term) == term {
+			continue
+		}
+		if strings.Contains(trimmed, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func refineEvidenceLooksLikeCaseBoundary(trimmed string, terms []string, promptLower string) bool {
+	if !strings.HasPrefix(trimmed, "case ") && !strings.HasPrefix(trimmed, "default:") {
+		return false
+	}
+	if !strings.Contains(promptLower, "switch") &&
+		!strings.Contains(promptLower, "case") &&
+		!strings.Contains(promptLower, "closing") {
+		return false
+	}
+	for _, term := range terms {
+		if strings.Contains(trimmed, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func refineEvidenceLineShapeWeight(line string) int {
+	trimmed := strings.TrimSpace(line)
+	score := 0
+	if strings.Contains(trimmed, "enum ") || strings.Contains(trimmed, "enum class ") {
+		score += 5
+	}
+	if strings.Contains(trimmed, "struct ") || strings.Contains(trimmed, "class ") || strings.Contains(trimmed, "interface ") || strings.Contains(trimmed, "type ") {
+		score += 4
+	}
+	if strings.HasPrefix(trimmed, "func ") || strings.Contains(trimmed, " func(") || strings.Contains(trimmed, "function ") || strings.Contains(trimmed, "def ") {
+		score += 4
+	}
+	if strings.Contains(trimmed, "TEST") || strings.Contains(trimmed, "Describe(") || strings.Contains(trimmed, "it(") || strings.Contains(trimmed, "test(") {
+		score += 4
+	}
+	if strings.Contains(trimmed, "=") || strings.Contains(trimmed, ":=") || strings.Contains(trimmed, "case ") {
+		score++
+	}
+	return score
+}
+
+func refineEvidenceLineText(line string) string {
+	text := strings.TrimSpace(line)
+	text = strings.ReplaceAll(text, "`", "'")
+	if len(text) > 180 {
+		text = strings.TrimSpace(text[:180]) + "..."
+	}
+	return text
 }
 
 // refineWorkspaceRel converts an absolute path into a workspace-
@@ -1339,6 +2217,9 @@ func refineLoopDiverging(previous, current []string) bool {
 	if len(current) == 0 {
 		return false
 	}
+	if len(previous) != len(current) {
+		return false
+	}
 	prev := make(map[string]struct{}, len(previous))
 	for _, b := range previous {
 		prev[b] = struct{}{}
@@ -1349,6 +2230,21 @@ func refineLoopDiverging(previous, current []string) bool {
 		}
 	}
 	return true
+}
+
+func refineDraftScoreBetter(lintExit, bugCount, bestLintExit, bestBugCount int) bool {
+	if bestLintExit < 0 || bestBugCount < 0 {
+		return true
+	}
+	lintClean := lintExit == 0
+	bestLintClean := bestLintExit == 0
+	if lintClean != bestLintClean {
+		return lintClean
+	}
+	if bugCount != bestBugCount {
+		return bugCount < bestBugCount
+	}
+	return false
 }
 
 // refineMinDraftBytes is the minimum size for a draft to be considered
@@ -1392,9 +2288,10 @@ func finalizeRefine(draftPath, outputPath string, iter int, reason string, stder
 }
 
 // finalizeRefineWithTitle is the marker-aware variant. The marker line
-// becomes the FIRST line of the output brief so detectBriefProvenance
-// can identify refine-drafted briefs in lane history. Reads draft +
-// runs brief lint + writes output (with marker prepended).
+// becomes the FIRST non-warning line of the output brief so
+// detectBriefProvenance can identify refine-drafted briefs in lane
+// history. Reads draft, renders the final artifact shape, lints that
+// exact artifact, then writes output.
 //
 // Exit-code contract (Colony's Q4 review, 2026-05-11): ONLY a
 // `ship-as-is` reason returns 0. Every other reason (failsoft-*,
@@ -1405,15 +2302,25 @@ func finalizeRefine(draftPath, outputPath string, iter int, reason string, stder
 // non-zero exit preserves debugging signal — the dichotomy isn't
 // "save vs. fail-loud", it's "save AND fail-loud."
 func finalizeRefineWithTitle(draftPath, outputPath, title string, iter int, reason string, stderr io.Writer) int {
-	return finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title, iter, reason, "", stderr)
+	return finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title, iter, reason, "", "", nil, stderr)
 }
 
 // finalizeRefineWithTitleAndOverlay is the §2.4-aware finalize path.
 // Applies project overlay (HARD PROHIBITIONS + atom-shape-matched
-// traps) BEFORE the warning header so the hardened brief is what
-// downstream consumers see. Empty projectRoot disables overlay
-// (bare-repo behavior preserved).
-func finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title string, iter int, reason, projectRoot string, stderr io.Writer) int {
+// traps) before final lint so the hardened brief is what downstream
+// consumers see and what the exit status certifies. Empty projectRoot
+// disables overlay (bare-repo behavior preserved).
+//
+// Gap 8 (Colony 2026-05-12): the model NEVER authors the deliverable
+// path. Templates emit a literal `<!-- idiom:harness-deliverable-block -->`
+// marker after `## Problem`; this finalize step substitutes the marker
+// with the canonical path block (`## Files To Modify` for anchored
+// mode, `## Deliverable` for markdown mode) populated from the
+// harness-extracted target(s). The model can't hallucinate a path it
+// never wrote. Empty mode / target list = no substitution attempted
+// (the marker stays in the brief, which is a visible defect for the
+// reviewer rather than a silent corruption).
+func finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title string, iter int, reason, projectRoot, mode string, deliverableTargets []string, stderr io.Writer) int {
 	if trivial, why := refineDraftIsTrivial(draftPath); trivial {
 		fmt.Fprintf(stderr, "refine: refusing to finalize trivial draft %s (%s); exiting non-zero rather than writing a silent-failure output\n", draftPath, why)
 		return 1
@@ -1423,22 +2330,23 @@ func finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title string, iter
 		fmt.Fprintf(stderr, "refine: cannot read final draft %s: %v\n", draftPath, err)
 		return 1
 	}
+	body = refineInjectDeliverableBlock(body, mode, deliverableTargets, stderr)
 	body = refineApplyProjectOverlay(body, projectRoot, stderr)
-	if code := laneBriefLintRunner([]string{draftPath}, io.Discard, stderr); code != 0 {
-		fmt.Fprintf(stderr, "refine: WARN brief lint reported issues on final draft (continuing anyway)\n")
+	isShipAsIs := reason == "ship-as-is"
+	outputReason := reason
+	finalBody := buildRefineFinalBody(body, title, iter, outputReason, !isShipAsIs)
+	if code := lintRefineFinalBody(finalBody, stderr); code != 0 {
+		fmt.Fprintf(stderr, "refine: final output brief failed lint after finalize (exit %d); refusing ship-as-is dispatch\n", code)
+		if isShipAsIs {
+			isShipAsIs = false
+			outputReason = "final-lint-failed"
+			finalBody = buildRefineFinalBody(body, title, iter, outputReason, true)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		fmt.Fprintf(stderr, "refine: cannot create output dir: %v\n", err)
 		return 1
 	}
-	isShipAsIs := reason == "ship-as-is"
-	var prefix []byte
-	if !isShipAsIs {
-		prefix = []byte(fmt.Sprintf("> WARNING: refine exited non-zero — reason=%s after iter %d. The brief below is the best draft the loop produced; review for unresolved bugs/BLOCKs before dispatching to plan-execute. Inspect `.idiom/refine/%s/iter-%d/{review.md,metrics.json}` for findings.\n\n", reason, iter, refineSanitizeTitle(title), iter))
-	}
-	marker := fmt.Sprintf("<!-- idiom:refine-drafted title=%s iter=%d reason=%s -->\n", refineSanitizeTitle(title), iter, reason)
-	finalBody := append(prefix, []byte(marker)...)
-	finalBody = append(finalBody, body...)
 	if err := os.WriteFile(outputPath, finalBody, 0o644); err != nil {
 		fmt.Fprintf(stderr, "refine: cannot write output %s: %v\n", outputPath, err)
 		return 1
@@ -1447,6 +2355,46 @@ func finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title string, iter
 		fmt.Fprintf(stderr, "refine: converged ship-as-is after %d iter(s); wrote %s (%d bytes) at %s\n", iter, outputPath, len(finalBody), time.Now().Format(time.RFC3339))
 		return 0
 	}
-	fmt.Fprintf(stderr, "refine: did NOT reach ship-as-is (%s) after %d iter(s); wrote best-draft to %s (%d bytes) with WARNING header — exiting non-zero so orchestrator inspects before piping\n", reason, iter, outputPath, len(finalBody))
+	fmt.Fprintf(stderr, "refine: did NOT reach ship-as-is (%s) after %d iter(s); wrote best-draft to %s (%d bytes) with WARNING header — exiting non-zero so orchestrator inspects before piping\n", outputReason, iter, outputPath, len(finalBody))
 	return 1
+}
+
+func buildRefineFinalBody(body []byte, title string, iter int, reason string, warning bool) []byte {
+	var prefix []byte
+	if warning {
+		prefix = []byte(fmt.Sprintf("> WARNING: refine exited non-zero — reason=%s after iter %d. The brief below is the best draft the loop produced; review for unresolved bugs/BLOCKs before dispatching to plan-execute. Inspect `.idiom/refine/%s/iter-%d/{review.md,metrics.json}` for findings.\n\n", reason, iter, refineSanitizeTitle(title), iter))
+	}
+	marker := fmt.Sprintf("<!-- idiom:refine-drafted title=%s iter=%d reason=%s -->\n", refineSanitizeTitle(title), iter, reason)
+	finalBody := append(prefix, []byte(marker)...)
+	finalBody = append(finalBody, body...)
+	return finalBody
+}
+
+func lintRefineFinalBody(body []byte, stderr io.Writer) int {
+	tmpPath, cleanup, err := writeRefineTempBody(body, "idiom-refine-final-*.md")
+	if err != nil {
+		fmt.Fprintf(stderr, "refine: WARN cannot create temp final brief for lint: %v\n", err)
+		return 0
+	}
+	defer cleanup()
+	return laneBriefLintRunner([]string{tmpPath}, io.Discard, stderr)
+}
+
+func writeRefineTempBody(body []byte, pattern string) (string, func(), error) {
+	tmp, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", func() {}, err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return tmpPath, cleanup, nil
 }

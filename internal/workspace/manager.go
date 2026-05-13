@@ -35,21 +35,21 @@ type Manager struct {
 	writePolicy                WritePolicy
 	bypassReadBeforeEdit       bool
 	planThenExecutePlannerMode bool
-	mu                    sync.Mutex
-	nextHandle            int
-	pathToHandle          map[string]string
-	handleToPath          map[string]string
-	observedPaths         map[string]struct{}
-	permissionRules       map[string][]ToolRule
-	mcpRegistry           *mcp.Registry
-	externalToolsRegistry *ExternalToolRegistry
-	goIndex               *semantic.GoIndex
-	goIndexToken          string
-	cppIndex              *semantic.CppIndex
-	cppIndexToken         string
-	goplsPath             string
-	goplsChecked          bool
-	editRecoveryRequired  map[string]editRecoveryState
+	mu                         sync.Mutex
+	nextHandle                 int
+	pathToHandle               map[string]string
+	handleToPath               map[string]string
+	observedPaths              map[string]struct{}
+	permissionRules            map[string][]ToolRule
+	mcpRegistry                *mcp.Registry
+	externalToolsRegistry      *ExternalToolRegistry
+	goIndex                    *semantic.GoIndex
+	goIndexToken               string
+	cppIndex                   *semantic.CppIndex
+	cppIndexToken              string
+	goplsPath                  string
+	goplsChecked               bool
+	editRecoveryRequired       map[string]editRecoveryState
 }
 
 type editRecoveryState struct {
@@ -80,53 +80,58 @@ const (
 )
 
 type ToolRequest struct {
-	Tool            string              `json:"tool"`
-	ID              string              `json:"id,omitempty"`
-	Path            string              `json:"path,omitempty"`
-	StartLine       int                 `json:"start_line,omitempty"`
-	EndLine         int                 `json:"end_line,omitempty"`
-	Pattern         string              `json:"pattern,omitempty"`
-	Query           string              `json:"query,omitempty"`
-	Task            string              `json:"task,omitempty"`
-	Purpose         string              `json:"purpose,omitempty"`
-	Capability      string              `json:"capability,omitempty"`
-	Language        string              `json:"language,omitempty"`
-	Glob            string              `json:"glob,omitempty"`
-	Workdir         string              `json:"workdir,omitempty"`
-	Command         string              `json:"command,omitempty"`
-	Prompt          string              `json:"prompt,omitempty"`
-	Agent           string              `json:"agent,omitempty"`
-	Mode            string              `json:"mode,omitempty"`
-	Content         string              `json:"content,omitempty"`
-	OldText         string              `json:"old_text,omitempty"`
-	NewText         string              `json:"new_text,omitempty"`
-	ReplaceAll      bool                `json:"replace_all,omitempty"`
-	Recursive       bool                `json:"recursive,omitempty"`
-	MaxDepth        int                 `json:"max_depth,omitempty"`
-	Limit           int                 `json:"limit,omitempty"`
-	BudgetTokens    int                 `json:"budget_tokens,omitempty"`
-	Resolution      string              `json:"resolution,omitempty"`
-	IncludeEvidence bool                `json:"include_evidence,omitempty"`
-	IncludeSource   bool                `json:"include_source,omitempty"`
-	IncludeFiles    bool                `json:"include_files,omitempty"`
-	Refresh         bool                `json:"refresh,omitempty"`
-	Category        string              `json:"category,omitempty"`
-	Component       string              `json:"component,omitempty"`
-	Expected        string              `json:"expected,omitempty"`
-	Observed        string              `json:"observed,omitempty"`
-	Workaround      string              `json:"workaround,omitempty"`
-	Impact          string              `json:"impact,omitempty"`
-	Evidence        []string            `json:"evidence,omitempty"`
-	Confidence      string              `json:"confidence,omitempty"`
-	Severity        string              `json:"severity,omitempty"`
-	SuggestedFix    string              `json:"suggested_fix,omitempty"`
-	RequiredTests   []string            `json:"required_tests,omitempty"`
-	ForbiddenPaths  []string            `json:"forbidden_paths,omitempty"`
-	Destination     string              `json:"destination,omitempty"`
-	Declarations    []string            `json:"declarations,omitempty"`
-	Moves           []GoDeclarationMove `json:"moves,omitempty"`
-	Todos           []TaskLedgerItem    `json:"todos,omitempty"`
-	Items           []TaskLedgerItem    `json:"items,omitempty"`
+	Tool              string              `json:"tool"`
+	ID                string              `json:"id,omitempty"`
+	Handle            string              `json:"handle,omitempty"`
+	Path              string              `json:"path,omitempty"`
+	StartLine         int                 `json:"start_line,omitempty"`
+	EndLine           int                 `json:"end_line,omitempty"`
+	Pattern           string              `json:"pattern,omitempty"`
+	Query             string              `json:"query,omitempty"`
+	Symbol            string              `json:"symbol,omitempty"`
+	Task              string              `json:"task,omitempty"`
+	Purpose           string              `json:"purpose,omitempty"`
+	Capability        string              `json:"capability,omitempty"`
+	Language          string              `json:"language,omitempty"`
+	Glob              string              `json:"glob,omitempty"`
+	Workdir           string              `json:"workdir,omitempty"`
+	Command           string              `json:"command,omitempty"`
+	Prompt            string              `json:"prompt,omitempty"`
+	Agent             string              `json:"agent,omitempty"`
+	Mode              string              `json:"mode,omitempty"`
+	Content           string              `json:"content,omitempty"`
+	OldText           string              `json:"old_text,omitempty"`
+	NewText           string              `json:"new_text,omitempty"`
+	ReplaceAll        bool                `json:"replace_all,omitempty"`
+	Recursive         bool                `json:"recursive,omitempty"`
+	MaxDepth          int                 `json:"max_depth,omitempty"`
+	Limit             int                 `json:"limit,omitempty"`
+	BudgetTokens      int                 `json:"budget_tokens,omitempty"`
+	Resolution        string              `json:"resolution,omitempty"`
+	IncludeEvidence   bool                `json:"include_evidence,omitempty"`
+	IncludeSource     bool                `json:"include_source,omitempty"`
+	IncludeFiles      bool                `json:"include_files,omitempty"`
+	Refresh           bool                `json:"refresh,omitempty"`
+	FreshnessPolicy   string              `json:"freshness_policy,omitempty"`
+	FreshnessMaxFiles int                 `json:"freshness_max_files,omitempty"`
+	Category          string              `json:"category,omitempty"`
+	Component         string              `json:"component,omitempty"`
+	Expected          string              `json:"expected,omitempty"`
+	Observed          string              `json:"observed,omitempty"`
+	Workaround        string              `json:"workaround,omitempty"`
+	Impact            string              `json:"impact,omitempty"`
+	Evidence          []string            `json:"evidence,omitempty"`
+	Confidence        string              `json:"confidence,omitempty"`
+	Severity          string              `json:"severity,omitempty"`
+	SuggestedFix      string              `json:"suggested_fix,omitempty"`
+	RequiredTests     []string            `json:"required_tests,omitempty"`
+	RequiredEditPaths []string            `json:"required_edit_paths,omitempty"`
+	ForbiddenPaths    []string            `json:"forbidden_paths,omitempty"`
+	Destination       string              `json:"destination,omitempty"`
+	Declarations      []string            `json:"declarations,omitempty"`
+	Moves             []GoDeclarationMove `json:"moves,omitempty"`
+	Todos             []TaskLedgerItem    `json:"todos,omitempty"`
+	Items             []TaskLedgerItem    `json:"items,omitempty"`
 	// NamedGap explains one exact unresolved claim a post-readiness
 	// follow-up tool call is trying to verify or falsify. It should be
 	// specific enough that the next discovery move is obvious (for
@@ -174,6 +179,11 @@ type ToolRequest struct {
 	// planner's packet via comprehension.LoadView instead of
 	// re-discovering the same files.
 	PackID string `json:"pack_id,omitempty"`
+	// PlanArtifact carries the durable structured submit_plan schema.
+	// It is optional so legacy callers can keep sending rationale,
+	// pack_id, and edits at the top level; submit_plan normalizes that
+	// legacy shape into the same persisted artifact contract.
+	PlanArtifact *PlanArtifact `json:"plan_artifact,omitempty"`
 }
 
 type GoDeclarationMove struct {
@@ -436,13 +446,13 @@ func (m *Manager) Instructions() string {
 	return fmt.Sprintf(
 		"Workspace root: %s\nWorking directory: %s\n\n"+
 			"Rules:\n"+
-			"- Do not invent file paths from memory. Use list_files, search_files, discovered handles, or structured symbol/navigation routes to discover real files first.\n"+
-			"- After an orientation call, narrow with structured language-aware routes or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
+			"- Do not invent file paths from memory. Resolve a path-discovery capability, discovered handle, or structured symbol/navigation route before naming a new file.\n"+
+			"- After an orientation call, narrow with structured language-aware routes or discovered handles first. Exact-text search and bounded reads are fallback capabilities for prose, config, or ranges a semantic probe cannot cover.\n"+
 			"- Paths are relative to the working directory unless absolute.\n"+
-			"- Prefer edit_file for small localized changes; write_file overwrites.\n"+
+			"- Prefer anchored edit capabilities for small localized changes; whole-file writes overwrite.\n"+
 			"%s"+
 			"- shell runs with the same OS permissions as this process. Prefer the dedicated tools where one exists.\n"+
-			"- After tool results, either answer directly or take one exact next tool step.",
+			"- After tool results, either answer directly or take one exact evidence step tied to a named gap.",
 		m.cfg.Root,
 		m.cfg.CWD,
 		m.writePolicyInstructions(),
@@ -452,9 +462,9 @@ func (m *Manager) Instructions() string {
 func (m *Manager) writePolicyInstructions() string {
 	switch m.WritePolicy() {
 	case WritePolicyAuto:
-		return "- Write policy is auto: file tools may create, rewrite, or append within the workspace when the task requires it. Still prefer edit_file for precise edits and avoid unnecessary rewrites.\n"
+		return "- Write policy is auto: file tools may create, rewrite, or append within the workspace when the task requires it. Still prefer precise anchored edits and avoid unnecessary rewrites.\n"
 	default:
-		return "- Write policy is guarded: prefer edit_file for existing files. Avoid write_file for existing files, avoid state-changing shell commands for edits, and only create/append/mkdir when the user clearly requested that broader write scope.\n"
+		return "- Write policy is guarded: prefer anchored edits for existing files. Avoid whole-file rewrites of existing files, avoid state-changing shell commands for edits, and only create/append/mkdir when the user clearly requested that broader write scope.\n"
 	}
 }
 
@@ -463,8 +473,8 @@ func (m *Manager) exploreInstructions() string {
 		"You are in EXPLORE mode — a READ-ONLY investigation session. Do not change files or system state.\n\n"+
 			"Workspace root: %s\nWorking directory: %s\nThoroughness: %s\n\n"+
 			"Rules:\n"+
-			"- Start broad once, then narrow with structured language-aware routes or discovered handles first. Use search_content / read_file only when semantic probes do not land or when you need prose or exact ranges.\n"+
-			"- Do not invent file paths. Use search tools first.\n"+
+			"- Start broad once, then narrow with structured language-aware routes or discovered handles first. Exact-text search and bounded reads are fallback capabilities for prose, config, or ranges a semantic probe cannot cover.\n"+
+			"- Do not invent file paths. Resolve a path-discovery capability first.\n"+
 			"- shell is limited to read-only utilities (ls, find, rg, grep, awk, sed, cat, head, tail, wc, file, pwd, git status/log/diff/show/grep).\n"+
 			"- When you have enough evidence, answer directly. Continue only for one exact missing claim and one exact probe.",
 		m.cfg.Root,
@@ -728,6 +738,8 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.fileStats(req)
 	case "code_navigate":
 		return m.codeNavigate(ctx, req)
+	case "read_only_capability":
+		return m.readOnlyCapability(ctx, req)
 	case "source_sanity":
 		return m.sourceSanity(ctx, req)
 	case "harness_audit":
@@ -743,7 +755,7 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 	case "context_query":
 		return m.contextQuery(ctx, req)
 	case "context_zoom":
-		return m.contextZoom(req)
+		return m.contextZoom(ctx, req)
 	case "context_pack":
 		return m.contextPack(ctx, req)
 	case "context_impact":
@@ -1035,17 +1047,7 @@ func (m *Manager) knownToolNames() []string {
 // builtinToolNamesForSuggest reuses the manifest inventory so unsupported-tool
 // recovery does not drift away from the exported built-in surface.
 func builtinToolNamesForSuggest() []string {
-	return ToolManifestTools(ToolManifestToolOptions{
-		IncludeTaskLedger: true,
-		IncludeTask:       true,
-		IncludeWriteTools: true,
-		IncludeGo:         true,
-		IncludeCpp:        true,
-		IncludePython:     true,
-		IncludeTypescript: true,
-		IncludeRust:       true,
-		IncludeJava:       true,
-	})
+	return toolManifestToolsAcrossBuiltInSurfaces()
 }
 
 // closestToolNames returns up to maxN candidates closest to target by
@@ -1383,12 +1385,23 @@ func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
 	if err := json.Unmarshal(payload, &req); err != nil {
 		if repaired, ok := repairNumericStringToolFields(payload); ok {
 			if repairErr := json.Unmarshal(repaired, &req); repairErr == nil {
+				normalizeToolRequestAliases(&req)
 				return req, nil
 			}
 		}
 		return ToolRequest{}, err
 	}
+	normalizeToolRequestAliases(&req)
 	return req, nil
+}
+
+func normalizeToolRequestAliases(req *ToolRequest) {
+	if req == nil {
+		return
+	}
+	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Symbol) != "" {
+		req.Pattern = req.Symbol
+	}
 }
 
 func repairNumericStringToolFields(payload []byte) ([]byte, bool) {
@@ -1588,7 +1601,7 @@ func IsNarrowingRequest(req ToolRequest) bool {
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg", "read_file",
-		"code_navigate", "source_sanity", "harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
+		"code_navigate", "read_only_capability", "source_sanity", "harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
 		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
@@ -1626,7 +1639,7 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	case "list_files":
 		return IsScopedInspectionRequest(req)
 	case "search_files", "search_content", "rg",
-		"code_navigate", "source_sanity", "harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
+		"code_navigate", "read_only_capability", "source_sanity", "harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
 		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
 		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
 		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
@@ -2156,10 +2169,6 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			return result
 		}
 	}
-	if len(data) > m.cfg.MaxFileBytes && !userRequestedRange {
-		data = data[:m.cfg.MaxFileBytes]
-	}
-
 	lines := strings.Split(string(data), "\n")
 	start := req.StartLine
 	end := req.EndLine
@@ -2200,11 +2209,6 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "read_file", Summary: "Invalid line range", Error: "start_line must be <= end_line"}
 	}
 
-	// Soft cap: when the caller did NOT specify a range and the file is
-	// large, truncate to the first 400 lines and tell the model how to
-	// continue. Prevents a read_file on runner.go (1720 lines) from
-	// blowing most of the turn's context budget when an outline-first
-	// approach would have been cheaper.
 	truncated := false
 	tailRead := false
 	if !userRequestedRange && isLogLikePath(m.displayPath(path)) && len(lines) > defaultLogReadLineCap {
@@ -2214,12 +2218,6 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		}
 		end = len(lines)
 		tailRead = true
-		truncated = true
-	} else if !userRequestedRange && end > defaultLargeReadLineCap && end-start+1 > defaultLargeReadLineCap {
-		end = start + defaultLargeReadLineCap - 1
-		if end > len(lines) {
-			end = len(lines)
-		}
 		truncated = true
 	} else if openEndedLogRange {
 		truncated = true
@@ -2681,7 +2679,7 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 	start, end := goReadSymbolWindow(match, req.StartLine, req.EndLine)
 	summary := fmt.Sprintf("Read %s in %s lines %d-%d", goQualifiedSymbol(match), m.displayPath(abs), start, end)
 	if req.StartLine == 0 && req.EndLine == 0 && match.EndLine > 0 && end < match.EndLine {
-		summary = fmt.Sprintf("%s (truncated from lines %d-%d; use go_extract_body for the full body)", summary, match.StartLine, match.EndLine)
+		summary = fmt.Sprintf("%s (truncated from lines %d-%d; full-body adapter: go_extract_body)", summary, match.StartLine, match.EndLine)
 	}
 
 	snippet, err := m.readFileLines(abs, start, end)
@@ -3635,9 +3633,6 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if m.cfg.MaxFileBytes > 0 && len(data) > m.cfg.MaxFileBytes {
-		data = data[:m.cfg.MaxFileBytes]
-	}
 	lines := strings.Split(string(data), "\n")
 	if start <= 0 {
 		start = 1
@@ -4085,6 +4080,16 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 			return ToolResult{Tool: toolName, Summary: "Failed to read existing file", Error: err.Error()}
 		}
 		updated = append(append([]byte(nil), current...), []byte(req.Content)...)
+	} else if current, err := os.ReadFile(path); err == nil {
+		if IsCompletedPlanningArtifact(path, current) {
+			return ToolResult{
+				Tool:    toolName,
+				Summary: "Write request rejected",
+				Error:   fmt.Sprintf("write_file refuses to overwrite completed planning artifact %s. The available contract outcomes are a bounded anchored update or explicit user approval to reopen/replace the completed artifact.", m.displayPath(path)),
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return ToolResult{Tool: toolName, Summary: "Failed to read existing file", Error: err.Error()}
 	}
 	if rejected := m.rejectInvalidPlannedWrite(toolName, "Write request rejected", path, updated); rejected != nil {
 		return *rejected
@@ -4434,6 +4439,25 @@ func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, pat
 	if m == nil {
 		return nil
 	}
+	before, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return &ToolResult{
+			Tool:    toolName,
+			Summary: summary,
+			Error:   fmt.Sprintf("preflight could not read existing %s: %s", m.displayPath(path), err.Error()),
+		}
+	}
+	if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, before, contents); ok {
+		return &ToolResult{
+			Tool:    toolName,
+			Summary: summary,
+			Error: fmt.Sprintf(
+				"preflight rejected %s because it would introduce adjacent duplicate code line %d: %q. "+
+					"Combine adjacent edits into one replacement or include the existing line in old_text instead of re-declaring it.",
+				m.displayPath(path), lineNo, line,
+			),
+		}
+	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".go":
 		fset := token.NewFileSet()
@@ -4458,6 +4482,180 @@ func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, pat
 	return nil
 }
 
+// IsCompletedPlanningArtifact reports whether a markdown artifact already
+// declares a closed status. Whole-file replacement of these files is rejected
+// by write_file/submit_plan; bounded edit_file updates remain available.
+func IsCompletedPlanningArtifact(path string, content []byte) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".md" && ext != ".markdown" {
+		return false
+	}
+	if !looksLikePlanningArtifactPath(path) {
+		return false
+	}
+	lines := strings.Split(string(content), "\n")
+	for i, line := range lines {
+		if i >= 120 {
+			break
+		}
+		if statusLineMarksCompleted(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikePlanningArtifactPath(path string) bool {
+	normalized := strings.ToLower(filepath.ToSlash(filepath.Clean(path)))
+	for _, segment := range strings.Split(normalized, "/") {
+		switch segment {
+		case ".planning", "planning", "plans", "campaigns", "atoms", "atom", "specs", "spec", "tasks", "tickets", "work-packages", "work_packages":
+			return true
+		}
+	}
+	base := strings.TrimSuffix(filepath.Base(normalized), filepath.Ext(normalized))
+	return strings.Contains(base, "spec") || strings.Contains(base, "atom") || strings.Contains(base, "task")
+}
+
+func statusLineMarksCompleted(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if !strings.Contains(lower, "status") {
+		return false
+	}
+	tokens := strings.FieldsFunc(lower, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	for _, token := range tokens {
+		switch token {
+		case "complete", "completed", "accepted", "done", "shipped":
+			return true
+		}
+	}
+	return false
+}
+
+// NewSuspiciousAdjacentDuplicateCodeLine reports the first adjacent duplicate
+// assignment/declaration line that appears in after but not before. It is a
+// source-hygiene invariant, not a style lint: adjacent duplicate assignments
+// almost always mean an anchored edit reintroduced nearby context.
+func NewSuspiciousAdjacentDuplicateCodeLine(path string, before []byte, after []byte) (int, string, bool) {
+	if !isSourceLikePath(path) {
+		return 0, "", false
+	}
+	beforeCounts := adjacentDuplicateCodeLineCounts(string(before))
+	beforeTotal := adjacentDuplicateBaselineLineCount(string(before))
+	seen := make(map[string]int)
+	seenTotal := 0
+	previous := ""
+	for i, raw := range strings.Split(string(after), "\n") {
+		line := suspiciousDuplicateCodeLine(raw)
+		if line == "" {
+			previous = ""
+			continue
+		}
+		if line == previous {
+			seen[line]++
+			seenTotal++
+			if seenTotal > beforeTotal && seen[line] > beforeCounts[line] {
+				return i + 1, line, true
+			}
+		}
+		previous = line
+	}
+	return 0, "", false
+}
+
+func adjacentDuplicateCodeLineCounts(content string) map[string]int {
+	counts := make(map[string]int)
+	previous := ""
+	for _, raw := range strings.Split(content, "\n") {
+		line := suspiciousDuplicateCodeLine(raw)
+		if line == "" {
+			previous = ""
+			continue
+		}
+		if line == previous {
+			counts[line]++
+		}
+		previous = line
+	}
+	return counts
+}
+
+func adjacentDuplicateBaselineLineCount(content string) int {
+	count := 0
+	previous := ""
+	for _, raw := range strings.Split(content, "\n") {
+		line := duplicateCodeLineBaseline(raw)
+		if line == "" {
+			previous = ""
+			continue
+		}
+		if line == previous {
+			count++
+		}
+		previous = line
+	}
+	return count
+}
+
+func suspiciousDuplicateCodeLine(line string) string {
+	line = duplicateCodeLineBaseline(line)
+	if line == "" {
+		return ""
+	}
+	if !hasAssignmentOperator(line) {
+		return ""
+	}
+	return line
+}
+
+func duplicateCodeLineBaseline(line string) string {
+	line = strings.TrimSpace(line)
+	if len(line) < 8 {
+		return ""
+	}
+	for _, prefix := range []string{"//", "#", "/*", "*", "*/", "import ", "package ", "#include"} {
+		if strings.HasPrefix(line, prefix) {
+			return ""
+		}
+	}
+	return line
+}
+
+func hasAssignmentOperator(line string) bool {
+	for i, r := range line {
+		if r != '=' {
+			continue
+		}
+		prev := rune(0)
+		next := rune(0)
+		if i > 0 {
+			prev = rune(line[i-1])
+		}
+		if i+1 < len(line) {
+			next = rune(line[i+1])
+		}
+		if prev == '=' || prev == '!' || prev == '<' || prev == '>' || next == '=' || next == '>' {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isSourceLikePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx",
+		".m", ".mm", ".rs", ".java", ".kt", ".kts", ".swift", ".cs",
+		".js", ".jsx", ".ts", ".tsx", ".py", ".rb", ".php", ".gd",
+		".sh", ".bash", ".zsh":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *Manager) rejectPendingEditRecovery(toolName string, path string) *ToolResult {
 	state, ok := m.pendingEditRecovery(path)
 	if !ok {
@@ -4472,10 +4670,9 @@ func (m *Manager) rejectPendingEditRecovery(toolName string, path string) *ToolR
 		Tool:    toolName,
 		Summary: "Edit request rejected",
 		Error: fmt.Sprintf(
-			"previous syntax preflight failure on %s still needs evidence refresh%s. Run read_file on %s with start_line/end_line covering the failing region, or run git_diff for that path, before retrying edit_file. Last validation error: %s",
+			"previous syntax preflight failure on %s still needs evidence refresh%s. Required recovery evidence is a bounded failing-region read or path diff before retrying the anchored edit. Last validation error: %s",
 			display,
 			lineHint,
-			display,
 			state.detail,
 		),
 	}
@@ -4550,9 +4747,9 @@ func (m *Manager) formatSyntaxPreflightError(path string, contents []byte, line 
 		b.WriteString(context)
 	}
 	if line > 0 {
-		fmt.Fprintf(&b, "\nBefore retrying edit_file on %s, inspect the failing region with read_file start_line/end_line around line %d or run git_diff for that path.", display, line)
+		fmt.Fprintf(&b, "\nBefore retrying the anchored edit on %s, refresh evidence for the failing region around line %d with a bounded source read or path diff.", display, line)
 	} else {
-		fmt.Fprintf(&b, "\nBefore retrying edit_file on %s, inspect the failing region with read_file or run git_diff for that path.", display)
+		fmt.Fprintf(&b, "\nBefore retrying the anchored edit on %s, refresh evidence with a bounded source read or path diff.", display)
 	}
 	return b.String()
 }
@@ -4653,7 +4850,9 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		}
 	}
 
-	output, execErr := m.runCommand(ctx, workdir, m.cfg.Shell, "-lc", command)
+	stdout, stderr, execErr := m.runCommandDetailed(ctx, workdir, m.cfg.Shell, "-lc", command)
+	rawOutput := combineCommandOutput(stdout, stderr)
+	output := m.truncateCommandOutput(rawOutput)
 	result := ToolResult{
 		Tool:    "shell",
 		Summary: fmt.Sprintf("Ran shell command in %s", m.displayPath(workdir)),
@@ -4661,11 +4860,70 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 	}
 	if execErr != nil {
 		result.Error = execErr.Error()
+	} else if reason := zeroSelectedTestFailureReason(command, rawOutput); reason != "" {
+		result.Error = reason
 	} else if m.Mode() != ModeExplore {
 		m.invalidateGoIndex()
 		m.invalidateCppIndex()
 	}
 	return result
+}
+
+func zeroSelectedTestFailureReason(command string, output string) string {
+	if !shellCommandLooksLikeTest(command) {
+		return ""
+	}
+	if signal := zeroSelectedTestSignal(output); signal != "" {
+		return "verification command selected zero tests despite exiting 0 (" + signal + "). Check the test filter/name and rerun a command that executes at least one test."
+	}
+	return ""
+}
+
+func shellCommandLooksLikeTest(command string) bool {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	if lower == "" {
+		return false
+	}
+	for _, needle := range []string{
+		"go test",
+		"cargo test",
+		"npm test",
+		"yarn test",
+		"pnpm test",
+		"pytest",
+		"doctest",
+		"ctest",
+		"jest",
+		"vitest",
+		"colony_tests",
+		"run_tests.py",
+		"run_tests.sh",
+		"run_tests",
+		"-tc=",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func zeroSelectedTestSignal(output string) string {
+	lower := strings.ToLower(output)
+	switch {
+	case strings.Contains(lower, "test cases: 0 |"):
+		return "doctest reported test cases: 0"
+	case strings.Contains(lower, "0 tests selected"):
+		return "reported 0 tests selected"
+	case strings.Contains(lower, "collected 0 items"):
+		return "pytest collected 0 items"
+	case strings.Contains(lower, "no tests ran"):
+		return "reported no tests ran"
+	case strings.Contains(lower, "ran 0 tests"):
+		return "reported ran 0 tests"
+	default:
+		return ""
+	}
 }
 
 func isDirectoryOnlyShellCommand(command string) bool {
@@ -4690,6 +4948,14 @@ func isDirectoryOnlyShellCommand(command string) bool {
 
 func (m *Manager) runCommand(parent context.Context, dir, name string, args ...string) (string, error) {
 	stdout, stderr, err := m.runCommandDetailed(parent, dir, name, args...)
+	output := m.truncateCommandOutput(combineCommandOutput(stdout, stderr))
+	if err != nil {
+		return output, err
+	}
+	return output, nil
+}
+
+func combineCommandOutput(stdout string, stderr string) string {
 	output := strings.TrimSpace(stdout)
 	errText := strings.TrimSpace(stderr)
 	if errText != "" {
@@ -4698,13 +4964,14 @@ func (m *Manager) runCommand(parent context.Context, dir, name string, args ...s
 		}
 		output += errText
 	}
-	if len(output) > m.cfg.MaxOutputBytes {
-		output = output[:m.cfg.MaxOutputBytes] + "\n...[truncated]"
+	return output
+}
+
+func (m *Manager) truncateCommandOutput(output string) string {
+	if m.cfg.MaxOutputBytes > 0 && len(output) > m.cfg.MaxOutputBytes {
+		return output[:m.cfg.MaxOutputBytes] + "\n...[truncated]"
 	}
-	if err != nil {
-		return output, err
-	}
-	return output, nil
+	return output
 }
 
 func (m *Manager) runCommandDetailed(parent context.Context, dir, name string, args ...string) (string, string, error) {
@@ -4810,42 +5077,43 @@ func (m *Manager) resolvePath(path string, workdir string) (string, error) {
 }
 
 func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
+	if strings.TrimSpace(req.Path) != "" {
+		pathFromRequest, err := m.resolvePath(req.Path, req.Workdir)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.TrimSpace(req.ID) != "" {
+			pathFromHandle, err := m.pathForHandle(req.ID)
+			if err == nil && filepath.Clean(pathFromHandle) == filepath.Clean(pathFromRequest) {
+				return pathFromHandle, m.handleDisplay(pathFromHandle), nil
+			}
+			// Models sometimes combine a stale file handle with the correct
+			// explicit path after a new scratchpad/output path has been
+			// introduced. For read-only file access, the explicit path is the
+			// safer user-visible target; using the handle would read the wrong
+			// file, and rejecting the call commonly causes an identical retry.
+			return m.resolveExplicitReadPath(pathFromRequest)
+		}
+		return m.resolveExplicitReadPath(pathFromRequest)
+	}
+
 	if strings.TrimSpace(req.ID) != "" {
 		path, err := m.pathForHandle(req.ID)
 		if err != nil {
 			return "", "", err
 		}
-		if strings.TrimSpace(req.Path) != "" {
-			pathFromRequest, err := m.resolvePath(req.Path, req.Workdir)
-			if err != nil {
-				return "", "", err
-			}
-			if filepath.Clean(pathFromRequest) != filepath.Clean(path) {
-				return "", "", fmt.Errorf(
-					"read_file id %q resolves to %q but path %q resolves to %q; use either the discovered handle or the matching path, not conflicting values",
-					strings.TrimSpace(req.ID),
-					m.displayPath(path),
-					req.Path,
-					m.displayPath(pathFromRequest),
-				)
-			}
-		}
 		return path, m.handleDisplay(path), nil
 	}
 
-	if strings.TrimSpace(req.Path) == "" {
-		return "", "", fmt.Errorf("read_file requires id or path")
-	}
+	return "", "", fmt.Errorf("read_file requires id or path")
+}
 
-	path, err := m.resolvePath(req.Path, req.Workdir)
-	if err != nil {
-		return "", "", err
-	}
+func (m *Manager) resolveExplicitReadPath(path string) (string, string, error) {
 	if !m.hasDiscoveredPath(path) {
 		info, statErr := os.Stat(path)
 		if statErr != nil {
 			return "", "", fmt.Errorf(
-				"path %q was not found. %s Use search_files, a structured symbol/navigation route, or search_content and then read a returned handle.",
+				"path %q was not found. %s Available recovery capabilities: file-name search, structured symbol/navigation, or exact text search followed by a returned handle.",
 				m.displayPath(path),
 				m.notFoundRecoveryHint(path),
 			)
@@ -5297,12 +5565,6 @@ func looksLikeBareIdentifier(pattern string) bool {
 	return true
 }
 
-// defaultLargeReadLineCap bounds read_file when the caller did not ask for
-// a specific line range. A small local model burns context quickly on
-// full-file reads; 400 lines is roughly a screen or two and still large
-// enough to see most real functions end-to-end. The cap is easily bypassed
-// by passing explicit start_line/end_line in the request.
-const defaultLargeReadLineCap = 400
 const defaultLogReadLineCap = 80
 const defaultLogLineCharCap = 240
 

@@ -105,9 +105,9 @@ func humanDiscoveryLayerName(name string) string {
 func cleanDiscoveryFindingText(text string) string {
 	text = strings.TrimSpace(text)
 	for _, suffix := range []string{
-		" Use read_file on a returned handle, or narrow the pattern to see more.",
+		" Bounded-read capability is available on returned handles, or narrow the pattern to see more.",
 		" Open a returned handle with read_file.",
-		" Use read_file on a returned handle to inspect a file.",
+		" Bounded-read capability is available on a returned handle to inspect a file.",
 	} {
 		text = strings.ReplaceAll(text, suffix, ".")
 	}

@@ -29,6 +29,15 @@ type ExternalTool struct {
 	Cwd            string          `json:"cwd,omitempty"`
 	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
 	InputSchema    json.RawMessage `json:"input_schema,omitempty"`
+	// ReadOnly declares that invoking this tool must not mutate project
+	// source, generated artifacts, queues, network state, or other external
+	// state. Idiom treats this as a host-project contract.
+	ReadOnly bool `json:"read_only,omitempty"`
+	// Discovery declares that the tool returns evidence for navigation,
+	// lookup, tracing, impact analysis, or validation. Combined with ReadOnly
+	// it lets narrow implementation lanes keep project-specific discovery
+	// wrappers visible without exposing opaque mutating commands.
+	Discovery bool `json:"discovery,omitempty"`
 }
 
 // ExternalToolRegistry holds the loaded ExternalTool definitions, keyed
@@ -82,6 +91,23 @@ func (r *ExternalToolRegistry) Has(name string) bool {
 	}
 	_, ok := r.tools[name]
 	return ok
+}
+
+// Tool returns the registered external tool definition.
+func (r *ExternalToolRegistry) Tool(name string) (ExternalTool, bool) {
+	if r == nil {
+		return ExternalTool{}, false
+	}
+	t, ok := r.tools[strings.TrimSpace(name)]
+	return t, ok
+}
+
+// IsReadOnlyDiscovery reports whether the host project declared an external
+// tool as a read-only discovery wrapper. Idiom does not infer safety from the
+// command text or tool name; the project owns this contract explicitly.
+func (r *ExternalToolRegistry) IsReadOnlyDiscovery(name string) bool {
+	t, ok := r.Tool(name)
+	return ok && t.ReadOnly && t.Discovery
 }
 
 // Definitions converts the registered tools into ToolDefinition entries

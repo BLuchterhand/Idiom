@@ -245,10 +245,12 @@ func TestPoolForModelAliasMapping(t *testing.T) {
 		want  string
 	}{
 		{"qwen3.6-35b", "qwen-35b"},
+		{"qwen3.6-27b", "qwen-27b"},
+		{"qwen3.6-27b-planner", "qwen-27b"},
 		{"qwen3-coder-30b", "qwen-coder"},
 		{"Qwen3-CODER-30B-A3B", "qwen-coder"},
 		{"qwen-planner-7b", "qwen-35b"}, // "planner" alias still maps to planner pool
-		{"llama3-70b", ""},               // unknown family: caller falls back to "default"
+		{"llama3-70b", ""},              // unknown family: caller falls back to "default"
 		{"", ""},
 	}
 	for _, c := range cases {

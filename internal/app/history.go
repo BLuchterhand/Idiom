@@ -423,9 +423,10 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 	}
 
 	text, err := m.completeChatWithFallback(ctx, msgs, llama.ChatOptions{
-		MaxTokens:      maxTokens,
-		Temperature:    0.3,
-		EnableThinking: &thinkingOff,
+		MaxTokens:          maxTokens,
+		Temperature:        0.3,
+		EnableThinking:     &thinkingOff,
+		ChatTemplateKwargs: true,
 	})
 	if err != nil {
 		return
@@ -525,9 +526,12 @@ func (m *Model) launchSummaryServer() {
 	defer cancel()
 
 	if err := m.summaryController.Start(ctx); err != nil {
+		m.logError("route_classifier", "start failed: "+err.Error())
 		return
 	}
-	_ = m.summaryController.WaitUntilReady(ctx)
+	if err := m.summaryController.WaitUntilReady(ctx); err != nil {
+		m.logError("route_classifier", "ready wait failed: "+err.Error())
+	}
 }
 
 // truncateRunes truncates s to at most max runes, appending "…" if cut.

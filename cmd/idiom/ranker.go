@@ -30,6 +30,8 @@ func runRankerMainWithTelemetry(args []string, stdout io.Writer, stderr io.Write
 		return runRankerNudge(args[1:], stdout, stderr, rec, "penalize")
 	case "reset":
 		return runRankerReset(args[1:], stdout, stderr, rec)
+	case "rollback":
+		return runRankerRollback(args[1:], stdout, stderr, rec)
 	case "show":
 		return runRankerShow(args[1:], stdout, stderr, rec)
 	default:
@@ -44,11 +46,13 @@ func printRankerUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  idiom ranker boost    [--config path] [--note text] <file> [<file> ...]")
 	fmt.Fprintln(stderr, "  idiom ranker penalize [--config path] [--note text] <file> [<file> ...]")
 	fmt.Fprintln(stderr, "  idiom ranker reset    [--config path]")
+	fmt.Fprintln(stderr, "  idiom ranker rollback [--config path] --event event_id")
 	fmt.Fprintln(stderr, "  idiom ranker show     [--config path] [--json]")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Manually nudge per-file ranker weights stored under .idiom/ranker/weights.json.")
 	fmt.Fprintln(stderr, "Boost and penalize each apply one decay-then-nudge cycle to weights.json.")
 	fmt.Fprintln(stderr, "Reset clears weights.json; the learning_log.jsonl history is preserved.")
+	fmt.Fprintln(stderr, "Rollback restores weights from a prior verified learning event log entry.")
 	fmt.Fprintln(stderr, "Show prints current weights and recent learning-log entries.")
 }
 
@@ -145,6 +149,46 @@ func runRankerReset(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	logCLIPhase(rec, "ranker_reset", nil)
 	fmt.Fprintln(stdout, "ranker weights cleared")
 	return 0
+}
+
+func runRankerRollback(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	opts := struct {
+		Config  string
+		EventID string
+	}{Config: "config.json"}
+	fs := flag.NewFlagSet("idiom ranker rollback", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&opts.Config, "config", opts.Config, "path to config file")
+	fs.StringVar(&opts.EventID, "event", "", "learning event id to restore from")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "ranker rollback: unexpected positional argument %q\n", fs.Arg(0))
+		return 2
+	}
+	if strings.TrimSpace(opts.EventID) == "" {
+		fmt.Fprintln(stderr, "ranker rollback: --event is required")
+		return 2
+	}
+	cfg, err := loadToolConfig(opts.Config)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	root := strings.TrimSpace(cfg.Workspace.Root)
+	if root == "" {
+		fmt.Fprintln(stderr, "workspace root not configured; cannot roll back ranker weights")
+		return 1
+	}
+	weights, entry, err := comprehension.RestoreLearnedWeightsFromLearningLog(root, opts.EventID)
+	if err != nil {
+		fmt.Fprintf(stderr, "ranker rollback failed: %v\n", err)
+		return 1
+	}
+	logCLIPhase(rec, "ranker_rollback", map[string]any{"event_id": opts.EventID, "restore_event_id": entry.EventID})
+	fmt.Fprintf(stdout, "ranker weights restored from learning event %s\n", opts.EventID)
+	return printRankerWeights(stdout, root, weights)
 }
 
 func runRankerShow(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

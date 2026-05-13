@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -28,7 +29,8 @@ import (
 // reasoning and coder backends, "single-llama-cpp" for a single-model
 // dev box) and pick one with `--profile` at lane invocation time.
 type File struct {
-	Profiles map[string]Profile `json:"profiles"`
+	DefaultProfile string             `json:"default_profile,omitempty"`
+	Profiles       map[string]Profile `json:"profiles"`
 }
 
 // Profile describes one named backend stack: a list of Model entries
@@ -70,11 +72,11 @@ type Model struct {
 // harness role without relying on the role-tag heuristic; DefaultCoder
 // is the legacy alias for DefaultExecutor and remains supported.
 type Proxy struct {
-	Listen           int    `json:"listen,omitempty"`
-	DefaultAlias     string `json:"default_alias,omitempty"`
-	DefaultCoder     string `json:"default_coder,omitempty"`
-	DefaultPlanner   string `json:"default_planner,omitempty"`
-	DefaultExecutor  string `json:"default_executor,omitempty"`
+	Listen            int    `json:"listen,omitempty"`
+	DefaultAlias      string `json:"default_alias,omitempty"`
+	DefaultCoder      string `json:"default_coder,omitempty"`
+	DefaultPlanner    string `json:"default_planner,omitempty"`
+	DefaultExecutor   string `json:"default_executor,omitempty"`
 	DefaultClassifier string `json:"default_classifier,omitempty"`
 }
 
@@ -138,6 +140,9 @@ func (f File) Profile(name string) (Profile, bool) {
 	if len(f.Profiles) == 0 {
 		return Profile{}, false
 	}
+	if name == "" {
+		name = strings.TrimSpace(f.DefaultProfile)
+	}
 	if name == "" && len(f.Profiles) == 1 {
 		for _, p := range f.Profiles {
 			return p, true
@@ -145,6 +150,37 @@ func (f File) Profile(name string) (Profile, bool) {
 	}
 	p, ok := f.Profiles[name]
 	return p, ok
+}
+
+// ModelByAlias searches every declared profile for a model alias. It supports
+// explicit CLI model overrides that intentionally target a non-default profile
+// without changing the project's default_profile.
+func (f File) ModelByAlias(alias string) (Model, bool) {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return Model{}, false
+	}
+	if name := strings.TrimSpace(f.DefaultProfile); name != "" {
+		if p, ok := f.Profiles[name]; ok {
+			if m, ok := p.ModelByAlias(alias); ok {
+				return m, true
+			}
+		}
+	}
+	names := make([]string, 0, len(f.Profiles))
+	for name := range f.Profiles {
+		if name != strings.TrimSpace(f.DefaultProfile) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		p := f.Profiles[name]
+		if m, ok := p.ModelByAlias(alias); ok {
+			return m, true
+		}
+	}
+	return Model{}, false
 }
 
 // CoderAlias is the legacy "does this profile have a coder?" resolver.

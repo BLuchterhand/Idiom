@@ -243,11 +243,28 @@ A new CLI subcommand that runs the implementation in two phases:
    `go_move_declarations` — every one of those returns a directional
    redirect at the runner). The only "write" the planner can do is
    call `submit_plan` with the full ordered edit list. After that,
-   the planner finalizes and exits.
+   the planner finalizes and exits. If bounded source evidence shows
+   the requested final state is already present in every required path,
+   the planner may instead close with `Decision: source-satisfied`
+   naming each path and the observed evidence; the executor is skipped.
 2. **Executor phase** — the orchestrator (in `cmd/idiom`) reads the
    plan artifact written by `submit_plan` and dispatches each edit in
-   order through the workspace. Failure of any edit aborts the phase
-   and surfaces the failing path.
+   order through the workspace. Before dispatch, it validates scope,
+   stale anchors, ambiguous anchors, completed artifact overwrites, and
+   unsupported proof claims such as `assert true` repairs or comments
+   admitting the behavior was not actually inspected. After dispatch, it
+   runs `source_sanity` on changed source files. Failure of any contract
+   aborts the phase and surfaces the failing path. The executor report
+   retains source-sanity evidence for the next phase.
+3. **Review-repair phase** — the orchestrator assembles an
+   `idiom.phase_evidence.v1` bundle for the reviewer. The bundle
+   includes changed/required/allowed paths, planner `pack_id` status,
+   packet candidate files/symbols/suggested tests, packet gaps, executor
+   source-sanity results, patch hygiene, and open obligations. The
+   reviewer sees this before deciding to pass, repair, or block. The
+   `review_repair_start` audit event also carries bounded evidence
+   details so later diagnosis can inspect the packet, test, sanity, and
+   obligation state without replaying broad discovery.
 
 The model only thinks once — about WHAT to change, end-to-end —
 and never has to hold "what's done vs. what's left" in working memory
@@ -315,6 +332,13 @@ pack_id)` instead of re-discovering the same files. Older artifacts
 without a `pack_id` remain readable; the field is additive and
 schema_version stays at `idiom.plan.v1`.
 
+When a `pack_id` is present, review-repair receives the cached packet
+summary as phase evidence. Missing `pack_id` is reported as evidence
+state, not a hard failure; structured packet gaps from an available
+packet become checklist obligations. If a supplied `pack_id` cannot be
+loaded, that packet miss/error is also an open obligation for the reviewer
+to resolve with the checklist, a narrow repair, or a blocker.
+
 ### Stdout shape (non-`--json` mode)
 
 ```
@@ -324,6 +348,8 @@ schema_version stays at `idiom.plan.v1`.
   edit 2/8 native/src/core/constants/animals.h ... ok
   ...
   edit 8/8 native/tests/test_combat.cpp ... ok
+  source sanity native/src/core/animal_types.h ... ok
+  source sanity native/tests/test_combat.cpp ... ok
 
 --- plan-then-execute summary ---
 executor: 8 edits, 8 succeeded, 0 failed
@@ -344,20 +370,26 @@ and the executor phase. This is enforced at the runner's pre-dispatch
 hook (`preflightPlanThenExecuteWriteGuard`), so the system addendum
 is backed by hard runtime enforcement rather than soft prompting.
 
+Planner-phase shell, git, build/test, and source-sanity commands are
+also rejected. Those checks belong to the deterministic executor or
+review-repair phases, not to the edit-planning phase.
+
 ### Failure recovery
+
+If the planner reports `Decision: source-satisfied` with every required
+path named, the orchestrator treats the run as a clean no-op and exits
+zero. This is the stale-spec path: the correct response is to update the
+tracker/spec, not to force a stale `submit_plan`.
 
 If the planner produces no plan (e.g., stops with `<<QUESTION>>:` for
 a blocker), the orchestrator prints the planner's final answer and
 exits non-zero. To re-plan, fix the blocker and re-run.
 
-If the executor phase fails on an edit, the orchestrator prints the
+If the executor phase fails on preflight, an edit, unsupported proof
+evidence, or post-write `source_sanity`, the orchestrator prints the
 specific failure and exits non-zero. The plan artifact remains under
-`.idiom/plans/` for inspection. To resume after a fix, you can either
-re-run the planner (it will compute a new plan) or hand-edit the
-plan and re-run only the executor against the existing artifact (no
-CLI surface for that yet — load the artifact and call
-`runExecutorPhase` from a small Go program, or just do the remaining
-edits by hand).
+`.idiom/plans/` for inspection. To resume after a fix, re-run the
+planner so it computes a fresh plan against the current workspace.
 
 ### Files
 
@@ -366,11 +398,18 @@ edits by hand).
   validation, schema versioning.
 - `internal/workspace/submit_plan_test.go` — 5 tests.
 - `cmd/idiom/plan_execute.go` — CLI subcommand, planner-phase
-  system addendum, latest-artifact lookup, executor phase dispatch.
-- `cmd/idiom/plan_execute_test.go` — 5 tests.
+  system addendum, latest-artifact lookup, executor phase dispatch,
+  post-write source sanity, and action-capable review-repair gate.
+- `cmd/idiom/plan_execute_evidence.go` — phase evidence bundle for
+  packet, diff, source-sanity, suggested-test, and open-obligation
+  handoff into review-repair.
+- `cmd/idiom/plan_execute_test.go` — focused plan-execute contract
+  tests.
 - `internal/agent/runner_plan_then_execute_guard.go` — hard runtime
-  enforcement of "no per-edit writes during the planner phase".
-- `internal/agent/runner_plan_then_execute_guard_test.go` — 5 tests.
+  enforcement of "no per-edit writes or planner-phase verification
+  commands", plus source-satisfied closeout recognition.
+- `internal/agent/runner_plan_then_execute_guard_test.go` — focused
+  tests for planner-phase submit, source-satisfied, and tool guards.
 
 ---
 
@@ -384,9 +423,10 @@ edits by hand).
   `Implementer` in `config.json` to point at a separate executor
   model; otherwise it falls back to direct dispatch.
 - **C is a different lane shape**: the planner physically can't emit
-  a per-edit write — it MUST produce a `submit_plan`. Strongest
-  separation; best for multi-file atoms (8+ files) where focus loss
-  is the dominant failure mode.
+  a per-edit write — it MUST produce a `submit_plan`, a source-satisfied
+  closeout, or a path-specific blocker. Strongest separation; best for
+  multi-file atoms (8+ files) where focus loss is the dominant failure
+  mode.
 
 You can run **A + C** together (always on + plan lane) — they don't
 interact. **B** is mostly redundant under C (the executor phase is

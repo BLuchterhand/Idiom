@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/workspace"
 )
@@ -215,5 +217,74 @@ func TestRunnerTurnControllerRejectCompletionPreservesReplyAndRecordsGate(t *tes
 	}
 	if turnMessages[0].Role != "assistant" || turnMessages[0].Content != "partial answer" {
 		t.Fatalf("preserved reply = %#v, want assistant partial answer", turnMessages[0])
+	}
+}
+
+func TestRunnerTurnControllerRejectCompletionCompactsLargeUnwrittenMutationAnswer(t *testing.T) {
+	collected := []workspace.ToolResult{}
+	turnMessages := []llama.ChatMessage{}
+	lastToolKey := ""
+	var lastToolResult *workspace.ToolResult
+	consecutiveRejected := 0
+	consecutiveNoProgress := 0
+	rejectionRecoveryNudgeUsed := false
+	completionGateRejections := 0
+	metrics := &runnerMetrics{}
+	requestBudget := newRunnerRequestBudgetState(2)
+	currentFingerprint := ""
+	recorder := runnerTurnRecorder{
+		collectedResults:          &collected,
+		turnMessages:              &turnMessages,
+		lastToolKey:               &lastToolKey,
+		lastToolResult:            &lastToolResult,
+		consecutiveRejectedAction: &consecutiveRejected,
+		consecutiveNoProgress:     &consecutiveNoProgress,
+		metrics:                   metrics,
+	}
+	controller := runnerTurnController{
+		runner: &Runner{
+			RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "implementation",
+				RequiredEditPaths: []string{"scratchpad.md"},
+			},
+		},
+		ctx:                        context.Background(),
+		metrics:                    metrics,
+		requestBudget:              &requestBudget,
+		recorder:                   &recorder,
+		turnMessages:               &turnMessages,
+		collectedResults:           &collected,
+		rejectedActions:            map[string]int{},
+		rejectionRecoveryNudgeUsed: &rejectionRecoveryNudgeUsed,
+		completionGateRejections:   &completionGateRejections,
+		consecutiveRejected:        &consecutiveRejected,
+		consecutiveNoProgress:      &consecutiveNoProgress,
+		currentFingerprint:         &currentFingerprint,
+	}
+
+	largeReply := "UNWRITTEN DELIVERABLE ANALYSIS " + strings.Repeat("detail ", 900)
+	result := workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Mutation completion gate rejected final answer",
+		Error:   "no successful write tool result is present",
+	}
+
+	controller.rejectCompletion(3, nil, llama.ChatMessage{
+		Role:             "assistant",
+		Content:          largeReply,
+		ReasoningContent: "hidden reasoning",
+	}, result)
+
+	if len(turnMessages) != 2 {
+		t.Fatalf("turn messages = %d, want 2", len(turnMessages))
+	}
+	if !strings.Contains(turnMessages[0].Content, "omitted rejected final answer") {
+		t.Fatalf("expected compact rejection marker, got %q", turnMessages[0].Content)
+	}
+	if len(turnMessages[0].Content) >= len(largeReply) {
+		t.Fatalf("expected compacted content shorter than rejected reply")
+	}
+	if turnMessages[0].ReasoningContent != "" {
+		t.Fatalf("expected rejected reasoning content to be dropped, got %q", turnMessages[0].ReasoningContent)
 	}
 }

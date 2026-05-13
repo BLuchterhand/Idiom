@@ -93,7 +93,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 				Content: strings.Join([]string{
 					"You are a read-only delegated child task.",
 					"Answer the delegated question directly using concise grounded evidence.",
-					"For broad architecture, impact, tracing, security, or history questions, prefer one discovery_query first; it returns a layered evidence packet.",
+					"For broad architecture, impact, tracing, security, or history questions, a layered discovery evidence packet satisfies the initial orientation contract when available.",
 					"After one sufficient packet or exact probe, answer unless one exact missing claim would materially change the answer.",
 					"Prefer the minimal implementation surface needed to answer the question. Do not expand into side-path comparison, mode-by-mode breakdowns, or policy tables unless the question explicitly requires that detail.",
 					"After readiness, either answer or take one exact follow-up inside packet-named files or symbols. Do not switch to README, docs, or repo-wide search for completeness.",

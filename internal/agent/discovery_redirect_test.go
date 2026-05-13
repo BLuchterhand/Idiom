@@ -292,9 +292,8 @@ func TestRedirectRoutesReadFileHandle(t *testing.T) {
 }
 
 // TestRedirectResultNamesReplacementTool ensures the synthetic
-// ToolResult the model actually sees names the replacement tool and
-// shows an example call — the redirect is useless if the model can't
-// figure out what to try next from the result alone.
+// ToolResult names the replacement adapter while framing it as a
+// capability contract, not a raw next-tool command.
 func TestRedirectResultNamesReplacementTool(t *testing.T) {
 	ws := newGoTestWorkspace(t)
 	d := NewDiscoveryRedirect()
@@ -309,8 +308,11 @@ func TestRedirectResultNamesReplacementTool(t *testing.T) {
 	if !strings.Contains(output, `"path":"main.go"`) {
 		t.Fatalf("result output missing example request path: %q", output)
 	}
-	if !strings.Contains(output, "fall") && !strings.Contains(output, "retry") {
-		t.Fatalf("result output should mention fallback/retry path: %q", output)
+	if !strings.Contains(output, "direct_tool_fallback") {
+		t.Fatalf("result output should mention fallback behavior: %q", output)
+	}
+	if strings.Contains(output, "Try:") || strings.Contains(output, "Next step:") {
+		t.Fatalf("redirect output should avoid imperative strategy menu text: %q", output)
 	}
 }
 

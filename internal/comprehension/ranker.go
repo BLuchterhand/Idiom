@@ -31,6 +31,7 @@ type RankerWeights struct {
 	RoleTest          float64
 	RoleEvidence      float64
 	RoleDefault       float64
+	RequiredEditPath  float64 // additive bonus for caller-declared edit paths
 	MatchBoost        float64 // additive bonus for files that matched task terms; keeps matches above their pure neighbors
 	PathMatch         float64
 	Hop1Boost         float64
@@ -53,6 +54,7 @@ func DefaultRankerWeights() RankerWeights {
 		RoleTest:          2.0,
 		RoleEvidence:      1.5,
 		RoleDefault:       0.5,
+		RequiredEditPath:  4.0,
 		MatchBoost:        1.2,
 		PathMatch:         0.8,
 		Hop1Boost:         0.4,
@@ -345,6 +347,7 @@ type RankInputs struct {
 	Intent         Intent
 	LearnedWeights map[string]float64
 	QueryTokens    []string
+	RequiredPaths  map[string]struct{}
 }
 
 // RankPackFiles assigns a Score to every input file by combining role floor,
@@ -360,33 +363,60 @@ func RankPackFiles(in RankInputs) []PackFile {
 	scored := make([]PackFile, len(in.Files))
 	for i, file := range in.Files {
 		base := roleFloor(file.Role, weights)
+		reasons := []RankerReason{{
+			Reason:     "role_floor",
+			State:      firstNonEmpty(file.Role, "default"),
+			ScoreDelta: roundScore(base),
+		}}
 		bonus := 0.0
 		_, isMatch := matchedFiles[file.Path]
+		_, isRequired := in.RequiredPaths[file.Path]
+		if isRequired {
+			bonus += weights.RequiredEditPath
+			reasons = append(reasons, RankerReason{Reason: "required_edit_path", State: "declared", ScoreDelta: roundScore(weights.RequiredEditPath)})
+		}
 		if isMatch {
 			// A direct task-term match must outrank pure neighbors; otherwise
 			// a 1-hop neighbor of the match (which gets Hop1Boost) silently
 			// wins on tie-broken role scores.
 			bonus += weights.MatchBoost
+			reasons = append(reasons, RankerReason{Reason: "direct_task_match", State: "matched", ScoreDelta: roundScore(weights.MatchBoost)})
 		}
 		if pathMatchTokens(file.Path, in.QueryTokens) {
 			bonus += weights.PathMatch
+			reasons = append(reasons, RankerReason{Reason: "path_token_match", State: "matched", ScoreDelta: roundScore(weights.PathMatch)})
 		}
-		bonus += HopBoost(file.Path, fg, matchedFiles, weights)
+		hopBoost := HopBoost(file.Path, fg, matchedFiles, weights)
+		if hopBoost > 0 {
+			reasons = append(reasons, RankerReason{Reason: "graph_hop", State: graphHopState(file.Path, fg, matchedFiles), ScoreDelta: roundScore(hopBoost)})
+		}
+		bonus += hopBoost
 		score := base + bonus
 		_, fanoutHub := fanoutHubs[file.Path]
 		isHub := fanoutHub || IsNameHub(file.Path)
-		if isHub && !isMatch {
+		if isHub && !isMatch && !isRequired {
 			score *= weights.HubDemotion
+			reasons = append(reasons, RankerReason{Reason: "hub_demotion", State: hubState(file.Path, fanoutHub), Multiplier: weights.HubDemotion})
 		}
 		if file.Stale {
 			score *= weights.StaleDemotion
+			reasons = append(reasons, RankerReason{Reason: "stale_demotion", State: "stale", Multiplier: weights.StaleDemotion})
 		}
-		score *= PathPenalty(file.Path, weights)
+		pathPenalty := 1.0
+		if !isRequired {
+			pathPenalty = PathPenalty(file.Path, weights)
+			if pathPenalty != 1.0 {
+				reasons = append(reasons, RankerReason{Reason: "path_penalty", State: pathPenaltyState(file.Path), Multiplier: pathPenalty})
+			}
+		}
+		score *= pathPenalty
 		if mult, ok := in.LearnedWeights[file.Path]; ok && mult > 0 {
 			score *= mult
+			reasons = append(reasons, RankerReason{Reason: "learned_weight", State: "applied", Multiplier: roundScore(mult)})
 		}
 		file.Score = roundScore(score)
 		file.Hub = isHub
+		file.RankerReasons = reasons
 		scored[i] = file
 	}
 	sort.SliceStable(scored, func(i, j int) bool {
@@ -402,6 +432,42 @@ func RankPackFiles(in RankInputs) []PackFile {
 		return scored[i].Path < scored[j].Path
 	})
 	return scored
+}
+
+func graphHopState(file string, fg FileGraph, matchedFiles map[string]struct{}) string {
+	if hop1Neighbor(file, fg, matchedFiles) {
+		return "hop1"
+	}
+	if hop2Neighbor(file, fg, matchedFiles) {
+		return "hop2"
+	}
+	return "none"
+}
+
+func hubState(file string, fanoutHub bool) string {
+	if fanoutHub && IsNameHub(file) {
+		return "fanout_and_name"
+	}
+	if fanoutHub {
+		return "fanout"
+	}
+	return "name"
+}
+
+func pathPenaltyState(p string) string {
+	clean := path.Clean("/" + strings.ReplaceAll(p, "\\", "/"))
+	switch {
+	case pathVendoredRE.MatchString(clean):
+		return "vendored"
+	case pathTestRE.MatchString(clean):
+		return "test"
+	case pathGenRE.MatchString(clean):
+		return "generated"
+	case pathDocsRE.MatchString(clean):
+		return "docs"
+	default:
+		return "none"
+	}
 }
 
 func roleFloor(role string, w RankerWeights) float64 {

@@ -1,10 +1,14 @@
 # Idiom AGENTS
 
+**North Star: AI coding agents are becoming common, but teams do not yet trust
+their context, decisions, or outputs. Idiom sells the missing substrate: repo
+memory, freshness, contracts, audit, and evals.**
+
 This repository builds `idiom`, a local coding-agent harness around Qwen, `llama.cpp`, routing/control rails, workspace tools, and eval infrastructure.
 
 ## Start Here
 
-- Read [README.md](README.md), [docs/decisioning-north-star.md](docs/decisioning-north-star.md), and [.codex/project-context.md](.codex/project-context.md) before changing agent behavior, prompt layers, routing, control rails, readiness gates, or verification logic.
+- Read [README.md](README.md), [docs/idiom-strategic-thesis.md](docs/idiom-strategic-thesis.md), [docs/idiom-design-roadmap.md](docs/idiom-design-roadmap.md), [docs/decisioning-north-star.md](docs/decisioning-north-star.md), and [.codex/project-context.md](.codex/project-context.md) before changing agent behavior, prompt layers, routing, control rails, readiness gates, verification logic, or strategic direction.
 - Always use the OpenAI developer documentation MCP server for OpenAI API, Codex, MCP, or ChatGPT-app questions without waiting for the user to ask explicitly.
 - Keep terminology precise: the model owns strategy; the harness owns contracts.
 
@@ -32,6 +36,10 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 
 For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or context packets:
 
+- Treat conversation logs, telemetry logs, and `harness_audit` as the primary evidence trail. Start from the newest relevant `.idiom/logs/conversations/*.jsonl` and `logs/telemetry/*.jsonl` records before changing prompts or rails.
+- Treat `harness_audit` behavior output as local diagnostic evidence. Before storing, sharing, or committing audit artifacts, redact raw prompt, raw transcript, log excerpt, file-body, secret, and customer-identifying fields; keep aggregate counts, command IDs, paths, findings, and session IDs needed for reproduction.
+- Do not treat contract audit `all_clear` as sufficient by itself. Check `contract_coverage.gate_coverage.open_obligation_refs`, unresolved obligations, invalid-event warnings, and sidecar/tool correlation findings before using audit output as proof.
+- If the logs do not make the failure shape obvious, improve the structured logging or audit coverage as part of the fix. A harness behavior bug is not fully diagnosable until audit output can surface the same class of failure without hand-reconstructing it from raw prose.
 - Trace behavioral authority end to end: static prompt stack, dynamic instruction attachment, runtime brief, tool manifest/schema, recovery nudges, gates, telemetry, and audit output.
 - Search for authority leaks, not only direct wording. Distinguish instructions from evidence, telemetry, generated context, and source text.
 - For required-path implementation failures, distinguish exact-anchor write-first contracts from abstract scope-ready packets. Check both what tells the model to write and which bounded read/search affordances remain visible.
@@ -68,12 +76,23 @@ When invoked via CLI, the tool result is printed as JSON with `Tool`, `Summary`,
 
 `context_pack` is the right starting point for almost every "find the relevant code for this task" question. It returns a ranked candidate file/symbol/test list with provenance, and persists the result in the `graph_views` table inside `.idiom/comprehension/graph.sqlite` so the next call with the same task hits the cache instead of recomputing.
 
+- **Lane default**: `idiom lane implement` and `idiom lane plan-execute`
+  automatically attach a compact `context_pack` section before the brief body.
+  Treat that packet as the first localization pass, then use language/project
+  tools only for named gaps. Use `--no-context-pack` only when the caller
+  already supplied an equivalent packet or is debugging context generation.
+  Do not paste a second broad packet into the brief unless a human-readable
+  artifact needs it; add only missing exact anchors, runtime evidence, or
+  domain-specific facts.
+  Refine scratchpad meta-prompts are excluded because refine already preloads
+  phase-specific lint/source evidence and an extra repo map can distract the
+  writer/reviewer phase.
 - **Use the same task string across related calls** so identical requests reuse the cache. Don't append timestamps, session ids, or "round 2" suffixes.
-- **The cache key is content-addressed** over `(graph index_id, task, mode, path, scope, limit, budget_tokens, required_tests, forbidden_paths, intent)`. Anything not in that set isn't in the key.
+- **The cache key is content-addressed** over `(graph index_id, task, mode, path, scope, limit, budget_tokens, required_tests, forbidden_paths, intent, include_stale_runtime, workspace_state_fingerprint, ranker_weights_fingerprint, runtime_traces_fingerprint)`. The aggregate `workspace_state_fingerprint` is the cache validity signal for workspace-side state; the ranker/runtime component fingerprints are also carried in the canonical query and result contract for attribution.
 - **Known cache limitations** (see `docs/codebase-comprehension-memory-design.md` "Known cache limitations"):
-  - Cache survives only within a single `context build` session — `graph.ID` hashes `GeneratedAt`, so every refresh mints a new index_id and old rows become unreachable. Per-row staleness is correctly tracked but not yet load-bearing across rebuilds.
-  - Ranker weight changes (`idiom ranker boost/penalize`) and new runtime traces under `.idiom/comprehension/traces/` aren't in the cache key. Rebuild the index after either if the changes should reshape pack outputs.
-  - Pack bypasses the cache when `context_status` reports `Fresh: false`, so an edited-but-not-refreshed working tree always recomputes.
+  - Cache reuse is tied to content-addressed `graph.ID`. No-op rebuilds keep the same `index_id`; source or collector changes that alter graph content mint a different key or stale rows through referenced-path invalidation. Rows are not migrated between genuinely different graph IDs.
+  - Cached rows still validate the current index, referenced source fingerprints, and scoped freshness on load. Failed validation is a miss/recompute, not a served stale result.
+  - Runtime trace fingerprinting uses the bounded trace manifest when present. Legacy/no-manifest trace directories use a constant-work directory timestamp fallback until `context_trace_pack` writes the manifest; that fallback is coarse for hand-edited existing trace files.
 - **Plan-then-execute**: the planner's `pack_id` round-trips through `submit_plan` → `PlanArtifact.PackID` → executor phase, which emits `executor_inherits_pack` (or `executor_pack_miss`) JSON events. Pass the `pack_id` through when chaining planner + executor so downstream consumers (UIs, debug tooling) can attach.
 
 ### Discovery hierarchy (this Claude Code session, you, an external agent)
@@ -117,6 +136,7 @@ If you find yourself ten greps deep without having tried `context_pack` once, yo
 ## Project Docs
 
 - [.codex/project-context.md](.codex/project-context.md): Codex-focused project brief
+- [docs/idiom-strategic-thesis.md](docs/idiom-strategic-thesis.md): project-defining differentiation thesis and roadmap
 - [docs/decisioning-north-star.md](docs/decisioning-north-star.md): canonical strategy-vs-contract policy
 - [docs/agent-autonomy-tracker.md](docs/agent-autonomy-tracker.md): completion, task-ledger, and workflow-state expectations
 - [docs/north-star-remediation.md](docs/north-star-remediation.md): examples of repo language that should be generalized or softened

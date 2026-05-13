@@ -150,10 +150,12 @@ func codeNavigationWrapResult(spec codeNavigationSpec, language string, routedTo
 		summary = fmt.Sprintf("Code navigation used generic fallback for %s", spec.Name)
 	}
 	return ToolResult{
-		Tool:    "code_navigate",
-		Summary: summary,
-		Output:  strings.TrimSpace(output),
-		Error:   strings.TrimSpace(result.Error),
+		Tool:          "code_navigate",
+		Summary:       summary,
+		Output:        strings.TrimSpace(output),
+		Error:         strings.TrimSpace(result.Error),
+		PrecisionTier: strings.TrimSpace(result.PrecisionTier),
+		Relationships: append([]ToolRelationship(nil), result.Relationships...),
 	}
 }
 
@@ -185,9 +187,10 @@ func (m *Manager) genericCodeNavigationFallback(req ToolRequest, spec codeNaviga
 	}
 	if len(matches) == 0 {
 		return ToolResult{
-			Tool:    "code_navigate",
-			Summary: fmt.Sprintf("No generic code navigation matches for %s", spec.Name),
-			Output:  strings.Join(header, "\n"),
+			Tool:          "code_navigate",
+			Summary:       fmt.Sprintf("No generic code navigation matches for %s", spec.Name),
+			Output:        strings.Join(header, "\n"),
+			PrecisionTier: PrecisionTierRGFallback,
 		}
 	}
 	if truncated {
@@ -195,9 +198,10 @@ func (m *Manager) genericCodeNavigationFallback(req ToolRequest, spec codeNaviga
 	}
 	output := strings.Join(header, "\n") + "\n\n" + strings.Join(matches, "\n")
 	return ToolResult{
-		Tool:    "code_navigate",
-		Summary: fmt.Sprintf("Code navigation used generic fallback for %s", spec.Name),
-		Output:  strings.TrimSpace(output),
+		Tool:          "code_navigate",
+		Summary:       fmt.Sprintf("Code navigation used generic fallback for %s", spec.Name),
+		Output:        strings.TrimSpace(output),
+		PrecisionTier: PrecisionTierRGFallback,
 	}
 }
 
@@ -237,9 +241,10 @@ func (m *Manager) genericCodeNavigationOutline(req ToolRequest, spec codeNavigat
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation generic fallback failed", Error: err.Error()}
 	}
 	result := ToolResult{
-		Tool:    "generic_source_text",
-		Summary: fmt.Sprintf("Read %s lines %d-%d", m.displayPath(abs), start, end),
-		Output:  snippet,
+		Tool:          "generic_source_text",
+		Summary:       fmt.Sprintf("Read %s lines %d-%d", m.displayPath(abs), start, end),
+		Output:        snippet,
+		PrecisionTier: PrecisionTierRGFallback,
 	}
 	return codeNavigationWrapResult(spec, "generic", "generic_source_text", result, reason)
 }

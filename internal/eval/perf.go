@@ -51,7 +51,8 @@ type AntiPattern struct {
 type PerfReport struct {
 	LogPath          string         `json:"log_path"`
 	SessionID        string         `json:"session_id,omitempty"`
-	UserPrompt       string         `json:"user_prompt,omitempty"`
+	UserPrompt       string         `json:"-"`
+	PromptRedacted   bool           `json:"prompt_redacted,omitempty"`
 	ModelCalls       int            `json:"model_calls"`
 	ToolResults      int            `json:"tool_results"`
 	PromptTokens     int            `json:"prompt_tokens"`
@@ -68,51 +69,64 @@ type PerfReport struct {
 }
 
 type ContextStats struct {
-	ToolResults                 int            `json:"tool_results,omitempty"`
-	IndexedResults              int            `json:"indexed_results,omitempty"`
-	FreshResults                int            `json:"fresh_results,omitempty"`
-	StaleResults                int            `json:"stale_results,omitempty"`
-	IncompatibleBackendResults  int            `json:"incompatible_backend_results,omitempty"`
-	TraceFailures               int            `json:"trace_failures,omitempty"`
-	MaxFilesIndexed             int            `json:"max_files_indexed,omitempty"`
-	MaxSymbolsIndexed           int            `json:"max_symbols_indexed,omitempty"`
-	MaxEdgesIndexed             int            `json:"max_edges_indexed,omitempty"`
-	MaxStaleSymbols             int            `json:"max_stale_symbols,omitempty"`
-	RefreshedStaleSymbols       int            `json:"refreshed_stale_symbols,omitempty"`
-	StaleSymbolSamples          int            `json:"stale_symbol_samples,omitempty"`
-	IncrementalRefreshes        int            `json:"incremental_refreshes,omitempty"`
-	ReusedIndexedFiles          int            `json:"reused_indexed_files,omitempty"`
-	DependencyRefreshFiles      int            `json:"dependency_refresh_files,omitempty"`
-	AutoRefreshAttempts         int            `json:"auto_refresh_attempts,omitempty"`
-	AutoRefreshSkips            int            `json:"auto_refresh_skips,omitempty"`
-	AutoRefreshFailures         int            `json:"auto_refresh_failures,omitempty"`
-	AutoRefreshFreshAfter       int            `json:"auto_refresh_fresh_after,omitempty"`
-	AutoRefreshFilesIndexed     int            `json:"auto_refresh_files_indexed,omitempty"`
-	AutoRefreshRefreshedFiles   int            `json:"auto_refresh_refreshed_files,omitempty"`
-	NodesReturned               int            `json:"nodes_returned,omitempty"`
-	EdgesReturned               int            `json:"edges_returned,omitempty"`
-	SummaryNodesReturned        int            `json:"summary_nodes_returned,omitempty"`
-	ModelSummaryNodesReturned   int            `json:"model_summary_nodes_returned,omitempty"`
-	CandidateFiles              int            `json:"candidate_files,omitempty"`
-	CandidateSymbols            int            `json:"candidate_symbols,omitempty"`
-	ImpactScope                 int            `json:"impact_scope,omitempty"`
-	TestsSuggested              int            `json:"tests_suggested,omitempty"`
-	UnresolvedGaps              int            `json:"unresolved_gaps,omitempty"`
-	CollectorReports            int            `json:"collector_reports,omitempty"`
-	CollectorCoverage           int            `json:"collector_coverage,omitempty"`
-	CollectorUnavailable        int            `json:"collector_unavailable,omitempty"`
-	CollectorWarnings           int            `json:"collector_warnings,omitempty"`
-	CollectorVersionMismatches  int            `json:"collector_version_mismatches,omitempty"`
-	EnrichmentDiagnostics       int            `json:"enrichment_diagnostics,omitempty"`
-	NormalizedRelationshipEdges int            `json:"normalized_relationship_edges,omitempty"`
-	ActiveBackendCounts         map[string]int `json:"active_backend_counts,omitempty"`
-	ActiveBackendStatusCounts   map[string]int `json:"active_backend_status_counts,omitempty"`
-	StoreKindCounts             map[string]int `json:"store_kind_counts,omitempty"`
-	StorageBackendStatusCounts  map[string]int `json:"storage_backend_status_counts,omitempty"`
-	CollectorReportNameCounts   map[string]int `json:"collector_report_name_counts,omitempty"`
-	CollectorCoverageNameCounts map[string]int `json:"collector_coverage_name_counts,omitempty"`
-	AutoRefreshReasonCounts     map[string]int `json:"auto_refresh_reason_counts,omitempty"`
-	AutoRefreshSkippedCounts    map[string]int `json:"auto_refresh_skipped_counts,omitempty"`
+	ToolResults                  int            `json:"tool_results,omitempty"`
+	IndexedResults               int            `json:"indexed_results,omitempty"`
+	FreshResults                 int            `json:"fresh_results,omitempty"`
+	StaleResults                 int            `json:"stale_results,omitempty"`
+	IncompatibleBackendResults   int            `json:"incompatible_backend_results,omitempty"`
+	TraceFailures                int            `json:"trace_failures,omitempty"`
+	MaxFilesIndexed              int            `json:"max_files_indexed,omitempty"`
+	MaxSymbolsIndexed            int            `json:"max_symbols_indexed,omitempty"`
+	MaxEdgesIndexed              int            `json:"max_edges_indexed,omitempty"`
+	MaxStaleSymbols              int            `json:"max_stale_symbols,omitempty"`
+	RefreshedStaleSymbols        int            `json:"refreshed_stale_symbols,omitempty"`
+	StaleSymbolSamples           int            `json:"stale_symbol_samples,omitempty"`
+	IncrementalRefreshes         int            `json:"incremental_refreshes,omitempty"`
+	ReusedIndexedFiles           int            `json:"reused_indexed_files,omitempty"`
+	DependencyRefreshFiles       int            `json:"dependency_refresh_files,omitempty"`
+	AutoRefreshAttempts          int            `json:"auto_refresh_attempts,omitempty"`
+	AutoRefreshSkips             int            `json:"auto_refresh_skips,omitempty"`
+	AutoRefreshFailures          int            `json:"auto_refresh_failures,omitempty"`
+	AutoRefreshFreshAfter        int            `json:"auto_refresh_fresh_after,omitempty"`
+	AutoRefreshFilesIndexed      int            `json:"auto_refresh_files_indexed,omitempty"`
+	AutoRefreshRefreshedFiles    int            `json:"auto_refresh_refreshed_files,omitempty"`
+	FreshnessReadThroughResults  int            `json:"freshness_read_through_results,omitempty"`
+	FreshnessBlockers            int            `json:"freshness_blockers,omitempty"`
+	FreshnessBudgetExceeded      int            `json:"freshness_budget_exceeded,omitempty"`
+	FreshnessRefreshAttempts     int            `json:"freshness_refresh_attempts,omitempty"`
+	FreshnessRefreshFailures     int            `json:"freshness_refresh_failures,omitempty"`
+	FreshnessRefreshFilesIndexed int            `json:"freshness_refresh_files_indexed,omitempty"`
+	StaleUseBlocked              int            `json:"stale_use_blocked,omitempty"`
+	StaleUseReported             int            `json:"stale_use_reported,omitempty"`
+	StaleUseAllowed              int            `json:"stale_use_allowed,omitempty"`
+	StaleUseFresh                int            `json:"stale_use_fresh,omitempty"`
+	NodesReturned                int            `json:"nodes_returned,omitempty"`
+	EdgesReturned                int            `json:"edges_returned,omitempty"`
+	SummaryNodesReturned         int            `json:"summary_nodes_returned,omitempty"`
+	ModelSummaryNodesReturned    int            `json:"model_summary_nodes_returned,omitempty"`
+	CandidateFiles               int            `json:"candidate_files,omitempty"`
+	CandidateSymbols             int            `json:"candidate_symbols,omitempty"`
+	ImpactScope                  int            `json:"impact_scope,omitempty"`
+	TestsSuggested               int            `json:"tests_suggested,omitempty"`
+	UnresolvedGaps               int            `json:"unresolved_gaps,omitempty"`
+	CollectorReports             int            `json:"collector_reports,omitempty"`
+	CollectorCoverage            int            `json:"collector_coverage,omitempty"`
+	CollectorUnavailable         int            `json:"collector_unavailable,omitempty"`
+	CollectorWarnings            int            `json:"collector_warnings,omitempty"`
+	CollectorVersionMismatches   int            `json:"collector_version_mismatches,omitempty"`
+	EnrichmentDiagnostics        int            `json:"enrichment_diagnostics,omitempty"`
+	NormalizedRelationshipEdges  int            `json:"normalized_relationship_edges,omitempty"`
+	ActiveBackendCounts          map[string]int `json:"active_backend_counts,omitempty"`
+	ActiveBackendStatusCounts    map[string]int `json:"active_backend_status_counts,omitempty"`
+	StoreKindCounts              map[string]int `json:"store_kind_counts,omitempty"`
+	StorageBackendStatusCounts   map[string]int `json:"storage_backend_status_counts,omitempty"`
+	CollectorReportNameCounts    map[string]int `json:"collector_report_name_counts,omitempty"`
+	CollectorCoverageNameCounts  map[string]int `json:"collector_coverage_name_counts,omitempty"`
+	AutoRefreshReasonCounts      map[string]int `json:"auto_refresh_reason_counts,omitempty"`
+	AutoRefreshSkippedCounts     map[string]int `json:"auto_refresh_skipped_counts,omitempty"`
+	FreshnessPolicyCounts        map[string]int `json:"freshness_policy_counts,omitempty"`
+	FreshnessReasonCounts        map[string]int `json:"freshness_reason_counts,omitempty"`
+	StaleUseStateCounts          map[string]int `json:"stale_use_state_counts,omitempty"`
 }
 
 type FeedbackStats struct {
@@ -279,11 +293,14 @@ func analyzeRecords(path string, records []Record) PerfReport {
 		detectTruncatedSearch(&rep, records)
 		detectRedirectStorm(&rep, records)
 		detectSameToolRepeat(&rep, steps)
+		detectNamedGapReadWalk(&rep, steps)
 		detectDocWander(&rep, steps)
 		detectPromptSurfaceOverlap(&rep, records)
 		detectRejectionRetry(&rep, steps)
 		detectMalformedEditArgs(&rep, records)
 		detectToolErrorStreak(&rep, steps, records)
+		detectCompletionGateReopenedDiscovery(&rep, records)
+		detectRequiredPathsBlockedWithoutWrite(&rep, records)
 	}
 
 	score := 0
@@ -305,6 +322,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			}
 		}
 	}
+	rep.PromptRedacted = rep.UserPrompt != ""
 
 	return rep
 }
@@ -324,6 +342,9 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 			CollectorCoverageNameCounts: make(map[string]int),
 			AutoRefreshReasonCounts:     make(map[string]int),
 			AutoRefreshSkippedCounts:    make(map[string]int),
+			FreshnessPolicyCounts:       make(map[string]int),
+			FreshnessReasonCounts:       make(map[string]int),
+			StaleUseStateCounts:         make(map[string]int),
 		}
 	}
 	ctx := rep.Context
@@ -370,6 +391,39 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 	}
 	ctx.AutoRefreshFilesIndexed += intField(data, "context_auto_refresh_files_indexed")
 	ctx.AutoRefreshRefreshedFiles += intField(data, "context_auto_refresh_refreshed_files")
+	if stringField(data, "context_freshness_policy") != "" {
+		incrementStringCount(ctx.FreshnessPolicyCounts, stringField(data, "context_freshness_policy"))
+		if stringField(data, "context_freshness_policy") == "read_through" {
+			ctx.FreshnessReadThroughResults++
+		}
+	}
+	if boolField(data, "context_freshness_blocked") {
+		ctx.FreshnessBlockers++
+	}
+	if boolField(data, "context_freshness_budget_exceeded") {
+		ctx.FreshnessBudgetExceeded++
+	}
+	if boolField(data, "context_freshness_refresh_attempted") {
+		ctx.FreshnessRefreshAttempts++
+	}
+	if stringField(data, "context_freshness_refresh_error") != "" {
+		ctx.FreshnessRefreshFailures++
+	}
+	ctx.FreshnessRefreshFilesIndexed += intField(data, "context_freshness_refresh_files_indexed")
+	incrementStringCount(ctx.FreshnessReasonCounts, stringField(data, "context_freshness_reason"))
+	incrementStringCount(ctx.StaleUseStateCounts, stringField(data, "context_stale_evidence_state"))
+	if boolField(data, "context_stale_use_blocked") {
+		ctx.StaleUseBlocked++
+	}
+	if boolField(data, "context_stale_use_reported") {
+		ctx.StaleUseReported++
+	}
+	if boolField(data, "context_stale_use_allowed") {
+		ctx.StaleUseAllowed++
+	}
+	if boolField(data, "context_stale_use_fresh") {
+		ctx.StaleUseFresh++
+	}
 	ctx.NodesReturned += intField(data, "context_nodes")
 	ctx.EdgesReturned += intField(data, "context_edges")
 	ctx.SummaryNodesReturned += intField(data, "context_summary_nodes")
@@ -761,6 +815,61 @@ func detectSameToolRepeat(rep *PerfReport, steps []toolStep) {
 	}
 }
 
+func detectNamedGapReadWalk(rep *PerfReport, steps []toolStep) {
+	type readWalk struct {
+		count int
+		first int
+		last  int
+	}
+	walks := make(map[string]readWalk)
+	for _, s := range steps {
+		if s.tool != "read_file" {
+			continue
+		}
+		gap := perfRawJSONStringField(s.rawArgs, "named_gap")
+		if gap == "" {
+			continue
+		}
+		path := firstNonEmptyPerfString(perfRawJSONStringField(s.rawArgs, "path"), s.target)
+		if path == "" {
+			continue
+		}
+		key := path + "\x00" + gap
+		walk := walks[key]
+		if walk.count == 0 {
+			walk.first = s.index
+		}
+		walk.count++
+		walk.last = s.index
+		walks[key] = walk
+	}
+	total := 0
+	var examples []string
+	for key, walk := range walks {
+		if walk.count < 3 {
+			continue
+		}
+		total += walk.count
+		if len(examples) < 3 {
+			parts := strings.SplitN(key, "\x00", 2)
+			path := parts[0]
+			gap := ""
+			if len(parts) == 2 {
+				gap = parts[1]
+			}
+			examples = append(examples, fmt.Sprintf("steps %d-%d: %d reads of %s for named_gap=%s", walk.first, walk.last, walk.count, path, gap))
+		}
+	}
+	if total > 0 {
+		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
+			Name:        "named_gap_read_walk",
+			Count:       total,
+			Description: "read_file walked the same path for the same named_gap ≥3 times; the model kept reopening one edit-safety question instead of closing or blocking",
+			Examples:    examples,
+		})
+	}
+}
+
 func detectDocWander(rep *PerfReport, steps []toolStep) {
 	// Heuristic: 3+ read_file calls on .md / README-ish paths with
 	// <=1 read on source. Indicates the model answered from docs
@@ -969,6 +1078,164 @@ func detectRejectionRetry(rep *PerfReport, steps []toolStep) {
 	}
 }
 
+func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
+	reopened := 0
+	var examples []string
+	armedStep := 0
+	for _, rec := range records {
+		switch rec.Type {
+		case "tool_result":
+			tool := stringField(rec.Data, "tool")
+			if tool == "completion_gate" && completionGateNoWriteRejection(rec.Data) {
+				armedStep = intField(rec.Data, "step")
+				if armedStep == 0 {
+					armedStep = 1
+				}
+				continue
+			}
+			if armedStep > 0 && workspaceWriteToolName(tool) && stringField(rec.Data, "error") == "" {
+				armedStep = 0
+			}
+		case "tool_request":
+			if armedStep == 0 {
+				continue
+			}
+			tool := stringField(rec.Data, "tool")
+			if workspaceWriteToolName(tool) {
+				armedStep = 0
+				continue
+			}
+			if !toolLooksLikeReadOrDiscovery(tool) {
+				continue
+			}
+			reopened++
+			if len(examples) < 3 {
+				target := firstNonEmptyPerfString(stringField(rec.Data, "path"), targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "tool"))
+				examples = append(examples, fmt.Sprintf("after completion gate step %d: %s %s", armedStep, tool, target))
+			}
+			armedStep = 0
+		}
+	}
+	if reopened > 0 {
+		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
+			Name:        "completion_gate_reopened_discovery",
+			Count:       reopened,
+			Description: "completion gate rejected a no-write final answer, then the next model action reopened read/discovery instead of writing or blocking",
+			Examples:    examples,
+		})
+	}
+}
+
+func detectRequiredPathsBlockedWithoutWrite(rep *PerfReport, records []Record) {
+	count := 0
+	var examples []string
+	for _, rec := range records {
+		if rec.Type != "completion_status" {
+			continue
+		}
+		reason := strings.ToLower(firstNonEmptyPerfString(stringField(rec.Data, "reason"), stringField(rec.Data, "blocker_kind")))
+		if !strings.Contains(reason, "required_edit_paths_remaining") {
+			continue
+		}
+		if boolField(rec.Data, "edit_attempted") {
+			continue
+		}
+		count++
+		if len(examples) < 3 {
+			examples = append(examples, fmt.Sprintf("session blocked with %s and edit_attempted=false", reason))
+		}
+	}
+	if count > 0 {
+		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
+			Name:        "required_paths_blocked_without_write",
+			Count:       count,
+			Description: "implementation run ended with required edit paths remaining and no recorded edit attempt",
+			Examples:    examples,
+		})
+	}
+}
+
+func completionGateNoWriteRejection(data map[string]any) bool {
+	text := strings.ToLower(strings.TrimSpace(
+		stringField(data, "summary") + " " +
+			stringField(data, "error") + " " +
+			stringField(data, "content"),
+	))
+	return strings.Contains(text, "no successful write") ||
+		strings.Contains(text, "workspace change") ||
+		strings.Contains(text, "required edit path") ||
+		strings.Contains(text, "remain unwritten")
+}
+
+func workspaceWriteToolName(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "mkdir", "submit_plan":
+		return true
+	default:
+		return false
+	}
+}
+
+func toolLooksLikeReadOrDiscovery(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return false
+	}
+	switch tool {
+	case "read_file", "list_files", "search_files", "search_content",
+		"code_navigate", "structural_search", "dependency_graph",
+		"history_range", "history_symbol", "blame_range",
+		"ctags_symbols", "semgrep_scan", "joern_scan",
+		"lookup", "trace_code", "gdscript_trace", "boundary",
+		"ast_grep":
+		return true
+	}
+	if strings.HasPrefix(tool, "context_") {
+		return true
+	}
+	for _, suffix := range []string{
+		"_overview",
+		"_entrypoints",
+		"_find_symbol",
+		"_workspace_symbol",
+		"_definition",
+		"_references",
+		"_calls_from",
+		"_calls_into",
+		"_read_symbol",
+		"_related_files",
+		"_implementations",
+		"_diagnostics",
+		"_file_outline",
+	} {
+		if strings.HasSuffix(tool, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmptyPerfString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func perfRawJSONStringField(raw string, key string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || key == "" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	return stringField(payload, key)
+}
+
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
@@ -1018,11 +1285,11 @@ type PerfToolMix struct {
 }
 
 type PerfWorstOffender struct {
-	LogPath          string `json:"log_path"`
-	SessionID        string `json:"session_id,omitempty"`
-	AntiPatternScore int    `json:"anti_pattern_score"`
-	ToolResults      int    `json:"tool_results"`
-	UserPrompt       string `json:"user_prompt,omitempty"`
+	LogPath            string `json:"log_path"`
+	SessionID          string `json:"session_id,omitempty"`
+	AntiPatternScore   int    `json:"anti_pattern_score"`
+	ToolResults        int    `json:"tool_results"`
+	LogExcerptRedacted bool   `json:"log_excerpt_redacted,omitempty"`
 }
 
 // Aggregate combines per-log reports into one summary.
@@ -1121,11 +1388,11 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 			break
 		}
 		agg.WorstOffenders = append(agg.WorstOffenders, PerfWorstOffender{
-			LogPath:          r.LogPath,
-			SessionID:        r.SessionID,
-			AntiPatternScore: r.AntiPatternScore,
-			ToolResults:      r.ToolResults,
-			UserPrompt:       r.UserPrompt,
+			LogPath:            r.LogPath,
+			SessionID:          r.SessionID,
+			AntiPatternScore:   r.AntiPatternScore,
+			ToolResults:        r.ToolResults,
+			LogExcerptRedacted: r.UserPrompt != "",
 		})
 	}
 
@@ -1146,6 +1413,9 @@ func mergeContextStats(target **ContextStats, source *ContextStats) {
 			CollectorCoverageNameCounts: make(map[string]int),
 			AutoRefreshReasonCounts:     make(map[string]int),
 			AutoRefreshSkippedCounts:    make(map[string]int),
+			FreshnessPolicyCounts:       make(map[string]int),
+			FreshnessReasonCounts:       make(map[string]int),
+			StaleUseStateCounts:         make(map[string]int),
 		}
 	}
 	dst := *target
@@ -1170,6 +1440,16 @@ func mergeContextStats(target **ContextStats, source *ContextStats) {
 	dst.AutoRefreshFreshAfter += source.AutoRefreshFreshAfter
 	dst.AutoRefreshFilesIndexed += source.AutoRefreshFilesIndexed
 	dst.AutoRefreshRefreshedFiles += source.AutoRefreshRefreshedFiles
+	dst.FreshnessReadThroughResults += source.FreshnessReadThroughResults
+	dst.FreshnessBlockers += source.FreshnessBlockers
+	dst.FreshnessBudgetExceeded += source.FreshnessBudgetExceeded
+	dst.FreshnessRefreshAttempts += source.FreshnessRefreshAttempts
+	dst.FreshnessRefreshFailures += source.FreshnessRefreshFailures
+	dst.FreshnessRefreshFilesIndexed += source.FreshnessRefreshFilesIndexed
+	dst.StaleUseBlocked += source.StaleUseBlocked
+	dst.StaleUseReported += source.StaleUseReported
+	dst.StaleUseAllowed += source.StaleUseAllowed
+	dst.StaleUseFresh += source.StaleUseFresh
 	dst.NodesReturned += source.NodesReturned
 	dst.EdgesReturned += source.EdgesReturned
 	dst.SummaryNodesReturned += source.SummaryNodesReturned
@@ -1194,6 +1474,9 @@ func mergeContextStats(target **ContextStats, source *ContextStats) {
 	mergeStringCounts(dst.CollectorCoverageNameCounts, source.CollectorCoverageNameCounts)
 	mergeStringCounts(dst.AutoRefreshReasonCounts, source.AutoRefreshReasonCounts)
 	mergeStringCounts(dst.AutoRefreshSkippedCounts, source.AutoRefreshSkippedCounts)
+	mergeStringCounts(dst.FreshnessPolicyCounts, source.FreshnessPolicyCounts)
+	mergeStringCounts(dst.FreshnessReasonCounts, source.FreshnessReasonCounts)
+	mergeStringCounts(dst.StaleUseStateCounts, source.StaleUseStateCounts)
 }
 
 func mergeFeedbackStats(target **FeedbackStats, source *FeedbackStats) {

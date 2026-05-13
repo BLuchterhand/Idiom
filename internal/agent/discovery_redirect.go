@@ -207,7 +207,7 @@ func redirectSummary(req workspace.ToolRequest, replacement string) string {
 // sees the streak, not just an anonymous scolding.
 func escalateRedirectMessage(base string, lang workspace.LanguageSupport, cap workspace.Capability, replacement string, fireNumber int) string {
 	preface := fmt.Sprintf(
-		"Redirect #%d for %s %s this turn. Further raw-inspection calls on %s code will be blocked instead of executed — even identical retries. Use %s (or the related structured tool listed below) now.\n\n",
+		"Redirect #%d for %s %s this turn. Further raw-inspection calls on %s code will be blocked instead of executed — even identical retries. Available capability route: %s or the related structured adapter listed below.\n\n",
 		fireNumber, lang.Name, cap, lang.Name, replacement,
 	)
 	return preface + base
@@ -215,43 +215,43 @@ func escalateRedirectMessage(base string, lang workspace.LanguageSupport, cap wo
 
 func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability, replacement string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "The request targets %s code. Use the deterministic tool %s (%s) instead of %s.\n",
-		lang.Name, replacement, cap, req.Tool)
+	fmt.Fprintf(&b, "The request targets %s code. Capability route: %s via adapter %s instead of raw %s.\n",
+		lang.Name, cap, replacement, req.Tool)
 	switch cap {
 	case workspace.CapFileOutline:
-		fmt.Fprintf(&b, "Try: {\"tool\":%q,\"path\":%q}\n", replacement, req.Path)
+		fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"path\":%q}\n", replacement, req.Path)
 		readSym := lang.Tool(workspace.CapReadSymbol)
-		fmt.Fprintf(&b, "Next step: to read one declaration by name, use %s — that is the default follow-up and returns the body directly.\n", readSym)
-		b.WriteString("Use read_file with start_line/end_line only when you need a range a single declaration cannot cover (imports block, package/file header, or a span across multiple decls).\n")
+		fmt.Fprintf(&b, "related_capability: read_symbol via %s returns one declaration body by name.\n", readSym)
+		b.WriteString("raw_range_fallback: read_file with start_line/end_line remains appropriate for ranges a single declaration cannot cover.\n")
 	case workspace.CapWorkspaceSymbol, workspace.CapFindSymbol:
 		if cap == workspace.CapFindSymbol && strings.TrimSpace(req.Path) != "" {
-			fmt.Fprintf(&b, "Try: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, req.Pattern, req.Path)
+			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, req.Pattern, req.Path)
 		} else {
-			fmt.Fprintf(&b, "Try: {\"tool\":%q,\"pattern\":%q}\n", replacement, req.Pattern)
+			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q}\n", replacement, req.Pattern)
 		}
 		b.WriteString("The structured result includes file, line, kind, and qualified name.\n")
 		readSym := lang.Tool(workspace.CapReadSymbol)
 		if readSym != "" {
-			fmt.Fprintf(&b, "Next step: to read a hit's body, use %s (pattern, path) — prefer it over read_file. Fall back to read_file with start_line/end_line only when you need context beyond a single declaration.\n", readSym)
+			fmt.Fprintf(&b, "related_capability: read_symbol via %s returns a hit's body by pattern and path; raw range fallback remains for context beyond a single declaration.\n", readSym)
 		}
 	case workspace.CapReferences:
 		path := req.Path
 		if strings.TrimSpace(path) == "" {
 			path = "."
 		}
-		fmt.Fprintf(&b, "Try: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, req.Pattern, path)
+		fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, req.Pattern, path)
 		readSym := lang.Tool(workspace.CapReadSymbol)
 		if readSym != "" {
-			fmt.Fprintf(&b, "Next step: inspect each hit's enclosing declaration with %s (pattern, path). Use read_file with start_line/end_line only when the surrounding context matters more than the symbol itself.\n", readSym)
+			fmt.Fprintf(&b, "related_capability: read_symbol via %s can inspect each hit's enclosing declaration; raw range fallback remains for surrounding context.\n", readSym)
 		}
 	default:
 		// Generic hint for capabilities that don't have a bespoke
 		// template above. Adding a new Capability should not silently
 		// degrade this message — the hint always names the tool so the
 		// model can construct the call from its schema.
-		fmt.Fprintf(&b, "Try calling %s with the equivalent arguments from your request.\n", replacement)
+		fmt.Fprintf(&b, "candidate_adapter: %s with equivalent arguments from the rejected request.\n", replacement)
 	}
-	b.WriteString("If the deterministic tool returns nothing, retry your original request and it will execute.")
+	b.WriteString("direct_tool_fallback: if the capability route returns nothing, the original request remains available.")
 	return strings.TrimSpace(b.String())
 }
 
@@ -543,14 +543,14 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		d.kindFireCount[kind]++
 		hardReject := d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
 		msg := fmt.Sprintf(
-			"The request reads a file range via shell. Use read_file instead — it returns structured output and skips the shell permission prompt.\n"+
-				"Try: {\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
-				"If the read returns nothing, retry your original command and it will execute.",
+			"The request reads a file range via shell. Bounded-read capability is available through read_file; it returns structured output and skips the shell permission prompt.\n"+
+				"candidate_request: {\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
+				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
 			match.path, match.start, match.end)
 		summary := "Redirected to read_file"
 		result := workspace.ToolResult{Tool: req.Tool, Summary: summary, Output: msg}
 		if hardReject {
-			result.Summary = "Shell range-read blocked — use read_file instead"
+			result.Summary = "Shell range-read blocked by bounded-read capability"
 			result.Error = msg
 			result.Output = ""
 		}
@@ -569,13 +569,13 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		d.kindFireCount[kind]++
 		hardReject := d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
 		msg := fmt.Sprintf(
-			"The request reads a file prefix/suffix via shell. Use read_file instead — structured output, no permission prompt.\n"+
-				"Try: {\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
-				"If the read returns nothing, retry your original command and it will execute.",
+			"The request reads a file prefix/suffix via shell. Bounded-read capability is available through read_file; structured output, no permission prompt.\n"+
+				"candidate_request: {\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
+				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
 			match.path, match.start, match.end)
 		result := workspace.ToolResult{Tool: req.Tool, Summary: "Redirected to read_file", Output: msg}
 		if hardReject {
-			result.Summary = "Shell prefix/suffix read blocked — use read_file instead"
+			result.Summary = "Shell prefix/suffix read blocked by bounded-read capability"
 			result.Error = msg
 			result.Output = ""
 		}
@@ -594,13 +594,13 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		d.kindFireCount[kind]++
 		hardReject := d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
 		msg := fmt.Sprintf(
-			"The request dumps an entire file via shell. Use read_file instead — it returns structured output and bounds large files automatically.\n"+
-				"Try: {\"tool\":\"read_file\",\"path\":%q}\n"+
-				"If the read returns nothing, retry your original command and it will execute.",
+			"The request dumps an entire file via shell. Bounded-read capability is available through read_file so the result is structured and observable by the harness.\n"+
+				"candidate_request: {\"tool\":\"read_file\",\"path\":%q}\n"+
+				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
 			match)
 		result := workspace.ToolResult{Tool: req.Tool, Summary: "Redirected to read_file", Output: msg}
 		if hardReject {
-			result.Summary = "Shell cat blocked — use read_file instead"
+			result.Summary = "Shell cat blocked by bounded-read capability"
 			result.Error = msg
 			result.Output = ""
 		}
@@ -619,13 +619,13 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		d.kindFireCount[kind]++
 		hardReject := d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
 		msg := fmt.Sprintf(
-			"The request searches for files by name via shell. Use search_files instead — it returns stable handles the model can open with read_file.\n"+
-				"Try: {\"tool\":\"search_files\",\"pattern\":%q}\n"+
-				"If the search returns nothing, retry your original command and it will execute.",
+			"The request searches for files by name via shell. File-name search capability is available through search_files; it returns stable handles.\n"+
+				"candidate_request: {\"tool\":\"search_files\",\"pattern\":%q}\n"+
+				"direct_tool_fallback: if file-name search returns nothing, the original command remains available.",
 			match)
 		result := workspace.ToolResult{Tool: req.Tool, Summary: "Redirected to search_files", Output: msg}
 		if hardReject {
-			result.Summary = "Shell find blocked — use search_files instead"
+			result.Summary = "Shell find blocked by file-name search capability"
 			result.Error = msg
 			result.Output = ""
 		}
@@ -644,13 +644,13 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		d.kindFireCount[kind]++
 		hardReject := d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
 		msg := fmt.Sprintf(
-			"The request counts file size/lines via shell. Use file_stats instead — it returns structured file, byte, and line counts without a shell prompt.\n"+
-				"Try: {\"tool\":\"file_stats\",\"path\":%q}\n"+
-				"If the stats do not answer the question, retry your original command and it will execute.",
+			"The request counts file size/lines via shell. File-stat capability is available through file_stats; it returns structured file, byte, and line counts without a shell prompt.\n"+
+				"candidate_request: {\"tool\":\"file_stats\",\"path\":%q}\n"+
+				"direct_tool_fallback: if file stats do not answer the question, the original command remains available.",
 			match)
 		result := workspace.ToolResult{Tool: req.Tool, Summary: "Redirected to file_stats", Output: msg}
 		if hardReject {
-			result.Summary = "Shell wc blocked — use file_stats instead"
+			result.Summary = "Shell wc blocked by file-stat capability"
 			result.Error = msg
 			result.Output = ""
 		}
@@ -703,18 +703,18 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "The request greps for an identifier via shell on %s code. Use %s (%s) instead — it returns file, line, and qualified-name for each hit.\n",
-			lang.Name, replacement, primary)
+		fmt.Fprintf(&b, "The request greps for an identifier via shell on %s code. Capability route: %s via adapter %s; it returns file, line, and qualified-name for each hit.\n",
+			lang.Name, primary, replacement)
 		if match.path != "" {
-			fmt.Fprintf(&b, "Try: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, match.pattern, match.path)
+			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, match.pattern, match.path)
 		} else {
-			fmt.Fprintf(&b, "Try: {\"tool\":%q,\"pattern\":%q}\n", replacement, match.pattern)
+			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q}\n", replacement, match.pattern)
 		}
-		b.WriteString("If the deterministic tool returns nothing, retry your original command and it will execute.")
+		b.WriteString("direct_tool_fallback: if the capability route returns nothing, the original command remains available.")
 		summary := "Redirected to " + replacement
 		result := workspace.ToolResult{Tool: req.Tool, Summary: summary, Output: b.String()}
 		if hardReject {
-			result.Summary = fmt.Sprintf("Shell grep blocked — use %s instead", replacement)
+			result.Summary = fmt.Sprintf("Shell grep blocked by %s capability", primary)
 			result.Error = b.String()
 			result.Output = ""
 		}
@@ -1083,7 +1083,8 @@ func matchShellHeadTailFile(cmd string) *shellHeadTailMatch {
 		return &shellHeadTailMatch{path: path, start: 1, end: n}
 	case "tail":
 		// For tail we don't know total lines; point the model at a
-		// whole-file read_file — it'll get the default cap.
+		// whole-file read_file so the workspace layer can choose the
+		// right log/source behavior.
 		return &shellHeadTailMatch{path: path, start: 1, end: 0}
 	}
 	return nil

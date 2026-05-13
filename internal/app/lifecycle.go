@@ -100,7 +100,14 @@ func roleSpec(projectRoot, role string, defaults config.LlamaServer) (config.Lla
 	// backend alias, that backend wins over the role default.
 	if explicit := strings.TrimSpace(defaults.Model); explicit != "" {
 		if model, ok := prof.ModelByAlias(explicit); ok {
-			return backendsModelToLlamaServer(model, defaults), true
+			if explicitAliasCanOverrideRole(model, role) {
+				return backendsModelToLlamaServer(model, defaults), true
+			}
+		}
+		if model, ok := file.ModelByAlias(explicit); ok {
+			if explicitAliasCanOverrideRole(model, role) {
+				return backendsModelToLlamaServer(model, defaults), true
+			}
 		}
 	}
 	alias, ok := prof.AliasForRole(role)
@@ -109,6 +116,18 @@ func roleSpec(projectRoot, role string, defaults config.LlamaServer) (config.Lla
 	}
 	model, _ := prof.ModelByAlias(alias)
 	return backendsModelToLlamaServer(model, defaults), true
+}
+
+func explicitAliasCanOverrideRole(model backends.Model, role string) bool {
+	if role != backends.RoleExecutor || len(model.Roles) == 0 {
+		return true
+	}
+	for _, r := range model.Roles {
+		if strings.EqualFold(strings.TrimSpace(r), backends.RoleExecutor) {
+			return true
+		}
+	}
+	return false
 }
 
 // sameLlamaTarget reports whether two LlamaServer specs would route

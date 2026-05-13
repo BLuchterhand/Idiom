@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/eval"
@@ -24,6 +25,7 @@ func TestGenericDiscoveryToolsAreAdvertised(t *testing.T) {
 		"harness_feedback",
 		"file_stats",
 		"code_navigate",
+		"read_only_capability",
 		"source_sanity",
 		"context_index",
 		"context_status",
@@ -52,10 +54,26 @@ func TestGenericDiscoveryToolsAreAdvertised(t *testing.T) {
 	for _, def := range defs {
 		names = append(names, def.Name)
 	}
-	for _, want := range []string{"harness_audit", "harness_feedback", "file_stats", "code_navigate", "source_sanity", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "blame_range"} {
+	for _, want := range []string{"harness_audit", "harness_feedback", "file_stats", "code_navigate", "read_only_capability", "source_sanity", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "blame_range"} {
 		if !slices.Contains(names, want) {
 			t.Fatalf("expected tool definitions to include %q, got %#v", want, names)
 		}
+	}
+}
+
+func TestContextImpactSchemaAllowsPathOnlyRequests(t *testing.T) {
+	defs := BuildToolDefinitions([]string{"context_impact"})
+	if len(defs) != 1 {
+		t.Fatalf("expected one context_impact definition, got %#v", defs)
+	}
+	var schema struct {
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal([]byte(defs[0].ParametersJSON), &schema); err != nil {
+		t.Fatalf("decode context_impact schema: %v\n%s", err, defs[0].ParametersJSON)
+	}
+	if slices.Contains(schema.Required, "task") {
+		t.Fatalf("context_impact schema should allow path-only requests, required=%#v", schema.Required)
 	}
 }
 
@@ -198,6 +216,486 @@ func TestContextToolsBuildQueryAndReportStaleSymbols(t *testing.T) {
 	}
 }
 
+func TestContextImpactSupportsPathOnlyRequest(t *testing.T) {
+	root := t.TempDir()
+	targetPath := filepath.Join("internal", "comprehension", "pack.go")
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/pathimpact\n\ngo 1.22\n")
+	writeWorkspaceFile(t, filepath.Join(root, targetPath), "package comprehension\n\nfunc Pack() string { return \"DO_NOT_LEAK_BODY\" }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_impact", Path: targetPath})
+	if result.Error != "" {
+		t.Fatalf("context_impact returned error: %v\n%s", result.Error, result.Output)
+	}
+	assertNoPrescriptiveGraphOutput(t, "context_impact path-only", result.Summary+"\n"+result.Output)
+	if strings.Contains(result.Output, "DO_NOT_LEAK_BODY") {
+		t.Fatalf("context_impact path-only output leaked raw source body:\n%s", result.Output)
+	}
+
+	var report struct {
+		Task            string `json:"task"`
+		ContextViewPath string `json:"context_view_path"`
+		Confidence      struct {
+			Level string `json:"level"`
+		} `json:"confidence"`
+		Provenance struct {
+			Operation string `json:"operation"`
+			IndexID   string `json:"index_id"`
+		} `json:"provenance"`
+		IndexID     string `json:"index_id"`
+		ImpactScope []struct {
+			Kind       string `json:"kind"`
+			Path       string `json:"path"`
+			Confidence string `json:"confidence"`
+			Signals    []struct {
+				Kind string `json:"kind"`
+			} `json:"signals"`
+		} `json:"impact_scope"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode context_impact output: %v\n%s", err, result.Output)
+	}
+	if report.Task != "Graph-backed impact evidence for "+targetPath {
+		t.Fatalf("expected derived path evidence task, got %q", report.Task)
+	}
+	if report.ContextViewPath == "" || report.Confidence.Level != "high" || report.Provenance.Operation != "context_impact" || report.Provenance.IndexID != report.IndexID {
+		t.Fatalf("expected structured graph metadata, got %#v", report)
+	}
+	if !slices.ContainsFunc(report.ImpactScope, func(item struct {
+		Kind       string `json:"kind"`
+		Path       string `json:"path"`
+		Confidence string `json:"confidence"`
+		Signals    []struct {
+			Kind string `json:"kind"`
+		} `json:"signals"`
+	}) bool {
+		return item.Kind == "file" && item.Path == targetPath && item.Confidence != "" && len(item.Signals) > 0
+	}) {
+		t.Fatalf("expected path-only impact scope for %s, got %#v", targetPath, report.ImpactScope)
+	}
+}
+
+func TestContextStatusIncludesStructuredFreshnessConfidenceAndProvenance(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statusmetadata\n\ngo 1.22\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Run() string { return \"ok\" }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_status"})
+	if result.Error != "" {
+		t.Fatalf("context_status returned error: %v\n%s", result.Error, result.Output)
+	}
+	var status struct {
+		IndexID          string `json:"index_id"`
+		StoreKind        string `json:"store_kind"`
+		GeneratedAt      string `json:"generated_at"`
+		Fresh            bool   `json:"fresh"`
+		StaleFileCount   int    `json:"stale_file_count"`
+		MissingFileCount int    `json:"missing_file_count"`
+		StalePathCount   int    `json:"stale_path_count"`
+		Confidence       struct {
+			Level  string `json:"level"`
+			Source string `json:"source"`
+		} `json:"confidence"`
+		Provenance struct {
+			Source      string `json:"source"`
+			Operation   string `json:"operation"`
+			StoreKind   string `json:"store_kind"`
+			IndexID     string `json:"index_id"`
+			GeneratedAt string `json:"generated_at"`
+		} `json:"provenance"`
+		Freshness struct {
+			Policy           string `json:"policy"`
+			Operation        string `json:"operation"`
+			IndexID          string `json:"index_id"`
+			StoreKind        string `json:"store_kind"`
+			GeneratedAt      string `json:"generated_at"`
+			FreshForScope    bool   `json:"fresh_for_scope"`
+			GlobalFresh      bool   `json:"global_fresh"`
+			CheckedPathCount int    `json:"checked_path_count"`
+			StalePathCount   int    `json:"stale_path_count"`
+			MissingPathCount int    `json:"missing_path_count"`
+		} `json:"freshness"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &status); err != nil {
+		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
+	}
+	if !status.Fresh || status.IndexID == "" || status.StoreKind != "sqlite-graph-v1" || status.GeneratedAt == "" {
+		t.Fatalf("expected fresh indexed status metadata, got %#v", status)
+	}
+	if status.StaleFileCount != 0 || status.MissingFileCount != 0 || status.StalePathCount != 0 {
+		t.Fatalf("fresh status should report zero stale/missing counts, got %#v", status)
+	}
+	if status.Confidence.Level != "high" || status.Confidence.Source != "freshness_decision" {
+		t.Fatalf("expected high confidence backed by freshness decision, got %#v", status.Confidence)
+	}
+	if status.Provenance.Source != "context_graph" || status.Provenance.Operation != "context_status" || status.Provenance.IndexID != status.IndexID || status.Provenance.GeneratedAt != status.GeneratedAt || status.Provenance.StoreKind != status.StoreKind {
+		t.Fatalf("unexpected status provenance: %#v", status.Provenance)
+	}
+	if status.Freshness.Policy != "report_only" || status.Freshness.Operation != "context_status" || status.Freshness.IndexID != status.IndexID || status.Freshness.StoreKind != status.StoreKind || status.Freshness.GeneratedAt != status.GeneratedAt || !status.Freshness.FreshForScope || !status.Freshness.GlobalFresh {
+		t.Fatalf("unexpected status freshness contract: %#v", status.Freshness)
+	}
+}
+
+func TestContextStatusReportsStructuredStalePathCounts(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statusstale\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "pkg.go")
+	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"ok\" }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"changed\" }\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_status"})
+	if result.Error != "" {
+		t.Fatalf("context_status returned error: %v\n%s", result.Error, result.Output)
+	}
+	var status struct {
+		Fresh          bool     `json:"fresh"`
+		StaleFiles     []string `json:"stale_files"`
+		StaleFileCount int      `json:"stale_file_count"`
+		StalePathCount int      `json:"stale_path_count"`
+		Confidence     struct {
+			Level  string `json:"level"`
+			Source string `json:"source"`
+			Reason string `json:"reason"`
+		} `json:"confidence"`
+		Freshness struct {
+			FreshForScope  bool     `json:"fresh_for_scope"`
+			GlobalFresh    bool     `json:"global_fresh"`
+			Reason         string   `json:"reason"`
+			StalePaths     []string `json:"stale_paths"`
+			StalePathCount int      `json:"stale_path_count"`
+		} `json:"freshness"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &status); err != nil {
+		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
+	}
+	if status.Fresh || status.StaleFileCount != 1 || status.StalePathCount != 1 || !slices.Contains(status.StaleFiles, "pkg/pkg.go") {
+		t.Fatalf("expected one stale path in status, got %#v", status)
+	}
+	if status.Freshness.FreshForScope || status.Freshness.GlobalFresh || status.Freshness.Reason != "stale_unbounded_graph" || status.Freshness.StalePathCount != 1 || !slices.Contains(status.Freshness.StalePaths, "pkg/pkg.go") {
+		t.Fatalf("expected structured stale freshness fields, got %#v", status.Freshness)
+	}
+	if status.Confidence.Level != "low" || status.Confidence.Source != "freshness_decision" || status.Confidence.Reason != "stale_unbounded_graph" {
+		t.Fatalf("expected low confidence from stale freshness decision, got %#v", status.Confidence)
+	}
+}
+
+func TestGraphBackedOutputsCarryConfidenceProvenanceAndLegacyFields(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/graphoutputs\n\ngo 1.22\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Run() string { return helper() }\n\nfunc helper() string { return \"ok\" }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	query := mgr.Execute(context.Background(), ToolRequest{Tool: "context_query", Pattern: "Run", Resolution: "symbol", IncludeEvidence: true})
+	if query.Error != "" {
+		t.Fatalf("context_query returned error: %v\n%s", query.Error, query.Output)
+	}
+	var queryReport struct {
+		IndexID     string `json:"index_id"`
+		StoreKind   string `json:"store_kind"`
+		GeneratedAt string `json:"generated_at"`
+		Confidence  struct {
+			Level string `json:"level"`
+		} `json:"confidence"`
+		Provenance struct {
+			Source    string `json:"source"`
+			Operation string `json:"operation"`
+			IndexID   string `json:"index_id"`
+		} `json:"provenance"`
+		Nodes []struct {
+			ID         string `json:"id"`
+			Confidence string `json:"confidence"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(query.Output), &queryReport); err != nil {
+		t.Fatalf("decode context_query output: %v\n%s", err, query.Output)
+	}
+	if queryReport.IndexID == "" || queryReport.StoreKind != "sqlite-graph-v1" || queryReport.GeneratedAt == "" || queryReport.Confidence.Level != "high" || queryReport.Provenance.Source != "context_graph" || queryReport.Provenance.Operation != "context_query" || queryReport.Provenance.IndexID != queryReport.IndexID {
+		t.Fatalf("expected query confidence/provenance metadata, got %#v", queryReport)
+	}
+	if !slices.ContainsFunc(queryReport.Nodes, func(node struct {
+		ID         string `json:"id"`
+		Confidence string `json:"confidence"`
+	}) bool {
+		return node.ID == "symbol://pkg/pkg.go#Run" && node.Confidence != ""
+	}) {
+		t.Fatalf("expected node-level confidence to remain present, got %#v", queryReport.Nodes)
+	}
+
+	zoom := mgr.Execute(context.Background(), ToolRequest{Tool: "context_zoom", Handle: "symbol://pkg/pkg.go#Run", Resolution: "symbol"})
+	if zoom.Error != "" {
+		t.Fatalf("context_zoom returned error: %v\n%s", zoom.Error, zoom.Output)
+	}
+	var zoomReport struct {
+		IndexID    string `json:"index_id"`
+		Confidence struct {
+			Level string `json:"level"`
+		} `json:"confidence"`
+		Provenance struct {
+			Operation string `json:"operation"`
+			IndexID   string `json:"index_id"`
+		} `json:"provenance"`
+		Node *struct {
+			ID string `json:"id"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(zoom.Output), &zoomReport); err != nil {
+		t.Fatalf("decode context_zoom output: %v\n%s", err, zoom.Output)
+	}
+	if zoomReport.Node == nil || zoomReport.Node.ID != "symbol://pkg/pkg.go#Run" || zoomReport.Confidence.Level != "high" || zoomReport.Provenance.Operation != "context_zoom" || zoomReport.Provenance.IndexID != zoomReport.IndexID {
+		t.Fatalf("expected zoom metadata and node, got %#v", zoomReport)
+	}
+
+	pack := mgr.Execute(context.Background(), ToolRequest{Tool: "context_pack", Task: "Plan a change to Run", RequiredTests: []string{"go test ./..."}})
+	if pack.Error != "" {
+		t.Fatalf("context_pack returned error: %v\n%s", pack.Error, pack.Output)
+	}
+	var packReport struct {
+		ArtifactPath string `json:"artifact_path"`
+		IndexID      string `json:"index_id"`
+		Fresh        bool   `json:"fresh"`
+		Confidence   struct {
+			Level string `json:"level"`
+		} `json:"confidence"`
+		Provenance struct {
+			Source       string `json:"source"`
+			Operation    string `json:"operation"`
+			IndexID      string `json:"index_id"`
+			ArtifactPath string `json:"artifact_path"`
+		} `json:"provenance"`
+		Cache struct {
+			State        string `json:"state"`
+			Source       string `json:"source"`
+			CacheKey     string `json:"cache_key"`
+			Invalidation struct {
+				Policy  string `json:"policy"`
+				Sources []struct {
+					Source string `json:"source"`
+					State  string `json:"state"`
+				} `json:"sources"`
+			} `json:"invalidation"`
+		} `json:"cache"`
+		Contract struct {
+			SchemaVersion string `json:"schema_version"`
+			Cache         struct {
+				State string `json:"state"`
+			} `json:"cache"`
+			UnresolvedGaps []struct {
+				Reason string `json:"reason"`
+				State  string `json:"state"`
+			} `json:"unresolved_gaps"`
+		} `json:"contract"`
+		Freshness struct {
+			IndexID       string `json:"index_id"`
+			FreshForScope bool   `json:"fresh_for_scope"`
+		} `json:"freshness"`
+		CandidateFiles []struct {
+			Path          string `json:"path"`
+			Role          string `json:"role"`
+			Confidence    string `json:"confidence"`
+			RankerReasons []struct {
+				Reason string `json:"reason"`
+				State  string `json:"state"`
+			} `json:"ranker_reasons"`
+		} `json:"candidate_files"`
+		Tests []struct {
+			Command string `json:"command"`
+		} `json:"tests"`
+	}
+	if err := json.Unmarshal([]byte(pack.Output), &packReport); err != nil {
+		t.Fatalf("decode context_pack output: %v\n%s", err, pack.Output)
+	}
+	if packReport.ArtifactPath == "" || !packReport.Fresh || packReport.Confidence.Level != "high" || packReport.Provenance.Source != "context_graph" || packReport.Provenance.Operation != "context_pack" || packReport.Provenance.IndexID != packReport.IndexID || packReport.Provenance.ArtifactPath != packReport.ArtifactPath || packReport.Freshness.IndexID != packReport.IndexID || !packReport.Freshness.FreshForScope {
+		t.Fatalf("expected pack metadata and legacy fields, got %#v", packReport)
+	}
+	if packReport.Cache.State == "" || packReport.Cache.CacheKey == "" || packReport.Cache.Invalidation.Policy != "content_addressed_read_through" || packReport.Contract.SchemaVersion != comprehension.GraphViewResultContractVersion || packReport.Contract.Cache.State != packReport.Cache.State {
+		t.Fatalf("expected graph-view contract/cache metadata, got cache=%#v contract=%#v", packReport.Cache, packReport.Contract)
+	}
+	if !packReportSourcePresent(packReport.Cache.Invalidation.Sources, "ranker_weights") || !packReportSourcePresent(packReport.Cache.Invalidation.Sources, "runtime_traces") {
+		t.Fatalf("expected ranker/runtime invalidation sources, got %#v", packReport.Cache.Invalidation.Sources)
+	}
+	if !slices.ContainsFunc(packReport.CandidateFiles, func(file struct {
+		Path          string `json:"path"`
+		Role          string `json:"role"`
+		Confidence    string `json:"confidence"`
+		RankerReasons []struct {
+			Reason string `json:"reason"`
+			State  string `json:"state"`
+		} `json:"ranker_reasons"`
+	}) bool {
+		return file.Path == "pkg/pkg.go" && file.Role == "editable" && file.Confidence != "" && packReportRankerReasonPresent(file.RankerReasons, "role_floor")
+	}) || !slices.ContainsFunc(packReport.Tests, func(test struct {
+		Command string `json:"command"`
+	}) bool {
+		return test.Command == "go test ./..."
+	}) {
+		t.Fatalf("expected legacy pack candidates/tests with confidence, got files=%#v tests=%#v", packReport.CandidateFiles, packReport.Tests)
+	}
+
+	impact := mgr.Execute(context.Background(), ToolRequest{Tool: "context_impact", Task: "Plan a change to Run"})
+	if impact.Error != "" {
+		t.Fatalf("context_impact returned error: %v\n%s", impact.Error, impact.Output)
+	}
+	var impactReport struct {
+		ContextViewPath string `json:"context_view_path"`
+		Confidence      struct {
+			Level string `json:"level"`
+		} `json:"confidence"`
+		Provenance struct {
+			Operation string `json:"operation"`
+			IndexID   string `json:"index_id"`
+		} `json:"provenance"`
+		IndexID     string `json:"index_id"`
+		ImpactScope []struct {
+			Path       string `json:"path"`
+			Confidence string `json:"confidence"`
+		} `json:"impact_scope"`
+	}
+	if err := json.Unmarshal([]byte(impact.Output), &impactReport); err != nil {
+		t.Fatalf("decode context_impact output: %v\n%s", err, impact.Output)
+	}
+	if impactReport.ContextViewPath == "" || impactReport.Confidence.Level != "high" || impactReport.Provenance.Operation != "context_impact" || impactReport.Provenance.IndexID != impactReport.IndexID {
+		t.Fatalf("expected impact metadata and context view, got %#v", impactReport)
+	}
+	if !slices.ContainsFunc(impactReport.ImpactScope, func(item struct {
+		Path       string `json:"path"`
+		Confidence string `json:"confidence"`
+	}) bool {
+		return item.Path == "pkg/pkg.go" && item.Confidence != ""
+	}) {
+		t.Fatalf("expected impact scope confidence, got %#v", impactReport.ImpactScope)
+	}
+}
+
+func TestGraphBackedContextOutputsDoNotPrescribeNextTools(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/neutraloutputs\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "pkg.go")
+	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"ok\" }\n")
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		EnableShell:           true,
+		EnableWrites:          true,
+	})
+
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	outputs := map[string]string{}
+	for name, req := range map[string]ToolRequest{
+		"context_status": {Tool: "context_status"},
+		"context_query":  {Tool: "context_query", Query: "zzzz-no-match", Resolution: "symbol"},
+		"context_zoom":   {Tool: "context_zoom", Handle: "symbol://pkg/pkg.go#Missing", Resolution: "symbol"},
+		"context_pack":   {Tool: "context_pack", Task: "zzzz-no-match"},
+		"context_impact": {Tool: "context_impact", Task: "zzzz-no-match"},
+	} {
+		result := mgr.Execute(context.Background(), req)
+		if result.Error != "" && result.Error != "freshness_blocker" {
+			t.Fatalf("%s returned error: %v\n%s", name, result.Error, result.Output)
+		}
+		outputs[name] = result.Summary + "\n" + result.Error + "\n" + result.Output
+	}
+
+	discovery := mgr.Execute(context.Background(), ToolRequest{
+		Tool:     "discovery_query",
+		Purpose:  "impact_analysis",
+		Path:     ".",
+		Pattern:  "Run",
+		Language: "go",
+		MaxDepth: 2,
+	})
+	if discovery.Error != "" {
+		t.Fatalf("discovery_query returned error: %v\n%s", discovery.Error, discovery.Output)
+	}
+	packet := readDiscoveryQueryPacket(t, root, discovery.Output)
+	if !packetHasLayer(packet, "context_pack") {
+		t.Fatalf("expected graph-backed discovery_query context_pack layer, got %#v", packetLayerNames(packet))
+	}
+	outputs["discovery_query"] = discovery.Summary + "\n" + discovery.Output + "\n" + mustMarshalTestJSON(t, packet)
+
+	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"changed\" }\n")
+	staleStatus := mgr.Execute(context.Background(), ToolRequest{Tool: "context_status"})
+	if staleStatus.Error != "" {
+		t.Fatalf("stale context_status returned error: %v\n%s", staleStatus.Error, staleStatus.Output)
+	}
+	outputs["context_status_stale"] = staleStatus.Summary + "\n" + staleStatus.Output
+
+	for name, output := range outputs {
+		assertNoPrescriptiveGraphOutput(t, name, output)
+	}
+}
+
+func TestContextPackExposesStructuredUnresolvedGaps(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/structuredgaps\n\ngo 1.22\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Run() string { return \"ok\" }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_pack", Task: "zzzzzzzzqqq", Mode: "plan"})
+	if result.Error != "" {
+		t.Fatalf("context_pack returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report struct {
+		UnresolvedGaps       []string `json:"unresolved_gaps"`
+		UnresolvedGapDetails []struct {
+			Reason             string `json:"reason"`
+			State              string `json:"state"`
+			CandidateFileCount int    `json:"candidate_file_count"`
+		} `json:"unresolved_gap_details"`
+		Contract struct {
+			UnresolvedGaps []struct {
+				Reason string `json:"reason"`
+				State  string `json:"state"`
+			} `json:"unresolved_gaps"`
+		} `json:"contract"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode context_pack output: %v\n%s", err, result.Output)
+	}
+	if !slices.ContainsFunc(report.UnresolvedGapDetails, func(gap struct {
+		Reason             string `json:"reason"`
+		State              string `json:"state"`
+		CandidateFileCount int    `json:"candidate_file_count"`
+	}) bool {
+		return gap.Reason == "no_graph_matches" && gap.State == "empty" && gap.CandidateFileCount == 0
+	}) {
+		t.Fatalf("expected structured no-match gap, got legacy=%#v details=%#v", report.UnresolvedGaps, report.UnresolvedGapDetails)
+	}
+	if !slices.ContainsFunc(report.Contract.UnresolvedGaps, func(gap struct {
+		Reason string `json:"reason"`
+		State  string `json:"state"`
+	}) bool {
+		return gap.Reason == "no_graph_matches" && gap.State == "empty"
+	}) {
+		t.Fatalf("expected contract unresolved gap mirror, got %#v", report.Contract.UnresolvedGaps)
+	}
+	assertNoPrescriptiveGraphOutput(t, "context_pack_structured_gaps", result.Output)
+}
+
 func TestContextPackAutoRefreshesBoundedStaleScope(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/autorefresh\n\ngo 1.22\n")
@@ -248,6 +746,54 @@ func TestContextPackAutoRefreshesBoundedStaleScope(t *testing.T) {
 	}
 }
 
+func TestContextPackRequiredEditPathsBoundFreshness(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/requiredfreshness\n\ngo 1.22\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "target.go"), "package pkg\n\nfunc Target() string { return \"ok\" }\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "noisy_a.go"), "package pkg\n\nfunc NoisyA() string { return \"old\" }\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "noisy_b.go"), "package pkg\n\nfunc NoisyB() string { return \"old\" }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "noisy_a.go"), "package pkg\n\nfunc NoisyA() string { return \"new\" }\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "noisy_b.go"), "package pkg\n\nfunc NoisyB() string { return \"new\" }\n")
+
+	result = mgr.Execute(context.Background(), ToolRequest{
+		Tool:              "context_pack",
+		Task:              "Plan a noisy change",
+		RequiredEditPaths: []string{"pkg/target.go"},
+		Limit:             1,
+		FreshnessMaxFiles: 1,
+	})
+	if result.Error != "" {
+		t.Fatalf("context_pack should use required_edit_paths as freshness scope, got error=%q output=%s", result.Error, result.Output)
+	}
+	var packReport struct {
+		Freshness      comprehension.FreshnessDecision `json:"freshness"`
+		CandidateFiles []struct {
+			Path          string                       `json:"path"`
+			RankerReasons []comprehension.RankerReason `json:"ranker_reasons"`
+		} `json:"candidate_files"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &packReport); err != nil {
+		t.Fatalf("decode context_pack output: %v\n%s", err, result.Output)
+	}
+	if !packReport.Freshness.FreshForScope || packReport.Freshness.BudgetExceeded || packReport.Freshness.Scope != "pkg/target.go" {
+		t.Fatalf("expected required edit path to bound freshness, got %#v", packReport.Freshness)
+	}
+	if len(packReport.CandidateFiles) != 1 || packReport.CandidateFiles[0].Path != "pkg/target.go" {
+		t.Fatalf("expected required edit path to outrank noisy task text, got %#v", packReport.CandidateFiles)
+	}
+	if !slices.ContainsFunc(packReport.CandidateFiles[0].RankerReasons, func(reason comprehension.RankerReason) bool {
+		return reason.Reason == "required_edit_path"
+	}) {
+		t.Fatalf("expected required_edit_path ranker reason, got %#v", packReport.CandidateFiles[0].RankerReasons)
+	}
+}
+
 func TestContextStatusRefreshesBoundedStaleScope(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statusbounded\n\ngo 1.22\n")
@@ -285,6 +831,58 @@ func TestContextStatusRefreshesBoundedStaleScope(t *testing.T) {
 	}
 	if !statusReport.Fresh || len(statusReport.StaleFiles) != 0 || !slices.Contains(statusReport.AutoRefresh.RefreshedFiles, "pkg/pkg.go") {
 		t.Fatalf("expected fresh status after bounded refresh, got %#v", statusReport)
+	}
+}
+
+func TestContextStatusRefreshesSingleFileWithDependencyAwarePatch(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statussinglefile\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "a.go")
+	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc OldName() string { return \"old\" }\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "b.go"), "package pkg\n\nfunc KeepName() string { return OldName() }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	var initialIndex struct {
+		IndexID string `json:"index_id"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &initialIndex); err != nil {
+		t.Fatalf("decode context_index output: %v\n%s", err, result.Output)
+	}
+	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc NewName() string { return \"new\" }\n")
+
+	result = mgr.Execute(context.Background(), ToolRequest{Tool: "context_status", Refresh: true, Path: "pkg/a.go", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_status returned error: %v\n%s", result.Error, result.Output)
+	}
+	var statusReport struct {
+		IndexID     string   `json:"index_id"`
+		Fresh       bool     `json:"fresh"`
+		StaleFiles  []string `json:"stale_files"`
+		AutoRefresh struct {
+			Attempted            bool     `json:"attempted"`
+			Scope                string   `json:"scope"`
+			Reason               string   `json:"reason"`
+			FilesIndexed         int      `json:"files_indexed"`
+			PartialRefreshReason string   `json:"partial_refresh_reason"`
+			FreshAfter           bool     `json:"fresh_after"`
+			RefreshedFiles       []string `json:"refreshed_files"`
+		} `json:"auto_refresh"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &statusReport); err != nil {
+		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
+	}
+	if !statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Scope != "pkg/a.go" || statusReport.AutoRefresh.FilesIndexed != 2 || statusReport.AutoRefresh.PartialRefreshReason != "sqlite_scope_patch" || !statusReport.AutoRefresh.FreshAfter {
+		t.Fatalf("expected dependency-aware status refresh patch, got %#v", statusReport.AutoRefresh)
+	}
+	if !statusReport.Fresh || len(statusReport.StaleFiles) != 0 || !slices.Contains(statusReport.AutoRefresh.RefreshedFiles, "pkg/a.go") {
+		t.Fatalf("expected fresh status after exact single-file refresh, got %#v", statusReport)
+	}
+	if statusReport.IndexID != initialIndex.IndexID {
+		t.Fatalf("dependency-aware patch should preserve the active graph index id, got before=%s after=%s", initialIndex.IndexID, statusReport.IndexID)
 	}
 }
 
@@ -354,6 +952,47 @@ func TestContextStatusRefreshBuildsMissingRootIndexWithoutScope(t *testing.T) {
 	}
 	if !statusReport.Indexed || !statusReport.Fresh || !statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Scope != "." || statusReport.AutoRefresh.Reason != "missing_index" || statusReport.AutoRefresh.FilesIndexed != 1 || !statusReport.AutoRefresh.FreshAfter {
 		t.Fatalf("expected missing root index refresh, got %#v", statusReport)
+	}
+}
+
+func TestContextStatusRefreshBuildsLargeMissingRootIndex(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statusmissinglarge\n\ngo 1.22\n")
+	for i := 0; i < 30; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("file_%02d.go", i)), fmt.Sprintf("package pkg\n\nfunc File%02d() {}\n", i))
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_status", Refresh: true, Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_status should return a freshness blocker report, not a tool timeout/error: %v\n%s", result.Error, result.Output)
+	}
+	var statusReport struct {
+		Indexed     bool `json:"indexed"`
+		Fresh       bool `json:"fresh"`
+		AutoRefresh struct {
+			Attempted    bool   `json:"attempted"`
+			Scope        string `json:"scope"`
+			Reason       string `json:"reason"`
+			FilesIndexed int    `json:"files_indexed"`
+			FreshAfter   bool   `json:"fresh_after"`
+		} `json:"auto_refresh"`
+		Freshness struct {
+			FreshForScope  bool `json:"fresh_for_scope"`
+			BudgetExceeded bool `json:"budget_exceeded"`
+		} `json:"freshness"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &statusReport); err != nil {
+		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
+	}
+	if !statusReport.Indexed || !statusReport.Fresh {
+		t.Fatalf("large missing index should build a fresh root graph, got %#v", statusReport)
+	}
+	if !statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Scope != "." || statusReport.AutoRefresh.Reason != "missing_index" || statusReport.AutoRefresh.FilesIndexed != 30 || !statusReport.AutoRefresh.FreshAfter {
+		t.Fatalf("expected large missing-index refresh, got %#v", statusReport.AutoRefresh)
+	}
+	if !statusReport.Freshness.FreshForScope || statusReport.Freshness.BudgetExceeded {
+		t.Fatalf("expected fresh read-through decision without budget blocker, got %#v", statusReport.Freshness)
 	}
 }
 
@@ -453,6 +1092,226 @@ func TestContextQueryAutoRefreshesMissingBoundedIndex(t *testing.T) {
 		return node.ID == "symbol://pkg/pkg.go#Run"
 	}) {
 		t.Fatalf("expected Run node after auto-refresh, got %#v", queryReport.Nodes)
+	}
+}
+
+func TestContextQueryRefreshesUnboundedStaleGraphWithoutBudgetBlocker(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/querylarge\n\ngo 1.22\n")
+	for i := 0; i < 30; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("f%03d.go", i)), fmt.Sprintf("package pkg\n\nfunc F%03d() string { return \"old\" }\n", i))
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	for i := 0; i < 30; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("f%03d.go", i)), fmt.Sprintf("package pkg\n\nfunc F%03d() string { return \"new\" }\n", i))
+	}
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_query", Query: "what functions changed", Language: "go", Resolution: "symbol"})
+	if result.Error != "" {
+		t.Fatalf("context_query should refresh large stale scopes instead of returning a budget blocker, got error=%q output=%s", result.Error, result.Output)
+	}
+	if strings.Contains(result.Output, `"budget_exceeded": true`) || strings.Contains(result.Output, `"error": "freshness_blocker"`) {
+		t.Fatalf("expected no budget freshness blocker, got %s", result.Output)
+	}
+	if !strings.Contains(result.Output, `"reason": "stale_unbounded_graph"`) {
+		t.Fatalf("expected stale unbounded graph refresh evidence, got %s", result.Output)
+	}
+}
+
+func TestContextQueryStaleEvidenceBlockerAndReportOnlyModes(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/staleevidence\n\ngo 1.22\n")
+	for i := 0; i < 3; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("f%d.go", i)), fmt.Sprintf("package pkg\n\nfunc Old%d() string { return \"old\" }\n", i))
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	for i := 0; i < 3; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("f%d.go", i)), fmt.Sprintf("package pkg\n\nfunc New%d() string { return \"new\" }\n", i))
+	}
+
+	blocked := mgr.Execute(context.Background(), ToolRequest{
+		Tool:              "context_query",
+		Query:             "Old",
+		Language:          "go",
+		Resolution:        "symbol",
+		FreshnessPolicy:   "require_fresh",
+		FreshnessMaxFiles: 1,
+	})
+	if blocked.Error != "freshness_blocker" {
+		t.Fatalf("expected freshness blocker, got error=%q output=%s", blocked.Error, blocked.Output)
+	}
+	var blockerReport struct {
+		Error         string                            `json:"error"`
+		Freshness     comprehension.FreshnessDecision   `json:"freshness"`
+		StaleEvidence comprehension.StaleEvidenceSafety `json:"stale_evidence"`
+	}
+	if err := json.Unmarshal([]byte(blocked.Output), &blockerReport); err != nil {
+		t.Fatalf("decode blocker output: %v\n%s", err, blocked.Output)
+	}
+	if blockerReport.StaleEvidence.State != "blocked" || blockerReport.StaleEvidence.Policy != comprehension.FreshnessRequire || !blockerReport.Freshness.BudgetExceeded {
+		t.Fatalf("expected blocked stale-evidence state, got %#v", blockerReport)
+	}
+
+	reported := mgr.Execute(context.Background(), ToolRequest{
+		Tool:              "context_query",
+		Query:             "Old",
+		Language:          "go",
+		Resolution:        "symbol",
+		FreshnessPolicy:   "report_only",
+		FreshnessMaxFiles: 1,
+	})
+	if reported.Error != "" {
+		t.Fatalf("report-only context_query should not hard block, got error=%q output=%s", reported.Error, reported.Output)
+	}
+	var reportOnly struct {
+		Fresh         bool                              `json:"fresh"`
+		Freshness     comprehension.FreshnessDecision   `json:"freshness"`
+		StaleEvidence comprehension.StaleEvidenceSafety `json:"stale_evidence"`
+		Confidence    struct {
+			Level  string `json:"level"`
+			Reason string `json:"reason"`
+		} `json:"confidence"`
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(reported.Output), &reportOnly); err != nil {
+		t.Fatalf("decode report-only output: %v\n%s", err, reported.Output)
+	}
+	if reportOnly.Fresh || reportOnly.Freshness.Policy != comprehension.FreshnessReportOnly || reportOnly.StaleEvidence.State != "reported" || reportOnly.Confidence.Level != "low" {
+		t.Fatalf("expected report-only stale evidence with low confidence, got %#v", reportOnly)
+	}
+	if len(reportOnly.Nodes) == 0 {
+		t.Fatalf("expected stale graph nodes to remain observable in report-only mode, got %#v", reportOnly)
+	}
+	fields := ContextTelemetryFields("context_query", reported.Output)
+	if fields["context_stale_evidence_state"] != "reported" || fields["context_stale_use_reported"] != true || fields["context_freshness_state"] != "reported" || fields["context_freshness_blocked"] == true {
+		t.Fatalf("expected stale-use report telemetry, got %#v", fields)
+	}
+}
+
+func TestContextZoomPreservesFreshnessPolicyAndMaxFiles(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/zoompolicy\n\ngo 1.22\n")
+	for i := 0; i < 3; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("f%d.go", i)), fmt.Sprintf("package pkg\n\nfunc Old%d() string { return \"old\" }\n", i))
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	for i := 0; i < 3; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("f%d.go", i)), fmt.Sprintf("package pkg\n\nfunc New%d() string { return \"new\" }\n", i))
+	}
+
+	blocked := mgr.Execute(context.Background(), ToolRequest{
+		Tool:              "context_zoom",
+		Handle:            "symbol://pkg/f0.go#Old0",
+		Path:              "pkg",
+		Language:          "go",
+		FreshnessPolicy:   "require_fresh",
+		FreshnessMaxFiles: 1,
+	})
+	if blocked.Error != "freshness_blocker" {
+		t.Fatalf("expected require_fresh zoom budget blocker, got error=%q output=%s", blocked.Error, blocked.Output)
+	}
+	var blockerReport struct {
+		Freshness     comprehension.FreshnessDecision   `json:"freshness"`
+		StaleEvidence comprehension.StaleEvidenceSafety `json:"stale_evidence"`
+	}
+	if err := json.Unmarshal([]byte(blocked.Output), &blockerReport); err != nil {
+		t.Fatalf("decode blocker output: %v\n%s", err, blocked.Output)
+	}
+	if blockerReport.Freshness.Policy != comprehension.FreshnessRequire || !blockerReport.Freshness.BudgetExceeded || blockerReport.StaleEvidence.State != "blocked" {
+		t.Fatalf("expected propagated require_fresh policy and max-file budget, got %#v", blockerReport)
+	}
+
+	reported := mgr.Execute(context.Background(), ToolRequest{
+		Tool:              "context_zoom",
+		Handle:            "symbol://pkg/f0.go#Old0",
+		Path:              "pkg",
+		Language:          "go",
+		FreshnessPolicy:   "report_only",
+		FreshnessMaxFiles: 1,
+	})
+	if reported.Error != "" {
+		t.Fatalf("report-only context_zoom should not hard block, got error=%q output=%s", reported.Error, reported.Output)
+	}
+	var zoomReport struct {
+		Freshness     comprehension.FreshnessDecision   `json:"freshness"`
+		StaleEvidence comprehension.StaleEvidenceSafety `json:"stale_evidence"`
+	}
+	if err := json.Unmarshal([]byte(reported.Output), &zoomReport); err != nil {
+		t.Fatalf("decode report-only zoom output: %v\n%s", err, reported.Output)
+	}
+	if zoomReport.Freshness.Policy != comprehension.FreshnessReportOnly || zoomReport.StaleEvidence.State != "reported" || zoomReport.Freshness.Refresh != nil {
+		t.Fatalf("expected report-only policy to remain report-only, got %#v", zoomReport)
+	}
+	assertNoPrescriptiveGraphOutput(t, "context_zoom report-only stale output", reported.Output)
+	fields := ContextTelemetryFields("context_zoom", reported.Output)
+	if fields["context_freshness_state"] != "reported" || fields["context_freshness_blocked"] == true || fields["context_stale_use_reported"] != true {
+		t.Fatalf("expected report-only zoom telemetry without hard blocker, got %#v", fields)
+	}
+}
+
+func TestContextZoomRefreshesHandleFileBeforeReturningGraphFacts(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/zoomfresh\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "pkg.go")
+	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"old\" }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	writeWorkspaceFile(t, sourcePath, "package pkg\n\nfunc Run() string { return \"new\" }\n")
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_zoom", ID: "symbol://pkg/pkg.go#Run", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_zoom returned error: %v\n%s", result.Error, result.Output)
+	}
+	var zoom struct {
+		Freshness *comprehension.FreshnessDecision `json:"freshness"`
+		Node      *struct {
+			ID string `json:"id"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &zoom); err != nil {
+		t.Fatalf("decode context_zoom output: %v\n%s", err, result.Output)
+	}
+	if zoom.Node == nil || zoom.Node.ID != "symbol://pkg/pkg.go#Run" {
+		t.Fatalf("expected refreshed Run node, got %#v", zoom.Node)
+	}
+	if zoom.Freshness == nil || !zoom.Freshness.FreshForScope || zoom.Freshness.Refresh == nil || !zoom.Freshness.Refresh.Attempted {
+		t.Fatalf("expected context_zoom freshness refresh, got %#v", zoom.Freshness)
+	}
+}
+
+func TestContextZoomAcceptsHandleAlias(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/zoomhandle\n\ngo 1.22\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Run() string { return \"ok\" }\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_zoom", Handle: "symbol://pkg/pkg.go#Run", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_zoom with handle alias returned error: %v\n%s", result.Error, result.Output)
+	}
+	var zoom struct {
+		Node *struct {
+			ID string `json:"id"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &zoom); err != nil {
+		t.Fatalf("decode context_zoom output: %v\n%s", err, result.Output)
+	}
+	if zoom.Node == nil || zoom.Node.ID != "symbol://pkg/pkg.go#Run" {
+		t.Fatalf("expected Run node via handle alias, got %#v", zoom.Node)
 	}
 }
 
@@ -572,8 +1431,25 @@ func TestHarnessAuditReportsToolSurfaceAndLanguageCapabilities(t *testing.T) {
 	if report.ToolSurface == nil || report.ToolSurface.ManifestToolCount == 0 {
 		t.Fatalf("expected manifest tool count, got %#v", report.ToolSurface)
 	}
+	if report.ToolSurface.ExportedSchemaToolCount != report.ToolSurface.ManifestToolCount || report.ToolSurface.DriftFindingCount != 0 {
+		t.Fatalf("expected manifest/exported schema alignment, got %#v", report.ToolSurface)
+	}
 	if len(report.ToolSurface.ManifestWithoutSchema) != 0 {
 		t.Fatalf("manifest tools missing schemas: %#v", report.ToolSurface.ManifestWithoutSchema)
+	}
+	if len(report.ToolSurface.SchemaWithoutManifest) != 0 {
+		t.Fatalf("schemas missing from built-in tool surfaces: %#v", report.ToolSurface.SchemaWithoutManifest)
+	}
+	if !slices.Contains(toolManifestToolsAcrossBuiltInSurfaces(), "submit_plan") {
+		t.Fatalf("built-in surface union should include conditional submit_plan")
+	}
+	if !slices.ContainsFunc(report.ToolSurface.StaleUseBlockerCoverage, func(row harnessAuditStaleUseCoverage) bool {
+		return row.Tool == "context_query" && row.RuntimeBlocker && row.SchemaErrorClass && row.State == "blocked"
+	}) {
+		t.Fatalf("expected context_query stale-use blocker coverage, got %#v", report.ToolSurface.StaleUseBlockerCoverage)
+	}
+	if !slices.Contains(report.ToolSurface.StaleUseReportOnlyTools, "context_status") {
+		t.Fatalf("expected context_status report-only stale-use coverage, got %#v", report.ToolSurface.StaleUseReportOnlyTools)
 	}
 	if !slices.ContainsFunc(report.LanguageTooling, func(lang harnessAuditLanguage) bool {
 		return lang.Language == "go" && lang.Active && slices.ContainsFunc(lang.Capabilities, func(tool harnessAuditLanguageTool) bool {
@@ -598,6 +1474,12 @@ func TestHarnessAuditBehaviorScansLogs(t *testing.T) {
 		`{"type":"tool_result","tool":"search_files","summary":"No file matches for \"Nope\"","error":""}`,
 		"",
 	}, "\n"))
+	writeWorkspaceFile(t, filepath.Join(root, "atom.md"), "# atom\n")
+	writeWorkspaceFile(t, filepath.Join(root, ".idiom", "lane-history.jsonl"), strings.Join([]string{
+		`{"ts":"2026-05-13T00:00:00Z","mode":"plan-execute","brief":"` + filepath.ToSlash(filepath.Join(root, "atom.md")) + `","exit_code":1,"final_state":"stale-needs-rebase","model_calls":0,"tool_calls":0,"total_tokens":0,"duration_ms":0}`,
+		`{"ts":"2026-05-13T00:01:00Z","mode":"plan-execute","brief":"atom-2.md","exit_code":0,"final_state":"success","model_calls":2,"tool_calls":3,"total_tokens":1200,"duration_ms":4500}`,
+		"",
+	}, "\n"))
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/conversations", Limit: 5})
@@ -615,6 +1497,48 @@ func TestHarnessAuditBehaviorScansLogs(t *testing.T) {
 		return hit.Name == "zero_hit_search" && hit.TotalCount == 1
 	}) {
 		t.Fatalf("expected zero_hit_search pattern, got %#v", report.LogBehavior.TopPatterns)
+	}
+	if report.LogBehavior.LaneHistory == nil ||
+		report.LogBehavior.LaneHistory.Runs != 2 ||
+		report.LogBehavior.LaneHistory.ByFinalState["stale-needs-rebase"] != 1 ||
+		report.LogBehavior.LaneHistory.TotalTokens != 1200 ||
+		report.LogBehavior.LaneHistory.Recent[0].Brief != "atom.md" {
+		t.Fatalf("expected lane history aggregate, got %#v", report.LogBehavior.LaneHistory)
+	}
+}
+
+func TestHarnessAuditBehaviorRedactsWorstOffenderPrompts(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "conversations", "session.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"message","role":"user","content":"private customer prompt with secret"}`,
+		`{"type":"tool_request","tool":"read_file","action":"read_file:a.go","raw":"{\"tool\":\"read_file\",\"path\":\"a.go\"}"}`,
+		`{"type":"tool_result","tool":"read_file","summary":"Read a.go","error":""}`,
+		`{"type":"tool_request","tool":"read_file","action":"read_file:a.go","raw":"{\"tool\":\"read_file\",\"path\":\"a.go\"}"}`,
+		`{"type":"tool_result","tool":"read_file","summary":"Read a.go","error":""}`,
+		`{"type":"tool_request","tool":"read_file","action":"read_file:a.go","raw":"{\"tool\":\"read_file\",\"path\":\"a.go\"}"}`,
+		`{"type":"tool_result","tool":"read_file","summary":"Read a.go","error":""}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/conversations", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	if strings.Contains(result.Output, "user_prompt") ||
+		strings.Contains(result.Output, "private customer prompt") ||
+		strings.Contains(result.Output, "secret") {
+		t.Fatalf("harness_audit leaked prompt data: %s", result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil ||
+		len(report.LogBehavior.WorstOffenders) != 1 ||
+		!report.LogBehavior.WorstOffenders[0].LogExcerptRedacted {
+		t.Fatalf("expected redacted worst offender marker, got %#v", report.LogBehavior)
 	}
 }
 
@@ -789,6 +1713,12 @@ func TestHarnessAuditBehaviorDefaultIncludesTelemetryLogs(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
 		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
 	}
+	if report.ContractCoverage != nil {
+		t.Fatalf("expected no contract coverage without autonomy events, got %#v", report.ContractCoverage)
+	}
+	if strings.Contains(result.Output, `"contract_coverage"`) {
+		t.Fatalf("expected no serialized contract_coverage without autonomy events, got %s", result.Output)
+	}
 	if report.LogBehavior == nil || report.LogBehavior.LogsScanned != 2 {
 		t.Fatalf("expected conversation and telemetry logs to be scanned, got %#v", report.LogBehavior)
 	}
@@ -802,6 +1732,214 @@ func TestHarnessAuditBehaviorDefaultIncludesTelemetryLogs(t *testing.T) {
 		return finding.ID == "agent_harness_feedback_reported" && finding.Severity == "high"
 	}) {
 		t.Fatalf("expected feedback finding, got %#v", report.Findings)
+	}
+	if !slices.ContainsFunc(report.LogBehavior.Sources, func(source harnessAuditLogSource) bool {
+		return source.Pattern == "logs/telemetry/*.jsonl" && source.Matched == 1 && source.Selected == 1
+	}) {
+		t.Fatalf("expected audit source coverage for telemetry logs, got %#v", report.LogBehavior.Sources)
+	}
+}
+
+func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
+	root := t.TempDir()
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind:    autonomy.InvocationSidecarCall,
+			TaskFamily:        "sidecar_discovery",
+			RuntimeContract:   "grounded_evidence_summary",
+			PermissionProfile: "read_only_workspace",
+			Sidecar: &autonomy.SidecarContext{
+				Transport: "cli",
+				Caller:    "codex",
+				Profile:   "discovery",
+				RequestID: "req-contract-coverage",
+				Tool:      "context_pack",
+			},
+			ToolCall: &autonomy.ToolCallContext{
+				ToolCallID: "tool-contract-coverage",
+				ToolName:   "context_pack",
+				Capability: autonomy.CapabilitySemanticDiscovery,
+				SideEffect: autonomy.SideEffectReadOnly,
+			},
+		},
+		Obligations: []autonomy.Obligation{
+			{ObligationID: "obl-evidence", Kind: autonomy.ObligationEvidence, Status: autonomy.ObligationOpen, Owner: autonomy.OwnerSidecar, RequiredBy: "sidecar_request"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	occurredAt := time.Date(2026, 5, 13, 21, 0, 0, 0, time.UTC)
+	events := []autonomy.Event{
+		mustWorkspaceAutonomyEvent(autonomy.NewContractCompiledEvent(contract, occurredAt, 1)),
+		mustWorkspaceAutonomyEvent(autonomy.NewToolPolicyDecisionEvent(contract, autonomy.ContractPolicyEvent{
+			ToolCallID: "tool-contract-coverage",
+			ToolName:   "context_pack",
+			Capability: autonomy.CapabilitySemanticDiscovery,
+			SideEffect: autonomy.SideEffectReadOnly,
+			Decision:   autonomy.PolicyObserve,
+		}, occurredAt.Add(time.Second), 2)),
+		mustWorkspaceAutonomyEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationOpened, contract, autonomy.Obligation{
+			ObligationID: "obl-evidence",
+			Kind:         autonomy.ObligationEvidence,
+			Status:       autonomy.ObligationOpen,
+			Owner:        autonomy.OwnerSidecar,
+			RequiredBy:   "sidecar_request",
+		}, occurredAt.Add(2*time.Second), 3)),
+		mustWorkspaceAutonomyEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationResolved, contract, autonomy.Obligation{
+			ObligationID: "obl-evidence",
+			Kind:         autonomy.ObligationEvidence,
+			Status:       autonomy.ObligationResolved,
+			Owner:        autonomy.OwnerSidecar,
+			RequiredBy:   "sidecar_request",
+			EvidenceRef:  "event-context-pack-result",
+		}, occurredAt.Add(3*time.Second), 4)),
+	}
+	var lines []string
+	for _, event := range events {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("marshal event: %v", err)
+		}
+		lines = append(lines, string(encoded))
+	}
+	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, autonomy.ContractGateEvent{
+		Gate:                autonomy.GateReadOnly,
+		Decision:            autonomy.PolicyObserve,
+		InvariantID:         "sidecar.read_only_profile",
+		ReasonCode:          "read_only_contract",
+		ToolCallID:          "tool-contract-coverage",
+		ToolName:            "context_pack",
+		ObligationRefs:      []string{"obl-evidence"},
+		ResolvedObligations: []string{"obl-evidence"},
+		Source:              "harness_audit_test",
+	}, occurredAt.Add(4*time.Second), 5))
+	encodedGateEvent, err := json.Marshal(gateEvent)
+	if err != nil {
+		t.Fatalf("marshal gate event: %v", err)
+	}
+	wrappedGateLine, err := json.Marshal(map[string]string{
+		"type":    "message",
+		"role":    "autonomy_event",
+		"content": string(encodedGateEvent),
+	})
+	if err != nil {
+		t.Fatalf("marshal wrapped gate event: %v", err)
+	}
+	lines = append(lines, string(wrappedGateLine))
+	lines = append(lines, "")
+	writeWorkspaceFile(t, filepath.Join(root, "logs", "telemetry", "contracts.jsonl"), strings.Join(lines, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.ContractCoverage == nil || report.ContractCoverage.TotalEvents != 5 {
+		t.Fatalf("expected contract coverage for five events, got %#v", report.ContractCoverage)
+	}
+	if !report.ContractCoverage.AllClear ||
+		report.ContractCoverage.PolicyCoverage.DecisionEvents != 1 ||
+		report.ContractCoverage.ObligationCoverage.Resolved != 1 ||
+		report.ContractCoverage.GateCoverage.DecisionEvents != 1 ||
+		report.ContractCoverage.GateCoverage.KindCounts[string(autonomy.GateReadOnly)] != 1 ||
+		report.ContractCoverage.SidecarToolCorrelation.CorrelatedEventCount == 0 {
+		t.Fatalf("unexpected contract coverage: %#v", report.ContractCoverage)
+	}
+	if len(report.ContractCoverage.GateCoverage.OpenObligationRefs) != 0 ||
+		len(report.ContractCoverage.GateCoverage.InconsistentOpenObligationRefs) != 0 {
+		t.Fatalf("expected resolved gate obligations with no open refs, got %#v", report.ContractCoverage.GateCoverage)
+	}
+	if !strings.Contains(result.Summary, "contract_events=5") {
+		t.Fatalf("expected summary to include contract event count, got %q", result.Summary)
+	}
+}
+
+func TestHarnessAuditBehaviorRejectsInvalidAutonomyEvents(t *testing.T) {
+	root := t.TempDir()
+	lines := []string{
+		`{"schema_version":"idiom.autonomy.event.v1","event_id":"event-invalid","type":"not_a_real_event","effect":"observe_only","occurred_at":"2026-05-13T21:01:00Z","sequence":1,"contract_id":"contract_invalid","lifecycle":{"reason":"bad type"}}`,
+		"",
+	}
+	writeWorkspaceFile(t, filepath.Join(root, "logs", "telemetry", "contracts.jsonl"), strings.Join(lines, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.ContractCoverage != nil {
+		t.Fatalf("invalid autonomy event should not enter contract coverage, got %#v", report.ContractCoverage)
+	}
+	if report.LogBehavior == nil || !slices.ContainsFunc(report.LogBehavior.Warnings, func(warning string) bool {
+		return strings.Contains(warning, "invalid autonomy event")
+	}) {
+		t.Fatalf("expected invalid autonomy event warning, got %#v", report.LogBehavior)
+	}
+	if !slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "contract_event_invalid" && finding.Severity == "medium"
+	}) {
+		t.Fatalf("expected invalid contract event finding, got %#v", report.Findings)
+	}
+}
+
+func mustWorkspaceAutonomyEvent(event autonomy.Event, err error) autonomy.Event {
+	if err != nil {
+		panic(err)
+	}
+	return event
+}
+
+func TestHarnessAuditBehaviorDefaultIncludesIdiomConversationLogs(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, ".idiom", "logs", "conversations", "session.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"message","role":"user","content":"write the brief"}`,
+		`{"type":"tool_result","tool":"completion_gate","step":3,"summary":"Mutation completion gate rejected final answer","error":"this task asks for a workspace change, but no successful write tool result is present"}`,
+		`{"type":"tool_request","tool":"read_file","action":"read_file:native/src/example.cpp","path":"native/src/example.cpp"}`,
+		`{"type":"tool_result","tool":"read_file","summary":"Read native/src/example.cpp","error":""}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil || report.LogBehavior.LogsScanned != 1 {
+		t.Fatalf("expected idiom conversation log to be scanned, got %#v", report.LogBehavior)
+	}
+	if !slices.ContainsFunc(report.LogBehavior.Sources, func(source harnessAuditLogSource) bool {
+		return source.Pattern == ".idiom/logs/conversations/*.jsonl" && source.Matched == 1 && source.Selected == 1
+	}) {
+		t.Fatalf("expected audit source coverage for .idiom conversation logs, got %#v", report.LogBehavior.Sources)
+	}
+	if !slices.ContainsFunc(report.LogBehavior.TopPatterns, func(hit eval.PerfPatternHit) bool {
+		return hit.Name == "completion_gate_reopened_discovery" && hit.TotalCount == 1
+	}) {
+		t.Fatalf("expected completion_gate_reopened_discovery pattern, got %#v", report.LogBehavior.TopPatterns)
+	}
+	questions, err := json.Marshal(report.ImprovementQuestions)
+	if err != nil {
+		t.Fatalf("marshal improvement questions: %v", err)
+	}
+	if !strings.Contains(string(questions), "recovery contract outcomes") {
+		t.Fatalf("expected behavior audit to describe recovery contract outcomes, got %s", questions)
+	}
+	if strings.Contains(string(questions), "write the required artifact") || strings.Contains(string(questions), "next-action state") {
+		t.Fatalf("behavior audit should avoid strategy-prescriptive completion recovery text, got %s", questions)
 	}
 }
 
@@ -851,6 +1989,15 @@ func TestHarnessAuditDefaultLimitIsPerLogSource(t *testing.T) {
 	}
 	if !slices.Contains(report.LogBehavior.Warnings, "log scan capped at 2 newest file(s) out of 3 matched for logs/telemetry/*.jsonl") {
 		t.Fatalf("expected per-source telemetry cap warning, got %#v", report.LogBehavior.Warnings)
+	}
+}
+
+func TestHarnessAuditAllowsLargeExplicitLogLimit(t *testing.T) {
+	if got := harnessAuditLogLimit(3000); got != 3000 {
+		t.Fatalf("expected explicit all-log audit limit to be honored, got %d", got)
+	}
+	if got := harnessAuditLogLimit(harnessAuditMaxLogLimit + 1); got != harnessAuditMaxLogLimit {
+		t.Fatalf("expected extreme limit to cap at %d, got %d", harnessAuditMaxLogLimit, got)
 	}
 }
 
@@ -969,11 +2116,84 @@ func TestContextTelemetryFieldsIncludeCollectorReports(t *testing.T) {
   "collector_version": "old",
   "current_collector_version": "new",
   "collector_version_mismatch": true,
+  "stale_file_count": 2,
+  "missing_file_count": 1,
+  "stale_path_count": 3,
+  "confidence": {
+    "level": "low",
+    "source": "freshness_decision",
+    "reason": "budget_exceeded"
+  },
+  "provenance": {
+    "source": "context_graph",
+    "operation": "context_pack",
+    "store_kind": "sqlite-graph-v1",
+    "index_id": "idx123",
+    "generated_at": "2026-05-13T09:00:00Z",
+    "collector_version": "old",
+    "current_collector_version": "new",
+    "artifact_path": ".idiom/comprehension/views/abc.json"
+  },
+  "cache": {
+    "state": "hit",
+    "source": "graph_views",
+    "reason": "fresh_cached_row",
+    "cache_key": "abc",
+    "pack_id": "abc",
+    "workspace_state_fingerprint": "fp123",
+    "ranker_weights_fingerprint": "ranker123",
+    "runtime_traces_fingerprint": "trace123",
+    "freshness_policy": "read_through",
+    "read_through_refresh": true,
+    "invalidation": {
+      "policy": "content_addressed_read_through",
+      "state": "valid",
+      "stale_result": "cache_miss_recompute",
+      "sources": [
+        {"source": "index_id", "state": "keyed"},
+        {"source": "ranker_weights", "state": "keyed"}
+      ]
+    }
+  },
+  "unresolved_gap_details": [
+    {"reason": "stale_graph", "state": "stale"}
+  ],
   "incremental": true,
   "reused_indexed_files": 5,
   "expanded_scope": "pkg",
   "dependency_refresh_files": ["pkg/a.go", "pkg/b.go"],
   "collector_coverage": ["python_index", "language_environment"],
+  "freshness": {
+    "policy": "read_through",
+    "operation": "context_pack",
+    "fresh_for_scope": false,
+    "global_fresh": false,
+    "scope": "pkg",
+    "reason": "budget_exceeded",
+    "blocker": "freshness refresh exceeded budget",
+    "budget_exceeded": true,
+    "checked_path_count": 1,
+    "stale_path_count": 1,
+    "missing_path_count": 1,
+    "checked_paths": ["pkg/a.go"],
+    "stale_paths": ["pkg/a.go"],
+    "missing_paths": ["pkg/missing.go"],
+    "refresh": {
+      "attempted": false,
+      "scope": "pkg",
+      "reason": "budget_exceeded",
+      "skipped_reason": "cap exceeded"
+    }
+  },
+  "stale_evidence": {
+    "state": "blocked",
+    "policy": "read_through",
+    "reason": "budget_exceeded",
+    "fresh_for_scope": false,
+    "global_fresh": false,
+    "stale_path_count": 1,
+    "missing_path_count": 1
+  },
   "stale_symbol_samples": [{"id": "symbol://app.py#run"}],
   "refreshed_stale_symbols": 1,
   "nodes": [
@@ -996,6 +2216,27 @@ func TestContextTelemetryFieldsIncludeCollectorReports(t *testing.T) {
 	}
 	if fields["context_collector_version"] != "old" || fields["context_current_collector_version"] != "new" || fields["context_collector_version_mismatch"] != true {
 		t.Fatalf("unexpected collector version telemetry fields: %#v", fields)
+	}
+	if fields["context_freshness_policy"] != "read_through" || fields["context_freshness_operation"] != "context_pack" || fields["context_fresh_for_scope"] != false || fields["context_freshness_state"] != "blocked" || fields["context_freshness_blocked"] != true || fields["context_freshness_budget_exceeded"] != true {
+		t.Fatalf("unexpected freshness telemetry fields: %#v", fields)
+	}
+	if fields["context_freshness_checked_paths"] != 1 || fields["context_freshness_stale_paths"] != 1 || fields["context_freshness_missing_paths"] != 1 || fields["context_freshness_refresh_attempted"] != false || fields["context_freshness_refresh_skipped_reason"] != "cap exceeded" {
+		t.Fatalf("unexpected freshness path/refresh telemetry fields: %#v", fields)
+	}
+	if fields["context_stale_evidence_state"] != "blocked" || fields["context_stale_use_blocked"] != true || fields["context_stale_evidence_stale_path_count"] != 1 {
+		t.Fatalf("unexpected stale-evidence telemetry fields: %#v", fields)
+	}
+	if fields["context_stale_file_count"] != 2 || fields["context_missing_file_count"] != 1 || fields["context_stale_path_count"] != 3 || fields["context_freshness_checked_path_count"] != 1 || fields["context_freshness_stale_path_count"] != 1 || fields["context_freshness_missing_path_count"] != 1 {
+		t.Fatalf("unexpected structured stale count telemetry fields: %#v", fields)
+	}
+	if fields["context_confidence_level"] != "low" || fields["context_confidence_source"] != "freshness_decision" || fields["context_confidence_reason"] != "budget_exceeded" {
+		t.Fatalf("unexpected confidence telemetry fields: %#v", fields)
+	}
+	if fields["context_provenance_source"] != "context_graph" || fields["context_provenance_operation"] != "context_pack" || fields["context_provenance_index_id"] != "idx123" || fields["context_provenance_artifact_path"] != ".idiom/comprehension/views/abc.json" {
+		t.Fatalf("unexpected provenance telemetry fields: %#v", fields)
+	}
+	if fields["context_cache_state"] != "hit" || fields["context_cache_source"] != "graph_views" || fields["context_cache_key"] != "abc" || fields["context_cache_workspace_state_fingerprint"] != "fp123" || fields["context_cache_ranker_weights_fingerprint"] != "ranker123" || fields["context_cache_runtime_traces_fingerprint"] != "trace123" || fields["context_cache_read_through_refresh"] != true || fields["context_cache_invalidation_policy"] != "content_addressed_read_through" || fields["context_cache_invalidation_sources"] != 2 || fields["context_unresolved_gap_details"] != 1 {
+		t.Fatalf("unexpected cache/gap telemetry fields: %#v", fields)
 	}
 	names, ok := fields["context_collector_report_names"].([]string)
 	if !ok || !slices.Contains(names, "python_lsp") || !slices.Contains(names, "workspace_tool_enrichment") {
@@ -1103,6 +2344,12 @@ func TestDependencyGraphExtractsTypeScriptImportsWithoutMadge(t *testing.T) {
 const fs = require("fs");
 export { y } from "./other";
 `)
+	writeWorkspaceFile(t, filepath.Join(root, "src", "module.mts"), `import {x} from "./lib";
+export {x};
+`)
+	writeWorkspaceFile(t, filepath.Join(root, "src", "common.cts"), `const lib = require("./lib");
+module.exports = lib;
+`)
 	writeWorkspaceFile(t, filepath.Join(root, "src", "lib.ts"), `export const x = 1;`)
 
 	mgr := NewManager(config.Workspace{
@@ -1115,14 +2362,23 @@ export { y } from "./other";
 		EnableWrites:          true,
 	})
 	target := filepath.Join(root, "src")
-	result := mgr.regexDependencyGraph(target, "typescript", []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}, tsImportRe)
+	result := mgr.regexDependencyGraph(target, "typescript", typescriptDependencyGraphExtensions(), tsImportRe)
 	if result.Error != "" {
 		t.Fatalf("dependency_graph returned error: %v\n%s", result.Error, result.Output)
 	}
-	for _, want := range []string{"src/main.ts -> ./lib", "src/main.ts -> ./other", "src/main.ts -> fs"} {
+	for _, want := range []string{"src/main.ts -> ./lib", "src/main.ts -> ./other", "src/main.ts -> fs", "src/module.mts -> ./lib", "src/common.cts -> ./lib"} {
 		if !strings.Contains(result.Output, want) {
 			t.Fatalf("expected dependency graph to include %q, got:\n%s", want, result.Output)
 		}
+	}
+}
+
+func TestInferDependencyLanguageRecognizesTypeScriptModuleExtensions(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "src", "entry.mts"), `export const entry = true;`)
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxDirectoryEntries: 16})
+	if got := mgr.inferDependencyLanguage(filepath.Join(root, "src")); got != "typescript" {
+		t.Fatalf("inferDependencyLanguage(.mts workspace) = %q, want typescript", got)
 	}
 }
 
@@ -1227,6 +2483,28 @@ func TestOptionalExternalDiscoveryToolsReportUnavailable(t *testing.T) {
 	}
 }
 
+func assertNoPrescriptiveGraphOutput(t *testing.T, name string, output string) {
+	t.Helper()
+	lower := strings.ToLower(output)
+	for _, forbidden := range []string{
+		"run context_index",
+		"run context_pack",
+		"rerun context_trace_pack",
+		"use context_pack",
+		"provide a bounded path",
+		"identify one exact",
+		"language-aware symbol tool",
+		"before relying",
+		"next action",
+		"next step",
+		"invoke",
+	} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("%s output contains prescriptive phrase %q:\n%s", name, forbidden, output)
+		}
+	}
+}
+
 func writeWorkspaceFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1244,6 +2522,30 @@ func mustMarshalTestJSON(t *testing.T, value any) string {
 		t.Fatalf("marshal JSON: %v", err)
 	}
 	return string(data)
+}
+
+func packReportSourcePresent(sources []struct {
+	Source string `json:"source"`
+	State  string `json:"state"`
+}, source string) bool {
+	for _, item := range sources {
+		if item.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+func packReportRankerReasonPresent(reasons []struct {
+	Reason string `json:"reason"`
+	State  string `json:"state"`
+}, reason string) bool {
+	for _, item := range reasons {
+		if item.Reason == reason {
+			return true
+		}
+	}
+	return false
 }
 
 func runTestCommand(t *testing.T, dir string, name string, args ...string) {
@@ -1298,6 +2600,12 @@ func TestHarnessAuditReportsContextCacheState(t *testing.T) {
 	if report.ContextCache.SessionWrites < 1 {
 		t.Fatalf("expected at least one session write counter, got %+v", report.ContextCache)
 	}
+	if report.ContextCache.ContractRows < 1 {
+		t.Fatalf("expected graph-view contract row count in cache audit, got %+v", report.ContextCache)
+	}
+	if report.FreshnessHealth == nil || report.FreshnessHealth.ReadThroughAttempts < 1 {
+		t.Fatalf("expected freshness health counters in audit report, got %#v", report.FreshnessHealth)
+	}
 	// Confirm the comprehension package's view stats type is the same shape
 	// the audit wraps; this catches drift if either side adds a field
 	// without updating the mirror.
@@ -1307,5 +2615,37 @@ func TestHarnessAuditReportsContextCacheState(t *testing.T) {
 	}
 	if stats.Rows != report.ContextCache.Rows {
 		t.Fatalf("audit row count drifted from comprehension stats: audit=%d stats=%d", report.ContextCache.Rows, stats.Rows)
+	}
+}
+
+func TestHarnessAuditFreshnessHealthIncludesLogDerivedTelemetry(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "logs", "conversations", "freshness.jsonl"), strings.Join([]string{
+		`{"type":"tool_result","tool":"context_query","context_freshness_policy":"read_through","context_freshness_blocked":true,"context_freshness_budget_exceeded":true,"context_freshness_refresh_attempted":true,"context_freshness_refresh_error":"refresh failed","context_freshness_refresh_files_indexed":3,"context_stale_evidence_state":"blocked","context_stale_use_blocked":true}`,
+		`{"type":"tool_result","tool":"context_zoom","context_freshness_policy":"report_only","context_stale_evidence_state":"reported","context_stale_use_reported":true}`,
+		`{"type":"tool_result","tool":"context_status","context_freshness_policy":"report_only","context_stale_evidence_state":"fresh","context_stale_use_fresh":true}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/conversations"})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.FreshnessHealth == nil {
+		t.Fatalf("expected freshness_health section, got %s", result.Output)
+	}
+	if report.FreshnessHealth.TelemetryReadThrough != 1 || report.FreshnessHealth.TelemetryBlockers != 1 || report.FreshnessHealth.TelemetryBudgetExceeded != 1 || report.FreshnessHealth.TelemetryRefreshFailures != 1 || report.FreshnessHealth.TelemetryRefreshFiles != 3 {
+		t.Fatalf("unexpected log-derived freshness health: %#v", report.FreshnessHealth)
+	}
+	if _, ok := report.FreshnessHealth.TelemetryPolicyCounts["read_through"]; !ok {
+		t.Fatalf("expected policy counts to include read_through: %#v", report.FreshnessHealth.TelemetryPolicyCounts)
+	}
+	if report.FreshnessHealth.StaleUseBlocked != 1 || report.FreshnessHealth.StaleUseReported != 1 || report.FreshnessHealth.StaleUseFresh != 1 || report.FreshnessHealth.StaleUseStateCounts["blocked"] != 1 || report.FreshnessHealth.StaleUseStateCounts["reported"] != 1 || report.FreshnessHealth.StaleUseStateCounts["fresh"] != 1 {
+		t.Fatalf("expected stale-use blocker coverage in freshness health, got %#v", report.FreshnessHealth)
 	}
 }

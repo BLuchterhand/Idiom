@@ -1,8 +1,11 @@
 package comprehension
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,7 +29,7 @@ func TestViewKeyIDDeterministic(t *testing.T) {
 		Query: ViewQueryInputs{
 			Path:           "internal/comprehension",
 			Limit:          8,
-			ForbiddenPaths: []string{".idiom", "/tmp"}, // reordered
+			ForbiddenPaths: []string{".idiom", "/tmp"},                          // reordered
 			RequiredTests:  []string{"go test ./internal/...", "go test ./..."}, // reordered
 		},
 	}
@@ -54,10 +57,17 @@ func TestViewKeyIDIgnoresGenerationTimestamp(t *testing.T) {
 
 func TestSaveAndLoadViewRoundTrip(t *testing.T) {
 	root := t.TempDir()
-	key := ViewKey{IndexID: "idx-xyz", Task: "round trip", Mode: "plan"}
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/viewroundtrip\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "a.go"), "package viewroundtrip\n\nfunc A() string { return \"a\" }\n")
+	writeFile(t, filepath.Join(root, "b.go"), "package viewroundtrip\n\nfunc B() string { return \"b\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := ViewKey{IndexID: build.IndexID, Task: "round trip", Mode: "plan"}
 	original := PackResult{
 		PackID:  key.ID(),
-		IndexID: "idx-xyz",
+		IndexID: build.IndexID,
 		Root:    root,
 		Task:    "round trip",
 		Mode:    "plan",
@@ -110,16 +120,23 @@ func TestLoadViewMissOnEmpty(t *testing.T) {
 
 func TestMarkViewsStaleByPath(t *testing.T) {
 	root := t.TempDir()
-	keyA := ViewKey{IndexID: "i", Task: "task-a", Mode: "plan"}
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/staleviews\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "alpha.go"), "package staleviews\n\nfunc Alpha() string { return \"a\" }\n")
+	writeFile(t, filepath.Join(root, "beta.go"), "package staleviews\n\nfunc Beta() string { return \"b\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	keyA := ViewKey{IndexID: build.IndexID, Task: "task-a", Mode: "plan"}
 	resA := PackResult{
 		PackID:         keyA.ID(),
-		IndexID:        "i",
+		IndexID:        build.IndexID,
 		CandidateFiles: []PackFile{{Path: "alpha.go"}},
 	}
-	keyB := ViewKey{IndexID: "i", Task: "task-b", Mode: "plan"}
+	keyB := ViewKey{IndexID: build.IndexID, Task: "task-b", Mode: "plan"}
 	resB := PackResult{
 		PackID:         keyB.ID(),
-		IndexID:        "i",
+		IndexID:        build.IndexID,
 		CandidateFiles: []PackFile{{Path: "beta.go"}},
 	}
 	if err := SaveView(root, keyA, resA); err != nil {
@@ -176,8 +193,14 @@ func TestMarkAllViewsStale(t *testing.T) {
 func TestReadViewStatsIncludesSessionCounters(t *testing.T) {
 	ResetViewCacheCounters()
 	root := t.TempDir()
-	key := ViewKey{IndexID: "i", Task: "t", Mode: "plan"}
-	if err := SaveView(root, key, PackResult{PackID: key.ID(), IndexID: "i"}); err != nil {
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/viewstats\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "x.go"), "package viewstats\n\nfunc X() string { return \"x\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := ViewKey{IndexID: build.IndexID, Task: "t", Mode: "plan"}
+	if err := SaveView(root, key, PackResult{PackID: key.ID(), IndexID: build.IndexID, CandidateFiles: []PackFile{{Path: "x.go"}}}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	if _, hit, _ := LoadView(root, key); !hit {
@@ -192,6 +215,31 @@ func TestReadViewStatsIncludesSessionCounters(t *testing.T) {
 	}
 	if stats.Hits != 1 || stats.Misses != 1 || stats.Writes != 1 {
 		t.Fatalf("expected hits=1 misses=1 writes=1, got %+v", stats)
+	}
+}
+
+func TestReadViewStatsReportsNonCurrentRows(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/viewstatscurrent\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "x.go"), "package viewstatscurrent\n\nfunc X() string { return \"x\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	current := ViewKey{IndexID: build.IndexID, Task: "current", Mode: "plan"}
+	if err := SaveView(root, current, PackResult{PackID: current.ID(), IndexID: build.IndexID, CandidateFiles: []PackFile{{Path: "x.go"}}}); err != nil {
+		t.Fatalf("save current: %v", err)
+	}
+	old := ViewKey{IndexID: "old-index", Task: "old", Mode: "plan"}
+	if err := SaveView(root, old, PackResult{PackID: old.ID(), IndexID: "old-index", CandidateFiles: []PackFile{{Path: "x.go"}}}); err != nil {
+		t.Fatalf("save old: %v", err)
+	}
+	stats, err := ReadViewStats(root)
+	if err != nil {
+		t.Fatalf("ReadViewStats: %v", err)
+	}
+	if stats.CurrentIndexID != build.IndexID || stats.Rows != 2 || stats.NonCurrent != 1 {
+		t.Fatalf("expected one non-current row against current index %s, got %+v", build.IndexID, stats)
 	}
 }
 
@@ -226,6 +274,303 @@ func TestPackHitsCacheOnIdenticalSecondCall(t *testing.T) {
 	}
 	if writes != 1 {
 		t.Fatalf("expected exactly one cache write (first Pack), got %d", writes)
+	}
+}
+
+func TestPackExposesGraphViewContractCacheAndRankerReasons(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/contract\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "alpha.go"), "package pkg\n\nfunc Alpha() string { return \"a\" }\n")
+	writeFile(t, filepath.Join(root, "pkg", "beta.go"), "package pkg\n\nfunc Beta() string { return \"b\" }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	opts := PackOptions{Root: root, Task: "change Alpha", Path: "pkg", Mode: "plan"}
+	first, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("first Pack: %v", err)
+	}
+	if first.Contract.SchemaVersion != GraphViewResultContractVersion || first.Contract.Cache.State != "miss_recompute" || first.Cache.State != "miss_recompute" {
+		t.Fatalf("expected first packet contract/cache miss metadata, got contract=%#v cache=%#v", first.Contract, first.Cache)
+	}
+	if first.Contract.Provenance.Operation != "context_pack" || first.Contract.StaleEvidence.State != "fresh" {
+		t.Fatalf("expected contract to mirror provenance/freshness, got %#v", first.Contract)
+	}
+	if !cacheInvalidationHasSource(first.Cache.Invalidation.Sources, "ranker_weights") || !cacheInvalidationHasSource(first.Cache.Invalidation.Sources, "runtime_traces") {
+		t.Fatalf("expected ranker/runtime invalidation sources, got %#v", first.Cache.Invalidation.Sources)
+	}
+	alpha := packFileByPath(first.CandidateFiles, "pkg/alpha.go")
+	if alpha == nil || !rankerReasonsContain(alpha.RankerReasons, "role_floor") || !rankerReasonsContain(alpha.RankerReasons, "direct_task_match") {
+		t.Fatalf("expected ranker reasons for alpha candidate, got %#v", alpha)
+	}
+
+	second, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("second Pack: %v", err)
+	}
+	if second.PackID != first.PackID || second.Cache.State != "hit" || second.Contract.Cache.State != "hit" {
+		t.Fatalf("expected second packet cache hit for same pack_id, first=%q second=%q cache=%#v contract=%#v", first.PackID, second.PackID, second.Cache, second.Contract.Cache)
+	}
+}
+
+func TestPackCacheKeyChangesForPersistedWeightsAndRuntimeTraces(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/invalidation\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "alpha.go"), "package pkg\n\nfunc Alpha() string { return \"a\" }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	opts := PackOptions{Root: root, Task: "change Alpha", Path: "pkg", Mode: "plan"}
+	base, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("base Pack: %v", err)
+	}
+	if err := SaveLearnedWeights(root, map[string]float64{"pkg/alpha.go": 1.5}); err != nil {
+		t.Fatalf("SaveLearnedWeights: %v", err)
+	}
+	weighted, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("weighted Pack: %v", err)
+	}
+	if weighted.PackID == base.PackID {
+		t.Fatalf("ranker weight changes must produce a new cache key; both were %q", base.PackID)
+	}
+	if weighted.Cache.WorkspaceStateFingerprint == "" || weighted.Cache.RankerWeightsFingerprint == "" || weighted.Cache.RuntimeTracesFingerprint != "" || weighted.Cache.State != "miss_recompute" {
+		t.Fatalf("expected keyed workspace-state miss after weight change, got %#v", weighted.Cache)
+	}
+	weightedRanker := cacheInvalidationSourceByName(weighted.Cache.Invalidation.Sources, "ranker_weights")
+	weightedRuntime := cacheInvalidationSourceByName(weighted.Cache.Invalidation.Sources, "runtime_traces")
+	if weightedRanker == nil || weightedRanker.Fingerprint != weighted.Cache.RankerWeightsFingerprint || weightedRanker.Fingerprint == weighted.Cache.WorkspaceStateFingerprint {
+		t.Fatalf("expected ranker source to carry its own component fingerprint, source=%#v cache=%#v", weightedRanker, weighted.Cache)
+	}
+	if weightedRuntime == nil || weightedRuntime.Fingerprint != "" || weightedRuntime.State != "baseline_keyed" {
+		t.Fatalf("expected runtime source to remain baseline for ranker-only change, got %#v", weightedRuntime)
+	}
+	tracesDir := filepath.Join(root, ".idiom", "comprehension", "traces")
+	if err := os.MkdirAll(tracesDir, 0o755); err != nil {
+		t.Fatalf("mkdir traces: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tracesDir, "trace-1.json"), []byte(`{"trace_id":"trace-1","generated_at":"2026-05-13T00:00:00Z","command":"go test ./...","fresh":true}`), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	traced, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("traced Pack: %v", err)
+	}
+	if traced.PackID == weighted.PackID {
+		t.Fatalf("runtime trace changes must produce a new cache key; both were %q", traced.PackID)
+	}
+	if traced.Cache.WorkspaceStateFingerprint == "" || traced.Cache.RankerWeightsFingerprint == "" || traced.Cache.RuntimeTracesFingerprint == "" || traced.Cache.State != "miss_recompute" {
+		t.Fatalf("expected keyed workspace-state miss after trace change, got %#v", traced.Cache)
+	}
+	tracedRuntime := cacheInvalidationSourceByName(traced.Cache.Invalidation.Sources, "runtime_traces")
+	if tracedRuntime == nil || tracedRuntime.Fingerprint != traced.Cache.RuntimeTracesFingerprint || tracedRuntime.Fingerprint == traced.Cache.WorkspaceStateFingerprint {
+		t.Fatalf("expected runtime source to carry its own component fingerprint, source=%#v cache=%#v", tracedRuntime, traced.Cache)
+	}
+	if traced.Cache.RankerWeightsFingerprint == traced.Cache.RuntimeTracesFingerprint {
+		t.Fatalf("ranker and runtime component fingerprints should be independently attributed, got %#v", traced.Cache)
+	}
+}
+
+func TestPackInvalidationAttributionIdentifiesRuntimeOnlyState(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/runtimeonly\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "alpha.go"), "package pkg\n\nfunc Alpha() string { return \"a\" }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	opts := PackOptions{Root: root, Task: "change Alpha", Path: "pkg", Mode: "plan"}
+	base, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("base Pack: %v", err)
+	}
+	writeRuntimeTraceForTest(t, root, "trace-runtime-only", time.Date(2026, 5, 13, 0, 0, 0, 0, time.UTC))
+	traced, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("traced Pack: %v", err)
+	}
+	if traced.PackID == base.PackID {
+		t.Fatalf("runtime trace changes must produce a new cache key; both were %q", traced.PackID)
+	}
+	rankerSource := cacheInvalidationSourceByName(traced.Cache.Invalidation.Sources, "ranker_weights")
+	runtimeSource := cacheInvalidationSourceByName(traced.Cache.Invalidation.Sources, "runtime_traces")
+	if traced.Cache.RankerWeightsFingerprint != "" || rankerSource == nil || rankerSource.Fingerprint != "" || rankerSource.State != "baseline_keyed" {
+		t.Fatalf("expected ranker source to remain baseline for runtime-only state, source=%#v cache=%#v", rankerSource, traced.Cache)
+	}
+	if traced.Cache.RuntimeTracesFingerprint == "" || runtimeSource == nil || runtimeSource.Fingerprint != traced.Cache.RuntimeTracesFingerprint || runtimeSource.State != "keyed" {
+		t.Fatalf("expected runtime source to identify runtime-only state, source=%#v cache=%#v", runtimeSource, traced.Cache)
+	}
+}
+
+func TestPackCacheHitSurvivesNoopFullRebuild(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/nooprebuild\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("initial Build: %v", err)
+	}
+	opts := PackOptions{Root: root, Task: "change X", Path: "pkg/x.go", Mode: "plan"}
+	first, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("first Pack: %v", err)
+	}
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("noop Build: %v", err)
+	}
+	second, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("second Pack: %v", err)
+	}
+	if first.PackID != second.PackID {
+		t.Fatalf("noop rebuild should preserve pack id, got %q then %q", first.PackID, second.PackID)
+	}
+	hits, _, writes := ViewCacheCounters()
+	if hits == 0 || writes != 1 {
+		t.Fatalf("expected cache hit after noop rebuild and no rewrite, hits=%d writes=%d", hits, writes)
+	}
+}
+
+func TestPackCacheKeyIncludesLearnedWeightsOverride(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/overrideweights\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "a.go"), "package pkg\n\nfunc Alpha() string { return \"a\" }\n")
+	writeFile(t, filepath.Join(root, "pkg", "b.go"), "package pkg\n\nfunc Beta() string { return \"b\" }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	base := PackOptions{Root: root, Task: "update package", Path: "pkg", Mode: "plan"}
+	first := base
+	first.LearnedWeights = map[string]float64{"pkg/a.go": 2}
+	firstPack, err := Pack(first)
+	if err != nil {
+		t.Fatalf("first Pack: %v", err)
+	}
+	second := base
+	second.LearnedWeights = map[string]float64{"pkg/b.go": 2}
+	secondPack, err := Pack(second)
+	if err != nil {
+		t.Fatalf("second Pack: %v", err)
+	}
+	if firstPack.PackID == secondPack.PackID {
+		t.Fatalf("learned weight overrides must produce distinct pack IDs; both were %q", firstPack.PackID)
+	}
+}
+
+func TestLoadViewByIDRefusesStaleReferencedPath(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/stalepacket\n\ngo 1.22\n")
+	sourcePath := filepath.Join(root, "pkg", "x.go")
+	writeFile(t, sourcePath, "package pkg\n\nfunc X() string { return \"x\" }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	pack, err := Pack(PackOptions{Root: root, Task: "change X", Path: "pkg/x.go", Mode: "plan"})
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	writeFile(t, sourcePath, "package pkg\n\nfunc X() string { return \"changed\" }\n")
+	if _, hit, err := LoadViewByID(root, pack.PackID); err != nil {
+		t.Fatalf("LoadViewByID: %v", err)
+	} else if hit {
+		t.Fatalf("stale referenced path should miss instead of rehydrating cached packet")
+	}
+}
+
+func TestLoadViewByIDAllowsUnrelatedStalePath(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/scopedpacket\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	otherPath := filepath.Join(root, "other", "other.go")
+	writeFile(t, otherPath, "package other\n\nfunc Other() string { return \"old\" }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	pack, err := Pack(PackOptions{Root: root, Task: "change X", Path: "pkg/x.go", Mode: "plan"})
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	writeFile(t, otherPath, "package other\n\nfunc Other() string { return \"new\" }\n")
+	got, hit, err := LoadViewByID(root, pack.PackID)
+	if err != nil {
+		t.Fatalf("LoadViewByID: %v", err)
+	}
+	if !hit {
+		t.Fatalf("unrelated stale path should not invalidate scoped cached packet")
+	}
+	if got.Freshness == nil || !got.Freshness.FreshForScope || got.Freshness.GlobalFresh {
+		t.Fatalf("expected scoped freshness with globally stale repo, got %#v", got.Freshness)
+	}
+}
+
+func TestPackUsesCachedViewWhenOnlyUnrelatedPathIsStale(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/scopedpack\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	otherPath := filepath.Join(root, "other", "other.go")
+	writeFile(t, otherPath, "package other\n\nfunc Other() string { return \"old\" }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	opts := PackOptions{Root: root, Task: "change X", Path: "pkg/x.go", Mode: "plan"}
+	first, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("first Pack: %v", err)
+	}
+	writeFile(t, otherPath, "package other\n\nfunc Other() string { return \"new\" }\n")
+	second, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("second Pack: %v", err)
+	}
+	if second.PackID != first.PackID {
+		t.Fatalf("expected cached pack id %q, got %q", first.PackID, second.PackID)
+	}
+	hits, _, writes := ViewCacheCounters()
+	if hits == 0 || writes != 1 {
+		t.Fatalf("expected scoped cache hit without rewrite, hits=%d writes=%d", hits, writes)
+	}
+	if second.Freshness == nil || !second.Freshness.FreshForScope || second.Freshness.GlobalFresh {
+		t.Fatalf("expected scoped freshness hit with globally stale repo, got %#v", second.Freshness)
+	}
+}
+
+func TestSaveViewPersistsFreshnessMetadata(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/viewmeta\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := ViewKey{IndexID: build.IndexID, Task: "meta", Mode: "plan", Query: ViewQueryInputs{WorkspaceStateFingerprint: "fp"}}
+	if err := SaveView(root, key, PackResult{
+		PackID:         key.ID(),
+		IndexID:        build.IndexID,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	db, err := openSQLite(sqliteGraphPath(root))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	var indexID, task, mode, workspaceFingerprint, refsJSON, fingerprintsJSON string
+	if err := db.QueryRow(`SELECT index_id, task, mode, workspace_state_fingerprint, referenced_paths_json, source_fingerprints_json FROM graph_views WHERE id = ?`, key.ID()).Scan(&indexID, &task, &mode, &workspaceFingerprint, &refsJSON, &fingerprintsJSON); err != nil {
+		t.Fatalf("read graph_views metadata: %v", err)
+	}
+	if indexID != build.IndexID || task != "meta" || mode != "plan" || workspaceFingerprint != "fp" {
+		t.Fatalf("metadata mismatch: index=%q task=%q mode=%q workspace=%q", indexID, task, mode, workspaceFingerprint)
+	}
+	if !strings.Contains(refsJSON, "pkg/x.go") || !strings.Contains(fingerprintsJSON, "pkg/x.go") {
+		t.Fatalf("expected referenced paths and source fingerprints in metadata, refs=%s fingerprints=%s", refsJSON, fingerprintsJSON)
 	}
 }
 
@@ -277,6 +622,13 @@ func TestComprehensionStateFingerprintChangesWhenWeightsChange(t *testing.T) {
 	}
 }
 
+func TestComprehensionStateFingerprintEmptyWithoutWorkspaceState(t *testing.T) {
+	root := t.TempDir()
+	if got := ComprehensionStateFingerprint(root); got != "" {
+		t.Fatalf("expected empty workspace state fingerprint without weights or traces, got %q", got)
+	}
+}
+
 func TestComprehensionStateFingerprintChangesWhenTraceAdded(t *testing.T) {
 	root := t.TempDir()
 	tracesDir := filepath.Join(root, ".idiom", "comprehension", "traces")
@@ -294,6 +646,49 @@ func TestComprehensionStateFingerprintChangesWhenTraceAdded(t *testing.T) {
 	}
 }
 
+func TestRuntimeTraceStateFingerprintUsesBoundedManifest(t *testing.T) {
+	root := t.TempDir()
+	tracesDir := filepath.Join(root, ".idiom", "comprehension", "traces")
+	if err := os.MkdirAll(tracesDir, 0o755); err != nil {
+		t.Fatalf("mkdir traces: %v", err)
+	}
+	baseTime := time.Date(2026, 5, 13, 0, 0, 0, 0, time.UTC)
+	var manifest traceManifest
+	manifest.SchemaVersion = runtimeTraceManifestSchema
+	manifest.UpdatedAt = baseTime.Format(time.RFC3339)
+	for i := 0; i < 100; i++ {
+		traceID := fmt.Sprintf("trace-%03d", i)
+		generatedAt := baseTime.Add(time.Duration(i) * time.Minute).Format(time.RFC3339)
+		writeFile(t, filepath.Join(tracesDir, traceID+".json"), fmt.Sprintf(`{"trace_id":%q,"artifact_path":%q,"generated_at":%q,"command":"go test ./...","fresh":true}`+"\n", traceID, filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", traceID+".json")), generatedAt))
+		if i >= 100-runtimeTraceRecentLimit {
+			manifest.Traces = append(manifest.Traces, traceManifestEntry{
+				TraceID:      traceID,
+				ArtifactPath: filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", traceID+".json")),
+				GeneratedAt:  generatedAt,
+				Fingerprint:  fmt.Sprintf("fp-%03d", i),
+			})
+		}
+	}
+	writeTraceManifestForTest(t, root, manifest)
+	state := runtimeTraceStateFingerprint(root, runtimeTraceRecentLimit)
+	if state.Fingerprint == "" || state.Source != "trace_manifest" || state.Considered != runtimeTraceRecentLimit || state.Total != runtimeTraceRecentLimit {
+		t.Fatalf("expected bounded manifest fingerprint state, got %#v", state)
+	}
+	before := state.Fingerprint
+	time.Sleep(20 * time.Millisecond)
+	writeFile(t, filepath.Join(tracesDir, "trace-000.json"), `{"trace_id":"trace-000","generated_at":"2026-05-13T00:00:00Z","command":"changed old trace","fresh":true}`+"\n")
+	afterOldTraceChange := runtimeTraceStateFingerprint(root, runtimeTraceRecentLimit)
+	if afterOldTraceChange.Fingerprint != before || afterOldTraceChange.Considered != runtimeTraceRecentLimit {
+		t.Fatalf("old retained traces outside the manifest horizon must not affect fingerprint work, before=%#v after=%#v", state, afterOldTraceChange)
+	}
+	manifest.Traces[0].Fingerprint = "changed-recent-fingerprint"
+	writeTraceManifestForTest(t, root, manifest)
+	afterRecentManifestChange := runtimeTraceStateFingerprint(root, runtimeTraceRecentLimit)
+	if afterRecentManifestChange.Fingerprint == before {
+		t.Fatalf("recent manifest entries inside the horizon must affect the fingerprint")
+	}
+}
+
 func TestViewKeyIDIncorporatesWorkspaceStateFingerprint(t *testing.T) {
 	base := ViewKey{IndexID: "i", Task: "t", Mode: "plan"}
 	withFP := ViewKey{IndexID: "i", Task: "t", Mode: "plan", Query: ViewQueryInputs{WorkspaceStateFingerprint: "fp1"}}
@@ -303,5 +698,77 @@ func TestViewKeyIDIncorporatesWorkspaceStateFingerprint(t *testing.T) {
 	}
 	if withFP.ID() == other.ID() {
 		t.Fatalf("different workspace_state_fingerprint values must produce different IDs")
+	}
+	withRanker := ViewKey{IndexID: "i", Task: "t", Mode: "plan", Query: ViewQueryInputs{WorkspaceStateFingerprint: "fp", RankerWeightsFingerprint: "ranker"}}
+	withRuntime := ViewKey{IndexID: "i", Task: "t", Mode: "plan", Query: ViewQueryInputs{WorkspaceStateFingerprint: "fp", RuntimeTracesFingerprint: "runtime"}}
+	if withRanker.ID() == withRuntime.ID() {
+		t.Fatalf("ranker/runtime component fingerprints must produce distinct IDs")
+	}
+}
+
+func packFileByPath(files []PackFile, path string) *PackFile {
+	for i := range files {
+		if files[i].Path == path {
+			return &files[i]
+		}
+	}
+	return nil
+}
+
+func rankerReasonsContain(reasons []RankerReason, reason string) bool {
+	for _, item := range reasons {
+		if item.Reason == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func cacheInvalidationHasSource(sources []GraphViewInvalidationSource, source string) bool {
+	for _, item := range sources {
+		if item.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+func cacheInvalidationSourceByName(sources []GraphViewInvalidationSource, source string) *GraphViewInvalidationSource {
+	for i := range sources {
+		if sources[i].Source == source {
+			return &sources[i]
+		}
+	}
+	return nil
+}
+
+func writeRuntimeTraceForTest(t *testing.T, root string, traceID string, generatedAt time.Time) {
+	t.Helper()
+	result := TraceResult{
+		TraceID:      traceID,
+		ArtifactPath: filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", traceID+".json")),
+		Root:         root,
+		Command:      "go test ./...",
+		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
+		Success:      true,
+		Fresh:        true,
+	}
+	if err := saveTrace(root, result); err != nil {
+		t.Fatalf("save trace: %v", err)
+	}
+}
+
+func writeTraceManifestForTest(t *testing.T, root string, manifest traceManifest) {
+	t.Helper()
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal trace manifest: %v", err)
+	}
+	path := traceManifestPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir trace manifest dir: %v", err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write trace manifest: %v", err)
 	}
 }

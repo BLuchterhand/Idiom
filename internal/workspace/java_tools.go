@@ -641,7 +641,7 @@ func (m *Manager) javaFileOutline(req ToolRequest) ToolResult {
 		}
 	}
 
-	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Use code_navigate capability=read_symbol for a specific body.", len(file.Symbols), rel)
+	summary := fmt.Sprintf("Outlined %d symbol(s) in %s. Read-symbol capability is available for a specific body.", len(file.Symbols), rel)
 	return ToolResult{
 		Tool:    "java_file_outline",
 		Summary: summary,

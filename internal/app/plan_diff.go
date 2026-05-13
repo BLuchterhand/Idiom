@@ -38,6 +38,12 @@ func unifiedDiff(path, before, after string) string {
 	return out.String()
 }
 
+// UnifiedDiff renders a minimal unified diff for callers outside the app
+// package that need write-scoped diff evidence without consulting git HEAD.
+func UnifiedDiff(path, before, after string) string {
+	return unifiedDiff(path, before, after)
+}
+
 // splitLines returns the lines and whether the original string ended
 // with a newline. An empty string has no lines and no trailing newline.
 func splitLines(s string) ([]string, bool) {

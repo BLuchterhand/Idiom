@@ -1,6 +1,9 @@
 package llama
 
 import (
+	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"idiom/internal/config"
@@ -91,5 +94,22 @@ func TestBuildArgsForMLXOmitsLlamaFlags(t *testing.T) {
 	if !sawModel || !sawHost || !sawPort || !sawExtra {
 		t.Fatalf("MLX args missing required flags (model=%v host=%v port=%v extra=%v): %#v",
 			sawModel, sawHost, sawPort, sawExtra, args)
+	}
+}
+
+func TestStartReturnsClearErrorWhenLlamaModelMissing(t *testing.T) {
+	root := t.TempDir()
+	controller := NewServerController(config.LlamaServer{
+		Binary:  "llama-server-that-should-not-run",
+		Model:   filepath.Join(root, "missing.gguf"),
+		LogFile: filepath.Join(root, "server.log"),
+	}, nil)
+
+	err := controller.Start(context.Background())
+	if err == nil {
+		t.Fatal("expected missing model path to fail before spawning server")
+	}
+	if !strings.Contains(err.Error(), "llama model path") || !strings.Contains(err.Error(), "missing.gguf") {
+		t.Fatalf("expected clear missing-model error, got %v", err)
 	}
 }

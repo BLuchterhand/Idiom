@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -471,6 +472,32 @@ func TestRunMainWritesTelemetryForRejectedDirectToolInput(t *testing.T) {
 	}
 }
 
+func TestRunMainDirectToolInputUsesSharedRequestDecoder(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	repoRoot := filepath.Clean(filepath.Join(cwd, "../.."))
+	configJSON := fmt.Sprintf(`{"workspace":{"root":%q}}`, repoRoot)
+	if err := os.WriteFile(configPath, []byte(configJSON+"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{
+		"tool", "go_read_symbol",
+		"-config", configPath,
+		"-input", `{"path":"cmd/idiom/main.go","symbol":"runToolMainWithTelemetry"}`,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "runToolMainWithTelemetry") {
+		t.Fatalf("expected symbol read output, got %s", stdout.String())
+	}
+}
+
 func TestRunMainToolHelpPrintsSchemaWithoutError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runMain([]string{"tool", "harness_feedback", "--help"}, &stdout, &stderr)
@@ -487,6 +514,72 @@ func TestRunMainToolHelpPrintsSchemaWithoutError(t *testing.T) {
 	}
 }
 
+func TestRunMainToolSchemasExportsManifestDerivedSchemas(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "schemas"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	var export struct {
+		SchemaVersion string `json:"schema_version"`
+		Source        string `json:"source"`
+		Metadata      struct {
+			ClientClassifications []string `json:"client_classifications"`
+			ProductSignals        []string `json:"product_signals"`
+		} `json:"metadata"`
+		Tools []struct {
+			Name        string          `json:"name"`
+			InputSchema json.RawMessage `json:"input_schema"`
+			Profiles    []string        `json:"profiles"`
+			Policy      struct {
+				SideEffects       []string `json:"side_effects"`
+				DecisionAuthority string   `json:"decision_authority"`
+				ErrorClasses      []string `json:"error_classes"`
+			} `json:"policy"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &export); err != nil {
+		t.Fatalf("decode schema export: %v\n%s", err, stdout.String())
+	}
+	if export.SchemaVersion == "" || !strings.Contains(export.Source, "BuildToolManifest") {
+		t.Fatalf("schema export should name manifest/schema source, got %#v", export)
+	}
+	if len(export.Metadata.ClientClassifications) != 7 || len(export.Metadata.ProductSignals) != 9 {
+		t.Fatalf("schema export should carry generic client/product metadata, got %#v", export.Metadata)
+	}
+	var sawReadFile bool
+	var sawContextQuery bool
+	for _, tool := range export.Tools {
+		if tool.Name != "read_file" {
+			if tool.Name == "context_query" {
+				sawContextQuery = true
+				if !slicesContainsString(tool.Policy.ErrorClasses, "stale_context") {
+					t.Fatalf("context_query export should expose stale_context error class: %#v", tool.Policy.ErrorClasses)
+				}
+				if !strings.Contains(string(tool.InputSchema), `"freshness_policy"`) || !strings.Contains(string(tool.InputSchema), `"freshness_max_files"`) {
+					t.Fatalf("context_query schema should expose freshness controls, got %s", string(tool.InputSchema))
+				}
+			}
+			continue
+		}
+		sawReadFile = true
+		if !json.Valid(tool.InputSchema) || len(tool.Profiles) == 0 ||
+			len(tool.Policy.SideEffects) == 0 || tool.Policy.DecisionAuthority != "runtime_contract" ||
+			!slicesContainsString(tool.Policy.ErrorClasses, "invalid_input") {
+			t.Fatalf("read_file export missing required metadata: %#v", tool)
+		}
+	}
+	if !sawReadFile {
+		t.Fatalf("schema export missing read_file: %#v", export.Tools)
+	}
+	if !sawContextQuery {
+		t.Fatalf("schema export missing context_query: %#v", export.Tools)
+	}
+	if strings.Contains(stdout.String(), "Inspect one focused architecture/review question") {
+		t.Fatalf("schema export should not expose raw manifest prompt examples")
+	}
+}
+
 func TestToolHelpRequestedIgnoresFlagValues(t *testing.T) {
 	if !toolHelpRequested([]string{"--config", "custom.json", "--help"}) {
 		t.Fatal("expected help after config flag to be recognized")
@@ -494,6 +587,15 @@ func TestToolHelpRequestedIgnoresFlagValues(t *testing.T) {
 	if toolHelpRequested([]string{"--input", "help"}) {
 		t.Fatal("input value should not be treated as a help request")
 	}
+}
+
+func slicesContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func writeMainConfig(t *testing.T) string {

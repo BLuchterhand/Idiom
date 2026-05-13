@@ -18,7 +18,7 @@ type nativeLanguageIndexes struct {
 	java       *semantic.JavaIndex
 }
 
-func buildNativeLanguageIndexes(ctx context.Context, root string, language string, scope string, maxFiles int) (nativeLanguageIndexes, error) {
+func buildNativeLanguageIndexes(ctx context.Context, root string, language string, scope string, maxFiles int, allowMissingScope bool) (nativeLanguageIndexes, error) {
 	language = normalizeLanguage(language)
 	out := nativeLanguageIndexes{requested: language}
 	indexOpts := semantic.IndexOptions{Scope: scope, MaxFiles: maxFiles, Context: ctx}
@@ -27,7 +27,7 @@ func buildNativeLanguageIndexes(ctx context.Context, root string, language strin
 		if err != nil {
 			return out, fmt.Errorf("build Python index: %w", err)
 		}
-		if language == "python" && index == nil {
+		if language == "python" && index == nil && !allowMissingScope {
 			return out, fmt.Errorf("no Python files found under %s", root)
 		}
 		out.python = index
@@ -37,7 +37,7 @@ func buildNativeLanguageIndexes(ctx context.Context, root string, language strin
 		if err != nil {
 			return out, fmt.Errorf("build TypeScript/JavaScript index: %w", err)
 		}
-		if (language == "typescript" || language == "javascript") && index == nil {
+		if (language == "typescript" || language == "javascript") && index == nil && !allowMissingScope {
 			return out, fmt.Errorf("no TypeScript/JavaScript files found under %s", root)
 		}
 		out.typescript = index
@@ -47,7 +47,7 @@ func buildNativeLanguageIndexes(ctx context.Context, root string, language strin
 		if err != nil {
 			return out, fmt.Errorf("build Rust index: %w", err)
 		}
-		if language == "rust" && index == nil {
+		if language == "rust" && index == nil && !allowMissingScope {
 			return out, fmt.Errorf("no Rust files found under %s", root)
 		}
 		out.rust = index
@@ -57,7 +57,7 @@ func buildNativeLanguageIndexes(ctx context.Context, root string, language strin
 		if err != nil {
 			return out, fmt.Errorf("build Java index: %w", err)
 		}
-		if language == "java" && index == nil {
+		if language == "java" && index == nil && !allowMissingScope {
 			return out, fmt.Errorf("no Java files found under %s", root)
 		}
 		out.java = index

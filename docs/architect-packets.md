@@ -44,6 +44,9 @@ idiom architect plan --packet /tmp/packet.json \
 idiom artifact \
   --prompt-file /tmp/plan.prompt.md \
   --output /tmp/plan.md \
+  --json-out /tmp/plan.events.jsonl \
+  --report-out /tmp/plan.report.json \
+  --mechanical-repair \
   --no-tools
 
 idiom architect plan-audit \
@@ -73,6 +76,14 @@ view and records it as `context_view` evidence. `plan`, `critique`, and `brief`
 also only render prompts; use `idiom artifact` or another model runner to
 generate the actual plan, critique, or brief.
 
+When `artifact` is used as the model runner, prefer `--json-out` plus
+`--report-out`. The JSONL file preserves the model event stream, while the
+report is the compact dispatch artifact: it records the no-tools contract,
+prompt and answer hashes, model, validator exit, tool-use detection,
+deterministic repair source, and `dispatch_ready`. Use `--mechanical-repair`
+for Markdown plan/spec artifacts so one accidental outer fence is unwrapped
+deterministically before validation.
+
 `idiom context pack` results are cached under
 `.idiom/comprehension/graph.sqlite` in the `graph_views` table, keyed by
 content fingerprint (active graph `index_id` + canonical task/mode/query
@@ -89,8 +100,10 @@ intended for plan generation and plan audit. The default remains v1 for
 existing callers.
 
 `plan-audit` is deterministic. It checks a candidate plan against the packet
-for missing file references, unresolved handles, protected-path edits, stale
-context use, validation gaps, and vague "inspect more" deferrals.
+for missing file references, validation commands that cite missing workspace
+paths, unresolved placeholder tokens such as `<path>`, unresolved handles,
+protected-path edits, stale context use, validation gaps, and vague "inspect
+more" deferrals.
 
 `budget` evaluates the same packet across `brief`, `standard`, `deep`, and
 `max-local` budget tiers and emits placement probes for long-context

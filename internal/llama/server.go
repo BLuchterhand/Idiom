@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -39,6 +40,9 @@ func (s *ServerController) Start(ctx context.Context) error {
 
 	if s.isRunningLocked() {
 		return nil
+	}
+	if err := s.validateLaunchConfig(); err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(s.cfg.LogFile), 0o755); err != nil {
@@ -73,6 +77,23 @@ func (s *ServerController) Start(ctx context.Context) error {
 		}
 	}()
 
+	return nil
+}
+
+func (s *ServerController) validateLaunchConfig() error {
+	if strings.TrimSpace(s.cfg.Binary) == "" {
+		return fmt.Errorf("server binary is required")
+	}
+	model := strings.TrimSpace(s.cfg.Model)
+	if model == "" {
+		return fmt.Errorf("server model is required")
+	}
+	if s.cfg.IsMLX() {
+		return nil
+	}
+	if _, err := os.Stat(model); err != nil {
+		return fmt.Errorf("llama model path %q is not readable: %w", model, err)
+	}
 	return nil
 }
 

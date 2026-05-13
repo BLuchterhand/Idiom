@@ -125,16 +125,17 @@ func main() {
 	}
 
 	opts := llama.ChatOptions{
-		Model:             modelID,
-		Temperature:       cfg.Chat.Temperature,
-		TopP:              cfg.Chat.TopP,
-		TopK:              cfg.Chat.TopK,
-		MinP:              cfg.Chat.MinP,
-		PresencePenalty:   cfg.Chat.PresencePenalty,
-		RepetitionPenalty: cfg.Chat.RepetitionPenalty,
-		EnableThinking:    cfg.Chat.EnableThinking,
-		PreserveThinking:  cfg.Chat.PreserveThinking,
-		MaxTokens:         cfg.Chat.MaxTokens,
+		Model:              modelID,
+		Temperature:        cfg.Chat.Temperature,
+		TopP:               cfg.Chat.TopP,
+		TopK:               cfg.Chat.TopK,
+		MinP:               cfg.Chat.MinP,
+		PresencePenalty:    cfg.Chat.PresencePenalty,
+		RepetitionPenalty:  cfg.Chat.RepetitionPenalty,
+		EnableThinking:     cfg.Chat.EnableThinking,
+		PreserveThinking:   cfg.Chat.PreserveThinking,
+		ChatTemplateKwargs: cfg.Chat.EnableThinking != nil && !*cfg.Chat.EnableThinking,
+		MaxTokens:          cfg.Chat.MaxTokens,
 	}
 
 	toolReqs := 0

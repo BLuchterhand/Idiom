@@ -450,6 +450,52 @@ func TestAuditPlanWarnsOnMissingValidationAndStaleFacts(t *testing.T) {
 	}
 }
 
+func TestAuditPlanRejectsMissingCommandPath(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "internal/architect/packet.go"), "package architect\n")
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Implement packet work",
+		Workspace:     WorkspaceSummary{Root: root},
+		Tests:         []CommandRef{{Command: "bash scripts/missing.sh", Reason: "script smoke"}},
+	}
+	result := AuditPlan(packet, "Validate with `bash scripts/missing.sh` after editing internal/architect/packet.go.")
+	if result.OK {
+		t.Fatalf("expected missing command path failure")
+	}
+	if !hasAuditFinding(result, "unknown_command_path", "error") {
+		t.Fatalf("expected unknown_command_path error, got %#v", result.Findings)
+	}
+}
+
+func TestAuditPlanDoesNotTreatAbsoluteCommandPathAsWorkspacePath(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "internal/architect/packet.go"), "package architect\n")
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Validate external helper",
+		Workspace:     WorkspaceSummary{Root: root},
+	}
+	result := AuditPlan(packet, "Validate with `bash /tmp/idiom-missing-helper.sh` after checking internal/architect/packet.go.")
+	if hasAuditFinding(result, "unknown_command_path", "error") {
+		t.Fatalf("absolute external command path should not be audited as workspace path: %#v", result.Findings)
+	}
+}
+
+func TestAuditPlanRejectsUnresolvedPlaceholder(t *testing.T) {
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Draft an atom",
+	}
+	result := AuditPlan(packet, "Update `<path>` and replace `<count>` once evidence is available.")
+	if result.OK {
+		t.Fatalf("expected unresolved placeholder failure")
+	}
+	if !hasAuditFinding(result, "unresolved_placeholder", "error") {
+		t.Fatalf("expected unresolved_placeholder error, got %#v", result.Findings)
+	}
+}
+
 func TestAuditPlanRejectsProtectedPathEdit(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "internal/secret.go"), "package internal\n")

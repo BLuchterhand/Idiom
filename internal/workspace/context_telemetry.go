@@ -13,6 +13,9 @@ func ToolTelemetryFields(tool string, output string) map[string]any {
 	for key, value := range HarnessFeedbackTelemetryFields(tool, output) {
 		fields[key] = value
 	}
+	for key, value := range ReadOnlyCapabilityTelemetryFields(tool, output) {
+		fields[key] = value
+	}
 	if len(fields) == 0 {
 		return nil
 	}
@@ -20,7 +23,8 @@ func ToolTelemetryFields(tool string, output string) map[string]any {
 }
 
 func ContextTelemetryFields(tool string, output string) map[string]any {
-	if !strings.HasPrefix(strings.TrimSpace(tool), "context_") || strings.TrimSpace(output) == "" {
+	tool = strings.TrimSpace(tool)
+	if (tool != "discovery_query" && !strings.HasPrefix(tool, "context_")) || strings.TrimSpace(output) == "" {
 		return nil
 	}
 	var payload map[string]any
@@ -46,6 +50,9 @@ func ContextTelemetryFields(tool string, output string) map[string]any {
 	copyTelemetryNumber(payload, fields, "symbols_indexed", "context_symbols_indexed")
 	copyTelemetryNumber(payload, fields, "edges_indexed", "context_edges_indexed")
 	copyTelemetryNumber(payload, fields, "stale_symbols", "context_stale_symbols")
+	copyTelemetryNumber(payload, fields, "stale_file_count", "context_stale_file_count")
+	copyTelemetryNumber(payload, fields, "missing_file_count", "context_missing_file_count")
+	copyTelemetryNumber(payload, fields, "stale_path_count", "context_stale_path_count")
 	copyTelemetryNumber(payload, fields, "refreshed_stale_symbols", "context_refreshed_stale_symbols")
 	copyTelemetryNumber(payload, fields, "reused_indexed_files", "context_reused_indexed_files")
 	copyTelemetryArrayLen(payload, fields, "stale_files", "context_stale_files")
@@ -65,10 +72,16 @@ func ContextTelemetryFields(tool string, output string) map[string]any {
 	copyTelemetryArrayLen(payload, fields, "executed_files", "context_trace_executed_files")
 	copyTelemetryArrayLen(payload, fields, "failing_anchors", "context_trace_failing_anchors")
 	copyTelemetryArrayLen(payload, fields, "unresolved_gaps", "context_unresolved_gaps")
+	copyTelemetryArrayLen(payload, fields, "unresolved_gap_details", "context_unresolved_gap_details")
 	addStorageBackendTelemetry(payload, fields)
 	addCollectorReportTelemetry(payload, fields)
 	addCollectorCoverageTelemetry(payload, fields)
 	addContextAutoRefreshTelemetry(payload, fields)
+	addContextFreshnessTelemetry(payload, fields)
+	addContextStaleEvidenceTelemetry(payload, fields)
+	addContextCacheTelemetry(payload, fields)
+	addContextConfidenceTelemetry(payload, fields)
+	addContextProvenanceTelemetry(payload, fields)
 	addContextNodeKindTelemetry(payload, fields)
 	if len(fields) == 0 {
 		return nil
@@ -108,6 +121,146 @@ func HarnessFeedbackTelemetryFields(tool string, output string) map[string]any {
 	return fields
 }
 
+func ReadOnlyCapabilityTelemetryFields(tool string, output string) map[string]any {
+	tool = strings.TrimSpace(tool)
+	if tool != readOnlyCapabilityToolName || strings.TrimSpace(output) == "" {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		return nil
+	}
+	fields := make(map[string]any)
+	copyTelemetryString(payload, fields, "schema_version", "capability_schema_version")
+	copyTelemetryString(payload, fields, "requested_capability", "capability_requested")
+	copyTelemetryString(payload, fields, "capability", "capability_resolved")
+	copyTelemetryBool(payload, fields, "routed", "capability_routed")
+	copyTelemetryString(payload, fields, "routed_tool", "capability_routed_tool")
+	copyTelemetryString(payload, fields, "fallback_reason", "capability_fallback_source_reason")
+	copyTelemetryBool(payload, fields, "resolver_runtime_enabled", "capability_resolver_runtime_enabled")
+	copyTelemetryBool(payload, fields, "direct_tool_fallback", "capability_direct_tool_fallback")
+	copyTelemetryArrayLen(payload, fields, "available_adapters", "capability_available_adapters")
+	copyTelemetryArrayLen(payload, fields, "unavailable_adapters", "capability_unavailable_adapters")
+	status, ok := payload["status"].(map[string]any)
+	if ok {
+		addReadOnlyCapabilityStatusTelemetry(status, fields)
+	} else {
+		addReadOnlyCapabilityDerivedStatusTelemetry(payload, fields)
+	}
+	if fields["capability_fallback_reason"] == "capability_unmapped" {
+		fields["capability_unmapped"] = true
+	}
+	if fields["capability_fallback_reason"] == "capability_deferred" {
+		fields["capability_deferred"] = true
+	}
+	if fields["capability_fallback_state"] != nil && fields["capability_fallback_state"] != "none" {
+		fields["capability_fallback"] = true
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+func addReadOnlyCapabilityStatusTelemetry(status map[string]any, fields map[string]any) {
+	copyTelemetryString(status, fields, "state", "capability_status_state")
+	copyTelemetryString(status, fields, "precision_tier", "capability_precision_tier")
+	copyTelemetryString(status, fields, "confidence", "capability_confidence")
+	copyTelemetryArrayLen(status, fields, "unresolved_gaps", "capability_unresolved_gaps")
+	if selected, ok := status["selected_adapter"].(map[string]any); ok {
+		copyTelemetryString(selected, fields, "tool", "capability_selected_adapter")
+		copyTelemetryString(selected, fields, "capability", "capability_selected_adapter_capability")
+		copyTelemetryString(selected, fields, "language", "capability_selected_adapter_language")
+		copyTelemetryString(selected, fields, "source", "capability_selected_adapter_source")
+		copyTelemetryString(selected, fields, "provenance", "capability_selected_adapter_provenance")
+	}
+	if fallback, ok := status["fallback"].(map[string]any); ok {
+		copyTelemetryString(fallback, fields, "state", "capability_fallback_state")
+		copyTelemetryString(fallback, fields, "reason", "capability_fallback_reason")
+		copyTelemetryString(fallback, fields, "source_reason", "capability_fallback_source_reason")
+	}
+	if absence, ok := status["absence_confidence"].(map[string]any); ok {
+		copyTelemetryString(absence, fields, "level", "capability_absence_confidence")
+		copyTelemetryString(absence, fields, "reason", "capability_absence_reason")
+		copyTelemetryString(absence, fields, "precision_tier", "capability_absence_precision_tier")
+		copyTelemetryString(absence, fields, "source", "capability_absence_source")
+	}
+}
+
+func addReadOnlyCapabilityDerivedStatusTelemetry(payload map[string]any, fields map[string]any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	var decoded ReadOnlyCapabilityExecutionResult
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return
+	}
+	underlying := readOnlyCapabilityUnderlyingAsToolResult(decoded.UnderlyingResult)
+	fallback := readOnlyCapabilityFallbackStatusFor(decoded.FallbackReason)
+	absence := readOnlyCapabilityAbsenceConfidenceFor(underlying)
+	precisionTier := readOnlyCapabilityStatusPrecisionTier(underlying, decoded.UnderlyingResult)
+	statusState := readOnlyCapabilityStatusState(decoded.Routed, fallback, absence)
+	if statusState != "" {
+		fields["capability_status_state"] = statusState
+	}
+	if precisionTier != "" {
+		fields["capability_precision_tier"] = precisionTier
+	}
+	if confidence := readOnlyCapabilityRouteConfidence(precisionTier, fallback, absence, underlying); confidence != "" {
+		fields["capability_confidence"] = confidence
+	}
+	if selected := readOnlyCapabilitySelectedAdapterStatus(decoded.RoutedAdapter); selected != nil {
+		fields["capability_selected_adapter"] = selected.Tool
+		if selected.Capability != "" {
+			fields["capability_selected_adapter_capability"] = selected.Capability
+		}
+		if selected.Language != "" {
+			fields["capability_selected_adapter_language"] = selected.Language
+		}
+		if selected.Source != "" {
+			fields["capability_selected_adapter_source"] = selected.Source
+		}
+		if selected.Provenance != "" {
+			fields["capability_selected_adapter_provenance"] = selected.Provenance
+		}
+	}
+	if fallback.State != "" {
+		fields["capability_fallback_state"] = fallback.State
+	}
+	if fallback.Reason != "" {
+		fields["capability_fallback_reason"] = fallback.Reason
+	}
+	if fallback.SourceReason != "" {
+		fields["capability_fallback_source_reason"] = fallback.SourceReason
+	}
+	if absence != nil {
+		fields["capability_absence_confidence"] = absence.Level
+		fields["capability_absence_reason"] = absence.Reason
+		if absence.PrecisionTier != "" {
+			fields["capability_absence_precision_tier"] = absence.PrecisionTier
+		}
+		if absence.Source != "" {
+			fields["capability_absence_source"] = absence.Source
+		}
+	}
+	fields["capability_unresolved_gaps"] = len(readOnlyCapabilityStatusGaps(decoded, fallback, absence))
+}
+
+func readOnlyCapabilityUnderlyingAsToolResult(underlying *ReadOnlyCapabilityUnderlyingResult) *ToolResult {
+	if underlying == nil {
+		return nil
+	}
+	return &ToolResult{
+		Tool:          underlying.Tool,
+		Summary:       underlying.Summary,
+		Output:        underlying.Output,
+		Error:         underlying.Error,
+		PrecisionTier: underlying.PrecisionTier,
+		Relationships: append([]ToolRelationship(nil), underlying.Relationships...),
+	}
+}
+
 func addContextAutoRefreshTelemetry(payload map[string]any, fields map[string]any) {
 	value, ok := payload["auto_refresh"].(map[string]any)
 	if !ok {
@@ -126,6 +279,169 @@ func addContextAutoRefreshTelemetry(payload map[string]any, fields map[string]an
 	copyTelemetryString(value, fields, "full_rebuild_reason", "context_auto_refresh_full_rebuild_reason")
 	copyTelemetryBool(value, fields, "fresh_after", "context_auto_refresh_fresh_after")
 	copyTelemetryArrayLen(value, fields, "refreshed_files", "context_auto_refresh_refreshed_files")
+}
+
+func addContextFreshnessTelemetry(payload map[string]any, fields map[string]any) {
+	value, ok := payload["freshness"].(map[string]any)
+	if !ok {
+		value, ok = payload["context_freshness"].(map[string]any)
+	}
+	if !ok {
+		return
+	}
+	copyTelemetryString(value, fields, "policy", "context_freshness_policy")
+	copyTelemetryString(value, fields, "operation", "context_freshness_operation")
+	copyTelemetryString(value, fields, "index_id", "context_freshness_index_id")
+	copyTelemetryString(value, fields, "store_kind", "context_freshness_store_kind")
+	copyTelemetryString(value, fields, "generated_at", "context_freshness_generated_at")
+	copyTelemetryString(value, fields, "scope", "context_freshness_scope")
+	copyTelemetryString(value, fields, "reason", "context_freshness_reason")
+	copyTelemetryString(value, fields, "blocker", "context_freshness_blocker")
+	copyTelemetryBool(value, fields, "fresh_for_scope", "context_fresh_for_scope")
+	copyTelemetryBool(value, fields, "global_fresh", "context_global_fresh")
+	copyTelemetryBool(value, fields, "budget_exceeded", "context_freshness_budget_exceeded")
+	copyTelemetryNumber(value, fields, "checked_path_count", "context_freshness_checked_path_count")
+	copyTelemetryNumber(value, fields, "stale_path_count", "context_freshness_stale_path_count")
+	copyTelemetryNumber(value, fields, "missing_path_count", "context_freshness_missing_path_count")
+	copyTelemetryArrayLen(value, fields, "checked_paths", "context_freshness_checked_paths")
+	copyTelemetryArrayLen(value, fields, "stale_paths", "context_freshness_stale_paths")
+	copyTelemetryArrayLen(value, fields, "missing_paths", "context_freshness_missing_paths")
+	state := contextFreshnessState(value)
+	if state != "" {
+		fields["context_freshness_state"] = state
+	}
+	if state == "blocked" {
+		fields["context_freshness_blocked"] = true
+	}
+	refresh, ok := value["refresh"].(map[string]any)
+	if !ok {
+		return
+	}
+	copyTelemetryBool(refresh, fields, "attempted", "context_freshness_refresh_attempted")
+	copyTelemetryString(refresh, fields, "scope", "context_freshness_refresh_scope")
+	copyTelemetryString(refresh, fields, "reason", "context_freshness_refresh_reason")
+	copyTelemetryString(refresh, fields, "skipped_reason", "context_freshness_refresh_skipped_reason")
+	copyTelemetryString(refresh, fields, "error", "context_freshness_refresh_error")
+	copyTelemetryString(refresh, fields, "full_rebuild_reason", "context_freshness_full_rebuild_reason")
+	copyTelemetryNumber(refresh, fields, "files_indexed", "context_freshness_refresh_files_indexed")
+	copyTelemetryArrayLen(refresh, fields, "refreshed_files", "context_freshness_refresh_refreshed_files")
+}
+
+func addContextStaleEvidenceTelemetry(payload map[string]any, fields map[string]any) {
+	value, ok := payload["stale_evidence"].(map[string]any)
+	if !ok {
+		value, ok = payload["context_stale_evidence"].(map[string]any)
+	}
+	if !ok {
+		return
+	}
+	copyTelemetryString(value, fields, "state", "context_stale_evidence_state")
+	copyTelemetryString(value, fields, "policy", "context_stale_evidence_policy")
+	copyTelemetryString(value, fields, "reason", "context_stale_evidence_reason")
+	copyTelemetryBool(value, fields, "fresh_for_scope", "context_stale_evidence_fresh_for_scope")
+	copyTelemetryBool(value, fields, "global_fresh", "context_stale_evidence_global_fresh")
+	copyTelemetryNumber(value, fields, "stale_path_count", "context_stale_evidence_stale_path_count")
+	copyTelemetryNumber(value, fields, "missing_path_count", "context_stale_evidence_missing_path_count")
+	state, _ := value["state"].(string)
+	switch strings.TrimSpace(state) {
+	case "blocked":
+		fields["context_freshness_state"] = "blocked"
+		fields["context_stale_use_blocked"] = true
+	case "reported":
+		fields["context_freshness_state"] = "reported"
+		delete(fields, "context_freshness_blocked")
+		fields["context_stale_use_reported"] = true
+	case "allowed_stale":
+		fields["context_freshness_state"] = "allowed_stale"
+		delete(fields, "context_freshness_blocked")
+		fields["context_stale_use_allowed"] = true
+	case "fresh":
+		fields["context_freshness_state"] = "fresh"
+		delete(fields, "context_freshness_blocked")
+		fields["context_stale_use_fresh"] = true
+	}
+}
+
+func addContextCacheTelemetry(payload map[string]any, fields map[string]any) {
+	value, ok := payload["cache"].(map[string]any)
+	if !ok {
+		contract, ok := payload["contract"].(map[string]any)
+		if ok {
+			value, ok = contract["cache"].(map[string]any)
+		}
+	}
+	if !ok {
+		return
+	}
+	copyTelemetryString(value, fields, "state", "context_cache_state")
+	copyTelemetryString(value, fields, "source", "context_cache_source")
+	copyTelemetryString(value, fields, "reason", "context_cache_reason")
+	copyTelemetryString(value, fields, "cache_key", "context_cache_key")
+	copyTelemetryString(value, fields, "pack_id", "context_cache_pack_id")
+	copyTelemetryString(value, fields, "workspace_state_fingerprint", "context_cache_workspace_state_fingerprint")
+	copyTelemetryString(value, fields, "ranker_weights_fingerprint", "context_cache_ranker_weights_fingerprint")
+	copyTelemetryString(value, fields, "runtime_traces_fingerprint", "context_cache_runtime_traces_fingerprint")
+	copyTelemetryString(value, fields, "freshness_policy", "context_cache_freshness_policy")
+	copyTelemetryBool(value, fields, "read_through_refresh", "context_cache_read_through_refresh")
+	copyTelemetryBool(value, fields, "fallback", "context_cache_fallback")
+	invalidation, ok := value["invalidation"].(map[string]any)
+	if !ok {
+		return
+	}
+	copyTelemetryString(invalidation, fields, "policy", "context_cache_invalidation_policy")
+	copyTelemetryString(invalidation, fields, "state", "context_cache_invalidation_state")
+	copyTelemetryString(invalidation, fields, "stale_result", "context_cache_stale_result")
+	copyTelemetryArrayLen(invalidation, fields, "sources", "context_cache_invalidation_sources")
+}
+
+func contextFreshnessState(freshness map[string]any) string {
+	fresh, ok := freshness["fresh_for_scope"].(bool)
+	if !ok {
+		return ""
+	}
+	if fresh {
+		return "fresh"
+	}
+	policy, _ := freshness["policy"].(string)
+	switch strings.TrimSpace(policy) {
+	case "report_only":
+		return "reported"
+	case "allow_stale":
+		return "allowed_stale"
+	default:
+		return "blocked"
+	}
+}
+
+func addContextConfidenceTelemetry(payload map[string]any, fields map[string]any) {
+	value, ok := payload["confidence"].(map[string]any)
+	if !ok {
+		value, ok = payload["context_confidence"].(map[string]any)
+	}
+	if !ok {
+		return
+	}
+	copyTelemetryString(value, fields, "level", "context_confidence_level")
+	copyTelemetryString(value, fields, "source", "context_confidence_source")
+	copyTelemetryString(value, fields, "reason", "context_confidence_reason")
+}
+
+func addContextProvenanceTelemetry(payload map[string]any, fields map[string]any) {
+	value, ok := payload["provenance"].(map[string]any)
+	if !ok {
+		value, ok = payload["context_provenance"].(map[string]any)
+	}
+	if !ok {
+		return
+	}
+	copyTelemetryString(value, fields, "source", "context_provenance_source")
+	copyTelemetryString(value, fields, "operation", "context_provenance_operation")
+	copyTelemetryString(value, fields, "store_kind", "context_provenance_store_kind")
+	copyTelemetryString(value, fields, "index_id", "context_provenance_index_id")
+	copyTelemetryString(value, fields, "generated_at", "context_provenance_generated_at")
+	copyTelemetryString(value, fields, "collector_version", "context_provenance_collector_version")
+	copyTelemetryString(value, fields, "current_collector_version", "context_provenance_current_collector_version")
+	copyTelemetryString(value, fields, "artifact_path", "context_provenance_artifact_path")
 }
 
 func addContextNodeKindTelemetry(payload map[string]any, fields map[string]any) {

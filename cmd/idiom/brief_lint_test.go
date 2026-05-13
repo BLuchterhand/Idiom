@@ -121,6 +121,73 @@ func TestBriefLintParsesParentheticalHeading(t *testing.T) {
 	}
 }
 
+func TestBriefLintParsesScopeFilesHeading(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"scripts/verify_atom.sh": "#!/usr/bin/env bash\n",
+	})
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
+		"## Scope\n\n"+
+		"### Files\n"+
+		"| File | Change |\n"+
+		"| --- | --- |\n"+
+		"| `scripts/verify_atom.sh` | MODIFY trace audit at line 1 |\n\n"+
+		"## Verified Current State\n\nLine 1 is `#!/usr/bin/env bash`.\n"))
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("expected lint OK on Scope/Files allowlist, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "1 file-allowlist row(s)") {
+		t.Fatalf("parser must recognize Scope/Files and parse the row: %s", out)
+	}
+}
+
+func TestBriefLintBlocksScopeFilesBriefWithoutAnchoredSections(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"scripts/verify_atom.sh": "#!/usr/bin/env bash\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Scope\n\n"+
+		"### Files\n"+
+		"| File | Change |\n"+
+		"| --- | --- |\n"+
+		"| `scripts/verify_atom.sh` | Add the active testing coverage atom trace audit |\n\n"+
+		"## Changes\n\n"+
+		"1. Add a small helper block in `scripts/verify_atom.sh`.\n\n"+
+		"## Tests\n\n"+
+		"- `bash -n scripts/verify_atom.sh`\n\n"+
+		"## Acceptance\n\n"+
+		"1. `bash -n scripts/verify_atom.sh`\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected lint FAIL on Scope/Files brief missing anchored sections, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "required section missing for anchored-edits mode") {
+		t.Fatalf("stderr should report anchored structural failure: %s", out)
+	}
+	if strings.Contains(out, "brief shape is unknown") {
+		t.Fatalf("Scope/Files should be classified as anchored, not unknown: %s", out)
+	}
+}
+
+func TestBriefLintBlocksUnknownBriefShape(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, nil)
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Scope\n\n"+
+		"This is not an implementation allowlist.\n\n"+
+		"## Acceptance\n\n"+
+		"- `go test ./...`\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected lint FAIL on unknown brief shape, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "brief shape is unknown") {
+		t.Fatalf("stderr should report unknown brief shape: %s", out)
+	}
+}
+
 // TestBriefLintBlocksProseAnchorInAllowlist confirms the new prose-anchor
 // rule fires on "near top of file" in a Files-to-Modify row — the exact
 // shape that wedged the falldetect brief while it still passed
@@ -173,6 +240,61 @@ func TestBriefLintWarnsOnBranchingInRequiredEdit(t *testing.T) {
 	}
 	if !strings.Contains(out, "branching language in Required Edit") {
 		t.Fatalf("stderr should carry the branching WARN: %s", out)
+	}
+}
+
+func TestBriefLintDoesNotWarnOnMultipleReadFirstAnchors(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"internal/foo/bar.go": "package foo\n\nfunc Existing() {}\n\n\n\n\nfunc Other() {}\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Read First\n\n"+
+		"- `internal/foo/bar.go` line 1 for package context.\n"+
+		"- `internal/foo/bar.go` line 8 for nearby helper context.\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `internal/foo/bar.go` | ADD `func Added()` after the verified helper context |\n\n"+
+		"## Verified Current State\n\n"+
+		"`internal/foo/bar.go` line 1 is `package foo` and line 8 is `func Other() {}`.\n\n"+
+		"## Required Edits\n\n"+
+		"Append `func Added() {}` after the existing helper block.\n\n"+
+		"## Acceptance\n\n"+
+		"- `go build ./...` succeeds.\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("read-first anchors should not fail lint, got exit=%d output=%s", exit, out)
+	}
+	if strings.Contains(out, "structure-describing anchors") {
+		t.Fatalf("read-first/current-state line evidence should not trigger edit-contract warning: %s", out)
+	}
+}
+
+func TestBriefLintWarnsOnMultipleRequiredEditAnchors(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"internal/foo/bar.go": "package foo\n\nfunc Existing() {}\n\n\n\n\nfunc Other() {}\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Read First\n\n"+
+		"- `internal/foo/bar.go` line 1 for package context.\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `internal/foo/bar.go` | ADD `func Added()` after the verified helper context |\n\n"+
+		"## Verified Current State\n\n"+
+		"`internal/foo/bar.go` line 1 is `package foo`.\n\n"+
+		"## Required Edits\n\n"+
+		"In `internal/foo/bar.go`, combine line 1 and line 8 into one replacement window.\n\n"+
+		"## Acceptance\n\n"+
+		"- `go build ./...` succeeds.\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("structure anchor issue should WARN, not FAIL, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "structure-describing anchors") {
+		t.Fatalf("required-edit line soup should still trigger the warning: %s", out)
 	}
 }
 
@@ -252,6 +374,32 @@ func TestBriefLintAnchorVerificationFileMissing(t *testing.T) {
 	}
 }
 
+// TestBriefLintAnchorVerificationSkipsExplicitNewFileRows confirms
+// new-file wording in the Files-to-Modify action suppresses existence
+// verification for paths that are intentionally being created, without
+// requiring the action to start with the old magic "new file:" prefix.
+func TestBriefLintAnchorVerificationSkipsExplicitNewFileRows(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"internal/foo/bar.go": "package foo\nfunc Existing() {}\n",
+	})
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `internal/foo/bar.go` | MODIFY `Existing` at line 2 |\n"+
+		"| `scripts/new_guard.sh` | Create this new shell helper. |\n"+
+		"| `.idiom/postflight/checks/new_guard.json` | Create this new idiom project check JSON. |\n\n"+
+		"## Current state\n\nLine 2 is `func Existing() {}`.\n"))
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("expected OK with explicit new-file rows skipped, got exit=%d output=%s", exit, out)
+	}
+	if strings.Contains(out, "file not found in workspace") {
+		t.Fatalf("new-file rows should not be treated as stale paths: %s", out)
+	}
+}
+
 // TestBriefLintAnchorVerificationOldTextMatches confirms a labeled
 // `old_text:` block that exactly matches the file passes verification.
 func TestBriefLintAnchorVerificationOldTextMatches(t *testing.T) {
@@ -322,6 +470,107 @@ func TestBriefLintAnchorVerificationOldTextStale(t *testing.T) {
 	}
 	if !strings.Contains(out, "does not match") {
 		t.Fatalf("stderr should name the stale-anchor failure: %s", out)
+	}
+}
+
+func TestBriefLintAnchorVerificationOldTextAmbiguousFails(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"internal/foo/bar.go": "package foo\n\nfunc helper() {}\nfunc helper() {}\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `internal/foo/bar.go` | MODIFY first helper at line 3 |\n\n"+
+		"## Current state\n\nLine 3 is `func helper() {}`.\n\n"+
+		"## Required Edits\n\n"+
+		"### Edit 1 — `bar.go` change first helper\n\n"+
+		"old_text:\n"+
+		"```text\n"+
+		"func helper() {}\n"+
+		"```\n\n"+
+		"new_text:\n"+
+		"```text\n"+
+		"func helper() { return }\n"+
+		"```\n\n"+
+		"## Acceptance\n\n- `go test ./internal/foo` passes.\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected FAIL on ambiguous old_text, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "anchor not unique") {
+		t.Fatalf("stderr should name the ambiguous-anchor failure: %s", out)
+	}
+}
+
+func TestBriefLintBlocksForeignTestMarkerForGDScript(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"ui/panel.gd": "extends Control\n\nfunc _ready() -> void:\n\tpass\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `ui/panel.gd` | MODIFY `_ready` at line 3 |\n\n"+
+		"## Current state\n\nLine 3 is `func _ready() -> void:`.\n\n"+
+		"## Required Edits\n\n"+
+		"### Edit 1 — `panel.gd` wire ready\n\n"+
+		"Change `_ready` using the verified line anchor.\n\n"+
+		"## Acceptance\n\n"+
+		"- Add a doctest-style `TEST_CASE` for this GDScript behavior.\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected FAIL on GDScript/C++ test marker mismatch, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "language/profile mismatch") || !strings.Contains(out, "TEST_CASE") {
+		t.Fatalf("stderr should report foreign test marker: %s", out)
+	}
+}
+
+func TestBriefLintBlocksMissingAcceptanceCommandPath(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"scripts/existing.sh": "#!/usr/bin/env bash\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `scripts/existing.sh` | MODIFY line 1 |\n\n"+
+		"## Current state\n\nLine 1 is `#!/usr/bin/env bash`.\n\n"+
+		"## Required Edits\n\n"+
+		"Apply the edit named in the Files to Modify row.\n\n"+
+		"## Acceptance\n\n"+
+		"- `bash scripts/missing.sh` passes.\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected FAIL on missing command path, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "acceptance command references missing path") {
+		t.Fatalf("stderr should report missing command path: %s", out)
+	}
+}
+
+func TestBriefLintIgnoresAbsoluteAcceptanceCommandPath(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"scripts/existing.sh": "#!/usr/bin/env bash\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `scripts/existing.sh` | MODIFY line 1 |\n\n"+
+		"## Current state\n\nLine 1 is `#!/usr/bin/env bash`.\n\n"+
+		"## Required Edits\n\n"+
+		"Apply the edit named in the Files to Modify row.\n\n"+
+		"## Acceptance\n\n"+
+		"- `bash /tmp/idiom-missing-helper.sh` remains an external harness command.\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("expected OK when command path is absolute/external, got exit=%d output=%s", exit, out)
 	}
 }
 

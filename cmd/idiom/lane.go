@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -10,14 +11,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"idiom/internal/app"
 	"idiom/internal/backends"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
+	"idiom/internal/workspace"
 )
 
 // briefBodyStartMarker / briefBodyEndMarker bracket the project
@@ -74,7 +78,10 @@ type laneDeps struct {
 	runPlanExecute   laneSubcommandRunner
 	runImplement     laneSubcommandRunner
 	defaultPromptRun promptRunner
+	buildContextPack laneContextPackBuilder
 }
+
+type laneContextPackBuilder func(opts laneOptions, cfg config.Config, stderr io.Writer) string
 
 // laneOptions captures the parsed command-line arguments for the
 // lane wrapper. Fields that can be overridden at the CLI map 1:1 to
@@ -91,11 +98,14 @@ type laneOptions struct {
 	Resume                   string
 	PlannerOwnedVerification bool
 	AllowBuildTests          bool
+	DisableThinking          bool
 	ProjectRoot              string // overridable for tests; defaults to filepath.Dir(BriefPath)
 	NoLint                   bool   // skip the brief lint preflight (default: lint runs)
+	NoContextPack            bool   // skip automatic ranked context_pack prompt preload
 	SlotKey                  string // if set, acquire a filesystem mutex named idiom-lane-<key>
 	Postflight               bool   // run postflight against git diff after the lane returns
 	AllowStaleBrief          bool   // override the deterministic stale-brief gate (default: gate fails if any required path has commits newer than brief mtime)
+	AllowDirtyAtomScope      bool   // override atom-intake dirty scoped-path blocking
 	RefineSpecPath           string // refine mode: path to 1-paragraph spec
 	RefineOutputPath         string // refine mode: where to write the converged brief
 	RefineMaxIters           int    // refine mode: max draft+review+patch iterations (default 3)
@@ -111,7 +121,8 @@ type laneOptions struct {
 	// with no --model override). The actual alias is resolved later
 	// in runLaneMainWithDeps once backends.json has loaded so projects
 	// can override the default without changing every invocation.
-	coderRequested bool
+	coderRequested         bool
+	explicitCoderRequested bool
 }
 
 // laneBriefLintRunner is the package-level indirection tests stub
@@ -146,6 +157,7 @@ func runLaneMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		runPlanExecute:   runPlanExecuteMain,
 		runImplement:     runImplementMain,
 		defaultPromptRun: runPromptOnce,
+		buildContextPack: buildLaneContextPackSection,
 	})
 }
 
@@ -162,6 +174,7 @@ func runLaneMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 			return runImplementMainWithTelemetry(args, stdout, stderr, promptRun, rec)
 		},
 		defaultPromptRun: runPromptOnce,
+		buildContextPack: buildLaneContextPackSection,
 	}
 	return runLaneMainWithDeps(args, stdout, stderr, deps)
 }
@@ -204,15 +217,14 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			opts.ProjectRoot = filepath.Dir(opts.BriefPath)
 		}
 	}
-	// Resolve the executor-role alias now that project root is known.
-	// This covers both --coder and the plan-execute auto-route; an
-	// explicit --model already short-circuited coderRequested in
+	// Resolve the lane model alias now that project root is known.
+	// This covers both explicit --coder and the plan-execute auto-route;
+	// an explicit --model already short-circuited coderRequested in
 	// parseLaneOptions, so this doesn't fight a deliberate choice.
-	// When no backends.json declares an executor, opts.Model stays
-	// empty and the subcommand uses cfg.LlamaServer.Model — i.e. the
-	// project's single configured model handles the lane.
+	// Named plan-execute profiles can select a planner role; otherwise
+	// we keep the legacy executor fallback.
 	if opts.coderRequested && strings.TrimSpace(opts.Model) == "" {
-		opts.Model = resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RoleExecutor, stderr)
+		opts.Model = resolveLaneModelAlias(opts, stderr)
 	}
 	if opts.Mode == "history" {
 		filter := laneHistoryFilter{FailedOnly: opts.FailedOnly, ModeFilter: opts.ModeFilter}
@@ -248,6 +260,9 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		}
 		return runLaneRefine(refineOpts, defaultRefineDispatch, stdout, stderr)
 	}
+	if handled, code := runLaneAtomIntakePreflight(opts, stdout, stderr); handled {
+		return code
+	}
 	// Brief lint preflight: default-on. The wrapper that used to
 	// run this in shell is now redundant — every project that uses
 	// `idiom lane` benefits from catching unsafe briefs before
@@ -274,7 +289,11 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		}
 		defer release()
 	}
-	composedPath, err := composeLanePromptToFile(opts)
+	contextPackSection := ""
+	if deps.buildContextPack != nil && shouldAutoPreloadLaneContextPack(opts) {
+		contextPackSection = deps.buildContextPack(opts, cfg, stderr)
+	}
+	composedPath, err := composeLanePromptToFile(opts, contextPackSection)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -311,6 +330,13 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		fmt.Fprintf(stderr, "lane: unknown mode %q\n", opts.Mode)
 		return 2
 	}
+	degraded := analyzeLaneOutput(tee.Bytes(), subcode)
+	if opts.Postflight {
+		pfExit := runLanePostflightAfterLane(opts, stdout, stderr)
+		if pfExit > subcode {
+			subcode = pfExit
+		}
+	}
 	briefMtime := ""
 	if info, err := os.Stat(opts.BriefPath); err == nil {
 		briefMtime = info.ModTime().UTC().Format(time.RFC3339Nano)
@@ -322,14 +348,27 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		BriefProvenance: detectBriefProvenance(opts.BriefPath),
 		Title:           opts.Title,
 		ExitCode:        subcode,
+		FinalState:      laneRunFinalState(subcode, degraded),
+		QueuePool:       parseLaneQueuePool(tee.Bytes()),
+		Degradations:    laneDegradationKinds(degraded),
 	}
 	if summary, ok := parseSessionSummary(tee.Bytes()); ok {
+		historyEvt.SessionID = summary.SessionID
+		historyEvt.ModelCalls = summary.ModelCalls
+		historyEvt.ToolCalls = summary.ToolCalls
 		historyEvt.PromptTokens = summary.PromptTokens
 		historyEvt.CompletionTokens = summary.CompletionTokens
 		historyEvt.TotalTokens = summary.TotalTokens
+		historyEvt.PeakPromptTokens = summary.PeakPromptTokens
+		historyEvt.ContextSize = summary.ContextSize
+		historyEvt.DurationMS = summary.DurationMS
+		historyEvt.StopReason = summary.StopReason
 	}
 	if err := appendLaneHistory(opts.ProjectRoot, historyEvt); err != nil {
 		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
+	}
+	if opts.JSONEvents {
+		emitLaneJSONEvent(stdout, "run_ledger", laneHistoryEventFields(historyEvt))
 	}
 
 	// Post-analyze: detect three regression classes and emit a
@@ -337,7 +376,6 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	// the seam — projects subscribe to it from telemetry / stdout
 	// to drive their own audit ledger (e.g. Colony's
 	// harness_feedback). Idiom doesn't reach into project policy.
-	degraded := analyzeLaneOutput(tee.Bytes(), subcode)
 	for _, d := range degraded {
 		emitLaneJSONEvent(stdout, "degraded", map[string]any{
 			"kind":    d.kind,
@@ -345,12 +383,6 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			"mode":    opts.Mode,
 		})
 		fmt.Fprintf(stderr, "lane: degraded kind=%s details=%s\n", d.kind, d.details)
-	}
-	if opts.Postflight {
-		pfExit := runLanePostflightAfterLane(opts, stdout, stderr)
-		if pfExit > subcode {
-			subcode = pfExit
-		}
 	}
 	if subcode != 0 {
 		return subcode
@@ -370,6 +402,82 @@ func isKnownLaneMode(mode string) bool {
 		return true
 	}
 	return false
+}
+
+func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Writer) (bool, int) {
+	body, err := os.ReadFile(opts.BriefPath)
+	if err != nil {
+		return false, 0
+	}
+	if !laneBriefNeedsAtomIntake(string(body)) {
+		return false, 0
+	}
+	report := evaluateAtomIntake(string(body), opts.BriefPath, opts.ProjectRoot, opts.AllowDirtyAtomScope)
+	if opts.JSONEvents {
+		emitLaneJSONEvent(stdout, "atom_intake", laneAtomIntakeReportFields(report))
+	}
+	if report.Dispatchable {
+		return false, 0
+	}
+	historyEvt := laneHistoryEvent{
+		Mode:            opts.Mode,
+		Brief:           opts.BriefPath,
+		BriefMtime:      laneBriefMtime(opts.BriefPath),
+		BriefProvenance: detectBriefProvenance(opts.BriefPath),
+		Title:           opts.Title,
+		ExitCode:        1,
+		FinalState:      string(report.State),
+	}
+	if err := appendLaneHistory(opts.ProjectRoot, historyEvt); err != nil {
+		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
+	}
+	if opts.JSONEvents {
+		emitLaneJSONEvent(stdout, "run_ledger", laneHistoryEventFields(historyEvt))
+	}
+	fmt.Fprintln(stderr, "lane: atom intake blocked dispatch")
+	printAtomIntakeReport(report, stderr)
+	return true, 1
+}
+
+func laneBriefMtime(path string) string {
+	if info, err := os.Stat(path); err == nil {
+		return info.ModTime().UTC().Format(time.RFC3339Nano)
+	}
+	return ""
+}
+
+func laneBriefNeedsAtomIntake(body string) bool {
+	if _, ok := atomSpecStatus(body); ok {
+		return true
+	}
+	if _, ok := atomRefineDraftReason(body); ok {
+		return true
+	}
+	if len(extractDeliverableTargets(body, refineDetectMode(body))) == 0 {
+		return false
+	}
+	if atomSpecHasAcceptedResult(body) {
+		return true
+	}
+	for _, heading := range []string{"required edits", "edits to apply", "implementation shape"} {
+		if strings.TrimSpace(atomMarkdownSectionByHeading(body, heading)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func laneAtomIntakeReportFields(report atomIntakeReport) map[string]any {
+	body, err := json.Marshal(report)
+	if err != nil {
+		return map[string]any{}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return map[string]any{}
+	}
+	delete(fields, "type")
+	return fields
 }
 
 // parseLaneOptions parses lane-specific flags + the positional brief
@@ -413,11 +521,15 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id")
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", true, "delegate build/test verification to the caller (default true for lane)")
 	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag forwarded to the underlying subcommand")
+	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for the wrapped subprocess")
 	fs.StringVar(&opts.ProjectRoot, "project-root", "", "project root used to resolve .idiom/ overlays (defaults to the brief's directory)")
 	fs.BoolVar(&opts.NoLint, "no-lint", false, "skip the brief lint preflight (lint runs by default)")
+	fs.BoolVar(&opts.NoContextPack, "no-context-pack", false, "skip automatic ranked context_pack prompt preload")
 	fs.StringVar(&opts.SlotKey, "slot", "", "acquire a filesystem mutex idiom-lane-<key> to prevent concurrent dispatch of the same lane (caller picks the granularity)")
 	fs.BoolVar(&opts.Postflight, "postflight", false, "run idiom lane postflight against git diff after the lane returns; final exit is max(lane, postflight)")
 	fs.BoolVar(&opts.AllowStaleBrief, "allow-stale-brief", false, "override the deterministic stale-brief gate (default: fail if any required edit path has commits newer than brief mtime)")
+	fs.BoolVar(&opts.AllowDirtyAtomScope, "allow-dirty", false, "allow atom dispatch when scoped existing paths have local modifications")
+	fs.BoolVar(&opts.AllowDirtyAtomScope, "allow-dirty-scope", false, "alias for --allow-dirty")
 	fs.StringVar(&opts.RefineSpecPath, "spec", "", "refine mode: path to 1-paragraph spec file")
 	fs.StringVar(&opts.RefineOutputPath, "output", "", "refine mode: where to write the converged brief")
 	fs.IntVar(&opts.RefineMaxIters, "max-iters", 3, "refine mode: max draft+review+patch iterations (default 3)")
@@ -437,6 +549,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	// alias resolves in runLaneMainWithDeps once backends.json loads.
 	if *coderShortcut && strings.TrimSpace(opts.Model) == "" {
 		opts.coderRequested = true
+		opts.explicitCoderRequested = true
 	}
 
 	tail := fs.Args()
@@ -513,9 +626,17 @@ func runLanePostflightAfterLane(opts laneOptions, stdout io.Writer, stderr io.Wr
 	return lanePostflightRunner([]string{"--diff", tmp.Name(), "--project-root", opts.ProjectRoot, "--brief", opts.BriefPath}, stdout, stderr)
 }
 
+func resolveLaneModelAlias(opts laneOptions, stderr io.Writer) string {
+	if opts.Mode == "plan-execute" && !opts.explicitCoderRequested && strings.TrimSpace(opts.BackendProfile) != "" {
+		if alias := resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RolePlanner, stderr); alias != "" {
+			return alias
+		}
+	}
+	return resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RoleExecutor, stderr)
+}
+
 // resolveRoleAlias reads .idiom/backends.json for the resolved
-// project root and returns the alias declared for the requested role
-// (executor today; planner / classifier reserved for future use).
+// project root and returns the alias declared for the requested role.
 // Returns "" when the file is missing, the profile is not found, or
 // the role isn't declared — the caller leaves --model unset and the
 // underlying subcommand uses cfg.LlamaServer.Model. Malformed
@@ -586,6 +707,293 @@ func sanitizeSlotKey(key string) string {
 	return b.String()
 }
 
+func shouldAutoPreloadLaneContextPack(opts laneOptions) bool {
+	if opts.NoContextPack {
+		return false
+	}
+	if isRefineScratchpadMetaBrief(opts.BriefPath) {
+		return false
+	}
+	switch strings.TrimSpace(opts.Mode) {
+	case "implement", "plan-execute":
+		return strings.TrimSpace(opts.BriefPath) != ""
+	default:
+		return false
+	}
+}
+
+func isRefineScratchpadMetaBrief(briefPath string) bool {
+	p := filepath.ToSlash(filepath.Clean(strings.TrimSpace(briefPath)))
+	if p == "" || p == "." {
+		return false
+	}
+	if !strings.HasPrefix(p, ".idiom/refine/") && !strings.Contains(p, "/.idiom/refine/") {
+		return false
+	}
+	name := p
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		name = name[slash+1:]
+	}
+	return strings.HasPrefix(name, "meta-") && strings.HasSuffix(name, ".md")
+}
+
+type laneContextPackView struct {
+	PackID           string                    `json:"pack_id"`
+	ArtifactPath     string                    `json:"artifact_path"`
+	Fresh            bool                      `json:"fresh"`
+	CandidateFiles   []laneContextPackFile     `json:"candidate_files"`
+	CandidateSymbols []laneContextPackSymbol   `json:"candidate_symbols"`
+	Tests            []laneContextPackTest     `json:"tests"`
+	UnresolvedGaps   []string                  `json:"unresolved_gaps"`
+	Freshness        *laneContextPackFreshness `json:"freshness"`
+}
+
+type laneContextPackFreshness struct {
+	Policy        string `json:"policy"`
+	Operation     string `json:"operation"`
+	FreshForScope bool   `json:"fresh_for_scope"`
+	GlobalFresh   bool   `json:"global_fresh"`
+	Reason        string `json:"reason,omitempty"`
+}
+
+type laneContextPackFile struct {
+	Path       string  `json:"path"`
+	Role       string  `json:"role"`
+	Reason     string  `json:"reason"`
+	Language   string  `json:"language"`
+	Confidence string  `json:"confidence"`
+	Score      float64 `json:"score"`
+	Hub        bool    `json:"hub"`
+}
+
+type laneContextPackSymbol struct {
+	ID            string `json:"id"`
+	Path          string `json:"path"`
+	QualifiedName string `json:"qualified_name"`
+	Kind          string `json:"kind"`
+	StartLine     int    `json:"start_line"`
+	EndLine       int    `json:"end_line"`
+	Confidence    string `json:"confidence"`
+	Reason        string `json:"reason"`
+}
+
+type laneContextPackTest struct {
+	Command string `json:"command"`
+	Path    string `json:"path"`
+	Symbol  string `json:"symbol"`
+	Reason  string `json:"reason"`
+}
+
+func buildLaneContextPackSection(opts laneOptions, cfg config.Config, stderr io.Writer) string {
+	briefBody, err := os.ReadFile(opts.BriefPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "lane: context_pack skipped: read brief: %v\n", err)
+		return ""
+	}
+	if briefAlreadyHasContextPack(briefBody) {
+		return ""
+	}
+	wsCfg := cfg.Workspace
+	wsCfg.Root = firstNonEmptyString(strings.TrimSpace(opts.ProjectRoot), strings.TrimSpace(wsCfg.Root), filepath.Dir(opts.BriefPath))
+	if strings.TrimSpace(wsCfg.CWD) == "" {
+		wsCfg.CWD = wsCfg.Root
+	}
+	wsCfg.EnableWrites = false
+	mgr := workspace.NewManager(wsCfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	result := mgr.Execute(ctx, workspace.ToolRequest{
+		Tool:              "context_pack",
+		Task:              laneContextPackTask(opts, string(briefBody)),
+		Mode:              laneContextPackMode(opts.Mode),
+		Limit:             8,
+		BudgetTokens:      1200,
+		RequiredEditPaths: app.RequiredEditPathsFromPrompt(string(briefBody)),
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		fmt.Fprintf(stderr, "lane: context_pack skipped: %s\n", result.Error)
+		return ""
+	}
+	section, err := renderLaneContextPackSection(result)
+	if err != nil {
+		fmt.Fprintf(stderr, "lane: context_pack skipped: %v\n", err)
+		return ""
+	}
+	if strings.TrimSpace(section) != "" {
+		fmt.Fprintf(stderr, "lane: context_pack preloaded (%s)\n", result.Summary)
+	}
+	return section
+}
+
+func briefAlreadyHasContextPack(body []byte) bool {
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "\n## context pack") ||
+		strings.Contains(lower, "\n## context packet") ||
+		strings.Contains(lower, "\n# context pack") ||
+		strings.Contains(lower, "\n# context packet") ||
+		strings.Contains(lower, "\ncontext pack:") ||
+		strings.Contains(lower, "\ncontext packet:") ||
+		strings.HasPrefix(strings.TrimSpace(lower), "## context pack") ||
+		strings.HasPrefix(strings.TrimSpace(lower), "# context pack") ||
+		strings.HasPrefix(strings.TrimSpace(lower), "context pack:") ||
+		strings.HasPrefix(strings.TrimSpace(lower), "context packet:")
+}
+
+func laneContextPackMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case "plan-execute":
+		return "plan"
+	case "implement":
+		return "implement"
+	default:
+		return "plan"
+	}
+}
+
+func laneContextPackTask(opts laneOptions, briefBody string) string {
+	title := strings.TrimSpace(opts.Title)
+	if title == "" {
+		title = firstMarkdownHeading(briefBody)
+	}
+	if title == "" {
+		title = strings.TrimSuffix(filepath.Base(opts.BriefPath), filepath.Ext(opts.BriefPath))
+	}
+	body := normalizeLaneContextPackTaskBody(briefBody)
+	if len(body) > 8000 {
+		body = body[:8000]
+	}
+	return strings.TrimSpace(strings.Join([]string{
+		"lane: " + strings.TrimSpace(opts.Mode),
+		"title: " + title,
+		"brief:",
+		body,
+	}, "\n"))
+}
+
+func normalizeLaneContextPackTaskBody(body string) string {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		line = regexpRefineScratchpadPath.ReplaceAllString(line, ".idiom/refine/<title>/iter-N/<artifact>")
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+var regexpRefineScratchpadPath = regexp.MustCompile(`\.idiom/refine/[^` + "`" + `\s)]+/iter-\d+/[^` + "`" + `\s)]+`)
+var regexpContextViewArtifactPath = regexp.MustCompile(`\.idiom/comprehension/views/[A-Za-z0-9._-]+\.json`)
+
+func firstMarkdownHeading(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "# ") {
+			continue
+		}
+		return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+	}
+	return ""
+}
+
+func renderLaneContextPackSection(result workspace.ToolResult) (string, error) {
+	var view laneContextPackView
+	if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
+		return "", fmt.Errorf("decode context_pack output: %w", err)
+	}
+	var b strings.Builder
+	b.WriteString("## Context Pack\n\n")
+	b.WriteString("Source: idiom `context_pack` automatic preload. Use this ranked packet before broad reads; treat it as cached context and verify exact anchors before source writes.\n\n")
+	summary := regexpContextViewArtifactPath.ReplaceAllString(strings.TrimSpace(result.Summary), "context view artifact")
+	fmt.Fprintf(&b, "- Summary: %s\n", summary)
+	if view.PackID != "" {
+		fmt.Fprintf(&b, "- Pack: `%s`\n", view.PackID)
+	}
+	if view.Freshness != nil {
+		fmt.Fprintf(&b, "- Freshness: policy=%s fresh_for_scope=%t global_fresh=%t", view.Freshness.Policy, view.Freshness.FreshForScope, view.Freshness.GlobalFresh)
+		if view.Freshness.Reason != "" {
+			fmt.Fprintf(&b, " reason=%s", view.Freshness.Reason)
+		}
+		b.WriteByte('\n')
+	} else {
+		fmt.Fprintf(&b, "- Fresh: %t\n", view.Fresh)
+	}
+	writeLaneContextFiles(&b, view.CandidateFiles, 8)
+	writeLaneContextSymbols(&b, view.CandidateSymbols, 8)
+	writeLaneContextTests(&b, view.Tests, 4)
+	writeLaneContextGaps(&b, view.UnresolvedGaps, 4)
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+func writeLaneContextFiles(b *strings.Builder, files []laneContextPackFile, limit int) {
+	if len(files) == 0 {
+		return
+	}
+	b.WriteString("\n### Candidate Files\n\n")
+	for i, file := range files {
+		if i >= limit {
+			break
+		}
+		role := firstNonEmptyString(file.Role, "candidate")
+		score := ""
+		if file.Score > 0 {
+			score = fmt.Sprintf(", score=%.2f", file.Score)
+		}
+		hub := ""
+		if file.Hub {
+			hub = ", hub"
+		}
+		fmt.Fprintf(b, "- `%s` (%s%s%s): %s\n", file.Path, role, score, hub, firstNonEmptyString(file.Reason, file.Confidence, file.Language))
+	}
+}
+
+func writeLaneContextSymbols(b *strings.Builder, symbols []laneContextPackSymbol, limit int) {
+	if len(symbols) == 0 {
+		return
+	}
+	b.WriteString("\n### Candidate Symbols\n\n")
+	for i, sym := range symbols {
+		if i >= limit {
+			break
+		}
+		name := firstNonEmptyString(sym.QualifiedName, sym.ID)
+		loc := sym.Path
+		if sym.StartLine > 0 {
+			loc = fmt.Sprintf("%s:%d", loc, sym.StartLine)
+		}
+		fmt.Fprintf(b, "- `%s` in `%s` (%s): %s\n", name, loc, firstNonEmptyString(sym.Kind, "symbol"), firstNonEmptyString(sym.Reason, sym.Confidence))
+	}
+}
+
+func writeLaneContextTests(b *strings.Builder, tests []laneContextPackTest, limit int) {
+	if len(tests) == 0 {
+		return
+	}
+	b.WriteString("\n### Candidate Tests\n\n")
+	for i, test := range tests {
+		if i >= limit {
+			break
+		}
+		target := firstNonEmptyString(test.Symbol, test.Path)
+		if target != "" {
+			target = " — " + target
+		}
+		fmt.Fprintf(b, "- `%s`%s\n", test.Command, target)
+	}
+}
+
+func writeLaneContextGaps(b *strings.Builder, gaps []string, limit int) {
+	if len(gaps) == 0 {
+		return
+	}
+	b.WriteString("\n### Context Gaps\n\n")
+	for i, gap := range gaps {
+		if i >= limit {
+			break
+		}
+		fmt.Fprintf(b, "- %s\n", gap)
+	}
+}
+
 // composeLanePromptToFile builds the composed prompt and writes it to
 // a temp file the underlying subcommand reads via --prompt-file. The
 // caller MUST defer os.Remove on the returned path — see
@@ -608,7 +1016,7 @@ func sanitizeSlotKey(key string) string {
 // canonical name replace the canonical entry in place; project files
 // with names NOT in the canonical set append after the canonical block.
 // Empty/missing files at any layer are skipped.
-func composeLanePromptToFile(opts laneOptions) (string, error) {
+func composeLanePromptToFile(opts laneOptions, contextPackSection string) (string, error) {
 	briefBody, err := os.ReadFile(opts.BriefPath)
 	if err != nil {
 		return "", fmt.Errorf("lane: read brief: %w", err)
@@ -623,6 +1031,9 @@ func composeLanePromptToFile(opts laneOptions) (string, error) {
 	}
 	if pre := readProjectLaneOverlay(opts.ProjectRoot, opts.Mode, "preamble.md"); strings.TrimSpace(pre) != "" {
 		parts = append(parts, pre)
+	}
+	if strings.TrimSpace(contextPackSection) != "" {
+		parts = append(parts, contextPackSection)
 	}
 	// Wrap the brief body in explicit boundary markers so downstream
 	// extractors (path detection, discovery handles) can scope to the
@@ -817,6 +1228,9 @@ func buildForwardedArgs(opts laneOptions, composedPath string) []string {
 	}
 	if opts.AllowBuildTests {
 		out = append(out, "--allow-build-tests")
+	}
+	if opts.DisableThinking {
+		out = append(out, "--no-thinking")
 	}
 	if opts.MaxTokens > 0 {
 		out = append(out, "--max-tokens", strconv.Itoa(opts.MaxTokens))

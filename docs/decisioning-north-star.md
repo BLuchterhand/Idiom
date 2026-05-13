@@ -1,5 +1,9 @@
 # Decisioning North Star
 
+**North Star: AI coding agents are becoming common, but teams do not yet trust
+their context, decisions, or outputs. Idiom sells the missing substrate: repo
+memory, freshness, contracts, audit, and evals.**
+
 This is the decisioning standard for the harness.
 
 ## Core Split
@@ -74,18 +78,50 @@ Use deterministic checks for the invariant boundary:
 - writes must stay inside the allowed scope
 - verification evidence must match the artifact risk and occur after the
   relevant writes
+- workflow artifacts must move through typed state transitions; terminal,
+  source-satisfied, stale, failed-refine, dirty-scope, invalid-scope, and
+  dispatchable states are harness facts, not prose guesses
 - repeated low-value reads/searches must eventually stop
 - when the harness has computed a required-path implementation state, the
   tool surface should expose the contract menu: in-scope write capabilities,
-  bounded required-path source reads for named edit-safety gaps, or a concrete
-  blocker. Exact-anchor packets may be write-first; abstract/rich packets
-  should not be treated as if the precise edit anchor is guaranteed.
+  semantic/context/declared project discovery or narrow required-path source
+  reads for named edit-safety gaps, or a concrete blocker. Exact-anchor
+  packets may be write-first; abstract/rich packets should not be treated as
+  if the precise edit anchor is guaranteed.
 
 If a deterministic backstop fires repeatedly, treat that as an alignment gap,
 not as proof that the model should be micromanaged. The first repair should be
 to make the structured contract clearer at its canonical owner: route metadata,
 runtime brief, tool result, step-state packet, or one prompt surface. Do not add
 the same rule to every prompt layer.
+
+## Workflow Transition Contracts
+
+Long-running agent workflows should be modeled as bounded, auditable state
+machines. Before a model receives an implementation lane, the harness should
+classify the artifact it is about to act on: dispatchable, complete,
+source-satisfied, stale-needs-rebase, failed-refine-draft, blocked by dirty
+scoped files, or missing the scope required for a safe write. Scope must be
+inside the workspace root; outside-root paths are invalid even when they exist
+on disk. These classifications are contract outcomes. A non-dispatchable
+classification is not a model failure and should be logged as useful evidence
+for the caller.
+
+The generic pattern is:
+
+- Intake reads a durable artifact plus the workspace state and emits a typed
+  report.
+- Execution lanes refuse terminal, stale, dirty, or unscoped artifacts before
+  spending model tokens.
+- Review and acceptance lanes write explicit source-satisfied or complete
+  outcomes instead of rewriting already-satisfied work.
+- Queue producers consume the same state report instead of duplicating
+  project-specific status parsing.
+
+This belongs in idiom core when the invariant is generic: do not ask an agent
+to mutate stale, already-complete, or ambiguous work. Project policies can
+choose what artifact format to feed the gate, but the bounded transition and
+audit behavior are harness responsibilities.
 
 ## Force Is Still Correct
 
@@ -179,12 +215,27 @@ Verification must match artifact risk. Patch-hygiene checks such as
 source-aware verification for code edits. Source edits require language
 diagnostics through the generic `source_sanity` route, a focused build/test, or
 a concrete blocker that says why source-aware evidence is unavailable.
+Tautological assertions (`assert true`, `CHECK(true)`, `_assert_true(true)`) and
+comments that admit the behavior is not inspected are not verification evidence;
+they should be rejected by deterministic lane contracts, not negotiated in a
+prompt.
+
+Phase transitions should carry a compact evidence bundle rather than asking the
+next model pass to rediscover context. A review pass should see packet status,
+candidate files/symbols/tests, unresolved packet gaps, changed paths,
+source-sanity results, diff hygiene, and open obligations before it decides to
+pass, repair, or block.
 
 ## Drift Detection
 
 Prompt overlap is a harness smell, not merely a writing problem. Look for these
 signals before adding more instructions:
 
+- behavior claims are not backed by conversation logs, telemetry logs, or
+  `harness_audit` output
+- a failure can only be diagnosed by hand-reading one raw JSONL file because
+  the audit layer does not summarize the relevant contract, recovery, or
+  no-progress shape
 - the same rule appears in multiple prompt/profile/project files
 - late system-message attachment is needed routinely for normal tasks
 - wrapper docs tell agents to rely on a behavior that is not represented in a
@@ -207,9 +258,12 @@ The repair path is:
    when the contract is missing.
 4. Align the model-facing wording at the canonical owner when the contract
    exists but the model is not naturally following it.
-5. Remove duplicate prose from secondary prompt surfaces.
-6. Add or update audit telemetry so the same drift shape is visible next time.
-7. Add an expectation test for the behavior, not a coverage-driven test of the
+5. Use logs as the source of truth for whether the repair worked; if the logs
+   cannot answer that question, fix the logging or audit path before declaring
+   the behavior understood.
+6. Remove duplicate prose from secondary prompt surfaces.
+7. Add or update audit telemetry so the same drift shape is visible next time.
+8. Add an expectation test for the behavior, not a coverage-driven test of the
    implementation detail.
 
 Nudges are temporary. If the same nudge becomes routine, graduate it into a

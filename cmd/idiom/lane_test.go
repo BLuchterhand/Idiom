@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/config"
+	"idiom/internal/workspace"
 )
 
 // laneFakeRunner captures the arguments handed to the underlying
@@ -73,6 +76,20 @@ func writeBrief(t *testing.T, body string) string {
 	return path
 }
 
+func minimalValidPlanExecuteBrief() string {
+	return "# atom\n\n" +
+		"## Files To Modify\n\n" +
+		"| File | Action |\n" +
+		"| --- | --- |\n" +
+		"| `.planning/trace.md` | Create this new file. |\n\n" +
+		"## Verified Current State\n\n" +
+		"The planning note does not exist yet.\n\n" +
+		"## Required Edits\n\n" +
+		"Create `.planning/trace.md` with a short trace note.\n\n" +
+		"## Acceptance\n\n" +
+		"- Lane wrapper dispatch reaches the fake runner.\n"
+}
+
 // TestRunLaneMainRequiresBrief verifies the wrapper rejects calls
 // with no positional brief, mirroring run_idiom_impl.sh's behavior.
 func TestRunLaneMainRequiresBrief(t *testing.T) {
@@ -117,6 +134,86 @@ func TestRunLaneMainPlanExecuteForwards(t *testing.T) {
 	}
 }
 
+func TestRunLaneMainAtomIntakeBlocksNonDispatchableBeforeRunner(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n\nfunc done() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	briefPath := filepath.Join(root, "atom.md")
+	brief := "# Atom\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `foo.go` | Add done helper. |\n\n## Required Edits\n\nIn `foo.go`, add:\n\n```go\nfunc done() {}\n```\n"
+	if err := os.WriteFile(briefPath, []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	code := runLaneMainTest(t, []string{"plan-execute", "--json", "--project-root", root, briefPath}, &stdout, &stderr, fake)
+	if code == 0 {
+		t.Fatalf("expected atom intake to block dispatch")
+	}
+	if fake.calledMode != "" {
+		t.Fatalf("fake runner should not be called, got mode %q", fake.calledMode)
+	}
+	if !strings.Contains(stderr.String(), "atom intake blocked dispatch") || !strings.Contains(stderr.String(), "source-satisfied") {
+		t.Fatalf("stderr should explain intake block, got:\n%s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"type":"idiom.lane.atom_intake"`) || !strings.Contains(stdout.String(), `"dispatchable":false`) {
+		t.Fatalf("stdout should include atom intake event, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunLaneMainAtomIntakeBlocksDirtyScopedPathBeforeRunner(t *testing.T) {
+	root := initGitRepoForStaleness(t)
+	gitCommit(t, root, "src/foo.go", "package src\n", "initial")
+	if err := os.WriteFile(filepath.Join(root, "src/foo.go"), []byte("package src\n\nfunc dirty() {}\n"), 0o644); err != nil {
+		t.Fatalf("dirty source: %v", err)
+	}
+	brief := "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `src/foo.go` | Modify source. |\n"
+	briefPath := writeBriefFile(t, root, "atom.md", brief, time.Now().Add(time.Hour))
+
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	code := runLaneMainTest(t, []string{"plan-execute", "--json", "--project-root", root, briefPath}, &stdout, &stderr, fake)
+	if code == 0 {
+		t.Fatalf("expected dirty atom scope to block dispatch")
+	}
+	if fake.calledMode != "" {
+		t.Fatalf("fake runner should not be called, got mode %q", fake.calledMode)
+	}
+	if !strings.Contains(stderr.String(), "blocked-dirty-files") || !strings.Contains(stderr.String(), "src/foo.go") {
+		t.Fatalf("stderr should explain dirty scope block, got:\n%s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"state":"blocked-dirty-files"`) || !strings.Contains(stdout.String(), `"type":"idiom.lane.run_ledger"`) {
+		t.Fatalf("stdout should include intake and ledger events, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunLaneMainAtomIntakeAllowDirtyDispatches(t *testing.T) {
+	root := initGitRepoForStaleness(t)
+	gitCommit(t, root, "src/foo.go", "package src\n", "initial")
+	if err := os.WriteFile(filepath.Join(root, "src/foo.go"), []byte("package src\n\nfunc dirty() {}\n"), 0o644); err != nil {
+		t.Fatalf("dirty source: %v", err)
+	}
+	brief := "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `src/foo.go` | Modify source. |\n"
+	briefPath := writeBriefFile(t, root, "atom.md", brief, time.Now().Add(time.Hour))
+
+	for _, flag := range []string{"--allow-dirty", "--allow-dirty-scope"} {
+		t.Run(flag, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			fake := &laneFakeRunner{}
+			code := runLaneMainTest(t, []string{"plan-execute", "--json", flag, "--project-root", root, briefPath}, &stdout, &stderr, fake)
+			if code != 0 {
+				t.Fatalf("expected %s to dispatch, got %d stderr=%s stdout=%s", flag, code, stderr.String(), stdout.String())
+			}
+			if fake.calledMode != "plan-execute" {
+				t.Fatalf("fake runner should be called, got mode %q", fake.calledMode)
+			}
+			if !strings.Contains(stdout.String(), `"state":"dispatchable"`) {
+				t.Fatalf("stdout should include dispatchable atom intake event, got:\n%s", stdout.String())
+			}
+		})
+	}
+}
+
 // TestRunLaneMainImplementForwards mirrors the previous test for
 // implement mode.
 func TestRunLaneMainImplementForwards(t *testing.T) {
@@ -146,6 +243,191 @@ func TestRunLaneMainComposesPreamblePostamble(t *testing.T) {
 	prompt := fake.calledPrompt
 	if !strings.Contains(prompt, briefBody) {
 		t.Fatalf("composed prompt must include the brief body verbatim, got: %s", prompt[:min(200, len(prompt))])
+	}
+}
+
+func TestRunLaneMainInjectsAutomaticContextPackBeforeBrief(t *testing.T) {
+	briefBody := "# Routing atom\n\nFiles To Modify:\n- internal/app/prompt_routing.go\n"
+	briefPath := writeBrief(t, briefBody)
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	cfg := config.Default()
+	cfg.Workspace.Root = filepath.Dir(briefPath)
+	cfg.Workspace.EnableWrites = true
+	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	deps := laneDeps{
+		loadConfig:     func(string) (config.Config, error) { return cfg, nil },
+		runPlanExecute: fake.plan,
+		runImplement:   fake.implement,
+		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) {
+			return "", nil
+		},
+		buildContextPack: func(opts laneOptions, got config.Config, stderr io.Writer) string {
+			if opts.Mode != "implement" {
+				t.Fatalf("context pack saw mode %q, want implement", opts.Mode)
+			}
+			if got.Workspace.Root != cfg.Workspace.Root {
+				t.Fatalf("context pack saw root %q, want %q", got.Workspace.Root, cfg.Workspace.Root)
+			}
+			return "## Context Pack\n\n- `internal/app/prompt_routing.go` (editable): matched task terms\n"
+		},
+	}
+	code := runLaneMainWithDeps([]string{"implement", "--project-root", cfg.Workspace.Root, briefPath}, &stdout, &stderr, deps)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	prompt := fake.calledPrompt
+	contextIdx := strings.Index(prompt, "## Context Pack")
+	briefIdx := strings.Index(prompt, briefBody)
+	if contextIdx < 0 {
+		t.Fatalf("composed prompt missing context pack:\n%s", prompt)
+	}
+	if briefIdx < 0 {
+		t.Fatalf("composed prompt missing brief body:\n%s", prompt)
+	}
+	if contextIdx > briefIdx {
+		t.Fatalf("context pack should precede brief body")
+	}
+	if !strings.Contains(prompt, briefBodyStartMarker+"\n"+briefBody) {
+		t.Fatalf("brief body should remain marker-scoped after context pack injection")
+	}
+}
+
+func TestRunLaneMainNoContextPackSkipsAutomaticContextPack(t *testing.T) {
+	briefPath := writeBrief(t, "# Routing atom\n\nFiles To Modify:\n- internal/app/prompt_routing.go\n")
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	cfg := config.Default()
+	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	calls := 0
+	deps := laneDeps{
+		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
+		runPlanExecute:   fake.plan,
+		runImplement:     fake.implement,
+		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		buildContextPack: func(laneOptions, config.Config, io.Writer) string {
+			calls++
+			return "## Context Pack\n\nshould not appear\n"
+		},
+	}
+	code := runLaneMainWithDeps([]string{"implement", "--no-context-pack", briefPath}, &stdout, &stderr, deps)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	if calls != 0 {
+		t.Fatalf("context pack builder should not run when --no-context-pack is set, got %d call(s)", calls)
+	}
+	if strings.Contains(fake.calledPrompt, "should not appear") {
+		t.Fatalf("context pack section leaked into prompt")
+	}
+}
+
+func TestRunLaneMainSkipsContextPackForRefineScratchpadMetaBrief(t *testing.T) {
+	root := t.TempDir()
+	metaDir := filepath.Join(root, ".idiom", "refine", "Atom", "iter-1")
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	briefPath := filepath.Join(metaDir, "meta-patch.md")
+	if err := os.WriteFile(briefPath, []byte("# META - Patch brief\n\nFiles To Modify:\n- .idiom/refine/Atom/iter-2/draft.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	calls := 0
+	deps := laneDeps{
+		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
+		runPlanExecute:   fake.plan,
+		runImplement:     fake.implement,
+		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		buildContextPack: func(laneOptions, config.Config, io.Writer) string {
+			calls++
+			return "## Context Pack\n\nshould not appear\n"
+		},
+	}
+	code := runLaneMainWithDeps([]string{"implement", "--project-root", root, briefPath}, &stdout, &stderr, deps)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	if calls != 0 {
+		t.Fatalf("context pack builder should not run for refine scratchpad meta briefs, got %d call(s)", calls)
+	}
+	if strings.Contains(fake.calledPrompt, "should not appear") {
+		t.Fatalf("context pack section leaked into prompt")
+	}
+}
+
+func TestRenderLaneContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
+	output := `{
+  "pack_id": "abc123",
+  "artifact_path": ".idiom/comprehension/views/abc123.json",
+  "fresh": true,
+  "freshness": {"policy":"read_through","operation":"context_pack","fresh_for_scope":true,"global_fresh":true},
+  "candidate_files": [
+    {"path":"internal/app/prompt_routing.go","role":"editable","reason":"matched task terms","score":0.91}
+  ],
+  "candidate_symbols": [
+    {"qualified_name":"runtimeBriefForRoute","path":"internal/app/prompt_routing.go","kind":"func","start_line":91,"reason":"matched task terms"}
+  ],
+  "tests": [
+    {"command":"go test ./internal/app","path":"internal/app/prompt_runtime_test.go"}
+  ]
+}`
+	section, err := renderLaneContextPackSection(workspace.ToolResult{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 1 candidate file(s)",
+		Output:  output,
+	})
+	if err != nil {
+		t.Fatalf("render context pack: %v", err)
+	}
+	if strings.Contains(section, ".idiom/comprehension/views/abc123.json") {
+		t.Fatalf("context pack section should not expose cache artifact as a workspace evidence path:\n%s", section)
+	}
+	for _, want := range []string{"context view artifact", "`internal/app/prompt_routing.go`", "`runtimeBriefForRoute`", "`go test ./internal/app`"} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("expected %q in context section:\n%s", want, section)
+		}
+	}
+}
+
+func TestBuildLaneContextPackSectionSeedsRequiredEditPaths(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/lanecontext\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "target.go"), []byte("package pkg\n\nfunc Target() string { return \"target\" }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "noisy.go"), []byte("package pkg\n\nfunc Noisy() string { return \"noisy\" }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	if result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	brief := "# Lane atom\n\n## Task\n\nPlan a change to Noisy.\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `pkg/target.go` | edit target |\n"
+	briefPath := filepath.Join(root, "atom.md")
+	if err := os.WriteFile(briefPath, []byte(brief), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stderr bytes.Buffer
+	section := buildLaneContextPackSection(laneOptions{
+		Mode:        "plan-execute",
+		BriefPath:   briefPath,
+		ProjectRoot: root,
+		Title:       "Lane atom",
+	}, config.Config{Workspace: config.Workspace{Root: root, CWD: root}}, &stderr)
+	if !strings.Contains(section, "`pkg/target.go`") {
+		t.Fatalf("automatic context pack should include Files To Modify path, stderr=%s\nsection:\n%s", stderr.String(), section)
 	}
 }
 
@@ -286,6 +568,58 @@ func TestRunLaneMainBackendProfileFlagSelectsProfile(t *testing.T) {
 	}
 }
 
+func TestRunLaneMainBackendProfilePlannerSelectsPlanExecutePrimary(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	root := filepath.Dir(briefPath)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"profiles": {
+		"qwen-27b-pair": {"models": [
+			{"alias": "qwen3.6-27b", "roles": ["planner"]},
+			{"alias": "qwen3-coder-30b", "roles": ["executor"]}
+		], "proxy": {"default_planner": "qwen3.6-27b", "default_executor": "qwen3-coder-30b"}}
+	}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"plan-execute", "--project-root", root, "--backend-profile", "qwen-27b-pair", briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	if !argsContain(fake.calledArgs, "--model", "qwen3.6-27b") {
+		t.Fatalf("--backend-profile qwen-27b-pair must resolve plan-execute to planner; forwarded: %v", fake.calledArgs)
+	}
+}
+
+func TestRunLaneMainExplicitCoderUsesExecutorWithPlannerProfile(t *testing.T) {
+	briefPath := writeBrief(t, "# atom\n")
+	root := filepath.Dir(briefPath)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"profiles": {
+		"qwen-27b-pair": {"models": [
+			{"alias": "qwen3.6-27b", "roles": ["planner"]},
+			{"alias": "qwen3-coder-30b", "roles": ["executor"]}
+		], "proxy": {"default_planner": "qwen3.6-27b", "default_executor": "qwen3-coder-30b"}}
+	}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"plan-execute", "--project-root", root, "--backend-profile", "qwen-27b-pair", "--coder", briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
+	}
+	if !argsContain(fake.calledArgs, "--model", "qwen3-coder-30b") {
+		t.Fatalf("--coder must keep using the executor role; forwarded: %v", fake.calledArgs)
+	}
+}
+
 // TestRunLaneMainExplicitModelBeatsBackendsJSON verifies the
 // precedence ladder: an explicit --model wins over both the
 // auto-route and the backends.json default_coder. Operators
@@ -372,6 +706,40 @@ func TestRunLaneMainEmbedsCanonicalImplementPreamble(t *testing.T) {
 	for _, marker := range required {
 		if !strings.Contains(prompt, marker) {
 			t.Fatalf("implement composed prompt missing canonical preamble marker %q; head=%s", marker, prompt[:min(400, len(prompt))])
+		}
+	}
+}
+
+func TestCanonicalImplementPreambleUsesCapabilityLookupLanguage(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("lanes", "implement", "preamble.md"))
+	if err != nil {
+		t.Fatalf("read implement preamble: %v", err)
+	}
+	preamble := string(body)
+	normalized := strings.Join(strings.Fields(preamble), " ")
+	for _, want := range []string{
+		"source sanity",
+		"symbol navigation or body inspection",
+		"reference/callsite evidence",
+		"project-declared read-only evidence",
+		"exact text/range confirmation",
+	} {
+		if !strings.Contains(normalized, want) {
+			t.Fatalf("implement preamble missing capability-oriented lookup language %q:\n%s", want, preamble)
+		}
+	}
+	for _, forbidden := range []string{
+		"code_" + "navigate",
+		"<lang>_" + "find_symbol",
+		"<lang>_" + "read_symbol",
+		"<lang>_" + "workspace_symbol",
+		"<lang>_" + "references",
+		"*_" + "file_outline",
+		"raw " + "read_file",
+		"Reserve " + "read_file",
+	} {
+		if strings.Contains(preamble, forbidden) {
+			t.Fatalf("implement preamble still contains raw lookup strategy menu term %q:\n%s", forbidden, preamble)
 		}
 	}
 }
@@ -535,6 +903,19 @@ func TestRunLaneMainHonorsExplicitModelOverride(t *testing.T) {
 	}
 }
 
+func TestRunLaneMainForwardsNoThinkingOverride(t *testing.T) {
+	briefPath := writeBrief(t, "# atom")
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	args := []string{"implement", "--no-thinking", briefPath}
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", got, stderr.String())
+	}
+	if !argsContainFlag(fake.calledArgs, "--no-thinking") {
+		t.Fatalf("--no-thinking must reach the underlying subcommand; got: %v", fake.calledArgs)
+	}
+}
+
 // TestRunLaneMainImplementDoesNotAutoRoute verifies that implement
 // mode does NOT auto-route to the executor role; only plan-execute
 // does. Implement always honors the configured planner unless the
@@ -658,7 +1039,7 @@ func TestRunLaneMainResolvesProjectRootFromConfig(t *testing.T) {
 		t.Fatalf("mkdir planning: %v", err)
 	}
 	briefPath := filepath.Join(planningDir, "atom.md")
-	if err := os.WriteFile(briefPath, []byte("# atom\nFiles: x"), 0o644); err != nil {
+	if err := os.WriteFile(briefPath, []byte(minimalValidPlanExecuteBrief()), 0o644); err != nil {
 		t.Fatalf("write brief: %v", err)
 	}
 	overlayDir := filepath.Join(root, ".idiom", "prompts", "lanes", "plan-execute")
@@ -707,7 +1088,7 @@ func TestRunLaneMainProjectRootFlagWinsOverConfig(t *testing.T) {
 		t.Fatalf("write overlay: %v", err)
 	}
 
-	briefPath := writeBrief(t, "# atom")
+	briefPath := writeBrief(t, minimalValidPlanExecuteBrief())
 	cfg := config.Default()
 	cfg.Workspace.Root = configRoot
 
@@ -954,6 +1335,15 @@ func TestRunLaneMainEmptyProjectRulesDirGraceful(t *testing.T) {
 func argsContain(args []string, flag, value string) bool {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func argsContainFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
 			return true
 		}
 	}

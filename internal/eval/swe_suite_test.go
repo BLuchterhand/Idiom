@@ -548,6 +548,9 @@ func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
 	if !report.LearningUpdate.Applied {
 		t.Fatalf("expected applied=true for boost band")
 	}
+	if report.LearningUpdate.EventID == "" || report.LearningUpdate.State != "accepted" {
+		t.Fatalf("expected accepted learning event, got %#v", report.LearningUpdate)
+	}
 	weightsPath := filepath.Join(root, ".idiom", "ranker", "weights.json")
 	if _, err := os.Stat(weightsPath); err != nil {
 		t.Fatalf("weights.json missing: %v", err)
@@ -557,7 +560,11 @@ func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("learning log missing: %v", err)
 	}
-	if !strings.Contains(string(data), "\"source\":\"eval\"") || !strings.Contains(string(data), "\"action\":\"boost\"") {
+	if !strings.Contains(string(data), "\"source\":\"eval\"") ||
+		!strings.Contains(string(data), "\"action\":\"boost\"") ||
+		!strings.Contains(string(data), "\"state\":\"accepted\"") ||
+		!strings.Contains(string(data), "\"before_weights\"") ||
+		!strings.Contains(string(data), "\"rollback\"") {
 		t.Fatalf("learning log missing expected entry: %s", string(data))
 	}
 }
@@ -589,6 +596,46 @@ func TestEvaluateSWETaskGroundednessPenalizesLowScore(t *testing.T) {
 	}
 	if report.LearningUpdate.Action != "penalize" {
 		t.Fatalf("expected penalize action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score)
+	}
+}
+
+func TestEvaluateSWETaskGroundednessLearningHonorsDisable(t *testing.T) {
+	t.Setenv("IDIOM_RANKER_LEARNING", "0")
+	root := t.TempDir()
+	contextPath := "spec.md"
+	if err := os.WriteFile(filepath.Join(root, contextPath), []byte("runner budget ledger snapshot"), 0o644); err != nil {
+		t.Fatalf("write context: %v", err)
+	}
+	task := SWETask{
+		ID:       "learning-disabled",
+		Family:   "direct_question",
+		Prompt:   "Explain runner budget.",
+		Scenario: Scenario{Name: "learning-disabled", PromptContains: []string{"runner"}},
+		Oracle: SWEOracle{
+			Groundedness: &SWEGroundednessOracle{MinScore: 0.0, ContextFiles: []string{contextPath}},
+		},
+	}
+	records := []Record{
+		{Type: "session_start", Data: map[string]any{"workspace_root": root}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Explain runner budget."}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "runner budget ledger snapshot"}},
+	}
+	report := EvaluateSWETask("disabled.jsonl", records, task)
+	if report.LearningUpdate == nil {
+		t.Fatalf("expected learning update")
+	}
+	if report.LearningUpdate.Applied || report.LearningUpdate.State != "rejected" || report.LearningUpdate.Reason != "learning_disabled" {
+		t.Fatalf("disabled learning should be rejected without applying: %#v", report.LearningUpdate)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "ranker", "weights.json")); !os.IsNotExist(err) {
+		t.Fatalf("disabled learning should not create weights.json, err=%v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl"))
+	if err != nil {
+		t.Fatalf("learning log missing: %v", err)
+	}
+	if !strings.Contains(string(data), "\"state\":\"rejected\"") || !strings.Contains(string(data), "\"reason\":\"learning_disabled\"") {
+		t.Fatalf("learning log missing disabled rejection: %s", string(data))
 	}
 }
 

@@ -85,9 +85,13 @@ type ChatOptions struct {
 	// ThinkingBudget caps tokens spent inside <think>...</think>.
 	// 0 = uncapped. See chatTemplateKwargs.ThinkingBudget for why.
 	ThinkingBudget int
-	MaxTokens      int
-	Tools          []Tool
-	ToolChoice     string
+	// ChatTemplateKwargs forces request-level template kwargs for backends
+	// where server-start defaults normally own those knobs. llama.cpp always
+	// receives kwargs when present; MLX receives them only when this is true.
+	ChatTemplateKwargs bool
+	MaxTokens          int
+	Tools              []Tool
+	ToolChoice         string
 }
 
 type Usage struct {
@@ -189,15 +193,26 @@ type chatStreamChunk struct {
 }
 
 func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwargs {
-	// chat_template_kwargs is a llama.cpp server extension for Jinja-templated
-	// chat templates (e.g. Qwen3's enable_thinking / preserve_thinking hooks).
-	// mlx_lm.server ignores the field, and other backends may reject unknown
-	// request keys outright — so omit it entirely unless we're talking to
-	// llama.cpp.
-	if backend != "" && backend != BackendLlama {
+	// chat_template_kwargs is supported by llama.cpp and current mlx_lm.server
+	// for Jinja-templated chat templates (for example Qwen3's enable_thinking
+	// and preserve_thinking hooks). Other OpenAI-compatible backends may reject
+	// unknown request keys, so keep the field scoped to verified backends.
+	switch backend {
+	case "", BackendLlama:
+		// Existing llama.cpp behavior: request-level options are the contract.
+	case BackendMLX:
+		// MLX deployments commonly encode the model's default thinking mode in
+		// server-start --chat-template-args. Only send per-request kwargs when
+		// a caller intentionally overrides those defaults; otherwise a generic
+		// config preset can accidentally flip a dedicated "nothink" server back
+		// into thinking mode.
+		if !opts.ChatTemplateKwargs {
+			return nil
+		}
+	default:
 		return nil
 	}
-	if opts.EnableThinking == nil && !opts.PreserveThinking {
+	if opts.EnableThinking == nil && !opts.PreserveThinking && opts.ThinkingBudget <= 0 {
 		return nil
 	}
 	return &chatTemplateKwargs{

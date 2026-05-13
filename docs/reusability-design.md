@@ -230,6 +230,7 @@ Reads `.idiom/backends.json`:
 
 ```json
 {
+  "default_profile": "qwen-pair",
   "profiles": {
     "qwen-pair": {
       "models": [

@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,6 +70,46 @@ func TestBuildRankerLearningAuditClassifiesObservedSources(t *testing.T) {
 	}
 }
 
+func TestRankerLearningAuditSurfacesAcceptedRejectedReasons(t *testing.T) {
+	root := t.TempDir()
+	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
+		EventID: "ranker_accept",
+		Source:  "eval",
+		Action:  "boost",
+		State:   "accepted",
+		Reason:  "swe_groundedness_oracle",
+	}); err != nil {
+		t.Fatalf("append accepted: %v", err)
+	}
+	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
+		EventID: "ranker_reject",
+		Source:  "eval",
+		Action:  "no_op",
+		State:   "rejected",
+		Reason:  "unverified_evidence",
+	}); err != nil {
+		t.Fatalf("append rejected: %v", err)
+	}
+	got := buildRankerLearningAudit(root)
+	if got.LearningSummary == nil {
+		t.Fatalf("learning summary missing")
+	}
+	if got.LearningSummary.TotalEvents != 2 || got.LearningSummary.AcceptedCount != 1 || got.LearningSummary.RejectedCount != 1 {
+		t.Fatalf("learning event counts missing: %#v", got.LearningSummary)
+	}
+	if got.LearningSummary.AcceptedReasonCounts["swe_groundedness_oracle"] != 1 ||
+		got.LearningSummary.RejectedReasonCounts["unverified_evidence"] != 1 {
+		t.Fatalf("reason counts missing: %#v", got.LearningSummary)
+	}
+	summary := harnessAuditSummary(harnessAuditReport{
+		Purpose:        "behavior",
+		RankerLearning: got,
+	})
+	if !strings.Contains(summary, "ranker_learning_events=2 accepted=1 rejected=1 reasons=2") {
+		t.Fatalf("audit summary missing learning metrics: %s", summary)
+	}
+}
+
 func TestRankerLearningQuestionsMentionDormantSources(t *testing.T) {
 	root := t.TempDir()
 	got := buildRankerLearningAudit(root)
@@ -83,6 +125,35 @@ func TestRankerLearningQuestionsMentionDormantSources(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected question for dormant %q in %s", want, joined)
 		}
+	}
+}
+
+func TestBuildContextCacheAuditReportsNonCurrentRows(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/auditcache\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "x.go"), []byte("package auditcache\n\nfunc X() string { return \"x\" }\n"), 0o644); err != nil {
+		t.Fatalf("write x.go: %v", err)
+	}
+	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	current := comprehension.ViewKey{IndexID: build.IndexID, Task: "current", Mode: "plan"}
+	if err := comprehension.SaveView(root, current, comprehension.PackResult{PackID: current.ID(), IndexID: build.IndexID, CandidateFiles: []comprehension.PackFile{{Path: "x.go"}}}); err != nil {
+		t.Fatalf("save current view: %v", err)
+	}
+	old := comprehension.ViewKey{IndexID: "old-index", Task: "old", Mode: "plan"}
+	if err := comprehension.SaveView(root, old, comprehension.PackResult{PackID: old.ID(), IndexID: "old-index", CandidateFiles: []comprehension.PackFile{{Path: "x.go"}}}); err != nil {
+		t.Fatalf("save old view: %v", err)
+	}
+	cache := buildContextCacheAudit(root)
+	if cache == nil {
+		t.Fatal("expected cache audit")
+	}
+	if cache.Rows != 2 || cache.Fresh != 2 || cache.Stale != 0 || cache.NonCurrent != 1 || cache.CurrentIndexID != build.IndexID {
+		t.Fatalf("expected one non-current row in cache audit, got %#v", cache)
 	}
 }
 

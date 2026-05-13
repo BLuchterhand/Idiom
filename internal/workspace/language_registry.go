@@ -62,14 +62,14 @@ var languageRegistry = []LanguageSupport{
 			CapEntrypoints:     "go_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Go decision guide - prefer code_navigate capabilities over raw shell/grep:
-- Orient a .go file: code_navigate capability=file_outline path=<file.go>
-- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
-- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
-- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
-- What does this call: code_navigate capability=calls_from
-- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file.go>
-- Files related to a concept: code_navigate capability=related_files pattern=<term> path=<scope>
+Go capability guide - prefer structured capabilities over raw shell/grep:
+- File-outline capability orients a .go file.
+- Symbol-lookup capability locates declarations by name or pattern.
+- Definition capability anchors where a symbol is declared.
+- References and calls-into capabilities show users or callers.
+- Calls-from capability shows outgoing handoff from a known symbol.
+- Read-symbol capability returns one declaration body.
+- Related-files capability finds files tied to a concept or symbol.
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
@@ -96,14 +96,14 @@ A narrow read_file range can supply exact context when semantic routes do not la
 			CapEntrypoints:     "cpp_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-C/C++ decision guide - prefer code_navigate capabilities over raw shell/grep:
-- Orient a .cpp/.h file: code_navigate capability=file_outline path=<file>
-- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
-- Jump to a definition/declaration: code_navigate capability=definition pattern=<name> path=<scope>
-- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
-- What does this call: code_navigate capability=calls_from
-- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file>
-- Files related to a concept: code_navigate capability=related_files pattern=<term> path=<scope>
+C/C++ capability guide - prefer structured capabilities over raw shell/grep:
+- File-outline capability orients a .cpp/.h file.
+- Symbol-lookup capability locates declarations by name or pattern.
+- Definition capability anchors declarations or definitions.
+- References and calls-into capabilities show users or callers.
+- Calls-from capability shows outgoing handoff from a known symbol.
+- Read-symbol capability returns one declaration body.
+- Related-files capability finds files tied to a concept or symbol.
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
@@ -152,14 +152,14 @@ A narrow read_file range can supply exact context when semantic routes do not la
 			CapEntrypoints:     "python_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Python decision guide - prefer code_navigate capabilities over raw shell/grep:
-- Orient a .py file: code_navigate capability=file_outline path=<file.py>
-- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
-- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
-- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
-- What does this call: code_navigate capability=calls_from
-- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file.py>
-- Subclasses/implementations: code_navigate capability=implementations pattern=<name>
+Python capability guide - prefer structured capabilities over raw shell/grep:
+- File-outline capability orients a .py file.
+- Symbol-lookup capability locates declarations by name or pattern.
+- Definition capability anchors where a symbol is declared.
+- References and calls-into capabilities show users or callers.
+- Calls-from capability shows outgoing handoff from a known symbol.
+- Read-symbol capability returns one declaration body.
+- Implementations capability finds subclasses or implementers.
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
@@ -209,7 +209,7 @@ A narrow read_file range can supply exact context when semantic routes do not la
 	},
 	{
 		Name:       "typescript",
-		Extensions: []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".d.ts"},
+		Extensions: []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".d.mts", ".d.cts"},
 		Tools: map[Capability]string{
 			CapFileOutline:     "ts_file_outline",
 			CapFindSymbol:      "ts_find_symbol",
@@ -226,14 +226,14 @@ A narrow read_file range can supply exact context when semantic routes do not la
 			CapEntrypoints:     "ts_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-TypeScript/JavaScript decision guide - prefer code_navigate capabilities over raw shell/grep:
-- Orient a .ts/.tsx/.js/.jsx file: code_navigate capability=file_outline path=<file>
-- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
-- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
-- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
-- What does this call: code_navigate capability=calls_from
-- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file>
-- Files related to a concept: code_navigate capability=related_files pattern=<term> path=<scope>
+TypeScript/JavaScript capability guide - prefer structured capabilities over raw shell/grep:
+- File-outline capability orients a .ts/.tsx/.js/.jsx file.
+- Symbol-lookup capability locates declarations by name or pattern.
+- Definition capability anchors where a symbol is declared.
+- References and calls-into capabilities show users or callers.
+- Calls-from capability shows outgoing handoff from a known symbol.
+- Read-symbol capability returns one declaration body.
+- Related-files capability finds files tied to a concept or symbol.
 The same route covers .js/.jsx/.mjs/.cjs. A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
@@ -287,14 +287,14 @@ The same route covers .js/.jsx/.mjs/.cjs. A narrow read_file range can supply ex
 			CapEntrypoints:     "rust_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Rust decision guide - prefer code_navigate capabilities over raw shell/grep:
-- Orient a .rs file: code_navigate capability=file_outline path=<file.rs>
-- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
-- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
-- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
-- What does this call: code_navigate capability=calls_from
-- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file.rs>
-- Trait impls across the crate: code_navigate capability=implementations pattern=<trait>
+Rust capability guide - prefer structured capabilities over raw shell/grep:
+- File-outline capability orients a .rs file.
+- Symbol-lookup capability locates declarations by name or pattern.
+- Definition capability anchors where a symbol is declared.
+- References and calls-into capabilities show users or callers.
+- Calls-from capability shows outgoing handoff from a known symbol.
+- Read-symbol capability returns one declaration body.
+- Implementations capability finds trait impls across the crate.
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
@@ -344,14 +344,14 @@ A narrow read_file range can supply exact context when semantic routes do not la
 			CapEntrypoints:     "java_entrypoints",
 		},
 		DecisionGuide: strings.TrimSpace(`
-Java decision guide - prefer code_navigate capabilities over raw shell/grep:
-- Orient a .java file: code_navigate capability=file_outline path=<file.java>
-- Find a symbol anywhere: code_navigate capability=workspace_symbol pattern=<name>
-- Jump to a definition: code_navigate capability=definition pattern=<name> path=<scope>
-- Who calls this / who uses this: code_navigate capability=references or capability=calls_into
-- What does this call: code_navigate capability=calls_from
-- Read one symbol body: code_navigate capability=read_symbol pattern=<name> path=<file.java>
-- Interface implementers: code_navigate capability=implementations pattern=<name>
+Java capability guide - prefer structured capabilities over raw shell/grep:
+- File-outline capability orients a .java file.
+- Symbol-lookup capability locates declarations by name or pattern.
+- Definition capability anchors where a symbol is declared.
+- References and calls-into capabilities show users or callers.
+- Calls-from capability shows outgoing handoff from a known symbol.
+- Read-symbol capability returns one declaration body.
+- Implementations capability finds interface implementers.
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
@@ -426,6 +426,7 @@ func LanguageForFile(path string) (LanguageSupport, bool) {
 // to the registry entry used by capability routers.
 func LanguageForName(name string) (LanguageSupport, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.TrimPrefix(name, ".")
 	switch name {
 	case "golang":
 		name = "go"
@@ -433,7 +434,7 @@ func LanguageForName(name string) (LanguageSupport, bool) {
 		name = "cpp"
 	case "py":
 		name = "python"
-	case "js", "javascript", "jsx", "ts":
+	case "js", "javascript", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts", "d.ts", "d.mts", "d.cts":
 		name = "typescript"
 	case "rs":
 		name = "rust"

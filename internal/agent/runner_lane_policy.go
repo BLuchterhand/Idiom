@@ -125,21 +125,9 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.RejectStopReason = "premature_target_read_exhausted"
 		return decision
 	}
-	if summary, errorText, reject := evidenceFirstTargetReadBudgetRejection(decision.Request, input.Results, r.RuntimeBrief); reject {
-		decision.RejectSummary = summary
-		decision.RejectError = errorText
-		decision.RejectStopReason = "target_read_budget_exhausted"
-		return decision
-	}
 	if redirected, ok := evidenceFirstTargetReadRedirect(r.RuntimeBrief, input.Results, decision.Request); ok {
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
-	}
-	if summary, errorText, reject := evidenceFirstTargetWritePhaseRejection(decision.Request, input.Results, r.RuntimeBrief); reject {
-		decision.RejectSummary = summary
-		decision.RejectError = errorText
-		decision.RejectStopReason = "target_write_phase_enforced"
-		return decision
 	}
 
 	if redirected, ok := r.debugLogPreflightRequest(input.Results, decision.Request); ok {
@@ -240,7 +228,7 @@ func hasTruncatedGoReadSymbolResult(results []workspace.ToolResult, path string)
 		if !strings.Contains(summary, path) {
 			continue
 		}
-		if strings.Contains(strings.ToLower(summary), "use go_extract_body for the full body") {
+		if strings.Contains(strings.ToLower(summary), "full-body adapter: go_extract_body") {
 			return true
 		}
 	}

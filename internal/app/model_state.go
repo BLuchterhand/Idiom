@@ -178,12 +178,14 @@ type Model struct {
 	debugLogPath                  string
 	sessionStartedAt              time.Time
 	sessionAgg                    sessionAggregate
+	sessionSummaryWritten         bool
 	eventStream                   *jsonEventStream
 	lastAssistantReasoningContent string
 	agentModeName                 string
 	forcedTaskFamily              string
 	plannerOwnedVerification      bool
 	maxTokensOverride             int
+	disableThinkingOverride       bool
 	traceMode                     traceDisplayMode
 
 	workspaceOverviewInjected bool
@@ -358,17 +360,30 @@ func (m *Model) Close() {
 }
 
 func (m *Model) chatOptions() llama.ChatOptions {
+	enableThinking := cloneBoolPtr(m.cfg.Chat.EnableThinking)
+	preserveThinking := m.cfg.Chat.PreserveThinking
+	chatTemplateKwargs := false
+	if enableThinking != nil && !*enableThinking {
+		chatTemplateKwargs = true
+	}
+	if m.disableThinkingOverride {
+		thinkingOff := false
+		enableThinking = &thinkingOff
+		preserveThinking = false
+		chatTemplateKwargs = true
+	}
 	return llama.ChatOptions{
-		Model:             m.modelID,
-		Temperature:       m.cfg.Chat.Temperature,
-		TopP:              m.cfg.Chat.TopP,
-		TopK:              m.cfg.Chat.TopK,
-		MinP:              m.cfg.Chat.MinP,
-		PresencePenalty:   m.cfg.Chat.PresencePenalty,
-		RepetitionPenalty: m.cfg.Chat.RepetitionPenalty,
-		EnableThinking:    cloneBoolPtr(m.cfg.Chat.EnableThinking),
-		PreserveThinking:  m.cfg.Chat.PreserveThinking,
-		MaxTokens:         m.cfg.Chat.MaxTokens,
+		Model:              m.modelID,
+		Temperature:        m.cfg.Chat.Temperature,
+		TopP:               m.cfg.Chat.TopP,
+		TopK:               m.cfg.Chat.TopK,
+		MinP:               m.cfg.Chat.MinP,
+		PresencePenalty:    m.cfg.Chat.PresencePenalty,
+		RepetitionPenalty:  m.cfg.Chat.RepetitionPenalty,
+		EnableThinking:     enableThinking,
+		PreserveThinking:   preserveThinking,
+		ChatTemplateKwargs: chatTemplateKwargs,
+		MaxTokens:          m.cfg.Chat.MaxTokens,
 	}
 }
 
@@ -1434,9 +1449,10 @@ func (m *Model) logNestedToolResult(content string) bool {
 }
 
 func (m *Model) writeSessionSummary() {
-	if m.sessionAgg.turns == 0 && m.sessionAgg.modelCalls == 0 && m.sessionAgg.toolCalls == 0 {
+	if m.sessionSummaryWritten {
 		return
 	}
+	m.sessionSummaryWritten = true
 	ctxSize := m.cfg.LlamaServer.CtxSize
 	peakPct := 0.0
 	if ctxSize > 0 && m.sessionAgg.peakPromptTokens > 0 {
@@ -1525,7 +1541,12 @@ func (m *Model) SetForcedTaskFamily(family string) {
 	// call. Detect via the canonical task-family constant and toggle
 	// the manager flag here, where forced family is set.
 	if m.workspace != nil {
-		m.workspace.SetPlanThenExecutePlannerMode(m.forcedTaskFamily == "plan_then_execute_planner")
+		switch m.forcedTaskFamily {
+		case "plan_then_execute_planner", "plan_then_execute_review_repair":
+			m.workspace.SetPlanThenExecutePlannerMode(true)
+		default:
+			m.workspace.SetPlanThenExecutePlannerMode(false)
+		}
 	}
 }
 
@@ -1539,6 +1560,10 @@ func (m *Model) SetMaxTokensOverride(maxTokens int) {
 		return
 	}
 	m.maxTokensOverride = 0
+}
+
+func (m *Model) SetDisableThinkingOverride(disabled bool) {
+	m.disableThinkingOverride = disabled
 }
 
 func (m *Model) clearContextError() {

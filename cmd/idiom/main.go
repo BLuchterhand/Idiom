@@ -31,6 +31,7 @@ type runOptions struct {
 	TaskFamily               string
 	PlannerOwnedVerification bool
 	MaxTokensOverride        int
+	DisableThinking          bool
 	Telemetry                *telemetry.Recorder
 }
 
@@ -64,6 +65,9 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	}
 	if len(args) > 0 && args[0] == "context" {
 		return runContextMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
+	if len(args) > 0 && args[0] == "atom" {
+		return runAtomMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
 	if len(args) > 0 && args[0] == "artifact" {
 		return runArtifactMainWithTelemetry(args[1:], stdout, stderr, runPromptOnce, rec)
@@ -309,6 +313,11 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		printToolUsage(stderr)
 		return 0
 	}
+	if args[0] == "schemas" {
+		code := runToolSchemas(stdout, stderr)
+		logCLIPhase(rec, "tool_schema_export", map[string]any{"exit_code": code})
+		return code
+	}
 	if args[0] == "list" {
 		// Allow `--config` after `list` to honour project-local externals.
 		listFs := flag.NewFlagSet("idiom tool list", flag.ContinueOnError)
@@ -377,13 +386,15 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		}
 	}
 	if len(rawInput) > 0 {
-		if err := json.Unmarshal(rawInput, &req); err != nil {
+		decoded, err := workspace.DecodeToolRequestJSON(rawInput)
+		if err != nil {
 			errText := fmt.Sprintf("invalid input JSON: %v", err)
 			logRequest(len(rawInput))
 			logFailureResult("Direct tool input rejected", errText)
 			fmt.Fprintln(stderr, errText)
 			return 1
 		}
+		req = decoded
 		// Preserve the full input as Args so external tools (and any
 		// future MCP-shaped tools) can pull arbitrary fields, not just
 		// the ones declared on ToolRequest.
@@ -511,6 +522,21 @@ func runToolListWithConfig(stdout io.Writer, configPath string) int {
 	return 0
 }
 
+func runToolSchemas(stdout io.Writer, stderr io.Writer) int {
+	export, err := workspace.BuildToolSchemaExport(nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "export tool schemas: %v\n", err)
+		return 1
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(export); err != nil {
+		fmt.Fprintf(stderr, "encode schema export: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func loadToolConfig(path string) (config.Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		cfg := config.Default()
@@ -529,6 +555,7 @@ func printToolUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  idiom tool <tool-name> [--input '<json>']")
 	fmt.Fprintln(stderr, "  idiom tool <tool-name> [flags]  # reads JSON from stdin when piped")
 	fmt.Fprintln(stderr, "  idiom tool list")
+	fmt.Fprintln(stderr, "  idiom tool schemas")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Run a single workspace tool and print its result as JSON.")
 	fmt.Fprintln(stderr, "Does not require llama-server.")
@@ -563,7 +590,9 @@ func printToolUsage(stderr io.Writer) {
 
 func runTUI(cfg config.Config, opts runOptions) error {
 	model := app.New(cfg)
+	unregisterCloseout := opts.Telemetry.RegisterCloseout(model.Close)
 	defer model.Close()
+	defer unregisterCloseout()
 	logModelSessionLink(opts.Telemetry, "tui", model.DebugLogPath())
 
 	if opts.Resume != "" {
@@ -581,10 +610,13 @@ func runTUI(cfg config.Config, opts runOptions) error {
 
 func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.Writer) (string, error) {
 	model := app.New(cfg)
+	unregisterCloseout := opts.Telemetry.RegisterCloseout(model.Close)
 	defer model.Close()
+	defer unregisterCloseout()
 	model.SetForcedTaskFamily(opts.TaskFamily)
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
 	model.SetMaxTokensOverride(opts.MaxTokensOverride)
+	model.SetDisableThinkingOverride(opts.DisableThinking)
 	logModelSessionLink(opts.Telemetry, "prompt", model.DebugLogPath())
 
 	if opts.Resume != "" {
@@ -609,10 +641,13 @@ func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.
 
 func runPromptsOnce(cfg config.Config, prompts []string, opts runOptions, stdout io.Writer) ([]string, error) {
 	model := app.New(cfg)
+	unregisterCloseout := opts.Telemetry.RegisterCloseout(model.Close)
 	defer model.Close()
+	defer unregisterCloseout()
 	model.SetForcedTaskFamily(opts.TaskFamily)
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
 	model.SetMaxTokensOverride(opts.MaxTokensOverride)
+	model.SetDisableThinkingOverride(opts.DisableThinking)
 	logModelSessionLink(opts.Telemetry, "turns_file", model.DebugLogPath())
 
 	if opts.Resume != "" {
@@ -870,6 +905,8 @@ func loadExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolRegi
 			Cwd:            def.Cwd,
 			TimeoutSeconds: def.TimeoutSeconds,
 			InputSchema:    def.InputSchema,
+			ReadOnly:       def.ReadOnly,
+			Discovery:      def.Discovery,
 		})
 	}
 	if dir := ws.ExternalToolsDir; dir != "" {
@@ -902,6 +939,8 @@ func loadExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolRegi
 				Cwd:            def.Cwd,
 				TimeoutSeconds: def.TimeoutSeconds,
 				InputSchema:    def.InputSchema,
+				ReadOnly:       def.ReadOnly,
+				Discovery:      def.Discovery,
 			})
 		}
 	}

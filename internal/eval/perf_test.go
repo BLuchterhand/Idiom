@@ -2,6 +2,7 @@ package eval
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -183,6 +184,50 @@ func TestAnalyzeLogIngestsContextTelemetryFields(t *testing.T) {
 	}
 }
 
+func TestAnalyzeLogDistinguishesStaleEvidenceStates(t *testing.T) {
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{
+			"tool":                              "context_query",
+			"context_freshness_policy":          "require_fresh",
+			"context_freshness_blocked":         true,
+			"context_stale_evidence_state":      "blocked",
+			"context_stale_use_blocked":         true,
+			"context_freshness_budget_exceeded": true,
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":                         "context_zoom",
+			"context_freshness_policy":     "report_only",
+			"context_stale_evidence_state": "reported",
+			"context_stale_use_reported":   true,
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":                         "context_pack",
+			"context_freshness_policy":     "allow_stale",
+			"context_stale_evidence_state": "allowed_stale",
+			"context_stale_use_allowed":    true,
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":                         "context_status",
+			"context_freshness_policy":     "report_only",
+			"context_stale_evidence_state": "fresh",
+			"context_stale_use_fresh":      true,
+		}},
+	}
+	rep := analyzeRecords("test", records)
+	if rep.Context == nil {
+		t.Fatalf("expected context telemetry summary")
+	}
+	if rep.Context.FreshnessBlockers != 1 || rep.Context.FreshnessBudgetExceeded != 1 {
+		t.Fatalf("expected only blocked stale evidence to count as freshness blocker, got %#v", rep.Context)
+	}
+	if rep.Context.StaleUseBlocked != 1 || rep.Context.StaleUseReported != 1 || rep.Context.StaleUseAllowed != 1 || rep.Context.StaleUseFresh != 1 {
+		t.Fatalf("unexpected stale-evidence state counters: %#v", rep.Context)
+	}
+	if rep.Context.StaleUseStateCounts["blocked"] != 1 || rep.Context.StaleUseStateCounts["reported"] != 1 || rep.Context.StaleUseStateCounts["allowed_stale"] != 1 || rep.Context.StaleUseStateCounts["fresh"] != 1 {
+		t.Fatalf("unexpected stale-evidence state counts: %#v", rep.Context.StaleUseStateCounts)
+	}
+}
+
 func TestAnalyzeLogIngestsHarnessFeedbackTelemetryFields(t *testing.T) {
 	records := []Record{
 		{Type: "tool_request", Data: map[string]any{"tool": "harness_feedback", "action": "harness_feedback"}},
@@ -251,6 +296,82 @@ func TestDetectPromptSurfaceOverlap(t *testing.T) {
 	}
 	if ap.Count != 2 {
 		t.Fatalf("prompt_surface_overlap count: want 2, got %d", ap.Count)
+	}
+}
+
+func TestDetectCompletionGateReopenedDiscovery(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "write a refined brief"}},
+		{Type: "model_call", Data: map[string]any{"prompt_tokens": 100, "completion_tokens": 20}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "completion_gate",
+			"step":    3,
+			"summary": "Mutation completion gate rejected final answer",
+			"error":   "this task asks for a workspace change, but no successful write tool result is present",
+		}},
+		{Type: "tool_request", Data: map[string]any{
+			"tool":   "read_file",
+			"action": "read_file:native/src/example.cpp",
+			"path":   "native/src/example.cpp",
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "read_file",
+			"summary": "Read native/src/example.cpp",
+			"error":   "",
+		}},
+	}
+	rep := analyzeRecords("test", records)
+	ap := findPattern(rep, "completion_gate_reopened_discovery")
+	if ap == nil {
+		t.Fatalf("expected completion_gate_reopened_discovery, got %#v", rep.AntiPatterns)
+	}
+	if ap.Count != 1 || !strings.Contains(strings.Join(ap.Examples, "\n"), "read_file native/src/example.cpp") {
+		t.Fatalf("unexpected completion gate discovery pattern: %#v", ap)
+	}
+}
+
+func TestDetectCompletionGateReopenedDiscoveryIgnoresImmediateWrite(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "write a refined brief"}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "completion_gate",
+			"step":    3,
+			"summary": "Mutation completion gate rejected final answer",
+			"error":   "this task asks for a workspace change, but no successful write tool result is present",
+		}},
+		{Type: "tool_request", Data: map[string]any{
+			"tool": "write_file",
+			"path": ".idiom/refine/example/iter-2/draft.md",
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "write_file",
+			"summary": "Wrote .idiom/refine/example/iter-2/draft.md",
+			"error":   "",
+		}},
+	}
+	rep := analyzeRecords("test", records)
+	if hasPattern(rep, "completion_gate_reopened_discovery") {
+		t.Fatalf("immediate write should not count as reopened discovery: %#v", rep.AntiPatterns)
+	}
+}
+
+func TestDetectRequiredPathsBlockedWithoutWrite(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "implement the brief"}},
+		{Type: "completion_status", Data: map[string]any{
+			"status":          "blocked",
+			"reason":          "required_edit_paths_remaining",
+			"blocker_kind":    "required_edit_paths_remaining",
+			"edit_attempted":  false,
+			"required_edits":  []any{"draft.md"},
+			"changed_paths":   []any{},
+			"user_visible":    true,
+			"user_visible_id": "required_edit_paths_remaining",
+		}},
+	}
+	rep := analyzeRecords("test", records)
+	if !hasPattern(rep, "required_paths_blocked_without_write") {
+		t.Fatalf("expected required_paths_blocked_without_write, got %#v", rep.AntiPatterns)
 	}
 }
 
@@ -351,6 +472,22 @@ func TestDetectSameToolRepeatOnlyAtThreeOrMore(t *testing.T) {
 	}
 }
 
+func TestDetectNamedGapReadWalk(t *testing.T) {
+	records := buildSynth("", nil, []synthStep{
+		{tool: "read_file", action: "read_file:src/item.cpp", raw: `{"path":"src/item.cpp","named_gap":"find_insert_anchor","start_line":1,"end_line":50}`, summary: "Read src/item.cpp lines 1-50"},
+		{tool: "read_file", action: "read_file:src/item.cpp", raw: `{"path":"src/item.cpp","named_gap":"find_insert_anchor","start_line":50,"end_line":100}`, summary: "Read src/item.cpp lines 50-100"},
+		{tool: "read_file", action: "read_file:src/item.cpp", raw: `{"path":"src/item.cpp","named_gap":"find_insert_anchor","start_line":100,"end_line":150}`, summary: "Read src/item.cpp lines 100-150"},
+	})
+	rep := analyzeRecords("test", records)
+	ap := findPattern(rep, "named_gap_read_walk")
+	if ap == nil {
+		t.Fatalf("expected named_gap_read_walk, got %#v", rep.AntiPatterns)
+	}
+	if ap.Count != 3 {
+		t.Fatalf("count=%d, want 3", ap.Count)
+	}
+}
+
 func TestAggregateRanksByLogHits(t *testing.T) {
 	mkRep := func(patterns ...string) PerfReport {
 		r := PerfReport{Tools: ToolCounts{ByName: map[string]int{}}}
@@ -374,6 +511,30 @@ func TestAggregateRanksByLogHits(t *testing.T) {
 	}
 	if agg.PatternHitRate[0].Name != "zero_hit_search" || agg.PatternHitRate[0].LogsHit != 3 {
 		t.Fatalf("expected zero_hit_search leading with 3 logs hit, got %+v", agg.PatternHitRate[0])
+	}
+}
+
+func TestAggregateRedactsWorstOffenderPrompt(t *testing.T) {
+	agg := Aggregate([]PerfReport{{
+		LogPath:          "logs/conversations/session.jsonl",
+		SessionID:        "session",
+		UserPrompt:       "private customer prompt with secret",
+		ToolResults:      12,
+		AntiPatternScore: 5,
+		Tools:            ToolCounts{ByName: map[string]int{}},
+	}})
+	if len(agg.WorstOffenders) != 1 {
+		t.Fatalf("expected one worst offender, got %#v", agg.WorstOffenders)
+	}
+	if !agg.WorstOffenders[0].LogExcerptRedacted {
+		t.Fatalf("expected redaction marker, got %#v", agg.WorstOffenders[0])
+	}
+	encoded, err := json.Marshal(agg)
+	if err != nil {
+		t.Fatalf("marshal aggregate: %v", err)
+	}
+	if strings.Contains(string(encoded), "user_prompt") || strings.Contains(string(encoded), "private customer prompt") || strings.Contains(string(encoded), "secret") {
+		t.Fatalf("aggregate leaked prompt data: %s", string(encoded))
 	}
 }
 

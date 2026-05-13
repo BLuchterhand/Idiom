@@ -162,6 +162,26 @@ func TestRecorderCloseWithFieldsIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRecorderCloseRunsRegisteredCloseoutsOnce(t *testing.T) {
+	rec, err := Open(Options{Dir: t.TempDir(), Command: "implement", WorkspaceRoot: "/workspace"})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	closeouts := 0
+	rec.RegisterCloseout(func() {
+		closeouts++
+	})
+	if err := rec.CloseWithFields(143, map[string]any{"reason": "signal"}); err != nil {
+		t.Fatalf("CloseWithFields: %v", err)
+	}
+	if err := rec.Close(0); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if closeouts != 1 {
+		t.Fatalf("closeouts ran %d time(s), want 1", closeouts)
+	}
+}
+
 func TestRecorderHonorsDisabledEnv(t *testing.T) {
 	t.Setenv("IDIOM_TELEMETRY", "0")
 	rec, err := Open(Options{Dir: t.TempDir(), Command: "tool"})

@@ -80,6 +80,7 @@ type runnerFailureFeedbackPacket struct {
 	FailureClass       string   `json:"failure_class,omitempty"`
 	ResultSummary      string   `json:"result_summary,omitempty"`
 	ResultError        string   `json:"result_error,omitempty"`
+	EvidenceStatus     []string `json:"evidence_status,omitempty"`
 	DoNotRepeat        []string `json:"do_not_repeat,omitempty"`
 	RequiredNext       []string `json:"required_next,omitempty"`
 	InvalidNext        []string `json:"invalid_next,omitempty"`
@@ -241,6 +242,7 @@ type runnerNextActionState struct {
 	ResultError        string   `json:"result_error,omitempty"`
 	ResultOutputChars  int      `json:"result_output_chars,omitempty"`
 	EvidencePaths      []string `json:"evidence_paths,omitempty"`
+	EvidenceStatus     []string `json:"evidence_status,omitempty"`
 	Constraints        []string `json:"constraints,omitempty"`
 	InvalidNextActions []string `json:"invalid_next_actions,omitempty"`
 	NextValidActions   []string `json:"next_valid_actions,omitempty"`

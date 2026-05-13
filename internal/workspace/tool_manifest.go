@@ -44,6 +44,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 		"read_file",
 		"file_stats",
 		"code_navigate",
+		"read_only_capability",
 		"source_sanity",
 		"harness_audit",
 		"harness_feedback",
@@ -179,6 +180,41 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	return tools
 }
 
+func toolManifestToolsAcrossBuiltInSurfaces() []string {
+	opts := ToolManifestToolOptions{
+		IncludeTaskLedger: true,
+		IncludeTask:       true,
+		IncludeWriteTools: true,
+		IncludeGo:         true,
+		IncludeCpp:        true,
+		IncludePython:     true,
+		IncludeTypescript: true,
+		IncludeRust:       true,
+		IncludeJava:       true,
+	}
+	tools := ToolManifestTools(opts)
+	opts.IncludePlanThenExecute = true
+	tools = append(tools, ToolManifestTools(opts)...)
+	return uniqueToolManifestTools(tools)
+}
+
+func uniqueToolManifestTools(tools []string) []string {
+	seen := make(map[string]struct{}, len(tools))
+	out := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		if _, ok := seen[tool]; ok {
+			continue
+		}
+		seen[tool] = struct{}{}
+		out = append(out, tool)
+	}
+	return out
+}
+
 func WorkspaceWriteToolNames() []string {
 	return []string{"mkdir", "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "go_move_declarations"}
 }
@@ -206,7 +242,8 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "read_file", Request: `{"tool":"read_file","path":"relative/file.go","start_line":1,"end_line":120,"named_gap":"verify one exact function body or narrow range now that the target file is known","why_not_answering":"I still need the implementation body, not just the file name"}`, Purpose: "read exact file ranges"},
 		{Tool: "file_stats", Request: `{"tool":"file_stats","path":".","recursive":true,"glob":"*.go","max_depth":3,"limit":1000}`, Purpose: "count files, bytes, and lines without shell wc/find pipelines"},
 		{Tool: "code_navigate", Request: `{"tool":"code_navigate","capability":"read_symbol","path":"relative/file.go","pattern":"Run"}`, Purpose: "request a code navigation capability; the harness routes by file language to the best symbol/navigation tool or a bounded generic fallback"},
-		{Tool: "source_sanity", Request: `{"tool":"source_sanity","path":"relative/file.cpp"}`, Purpose: "run source-aware lane sanity: dispatch to the file language's diagnostics when available, otherwise use a generic source syntax sanity fallback"},
+		{Tool: "read_only_capability", Request: `{"tool":"read_only_capability","capability":"definition","path":"relative/file.go","pattern":"Run"}`, Purpose: "request a stable read-only capability ID; the harness resolves it through existing read-only adapters and reports any fallback reason"},
+		{Tool: "source_sanity", Request: `{"tool":"source_sanity","path":"relative/file.cpp"}`, Purpose: "source-aware lane sanity: dispatch to the file language's diagnostics when available, otherwise use a generic source syntax sanity fallback"},
 		{Tool: "harness_audit", Request: `{"tool":"harness_audit","purpose":"all","path":"logs/conversations","limit":25}`, Purpose: "audit idiom's own tool surface, backend availability, and recent behavior logs for evidence-backed improvement questions"},
 		{Tool: "harness_feedback", Request: `{"tool":"harness_feedback","category":"packet_quality","component":"context_pack","expected":"one task-ready packet that made the edit target clear","observed":"the packet lacked the symbol edge needed to choose between two files","workaround":"used exact symbol tools and a narrow file read","impact":"extra read loop before editing","evidence":["logs/conversations/session.jsonl step 8"],"confidence":"verified","severity":"medium"}`, Purpose: "record structured agent-observed idiom harness/tool/prompt gaps into telemetry for later audit triage. REQUIRED fields: category, component, expected, observed, impact, confidence (all strings, all non-empty); evidence must be a non-empty array of repo-relative paths or step ids; category must come from the documented enum exactly. Validation rejects partial submissions silently — fill every required field on the first call."},
 		{Tool: "context_index", Request: `{"tool":"context_index","path":".","language":"auto","mode":"standard"}`, Purpose: "build or refresh the persistent language-agnostic codebase comprehension graph with backend/build-system enrichment"},
@@ -323,7 +360,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "append_file", Request: `{"tool":"append_file","path":"relative/file","content":"text to append"}`, Purpose: "append text"},
 		{Tool: "apply_patch", Request: `{"tool":"apply_patch","content":"*** Begin Patch\n*** Update File: relative/file\n@@\n-old\n+new\n*** End Patch"}`, Purpose: "multi-file patch envelope. Use ONLY these *** directives: Begin Patch, End Patch, Add File, Update File, Delete File, Move to. Hunks (`@@`) inside Update File. Do not invent extras like *** Sanity Check / *** Note / *** Verification."},
 		{Tool: "delegate_edit", Request: `{"tool":"delegate_edit","path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}`, Purpose: "hand a single edit spec to the configured executor-role model and return its dispatch result. Use this when you have already decided the exact change and want to keep your own context focused on planning the next edit instead of re-reading what you just wrote. Falls back to direct dispatch when no executor is configured."},
-		{Tool: "submit_plan", Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}]}`, Purpose: "submit a structured edit plan (plan-then-execute mode only). The planner enumerates every edit up-front; the executor phase dispatches them in order. Use this in lieu of edit_file/apply_patch when the lane is plan-only."},
+		{Tool: "submit_plan", Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}]}`, Purpose: "submit a structured edit plan (plan-then-execute mode only). The planner enumerates every edit up-front; large bodies are spilled to artifact refs after submission."},
 		{Tool: "git_status", Request: `{"tool":"git_status","workdir":"."}`, Purpose: "inspect git state"},
 		{Tool: "git_diff", Request: `{"tool":"git_diff","workdir":".","path":"optional/path"}`, Purpose: "inspect git diff"},
 		{Tool: "shell", Request: `{"tool":"shell","command":"go test ./...","workdir":"."}`, Purpose: "run an allowed shell command"},

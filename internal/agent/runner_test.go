@@ -128,7 +128,7 @@ func TestPlannerOwnedVerificationRequiresSourceSanityBeforeDelegatedStatus(t *te
 	}
 
 	delegatedAnswer := patchOnlyAnswer + "\nPlanner-owned validation not run by lane; build/test verification is planner-owned."
-	if result, rejected := runner.mutationCompletionRejection(delegatedAnswer, results); !rejected || !strings.Contains(result.Error, "source_sanity") {
+	if result, rejected := runner.mutationCompletionRejection(delegatedAnswer, results); !rejected || !strings.Contains(result.Error, "source-sanity") {
 		t.Fatalf("expected planner-owned delegated status without source sanity to reject, rejected=%v result=%#v", rejected, result)
 	}
 
@@ -378,8 +378,11 @@ func TestSourceEditPatchHygieneBlocksMoreReadsButAllowsSourceSanity(t *testing.T
 	}
 
 	summary, errorText, reject := sourceEditVerificationRejection(workspace.ToolRequest{Tool: "read_file", Path: "native/src/cart_system.cpp"}, brief, results)
-	if !reject || summary != "Source edit verification required" || !strings.Contains(errorText, "source_sanity") {
-		t.Fatalf("expected patch-only source verification to block more reads with source_sanity guidance, got reject=%v summary=%q error=%q", reject, summary, errorText)
+	if !reject || summary != "Source edit verification required" || !strings.Contains(errorText, "source-sanity") {
+		t.Fatalf("expected patch-only source verification to block more reads with source-sanity guidance, got reject=%v summary=%q error=%q", reject, summary, errorText)
+	}
+	if strings.Contains(strings.ToLower(errorText), "run source_sanity") || strings.Contains(strings.ToLower(errorText), "use source_sanity") {
+		t.Fatalf("source verification recovery should name evidence, not prescribe the next tool: %q", errorText)
 	}
 	if _, _, reject := sourceEditVerificationRejection(workspace.ToolRequest{Tool: "source_sanity", Path: "native/src/cart_system.cpp"}, brief, results); reject {
 		t.Fatal("source_sanity must remain allowed after patch-only source verification")
@@ -597,7 +600,7 @@ func TestPlannerOwnedVerificationGateNamesLaneSanity(t *testing.T) {
 	if summary != "Verification required after workspace edits" {
 		t.Fatalf("unexpected summary %q", summary)
 	}
-	for _, want := range []string{"delegates build/test verification to the planner", "source_sanity", "git diff --check", "do not run build or test"} {
+	for _, want := range []string{"delegates build/test verification to the planner", "source-sanity evidence", "git diff --check", "do not run build or test"} {
 		if !strings.Contains(errorText, want) {
 			t.Fatalf("expected planner-owned verification message to contain %q, got %q", want, errorText)
 		}
@@ -723,10 +726,10 @@ func TestBuildRunnerNextActionStateGuidesAfterBootstrappedReadBlocker(t *testing
 		t.Fatalf("expected duplicate read invalid action, got %#v", state.InvalidNextActions)
 	}
 	actions := strings.Join(state.NextValidActions, "\n")
-	if !strings.Contains(actions, "edit_file on the approved target") {
+	if !strings.Contains(actions, "approved-target write capability") {
 		t.Fatalf("expected edit guidance, got %#v", state.NextValidActions)
 	}
-	if !strings.Contains(actions, "narrow read_file") {
+	if !strings.Contains(actions, "narrow range read") {
 		t.Fatalf("expected narrow read guidance, got %#v", state.NextValidActions)
 	}
 }
@@ -784,7 +787,7 @@ func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
 			return &workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: "Implementation bootstrap already inspected this target",
-				Error:   "README.md has already been read in the implementation bootstrap; use edit_file or a narrow line range instead",
+				Error:   "README.md has already been read in the implementation bootstrap; approved-target write capability or a narrow line range remains available",
 			}
 		},
 		OnEvent: func(event RunEvent) {
@@ -829,7 +832,7 @@ func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
 	if state.Reason != "pre_execute_guard" || state.LastTool != "read_file" || state.LastTarget != "README.md" {
 		t.Fatalf("unexpected state: %#v", state)
 	}
-	if !strings.Contains(strings.Join(state.NextValidActions, "\n"), "edit_file on the approved target") {
+	if !strings.Contains(strings.Join(state.NextValidActions, "\n"), "approved-target write capability") {
 		t.Fatalf("expected edit guidance, got %#v", state.NextValidActions)
 	}
 	if len(feedback) != 1 {
@@ -1672,7 +1675,7 @@ func TestExactAnchorPreWriteRecoveryNudgeDoesNotSuggestReadRefinement(t *testing
 		false,
 		false,
 	)
-	for _, want := range []string{"exact-anchor implementation pre-write", "Call edit_file or apply_patch", "<<QUESTION>>"} {
+	for _, want := range []string{"exact-anchor implementation pre-write", "Exact-anchor write capability", "<<QUESTION>>"} {
 		if !strings.Contains(nudge, want) {
 			t.Fatalf("expected exact-anchor recovery nudge to contain %q, got:\n%s", want, nudge)
 		}
@@ -1705,7 +1708,7 @@ func TestRequiredPathRecoveryNudgeDoesNotAnswerFirst(t *testing.T) {
 		false,
 		false,
 	)
-	for _, want := range []string{"required edit path", "native/tests/test_energy.cpp", "Make an allowed write now"} {
+	for _, want := range []string{"required edit path", "native/tests/test_energy.cpp", "Required outcomes are an allowed write"} {
 		if !strings.Contains(nudge, want) {
 			t.Fatalf("expected required-path recovery nudge to contain %q, got:\n%s", want, nudge)
 		}
@@ -1717,7 +1720,7 @@ func TestRequiredPathRecoveryNudgeDoesNotAnswerFirst(t *testing.T) {
 	}
 }
 
-func TestTargetWritePhaseRecoveryNudgeStaysInsideTarget(t *testing.T) {
+func TestTargetInspectionRecoveryNudgeStaysInsideTarget(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: "go_file_outline", Summary: "Outlined 15 top-level declaration(s) in internal/app/turn_planner.go.", Output: "package app"},
 		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 1-220", Output: "doc excerpt"},
@@ -1735,14 +1738,14 @@ func TestTargetWritePhaseRecoveryNudgeStaysInsideTarget(t *testing.T) {
 		false,
 		false,
 	)
-	if !strings.Contains(nudge, "target-write phase") {
-		t.Fatalf("expected target-write guidance, got:\n%s", nudge)
+	if !strings.Contains(nudge, "already has source evidence and target-file evidence") {
+		t.Fatalf("expected target-inspection guidance, got:\n%s", nudge)
 	}
 	if !strings.Contains(nudge, "Relevant target window: docs/frontier-routing-implementation-plan.md lines 340-359") {
 		t.Fatalf("expected narrow target window, got:\n%s", nudge)
 	}
 	if strings.Contains(nudge, `{"tool":"search_files"`) || strings.Contains(nudge, `{"tool":"search_content","pattern":"TODO|FIXME"`) {
-		t.Fatalf("target-write recovery nudge should not suggest broad discovery, got:\n%s", nudge)
+		t.Fatalf("target-inspection recovery nudge should not suggest broad discovery, got:\n%s", nudge)
 	}
 }
 
@@ -2403,7 +2406,7 @@ func TestForcedCompletionRepairsReadOnlyFallbackAnswer(t *testing.T) {
 		[]llama.ChatMessage{{Role: "user", Content: "how does this harness make use of sub-agents?"}},
 		llama.ChatOptions{},
 		runner.SeedResults,
-		"Post-readiness probe budget is exhausted. Tools are now disabled. Write the normal final answer from the evidence already gathered.",
+		"Post-readiness named-gap contract is exhausted. Tools are now disabled. Write the normal final answer from the evidence already gathered.",
 		nil,
 	)
 	if err != nil {
@@ -3245,6 +3248,83 @@ func TestWriteReadyPacketRejectsReadOutsideRequiredPathsAfterFirstWrite(t *testi
 	}
 }
 
+func TestWriteReadyPacketAllowsReadOnExplicitEvidencePath(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt", "evidence.txt"} {
+		if err := writeTestFile(root, path, "before\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	replies := []string{
+		`{"tool":"write_file","path":"a.txt","content":"after a\n","description":"update first required path"}`,
+		`{"tool":"read_file","path":"evidence.txt","start_line":1,"end_line":1,"named_gap":"verify the explicitly supplied evidence line before updating b.txt","why_not_answering":"b.txt depends on the supplied read-only evidence"}`,
+		`{"tool":"write_file","path":"b.txt","content":"after b\n","description":"update second required path"}`,
+		"Changed paths:\n- a.txt\n- b.txt\nVerification: not required for this test fixture.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var rejectedReads int
+	var successfulReads int
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 12, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"a.txt", "b.txt"},
+			TargetPacket:         []string{"prompt_context:verified_current_state"},
+			EvidencePaths:        []string{"evidence.txt"},
+		},
+	}
+	_, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt and b.txt using evidence.txt."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "read_file" {
+				if event.Result.Error == "" {
+					successfulReads++
+				} else {
+					rejectedReads++
+				}
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rejectedReads != 0 {
+		t.Fatalf("expected explicit evidence-path read to pass, got %d rejected reads", rejectedReads)
+	}
+	if successfulReads != 1 {
+		t.Fatalf("expected one successful evidence-path read, got %d", successfulReads)
+	}
+}
+
 func TestRunnerForcesSynthesisOnFirstPostReadinessNoGapFollowup(t *testing.T) {
 	root := t.TempDir()
 	source := `package agent
@@ -3795,7 +3875,7 @@ func TestRunnerReadinessStateTreatsContextPacketAsWriteReadyEvidence(t *testing.
 	if !slices.Contains(readiness.OpenObligations, "required_edit_paths_not_changed") {
 		t.Fatalf("expected required-path open obligation, got %#v", readiness.OpenObligations)
 	}
-	for _, want := range []string{"bounded required-path source read", "named_gap", "<<QUESTION>>"} {
+	for _, want := range []string{"semantic/context/declared project discovery", "named_gap", "<<QUESTION>>"} {
 		if !strings.Contains(readiness.FurtherReadsRequire, want) {
 			t.Fatalf("expected scope-ready read requirement %q, got %q", want, readiness.FurtherReadsRequire)
 		}
@@ -3897,8 +3977,8 @@ func TestRunnerReadinessStateRequiresPlannerOwnedSourceSanityAfterPatchHygiene(t
 	if !slices.Contains(readiness.OpenObligations, "planner_owned_source_lane_sanity_pending") {
 		t.Fatalf("expected planner-owned source lane sanity obligation, got %#v", readiness.OpenObligations)
 	}
-	if !strings.Contains(readiness.FurtherReadsRequire, "source_sanity") {
-		t.Fatalf("expected source_sanity follow-up boundary, got %q", readiness.FurtherReadsRequire)
+	if !strings.Contains(readiness.FurtherReadsRequire, "source-sanity") {
+		t.Fatalf("expected source-sanity follow-up boundary, got %q", readiness.FurtherReadsRequire)
 	}
 }
 
@@ -3937,6 +4017,26 @@ func TestCompletionGateExemptsNonSourceWritesFromVerification(t *testing.T) {
 				t.Fatalf("hasPendingVerificationAfterWrites for %q (required=%v) = %v, want %v", c.writePath, c.required, got, c.want)
 			}
 		})
+	}
+}
+
+func TestDocDeliverableMkdirParentDoesNotRequireVerification(t *testing.T) {
+	results := []workspace.ToolResult{
+		{Tool: "mkdir", Summary: "Created directory .idiom/refine/example/iter-1"},
+		{Tool: "write_file", Summary: "Wrote .idiom/refine/example/iter-1/draft.md"},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		RequiredEditPaths:    []string{".idiom/refine/example/iter-1/draft.md"},
+	}
+	if hasPendingVerificationAfterWrites(results, brief) {
+		t.Fatalf("doc-deliverable mkdir parent plus markdown write should not require source verification")
+	}
+
+	sourceBrief := brief
+	sourceBrief.RequiredEditPaths = []string{".idiom/refine/example/iter-1/generated.go"}
+	if !hasPendingVerificationAfterWrites(results, sourceBrief) {
+		t.Fatalf("mkdir exemption must not apply when the required deliverable is source-like")
 	}
 }
 
@@ -3986,11 +4086,13 @@ func TestImplementationPreWriteNonWriteRecoveryAllowsSubmitPlanInPlannerPhase(t 
 		t.Fatalf("plan-execute planner phase submit_plan must NOT be rejected by pre-write gate; got summary=%q error=%q prompt=%q", summary, errorText, prompt)
 	}
 
-	// Sanity: a non-write tool (read_file) in the same lane should still be rejected.
+	// Plan-execute planner phases no longer use the generic pre-write
+	// write-only gate. Reads are governed by the plan-submission
+	// readiness contract, not by implementation-lane write recovery.
 	reqRead := workspace.ToolRequest{Tool: "read_file"}
 	_, _, _, rejectRead := r.implementationPreWriteNonWriteRecovery(reqRead, nil)
-	if !rejectRead {
-		t.Fatal("non-write tool (read_file) in write-ready planner phase should still be rejected")
+	if rejectRead {
+		t.Fatal("plan-execute planner reads should not be rejected by the generic implementation pre-write gate")
 	}
 }
 
@@ -4147,7 +4249,7 @@ func TestPartialRequiredEditsCompletionGateUsesBoundedRecovery(t *testing.T) {
 		t.Fatalf("expected one recovery retry after partial edit, got %d request(s)", requests)
 	}
 	if !strings.Contains(recoveryPrompt, "b.txt") ||
-		!strings.Contains(recoveryPrompt, "bounded read_file/code_navigate") ||
+		!strings.Contains(recoveryPrompt, "semantic/context/declared project discovery") ||
 		strings.Contains(recoveryPrompt, "Read/search tools are hidden") {
 		t.Fatalf("expected recovery prompt to target remaining required path, got %q", recoveryPrompt)
 	}
@@ -4444,7 +4546,7 @@ func TestEvidenceFirstTargetReadRedirectBoundsFollowupTargetWindow(t *testing.T)
 	}
 }
 
-func TestEvidenceFirstTargetReadBudgetRejectsOnlyOversizedContinuation(t *testing.T) {
+func TestEvidenceFirstTargetReadRefreshHasNoWindowBudget(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: "explore_then_implement",
 		TargetRefs: []string{"docs/frontier-routing-implementation-plan.md"},
@@ -4455,24 +4557,28 @@ func TestEvidenceFirstTargetReadBudgetRejectsOnlyOversizedContinuation(t *testin
 		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 221-360", Output: "doc excerpt 2"},
 	}
 
-	if _, _, reject := evidenceFirstTargetReadBudgetRejection(workspace.ToolRequest{
+	redirected, ok := evidenceFirstTargetReadRedirect(brief, evidence, workspace.ToolRequest{
 		Tool: "read_file",
 		Path: "docs/frontier-routing-implementation-plan.md",
-	}, evidence, brief); !reject {
-		t.Fatal("expected third open-ended target read to be rejected")
+	})
+	if !ok {
+		t.Fatal("expected third open-ended target read to be redirected to the next narrow window")
+	}
+	if redirected.StartLine != 361 || redirected.EndLine != 500 {
+		t.Fatalf("unexpected follow-up redirect request: %#v", redirected)
 	}
 
-	if _, _, reject := evidenceFirstTargetReadBudgetRejection(workspace.ToolRequest{
+	if _, ok := evidenceFirstTargetReadRedirect(brief, evidence, workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "docs/frontier-routing-implementation-plan.md",
 		StartLine: 240,
 		EndLine:   260,
-	}, evidence, brief); reject {
-		t.Fatal("expected precise target read to remain allowed after budget exhaustion")
+	}); ok {
+		t.Fatal("expected precise target read to remain allowed after prior target windows")
 	}
 }
 
-func TestEvidenceFirstTargetWritePhaseRejectsNewSourceDiscovery(t *testing.T) {
+func TestEvidenceFirstTargetInspectionEncouragesWritesWithoutReadBudget(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: "explore_then_implement",
 		TargetRefs: []string{"docs/frontier-routing-implementation-plan.md"},
@@ -4483,26 +4589,18 @@ func TestEvidenceFirstTargetWritePhaseRejectsNewSourceDiscovery(t *testing.T) {
 		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 220-359", Output: "doc excerpt 2"},
 	}
 
-	if !evidenceFirstTargetWritePhaseActive(brief, evidence) {
-		t.Fatal("expected target write phase to activate after bounded target inspection")
+	if !evidenceFirstTargetInspectionActive(brief, evidence) {
+		t.Fatal("expected target inspection guidance to activate after target evidence")
 	}
-	if _, _, reject := evidenceFirstTargetWritePhaseRejection(workspace.ToolRequest{
-		Tool:    "go_read_symbol",
-		Path:    "internal/app/turn_planner.go",
-		Pattern: "classifyTurnRouteWithModel",
-	}, evidence, brief); !reject {
-		t.Fatal("expected new source discovery to be rejected after target inspection budget")
-	}
-	if _, _, reject := evidenceFirstTargetWritePhaseRejection(workspace.ToolRequest{
-		Tool:    "search_content",
-		Path:    "docs/frontier-routing-implementation-plan.md",
-		Pattern: "turnRoutePlan",
-	}, evidence, brief); reject {
-		t.Fatal("expected target-scoped search to remain allowed after target inspection budget")
+	if redirected, ok := evidenceFirstTargetReadRedirect(brief, evidence, workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "docs/frontier-routing-implementation-plan.md",
+	}); !ok || redirected.StartLine != 360 {
+		t.Fatalf("expected further target reads to stay available as bounded follow-ups, got %#v ok=%v", redirected, ok)
 	}
 }
 
-func TestRunnerBriefWithPhaseHintsPromotesTargetWritePhase(t *testing.T) {
+func TestRunnerBriefWithPhaseHintsPromotesTargetInspectionPhase(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: "explore_then_implement",
 		TargetRefs: []string{"docs/frontier-routing-implementation-plan.md"},
@@ -4514,16 +4612,136 @@ func TestRunnerBriefWithPhaseHintsPromotesTargetWritePhase(t *testing.T) {
 	}
 
 	live := runnerBriefWithPhaseHints(brief, results)
-	if got := evidenceFirstMutationPhase(live, results); got != "target_write" {
-		t.Fatalf("phase = %q, want target_write", got)
+	if got := evidenceFirstMutationPhase(live, results); got != "target_inspection" {
+		t.Fatalf("phase = %q, want target_inspection", got)
 	}
 	required := strings.Join(live.RequiredNext, "\n")
-	if !strings.Contains(required, "edit_file in the named target now") {
-		t.Fatalf("expected target-write required_next guidance, got %#v", live.RequiredNext)
+	if !strings.Contains(required, "make the edit in the named target once the change is supported") {
+		t.Fatalf("expected target-inspection write guidance, got %#v", live.RequiredNext)
 	}
 	invalid := strings.Join(live.InvalidActions, "\n")
-	if !strings.Contains(invalid, "source discovery outside the named target after target inspection") {
-		t.Fatalf("expected target-write invalid action guidance, got %#v", live.InvalidActions)
+	if !strings.Contains(invalid, "source discovery outside the named target during target inspection") {
+		t.Fatalf("expected target-inspection invalid action guidance, got %#v", live.InvalidActions)
+	}
+}
+
+func TestRunnerPhaseHintsUseCapabilityLanguageForPromptSurfaces(t *testing.T) {
+	debugLogSelection := workspace.ToolResult{
+		Tool:   "search_files",
+		Output: "f1 logs/conversations/2026-05-13.jsonl\n",
+	}
+	debugLogRead := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f1 logs/conversations/2026-05-13.jsonl lines 1-80",
+		Output:  "decision trace",
+	}
+	nonTargetEvidence := workspace.ToolResult{
+		Tool:    "go_read_symbol",
+		Summary: "Read Worker.resolve in internal/app/worker.go lines 10-40",
+		Output:  "func resolve() {}",
+	}
+	targetEvidence := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read target.go lines 1-80",
+		Output:  "package target",
+	}
+
+	cases := []struct {
+		name    string
+		brief   workerruntime.WorkerRuntimeBrief
+		results []workspace.ToolResult
+	}{
+		{
+			name:    "debug log tail",
+			brief:   workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"},
+			results: []workspace.ToolResult{debugLogSelection},
+		},
+		{
+			name:    "selected log analysis",
+			brief:   workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"},
+			results: []workspace.ToolResult{debugLogSelection, debugLogRead},
+		},
+		{
+			name:  "source evidence",
+			brief: workerruntime.WorkerRuntimeBrief{TaskFamily: "explore_then_implement", TargetRefs: []string{"target.go"}},
+		},
+		{
+			name:    "target entry",
+			brief:   workerruntime.WorkerRuntimeBrief{TaskFamily: "explore_then_implement", TargetRefs: []string{"target.go"}},
+			results: []workspace.ToolResult{nonTargetEvidence},
+		},
+		{
+			name:    "target inspection",
+			brief:   workerruntime.WorkerRuntimeBrief{TaskFamily: "explore_then_implement", TargetRefs: []string{"target.go"}},
+			results: []workspace.ToolResult{nonTargetEvidence, targetEvidence},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			live := runnerBriefWithPhaseHints(tc.brief, tc.results)
+			promptSurface := strings.Join(append(append(append([]string{}, live.RequiredNext...), live.InvalidActions...), live.SearchPolicy...), "\n")
+			for _, forbidden := range []string{
+				"read the newest selected log tail " + "now",
+				"one targeted " + "search_content",
+				"using " + "search_content" + " or a narrow " + "read_file",
+				"another blind " + "read_file",
+				"open-ended " + "read_file",
+			} {
+				if strings.Contains(promptSurface, forbidden) {
+					t.Fatalf("phase hint prompt surface still contains tool strategy prescription %q:\n%s", forbidden, promptSurface)
+				}
+			}
+			for _, rawTool := range []string{"search_content", "read_file"} {
+				if strings.Contains(promptSurface, rawTool) {
+					t.Fatalf("phase hint prompt surface should use capability/contract language, found %q in:\n%s", rawTool, promptSurface)
+				}
+			}
+		})
+	}
+}
+
+func TestRunnerPromptSourceDoesNotContainRemovedToolPrescriptions(t *testing.T) {
+	removedPromptSurfacePrescriptions := []string{
+		"read the newest selected log tail " + "now",
+		"prefer one " + "discovery_query first",
+		"otherwise stay inside the selected log with one targeted " + "search_content before answering",
+		"continue reading only for a named missing target fact, using " + "search_content or a narrow " + "read_file scoped to the named target",
+	}
+	rawProfileToolMenuTerms := []string{
+		"code_navigate",
+		"*_find_symbol",
+		"_find_symbol",
+		"*_read_symbol",
+		"_read_symbol",
+		"*_references",
+		"_references",
+		"read_file",
+		"project wrappers",
+	}
+
+	checks := []struct {
+		path      string
+		forbidden []string
+	}{
+		{path: "runner.go", forbidden: removedPromptSurfacePrescriptions},
+		{path: "runner_child_tasks.go", forbidden: removedPromptSurfacePrescriptions},
+		{path: filepath.Join("..", "..", "cmd", "idiom", "profiles", "claude-qwen-worker.md"), forbidden: rawProfileToolMenuTerms},
+		{path: filepath.Join("..", "..", "prompts", "profiles", "claude-qwen-worker.md"), forbidden: rawProfileToolMenuTerms},
+	}
+
+	for _, check := range checks {
+		t.Run(check.path, func(t *testing.T) {
+			body, err := os.ReadFile(check.path)
+			if err != nil {
+				t.Fatalf("read %s: %v", check.path, err)
+			}
+			source := string(body)
+			for _, forbidden := range check.forbidden {
+				if strings.Contains(source, forbidden) {
+					t.Fatalf("%s still contains removed prompt-surface prescription %q", check.path, forbidden)
+				}
+			}
+		})
 	}
 }
 
@@ -4546,8 +4764,8 @@ func TestRunnerBriefWithPhaseHintsPromotesRequiredPathWriteReadiness(t *testing.
 		t.Fatalf("expected write-ready constraint, got %#v", live.Constraints)
 	}
 	required := strings.Join(live.RequiredNext, "\n")
-	if !strings.Contains(required, "edit a required path") ||
-		!strings.Contains(required, "bounded required-path source read") ||
+	if !strings.Contains(required, "resolve a required path") ||
+		!strings.Contains(required, "semantic/context/declared project discovery") ||
 		!strings.Contains(required, "exact path-specific blocker") {
 		t.Fatalf("expected scoped required-path guidance, got %#v", live.RequiredNext)
 	}
@@ -4605,16 +4823,16 @@ func TestBuildRunnerNextActionStateIncludesEvidenceFirstPhaseHints(t *testing.T)
 	}
 
 	state := buildRunnerNextActionState("main", 17, "tool_result", req, result, results, false, brief)
-	if state.Phase != "target_write" {
-		t.Fatalf("phase = %q, want target_write", state.Phase)
+	if state.Phase != "target_inspection" {
+		t.Fatalf("phase = %q, want target_inspection", state.Phase)
 	}
 	actions := strings.Join(state.NextValidActions, "\n")
-	if !strings.Contains(actions, "edit_file in the named target now") {
-		t.Fatalf("expected target-write edit guidance, got %#v", state.NextValidActions)
+	if !strings.Contains(actions, "make the edit in the named target once the change is supported") {
+		t.Fatalf("expected target-inspection edit guidance, got %#v", state.NextValidActions)
 	}
 	invalid := strings.Join(state.InvalidNextActions, "\n")
-	if !strings.Contains(invalid, "source discovery outside the named target after target inspection") {
-		t.Fatalf("expected target-write invalid guidance, got %#v", state.InvalidNextActions)
+	if !strings.Contains(invalid, "source discovery outside the named target during target inspection") {
+		t.Fatalf("expected target-inspection invalid guidance, got %#v", state.InvalidNextActions)
 	}
 }
 
@@ -6025,7 +6243,7 @@ func TestWriteReadyPreWriteVisibleBriefAdvertisesScopedSurface(t *testing.T) {
 			t.Fatalf("write-ready pre-write brief should keep scoped tool %s, got %#v", allowed, brief.AllowedTools)
 		}
 	}
-	if !reflect.DeepEqual(brief.RequiredTools, []string{"edit_file_or_apply_patch", "read_file_or_code_navigate_for_named_gap"}) {
+	if !reflect.DeepEqual(brief.RequiredTools, []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"}) {
 		t.Fatalf("write-ready pre-write required tools = %#v, want scoped edit/read tools", brief.RequiredTools)
 	}
 	invalid := strings.Join(brief.InvalidActions, "\n")
@@ -6327,7 +6545,7 @@ func TestSynthesizeFallbackAnswerPrefersSemanticEvidenceOverRedirects(t *testing
 		{
 			Tool:    "read_file",
 			Summary: "Redirected internal/workspace/tool_schemas.go to go_file_outline",
-			Output:  "Try: {\"tool\":\"go_file_outline\",\"path\":\"internal/workspace/tool_schemas.go\"}\nNext step: use go_read_symbol.",
+			Output:  "candidate_request: {\"tool\":\"go_file_outline\",\"path\":\"internal/workspace/tool_schemas.go\"}\nrelated_capability: read_symbol via go_read_symbol.",
 		},
 		{
 			Tool:    "go_file_outline",
@@ -6382,7 +6600,7 @@ func TestImmediateBudgetFallbackAnswerUsesExistingEvidence(t *testing.T) {
 		Contract:          "direct_answer",
 		PermissionProfile: "read_only_workspace",
 		Objective:         "How does this harness utilize sub-agents?",
-	}, "Post-child read budget is exhausted. Tools are now disabled.", []workspace.ToolResult{
+	}, "Post-child named-gap contract is exhausted. Tools are now disabled.", []workspace.ToolResult{
 		{
 			Tool:    "task",
 			Summary: "Child task completed",
@@ -6422,7 +6640,7 @@ func TestChildPacketContainsGroundedAnswerEvidenceRequiresRealEvidence(t *testin
 	if !childPacketContainsGroundedAnswerEvidence("", partial) {
 		t.Fatal("expected partial packet with grounded file evidence to be recognized")
 	}
-	bad := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Redirected to go_file_outline\nTry: {\"tool\":\"go_file_outline\",\"path\":\"internal/workspace/tool_schemas.go\"}\nNext step: use go_read_symbol.\n"
+	bad := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Redirected to go_file_outline\ncandidate_request: {\"tool\":\"go_file_outline\",\"path\":\"internal/workspace/tool_schemas.go\"}\nrelated_capability: read_symbol via go_read_symbol.\n"
 	if childPacketContainsGroundedAnswerEvidence("", bad) {
 		t.Fatal("expected redirect packet without grounded evidence to be rejected")
 	}
@@ -6749,7 +6967,7 @@ func TestPostReadinessGoReadSymbolRedirectsToBodyAfterTruncatedRead(t *testing.T
 	runner := &Runner{}
 	results := []workspace.ToolResult{{
 		Tool:    "go_read_symbol",
-		Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-135 (truncated from lines 16-516; use go_extract_body for the full body)",
+		Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-135 (truncated from lines 16-516; full-body adapter: go_extract_body)",
 		Output:  "func (r *Runner) runChildTask(...) {",
 	}}
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
@@ -7074,7 +7292,7 @@ func TestAnswerComposerDecoratesDiscoveryToolEvidenceGenerically(t *testing.T) {
 				Error         string `json:"error,omitempty"`
 				OutputExcerpt string `json:"output_excerpt,omitempty"`
 			}{
-				{Name: "text_anchor_search", Summary: "Found 178 matching line(s) (showing first 50). Use read_file on a returned handle, or narrow the pattern to see more."},
+				{Name: "text_anchor_search", Summary: "Found 178 matching line(s) (showing first 50). Bounded-read capability is available on returned handles, or narrow the pattern to see more."},
 				{Name: "dependency_graph", Summary: "Collected Go dependency graph with go list -deps"},
 			},
 		}},
@@ -7116,7 +7334,7 @@ func TestAnswerComposerGenericFallbackDecoratesDiscoveryLayers(t *testing.T) {
 				Error         string `json:"error,omitempty"`
 				OutputExcerpt string `json:"output_excerpt,omitempty"`
 			}{
-				{Name: "text_anchor_search", Summary: "Found routing anchors in internal/app/turn_planner.go. Use read_file on a returned handle, or narrow the pattern to see more."},
+				{Name: "text_anchor_search", Summary: "Found routing anchors in internal/app/turn_planner.go. Bounded-read capability is available on returned handles, or narrow the pattern to see more."},
 				{Name: "go_read_symbol", Summary: "Read classifyPromptRoute in internal/app/turn_planner.go lines 42-96"},
 			},
 		}},
@@ -7129,7 +7347,7 @@ func TestAnswerComposerGenericFallbackDecoratesDiscoveryLayers(t *testing.T) {
 			t.Fatalf("expected decorated generic answer to contain %q, got:\n%s", want, answer)
 		}
 	}
-	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "What I found:", "text_anchor_search:", "go_read_symbol:", "Use read_file on a returned handle", "Discovery packet:", "discovery packet", "Confidence:"} {
+	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "What I found:", "text_anchor_search:", "go_read_symbol:", "Bounded-read capability is available", "Discovery packet:", "discovery packet", "Confidence:"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("generic answer leaked raw discovery wording %q:\n%s", forbidden, answer)
 		}
@@ -7138,7 +7356,7 @@ func TestAnswerComposerGenericFallbackDecoratesDiscoveryLayers(t *testing.T) {
 
 func TestRunnerFinalBoundaryDecoratesModelFinalDiscoveryAnswer(t *testing.T) {
 	root := t.TempDir()
-	reply := "What I found:\n- text_anchor_search: Found 178 matching line(s) (showing first 50). Use read_file on a returned handle, or narrow the pattern to see more.\n\nDiscovery packet: `.idiom/discovery/queries/query.json`.\nConfidence: high"
+	reply := "What I found:\n- text_anchor_search: Found 178 matching line(s) (showing first 50). Bounded-read capability is available on returned handles, or narrow the pattern to see more.\n\nDiscovery packet: `.idiom/discovery/queries/query.json`.\nConfidence: high"
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -7415,10 +7633,9 @@ func TestChildPacketBoundaryNudgeDisclosesActualProbeBudget(t *testing.T) {
 		budget int
 		want   string
 	}{
-		{0, "no further reads before answering"},
-		{1, "one targeted probe before answering"},
-		{2, "at most 2 targeted probes"},
-		{3, "at most 3 targeted probes"},
+		{budget: 2, want: "at most 2 targeted probes"},
+		{budget: 1, want: "one targeted probe"},
+		{budget: 0, want: "no further reads"},
 	} {
 		nudge := childPacketBoundaryNudge("q", []string{"internal/agent/runner.go"}, tc.budget)
 		if !strings.Contains(nudge, tc.want) {
@@ -7690,7 +7907,7 @@ func TestBuildRunnerNextActionStateUsesClosureConstraintsForSuccessfulPostChildS
 	}
 	for _, forbidden := range []string{
 		"edit_file if the target is already clear",
-		"run targeted verification",
+		"targeted verification evidence",
 		"update task_ledger or answer with the concrete blocker",
 	} {
 		if containsRunnerString(state.NextValidActions, forbidden) {
@@ -7727,8 +7944,8 @@ func TestBuildRunnerNextActionStatePreservesDurableChildPacketClosureAfterSucces
 		t.Fatalf("expected durable child-packet closure constraint, got %#v", state)
 	}
 	for _, forbidden := range []string{
-		"code_navigate capability=read_symbol with one of the outlined declaration names",
-		"code_navigate capability=references or capability=calls_into on a named declaration",
+		"read-symbol capability with one outlined declaration name",
+		"references or calls-into capability on a named declaration",
 		"go_move_declarations",
 	} {
 		if containsRunnerString(state.NextValidActions, forbidden) {
@@ -9208,36 +9425,6 @@ func TestSanitizeFallbackResultOutputKeepsRichEvidenceTools(t *testing.T) {
 	}
 }
 
-func TestForcedSynthesisPromptDelegatedDirectsAtSynthesis(t *testing.T) {
-	got := forcedSynthesisPromptDelegated(2, 2)
-	for _, want := range []string{
-		"used your disclosed post-readiness probe budget (2/2)",
-		"Tools are now disabled",
-		"citing",
-		"body content",
-		"do not just list paths",
-		"substantive synthesis",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected delegated forced-synthesis prompt to contain %q, got:\n%s", want, got)
-		}
-	}
-}
-
-func TestForcedSynthesisPromptPostChildDirectsAtSynthesis(t *testing.T) {
-	got := forcedSynthesisPromptPostChild(2, 2)
-	for _, want := range []string{
-		"used your disclosed post-child probe budget (2/2)",
-		"Tools are now disabled",
-		"child packet",
-		"do not just list paths",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected post-child forced-synthesis prompt to contain %q, got:\n%s", want, got)
-		}
-	}
-}
-
 func TestApplyPostReadinessSchemaRequirementsMakesGapFieldsRequiredOnReadTools(t *testing.T) {
 	tools := []llama.Tool{
 		{
@@ -9454,20 +9641,16 @@ Best-effort observations:
 }
 
 func TestPostReadinessContinuationContractDisclosesBudget(t *testing.T) {
-	// budget=2 → "at most 2 targeted probes"
 	contract := postReadinessContinuationContract("delegated_read_only_answer_ready", 2)
 	if !strings.Contains(contract, "at most 2 targeted probes") {
 		t.Fatalf("expected contract to disclose budget=2, got:\n%s", contract)
 	}
-	// budget=1 → "one targeted probe before answering"
-	if got := postReadinessContinuationContract("child_packet_available", 1); !strings.Contains(got, "one targeted probe before answering") {
+	if got := postReadinessContinuationContract("delegated_read_only_answer_ready", 1); !strings.Contains(got, "one targeted probe") {
 		t.Fatalf("expected contract to disclose budget=1, got:\n%s", got)
 	}
-	// budget=0 → "no further reads are budgeted"
 	if got := postReadinessContinuationContract("child_packet_available", 0); !strings.Contains(got, "no further reads before answering") {
 		t.Fatalf("expected contract to state zero-budget, got:\n%s", got)
 	}
-	// child_packet_available scope mentions packet anchoring
 	pkt := postReadinessContinuationContract("child_packet_available", 2)
 	if !strings.Contains(pkt, "packet-named path or symbol") {
 		t.Fatalf("expected child_packet contract to mention packet-named path, got:\n%s", pkt)
@@ -10038,6 +10221,76 @@ func TestSuccessfulSearchMustBeConsumedBeforeAnotherSearch(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected chained-search guard to fire, events: %v", eventRolesFor(events))
+	}
+}
+
+func TestSuccessfulSearchCanContinueAfterConcreteInspection(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/app/app.go", "package app\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	if err := writeTestFile(root, "internal/agent/runner.go", "package agent\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	replies := []string{
+		`{"tool":"search_files","path":"internal","pattern":"*runner*"}`,
+		`{"tool":"search_files","path":"internal","pattern":"*task*"}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":1}`,
+		`{"tool":"search_files","path":"internal","pattern":"*app*"}`,
+		"final answer",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	if err := mgr.SetMode(workspace.ModeExplore); err != nil {
+		t.Fatalf("set explore mode: %v", err)
+	}
+
+	var events []RunEvent
+	var results []workspace.ToolResult
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxNoProgressTurns: 8},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	_, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "nudge scenario"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	successfulSearches := 0
+	for _, result := range results {
+		if result.Tool == "search_files" && result.Error == "" {
+			successfulSearches++
+		}
+		if result.Summary == "Tool hidden by active contract" && strings.Contains(result.Error, "search_files") {
+			t.Fatalf("search_files should not stay hidden after concrete inspection; results=%#v events=%v", results, eventRolesFor(events))
+		}
+	}
+	if successfulSearches != 2 {
+		t.Fatalf("expected first and post-inspection searches to execute, got %d results=%#v", successfulSearches, results)
 	}
 }
 

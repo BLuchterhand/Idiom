@@ -201,7 +201,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 	if exactAnchorHiddenPrewriteTool(input.Constraints, tool, statusCombined) {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search/shell before first exact-anchor write")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "call edit_file or apply_patch with the supplied target-packet anchor now")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "exact-anchor write capability with the supplied target-packet anchor")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> if no exact write anchor or patch is present")
 	}
 	if containsAny(statusCombined, "repeated", "replayed", "already failed earlier") {
@@ -233,9 +233,9 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 
 	if strings.Contains(statusCombined, "bootstrap already inspected") {
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file on the approved target using bootstrapped evidence")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow read_file with start_line/end_line only if exact lines are missing")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "search_content scoped to the approved target")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "approved-target write capability using bootstrapped evidence")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow range read only if exact lines are missing")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "exact-text search scoped to the approved target")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with a concrete blocker or no-op reason")
 	}
 	if !closureActive && containsAny(statusCombined, "repeated dead-end", "already failed earlier", "replayed same blocker", "replayed prior evidence") {
@@ -243,32 +243,32 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the explicit blocker and evidence")
 	}
 	if !closureActive && strings.Contains(statusCombined, "broad inspection") {
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "use one structured symbol, call/reference, or file-outline probe on a named target")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "use one discovery_query for a broad architecture, tracing, or impact question")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "use search_content for one exact phrase only when a semantic probe or discovered handle does not land")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "one structured symbol, call/reference, or file-outline capability on a named target")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "one bounded discovery-packet capability for a broad architecture, tracing, or impact question")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "one exact-text search only when a semantic capability or discovered handle does not land")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the current evidence already resolves the question")
 	}
 	if containsAny(statusCombined, "post-edit", "workspace edit already landed") {
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "run targeted verification")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "provide targeted verification evidence")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "read the changed file if exact failure lines are needed")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger or answer with the concrete blocker")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "record required ledger state or answer with the concrete blocker")
 	}
 	if containsAny(statusCombined, "approved editable target", "implementation target packet") {
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file inside approved target paths")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "approved-target write capability inside approved paths")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "request a target-scope update if the approved target is wrong")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "report the guard as a concrete blocker")
 	}
 	if writeReadyPacket {
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file or apply_patch on a required edit path using the packet and gathered evidence")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path write capability using the packet and gathered evidence")
 		if !exactAnchorPacket && workspace.IsWorkspaceWriteTool(tool) && strings.TrimSpace(input.Result.Error) != "" && containsAny(statusCombined, "old_text did not appear", "hunk", "context matched", "ambiguous", "stale") {
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "use one bounded read_file or code_navigate inside the affected required path with named_gap to refresh the stale or ambiguous anchor")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "semantic/context/declared project discovery capability or narrow required-path read with named_gap to refresh the stale or ambiguous anchor")
 		}
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> naming the exact edit-safety fact if no safe edit can be attempted")
 	}
 	if requiredPathsRemaining {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "edit each remaining required path")
 		if !exactAnchorPacket {
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "use one bounded read_file or code_navigate inside a remaining required path with named_gap if an exact edit-safety fact is missing")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "semantic/context/declared project discovery capability or narrow remaining-path read with named_gap if an exact edit-safety fact is missing")
 		}
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> naming the exact blocker for each remaining required path")
 	}
@@ -279,8 +279,8 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		if writeReadyPacket || requiredPathsRemaining {
 			guidance.ValidNext = appendUnique(guidance.ValidNext, "satisfy the missing write contract with an allowed edit, or answer with <<QUESTION>> naming the exact blocker")
 		} else {
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "use a tool to gather or edit the missing evidence")
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger if the gate requires ledger state")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "produce the missing evidence or edit required by the gate")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "record ledger state if the gate requires it")
 		}
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer only after the gate condition is satisfied")
 	}
@@ -291,9 +291,9 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 	if input.DeclarationMovesForbidden {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "do not call go_file_outline or go_move_declarations")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "read_file with a narrow line range inside the approved target")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "use edit_file instead of go_move_declarations")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "run verification or report the concrete blocker")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow range read inside the approved target")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "same-file edit capability instead of declaration moves")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "verification evidence or concrete blocker")
 	}
 	if !closureActive {
 		switch tool {
@@ -302,35 +302,35 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 				if objectiveImpliesRefactor(input.Objective) {
 					// Refactoring objective — outline's built-in
 					// go_move_declarations hint is the right next step.
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "go_move_declarations to relocate a tagged group of declarations")
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "code_navigate capability=read_symbol if you still need to inspect one declaration before moving")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "declaration-move write capability for a tagged group of declarations")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "read-symbol capability if one declaration still needs inspection before moving")
 				} else {
 					// Default (explanatory/relational/unknown): reading a
 					// specific declaration is the high-value next step.
 					// The outline summary itself may suggest
 					// go_move_declarations — that advice only lands for
 					// refactor objectives, so we override here.
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "code_navigate capability=read_symbol with one of the outlined declaration names to inspect its body")
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "code_navigate capability=references or capability=calls_into on a named declaration to trace how it's used")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "read-symbol capability with one outlined declaration name to inspect its body")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "references or calls-into capability on a named declaration to trace how it is used")
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "ignore the outline's go_move_declarations suggestion unless the objective is actually a refactor")
 				}
 			}
 		case "read_file", "code_navigate", "go_extract_body", "go_read_symbol":
 			if strings.TrimSpace(input.Result.Error) == "" {
 				if writeReadyPacket {
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "edit a required path now from the packet and inspected evidence")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path edit from the packet and inspected evidence")
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> only if the edit still has a path-specific blocker")
 				} else {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the inspected body already resolves the question")
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "if one exact missing claim remains, use one exact symbol, reference, or narrow range probe that would resolve it")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "if one exact missing claim remains, request one exact symbol, reference, or narrow range capability that would resolve it")
 				}
 				if input.WriteCapable && (input.ApprovedTargetScopePresent || objectiveImpliesRefactor(input.Objective) || writeReadyPacket) {
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file using the inspected evidence")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "write capability using the inspected evidence")
 				}
 				if writeReadyPacket {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "do not take another orientation read just to improve confidence")
 				} else {
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "use one narrow read_file or exact text search only if a specific anchor is still missing")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "one narrow range read or exact-text search only if a specific anchor is still missing")
 				}
 			}
 		case "search_files", "search_content", "rg", "go_find_symbol", "go_find_type", "go_find_const", "go_references", "go_definition":
@@ -341,26 +341,26 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 					// a different search shape instead — its common failure
 					// after a zero-hit search_files is to invent more
 					// filenames to search for.
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "use a structured symbol/navigation route for the affected language before guessing filenames or repeating the same search")
+					guidance.ValidNext = appendUnique(guidance.ValidNext, "structured symbol/navigation capability for the affected language before guessing filenames or repeating the same search")
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow to one exact term or scope from the user's question")
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the evidence you already have if the target may not exist")
 				} else {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "read one exact symbol body, discovered handle, or narrow range from the highest-confidence hit")
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the best hit already resolves the question")
 					if input.WriteCapable {
-						guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file if the target is already clear")
+						guidance.ValidNext = appendUnique(guidance.ValidNext, "write capability if the target is already clear")
 					}
 				}
 			}
 		case "edit_file", "write_file", "append_file", "go_move_declarations":
 			if strings.TrimSpace(input.Result.Error) == "" {
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "run targeted verification")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "update task_ledger or answer with the change summary")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "targeted verification evidence")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "required ledger state or answer with the change summary")
 			}
 		case "task_ledger":
 			if writeReadyPacket || requiredPathsRemaining {
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "task_ledger does not satisfy the required-path write contract")
-				guidance.ValidNext = appendUnique(guidance.ValidNext, "edit_file or apply_patch on a required edit path now")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path write capability")
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> naming the exact blocker for each remaining required path")
 			} else {
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "continue with the next incomplete ledger item")
@@ -378,8 +378,8 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		// file and read it"; a relational question ("how does X call Y")
 		// is better answered by routing to symbol definitions and call sites.
 		relational := []string{
-			"code_navigate capability=workspace_symbol to locate the symbol by name, then capability=references to list call sites",
-			"code_navigate capability=calls_into or capability=calls_from to trace handoff direction from a known symbol",
+			"symbol-lookup capability for the named symbol, followed by references capability if call sites are the missing evidence",
+			"calls-into or calls-from capability to trace handoff direction from a known symbol",
 			"include path or language when multiple language routes are active",
 		}
 		rebuilt := make([]string, 0, len(relational)+len(guidance.ValidNext))
@@ -497,7 +497,7 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 			strings.Contains(lower, "continue from the latest evidence with a targeted tool"),
 			strings.Contains(lower, "choose a materially different tool or target"),
 			strings.Contains(lower, "use a targeted read-only shell search"),
-			strings.Contains(lower, "use a tool to gather or edit the missing evidence"),
+			strings.Contains(lower, "produce the missing evidence or edit required by the gate"),
 			strings.Contains(lower, "update task_ledger"),
 			strings.Contains(lower, "edit_file"),
 			strings.Contains(lower, "verification"),
@@ -506,10 +506,10 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 			strings.Contains(lower, "go_move_declarations"),
 			strings.Contains(lower, "choose a materially different tool or target"),
 			strings.Contains(lower, "use one structured symbol, call/reference, or file-outline probe"),
-			strings.Contains(lower, "use one discovery_query"),
-			strings.Contains(lower, "use search_content for one exact phrase"),
-			strings.Contains(lower, "code_navigate capability=read_symbol with one of the outlined declaration names"),
-			strings.Contains(lower, "code_navigate capability=references or capability=calls_into on a named declaration"),
+			strings.Contains(lower, "one structured symbol, call/reference, or file-outline capability"),
+			strings.Contains(lower, "one bounded discovery-packet capability"),
+			strings.Contains(lower, "read-symbol capability with one outlined declaration name"),
+			strings.Contains(lower, "references or calls-into capability on a named declaration"),
 			strings.Contains(lower, "ignore the outline"),
 			strings.Contains(lower, "read one exact symbol body, discovered handle, or narrow range from the highest-confidence hit"):
 			continue
@@ -640,7 +640,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	if exactAnchorHiddenPrewriteTool(input.Constraints, tool, combined) {
 		plan.FailureClass = "exact_anchor_prewrite_hidden_tool"
 		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "read/search/shell before first exact-anchor write")
-		plan.RequiredNext = appendUnique(plan.RequiredNext, "use edit_file or apply_patch with the supplied anchor, or answer with <<QUESTION>> naming the missing anchor")
+		plan.RequiredNext = appendUnique(plan.RequiredNext, "exact-anchor write capability with the supplied anchor, or answer with <<QUESTION>> naming the missing anchor")
 	}
 	if containsAny(combined, "approval required", "write approval required") {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "stop and report that write approval is required")
@@ -751,13 +751,13 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state.Readiness = NormalizeReadinessState(state.Readiness)
 	directive := "Use this current-state packet for the next action. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	if implementationStateHasRequiredPathsForMutation(state) && len(state.ChangedPaths) == 0 {
-		directive = "Use this current-state packet for the next action. Required edit paths define the implementation scope: edit an in-scope required path, use one bounded required-path source read with named_gap for an exact edit-safety fact, or answer with <<QUESTION>> naming the exact missing anchor or stale fact that blocks the edit. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+		directive = "Use this current-state packet for the next action. Required edit paths define the implementation scope. Contract outcomes are an in-scope required-path edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> naming the exact missing anchor or stale fact that blocks the edit. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if implementationStateMissingRequiredPaths(state) {
-		directive = "Use this current-state packet for the next action. Required edit paths remain contractual until each one is changed or explicitly blocked. Use only remaining-path edits, bounded remaining-path source reads with named_gap for exact edit-safety facts, or concrete blockers. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+		directive = "Use this current-state packet for the next action. Required edit paths remain contractual until each one is changed or explicitly blocked. The available contract menu is remaining-path edits, semantic/context/declared project discovery or narrow remaining-path source reads with named_gap for exact edit-safety facts, or concrete blockers. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToVerify {
 		directive = "Use this current-state packet for the next action. The readiness state says verification is the open obligation; resolve verification status or report the concrete blocker before claiming completion. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
-		directive = "Use this current-state packet for the next action. The readiness state says writing is supported by the current packet/evidence; edit or report <<QUESTION>> with the exact edit blocker. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+		directive = "Use this current-state packet for the next action. The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToAnswer {
 		directive = "Use this current-state packet for the next action. The readiness state says answering is supported; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if containsStringValue(state.Constraints, "answer_readiness_reached") || containsStringValue(state.Constraints, "child_packet_available") {
@@ -776,9 +776,9 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 		directive += " For guarded workspace write tasks, the first assistant response must be either exactly one tool call or an explicit blocker/no-op answer; narrative-only implementation summaries are invalid before a successful write, no-op, or blocker."
 	}
 	if implementationStateHasRequiredPathsForMutation(state) {
-		directive += " When required_edit_paths are present, treat the packet as the write scope. Edit an in-scope required path, use one bounded required-path source read with named_gap for an exact edit-safety fact, or report <<QUESTION>> with the exact blocker."
+		directive += " When required_edit_paths are present, treat the packet as the write scope. The available contract menu is an in-scope required-path edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker."
 	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
-		directive += " The readiness state says writing is supported by the current packet/evidence; edit or report <<QUESTION>> with the exact edit blocker."
+		directive += " The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker."
 	}
 	if state.Readiness != nil &&
 		state.Readiness.ReadyToAnswer &&
@@ -1102,11 +1102,7 @@ func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeB
 		return brief
 	}
 	brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
-		`Use one discovery_query before ad hoc list/search/read for broad architecture, impact, tracing, security, or history questions; follow with targeted reads only for named gaps.`,
-		`architecture_boundary shape: {"tool":"discovery_query","purpose":"architecture_boundary","path":"<narrow-root>","pattern":"<component-term>|<boundary-term>","max_depth":2}`,
-		`impact_analysis shape: {"tool":"discovery_query","purpose":"impact_analysis","path":"<target-file-or-dir>","pattern":"<changed-symbol-or-feature-term>","max_depth":2}`,
-		`function_tracing shape: {"tool":"discovery_query","purpose":"function_tracing","path":"<target-file-or-dir>","pattern":"<function-or-call-term>","max_depth":2}`,
-		`security_review: {"tool":"discovery_query","purpose":"security_review","path":".","pattern":"auth|token|secret","max_depth":2}`,
+		`For broad architecture, impact, tracing, security, or history questions, the bounded discovery-packet capability is available before ad hoc list/search/read; choose purpose from the tool schema and follow with targeted reads only for named gaps.`,
 	))
 	return brief
 }
@@ -1148,6 +1144,8 @@ func RenderRuntimeBriefSummary(brief WorkerRuntimeBrief) string {
 	if !RuntimeBriefHasContent(brief) {
 		return ""
 	}
+	brief.ToolManifest = nil
+	brief.DiscoveryExamples = nil
 	data, err := json.Marshal(brief)
 	if err != nil {
 		return ""
@@ -1185,7 +1183,7 @@ func RenderFailureFeedbackPacket(packet any) string {
 	}
 	return strings.Join([]string{
 		"[failure feedback packet]",
-		"Use this packet to recover. `required_next` lists hard requirements; `valid_next` lists safe options. Do not repeat invalid actions from this packet.",
+		"This packet reports recovery state. `required_next` lists hard requirements; `valid_next` lists safe options. Do not repeat invalid actions from this packet.",
 		string(data),
 	}, "\n")
 }

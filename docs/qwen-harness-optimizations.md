@@ -117,7 +117,9 @@ identified to date. Items marked **Shipped** are done; items marked
 | Item | Status | Notes |
 |---|---|---|
 | `--35b-6bit` auto-routing for large atoms | Already in `start_local_qwen.sh`; not auto-selected | Pre-dispatch heuristic: if expected output > 800 lines, suggest 6-bit |
-| Patch `mlx_lm.server` to forward `chat_template_kwargs` | **Upstream contribution** — would unlock per-request `thinking_budget` and other Qwen3 template knobs | Out of repo, real effort |
+| Forward `chat_template_kwargs` on MLX requests | **Shipped 2026-05-12** — installed `mlx_lm.server` 0.31.3 accepts request-level `chat_template_kwargs`; idiom now forwards Qwen thinking/preserve knobs only when a caller intentionally overrides server defaults | Enables one 35B server to serve thinking, direct/read-only, and refine no-thinking routes on current MLX |
+| Drop duplicate 35B no-think backend | **Shipped 2026-05-12** — `idiom lane refine` now targets `qwen3.6-35b` with request-level `--no-thinking`, so qwen-pair no longer needs a separate `qwen3.6-35b-nothink` MLX process | Reclaims the duplicate 35B process RSS after restarting the backend profile |
+| Add Qwen3.6-27B planner profile | **Shipped 2026-05-12** — Idiom and Colony now both declare `qwen-27b-pair`: 27B-6bit planner/classifier on `:47783` plus the existing coder executor | Eval target for atom-spec / local orchestrator work without replacing the stable 35B profile |
 | Multiple MLX instances per pool with different sampling configs | Heavy infrastructure | Speculative |
 | KV-cache reuse across lanes for shared context | MLX supports prompt cache; we don't optimize for it | Investigate |
 
@@ -154,7 +156,8 @@ identified to date. Items marked **Shipped** are done; items marked
 ## Findings reference
 
 - **MLX vs llama.cpp on M5 Max:** stay on MLX. ~2-3× decode advantage on Qwen3-A3B MoE; ~2-2.5× prefill advantage. llama.cpp's `chat_template_kwargs` per-request support is its main edge but is buggy on Qwen3.5/3.6 anyway. See research summary in session log.
-- **MLX caveat for `thinking_budget`:** MLX ignores per-request `chat_template_kwargs`. Per-lane thinking caps require either (a) MLX upstream patch to forward kwargs, or (b) llama.cpp sidecar pool for affected requests. Don't impose a global thinking cap in `.idiom/backends.json` — would hurt complex planning the same way the read-budget cap did before we removed it.
+- **MLX caveat for `thinking_budget`:** Verified 2026-05-12 on installed `mlx_lm.server` 0.31.3 that request-level `chat_template_kwargs` are honored for `enable_thinking=false` on Qwen3.6-35B-A3B. `thinking_budget` still needs separate quality testing before becoming a default cap; don't impose a global thinking cap in `.idiom/backends.json` because it can hurt complex planning.
+- **Refine no-thinking memory win:** Refine uses `--no-thinking` per request against the primary 35B backend. Do not reintroduce a dedicated `qwen3.6-35b-nothink` server unless a future MLX regression stops honoring request-level `chat_template_kwargs`.
 - **Self-critique is a documented Qwen3 weakness.** Refine review will continue to miss ~30% of bugs Claude catches; the workflow's value comes from *combining* Qwen-review and Claude-spot-check (different blind spots), not from either alone.
 - **Atom shape is the dominant predictor of success.** ≤5 files, ≤300 lines, NEW FILE > append, single-purpose actions: ships clean. >10 files / >700 lines: hits Qwen's actual ceiling (MLX 4-bit corruption + weak architectural synthesis); decompose or Claude-direct.
 

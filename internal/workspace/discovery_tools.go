@@ -55,7 +55,7 @@ func (m *Manager) dependencyGraph(ctx context.Context, req ToolRequest) ToolResu
 	if err != nil {
 		return ToolResult{Tool: "dependency_graph", Summary: "Failed to resolve path", Error: err.Error()}
 	}
-	lang := strings.ToLower(strings.TrimSpace(req.Language))
+	lang := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(req.Language)), ".")
 	if lang == "" {
 		lang = m.inferDependencyLanguage(target)
 	}
@@ -64,7 +64,7 @@ func (m *Manager) dependencyGraph(ctx context.Context, req ToolRequest) ToolResu
 		return m.goDependencyGraph(ctx, target)
 	case "rust", "rs":
 		return m.rustDependencyGraph(ctx, target)
-	case "typescript", "ts", "javascript", "js":
+	case "typescript", "ts", "tsx", "mts", "cts", "d.ts", "d.mts", "d.cts", "javascript", "js", "jsx", "mjs", "cjs":
 		return m.tsDependencyGraph(ctx, target)
 	case "python", "py":
 		return m.pythonDependencyGraph(ctx, target)
@@ -232,7 +232,11 @@ func (m *Manager) tsDependencyGraph(ctx context.Context, target string) ToolResu
 		}
 		return result
 	}
-	return m.regexDependencyGraph(target, "typescript", []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}, tsImportRe)
+	return m.regexDependencyGraph(target, "typescript", typescriptDependencyGraphExtensions(), tsImportRe)
+}
+
+func typescriptDependencyGraphExtensions() []string {
+	return []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}
 }
 
 func (m *Manager) pythonDependencyGraph(ctx context.Context, target string) ToolResult {
@@ -332,7 +336,7 @@ func (m *Manager) inferDependencyLanguage(target string) string {
 	if nearestAncestorWithFile(target, "Cargo.toml", m.cfg.Root) != "" {
 		return "rust"
 	}
-	if fileExists(filepath.Join(m.cfg.Root, "package.json")) || hasExtensionUnder(m.cfg.Root, target, ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs") {
+	if fileExists(filepath.Join(m.cfg.Root, "package.json")) || hasExtensionUnder(m.cfg.Root, target, typescriptDependencyGraphExtensions()...) {
 		return "typescript"
 	}
 	if fileExists(filepath.Join(m.cfg.Root, "pyproject.toml")) || fileExists(filepath.Join(m.cfg.Root, "requirements.txt")) || hasExtensionUnder(m.cfg.Root, target, ".py", ".pyi") {

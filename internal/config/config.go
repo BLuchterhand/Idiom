@@ -155,25 +155,25 @@ type Chat struct {
 	// ModelFamily controls model-specific prompt compatibility overlays.
 	// Empty/"auto" infers from the active model id. Use "generic" or "none"
 	// to suppress auto overlays when an alias looks misleading.
-	ModelFamily string `json:"model_family,omitempty"`
-	Preset                  string   `json:"preset"`
-	Temperature             float64  `json:"temperature"`
-	TopP                    float64  `json:"top_p"`
-	TopK                    int      `json:"top_k"`
-	MinP                    float64  `json:"min_p"`
-	PresencePenalty         float64  `json:"presence_penalty"`
-	RepetitionPenalty       float64  `json:"repetition_penalty"`
-	EnableThinking          *bool    `json:"enable_thinking,omitempty"`
-	PreserveThinking        bool     `json:"preserve_thinking"`
-	MaxTokens               int      `json:"max_tokens"`
-	MaxHistory              int      `json:"max_history"`
-	MaxToolSteps            int      `json:"max_tool_steps"`
-	MaxContextMessages      int      `json:"max_context_messages"`
-	MaxContextChars         int      `json:"max_context_chars"`
-	MaxModelCalls           int      `json:"max_model_calls"`
-	MaxDurationSeconds      int      `json:"max_duration_seconds"`
-	RequestTimeoutSeconds   int      `json:"request_timeout_seconds"`
-	ServerStartTimeoutSecs  int      `json:"server_start_timeout_seconds"`
+	ModelFamily            string  `json:"model_family,omitempty"`
+	Preset                 string  `json:"preset"`
+	Temperature            float64 `json:"temperature"`
+	TopP                   float64 `json:"top_p"`
+	TopK                   int     `json:"top_k"`
+	MinP                   float64 `json:"min_p"`
+	PresencePenalty        float64 `json:"presence_penalty"`
+	RepetitionPenalty      float64 `json:"repetition_penalty"`
+	EnableThinking         *bool   `json:"enable_thinking,omitempty"`
+	PreserveThinking       bool    `json:"preserve_thinking"`
+	MaxTokens              int     `json:"max_tokens"`
+	MaxHistory             int     `json:"max_history"`
+	MaxToolSteps           int     `json:"max_tool_steps"`
+	MaxContextMessages     int     `json:"max_context_messages"`
+	MaxContextChars        int     `json:"max_context_chars"`
+	MaxModelCalls          int     `json:"max_model_calls"`
+	MaxDurationSeconds     int     `json:"max_duration_seconds"`
+	RequestTimeoutSeconds  int     `json:"request_timeout_seconds"`
+	ServerStartTimeoutSecs int     `json:"server_start_timeout_seconds"`
 	// AgentMode selects which built-in agent profile drives the session.
 	// OpenCode-shaped: the user picks build/plan/general; the harness
 	// never classifies a prompt to pick one on their behalf. Empty falls
@@ -243,6 +243,8 @@ type ExternalToolDef struct {
 	Cwd            string          `json:"cwd,omitempty"`
 	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
 	InputSchema    json.RawMessage `json:"input_schema,omitempty"`
+	ReadOnly       bool            `json:"read_only,omitempty"`
+	Discovery      bool            `json:"discovery,omitempty"`
 }
 
 // ToolRule is a glob-style permission rule for a specific tool. Pattern

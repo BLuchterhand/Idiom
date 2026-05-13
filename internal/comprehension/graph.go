@@ -92,13 +92,15 @@ type Manifest struct {
 }
 
 type BuildOptions struct {
-	Root      string
-	Path      string
-	Language  string
-	Mode      string
-	MaxFiles  int
-	Now       time.Time
-	Enrichers []GraphEnricher
+	Root             string
+	Path             string
+	Language         string
+	Mode             string
+	MaxFiles         int
+	Now              time.Time
+	ExactScope       bool
+	PatchActiveStore bool
+	Enrichers        []GraphEnricher
 }
 
 type BuildReport struct {
@@ -130,28 +132,35 @@ type BuildReport struct {
 }
 
 type StatusReport struct {
-	Indexed                  bool                 `json:"indexed"`
-	IndexID                  string               `json:"index_id,omitempty"`
-	StoreKind                string               `json:"store_kind,omitempty"`
-	Root                     string               `json:"root"`
-	GitHead                  string               `json:"git_head,omitempty"`
-	GitDirty                 bool                 `json:"git_dirty"`
-	GeneratedAt              string               `json:"generated_at,omitempty"`
-	CollectorVersion         string               `json:"collector_version,omitempty"`
-	CurrentCollectorVersion  string               `json:"current_collector_version,omitempty"`
-	CollectorVersionMismatch bool                 `json:"collector_version_mismatch,omitempty"`
-	Languages                []string             `json:"languages,omitempty"`
-	FilesIndexed             int                  `json:"files_indexed,omitempty"`
-	SymbolsIndexed           int                  `json:"symbols_indexed,omitempty"`
-	EdgesIndexed             int                  `json:"edges_indexed,omitempty"`
-	StorageBackends          []StoreBackendReport `json:"storage_backends,omitempty"`
-	CollectorReports         []CollectorReport    `json:"collector_reports,omitempty"`
-	StaleFiles               []string             `json:"stale_files,omitempty"`
-	StaleSymbols             int                  `json:"stale_symbols,omitempty"`
-	StaleSymbolSamples       []NodeSummary        `json:"stale_symbol_samples,omitempty"`
-	MissingFiles             []string             `json:"missing_files,omitempty"`
-	Fresh                    bool                 `json:"fresh"`
-	AutoRefresh              *RefreshReport       `json:"auto_refresh,omitempty"`
+	Indexed                  bool                  `json:"indexed"`
+	IndexID                  string                `json:"index_id,omitempty"`
+	StoreKind                string                `json:"store_kind,omitempty"`
+	Root                     string                `json:"root"`
+	GitHead                  string                `json:"git_head,omitempty"`
+	GitDirty                 bool                  `json:"git_dirty"`
+	GeneratedAt              string                `json:"generated_at,omitempty"`
+	CollectorVersion         string                `json:"collector_version,omitempty"`
+	CurrentCollectorVersion  string                `json:"current_collector_version,omitempty"`
+	CollectorVersionMismatch bool                  `json:"collector_version_mismatch,omitempty"`
+	Languages                []string              `json:"languages,omitempty"`
+	FilesIndexed             int                   `json:"files_indexed,omitempty"`
+	SymbolsIndexed           int                   `json:"symbols_indexed,omitempty"`
+	EdgesIndexed             int                   `json:"edges_indexed,omitempty"`
+	StorageBackends          []StoreBackendReport  `json:"storage_backends,omitempty"`
+	CollectorReports         []CollectorReport     `json:"collector_reports,omitempty"`
+	StaleFiles               []string              `json:"stale_files,omitempty"`
+	StaleFileCount           int                   `json:"stale_file_count"`
+	StaleSymbols             int                   `json:"stale_symbols,omitempty"`
+	StaleSymbolSamples       []NodeSummary         `json:"stale_symbol_samples,omitempty"`
+	MissingFiles             []string              `json:"missing_files,omitempty"`
+	MissingFileCount         int                   `json:"missing_file_count"`
+	StalePathCount           int                   `json:"stale_path_count"`
+	Fresh                    bool                  `json:"fresh"`
+	Confidence               GraphResultConfidence `json:"confidence"`
+	Provenance               GraphResultProvenance `json:"provenance"`
+	AutoRefresh              *RefreshReport        `json:"auto_refresh,omitempty"`
+	Freshness                *FreshnessDecision    `json:"freshness,omitempty"`
+	StaleEvidence            StaleEvidenceSafety   `json:"stale_evidence"`
 }
 
 type QueryOptions struct {
@@ -166,14 +175,20 @@ type QueryOptions struct {
 }
 
 type QueryResult struct {
-	IndexID        string         `json:"index_id,omitempty"`
-	Fresh          bool           `json:"fresh"`
-	Resolution     string         `json:"resolution,omitempty"`
-	AutoRefresh    *RefreshReport `json:"auto_refresh,omitempty"`
-	Claims         []string       `json:"claims,omitempty"`
-	Nodes          []NodeSummary  `json:"nodes,omitempty"`
-	Edges          []EdgeSummary  `json:"edges,omitempty"`
-	UnresolvedGaps []string       `json:"unresolved_gaps,omitempty"`
+	IndexID        string                `json:"index_id,omitempty"`
+	StoreKind      string                `json:"store_kind,omitempty"`
+	Fresh          bool                  `json:"fresh"`
+	Resolution     string                `json:"resolution,omitempty"`
+	GeneratedAt    string                `json:"generated_at,omitempty"`
+	Confidence     GraphResultConfidence `json:"confidence"`
+	Provenance     GraphResultProvenance `json:"provenance"`
+	AutoRefresh    *RefreshReport        `json:"auto_refresh,omitempty"`
+	Freshness      *FreshnessDecision    `json:"freshness,omitempty"`
+	StaleEvidence  StaleEvidenceSafety   `json:"stale_evidence"`
+	Claims         []string              `json:"claims,omitempty"`
+	Nodes          []NodeSummary         `json:"nodes,omitempty"`
+	Edges          []EdgeSummary         `json:"edges,omitempty"`
+	UnresolvedGaps []string              `json:"unresolved_gaps,omitempty"`
 }
 
 type RefreshReport struct {
@@ -185,6 +200,10 @@ type RefreshReport struct {
 	Error                string   `json:"error,omitempty"`
 	IndexID              string   `json:"index_id,omitempty"`
 	FilesIndexed         int      `json:"files_indexed,omitempty"`
+	SourceFileCount      int      `json:"source_file_count,omitempty"`
+	EstimatedMinimum     bool     `json:"estimated_minimum,omitempty"`
+	StalePathCount       int      `json:"stale_path_count,omitempty"`
+	MaxFiles             int      `json:"max_files,omitempty"`
 	SymbolsIndexed       int      `json:"symbols_indexed,omitempty"`
 	EdgesIndexed         int      `json:"edges_indexed,omitempty"`
 	PartialRefreshReason string   `json:"partial_refresh_reason,omitempty"`
@@ -202,13 +221,19 @@ type ZoomOptions struct {
 }
 
 type ZoomResult struct {
-	IndexID        string        `json:"index_id,omitempty"`
-	Fresh          bool          `json:"fresh"`
-	Resolution     string        `json:"resolution,omitempty"`
-	Node           *NodeSummary  `json:"node,omitempty"`
-	RelatedNodes   []NodeSummary `json:"related_nodes,omitempty"`
-	Edges          []EdgeSummary `json:"edges,omitempty"`
-	UnresolvedGaps []string      `json:"unresolved_gaps,omitempty"`
+	IndexID        string                `json:"index_id,omitempty"`
+	StoreKind      string                `json:"store_kind,omitempty"`
+	Fresh          bool                  `json:"fresh"`
+	Freshness      *FreshnessDecision    `json:"freshness,omitempty"`
+	Resolution     string                `json:"resolution,omitempty"`
+	GeneratedAt    string                `json:"generated_at,omitempty"`
+	Confidence     GraphResultConfidence `json:"confidence"`
+	Provenance     GraphResultProvenance `json:"provenance"`
+	StaleEvidence  StaleEvidenceSafety   `json:"stale_evidence"`
+	Node           *NodeSummary          `json:"node,omitempty"`
+	RelatedNodes   []NodeSummary         `json:"related_nodes,omitempty"`
+	Edges          []EdgeSummary         `json:"edges,omitempty"`
+	UnresolvedGaps []string              `json:"unresolved_gaps,omitempty"`
 }
 
 type NodeSummary struct {
@@ -261,26 +286,52 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	var goIndex *semantic.GoIndex
 	repoProps := map[string]any{}
 	var previousGraph Graph
+	previousGraphLoaded := false
 	incremental := false
 	expandedScope := ""
 	preserveCollectorMismatch := false
 	var dependencyRefreshFiles []string
-	if scopedBuild && statusBefore.Indexed {
+	activeKind := activeGraphStoreKind(root, "")
+	patchActiveStore := opts.PatchActiveStore && scopedBuild && statusBefore.Indexed && activeKind == sqliteStoreKind
+	if patchActiveStore && statusBefore.Indexed && !opts.ExactScope {
+		if statusBefore.CollectorVersionMismatch {
+			patchActiveStore = false
+		} else if paths, err := dependencyRefreshPathsFromSQLite(root, scope); err == nil {
+			dependencyRefreshFiles = paths
+			if nextScope := commonRefreshScope(scope, dependencyRefreshFiles); nextScope != scope {
+				scope = nextScope
+				expandedScope = nextScope
+				if scope == "." {
+					scopedBuild = false
+					patchActiveStore = false
+					fullRebuildReason = "dependency_scope_expanded_to_root"
+				}
+			}
+		} else {
+			patchActiveStore = false
+		}
+	}
+	if statusBefore.Indexed && !patchActiveStore {
 		if graph, err := LoadGraph(root); err == nil {
 			previousGraph = graph
-			incremental = true
-			if statusBefore.CollectorVersionMismatch {
-				preserveCollectorMismatch = true
-				partialRefreshReason = "collector_version_mismatch_preserved_for_scoped_refresh"
-			} else {
-				dependencyRefreshFiles = dependencyRefreshPaths(previousGraph, scope)
-				if nextScope := commonRefreshScope(scope, dependencyRefreshFiles); nextScope != scope {
-					scope = nextScope
-					expandedScope = nextScope
-					if scope == "." {
-						incremental = false
-						fullRebuildReason = "dependency_scope_expanded_to_root"
-					}
+			previousGraphLoaded = true
+		}
+	}
+	if scopedBuild && previousGraphLoaded {
+		incremental = true
+		if opts.ExactScope {
+			partialRefreshReason = "exact_scope_refresh"
+		} else if statusBefore.CollectorVersionMismatch {
+			preserveCollectorMismatch = true
+			partialRefreshReason = "collector_version_mismatch_preserved_for_scoped_refresh"
+		} else {
+			dependencyRefreshFiles = dependencyRefreshPaths(previousGraph, scope)
+			if nextScope := commonRefreshScope(scope, dependencyRefreshFiles); nextScope != scope {
+				scope = nextScope
+				expandedScope = nextScope
+				if scope == "." {
+					incremental = false
+					fullRebuildReason = "dependency_scope_expanded_to_root"
 				}
 			}
 		}
@@ -297,7 +348,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		if goIndex != nil && goIndex.Module != "" {
 			repoProps["module"] = goIndex.Module
 		}
-		if language == "go" && goIndex == nil {
+		if language == "go" && goIndex == nil && (!patchActiveStore || !scopePathMissing(root, scope)) {
 			return BuildReport{}, fmt.Errorf("no Go files found under %s", root)
 		}
 	}
@@ -310,14 +361,15 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		if err != nil {
 			return BuildReport{}, fmt.Errorf("build C++ index: %w", err)
 		}
-		if language == "cpp" && cppIndex == nil {
+		if language == "cpp" && cppIndex == nil && (!patchActiveStore || !scopePathMissing(root, scope)) {
 			return BuildReport{}, fmt.Errorf("no C/C++ files found under %s", root)
 		}
 	}
 	if err := checkBuildContext(ctx); err != nil {
 		return BuildReport{}, err
 	}
-	nativeIndexes, err := buildNativeLanguageIndexes(ctx, root, language, scope, opts.MaxFiles)
+	allowMissingPatchScope := patchActiveStore && scopePathMissing(root, scope)
+	nativeIndexes, err := buildNativeLanguageIndexes(ctx, root, language, scope, opts.MaxFiles, allowMissingPatchScope)
 	if err != nil {
 		return BuildReport{}, err
 	}
@@ -418,7 +470,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			languagesSeen["gdscript"] = struct{}{}
 			collectors["gdscript_index"] = struct{}{}
 		}
-		if language == "gdscript" && addedFiles == 0 {
+		if language == "gdscript" && addedFiles == 0 && (!patchActiveStore || !scopePathMissing(root, scope)) {
 			return BuildReport{}, fmt.Errorf("no GDScript files found under %s", root)
 		}
 	}
@@ -453,7 +505,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			collectors[collector] = struct{}{}
 		}
 	}
-	if filesIndexed == 0 && countNodesFromMap(builder.nodes, "file") == 0 {
+	if filesIndexed == 0 && countNodesFromMap(builder.nodes, "file") == 0 && (!patchActiveStore || !scopePathMissing(root, scope)) {
 		return BuildReport{}, fmt.Errorf("no source files found under %s for language %q", root, language)
 	}
 
@@ -465,6 +517,72 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	graph.Languages = languages
 	graph.Nodes = sortedNodes(builder.nodes)
 	graph.Edges = sortedEdges(builder.edges)
+	if patchActiveStore {
+		if partialRefreshReason == "" {
+			if opts.ExactScope {
+				partialRefreshReason = "exact_scope_refresh"
+			} else {
+				partialRefreshReason = "sqlite_scope_patch"
+			}
+		}
+		graph.StoreKind = sqliteStoreKind
+		graph.ID = firstNonEmpty(statusBefore.IndexID, graphID(graph))
+		graph.CollectorReports = collectorReportsExcept(statusBefore.CollectorReports, "summary_index")
+		counts, err := patchSQLiteGraphScope(root, graph, scope, statusBefore)
+		if err != nil {
+			return BuildReport{}, err
+		}
+		// Scoped SQLite patches delete derived summary nodes instead of
+		// leaving stale package/repository summaries behind.
+		_, _ = MarkAllViewsStale(root)
+		backends := storageBackends(root, sqliteStoreKind)
+		if err := saveManifest(root, Manifest{
+			SchemaVersion:     SchemaVersion,
+			Root:              root,
+			IndexID:           counts.IndexID,
+			StoreKind:         sqliteStoreKind,
+			GraphPath:         filepath.ToSlash(filepath.Join(".idiom", "comprehension", "graph.sqlite")),
+			GitHead:           gitHead,
+			GitDirty:          gitDirty,
+			GeneratedAt:       graph.GeneratedAt,
+			CollectorVersion:  graph.CollectorVersion,
+			CollectorVersions: graph.CollectorVersions,
+			Languages:         counts.Languages,
+			FilesIndexed:      counts.FilesIndexed,
+			SymbolsIndexed:    counts.SymbolsIndexed,
+			EdgesIndexed:      counts.EdgesIndexed,
+			StorageBackends:   backends,
+			CollectorReports:  graph.CollectorReports,
+		}); err != nil {
+			return BuildReport{}, err
+		}
+		_ = ensureIgnored(root)
+		return BuildReport{
+			IndexID:                counts.IndexID,
+			ArtifactPath:           filepath.ToSlash(filepath.Join(".idiom", "comprehension", "graph.sqlite")),
+			ManifestPath:           filepath.ToSlash(filepath.Join(".idiom", "comprehension", "manifest.json")),
+			StoreKind:              sqliteStoreKind,
+			Root:                   root,
+			GitHead:                gitHead,
+			GitDirty:               gitDirty,
+			CollectorVersion:       graph.CollectorVersion,
+			CollectorVersions:      graph.CollectorVersions,
+			Incremental:            true,
+			ReusedIndexedFiles:     maxInt(counts.FilesIndexed-filesIndexed, 0),
+			ExpandedScope:          expandedScope,
+			DependencyRefreshFiles: dependencyRefreshFiles,
+			PartialRefreshReason:   partialRefreshReason,
+			Languages:              counts.Languages,
+			FilesIndexed:           filesIndexed,
+			SymbolsIndexed:         counts.SymbolsIndexed,
+			EdgesIndexed:           counts.EdgesIndexed,
+			StorageBackends:        backends,
+			RefreshedStaleFiles:    filterPathsInScope(append(append([]string(nil), statusBefore.StaleFiles...), statusBefore.MissingFiles...), scope),
+			RefreshedStaleSymbols:  statusBefore.StaleSymbols,
+			CollectorCoverage:      coverage,
+			CollectorReports:       graph.CollectorReports,
+		}, nil
+	}
 	if err := checkBuildContext(ctx); err != nil {
 		return BuildReport{}, err
 	}
@@ -512,6 +630,11 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	// rows whose referenced paths changed, so the cache survives partial
 	// updates instead of starting cold every refresh.
 	if scopedBuild {
+		changedPaths := ChangedPathsBetween(previousGraph, graph)
+		if len(changedPaths) > 0 {
+			_, _ = MarkViewsStale(root, changedPaths)
+		}
+	} else if previousGraphLoaded {
 		changedPaths := ChangedPathsBetween(previousGraph, graph)
 		if len(changedPaths) > 0 {
 			_, _ = MarkViewsStale(root, changedPaths)
@@ -586,17 +709,68 @@ func checkBuildContext(ctx context.Context) error {
 	return nil
 }
 
+func scopePathMissing(root string, scope string) bool {
+	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(cleanScope(scope))))
+	return os.IsNotExist(err)
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func collectorReportsExcept(reports []CollectorReport, names ...string) []CollectorReport {
+	if len(reports) == 0 {
+		return nil
+	}
+	omit := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			omit[name] = struct{}{}
+		}
+	}
+	out := make([]CollectorReport, 0, len(reports))
+	for _, report := range reports {
+		if _, skip := omit[strings.TrimSpace(report.Name)]; skip {
+			continue
+		}
+		out = append(out, report)
+	}
+	return out
+}
+
 func Status(root string) (StatusReport, error) {
+	return status(root, "")
+}
+
+func StatusForScope(root string, scope string) (StatusReport, error) {
+	return status(root, cleanScope(scope))
+}
+
+func status(root string, scope string) (StatusReport, error) {
 	root, err := normalizeRoot(root)
 	if err != nil {
 		return StatusReport{}, err
 	}
 	activeKind := activeGraphStoreKind(root, "")
+	if activeKind == sqliteStoreKind {
+		status, ok, err := statusFromSQLite(root, activeKind, scope)
+		if ok || err == nil {
+			return status, err
+		}
+		if !os.IsNotExist(err) {
+			gitHead, gitDirty := gitState(context.Background(), root)
+			return StatusReportWithMetadata(StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(), StorageBackends: storageBackends(root, activeKind), Fresh: false}, "context_status", nil), nil
+		}
+	}
 	graph, err := loadGraphForStatus(root)
 	if err != nil {
 		if os.IsNotExist(err) || activeKind != "" {
 			gitHead, gitDirty := gitState(context.Background(), root)
-			return StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(), StorageBackends: storageBackends(root, activeKind), Fresh: false}, nil
+			return StatusReportWithMetadata(StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(), StorageBackends: storageBackends(root, activeKind), Fresh: false}, "context_status", nil), nil
 		}
 		return StatusReport{}, err
 	}
@@ -606,6 +780,10 @@ func Status(root string) (StatusReport, error) {
 	currentVersion := currentCollectorVersion()
 	collectorMismatch := strings.TrimSpace(graph.CollectorVersion) == "" || graph.CollectorVersion != currentVersion
 	staleFiles, missingFiles := staleFilePaths(root, graph)
+	if scope != "" && scope != "." {
+		staleFiles = filterPathsInScope(staleFiles, scope)
+		missingFiles = filterPathsInScope(missingFiles, scope)
+	}
 	staleSet := make(map[string]struct{}, len(staleFiles)+len(missingFiles))
 	for _, path := range staleFiles {
 		staleSet[path] = struct{}{}
@@ -626,7 +804,7 @@ func Status(root string) (StatusReport, error) {
 		}
 	}
 	gitHead, gitDirty := gitState(context.Background(), root)
-	return StatusReport{
+	return StatusReportWithMetadata(StatusReport{
 		Indexed:                  true,
 		IndexID:                  graph.ID,
 		StoreKind:                activeKind,
@@ -648,7 +826,7 @@ func Status(root string) (StatusReport, error) {
 		StaleSymbolSamples:       summarizeNodes(staleSymbolSamples, StatusReport{StaleFiles: staleFiles, MissingFiles: missingFiles}),
 		MissingFiles:             missingFiles,
 		Fresh:                    !collectorMismatch && len(staleFiles) == 0 && len(missingFiles) == 0,
-	}, nil
+	}, "context_status", nil), nil
 }
 
 func Query(opts QueryOptions) (QueryResult, error) {
@@ -675,10 +853,15 @@ func Query(opts QueryOptions) (QueryResult, error) {
 	}
 	matched := matchNodes(graph.Nodes, terms, opts.Path, resolution, limit)
 	result := QueryResult{
-		IndexID:    graph.ID,
-		Fresh:      status.Fresh,
-		Resolution: resolution,
-		Nodes:      summarizeNodes(matched, status),
+		IndexID:       graph.ID,
+		StoreKind:     graph.StoreKind,
+		Fresh:         status.Fresh,
+		Resolution:    resolution,
+		GeneratedAt:   graph.GeneratedAt,
+		Confidence:    graphResultConfidenceForStatus(status, nil),
+		Provenance:    graphResultProvenanceFromGraph("context_query", graph, ""),
+		StaleEvidence: StaleEvidenceSafetyForStatus(status, nil),
+		Nodes:         summarizeNodes(matched, status),
 	}
 	if len(matched) == 0 {
 		result.UnresolvedGaps = append(result.UnresolvedGaps, "no graph nodes matched the query")
@@ -691,10 +874,8 @@ func Query(opts QueryOptions) (QueryResult, error) {
 	}
 	edges := relatedEdges(graph.Edges, ids, limit*2)
 	result.Edges = summarizeEdges(edges, opts.IncludeEvidence)
-	if status.CollectorVersionMismatch {
-		result.UnresolvedGaps = append(result.UnresolvedGaps, "context index collector versions are stale; run context_index to rebuild derived graph facts")
-	} else if !status.Fresh {
-		result.UnresolvedGaps = append(result.UnresolvedGaps, "context index has stale or missing files; run context_index to refresh affected symbols")
+	if gap := GraphGapForStatus(status); gap != "" {
+		result.UnresolvedGaps = append(result.UnresolvedGaps, gap)
 	}
 	return result, nil
 }
@@ -721,7 +902,12 @@ func Zoom(opts ZoomOptions) (ZoomResult, error) {
 	if !ok {
 		return ZoomResult{
 			IndexID:        graph.ID,
+			StoreKind:      graph.StoreKind,
 			Fresh:          status.Fresh,
+			GeneratedAt:    graph.GeneratedAt,
+			Confidence:     graphResultConfidenceForStatus(status, nil),
+			Provenance:     graphResultProvenanceFromGraph("context_zoom", graph, ""),
+			StaleEvidence:  StaleEvidenceSafetyForStatus(status, nil),
 			Resolution:     defaultString(opts.Resolution, "symbol"),
 			UnresolvedGaps: []string{"handle was not found in the context index"},
 		}, nil
@@ -748,19 +934,22 @@ func Zoom(opts ZoomOptions) (ZoomResult, error) {
 	}
 	summary := summarizeNodes([]Node{node}, status)
 	result := ZoomResult{
-		IndexID:      graph.ID,
-		Fresh:        status.Fresh,
-		Resolution:   defaultString(opts.Resolution, node.Kind),
-		RelatedNodes: summarizeNodes(related, status),
-		Edges:        summarizeEdges(edges, true),
+		IndexID:       graph.ID,
+		StoreKind:     graph.StoreKind,
+		Fresh:         status.Fresh,
+		Resolution:    defaultString(opts.Resolution, node.Kind),
+		GeneratedAt:   graph.GeneratedAt,
+		Confidence:    graphResultConfidenceForStatus(status, nil),
+		Provenance:    graphResultProvenanceFromGraph("context_zoom", graph, ""),
+		StaleEvidence: StaleEvidenceSafetyForStatus(status, nil),
+		RelatedNodes:  summarizeNodes(related, status),
+		Edges:         summarizeEdges(edges, true),
 	}
 	if len(summary) > 0 {
 		result.Node = &summary[0]
 	}
-	if status.CollectorVersionMismatch {
-		result.UnresolvedGaps = append(result.UnresolvedGaps, "context index collector versions are stale; run context_index to rebuild derived graph facts")
-	} else if !status.Fresh {
-		result.UnresolvedGaps = append(result.UnresolvedGaps, "context index has stale or missing files; run context_index to refresh affected symbols")
+	if gap := GraphGapForStatus(status); gap != "" {
+		result.UnresolvedGaps = append(result.UnresolvedGaps, gap)
 	}
 	return result, nil
 }
@@ -1591,9 +1780,9 @@ func sourceLanguageForPath(path string) string {
 		return "go"
 	case ".gd":
 		return "gdscript"
-	case ".py":
+	case ".py", ".pyi":
 		return "python"
-	case ".ts", ".tsx":
+	case ".ts", ".tsx", ".mts", ".cts":
 		return "typescript"
 	case ".js", ".jsx", ".mjs", ".cjs":
 		return "javascript"
@@ -1673,12 +1862,17 @@ func genericPackageFingerprint(path string, language string) string {
 // We hash file nodes' (path, fingerprint) pairs in sorted order rather
 // than every node, because file fingerprints transitively cover symbol
 // nodes (a symbol inherits its containing file's fingerprint). Edge
-// count is included so a structural collector change that adds new
-// edges without changing files still produces a new ID.
+// count and collector versions are included so structural collector
+// changes that add edges or reinterpret unchanged source facts still
+// produce a new ID.
 func graphID(graph Graph) string {
 	type filePair struct {
 		path        string
 		fingerprint string
+	}
+	type collectorPair struct {
+		name    string
+		version string
 	}
 	files := make([]filePair, 0, len(graph.Nodes))
 	for _, node := range graph.Nodes {
@@ -1688,11 +1882,29 @@ func graphID(graph Graph) string {
 		files = append(files, filePair{path: node.Path, fingerprint: node.Fingerprint})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
+	collectors := make([]collectorPair, 0, len(graph.CollectorVersions))
+	for name, version := range graph.CollectorVersions {
+		name = strings.TrimSpace(name)
+		version = strings.TrimSpace(version)
+		if name == "" || version == "" {
+			continue
+		}
+		collectors = append(collectors, collectorPair{name: name, version: version})
+	}
+	sort.Slice(collectors, func(i, j int) bool { return collectors[i].name < collectors[j].name })
 	h := sha256.New()
 	h.Write([]byte(graph.Root))
 	h.Write([]byte("\x00"))
 	h.Write([]byte(graph.GitHead))
 	h.Write([]byte("\x00"))
+	h.Write([]byte(strings.TrimSpace(graph.CollectorVersion)))
+	h.Write([]byte("\x00"))
+	for _, collector := range collectors {
+		h.Write([]byte(collector.name))
+		h.Write([]byte("\x00"))
+		h.Write([]byte(collector.version))
+		h.Write([]byte("\x00"))
+	}
 	h.Write([]byte(strconv.Itoa(len(graph.Edges))))
 	h.Write([]byte("\x00"))
 	for _, f := range files {
@@ -2713,10 +2925,12 @@ func sortedEdges(edges map[string]Edge) []Edge {
 func staleFilePaths(root string, graph Graph) ([]string, []string) {
 	var stale []string
 	var missing []string
+	indexedFiles := make(map[string]struct{})
 	for _, node := range graph.Nodes {
 		if node.Kind != "file" || node.Path == "" {
 			continue
 		}
+		indexedFiles[node.Path] = struct{}{}
 		current, err := fileFingerprint(filepath.Join(root, filepath.FromSlash(node.Path)))
 		if os.IsNotExist(err) {
 			missing = append(missing, node.Path)
@@ -2729,9 +2943,41 @@ func staleFilePaths(root string, graph Graph) ([]string, []string) {
 			stale = append(stale, node.Path)
 		}
 	}
-	sort.Strings(stale)
-	sort.Strings(missing)
-	return stale, missing
+	stale = append(stale, unindexedSourceFilePaths(root, ".", graph.Languages, indexedFiles)...)
+	return uniqueSortedStrings(stale), uniqueSortedStrings(missing)
+}
+
+func unindexedSourceFilePaths(root string, scope string, indexedLanguages []string, indexedFiles map[string]struct{}) []string {
+	files, err := collectGenericSourceFiles(context.Background(), root, scope, "auto", 0, indexedFiles)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, file := range files {
+		if indexedLanguageIncludesSource(indexedLanguages, file.Language) {
+			paths = append(paths, file.Path)
+		}
+	}
+	return uniqueSortedStrings(paths)
+}
+
+func indexedLanguageIncludesSource(indexedLanguages []string, sourceLanguage string) bool {
+	sourceLanguage = normalizeLanguage(sourceLanguage)
+	if sourceLanguage == "" {
+		return false
+	}
+	seenIndexedLanguage := false
+	for _, indexedLanguage := range indexedLanguages {
+		indexedLanguage = normalizeLanguage(indexedLanguage)
+		if indexedLanguage == "" {
+			continue
+		}
+		seenIndexedLanguage = true
+		if languageMatches(indexedLanguage, sourceLanguage) {
+			return true
+		}
+	}
+	return !seenIndexedLanguage
 }
 
 func countNodes(nodes []Node, kind string) int {
@@ -3031,6 +3277,7 @@ func firstNonEmpty(values ...string) string {
 
 func normalizeLanguage(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimPrefix(value, ".")
 	switch value {
 	case "", "auto", "all", "*":
 		return "auto"
@@ -3038,9 +3285,9 @@ func normalizeLanguage(value string) string {
 		return "go"
 	case "gd", "gdscript", "godot":
 		return "gdscript"
-	case "ts":
+	case "ts", "tsx", "mts", "cts", "d.ts", "d.mts", "d.cts":
 		return "typescript"
-	case "js", "node":
+	case "js", "jsx", "mjs", "cjs", "node":
 		return "javascript"
 	case "py":
 		return "python"

@@ -305,6 +305,35 @@ func TestRunBackendStartMultiProfileWithoutFlagExitsTwo(t *testing.T) {
 	}
 }
 
+func TestRunBackendStartUsesDefaultProfileWhenConfigured(t *testing.T) {
+	root := t.TempDir()
+	body := `{
+		"default_profile": "qwen-pair",
+		"profiles": {
+			"qwen-pair": {"models": [{"alias": "qwen3.6-35b", "port": 47780}]},
+			"qwen-27b-pair": {"models": [{"alias": "qwen3.6-27b", "port": 47783}]}
+		}
+	}`
+	writeBackendsForRoot(t, root, body)
+	var got []string
+	withStubbedBackendOps(t,
+		func(p backends.Profile, _ backends.LauncherOptions) []backends.LaunchResult {
+			for _, m := range p.Models {
+				got = append(got, m.Alias)
+			}
+			return []backends.LaunchResult{{Alias: "qwen3.6-35b", PID: 1001, Port: 47780, Ready: true}}
+		}, nil, nil)
+
+	var stdout, stderr bytes.Buffer
+	code := runBackendMain([]string{"start", "--project-root", root}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("default-profile start must exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if len(got) != 1 || got[0] != "qwen3.6-35b" {
+		t.Fatalf("launched aliases = %v, want default qwen-pair only", got)
+	}
+}
+
 // TestRunBackendStopReportsResultsPerModel is the happy path for
 // stop: each model's stop result becomes one output line, and
 // any result carrying an error toggles the exit code.

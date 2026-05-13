@@ -3,11 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
+
+	"idiom/internal/app"
 )
 
 // nonTrivialDraftBody returns a canned draft body sized to clear the
@@ -20,10 +25,34 @@ func nonTrivialDraftBody(label string) string {
 		"Synthetic test draft body — not a real brief. Padded above the\n" +
 		"refineMinDraftBytes floor so honest-exit-codes treats it as a\n" +
 		"valid draft. Real drafts are ~3-5KB; this stub matches the\n" +
-		"shape (heading + Problem + Files + Acceptance) without trying\n" +
+		"shape (heading + Problem + anchors + edits + Acceptance) without trying\n" +
 		"to be production-quality content.\n\n" +
 		"## Files To Modify\n\n| File | Change |\n|------|--------|\n" +
-		"| `foo.go` | MODIFY: stub |\n\n## Acceptance\n\n- run tests\n"
+		"| `foo.go` | MODIFY: stub |\n\n" +
+		"## Verified Current State\n\n" +
+		"- `foo.go:1`: synthetic anchor used only by refine tests.\n\n" +
+		"## Required Behavior\n\n" +
+		"1. Preserve the synthetic `foo.go:1` anchor while exercising refine control flow.\n\n" +
+		"## Acceptance\n\n- run tests\n"
+}
+
+func TestRefinePhaseRoutingUsesPrimary35BWithNoThinkingOverride(t *testing.T) {
+	pool, model, maxTokens := refinePhaseRouting(filepath.Join("iter-1", "meta-draft.md"))
+
+	if pool != "qwen-35b" || model != "qwen3.6-35b" {
+		t.Fatalf("refine should share primary 35B backend, got pool=%q model=%q", pool, model)
+	}
+	if maxTokens != 16384 {
+		t.Fatalf("draft max tokens = %d, want 16384", maxTokens)
+	}
+	_, _, patchTokens := refinePhaseRouting(filepath.Join("iter-2", "meta-patch.md"))
+	if patchTokens != 16384 {
+		t.Fatalf("patch max tokens = %d, want 16384", patchTokens)
+	}
+	_, _, reviewTokens := refinePhaseRouting(filepath.Join("iter-1", "meta-review.md"))
+	if reviewTokens != 4096 {
+		t.Fatalf("review max tokens = %d, want 4096", reviewTokens)
+	}
 }
 
 // stripFencedBlocksForStub removes ```...``` code blocks from
@@ -209,6 +238,46 @@ func TestRefineProjectRootFromIterDirWalksUpFourLevels(t *testing.T) {
 	}
 }
 
+func TestRunLaneRefineDoesNotAcceptStaleDraftOutput(t *testing.T) {
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	if err := os.WriteFile(specPath, []byte("Write docs/out.md.\n"), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "stale-output",
+		MaxIters:    1,
+		ProjectRoot: root,
+	}
+	staleDraft := filepath.Join(refineStateDir(root, opts.Title), "iter-1", "draft.md")
+	if err := os.MkdirAll(filepath.Dir(staleDraft), 0o755); err != nil {
+		t.Fatalf("mkdir stale draft: %v", err)
+	}
+	if err := os.WriteFile(staleDraft, []byte(nonTrivialDraftBody("stale")), 0o644); err != nil {
+		t.Fatalf("seed stale draft: %v", err)
+	}
+	dispatch := func(metaBriefPath string, stdout, stderr io.Writer) int {
+		return 0
+	}
+	var stdout, stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected stale draft to be rejected, stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(staleDraft); !os.IsNotExist(err) {
+		t.Fatalf("stale draft should have been removed and not accepted, stat err=%v", err)
+	}
+	if _, err := os.Stat(opts.OutputPath); !os.IsNotExist(err) {
+		t.Fatalf("final output should not be written from stale draft, stat err=%v", err)
+	}
+	if !strings.Contains(stderr.String(), "cleared stale output") {
+		t.Fatalf("expected stale-output cleanup log, got: %s", stderr.String())
+	}
+}
+
 func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
 	// End-to-end: write the meta brief and confirm the rendered
 	// "Files To Modify" row has a workspace-relative path, not an
@@ -234,6 +303,54 @@ func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
 	}
 	if !strings.Contains(string(body), ".idiom/refine/atom/iter-1/review.md") {
 		t.Fatalf("expected workspace-relative review path in meta body:\n%s", body)
+	}
+	if !strings.Contains(string(body), "## Required reads (exactly 1)") ||
+		!strings.Contains(string(body), "Drafted brief: `.idiom/refine/atom/iter-1/draft.md`") {
+		t.Fatalf("expected review meta to expose drafted brief as a required read evidence path:\n%s", body)
+	}
+}
+
+func TestWriteRefineDraftMetaScopesRequiredEditPathsToScratchpad(t *testing.T) {
+	root := t.TempDir()
+	iterDir := filepath.Join(root, ".idiom", "refine", "atom", "iter-1")
+	if err := os.MkdirAll(iterDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	metaPath := filepath.Join(iterDir, "meta-draft.md")
+	draftPath := filepath.Join(iterDir, "draft.md")
+	spec := `# Implementation atom
+
+## Files To Modify
+
+| File | Change |
+| --- | --- |
+| ` + "`src/real.cpp`" + ` | MODIFY: implementation target |
+
+## Required Edits
+
+Change the real implementation file.
+`
+	opts := laneRefineOptions{
+		SpecPath:    filepath.Join(root, "spec.md"),
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "atom",
+		ProjectRoot: root,
+	}
+	var stderr bytes.Buffer
+	if err := writeRefineDraftMeta(metaPath, draftPath, opts, spec, refineModeAnchored, &stderr); err != nil {
+		t.Fatalf("writeRefineDraftMeta: %v", err)
+	}
+	body, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+	wantDraft := ".idiom/refine/atom/iter-1/draft.md"
+	paths := app.RequiredEditPathsFromPrompt(string(body))
+	if len(paths) != 1 || paths[0] != wantDraft {
+		t.Fatalf("required edit paths leaked from embedded spec: got %#v, want [%q]\nmeta:\n%s", paths, wantDraft, body)
+	}
+	if !strings.Contains(string(body), "> ## Files To Modify") {
+		t.Fatalf("embedded spec should be quoted so its headings are inert, got:\n%s", body)
 	}
 }
 
@@ -326,8 +443,27 @@ func TestRefineLoopDivergingDetectsRepeatBugs(t *testing.T) {
 	if refineLoopDiverging(prev, current) {
 		t.Fatalf("a new bug appearing should NOT signal divergence")
 	}
+	current = []string{"bug a"}
+	if refineLoopDiverging(prev, current) {
+		t.Fatalf("a smaller bug set is improvement, not divergence")
+	}
 	if refineLoopDiverging(prev, []string{}) {
 		t.Fatalf("clean review (no bugs) is the success case, not divergence")
+	}
+}
+
+func TestRefineDraftScorePrefersLintCleanOverBugCount(t *testing.T) {
+	if !refineDraftScoreBetter(0, 5, 1, 1) {
+		t.Fatalf("lint-clean draft should beat lint-failing draft even with more review bugs")
+	}
+	if refineDraftScoreBetter(1, 1, 0, 5) {
+		t.Fatalf("lint-failing draft should not beat lint-clean draft")
+	}
+	if !refineDraftScoreBetter(0, 2, 0, 3) {
+		t.Fatalf("with equal lint status, fewer bugs should win")
+	}
+	if refineDraftScoreBetter(0, 4, 0, 3) {
+		t.Fatalf("with equal lint status, more bugs should not win")
 	}
 }
 
@@ -386,6 +522,66 @@ func TestRunLaneRefineConvergesOnShipAsIsVerdict(t *testing.T) {
 	}
 	if m.StartedAt == "" || m.EndedAt == "" {
 		t.Fatalf("metrics ts fields missing: started=%q ended=%q", m.StartedAt, m.EndedAt)
+	}
+}
+
+func TestRunLaneRefineRefusesCompletedSpecStatus(t *testing.T) {
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	spec := "# Done atom\n\nStatus: accepted\n\n## Scope\n\n- `foo.go`\n"
+	if err := os.WriteFile(specPath, []byte(spec), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "completed-spec",
+		MaxIters:    3,
+		ProjectRoot: root,
+	}
+	calls := 0
+	dispatch := func(_ string, _, _ io.Writer) int {
+		calls++
+		return 0
+	}
+	var stderr bytes.Buffer
+	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	if code == 0 {
+		t.Fatalf("expected completed spec to fail closed")
+	}
+	if calls != 0 {
+		t.Fatalf("dispatcher should not run for completed specs, calls=%d", calls)
+	}
+	if !strings.Contains(stderr.String(), "refusing spec") || !strings.Contains(stderr.String(), "accepted") {
+		t.Fatalf("expected refusal to name completed status, got: %s", stderr.String())
+	}
+}
+
+func TestAtomSpecDispatchBlockerStatusParsing(t *testing.T) {
+	blocked := []string{
+		"Status: accepted",
+		"Status: complete - accepted 2026-05-13",
+		"**Status**: completed",
+		"Status: source-satisfied - do not dispatch.",
+		"Status: closed",
+	}
+	for _, spec := range blocked {
+		if got := atomSpecDispatchBlocker(spec); got == "" {
+			t.Fatalf("expected status blocker for %q", spec)
+		}
+	}
+	allowed := []string{
+		"Status: planned",
+		"Status: pending",
+		"Status: active",
+		"Status: in-progress",
+		"Status: incomplete but dispatchable",
+		"# No status here",
+	}
+	for _, spec := range allowed {
+		if got := atomSpecDispatchBlocker(spec); got != "" {
+			t.Fatalf("unexpected status blocker for %q: %s", spec, got)
+		}
 	}
 }
 
@@ -668,7 +864,7 @@ func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 	}
 }
 
-func TestRunLaneRefineStopsOnNoImprovement(t *testing.T) {
+func TestRunLaneRefineContinuesThroughChangedBugSetUntilMaxIters(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
@@ -683,27 +879,31 @@ func TestRunLaneRefineStopsOnNoImprovement(t *testing.T) {
 	}
 	// Iter 1 has 2 bugs; iter 2 has 2 DIFFERENT bugs (so divergence
 	// detector doesn't fire — divergence is for IDENTICAL sets).
-	// The no-improvement stop should fire because bug count didn't
-	// drop, even though the bugs themselves changed.
+	// The loop should keep going to max-iters because changed bug sets
+	// can mean the reviewer exposed deeper issues after a patch.
 	dispatch, _ := stubDispatcher(t, []string{
 		nonTrivialDraftBody("Draft v1"),
 		"# Review\n\n## Bugs found\n\n1. **Bug A**: x\n2. **Bug B**: y\n\n## Verdict\n\nfix-bugs-then-ship\n",
 		nonTrivialDraftBody("Draft v2"),
 		"# Review\n\n## Bugs found\n\n1. **Bug C**: z\n2. **Bug D**: w\n\n## Verdict\n\nfix-bugs-then-ship\n",
+		nonTrivialDraftBody("Draft v3"),
+		"# Review\n\n## Bugs found\n\n1. **Bug E**: z\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
 	var stderr bytes.Buffer
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
-	// no-improvement saves best AND exits non-zero — orchestrator
-	// inspects (Colony Q4).
+	// max-iters saves best AND exits non-zero — orchestrator inspects.
 	if code == 0 {
-		t.Fatalf("expected non-zero exit on no-improvement convergence; got 0. stderr=%s", stderr.String())
+		t.Fatalf("expected non-zero exit on max-iters convergence; got 0. stderr=%s", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "no improvement") {
-		t.Fatalf("expected 'no improvement' message in stderr, got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "max iters") {
+		t.Fatalf("expected max-iters message in stderr, got: %s", stderr.String())
 	}
 	body, _ := os.ReadFile(opts.OutputPath)
 	if !strings.HasPrefix(string(body), "> WARNING:") {
 		t.Fatalf("expected saved best-draft to lead with WARNING, got: %s", body)
+	}
+	if !strings.Contains(string(body), "# Draft v3") {
+		t.Fatalf("expected best draft to be latest improved candidate, got: %s", body)
 	}
 }
 
@@ -938,6 +1138,47 @@ func TestRunLaneRefineAppliesProjectOverlay(t *testing.T) {
 	}
 }
 
+func TestRefineLintIgnoresProjectOverlayGuidance(t *testing.T) {
+	root := t.TempDir()
+	overlayDir := filepath.Join(root, refineOverlayDir)
+	trapsDir := filepath.Join(overlayDir, "traps")
+	if err := os.MkdirAll(trapsDir, 0o755); err != nil {
+		t.Fatalf("mkdir traps: %v", err)
+	}
+	trap := "---\napplies_to: [test-code]\n---\n\n## Trap — example\n\n```cpp\nCHECK(example());\n```\n"
+	if err := os.WriteFile(filepath.Join(trapsDir, "test-code.md"), []byte(trap), 0o644); err != nil {
+		t.Fatalf("seed trap: %v", err)
+	}
+	draftPath := filepath.Join(root, "draft.md")
+	draft := "# Draft\n\n## Problem\n\nChange `native/test_example.cpp`.\n\n" +
+		refineDeliverableMarker +
+		"\n\n## Required Behavior\n\nDo the edit.\n\n## Acceptance\n\n- Run tests.\n"
+	if err := os.WriteFile(draftPath, []byte(draft), 0o644); err != nil {
+		t.Fatalf("seed draft: %v", err)
+	}
+
+	var lintInput string
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
+		body, err := os.ReadFile(args[0])
+		if err != nil {
+			t.Fatalf("read lint input: %v", err)
+		}
+		lintInput = string(body)
+		return 0
+	})
+	var stderr bytes.Buffer
+	code, _ := captureRefineLintOutput(draftPath, "", root, refineModeAnchored, []string{"native/test_example.cpp"}, &stderr)
+	if code != 0 {
+		t.Fatalf("stub lint should pass, got %d", code)
+	}
+	if !strings.Contains(lintInput, "## Files To Modify") || !strings.Contains(lintInput, "## Acceptance") {
+		t.Fatalf("lint input should include canonical brief sections after marker injection, got:\n%s", lintInput)
+	}
+	if strings.Contains(lintInput, "Trap — example") || strings.Contains(lintInput, "```cpp") {
+		t.Fatalf("project overlay guidance should not be part of structural lint input, got:\n%s", lintInput)
+	}
+}
+
 // TestRunLaneRefinePatchPhaseSeesLintPreload locks in §6.1 Gap 1
 // (Colony shipped 2026-05-11): when refine runs a patch iteration,
 // the patch meta-brief inlines the previous draft's lint output so
@@ -978,6 +1219,167 @@ func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "Pre-loaded lint findings") {
 		t.Fatalf("expected 'Pre-loaded lint findings' section in patch meta-brief, got:\n%s", body)
+	}
+}
+
+func TestWriteRefinePatchMetaPreloadsSourceEvidenceAnchors(t *testing.T) {
+	root := t.TempDir()
+	srcPath := filepath.Join(root, "native", "src", "simulation", "creatures", "formative_events.h")
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	source := strings.Join([]string{
+		"enum class FormativeEventType : uint8_t {",
+		"    SURVIVED_BATTLE,",
+		"    FIRST_KILL,",
+		"    COUNT,",
+		"};",
+		"",
+		"enum class MemoryType : uint8_t {",
+		"    FIRST_KILL,",
+		"    COUNT,",
+		"};",
+	}, "\n")
+	if err := os.WriteFile(srcPath, []byte(source), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	prevDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "draft.md")
+	prevReview := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "review.md")
+	metaPath := filepath.Join(root, ".idiom", "refine", "example", "iter-2", "meta-patch.md")
+	newDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-2", "draft.md")
+	for _, path := range []string{prevDraft, prevReview, metaPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	if err := os.WriteFile(prevDraft, []byte("Add FormativeEventType and MemoryType anchors.\n"), 0o644); err != nil {
+		t.Fatalf("write draft: %v", err)
+	}
+	if err := os.WriteFile(prevReview, []byte("Missing anchor in formative_events.h for FormativeEventType, MemoryType, and COUNT.\n"), 0o644); err != nil {
+		t.Fatalf("write review: %v", err)
+	}
+	lintOutput := "- [BLOCK] (anchor-specificity) exact-anchor specificity failed for required edit path(s): native/src/simulation/creatures/formative_events.h"
+	if err := writeRefinePatchMeta(metaPath, prevDraft, prevReview, newDraft, lintOutput, []string{"native/src/simulation/creatures/formative_events.h"}); err != nil {
+		t.Fatalf("write patch meta: %v", err)
+	}
+	body, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read patch meta: %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"Pre-loaded source evidence",
+		"`native/src/simulation/creatures/formative_events.h:1`: `enum class FormativeEventType : uint8_t {`",
+		"`native/src/simulation/creatures/formative_events.h:7`: `enum class MemoryType : uint8_t {`",
+		"`native/src/simulation/creatures/formative_events.h:4`: `COUNT,`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected patch meta to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestRefinePatchSourceEvidenceStaysCompactAndSkipsBoilerplate(t *testing.T) {
+	root := t.TempDir()
+	relPath := filepath.ToSlash(filepath.Join("native", "src", "simulation", "creatures", "formative_events.h"))
+	srcPath := filepath.Join(root, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	var source strings.Builder
+	source.WriteString("#include \"appraisal.h\"\n")
+	source.WriteString("namespace Colony {\n")
+	source.WriteString("enum class FormativeEventType : uint8_t {\n")
+	for i := 0; i < 20; i++ {
+		source.WriteString("    EVENT_")
+		source.WriteString(string(rune('A' + i)))
+		source.WriteString(",\n")
+	}
+	source.WriteString("    COUNT,\n")
+	source.WriteString("};\n")
+	source.WriteString("}\n")
+	if err := os.WriteFile(srcPath, []byte(source.String()), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	prevDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "draft.md")
+	prevReview := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "review.md")
+	for _, path := range []string{prevDraft, prevReview} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	if err := os.WriteFile(prevDraft, []byte("Use FormativeEventType EVENT_A EVENT_B EVENT_C EVENT_D EVENT_E EVENT_F EVENT_G EVENT_H EVENT_I EVENT_J EVENT_K EVENT_L EVENT_M EVENT_N EVENT_O EVENT_P EVENT_Q EVENT_R EVENT_S EVENT_T COUNT anchors.\n"), 0o644); err != nil {
+		t.Fatalf("write draft: %v", err)
+	}
+	if err := os.WriteFile(prevReview, []byte("Missing compact anchors in native/src/simulation/creatures/formative_events.h.\n"), 0o644); err != nil {
+		t.Fatalf("write review: %v", err)
+	}
+
+	evidence := refinePatchSourceEvidence(root, prevDraft, prevReview, "", []string{relPath})
+	if strings.Contains(evidence, "#include") || strings.Contains(evidence, "namespace Colony") {
+		t.Fatalf("source evidence should skip boilerplate, got:\n%s", evidence)
+	}
+	count := 0
+	for _, line := range strings.Split(evidence, "\n") {
+		if strings.HasPrefix(line, "- `"+relPath+":") {
+			count++
+		}
+	}
+	if count == 0 || count > refinePatchSourceEvidenceAnchorsPerPath {
+		t.Fatalf("expected 1..%d anchors, got %d:\n%s", refinePatchSourceEvidenceAnchorsPerPath, count, evidence)
+	}
+}
+
+func TestRefinePatchSourceEvidencePrioritizesBoundaryAnchors(t *testing.T) {
+	root := t.TempDir()
+	relPath := filepath.ToSlash(filepath.Join("native", "src", "simulation", "creatures", "memory_helpers.cpp"))
+	srcPath := filepath.Join(root, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	var source strings.Builder
+	source.WriteString("enum class MemoryType : uint8_t {\n")
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&source, "    DISTRACTOR_%02d,\n", i)
+	}
+	source.WriteString("    FIRST_KILL,\n")
+	source.WriteString("    COUNT,\n")
+	source.WriteString("};\n\n")
+	source.WriteString("float default_memory_mood(MemoryType type) {\n")
+	source.WriteString("    switch (type) {\n")
+	source.WriteString("    case MemoryType::FIRST_KILL: return 8.0f;\n")
+	source.WriteString("    case MemoryType::COUNT: return 0.0f;\n")
+	source.WriteString("    }\n")
+	source.WriteString("    return 0.0f;\n")
+	source.WriteString("}\n")
+	if err := os.WriteFile(srcPath, []byte(source.String()), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	prevDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "draft.md")
+	prevReview := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "review.md")
+	for _, path := range []string{prevDraft, prevReview} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	draft := "Source verification pending: confirm the MemoryType COUNT sentinel and default_memory_mood() switch closing boundary in native/src/simulation/creatures/memory_helpers.cpp.\n"
+	if err := os.WriteFile(prevDraft, []byte(draft), 0o644); err != nil {
+		t.Fatalf("write draft: %v", err)
+	}
+	review := "Missing exact anchors for COUNT, default_memory_mood(), and case MemoryType::COUNT.\n"
+	if err := os.WriteFile(prevReview, []byte(review), 0o644); err != nil {
+		t.Fatalf("write review: %v", err)
+	}
+
+	evidence := refinePatchSourceEvidence(root, prevDraft, prevReview, "", []string{relPath})
+	for _, want := range []string{
+		"`native/src/simulation/creatures/memory_helpers.cpp:33`: `COUNT,`",
+		"`native/src/simulation/creatures/memory_helpers.cpp:36`: `float default_memory_mood(MemoryType type) {`",
+		"`native/src/simulation/creatures/memory_helpers.cpp:39`: `case MemoryType::COUNT: return 0.0f;`",
+	} {
+		if !strings.Contains(evidence, want) {
+			t.Fatalf("expected boundary evidence %q, got:\n%s", want, evidence)
+		}
 	}
 }
 
@@ -1024,6 +1426,54 @@ func TestRenderRefineLintFindingsCleanPassEmitsClearNote(t *testing.T) {
 	}
 	if !strings.Contains(out, "no BLOCK/WARN findings") {
 		t.Fatalf("expected clean-pass note, got: %s", out)
+	}
+}
+
+func TestWriteFallbackRefineReviewFromLintBlocks(t *testing.T) {
+	root := t.TempDir()
+	reviewPath := filepath.Join(root, ".idiom", "refine", "atom", "iter-1", "review.md")
+	lintOutput := strings.Join([]string{
+		"- [BLOCK] (anchor-specificity) exact-anchor failed for native/src/foo.cpp",
+		"- [WARN] (other) test-anchor preload missing for native/tests/test_foo.cpp",
+	}, "\n")
+
+	wrote, err := writeFallbackRefineReview(reviewPath, lintOutput, "review-missing", nil)
+	if err != nil {
+		t.Fatalf("write fallback review: %v", err)
+	}
+	if !wrote {
+		t.Fatal("expected fallback review to be written for lint BLOCKs")
+	}
+	bodyBytes, err := os.ReadFile(reviewPath)
+	if err != nil {
+		t.Fatalf("read fallback review: %v", err)
+	}
+	body := string(bodyBytes)
+	if got := parseRefineVerdict(body); got != "fix-bugs-then-ship" {
+		t.Fatalf("fallback verdict = %q, want fix-bugs-then-ship\n%s", got, body)
+	}
+	bugs := parseRefineBugTitles(body)
+	if len(bugs) != 1 || !strings.Contains(bugs[0], "anchor-specificity") {
+		t.Fatalf("fallback bugs = %#v, want one anchor-specificity lint block\n%s", bugs, body)
+	}
+	if !strings.Contains(body, "[WARN] (other) test-anchor preload missing") {
+		t.Fatalf("fallback review should preserve WARN findings for patch context:\n%s", body)
+	}
+}
+
+func TestWriteFallbackRefineReviewSkipsWithoutLintBlocks(t *testing.T) {
+	root := t.TempDir()
+	reviewPath := filepath.Join(root, "review.md")
+
+	wrote, err := writeFallbackRefineReview(reviewPath, "- [WARN] (other) warning only", "review-missing", nil)
+	if err != nil {
+		t.Fatalf("write fallback review: %v", err)
+	}
+	if wrote {
+		t.Fatal("fallback review should not synthesize a review without a lint BLOCK")
+	}
+	if _, err := os.Stat(reviewPath); !os.IsNotExist(err) {
+		t.Fatalf("review path should not exist, stat err=%v", err)
 	}
 }
 
@@ -1318,6 +1768,16 @@ func TestExtractDeliverableTargetExtractsFirstNonSourcePath(t *testing.T) {
 			spec: "modify `pkg/a.go` and create `docs/CHANGELOG.md`",
 			want: "docs/CHANGELOG.md",
 		},
+		{
+			name: "reject-symbol-target",
+			spec: "add `EventClass` mapping for the new event.",
+			want: "",
+		},
+		{
+			name: "reject-expression-target",
+			spec: "add `valence > 0.0f` branch to the existing condition.",
+			want: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1326,6 +1786,75 @@ func TestExtractDeliverableTargetExtractsFirstNonSourcePath(t *testing.T) {
 				t.Fatalf("extractDeliverableTarget(%q) = %q, want %q", tc.spec, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestExtractDeliverableTargetsPrefersFilesToModifyTable(t *testing.T) {
+	spec := `# Atom
+
+## Files to Modify
+
+| File | Change |
+|---|---|
+| ` + "`native/src/simulation/ai/appraisal.cpp`" + ` | Modify positive valence |
+| ` + "`native/src/simulation/ai/appraisal.h`" + ` | No change |
+| ` + "`native/src/core/constants/individuated_mood.h`" + ` | Add EventClass cells |
+| ` + "`native/tests/test_individuated_mood.cpp`" + ` | Add tests |
+
+## Changes
+
+Add ` + "`valence > 0.0f`" + ` handling and populate ` + "`EventClass`" + ` mappings.
+`
+	got := extractDeliverableTargets(spec, refineModeAnchored)
+	want := []string{
+		"native/src/simulation/ai/appraisal.cpp",
+		"native/src/core/constants/individuated_mood.h",
+		"native/tests/test_individuated_mood.cpp",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+	}
+}
+
+func TestExtractDeliverableTargetsFallsBackToScopeBullets(t *testing.T) {
+	spec := `# Legacy atom
+
+## Scope
+
+- ` + "`scripts/test_anomaly_scan.py`" + `
+
+Acceptance-only context:
+- ` + "`scripts/anomaly_scan.py`" + `
+- ` + "`native/tests/test_diagnostic_logger.cpp`" + `
+
+## Acceptance
+
+- update the anomaly scan tests
+`
+	got := extractDeliverableTargets(spec, refineModeAnchored)
+	want := []string{"scripts/test_anomaly_scan.py"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+	}
+}
+
+func TestExtractDeliverableTargetsPrefersFilesTableOverScope(t *testing.T) {
+	spec := `# Atom
+
+## Files To Modify
+
+| File | Change |
+|------|--------|
+| ` + "`src/real.go`" + ` | MODIFY: actual target |
+
+## Scope
+
+- ` + "`src/legacy.go`" + `
+`
+	got := extractDeliverableTargets(spec, refineModeAnchored)
+	want := []string{"src/real.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
 	}
 }
 
@@ -1346,7 +1875,7 @@ func TestRefineDeliverableTargetMismatchSurfacesAsBlock(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	specTarget := "docs/research/lane-postflight-check-inventory.md"
-	got := refineDeliverableTargetMismatch(draftPath, specTarget)
+	got := refineDeliverableTargetMismatch(draftPath, []string{specTarget})
 	if got == "" {
 		t.Fatalf("expected BLOCK on path mismatch, got empty")
 	}
@@ -1368,9 +1897,25 @@ func TestRefineDeliverableTargetMatchReturnsEmpty(t *testing.T) {
 	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	got := refineDeliverableTargetMismatch(draftPath, "docs/research/inventory.md")
+	got := refineDeliverableTargetMismatch(draftPath, []string{"docs/research/inventory.md"})
 	if got != "" {
 		t.Fatalf("expected silent success on match, got: %s", got)
+	}
+}
+
+func TestRefineDeliverableTargetMismatchRequiresAllAnchoredTargets(t *testing.T) {
+	dir := t.TempDir()
+	draftPath := filepath.Join(dir, "draft.md")
+	body := "# Brief\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `native/a.cpp` | MODIFY |\n\n## Acceptance\n\n- test\n"
+	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got := refineDeliverableTargetMismatch(draftPath, []string{"native/a.cpp", "native/b.cpp"})
+	if got == "" {
+		t.Fatalf("expected BLOCK when one required target is missing")
+	}
+	if !strings.Contains(got, "native/b.cpp") {
+		t.Fatalf("expected missing target in BLOCK, got: %s", got)
 	}
 }
 
@@ -1385,36 +1930,189 @@ func TestRefineDeliverableTargetEmptyTargetSkipsCheck(t *testing.T) {
 	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if got := refineDeliverableTargetMismatch(draftPath, ""); got != "" {
+	if got := refineDeliverableTargetMismatch(draftPath, nil); got != "" {
 		t.Fatalf("expected no-op when target is empty, got: %s", got)
 	}
 }
 
 // TestRefineDeliverableContextBlockRendersExtractedTarget verifies
-// the substitution block names the extracted path with the
-// "use this exact path" framing — gives the model an unambiguous
-// answer rather than asking it to derive the target.
+// the substitution block names the extracted path AND tells the
+// model that the harness owns the path block. Gap 8 (2026-05-12)
+// inverted the contract: model emits the marker, harness injects
+// the path. The context block remains for legacy template overrides
+// that still reference {{DELIVERABLE_TARGET_CONTEXT}}.
 func TestRefineDeliverableContextBlockRendersExtractedTarget(t *testing.T) {
-	got := refineDeliverableContextBlock("docs/research/x.md")
+	got := refineDeliverableContextBlock([]string{"docs/research/x.md"})
 	if !strings.Contains(got, "docs/research/x.md") {
 		t.Fatalf("expected block to name the target, got: %s", got)
 	}
-	if !strings.Contains(got, "Use this exact path") {
-		t.Fatalf("expected directive framing, got: %s", got)
+	if !strings.Contains(got, "harness will inject") {
+		t.Fatalf("expected harness-injection framing, got: %s", got)
 	}
-	if !strings.Contains(got, "{{DRAFT_PATH}}") {
-		t.Fatalf("expected explicit warning about DRAFT_PATH conflation, got: %s", got)
+	if !strings.Contains(got, "idiom:harness-deliverable-block") {
+		t.Fatalf("expected reference to harness marker, got: %s", got)
 	}
 }
 
 // TestRefineDeliverableContextBlockEmptyFallsBack: when extraction
-// returns empty, the block emits a no-op note so the template
+// returns empty, the block emits a no-op note so legacy template
 // substitution doesn't leak an orphan {{DELIVERABLE_TARGET_CONTEXT}}
 // placeholder.
 func TestRefineDeliverableContextBlockEmptyFallsBack(t *testing.T) {
-	got := refineDeliverableContextBlock("")
+	got := refineDeliverableContextBlock(nil)
 	if !strings.Contains(got, "no deliverable target detected") {
 		t.Fatalf("expected fallback note, got: %s", got)
+	}
+}
+
+// TestRefineInjectDeliverableBlockAnchored verifies the harness
+// substitutes the marker with a canonical `## Files To Modify`
+// table populated from the extracted target for anchored-edits mode.
+func TestRefineInjectDeliverableBlockAnchored(t *testing.T) {
+	body := []byte("# T\n\n## Problem\n\nspec.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Verified Current State\n\nbody\n")
+	out := refineInjectDeliverableBlock(body, "anchored", []string{"docs/research/x.md", "native/foo.cpp"}, io.Discard)
+	got := string(out)
+	if strings.Contains(got, "<!-- idiom:harness-deliverable-block -->") {
+		t.Fatalf("marker should be replaced, got: %s", got)
+	}
+	if !strings.Contains(got, "## Files To Modify") {
+		t.Fatalf("anchored injection should emit Files To Modify, got: %s", got)
+	}
+	if !strings.Contains(got, "`docs/research/x.md`") {
+		t.Fatalf("injection should name the extracted target, got: %s", got)
+	}
+	if !strings.Contains(got, "`native/foo.cpp`") {
+		t.Fatalf("injection should name every extracted target, got: %s", got)
+	}
+}
+
+// TestRefineInjectDeliverableBlockMarkdown verifies the harness
+// substitutes the marker with a canonical `## Deliverable` block
+// for markdown-deliverable mode.
+func TestRefineInjectDeliverableBlockMarkdown(t *testing.T) {
+	body := []byte("# T\n\n## Problem\n\nspec.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Inline content\n\nbody\n")
+	out := refineInjectDeliverableBlock(body, "markdown", []string{"docs/research/x.md"}, io.Discard)
+	got := string(out)
+	if strings.Contains(got, "<!-- idiom:harness-deliverable-block -->") {
+		t.Fatalf("marker should be replaced, got: %s", got)
+	}
+	if !strings.Contains(got, "## Deliverable") {
+		t.Fatalf("markdown injection should emit Deliverable, got: %s", got)
+	}
+	if !strings.Contains(got, "Path: `docs/research/x.md`") {
+		t.Fatalf("injection should name the extracted target with Path: prefix, got: %s", got)
+	}
+}
+
+// TestRefineInjectDeliverableBlockSkipsWhenMarkerAbsent verifies
+// that drafts without the marker pass through unchanged (model
+// authored its own block, or a legacy template — lint catches it
+// downstream).
+func TestRefineInjectDeliverableBlockSkipsWhenMarkerAbsent(t *testing.T) {
+	body := []byte("# T\n\n## Problem\n\nspec.\n\n## Files To Modify\n\n| a | b |\n")
+	out := refineInjectDeliverableBlock(body, "anchored", []string{"docs/research/x.md"}, io.Discard)
+	if !bytes.Equal(body, out) {
+		t.Fatalf("body should be unchanged when marker absent, got: %s", string(out))
+	}
+}
+
+// TestRefineInjectDeliverableBlockSkipsWhenTargetEmpty verifies
+// that empty target (extraction failed) leaves the body unchanged.
+// The marker stays in the brief as a visible defect, which the
+// reviewer's structural check will catch.
+func TestRefineInjectDeliverableBlockSkipsWhenTargetEmpty(t *testing.T) {
+	body := []byte("# T\n\n## Problem\n\n<!-- idiom:harness-deliverable-block -->\n\n## X\n")
+	out := refineInjectDeliverableBlock(body, "anchored", nil, io.Discard)
+	if !bytes.Equal(body, out) {
+		t.Fatalf("body should be unchanged when target empty, got: %s", string(out))
+	}
+}
+
+func TestFinalizeRefineLintsInjectedFinalBody(t *testing.T) {
+	dir := t.TempDir()
+	draftPath := filepath.Join(dir, "draft.md")
+	outputPath := filepath.Join(dir, "out.md")
+	body := "# Draft\n\n## Problem\n\nThis is a non-trivial refine draft with enough content to pass the minimum-size guard.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Verified Current State\n\nSource verification pending.\n\n## Required Behavior\n\n1. Preserve the marker until finalize.\n\n## Acceptance\n\n- `go test ./cmd/idiom`\n"
+	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed draft: %v", err)
+	}
+
+	var lintedBody string
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
+		if len(args) != 1 {
+			t.Fatalf("expected lint temp path only, got args=%v", args)
+		}
+		blob, err := os.ReadFile(args[0])
+		if err != nil {
+			t.Fatalf("read lint temp: %v", err)
+		}
+		lintedBody = string(blob)
+		return 0
+	})
+
+	var stderr bytes.Buffer
+	code := finalizeRefineWithTitleAndOverlay(draftPath, outputPath, "final-lint", 1, "ship-as-is", "", refineModeAnchored, []string{"native/foo.cpp"}, &stderr)
+	if code != 0 {
+		t.Fatalf("finalize exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(lintedBody, "## Files To Modify") || !strings.Contains(lintedBody, "`native/foo.cpp`") {
+		t.Fatalf("lint should see injected Files To Modify block, got:\n%s", lintedBody)
+	}
+	if strings.Contains(lintedBody, refineDeliverableMarker) {
+		t.Fatalf("lint should not see raw deliverable marker, got:\n%s", lintedBody)
+	}
+}
+
+func TestFinalizeRefineFailsShipAsIsWhenProjectOverlayBreaksLint(t *testing.T) {
+	root := t.TempDir()
+	overlayDir := filepath.Join(root, refineOverlayDir)
+	trapsDir := filepath.Join(overlayDir, "traps")
+	if err := os.MkdirAll(trapsDir, 0o755); err != nil {
+		t.Fatalf("mkdir traps: %v", err)
+	}
+	trap := "---\napplies_to: [test-code]\n---\n\n## Trap — example\n\n```cpp\nCHECK(example());\n```\n"
+	if err := os.WriteFile(filepath.Join(trapsDir, "test-code.md"), []byte(trap), 0o644); err != nil {
+		t.Fatalf("seed trap: %v", err)
+	}
+	draftPath := filepath.Join(root, "draft.md")
+	outputPath := filepath.Join(root, "out.md")
+	body := "# Draft\n\n## Problem\n\nThis is a non-trivial refine draft for `native/test_example.cpp`.\n\n" +
+		refineDeliverableMarker +
+		"\n\n## Verified Current State\n\nSource verification pending.\n\n## Required Behavior\n\n1. Preserve the marker until finalize.\n\n## Acceptance\n\n- `go test ./cmd/idiom`\n"
+	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed draft: %v", err)
+	}
+
+	var lintedBody string
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
+		blob, err := os.ReadFile(args[0])
+		if err != nil {
+			t.Fatalf("read lint temp: %v", err)
+		}
+		lintedBody = string(blob)
+		if strings.Contains(lintedBody, "```cpp") {
+			return 1
+		}
+		return 0
+	})
+
+	var stderr bytes.Buffer
+	code := finalizeRefineWithTitleAndOverlay(draftPath, outputPath, "overlay-lint", 1, "ship-as-is", root, refineModeAnchored, []string{"native/test_example.cpp"}, &stderr)
+	if code == 0 {
+		t.Fatalf("expected final overlay lint failure to force non-zero exit; stderr=%s", stderr.String())
+	}
+	if !strings.Contains(lintedBody, "Trap — example") || !strings.Contains(lintedBody, "```cpp") {
+		t.Fatalf("final lint should inspect project overlay content, got:\n%s", lintedBody)
+	}
+	out, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !strings.HasPrefix(string(out), "> WARNING:") {
+		t.Fatalf("expected warning artifact after final lint failure, got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "reason=final-lint-failed") {
+		t.Fatalf("expected provenance to record final-lint-failed, got:\n%s", out)
 	}
 }
 
@@ -1462,15 +2160,20 @@ func TestMarkdownDraftTemplateClarifiesTwoPaths(t *testing.T) {
 	if !strings.Contains(bodyStr, expectedDraftPath) {
 		t.Fatalf("expected substituted DRAFT_PATH %q in meta-draft, got:\n%s", expectedDraftPath, bodyStr)
 	}
-	// The "Deliverable Path" wording must appear (the brief's internal
-	// field, NOT the model's output file).
-	if !strings.Contains(bodyStr, "Deliverable Path") {
-		t.Fatalf("expected 'Deliverable Path' wording in markdown template, got:\n%s", bodyStr)
+	// Gap 8 (2026-05-12) inverted the contract: model no longer
+	// authors the `Deliverable Path` field. Instead, the template
+	// instructs the model to emit the harness marker, and refine's
+	// finalize step substitutes it. The lock-in shifts to: marker
+	// present + harness-injection framing + scratchpad disambiguation
+	// for the draft path.
+	if !strings.Contains(bodyStr, "<!-- idiom:harness-deliverable-block -->") {
+		t.Fatalf("expected harness deliverable marker in markdown template, got:\n%s", bodyStr)
 	}
-	// The disambiguating language must appear so the model sees the
-	// boundary explicitly.
-	if !strings.Contains(bodyStr, "Two different files") {
-		t.Fatalf("expected 'Two different files' disambiguation in template (Colony two-path bug fix), got:\n%s", bodyStr)
+	// The template must explain that the harness owns the substitution.
+	// Whitespace-flexible match — the prose may wrap "harness" and
+	// "substitutes" across a newline.
+	if !regexp.MustCompile(`(?i)harness\s+substitutes`).MatchString(bodyStr) {
+		t.Fatalf("expected harness-substitution framing in template, got:\n%s", bodyStr)
 	}
 	if !strings.Contains(bodyStr, "scratchpad") {
 		t.Fatalf("expected 'scratchpad' framing for refine's draft path, got:\n%s", bodyStr)
@@ -1875,6 +2578,109 @@ func TestEnsureRefineDraftWriteClosureAppendsWhenMissing(t *testing.T) {
 	}
 }
 
+func TestRefineMetaTemplatesDoNotSuggestScratchpadShellChecks(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		pathToken string
+	}{
+		{name: "draft", body: refineDraftTemplate, pathToken: "{{DRAFT_PATH}}"},
+		{name: "draft-markdown", body: refineDraftMarkdownTemplate, pathToken: "{{DRAFT_PATH}}"},
+		{name: "review", body: refineReviewTemplate, pathToken: "{{REVIEW_PATH}}"},
+		{name: "patch", body: refinePatchTemplate, pathToken: "{{NEW_DRAFT_PATH}}"},
+		{name: "override-closure", body: refineCanonicalWriteClosure, pathToken: "{{DRAFT_PATH}}"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scratchpadCheck := "test -f " + tc.pathToken
+			if strings.Contains(tc.body, scratchpadCheck) {
+				t.Fatalf("template must not suggest shell-checking scratchpad writes with %q:\n%s", scratchpadCheck, tc.body)
+			}
+			if !strings.Contains(tc.body, "The successful `write_file` result is the completion proof") {
+				t.Fatalf("template should tell the model write_file is the completion proof, got:\n%s", tc.body)
+			}
+		})
+	}
+}
+
+func TestRefineDraftTemplatesUseEvidenceContractInsteadOfBudget(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "draft", body: refineDraftTemplate},
+		{name: "draft-markdown", body: refineDraftMarkdownTemplate},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, want := range []string{"## Draft phase evidence contract", "Use the embedded spec", "Source verification pending:", "Stay on the draft deliverable"} {
+				if !strings.Contains(tc.body, want) {
+					t.Fatalf("draft template should contain %q, got:\n%s", want, tc.body)
+				}
+			}
+			for _, forbidden := range []string{"## Draft phase tool budget", "Zero source reads", "Zero searches", "Zero code-navigation calls", "Do not read files. Do not search."} {
+				if strings.Contains(tc.body, forbidden) {
+					t.Fatalf("draft template should not contain budget-shaped wording %q:\n%s", forbidden, tc.body)
+				}
+			}
+		})
+	}
+}
+
+func TestRefineReviewTemplateClosesSourceUncertaintyIntoReview(t *testing.T) {
+	for _, want := range []string{
+		"## Review evidence discipline",
+		"Do not perform source reads, discovery queries, broad orientation",
+		"record the uncertainty as a bug or OK caveat",
+		"A bounded `Source verification\n  pending:` note is not a bug by itself",
+		"Put bounded `Source verification pending:` entries in OK, not Bugs",
+		"## What to record as uncertainty",
+		"After the required read, write the review",
+	} {
+		if !strings.Contains(refineReviewTemplate, want) {
+			t.Fatalf("review template should contain %q, got:\n%s", want, refineReviewTemplate)
+		}
+	}
+	for _, forbidden := range []string{
+		"## Hard tool budget",
+		"At most ONE additional `read_file`",
+		"Do NOT do grep / search / code_navigate",
+		"## What to spot-check (gap-driven only)",
+		"Prefer context/language/project discovery tools before raw source",
+	} {
+		if strings.Contains(refineReviewTemplate, forbidden) {
+			t.Fatalf("review template should not contain obsolete source-discovery rule %q:\n%s", forbidden, refineReviewTemplate)
+		}
+	}
+}
+
+func TestRefinePatchTemplateClosesSourceUncertaintyIntoDraft(t *testing.T) {
+	for _, want := range []string{
+		"## Source evidence closure",
+		"not a source discovery",
+		"do not reopen source discovery here",
+		"Source verification pending:",
+		"## Scope Correction Required",
+		"Write the corrected draft after the two required reads",
+		"Do not perform\nsource reads, discovery queries",
+	} {
+		if !strings.Contains(refinePatchTemplate, want) {
+			t.Fatalf("patch template should contain %q, got:\n%s", want, refinePatchTemplate)
+		}
+	}
+	for _, forbidden := range []string{
+		"Maximum 4 additional source reads total",
+		"No searches, shell commands, code-navigation tools",
+		"file already listed in the draft/spec",
+		"## Gap-driven anchor refresh",
+		"Prefer context/language/project discovery tools",
+	} {
+		if strings.Contains(refinePatchTemplate, forbidden) {
+			t.Fatalf("patch template should not contain obsolete refresh rule %q:\n%s", forbidden, refinePatchTemplate)
+		}
+	}
+}
+
 // TestRunLaneRefineAutoAppendsClosureToOverrideWithoutWriteFile
 // verifies the auto-append behavior is wired end-to-end: a project
 // override that omits write_file in its body produces a meta-draft
@@ -1976,7 +2782,7 @@ func TestRunLaneRefineUsesProjectOverrideTemplate(t *testing.T) {
 	if !strings.Contains(string(body), "## Notebook deliverable") {
 		t.Fatalf("expected override template body in meta-draft, got:\n%s", body)
 	}
-	if !strings.Contains(string(body), "SPEC: Sweep hyperparameters") {
+	if !strings.Contains(string(body), "SPEC: > Sweep hyperparameters") {
 		t.Fatalf("expected substitutions to happen, got:\n%s", body)
 	}
 }
@@ -2142,6 +2948,63 @@ func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
 	}
 	if m.LintExit != 1 {
 		t.Fatalf("expected metrics.lint_exit=1, got %d", m.LintExit)
+	}
+}
+
+func TestRunLaneRefinePreloadsFinalShapeLintFindings(t *testing.T) {
+	var lintedCandidate string
+	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
+		isJSON := len(args) > 1 && args[1] == "--json"
+		if !isJSON {
+			return 0
+		}
+		body, err := os.ReadFile(args[0])
+		if err != nil {
+			t.Fatalf("read lint input: %v", err)
+		}
+		lintedCandidate = string(body)
+		if strings.Contains(lintedCandidate, "native/foo.cpp") && !strings.Contains(lintedCandidate, refineDeliverableMarker) {
+			_, _ = stdout.Write([]byte(`{"brief":"candidate.md","exit":1,"findings":[{"severity":"BLOCK","category":"exact-anchor","brief":"candidate.md","message":"exact-anchor specificity failed for native/foo.cpp"}]}`))
+			return 1
+		}
+		_, _ = stdout.Write([]byte(`{"brief":"candidate.md","exit":0,"findings":[]}`))
+		return 0
+	})
+	root := t.TempDir()
+	specPath := filepath.Join(root, "spec.md")
+	spec := "# Spec\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `native/foo.cpp` | Modify the feature. |\n"
+	if err := os.WriteFile(specPath, []byte(spec), 0o644); err != nil {
+		t.Fatalf("seed spec: %v", err)
+	}
+	draft := "# Drafted brief\n\n## Problem\n\nFinal-shape lint must see the harness-injected deliverable block.\n\n" +
+		refineDeliverableMarker + "\n\n## Verified Current State\n\nSource verification pending.\n\n" +
+		"## Required Behavior\n\n1. Modify the feature using source anchors once verified.\n\n" +
+		"## Acceptance\n\n- `go test ./...`\n"
+	opts := laneRefineOptions{
+		SpecPath:    specPath,
+		OutputPath:  filepath.Join(root, "brief.md"),
+		Title:       "final-shape-lint",
+		MaxIters:    1,
+		ProjectRoot: root,
+	}
+	dispatch, _ := stubDispatcher(t, []string{
+		draft,
+		"# Review\n\n## Bugs found\n\n1. **Lint BLOCK**: fix it.\n\n## Lint findings\n\nBLOCK present\n\n## OK\n\n- shape reviewed\n\n## Verdict\n\nfix-bugs-then-ship\n",
+	})
+	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &bytes.Buffer{})
+	if !strings.Contains(lintedCandidate, "native/foo.cpp") {
+		t.Fatalf("lint should run against final-shape candidate with injected target, got:\n%s", lintedCandidate)
+	}
+	if strings.Contains(lintedCandidate, refineDeliverableMarker) {
+		t.Fatalf("lint candidate should have marker substituted before lint, got:\n%s", lintedCandidate)
+	}
+	metaReviewPath := filepath.Join(refineStateDir(root, "final-shape-lint"), "iter-1", "meta-review.md")
+	body, err := os.ReadFile(metaReviewPath)
+	if err != nil {
+		t.Fatalf("read meta-review: %v", err)
+	}
+	if !strings.Contains(string(body), "exact-anchor specificity failed for native/foo.cpp") {
+		t.Fatalf("expected final-shape lint BLOCK in review meta, got:\n%s", body)
 	}
 }
 

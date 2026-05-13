@@ -56,6 +56,8 @@ func externalToolFromConfig(def config.ExternalToolDef) workspace.ExternalTool {
 		Cwd:            def.Cwd,
 		TimeoutSeconds: def.TimeoutSeconds,
 		InputSchema:    def.InputSchema,
+		ReadOnly:       def.ReadOnly,
+		Discovery:      def.Discovery,
 	}
 }
 

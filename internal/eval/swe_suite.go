@@ -202,6 +202,8 @@ type SWETaskReport struct {
 type SWELearningUpdateRecord struct {
 	Score     float64  `json:"score"`
 	Action    string   `json:"action"`
+	EventID   string   `json:"event_id,omitempty"`
+	State     string   `json:"state,omitempty"`
 	Files     []string `json:"files,omitempty"`
 	BoostAt   float64  `json:"boost_at"`
 	PenaltyAt float64  `json:"penalty_at"`
@@ -890,34 +892,32 @@ func applyEvalLearnedWeights(workspaceRoot string, oracle SWEGroundednessOracle,
 		rec.Reason = "workspace root missing in metrics; cannot persist"
 		return rec
 	}
-	if len(files) == 0 {
-		rec.Reason = "groundedness oracle had no context files to update"
-		return rec
-	}
-	switch rec.Action {
-	case "boost":
-		if _, err := comprehension.UpdateLearnedWeights(root, comprehension.UpdateLearnedWeightsOptions{Boost: files}); err != nil {
-			rec.Reason = "boost failed: " + err.Error()
-			return rec
-		}
-	case "penalize":
-		if _, err := comprehension.UpdateLearnedWeights(root, comprehension.UpdateLearnedWeightsOptions{Penalty: files}); err != nil {
-			rec.Reason = "penalize failed: " + err.Error()
-			return rec
-		}
-	default:
-		// no_op band; still record the entry so the audit can see that the
-		// eval ran and chose not to nudge.
-	}
-	rec.Applied = rec.Action != "no_op"
-	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
-		Source: "eval",
-		Action: rec.Action,
-		Score:  score,
-		Files:  files,
-		TaskID: taskID,
-	}); err != nil && rec.Reason == "" {
-		rec.Reason = "log append failed: " + err.Error()
+	event, _, err := comprehension.ApplyVerifiedRankerLearning(root, comprehension.VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   rec.Action,
+		Score:    score,
+		Files:    files,
+		TaskID:   taskID,
+		Reason:   "swe_groundedness_oracle",
+		Verified: true,
+		Evidence: comprehension.LearningEvidenceRef{
+			Kind:     "swe_groundedness_oracle",
+			Verified: true,
+			TaskID:   taskID,
+			Files:    files,
+			Metrics: map[string]float64{
+				"boost_at":   learningBoostScoreThreshold,
+				"penalty_at": learningPenalizeScoreThreshold,
+				"min_score":  oracle.MinScore,
+			},
+		},
+	})
+	rec.EventID = event.EventID
+	rec.State = event.State
+	rec.Reason = event.Reason
+	rec.Applied = event.State == comprehension.LearningStateAccepted && (event.Action == "boost" || event.Action == "penalize")
+	if err != nil {
+		rec.Reason = "learning event failed: " + err.Error()
 	}
 	return rec
 }

@@ -549,9 +549,10 @@ func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string
 	reply, err := m.completeChatWithFallback(ctx, []llama.ChatMessage{
 		{Role: "user", Content: sb.String()},
 	}, llama.ChatOptions{
-		MaxTokens:      16,
-		Temperature:    0.0,
-		EnableThinking: &thinkingOff,
+		MaxTokens:          16,
+		Temperature:        0.0,
+		EnableThinking:     &thinkingOff,
+		ChatTemplateKwargs: true,
 	})
 	if err != nil {
 		return ""

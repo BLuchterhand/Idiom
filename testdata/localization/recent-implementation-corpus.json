@@ -1,0 +1,606 @@
+{
+  "name": "recent-implementation-localization",
+  "version": 1,
+  "experimental": true,
+  "source_window": {
+    "started_at": "2026-05-11T00:00:00Z",
+    "ended_at": "2026-05-13T17:00:00Z",
+    "source_roots": [
+      ".idiom/logs/conversations",
+      "logs/telemetry"
+    ],
+    "note": "Built from recent local implementation telemetry and conversation metadata. The committed corpus keeps only sanitized metadata, digests, themes, and expected repository anchors."
+  },
+  "privacy_review": {
+    "status": "redacted",
+    "reviewed_at": "2026-05-13T17:00:00Z",
+    "reviewer": "implementation-agent-p4.1",
+    "sensitive_content_excluded": true,
+    "excluded_content_classes": [
+      "prompt_text",
+      "transcript_text",
+      "tool_payloads",
+      "file_bodies",
+      "secrets",
+      "protected_contents",
+      "customer_identifiers"
+    ],
+    "note": "Source logs were used as evidence for task shape and anchor selection only. No transcript text, prompt text, file bodies, secret values, or protected content is included."
+  },
+  "tasks": [
+    {
+      "id": "loc-context-pack-cache-freshness",
+      "name": "Context Pack Cache Freshness",
+      "summary": "Locate the implementation and tests for context pack cache keys, read-through freshness validation, and graph view cache metrics.",
+      "themes": [
+        "graph_freshness_cache",
+        "context_pack",
+        "graph_views"
+      ],
+      "client_product_area": "benchmark_context_memory",
+      "source_refs": [
+        {
+          "kind": "telemetry",
+          "ref": "20260513-080646-tool-context_pack-59782",
+          "log_path": "logs/telemetry/20260513-080646.439-tool:context_pack-59782.jsonl",
+          "observed_at": "2026-05-13T12:06:46Z",
+          "digest": "sha256:cbb40a60a92b",
+          "evidence": [
+            "tool_request metadata",
+            "tool_result freshness counters",
+            "context cache artifact path"
+          ]
+        }
+      ],
+      "expected": {
+        "files": [
+          {
+            "path": "internal/comprehension/views.go",
+            "rationale": "Owns graph_views cache keys, load/save, stale prevention, and cache metrics."
+          },
+          {
+            "path": "internal/comprehension/pack.go",
+            "rationale": "Builds context pack results that are cached and refreshed."
+          },
+          {
+            "path": "internal/comprehension/freshness.go",
+            "rationale": "Computes freshness decisions used by context tools."
+          },
+          {
+            "path": "internal/workspace/discovery_tools.go",
+            "rationale": "Exposes context_pack and context_status through workspace tools."
+          }
+        ],
+        "symbols": [
+          {
+            "path": "internal/comprehension/views.go",
+            "name": "LoadView",
+            "kind": "func"
+          },
+          {
+            "path": "internal/comprehension/views.go",
+            "name": "SaveView",
+            "kind": "func"
+          },
+          {
+            "path": "internal/comprehension/views.go",
+            "name": "ReadViewStats",
+            "kind": "func"
+          },
+          {
+            "path": "internal/comprehension/views.go",
+            "name": "ComprehensionStateFingerprint",
+            "kind": "func"
+          },
+          {
+            "path": "internal/comprehension/pack.go",
+            "name": "Pack",
+            "kind": "func"
+          }
+        ],
+        "tests": [
+          {
+            "path": "internal/comprehension/views_test.go",
+            "name": "TestPackExposesGraphViewContractCacheAndRankerReasons"
+          },
+          {
+            "path": "internal/comprehension/views_test.go",
+            "name": "TestLoadViewByIDRefusesStaleReferencedPath"
+          },
+          {
+            "path": "internal/comprehension/freshness_test.go",
+            "name": "TestFreshnessDetectsPostIndexAddedSourceFile"
+          },
+          {
+            "path": "internal/workspace/discovery_tools_test.go",
+            "name": "TestHarnessAuditReportsContextCacheState"
+          }
+        ]
+      },
+      "privacy": {
+        "status": "redacted",
+        "transcript_included": false,
+        "file_bodies_included": false,
+        "prompt_text_included": false,
+        "secrets_included": false,
+        "sensitive_content_excluded": true,
+        "review_notes": [
+          "Telemetry counters and sanitized tool metadata retained.",
+          "No context artifact body or source snippets retained."
+        ]
+      },
+      "sensitive_exclusion_note": "Excluded all prompt text, context artifact contents, source excerpts, and tool payload details.",
+      "provenance": {
+        "selection_reason": "Recent context_pack telemetry showed read-through refresh, cache artifact creation, source coverage counters, and stale gap reporting.",
+        "sanitized_fields": [
+          "timestamp",
+          "tool",
+          "summary",
+          "counter fields",
+          "artifact handle",
+          "digest"
+        ],
+        "source_coverage": [
+          "telemetry:context_pack"
+        ]
+      }
+    },
+    {
+      "id": "loc-read-only-capability-routing",
+      "name": "Read-Only Capability Routing",
+      "summary": "Locate the registry, routing, telemetry, and tests for mapping stable read-only capability requests onto available language and discovery adapters.",
+      "themes": [
+        "capability_routing",
+        "tool_surface",
+        "language_adapters"
+      ],
+      "client_product_area": "agent_control_rails",
+      "source_refs": [
+        {
+          "kind": "telemetry",
+          "ref": "20260513-122618-tool-read_only_capability-94627",
+          "log_path": "logs/telemetry/20260513-122618.175-tool:read_only_capability-94627.jsonl",
+          "observed_at": "2026-05-13T16:26:18Z",
+          "digest": "sha256:8216b9d517ec",
+          "evidence": [
+            "routed capability result",
+            "selected adapter metadata",
+            "status and fallback counters"
+          ]
+        }
+      ],
+      "expected": {
+        "files": [
+          {
+            "path": "internal/workspace/capabilities.go",
+            "rationale": "Defines registry, resolver, route status, and read_only_capability execution."
+          },
+          {
+            "path": "internal/workspace/language_registry.go",
+            "rationale": "Defines stable language capability vocabulary and adapter mapping."
+          },
+          {
+            "path": "internal/workspace/context_telemetry.go",
+            "rationale": "Extracts capability routing status into telemetry fields."
+          },
+          {
+            "path": "internal/workspace/tool_schema_export.go",
+            "rationale": "Exports side-effect and capability metadata used by audit coverage."
+          }
+        ],
+        "symbols": [
+          {
+            "path": "internal/workspace/capabilities.go",
+            "name": "BuildReadOnlyCapabilityRegistry",
+            "kind": "func"
+          },
+          {
+            "path": "internal/workspace/capabilities.go",
+            "name": "ResolveReadOnlyCapability",
+            "kind": "func"
+          },
+          {
+            "path": "internal/workspace/capabilities.go",
+            "name": "readOnlyCapability",
+            "kind": "func"
+          },
+          {
+            "path": "internal/workspace/context_telemetry.go",
+            "name": "ReadOnlyCapabilityTelemetryFields",
+            "kind": "func"
+          }
+        ],
+        "tests": [
+          {
+            "path": "internal/workspace/capabilities_test.go",
+            "name": "TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters"
+          },
+          {
+            "path": "internal/workspace/capabilities_test.go",
+            "name": "TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters"
+          },
+          {
+            "path": "internal/workspace/capabilities_test.go",
+            "name": "TestHarnessAuditReportsCapabilityRegistryMetrics"
+          }
+        ]
+      },
+      "privacy": {
+        "status": "redacted",
+        "transcript_included": false,
+        "file_bodies_included": false,
+        "prompt_text_included": false,
+        "secrets_included": false,
+        "sensitive_content_excluded": true,
+        "review_notes": [
+          "Capability request path and status counters retained.",
+          "Underlying tool output and query text excluded."
+        ]
+      },
+      "sensitive_exclusion_note": "Excluded the request body, underlying adapter output, and any prompt or source text.",
+      "provenance": {
+        "selection_reason": "Recent read_only_capability telemetry exercised routed symbol lookup and exposed measurable routed, fallback, and adapter metadata.",
+        "sanitized_fields": [
+          "timestamp",
+          "tool",
+          "path",
+          "capability status fields",
+          "summary",
+          "digest"
+        ],
+        "source_coverage": [
+          "telemetry:read_only_capability"
+        ]
+      }
+    },
+    {
+      "id": "loc-runtime-prompt-recovery-rails",
+      "name": "Runtime Prompt Recovery Rails",
+      "summary": "Locate the runtime brief and recovery guidance that shapes prompt text, next actions, readiness, and bounded recovery without hardcoding one task scenario.",
+      "themes": [
+        "prompt_recovery_text",
+        "readiness",
+        "control_rails"
+      ],
+      "client_product_area": "agent_reliability",
+      "source_refs": [
+        {
+          "kind": "conversation",
+          "ref": "20260511-171142-conversation-b0770aa92d57c6f9",
+          "log_path": ".idiom/logs/conversations/20260511-171142.935-b0770aa92d57c6f9.jsonl",
+          "observed_at": "2026-05-11T21:11:42Z",
+          "digest": "sha256:fcd229f5e5cb",
+          "evidence": [
+            "event type counts",
+            "tool names",
+            "readiness and final critic event presence"
+          ]
+        }
+      ],
+      "expected": {
+        "files": [
+          {
+            "path": "internal/frontier/workerruntime/runtime.go",
+            "rationale": "Builds runtime step instructions, recovery plans, and readiness-aware next actions."
+          },
+          {
+            "path": "internal/frontier/workerruntime/catalog.go",
+            "rationale": "Defines runtime contracts and capability profiles used by prompt shaping."
+          },
+          {
+            "path": "prompts/base.md",
+            "rationale": "Contains baseline prompt policy for harness feedback, runtime briefs, and context graph use."
+          },
+          {
+            "path": "cmd/idiom/lanes/rules/loop-protocol.md",
+            "rationale": "Documents generic loop and recovery protocol text for lane prompts."
+          }
+        ],
+        "symbols": [
+          {
+            "path": "internal/frontier/workerruntime/runtime.go",
+            "name": "BuildRecoveryPlan",
+            "kind": "func"
+          },
+          {
+            "path": "internal/frontier/workerruntime/runtime.go",
+            "name": "RenderStepInstruction",
+            "kind": "func"
+          },
+          {
+            "path": "internal/frontier/workerruntime/catalog.go",
+            "name": "ManifestToolsForCapabilityProfile",
+            "kind": "func"
+          }
+        ],
+        "tests": [
+          {
+            "path": "internal/frontier/workerruntime/runtime_test.go",
+            "name": "TestBuildRecoveryPlanPreservesClosureScopeOnRepeatedAction"
+          },
+          {
+            "path": "internal/frontier/workerruntime/runtime_test.go",
+            "name": "TestRenderStepInstructionIncludesReadinessState"
+          },
+          {
+            "path": "internal/frontier/workerruntime/catalog_test.go",
+            "name": "TestManifestToolsForCapabilityProfileExposeExpectedSurfaces"
+          }
+        ]
+      },
+      "privacy": {
+        "status": "redacted",
+        "transcript_included": false,
+        "file_bodies_included": false,
+        "prompt_text_included": false,
+        "secrets_included": false,
+        "sensitive_content_excluded": true,
+        "review_notes": [
+          "Only event categories and file path anchors retained.",
+          "Conversation text and tool payloads excluded."
+        ]
+      },
+      "sensitive_exclusion_note": "Excluded conversation messages, model traces, source file content, and write payloads.",
+      "provenance": {
+        "selection_reason": "Recent conversation metadata included control rails, readiness, final critic, tool request, and write-result events tied to recovery and prompt behavior.",
+        "sanitized_fields": [
+          "timestamp",
+          "event type counts",
+          "tool names",
+          "path anchors",
+          "digest"
+        ],
+        "source_coverage": [
+          "conversation:control_rails",
+          "conversation:readiness"
+        ]
+      }
+    },
+    {
+      "id": "loc-harness-audit-telemetry-safety",
+      "name": "Harness Audit Telemetry Safety",
+      "summary": "Locate the audit and telemetry code that measures tool surface coverage, behavior logs, context cache health, and redaction-safe command telemetry.",
+      "themes": [
+        "audit_telemetry",
+        "privacy_redaction",
+        "tool_surface"
+      ],
+      "client_product_area": "auditability",
+      "source_refs": [
+        {
+          "kind": "telemetry",
+          "ref": "20260513-122704-tool-harness_audit-94694",
+          "log_path": "logs/telemetry/20260513-122704.558-tool:harness_audit-94694.jsonl",
+          "observed_at": "2026-05-13T16:27:04Z",
+          "digest": "sha256:ae5c4597f91a",
+          "evidence": [
+            "audit summary counts",
+            "tool surface coverage counters",
+            "capability coverage counters"
+          ]
+        }
+      ],
+      "expected": {
+        "files": [
+          {
+            "path": "internal/workspace/harness_audit.go",
+            "rationale": "Builds tool surface, behavior, context cache, and contract coverage audit reports."
+          },
+          {
+            "path": "internal/telemetry/recorder.go",
+            "rationale": "Writes command telemetry and redacts sensitive argument values."
+          },
+          {
+            "path": "internal/workspace/context_telemetry.go",
+            "rationale": "Extracts context and capability telemetry fields for reports."
+          },
+          {
+            "path": "cmd/idiom/main.go",
+            "rationale": "Starts command telemetry and logs direct tool request/result records."
+          }
+        ],
+        "symbols": [
+          {
+            "path": "internal/workspace/harness_audit.go",
+            "name": "auditToolSurfaceFromSources",
+            "kind": "func"
+          },
+          {
+            "path": "internal/workspace/harness_audit.go",
+            "name": "auditLogBehavior",
+            "kind": "func"
+          },
+          {
+            "path": "internal/telemetry/recorder.go",
+            "name": "redactedValue",
+            "kind": "func"
+          },
+          {
+            "path": "cmd/idiom/main.go",
+            "name": "logDirectToolResult",
+            "kind": "func"
+          }
+        ],
+        "tests": [
+          {
+            "path": "internal/workspace/discovery_tools_test.go",
+            "name": "TestHarnessAuditBehaviorScansLogs"
+          },
+          {
+            "path": "internal/workspace/discovery_tools_test.go",
+            "name": "TestHarnessAuditBehaviorRedactsWorstOffenderPrompts"
+          },
+          {
+            "path": "internal/telemetry/recorder_test.go",
+            "name": "TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs"
+          },
+          {
+            "path": "cmd/idiom/main_test.go",
+            "name": "TestRunMainWritesTelemetryForDirectTool"
+          }
+        ]
+      },
+      "privacy": {
+        "status": "redacted",
+        "transcript_included": false,
+        "file_bodies_included": false,
+        "prompt_text_included": false,
+        "secrets_included": false,
+        "sensitive_content_excluded": true,
+        "review_notes": [
+          "Retained audit counters and source type only.",
+          "Audit output body excluded because it can contain diagnostic details."
+        ]
+      },
+      "sensitive_exclusion_note": "Excluded audit output body, raw log excerpts, prompts, file contents, and secret-like values.",
+      "provenance": {
+        "selection_reason": "Recent harness_audit telemetry provided measurable tool surface and capability coverage signals without needing raw audit output.",
+        "sanitized_fields": [
+          "timestamp",
+          "tool",
+          "summary",
+          "coverage counters",
+          "duration",
+          "digest"
+        ],
+        "source_coverage": [
+          "telemetry:harness_audit"
+        ]
+      }
+    },
+    {
+      "id": "loc-plan-execute-docs-tracking",
+      "name": "Plan Execute Docs Tracking",
+      "summary": "Locate the plan-execute, submit-plan, and task-ledger code that keeps implementation work packages auditable while preserving docs tracking as a read-only benchmark anchor.",
+      "themes": [
+        "docs_plan_tracking",
+        "plan_execute",
+        "task_ledger"
+      ],
+      "client_product_area": "workflow_audit",
+      "source_refs": [
+        {
+          "kind": "telemetry",
+          "ref": "20260513-000135-tool-context_pack-55174",
+          "log_path": "logs/telemetry/20260513-000135.899-tool:context_pack-55174.jsonl",
+          "observed_at": "2026-05-13T04:01:35Z",
+          "digest": "sha256:82de6f644b84",
+          "evidence": [
+            "context_pack scoped to implementation plan",
+            "freshness blocker metadata",
+            "candidate and test counters"
+          ]
+        },
+        {
+          "kind": "telemetry",
+          "ref": "20260512-165425-tool-submit_plan-56055",
+          "log_path": "logs/telemetry/20260512-165425.440-tool:submit_plan-56055.jsonl",
+          "observed_at": "2026-05-12T20:54:25Z",
+          "digest": "sha256:a32f150f1f40",
+          "evidence": [
+            "submit_plan success summary",
+            "edit count",
+            "tool lifecycle metadata"
+          ]
+        }
+      ],
+      "expected": {
+        "files": [
+          {
+            "path": "cmd/idiom/plan_execute.go",
+            "rationale": "Coordinates planner, executor, pack inheritance, preflight, and review repair."
+          },
+          {
+            "path": "internal/workspace/submit_plan.go",
+            "rationale": "Persists planner artifacts, validates edit shapes, and carries pack IDs."
+          },
+          {
+            "path": "internal/app/plan_autodoc.go",
+            "rationale": "Records task ledger and write success evidence for plan tracking."
+          },
+          {
+            "path": "internal/app/plan_overlay.go",
+            "rationale": "Parses and renders plan diff entries from ledger state."
+          },
+          {
+            "path": "docs/idiom-implementation-plan.md",
+            "rationale": "Read-only benchmark anchor for work-package row localization; updates remain orchestrator-owned."
+          }
+        ],
+        "symbols": [
+          {
+            "path": "cmd/idiom/plan_execute.go",
+            "name": "runPlanExecuteMainWithTelemetry",
+            "kind": "func"
+          },
+          {
+            "path": "cmd/idiom/plan_execute.go",
+            "name": "findLatestPlanArtifact",
+            "kind": "func"
+          },
+          {
+            "path": "internal/workspace/submit_plan.go",
+            "name": "submitPlan",
+            "kind": "method"
+          },
+          {
+            "path": "internal/workspace/submit_plan.go",
+            "name": "LoadPlanArtifact",
+            "kind": "func"
+          },
+          {
+            "path": "internal/app/plan_autodoc.go",
+            "name": "recordTaskLedger",
+            "kind": "method"
+          }
+        ],
+        "tests": [
+          {
+            "path": "cmd/idiom/plan_execute_test.go",
+            "name": "TestRunPlanExecuteMainUsesDefaultPlannerTokenBudget"
+          },
+          {
+            "path": "cmd/idiom/plan_execute_test.go",
+            "name": "TestFindLatestPlanArtifactReturnsMostRecent"
+          },
+          {
+            "path": "internal/workspace/submit_plan_test.go",
+            "name": "TestSubmitPlanPersistsPackIDForExecutorRehydration"
+          },
+          {
+            "path": "internal/app/plan_autodoc_ledger_test.go",
+            "name": "TestRecordTaskLedgerAppendsPlannedItems"
+          }
+        ]
+      },
+      "privacy": {
+        "status": "redacted",
+        "transcript_included": false,
+        "file_bodies_included": false,
+        "prompt_text_included": false,
+        "secrets_included": false,
+        "sensitive_content_excluded": true,
+        "review_notes": [
+          "Retained only telemetry summaries and expected code anchors.",
+          "Implementation plan content is referenced by path only."
+        ]
+      },
+      "sensitive_exclusion_note": "Excluded plan row text, edit bodies, task prompt text, and source excerpts; the docs path is a localization anchor only.",
+      "provenance": {
+        "selection_reason": "Recent context_pack and submit_plan telemetry support a localization task covering work-package tracking, pack inheritance, and planner artifact flow.",
+        "sanitized_fields": [
+          "timestamp",
+          "tool",
+          "summary",
+          "counts",
+          "path anchor",
+          "digest"
+        ],
+        "source_coverage": [
+          "telemetry:context_pack",
+          "telemetry:submit_plan"
+        ]
+      }
+    }
+  ]
+}

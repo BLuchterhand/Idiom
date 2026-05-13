@@ -12,7 +12,7 @@ func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Implementation bootstrap already inspected this target",
-		Error:   "internal/app/app.go has already been read in the implementation bootstrap; use edit_file or a narrow line range instead",
+		Error:   "internal/app/app.go has already been read in the implementation bootstrap; approved-target write capability or a narrow line range remains available",
 	}
 	guidance := BuildActionGuidance(ActionGuidanceInput{
 		Reason:                    "pre_execute_guard",
@@ -31,7 +31,7 @@ func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
 		t.Fatalf("missing duplicate read invalid action: %#v", guidance)
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
-	if !strings.Contains(joined, "edit_file on the approved target") || !strings.Contains(joined, "narrow read_file") {
+	if !strings.Contains(joined, "approved-target write capability") || !strings.Contains(joined, "narrow range read") {
 		t.Fatalf("missing expected valid next actions: %#v", guidance.ValidNext)
 	}
 }
@@ -104,7 +104,7 @@ func TestBuildActionGuidanceForExactAnchorHiddenPrewriteTool(t *testing.T) {
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
-		"call edit_file or apply_patch with the supplied target-packet anchor now",
+		"exact-anchor write capability with the supplied target-packet anchor",
 		"<<QUESTION>> if no exact write anchor or patch is present",
 	} {
 		if !strings.Contains(joined, want) {
@@ -125,7 +125,7 @@ func TestBuildActionGuidanceForExactAnchorHiddenPrewriteTool(t *testing.T) {
 	recovery := strings.Join(append(append([]string{}, plan.DoNotRepeat...), plan.RequiredNext...), "\n")
 	for _, want := range []string{
 		"read/search/shell before first exact-anchor write",
-		"use edit_file or apply_patch with the supplied anchor",
+		"exact-anchor write capability with the supplied anchor",
 	} {
 		if !strings.Contains(recovery, want) {
 			t.Fatalf("expected %q in exact-anchor hidden-tool recovery, got %#v", want, plan)
@@ -150,8 +150,8 @@ func TestBuildActionGuidanceForWriteReadyImplementationPacket(t *testing.T) {
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
-		"edit_file or apply_patch on a required edit path",
-		"edit a required path now from the packet and inspected evidence",
+		"required-path write capability",
+		"required-path edit from the packet and inspected evidence",
 		"do not take another orientation read",
 		"<<QUESTION>> naming the exact edit-safety fact",
 	} {
@@ -353,8 +353,8 @@ func TestBuildActionGuidanceClosureOmitsOutlineFollowupMenu(t *testing.T) {
 	})
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, forbidden := range []string{
-		"code_navigate capability=read_symbol with one of the outlined declaration names",
-		"code_navigate capability=references or capability=calls_into on a named declaration",
+		"read-symbol capability with one outlined declaration name",
+		"references or calls-into capability on a named declaration",
 		"go_move_declarations",
 	} {
 		if strings.Contains(joined, forbidden) {
@@ -477,7 +477,7 @@ func TestRenderStepInstructionIncludesCurrentState(t *testing.T) {
 		LastTool:       "read_file",
 		LastResult:     ToolResultSummary{Tool: "read_file", Error: "blocked"},
 		FailureClass:   "guard_rejection",
-		NextActions:    []string{"edit_file inside approved target paths"},
+		NextActions:    []string{"approved-target write capability inside approved paths"},
 		InvalidActions: []string{"duplicate_read_file_on_bootstrapped_target"},
 	})
 	rendered := RenderStepInstruction(instruction)
@@ -598,8 +598,8 @@ func TestBuildStepInstructionUsesWriteReadyImplementationDirective(t *testing.T)
 	})
 	for _, want := range []string{
 		"Required edit paths define the implementation scope",
-		"edit an in-scope required path",
-		"bounded required-path source read",
+		"in-scope required-path edit",
+		"semantic/context/declared project discovery",
 		"named_gap",
 		"exact missing anchor or stale fact",
 		"<<QUESTION>>",
@@ -708,8 +708,8 @@ func TestRenderInitialRuntimeBriefAddsRequiredEditPathReadinessDirective(t *test
 	})
 	for _, want := range []string{
 		"required_edit_paths are present",
-		"Edit an in-scope required path",
-		"bounded required-path source read",
+		"in-scope required-path edit",
+		"semantic/context/declared project discovery",
 		"named_gap",
 		"exact blocker",
 	} {
@@ -740,14 +740,25 @@ func TestRenderInitialRuntimeBriefAddsDeterministicDiscoveryExamples(t *testing.
 
 	for _, needle := range []string{
 		`"discovery_examples"`,
-		"Use one discovery_query before ad hoc list/search/read",
-		"architecture_boundary",
-		"impact_analysis",
-		"function_tracing",
-		"security_review",
+		"For broad architecture, impact, tracing, security, or history questions",
+		"bounded discovery-packet capability",
+		"choose purpose from the tool schema",
 	} {
 		if !strings.Contains(rendered, needle) {
 			t.Fatalf("expected %q in deterministic discovery guidance:\n%s", needle, rendered)
+		}
+	}
+	if strings.Contains(rendered, "architecture_boundary shape") || strings.Contains(rendered, "security_review:") {
+		t.Fatalf("runtime brief should not repeat verbose discovery_query examples:\n%s", rendered)
+	}
+	for _, forbidden := range []string{
+		"use one bounded discovery_query",
+		"run context_pack",
+		"call go_definition",
+		"invoke read_only_capability",
+	} {
+		if strings.Contains(strings.ToLower(rendered), strings.ToLower(forbidden)) {
+			t.Fatalf("runtime brief should avoid prescriptive raw-tool phrase %q:\n%s", forbidden, rendered)
 		}
 	}
 }
@@ -762,7 +773,7 @@ func TestRenderInitialRuntimeBriefSuppressesDiscoveryExamplesForWriteReadyPacket
 		RequiredEditPaths: []string{"native/tests/test_energy.cpp"},
 		TargetPacket:      []string{"[implementation target packet]", "verified anchor: native/tests/test_energy.cpp"},
 	})
-	if strings.Contains(rendered, `"discovery_examples"`) || strings.Contains(rendered, "Use one discovery_query before ad hoc") {
+	if strings.Contains(rendered, `"discovery_examples"`) || strings.Contains(rendered, "use one bounded discovery_query") {
 		t.Fatalf("write-ready implementation packet should not advertise discovery examples:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "required_edit_paths are present") {
@@ -788,7 +799,7 @@ func TestNormalizeRuntimeBriefConversationOnlyClearsToolSurface(t *testing.T) {
 		PermissionProfile: "conversation_only",
 		AllowedTools:      []string{"task", "search_files"},
 		RequiredTools:     []string{"search_files"},
-		DiscoveryExamples: []string{"use discovery_query"},
+		DiscoveryExamples: []string{"discovery-packet capability available"},
 	})
 	if len(brief.AllowedTools) != 0 {
 		t.Fatalf("conversation-only brief should not advertise tools, got %#v", brief.AllowedTools)
@@ -835,7 +846,7 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 			t.Fatalf("child read-only role must not advertise %q, got %#v", forbidden, spec.AllowedTools)
 		}
 	}
-	for _, want := range []string{"read_file", "search_files", "search_content", "structural_search", "dependency_graph", "history_range", "blame_range", "semgrep_scan"} {
+	for _, want := range []string{"read_file", "search_files", "search_content", "file_stats", "code_navigate", "context_pack", "discovery_query", "structural_search"} {
 		if !containsString(spec.AllowedTools, want) {
 			t.Fatalf("expected child read-only role to allow %q, got %#v", want, spec.AllowedTools)
 		}

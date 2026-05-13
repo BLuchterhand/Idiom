@@ -10,9 +10,10 @@ set -euo pipefail
 # Idempotent: rerunning the script with existing config / plist /
 # loaded agent is a no-op except for the verification step.
 #
-# Default pool layout (qwen-35b, qwen-coder, each max_in_flight=1)
-# matches idiom's qwen-pair backend profile; projects that run
-# different MLX backends can edit ~/.idiom/runner.json after install.
+# Default pool layout (qwen-35b, qwen-27b, qwen-coder, each
+# max_in_flight=1) matches idiom's local Qwen backend profiles;
+# projects that run different MLX backends can edit
+# ~/.idiom/runner.json after install.
 
 usage() {
   cat <<'USAGE'
@@ -136,9 +137,10 @@ ensure_config() {
   if [[ ! -f "$config_path" ]]; then
     cat > "$config_path" <<'EOF'
 {
-  "_comment": "Per-machine idiom queue daemon config. Two pools mapping to the qwen-pair backend profile (35B planner, Coder executor) — Metal command-buffer pressure is the binding constraint, so each pool caps at 1 in-flight job. Edit max_in_flight or add pools as needed for your local MLX setup.",
+  "_comment": "Per-machine idiom queue daemon config. Pools map to the qwen-pair and qwen-27b-pair backend profiles (35B planner, 27B planner, Coder executor) — Metal command-buffer pressure is the binding constraint, so each pool caps at 1 in-flight job. Edit max_in_flight or add pools as needed for your local MLX setup.",
   "pools": {
     "qwen-35b":   {"max_in_flight": 1},
+    "qwen-27b":   {"max_in_flight": 1},
     "qwen-coder": {"max_in_flight": 1}
   }
 }

@@ -58,3 +58,26 @@ func TestSubstituteArgsConditionals(t *testing.T) {
 		t.Fatalf("expected false conditional to drop, got %#v", got)
 	}
 }
+
+func TestExternalToolRegistryReadOnlyDiscoveryContract(t *testing.T) {
+	reg, err := NewExternalToolRegistry([]ExternalTool{
+		{Name: "lookup", Command: "true", ReadOnly: true, Discovery: true},
+		{Name: "queue_run", Command: "true", ReadOnly: false, Discovery: true},
+		{Name: "format", Command: "true", ReadOnly: true, Discovery: false},
+	})
+	if err != nil {
+		t.Fatalf("NewExternalToolRegistry: %v", err)
+	}
+	if !reg.IsReadOnlyDiscovery("lookup") {
+		t.Fatalf("lookup should be classified as read-only discovery")
+	}
+	for _, name := range []string{"queue_run", "format", "missing"} {
+		if reg.IsReadOnlyDiscovery(name) {
+			t.Fatalf("%s should not be classified as read-only discovery", name)
+		}
+	}
+	tool, ok := reg.Tool("lookup")
+	if !ok || !tool.ReadOnly || !tool.Discovery {
+		t.Fatalf("Tool lookup returned %#v, %v", tool, ok)
+	}
+}

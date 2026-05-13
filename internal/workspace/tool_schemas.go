@@ -70,6 +70,10 @@ func boolProp(desc string) string {
 	return `{"type":"boolean","description":"` + desc + `"}`
 }
 
+func freshnessPolicyProps() string {
+	return `"freshness_policy":{"type":"string","enum":["read_through","require_fresh","report_only","allow_stale"],"description":"optional graph freshness mode; read_through is the default for graph evidence tools, report_only returns stale evidence with a stale_evidence state instead of blocking"},"freshness_max_files":` + intProp("optional freshness refresh budget for graph-backed tools; when exceeded, require_fresh/read_through report a stale-evidence blocker")
+}
+
 func baseToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
@@ -142,6 +146,14 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
+			Name:        "read_only_capability",
+			Description: "Invoke a stable read-only capability ID from the capability registry. Routes through existing read-only adapters, preserves adapter fallback/uncertainty in the result wrapper, and leaves direct adapter tools available.",
+			ParametersJSON: schemaObj(
+				[]string{"capability"},
+				`"capability":{"type":"string","enum":["file-outline","symbol-lookup","definition","references","related-files"],"description":"read-only capability ID from the registry; source-sanity is intentionally not accepted here"},"path":`+strProp("source file or narrow source directory used by the underlying adapter")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"query":`+strProp("alternate symbol/name/pattern when pattern is not used")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file-outline routes")+`,"end_line":`+intProp("optional end line for file-outline routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
+			),
+		},
+		{
 			Name:        "source_sanity",
 			Description: "Run source-aware sanity for edited source files. Routes to the file language's diagnostics when available; otherwise falls back to a generic source syntax sanity check.",
 			ParametersJSON: schemaObj(
@@ -151,10 +163,10 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "harness_audit",
-			Description: "Audit idiom itself: exported tool/schema coverage, language capability wiring, backend availability, and recent JSONL behavior logs. Use only for harness/tooling improvement questions, not as a replacement for code search.",
+			Description: "Audit idiom itself: exported tool/schema coverage, language capability wiring, backend availability, recent JSONL behavior logs, and passive autonomy contract event coverage when present. Use only for harness/tooling improvement questions, not as a replacement for code search.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"purpose":{"type":"string","enum":["all","tool_surface","behavior","planning_quality"],"description":"audit scope; all includes static tool-surface checks, recent log behavior, and planning-quality feedback"},"path":`+strProp("optional log file or directory to scan for behavior signals; defaults to recent logs/conversations JSONL logs")+`,"glob":`+strProp("optional workspace-relative glob of JSONL logs to scan")+`,"limit":`+intProp("max recent log files to scan; default 25, cap 200"),
+				`"purpose":{"type":"string","enum":["all","tool_surface","behavior","planning_quality"],"description":"audit scope; all includes static tool-surface checks, recent log behavior, and planning-quality feedback"},"path":`+strProp("optional log file or directory to scan for behavior signals; defaults to recent logs/conversations JSONL logs")+`,"glob":`+strProp("optional workspace-relative glob of JSONL logs to scan")+`,"limit":`+intProp("max recent log files to scan; default 80, cap 5000"),
 			),
 		},
 		{
@@ -178,7 +190,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Report whether the persistent SQLite-backed codebase comprehension graph exists, whether indexed files/symbols or collector versions are stale, and whether storage backends are compatible. With refresh=true, repair bounded stale scopes, small stale file sets, missing indexes, and collector-version mismatches before reporting.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"refresh":`+boolProp("optional: attempt stale graph repair before reporting; uses path when provided, otherwise refreshes a small capped stale/missing file set or rebuilds the root for missing indexes/collector-version mismatches")+`,"path":`+strProp("optional bounded file or directory refresh scope; omit for workspace-level status/repair")+`,"language":`+strProp("optional language hint for refresh; auto remains language-agnostic")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"refresh indexing depth; default standard"}`,
+				`"refresh":`+boolProp("optional: attempt stale graph repair before reporting; uses path when provided, otherwise refreshes a small capped stale/missing file set or rebuilds the root for missing indexes/collector-version mismatches")+`,"path":`+strProp("optional bounded file or directory refresh scope; omit for workspace-level status/repair")+`,"language":`+strProp("optional language hint for refresh; auto remains language-agnostic")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"refresh indexing depth; default standard"},`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -186,7 +198,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Query idiom's persistent codebase graph for repository, package, file, symbol, summary, import, call, or test relationships without dumping raw source. Results are observational and include confidence/staleness.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"query":`+strProp("natural-language or keyword query")+`,"pattern":`+strProp("optional symbol or handle hint")+`,"path":`+strProp("optional path scope")+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"limit":`+intProp("max nodes to return; default 12")+`,"include_evidence":`+boolProp("include edge evidence such as path/line"),
+				`"query":`+strProp("natural-language or keyword query")+`,"pattern":`+strProp("optional symbol or handle hint")+`,"path":`+strProp("optional path scope")+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"limit":`+intProp("max nodes to return; default 12")+`,"include_evidence":`+boolProp("include edge evidence such as path/line")+`,`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -194,7 +206,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Return a deeper or broader view for one context graph handle, path, or symbol. Use after context_query returns a promising handle.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"id":`+strProp("context graph handle such as symbol://path.go#Name")+`,"pattern":`+strProp("optional symbol fallback when id is not known")+`,"path":`+strProp("optional path fallback when id is not known")+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"limit":`+intProp("max related nodes/edges to return; default 20")+`,"include_source":`+boolProp("reserved for future exact source excerpts"),
+				`"id":`+strProp("context graph handle such as symbol://path.go#Name")+`,"handle":`+strProp("alias for id; accepts file://, symbol://, package://, and other context graph handles")+`,"pattern":`+strProp("optional symbol fallback when id/handle is not known")+`,"path":`+strProp("optional path fallback when id/handle is not known")+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"limit":`+intProp("max related nodes/edges to return; default 20")+`,"include_source":`+boolProp("reserved for future exact source excerpts")+`,`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -202,15 +214,15 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Generate a saved, packet-ready context view for a task from the persistent graph. Returns candidate files, symbols, tests, evidence handles, risks, unknowns, and stale-context gaps without prescribing edits.",
 			ParametersJSON: schemaObj(
 				[]string{"task"},
-				`"task":`+strProp("task statement to localize")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"packet mode; default plan"},"limit":`+intProp("max candidate files; default 8")+`,"budget_tokens":`+intProp("optional intended context budget for downstream packet rendering")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands that must be carried into the pack"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"}`,
+				`"task":`+strProp("task statement to localize")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"packet mode; default plan"},"limit":`+intProp("max candidate files; default 8")+`,"budget_tokens":`+intProp("optional intended context budget for downstream packet rendering")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands that must be carried into the pack"},"required_edit_paths":{"type":"array","items":{"type":"string"},"description":"caller-declared workspace-relative edit paths to surface and prioritize as scope evidence"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"},`+freshnessPolicyProps(),
 			),
 		},
 		{
 			Name:        "context_impact",
 			Description: "Rank task-relevant files, symbols, and validation candidates with signal explanations from the persistent graph. Use before planner packet generation when you need affected-scope evidence without raw source flooding.",
 			ParametersJSON: schemaObj(
-				[]string{"task"},
-				`"task":`+strProp("task statement to localize")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"ranking mode; default plan"},"limit":`+intProp("max impact items; default 8")+`,"budget_tokens":`+intProp("optional intended downstream context budget")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands to include in ranking evidence"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"}`,
+				nil,
+				`"task":`+strProp("optional task statement to localize; path-only requests derive a bounded evidence task from path")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"ranking mode; default plan"},"limit":`+intProp("max impact items; default 8")+`,"budget_tokens":`+intProp("optional intended downstream context budget")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands to include in ranking evidence"},"required_edit_paths":{"type":"array","items":{"type":"string"},"description":"caller-declared workspace-relative edit paths to surface and prioritize as scope evidence"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"},`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -226,7 +238,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Run a deterministic layered discovery recipe for a configured purpose and persist the full evidence packet under .idiom/discovery/queries. Uses context_pack orientation when the graph is fresh or a bounded stale scope can be refreshed, then falls back to live probes for stale, missing, or too-coarse claims.",
 			ParametersJSON: schemaObj(
 				[]string{"purpose"},
-				`"purpose":{"type":"string","enum":["impact_analysis","function_tracing","architecture_boundary","security_review","history_context"],"description":"deterministic recipe to run"},"path":`+strProp("optional target file/directory")+`,"pattern":`+strProp("optional symbol, function, type, package, or search pattern")+`,"language":`+strProp("optional language/ecosystem hint, e.g. go, typescript, python, cpp, rust, java")+`,"max_depth":`+intProp("optional relationship depth/budget; default 2"),
+				`"purpose":{"type":"string","enum":["impact_analysis","function_tracing","architecture_boundary","security_review","history_context"],"description":"deterministic recipe to run"},"path":`+strProp("optional target file/directory")+`,"pattern":`+strProp("optional symbol, function, type, package, or search pattern")+`,"language":`+strProp("optional language/ecosystem hint, e.g. go, typescript, python, cpp, rust, java")+`,"max_depth":`+intProp("optional relationship depth/budget; default 2")+`,`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -359,10 +371,10 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "submit_plan",
-			Description: "Submit a structured edit plan in plan-then-execute mode. The planner enumerates every edit up front; the executor phase dispatches them in order against the workspace. Use this in lieu of per-edit tool calls when the lane is plan-only. Three edit shapes: (1) substring — path+old_text+new_text replaces the first match (set replace_all:true to replace every occurrence); (2) line-range — path+start_line+end_line+content replaces lines [start_line, end_line]; (3) whole-file or new-file — path+new_text+replace_all:true with EMPTY old_text writes new_text as the entire file body, creating the file if it doesn't exist (use this for new-file creation). When you used context_pack to localize the work, pass its pack_id back so the executor can rehydrate the same cached view instead of re-discovering.",
+			Description: "Submit a durable structured edit plan in plan-then-execute mode. The planner enumerates every edit up front; the executor phase dispatches them in order against the workspace. Legacy callers may send rationale, pack_id, and edits at the top level; structured callers may send plan_artifact with task, contract, packet, paths, evidence, unresolved_questions, verification_obligations, approval, handoff, and edits. Use this in lieu of per-edit tool calls when the lane is plan-only. Three edit shapes: (1) substring — path+old_text+new_text replaces the first match; empty new_text deletes old_text; set replace_all:true to replace every occurrence; (2) line-range — path+start_line+end_line+non-empty content replaces lines [start_line, end_line]; use substring shape for deletions; (3) whole-file or new-file — path+new_text+replace_all:true with EMPTY old_text writes new_text as the entire file body, creating the file if it doesn't exist. Large new_text/content bodies are automatically spilled to artifact refs after submission. When you used context_pack to localize the work, pass its pack_id back so the executor can rehydrate the same cached view instead of re-discovering.",
 			ParametersJSON: schemaObj(
-				[]string{"edits"},
-				`"rationale":`+strProp("paragraph explaining the overall plan and why these edits in this order")+`,"pack_id":`+strProp("optional: the context_pack pack_id (16-hex) used to localize this plan; lets the executor rehydrate the same cached view")+`,"edits":{"type":"array","description":"ordered list of edits the executor will dispatch","items":{"type":"object","properties":{"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start for the line-range shape")+`,"end_line":`+intProp("1-based end for the line-range shape")+`,"old_text":`+strProp("exact text to replace for the substring shape; leave empty when using replace_all+new_text to write a whole file or create a new file")+`,"new_text":`+strProp("replacement text for the substring shape, OR the whole file body when paired with replace_all:true and empty old_text")+`,"content":`+strProp("replacement content for the line-range shape")+`,"replace_all":`+boolProp("with old_text set: replace every occurrence; with old_text empty: write new_text as the entire file body (creates the file if missing)")+`,"purpose":`+strProp("one sentence: what this edit does and why")+`},"required":["path"]}}`,
+				nil,
+				`"rationale":`+strProp("legacy path: bounded paragraph explaining the overall plan and why these edits in this order")+`,"pack_id":`+strProp("legacy path: optional context_pack pack_id (16-hex) used to localize this plan; lets the executor rehydrate the same cached view")+`,"plan_artifact":{"type":"object","description":"optional durable idiom.plan.v2 artifact with task, contract, packet, paths, evidence, unresolved_questions, verification_obligations, approval, handoff, and edits fields"},"edits":{"type":"array","description":"ordered list of edits the executor will dispatch; required unless plan_artifact.edits is provided","items":{"type":"object","properties":{"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start for the line-range shape")+`,"end_line":`+intProp("1-based end for the line-range shape")+`,"old_text":`+strProp("exact text to replace for the substring shape; leave empty only when using replace_all+new_text to write a whole file or create a new file")+`,"new_text":`+strProp("replacement text for the substring shape; may be empty when deleting old_text; OR the whole file body when paired with replace_all:true and empty old_text")+`,"new_text_ref":`+strProp("artifact ref for replacement/whole-file body; normally produced automatically after submit_plan spills a large new_text")+`,"content":`+strProp("non-empty replacement content for the line-range shape")+`,"content_ref":`+strProp("artifact ref for line-range content; normally produced automatically after submit_plan spills large content")+`,"replace_all":`+boolProp("with old_text set: replace every occurrence; with old_text empty: write new_text as the entire file body (creates the file if missing)")+`,"purpose":`+strProp("one sentence: what this edit does and why")+`},"required":["path"]}}`,
 			),
 		},
 		{

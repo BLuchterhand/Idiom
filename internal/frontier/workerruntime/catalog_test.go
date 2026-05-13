@@ -99,10 +99,12 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 
 	archAvailable := []string{"task", "list_files", "search_files", "search_content", "read_file", "file_stats", "harness_audit", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "go_overview", "go_workspace_symbol", "go_read_symbol", "go_file_outline", "shell"}
 	arch := RuntimeBriefForTaskFamily("architecture", "main", archAvailable)
-	if containsString(arch.AllowedTools, "go_overview") || containsString(arch.AllowedTools, "shell") || containsString(arch.AllowedTools, "context_trace_pack") {
-		t.Fatalf("architecture should advertise the lean read-only discovery surface, got %#v", arch.AllowedTools)
+	for _, unexpected := range []string{"go_overview", "shell", "context_trace_pack", "context_index", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "list_files", "go_workspace_symbol", "go_read_symbol", "go_file_outline"} {
+		if containsString(arch.AllowedTools, unexpected) {
+			t.Fatalf("architecture should advertise the lean read-only discovery surface, got unexpected %q in %#v", unexpected, arch.AllowedTools)
+		}
 	}
-	for _, expected := range []string{"task", "search_content", "read_file", "file_stats", "context_status", "context_query", "context_zoom", "context_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "go_workspace_symbol", "go_read_symbol", "go_file_outline"} {
+	for _, expected := range []string{"task", "search_content", "read_file", "file_stats", "context_status", "context_query", "context_zoom", "context_pack", "discovery_query", "structural_search"} {
 		if !containsString(arch.AllowedTools, expected) {
 			t.Fatalf("architecture missing %q in %#v", expected, arch.AllowedTools)
 		}
@@ -110,7 +112,7 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 	if containsString(arch.SearchPolicy, "delegate_broad_discovery_when_needed") {
 		t.Fatalf("architecture should not bias toward delegated broad discovery, got %#v", arch.SearchPolicy)
 	}
-	if !containsString(arch.SearchPolicy, "prefer_discovery_query_for_architecture_boundary") || !containsString(arch.SearchPolicy, "use_dependency_graph_for_boundary_or_import_questions") || !containsString(arch.SearchPolicy, "use_history_only_for_evolution_questions") {
+	if !containsString(arch.SearchPolicy, "prefer_discovery_query_for_architecture_boundary") || !containsString(arch.SearchPolicy, "use_discovery_query_for_boundary_import_or_evolution_questions") || !containsString(arch.SearchPolicy, "name_heavy_graph_or_history_need_if_unresolved") {
 		t.Fatalf("architecture search policy should steer generic discovery tools, got %#v", arch.SearchPolicy)
 	}
 	for _, expected := range []string{"answer_when_boundary_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe"} {
@@ -126,8 +128,8 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 	if containsString(security.SearchPolicy, "delegate_broad_discovery_when_needed") {
 		t.Fatalf("security review should not bias toward delegated broad discovery, got %#v", security.SearchPolicy)
 	}
-	if !containsString(security.SearchPolicy, "prefer_semgrep_scan_for_security_patterns") || !containsString(security.SearchPolicy, "reserve_joern_scan_for_heavy_dataflow_questions") {
-		t.Fatalf("security review should explicitly balance semgrep/joern usage, got %#v", security.SearchPolicy)
+	if !containsString(security.SearchPolicy, "prefer_discovery_query_security_review_before_raw_scans") || !containsString(security.SearchPolicy, "name_heavy_scanner_need_instead_of_default_semgrep_or_joern") {
+		t.Fatalf("security review should keep heavy scanners out of the default surface, got %#v", security.SearchPolicy)
 	}
 	for _, expected := range []string{"answer_when_bounded_finding_or_no_finding_is_supported", "if_continuing_name_one_exact_missing_claim_and_probe"} {
 		if !containsString(security.SearchPolicy, expected) {

@@ -1,5 +1,9 @@
 # Project Context
 
+**North Star: AI coding agents are becoming common, but teams do not yet trust
+their context, decisions, or outputs. Idiom sells the missing substrate: repo
+memory, freshness, contracts, audit, and evals.**
+
 ## What This Repo Is
 
 `idiom` is a local coding-agent harness for Qwen models running through `llama.cpp` or MLX. The repo combines:
@@ -14,7 +18,15 @@ The main goal is frontier-style autonomy with explicit, observable host contract
 
 ## North Star
 
-This repo's canonical policy is [docs/decisioning-north-star.md](../docs/decisioning-north-star.md).
+This repo's project thesis is [docs/idiom-strategic-thesis.md](../docs/idiom-strategic-thesis.md):
+Idiom should not chase Aider-style terminal pair-programming parity. It should
+be the local, evidence-first harness for smaller/local models, where the model
+owns strategy and the harness owns contracts, repository memory, verification,
+auditability, and the improvement loop.
+
+The coordinated design map is [docs/idiom-design-roadmap.md](../docs/idiom-design-roadmap.md).
+
+This repo's canonical decisioning policy is [docs/decisioning-north-star.md](../docs/decisioning-north-star.md).
 
 The durable rules to preserve are:
 
@@ -72,6 +84,8 @@ make swe-live-subset
 - `internal/workspace/`: discovery and semantic tool implementations
 - `internal/app/`: TUI lifecycle and plan/history UI
 - `docs/decisioning-north-star.md`: strategy/contract split
+- `docs/idiom-strategic-thesis.md`: project-defining differentiation thesis and roadmap
+- `docs/idiom-design-roadmap.md`: coordinated pillar docs and sequencing
 - `docs/agent-autonomy-tracker.md`: completion and workflow-state design
 - `docs/north-star-remediation.md`: examples of instructions that should be softened or generalized
 

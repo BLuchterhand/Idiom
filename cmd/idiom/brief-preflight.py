@@ -16,7 +16,9 @@ the same lint before handoff.
 from __future__ import annotations
 
 import os
+import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -87,6 +89,8 @@ ALLOWLIST_HEADINGS = {
     "files allowlist",
     "source allowlist",
 }
+SCOPE_HEADINGS = {"scope"}
+SCOPE_FILE_HEADINGS = {"files", "file"}
 WORKSPACE_PATH_RE = re.compile(
     r"`?([A-Za-z0-9_.@+%=-][A-Za-z0-9_.@+%=/:-]*\."
     r"(?:c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|"
@@ -111,7 +115,7 @@ BRIEF_MODE_UNKNOWN = "unknown"
 # requirement. The Acceptance section was undocumented as required
 # despite being in every canonical template — Bug 7 root cause #2.
 REQUIRED_SECTIONS_ANCHORED = [
-    ("## Files To Modify", "## Files to Modify", "## Files You May Edit"),
+    ("## Files To Modify", "## Files to Modify", "## Files You May Edit", "### Files"),
     ("## Verified Current State", "## Verified Anchors", "## Current state", "## Current State"),
     ("## Required Edits", "## Required Behavior"),
     ("## Acceptance",),
@@ -130,7 +134,7 @@ def detect_brief_mode(text: str) -> str:
     Returns one of the BRIEF_MODE_* constants.
     """
     scannable = strip_fenced_blocks(text)
-    has_files = bool(re.search(r"^##\s+Files To Modify\b", scannable, re.MULTILINE | re.IGNORECASE))
+    has_files = has_allowlist_section(scannable)
     has_deliverable = bool(re.search(r"^##\s+Deliverable\b", scannable, re.MULTILINE | re.IGNORECASE))
     has_inline = bool(re.search(r"^##\s+Inline content\b", scannable, re.MULTILINE | re.IGNORECASE))
     if has_deliverable and has_inline:
@@ -188,6 +192,49 @@ OLD_TEXT_BLOCK_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+DEFAULT_LANGUAGE_RULES = [
+    {
+        "language": "gdscript",
+        "extensions": [".gd"],
+        "forbidden_acceptance_markers": ["TEST_CASE", "CHECK(", "REQUIRE("],
+        "allowed_acceptance_markers": ["func test_", "extends GutTest", "GdUnit"],
+    },
+    {
+        "language": "cpp",
+        "extensions": [
+            ".c",
+            ".cc",
+            ".cpp",
+            ".cxx",
+            ".h",
+            ".hh",
+            ".hpp",
+            ".hxx",
+            ".ipp",
+            ".inl",
+            ".tpp",
+        ],
+        "forbidden_acceptance_markers": ["extends GutTest", "GdUnit", "func test_"],
+        "allowed_acceptance_markers": ["TEST_CASE", "CHECK(", "REQUIRE("],
+    },
+]
+
+COMMAND_LIKE_PREFIXES = {
+    "bash",
+    "go",
+    "godot",
+    "make",
+    "node",
+    "npm",
+    "pnpm",
+    "python",
+    "python3",
+    "pytest",
+    "scons",
+    "sh",
+    "yarn",
+}
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -219,7 +266,7 @@ def main() -> int:
             "with `idiom lane refine --mode anchored|markdown` if intentional."
         )
     elif mode == BRIEF_MODE_UNKNOWN:
-        warnings.append(
+        failures.append(
             "brief shape is unknown: no `## Files To Modify` (anchored-edits) "
             "and no `## Deliverable`+`## Inline content` (markdown-deliverable). "
             "Add the canonical section for your mode before dispatch."
@@ -251,6 +298,8 @@ def main() -> int:
 
     rows = files_to_modify_rows(text)
     files = sorted({row[0] for row in rows})
+    workspace_root = resolve_workspace_root(Path.cwd())
+    lint_profile = load_lint_profile(workspace_root)
 
     # Decomposition: hard fail only when the brief is genuinely sprawling
     # (>=8 distinct edits AND >=6 files). A header+impl+test triplet for one
@@ -370,7 +419,7 @@ def main() -> int:
         warnings.append(
             "test-anchor preload missing for test file(s): "
             + ", ".join(test_files)
-            + ". Inlining fixture inventory + nearest existing TEST_CASE reduces lane discovery cost; the new idiom build can recover without it but the brief is then larger."
+            + ". Inlining fixture inventory + nearest existing test case for this language/profile reduces lane discovery cost; the new idiom build can recover without it but the brief is then larger."
         )
 
     if rows and not has_verified_current_state(text):
@@ -420,7 +469,7 @@ def main() -> int:
             f"Consider decomposing. {decomposition_hint(heavy_blocks)}"
         )
 
-    structure_anchor_paths = sorted(structure_describing_anchor_paths(text, files))
+    structure_anchor_paths = sorted(structure_describing_anchor_paths(edit_contract_anchor_text(text), files))
     if structure_anchor_paths:
         warnings.append(
             "structure-describing anchors found for required edit path(s): "
@@ -433,13 +482,19 @@ def main() -> int:
             "old_text for the first edit; use line M's exact text for the second\")."
         )
 
+    failures.extend(language_mismatch_failures(text, rows, lint_profile))
+    command_failures, command_warnings = validate_acceptance_command_references(
+        text, workspace_root
+    )
+    failures.extend(command_failures)
+    warnings.extend(command_warnings)
+
     # Canonical anchor verification — file existence + labeled old_text.
     # Resolve workspace from cwd → walk up to a .git root; fall back to cwd.
     # When no named file resolves under the chosen root, WARN explaining the
     # skip rather than flooding existence failures (lint may be running from
     # outside the target repo).
     if rows:
-        workspace_root = resolve_workspace_root(Path.cwd())
         verify_failures, verify_warnings = verify_anchors(text, rows, workspace_root)
         failures.extend(verify_failures)
         warnings.extend(verify_warnings)
@@ -461,17 +516,53 @@ def main() -> int:
     return 0
 
 
+def has_allowlist_section(text: str) -> bool:
+    lines = text.splitlines()
+    in_scope = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        level = heading_level(stripped)
+        normalized = normalize_heading(stripped)
+        if is_allowlist_heading(stripped):
+            return True
+        if level == 2:
+            in_scope = normalized in SCOPE_HEADINGS
+            continue
+        if in_scope and level >= 3 and normalized in SCOPE_FILE_HEADINGS:
+            return True
+    return False
+
+
 def files_to_modify_rows(text: str) -> list[tuple[str, str]]:
     lines = text.splitlines()
     in_section = False
+    in_scope = False
+    section_level = 0
     rows: list[tuple[str, str]] = []
     for line in lines:
         stripped = line.strip()
+        if stripped.startswith("#"):
+            level = heading_level(stripped)
+            normalized = normalize_heading(stripped)
+            if in_section and level <= section_level:
+                break
+            if is_allowlist_heading(stripped):
+                in_section = True
+                section_level = level
+                continue
+            if level == 2:
+                in_scope = normalized in SCOPE_HEADINGS
+                continue
+            if in_scope and level >= 3 and normalized in SCOPE_FILE_HEADINGS:
+                in_section = True
+                section_level = level
+                continue
         if is_allowlist_heading(stripped):
             in_section = True
+            section_level = heading_level(stripped)
             continue
-        if in_section and stripped.startswith("## "):
-            break
         if not in_section:
             continue
         parsed = parse_allowlist_table_row(stripped) or parse_allowlist_bullet(stripped)
@@ -486,6 +577,10 @@ def is_allowlist_heading(line: str) -> bool:
         return False
     normalized = normalize_heading(line)
     return normalized in ALLOWLIST_HEADINGS
+
+
+def heading_level(line: str) -> int:
+    return len(line) - len(line.lstrip("#"))
 
 
 def normalize_heading(line: str) -> str:
@@ -589,7 +684,19 @@ def looks_like_combined_action(action: str) -> bool:
 def is_newfile_action(action: str) -> bool:
     if not action:
         return False
-    return action.strip().lower().startswith(("new file:", "create file:"))
+    lower = action.strip().lower()
+    if lower.startswith(
+        ("new file:", "create file:", "create new file:", "add new file:")
+    ):
+        return True
+    return bool(
+        re.match(
+            r"^(create|add|write|produce|generate)\s+"
+            r"(this\s+|a\s+|an\s+)?new\b.*\b"
+            r"(file|script|helper|check|json|document|artifact)\b",
+            lower,
+        )
+    )
 
 
 def looks_like_outer_fenced(text: str) -> bool:
@@ -679,6 +786,30 @@ def structure_describing_anchor_paths(text: str, files: list[str]) -> set[str]:
             if file_path in flagged:
                 break
     return flagged
+
+
+def edit_contract_anchor_text(text: str) -> str:
+    """Return only the action-bearing parts of a brief for anchor-shape lint.
+
+    `Files to Read First` and `Verified Current State` often cite several
+    non-adjacent lines in the same file as factual evidence. That is useful
+    context, not an instruction to build one multi-line old_text. The
+    structure-describing-anchor warning should therefore inspect only the edit
+    contract: allowlist rows and required edit/behavior sections.
+    """
+    parts: list[str] = []
+    for heading in (
+        "## Files To Modify",
+        "## Files to Modify",
+        "## Files You May Edit",
+        "## Required Edits",
+        "## Required Behavior",
+    ):
+        body = find_section_body(text, heading)
+        if body:
+            parts.append(body)
+    parts.extend(body for _heading, body in required_edit_blocks(text))
+    return "\n\n".join(parts)
 
 
 def required_edit_blocks(text: str) -> list[tuple[str, str]]:
@@ -776,6 +907,176 @@ def decomposition_hint(heavy_blocks: list[tuple[int, str]]) -> str:
         for chars, preview in top
     ]
     return "Heaviest inlined blocks: " + "; ".join(parts) + ". Split the brief along these boundaries into ADD-only / MODIFY-only / TEST-only sub-atoms."
+
+
+def load_lint_profile(workspace_root: Path | None) -> dict:
+    """Load optional project brief-lint profile.
+
+    The profile is intentionally data-only so projects can declare language and
+    acceptance-command conventions without idiom core learning project-specific
+    vocabulary. Malformed profiles fall back to defaults; callers still get the
+    generic safety net.
+    """
+    if workspace_root is None:
+        return {}
+    path = workspace_root / ".idiom" / "brief-lint" / "profile.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def lint_language_rules(profile: dict) -> list[dict]:
+    rules = list(DEFAULT_LANGUAGE_RULES)
+    profile_rules = profile.get("language_rules", [])
+    if isinstance(profile_rules, list):
+        rules.extend(rule for rule in profile_rules if isinstance(rule, dict))
+    return rules
+
+
+def language_mismatch_failures(
+    text: str,
+    rows: list[tuple[str, str]],
+    profile: dict,
+) -> list[str]:
+    if not rows:
+        return []
+    scan_text = acceptance_and_required_edit_text(text)
+    if not scan_text.strip():
+        return []
+    failures: list[str] = []
+    for rule in lint_language_rules(profile):
+        language = str(rule.get("language", "")).strip() or "unknown"
+        extensions = [str(ext).lower() for ext in rule.get("extensions", [])]
+        if not extensions:
+            continue
+        touched = [
+            file_path
+            for file_path, _action in rows
+            if Path(file_path).suffix.lower() in extensions
+        ]
+        if not touched:
+            continue
+        for marker in rule.get("forbidden_acceptance_markers", []):
+            marker = str(marker)
+            if marker and marker in scan_text:
+                failures.append(
+                    "language/profile mismatch: "
+                    f"{language} file(s) {', '.join(sorted(touched))} are in scope, "
+                    f"but acceptance or required edits mention foreign test marker {marker!r}. "
+                    "Move this rule into the project brief-lint profile if intentional, "
+                    "otherwise use the test idiom for the touched language."
+                )
+                break
+    return failures
+
+
+def acceptance_and_required_edit_text(text: str) -> str:
+    parts: list[str] = []
+    for heading in ("## Acceptance", "## Tests", "## Validation"):
+        body = find_section_body(text, heading)
+        if body:
+            parts.append(body)
+    parts.extend(body for _heading, body in required_edit_blocks(text))
+    return "\n\n".join(parts)
+
+
+def validate_acceptance_command_references(
+    text: str,
+    workspace_root: Path | None,
+) -> tuple[list[str], list[str]]:
+    body = acceptance_and_required_edit_text(text)
+    commands = extract_inline_commands(body)
+    if not commands:
+        return [], []
+    if workspace_root is None:
+        return [], [
+            "acceptance command reference validation skipped: could not resolve "
+            "workspace root from cwd."
+        ]
+    failures: list[str] = []
+    warnings: list[str] = []
+    for command in commands:
+        for rel in command_reference_paths(command):
+            full = workspace_root / rel
+            if full.exists():
+                continue
+            failures.append(
+                "acceptance command references missing path: "
+                f"{rel!r} in `{command}`. Correct the command, add the path as "
+                "a new-file target, or mark the validation as blocked with the "
+                "exact missing command/path."
+            )
+    return failures, warnings
+
+
+def extract_inline_commands(text: str) -> list[str]:
+    commands: list[str] = []
+    for raw in re.findall(r"`([^`\n]+)`", text):
+        command = raw.strip()
+        if not command:
+            continue
+        first = command.split(maxsplit=1)[0]
+        if (
+            first in COMMAND_LIKE_PREFIXES
+            or command.startswith("./")
+            or command.startswith("scripts/")
+            or " scripts/" in command
+            or " ./scripts/" in command
+        ):
+            commands.append(command)
+    return commands
+
+
+def command_reference_paths(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+    paths: list[str] = []
+    for token in tokens:
+        token = token.strip()
+        if not token or token.startswith("-") or "..." in token:
+            continue
+        if "=" in token and not token.startswith(("./", "scripts/")):
+            continue
+        rel = token[2:] if token.startswith("./") else token
+        rel = rel.strip("'\"")
+        if (
+            rel in {"", ".", ".."}
+            or Path(rel).is_absolute()
+            or rel.startswith("../")
+            or "://" in rel
+        ):
+            continue
+        if command_token_is_workspace_reference(rel):
+            paths.append(rel)
+    return sorted(set(paths))
+
+
+def command_token_is_workspace_reference(token: str) -> bool:
+    if token.startswith("scripts/"):
+        return True
+    if token.startswith(("cmd/", "internal/", "pkg/", "native/", "test/", "tests/")):
+        return True
+    suffix = Path(token).suffix.lower()
+    return "/" in token and suffix in {
+        ".bash",
+        ".gd",
+        ".go",
+        ".js",
+        ".json",
+        ".md",
+        ".py",
+        ".rs",
+        ".sh",
+        ".ts",
+        ".yaml",
+        ".yml",
+    }
 
 
 def resolve_workspace_root(start: Path) -> Path | None:
@@ -878,11 +1179,11 @@ def verify_anchors(
                     "either the anchor is stale or the file has been edited."
                 )
             elif count > 1:
-                warnings.append(
+                failures.append(
                     f"anchor not unique in {section_file} ({count} matches) "
                     f"for '{heading}'. Extend the old_text block until it "
-                    "matches exactly once; otherwise the planner has to "
-                    "disambiguate at run time."
+                    "matches exactly once; submit_plan rejects ambiguous "
+                    "substring edits before executor writes."
                 )
     return failures, warnings
 

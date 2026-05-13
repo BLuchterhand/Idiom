@@ -143,9 +143,9 @@ func socketReachable(socketPath string) bool {
 
 // PoolForModelAlias maps a resolved llama_server model alias to the
 // queue pool name. Heuristic: anything containing "coder" routes to
-// the executor pool ("qwen-coder"); anything containing "35b" or
-// "planner" routes to the planner pool ("qwen-35b"); empty result
-// means the caller should fall back to "default".
+// the executor pool ("qwen-coder"); explicit local planner sizes route
+// to their matching pool ("qwen-27b" / "qwen-35b"); empty result means
+// the caller should fall back to "default".
 //
 // This mirrors the conventional pool layout in ~/.idiom/runner.json
 // for projects running the qwen-pair backend profile. Projects with
@@ -167,6 +167,9 @@ func PoolForModelAlias(alias string) string {
 	// qwen-35b-nothink. Subset-of-superset ordering is load-bearing.
 	if strings.Contains(a, "nothink") {
 		return "qwen-35b-nothink"
+	}
+	if strings.Contains(a, "27b") {
+		return "qwen-27b"
 	}
 	if strings.Contains(a, "35b") || strings.Contains(a, "planner") {
 		return "qwen-35b"

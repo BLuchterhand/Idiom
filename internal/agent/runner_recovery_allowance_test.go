@@ -460,8 +460,11 @@ func TestFinalAnswerBlockerErrorTextNamesMissingPaths(t *testing.T) {
 	if !strings.Contains(text, "b.txt") || !strings.Contains(text, "c.txt") {
 		t.Fatalf("error text must name missing required paths, got %q", text)
 	}
-	if !strings.Contains(text, "edit_file") && !strings.Contains(text, "apply_patch") {
-		t.Fatalf("error text should name allowed tool(s) for recovery, got %q", text)
+	if strings.Contains(text, "edit_file") || strings.Contains(text, "apply_patch") {
+		t.Fatalf("error text should use capability language instead of raw write-tool prescriptions, got %q", text)
+	}
+	if !strings.Contains(text, "remaining-path write contract") {
+		t.Fatalf("error text should name the write contract for recovery, got %q", text)
 	}
 }
 

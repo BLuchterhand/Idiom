@@ -18,57 +18,77 @@ const (
 )
 
 type PackOptions struct {
-	Root           string
-	Task           string
-	Path           string
-	Scope          string
-	Mode           string
-	Limit          int
-	BudgetTokens   int
-	RequiredTests  []string
-	ForbiddenPaths []string
-	Now            time.Time
+	Root          string
+	Task          string
+	Path          string
+	Scope         string
+	Mode          string
+	Limit         int
+	BudgetTokens  int
+	RequiredTests []string
+	// RequiredEditPaths are caller-declared write targets. They are
+	// scope evidence, not an edit instruction: Pack should surface and
+	// prioritize them so downstream agents do not rediscover already
+	// declared targets.
+	RequiredEditPaths []string
+	ForbiddenPaths    []string
+	Now               time.Time
 	// Intent overrides automatic intent detection from Task. Empty means
 	// detect from Task.
 	Intent Intent
 	// LearnedWeights overrides the on-disk persisted weights. Empty means
 	// load from .idiom/ranker/weights.json.
 	LearnedWeights map[string]float64
+	Freshness      *FreshnessDecision
+	// IncludeStaleRuntime is a debug/audit escape hatch. Normal packet
+	// generation leaves stale runtime traces in risks/gaps instead of
+	// evidence because old command output cannot be made fresh by a
+	// static graph refresh.
+	IncludeStaleRuntime bool
 }
 
 type PackResult struct {
-	PackID           string         `json:"pack_id"`
-	IndexID          string         `json:"index_id,omitempty"`
-	ArtifactPath     string         `json:"artifact_path,omitempty"`
-	StoreKind        string         `json:"store_kind,omitempty"`
-	Root             string         `json:"root"`
-	Task             string         `json:"task"`
-	Mode             string         `json:"mode"`
-	Fresh            bool           `json:"fresh"`
-	GeneratedAt      string         `json:"generated_at"`
-	AutoRefresh      *RefreshReport `json:"auto_refresh,omitempty"`
-	BudgetTokens     int            `json:"budget_tokens,omitempty"`
-	CandidateFiles   []PackFile     `json:"candidate_files,omitempty"`
-	CandidateSymbols []PackSymbol   `json:"candidate_symbols,omitempty"`
-	Tests            []PackTest     `json:"tests,omitempty"`
-	Relationships    []EdgeSummary  `json:"relationships,omitempty"`
-	Evidence         []PackEvidence `json:"evidence,omitempty"`
-	Risks            []string       `json:"risks,omitempty"`
-	Unknowns         []string       `json:"unknowns,omitempty"`
-	UnresolvedGaps   []string       `json:"unresolved_gaps,omitempty"`
+	PackID               string                  `json:"pack_id"`
+	IndexID              string                  `json:"index_id,omitempty"`
+	ArtifactPath         string                  `json:"artifact_path,omitempty"`
+	StoreKind            string                  `json:"store_kind,omitempty"`
+	Root                 string                  `json:"root"`
+	Task                 string                  `json:"task"`
+	Mode                 string                  `json:"mode"`
+	Fresh                bool                    `json:"fresh"`
+	Freshness            *FreshnessDecision      `json:"freshness,omitempty"`
+	Confidence           GraphResultConfidence   `json:"confidence"`
+	Provenance           GraphResultProvenance   `json:"provenance"`
+	StaleEvidence        StaleEvidenceSafety     `json:"stale_evidence"`
+	Cache                GraphViewCacheState     `json:"cache"`
+	Contract             GraphViewResultContract `json:"contract"`
+	GeneratedAt          string                  `json:"generated_at"`
+	AutoRefresh          *RefreshReport          `json:"auto_refresh,omitempty"`
+	BudgetTokens         int                     `json:"budget_tokens,omitempty"`
+	RequiredEditPaths    []string                `json:"required_edit_paths,omitempty"`
+	CandidateFiles       []PackFile              `json:"candidate_files,omitempty"`
+	CandidateSymbols     []PackSymbol            `json:"candidate_symbols,omitempty"`
+	Tests                []PackTest              `json:"tests,omitempty"`
+	Relationships        []EdgeSummary           `json:"relationships,omitempty"`
+	Evidence             []PackEvidence          `json:"evidence,omitempty"`
+	Risks                []string                `json:"risks,omitempty"`
+	Unknowns             []string                `json:"unknowns,omitempty"`
+	UnresolvedGaps       []string                `json:"unresolved_gaps,omitempty"`
+	UnresolvedGapDetails []GraphUnresolvedGap    `json:"unresolved_gap_details,omitempty"`
 }
 
 type PackFile struct {
-	Path           string   `json:"path"`
-	Role           string   `json:"role"`
-	Reason         string   `json:"reason,omitempty"`
-	Language       string   `json:"language,omitempty"`
-	Confidence     string   `json:"confidence,omitempty"`
-	Stale          bool     `json:"stale,omitempty"`
-	Handles        []string `json:"handles,omitempty"`
-	OmittedHandles int      `json:"omitted_handles,omitempty"`
-	Score          float64  `json:"score,omitempty"`
-	Hub            bool     `json:"hub,omitempty"`
+	Path           string         `json:"path"`
+	Role           string         `json:"role"`
+	Reason         string         `json:"reason,omitempty"`
+	Language       string         `json:"language,omitempty"`
+	Confidence     string         `json:"confidence,omitempty"`
+	Stale          bool           `json:"stale,omitempty"`
+	Handles        []string       `json:"handles,omitempty"`
+	OmittedHandles int            `json:"omitted_handles,omitempty"`
+	Score          float64        `json:"score,omitempty"`
+	Hub            bool           `json:"hub,omitempty"`
+	RankerReasons  []RankerReason `json:"ranker_reasons,omitempty"`
 }
 
 type PackSymbol struct {
@@ -133,47 +153,44 @@ func Pack(opts PackOptions) (PackResult, error) {
 	if intent == "" {
 		intent = DetectIntent(opts.Task)
 	}
+	workspaceStateFingerprints := packWorkspaceStateFingerprints(root, opts.LearnedWeights)
 	cacheKey := viewKeyFromOptions(PackOptions{
-		Task:           task,
-		Path:           opts.Path,
-		Scope:          opts.Scope,
-		Limit:          limit,
-		BudgetTokens:   opts.BudgetTokens,
-		RequiredTests:  opts.RequiredTests,
-		ForbiddenPaths: opts.ForbiddenPaths,
-	}, graph.ID, mode, intent, ComprehensionStateFingerprint(root))
+		Task:                task,
+		Path:                opts.Path,
+		Scope:               opts.Scope,
+		Limit:               limit,
+		BudgetTokens:        opts.BudgetTokens,
+		RequiredTests:       opts.RequiredTests,
+		RequiredEditPaths:   opts.RequiredEditPaths,
+		ForbiddenPaths:      opts.ForbiddenPaths,
+		IncludeStaleRuntime: opts.IncludeStaleRuntime,
+	}, graph.ID, mode, intent, workspaceStateFingerprints)
+	cacheState := GraphViewCacheStateForKey(cacheKey, graph.StoreKind, "miss_recompute", "cache_miss")
 
-	// Only serve from cache when the index is fresh. A cached PackResult
-	// captures status.Fresh at write time and per-file Stale flags from
-	// then; if the user edited a file since the cache was written
-	// (without refreshing the index) the cached freshness signal is now
-	// a lie. Recompute in that case so callers see the correct
-	// stale-paths picture.
-	//
-	// Known limitations of the cache key (intentional, follow-ups
-	// tracked in the design doc):
-	//   - opts.LearnedWeights and the on-disk ranker weights file
-	//     affect ranking but are not in the key. A weight bump won't
-	//     invalidate cached views until the index rebuilds.
-	//   - Runtime traces under .idiom/comprehension/traces/ enrich
-	//     PackResult.Evidence but don't influence the key. Adding a
-	//     trace doesn't bust cache.
-	if status.Fresh {
-		if cached, hit, err := LoadView(root, cacheKey); err != nil {
-			// I/O errors on the cache should not block the pack — drop
-			// the error and recompute.
-			_ = err
-		} else if hit {
-			// Mirror the export file in case it was deleted (cache row
-			// is the source of truth; on-disk JSON is for inspection).
-			_ = savePack(root, cached)
-			return cached, nil
-		}
+	// Try the packet cache even when unrelated workspace paths are stale.
+	// LoadView validates the cached row against its referenced paths,
+	// source fingerprints, workspace-state fingerprint, and current
+	// index_id before returning a hit. That scoped freshness check lets
+	// local models reuse task packets instead of paying for re-discovery
+	// just because another file elsewhere in the repo changed.
+	if cached, hit, err := LoadView(root, cacheKey); err != nil {
+		// I/O errors on the cache should not block the pack — drop the
+		// error and recompute.
+		_ = err
+		cacheState = GraphViewCacheStateForKey(cacheKey, graph.StoreKind, "fallback_recompute", "cache_load_error")
+	} else if hit {
+		cached.Cache = GraphViewCacheStateForKey(cacheKey, firstNonEmpty(cached.StoreKind, graph.StoreKind), "hit", "fresh_cached_row")
+		cached.Provenance.Operation = "context_pack"
+		AttachPackResultContract(&cached)
+		_ = savePack(root, cached)
+		return cached, nil
 	}
 
 	nodesByID := packNodesByID(graph.Nodes)
 	stale := packStalePaths(status)
 	forbidden := cleanPackPaths(opts.ForbiddenPaths)
+	requiredEditPaths := cleanPackPaths(opts.RequiredEditPaths)
+	requiredPathSet := packPathSet(requiredEditPaths)
 	terms := queryTerms(QueryOptions{Query: task, Path: opts.Path, Scope: opts.Scope})
 	if len(terms) == 0 {
 		terms = []string{"."}
@@ -183,6 +200,10 @@ func Pack(opts PackOptions) (PackResult, error) {
 	for _, node := range matched {
 		matchedIDs[node.ID] = struct{}{}
 	}
+	requiredNodes := packNodesForPaths(graph.Nodes, requiredPathSet)
+	for _, node := range requiredNodes {
+		matchedIDs[node.ID] = struct{}{}
+	}
 	relationships := relatedEdges(graph.Edges, matchedIDs, packRelationshipLimit(limit))
 	fileBuilder := newPackFileBuilder(stale, forbidden)
 	symbolBuilder := newPackSymbolBuilder(stale)
@@ -190,6 +211,18 @@ func Pack(opts PackOptions) (PackResult, error) {
 
 	for _, command := range opts.RequiredTests {
 		testBuilder.add(PackTest{Command: strings.TrimSpace(command), Required: true, Reason: "required by context_pack input"})
+	}
+	for _, path := range requiredEditPaths {
+		fileBuilder.addPackFile(PackFile{
+			Path:       path,
+			Role:       "editable",
+			Reason:     "required edit path",
+			Confidence: "exact_input",
+			Stale:      packPathIsStale(stale, path),
+		})
+	}
+	for _, node := range requiredNodes {
+		addPackNode(node, true, "required edit path", fileBuilder, symbolBuilder)
 	}
 	for _, node := range matched {
 		addPackNode(node, true, "matched task terms", fileBuilder, symbolBuilder)
@@ -209,7 +242,7 @@ func Pack(opts PackOptions) (PackResult, error) {
 	for _, file := range fileBuilder.files {
 		addPackTestCommandForFile(file, testBuilder)
 	}
-	runtimeOverlay := runtimeOverlayForPack(root, task, opts.Path, limit)
+	runtimeOverlay := runtimeOverlayForPack(root, task, opts.Path, limit, opts.IncludeStaleRuntime)
 	for _, file := range runtimeOverlay.Files {
 		fileBuilder.addPackFile(file)
 	}
@@ -228,30 +261,47 @@ func Pack(opts PackOptions) (PackResult, error) {
 		Intent:         intent,
 		LearnedWeights: learnedWeights,
 		QueryTokens:    terms,
+		RequiredPaths:  requiredPathSet,
 	}
 	candidateFiles := finalizePackFiles(fileBuilder.all(), rankInputs, limit)
 
 	result := PackResult{
-		IndexID:          graph.ID,
-		StoreKind:        graph.StoreKind,
-		Root:             root,
-		Task:             task,
-		Mode:             mode,
-		Fresh:            status.Fresh,
-		GeneratedAt:      now.Format(time.RFC3339),
-		BudgetTokens:     opts.BudgetTokens,
-		CandidateFiles:   candidateFiles,
-		CandidateSymbols: symbolBuilder.list(limit * 2),
-		Tests:            testBuilder.list(limit),
-		Relationships:    summarizeEdges(relationships, true),
+		IndexID:           graph.ID,
+		StoreKind:         graph.StoreKind,
+		Root:              root,
+		Task:              task,
+		Mode:              mode,
+		Fresh:             status.Fresh,
+		Freshness:         opts.Freshness,
+		Confidence:        graphResultConfidenceForStatus(status, opts.Freshness),
+		Provenance:        graphResultProvenanceFromStatus("context_pack", status, ""),
+		StaleEvidence:     StaleEvidenceSafetyForStatus(status, opts.Freshness),
+		Cache:             cacheState,
+		GeneratedAt:       now.Format(time.RFC3339),
+		BudgetTokens:      opts.BudgetTokens,
+		RequiredEditPaths: requiredEditPaths,
+		CandidateFiles:    candidateFiles,
+		CandidateSymbols:  symbolBuilder.list(limit * 2),
+		Tests:             testBuilder.list(limit),
+		Relationships:     summarizeEdges(relationships, true),
 	}
 	if !status.Fresh {
-		result.UnresolvedGaps = append(result.UnresolvedGaps, "context index has stale or missing files; run context_index before relying on this pack for edits")
+		if gap := GraphGapForStatus(status); gap != "" {
+			result.UnresolvedGaps = append(result.UnresolvedGaps, gap)
+		}
+		if gap, ok := GraphGapDetailForStatus(status); ok {
+			result.UnresolvedGapDetails = append(result.UnresolvedGapDetails, gap)
+		}
 		result.Risks = append(result.Risks, "Stale graph facts may point at outdated symbols or tests.")
 	}
 	if len(result.CandidateFiles) == 0 {
 		result.Unknowns = append(result.Unknowns, "No candidate files matched the task terms in the context graph.")
-		result.UnresolvedGaps = append(result.UnresolvedGaps, "identify one exact path or symbol with context_query, discovery_query, or a language-aware symbol tool")
+		result.UnresolvedGaps = append(result.UnresolvedGaps, "reason=no_graph_matches candidate_file_count=0")
+		result.UnresolvedGapDetails = append(result.UnresolvedGapDetails, GraphUnresolvedGap{
+			Reason:             "no_graph_matches",
+			State:              "empty",
+			CandidateFileCount: 0,
+		})
 	}
 	if len(result.CandidateSymbols) == 0 {
 		result.Unknowns = append(result.Unknowns, "No candidate symbols matched the task terms in the context graph.")
@@ -268,9 +318,13 @@ func Pack(opts PackOptions) (PackResult, error) {
 	result.Risks = append(result.Risks, runtimeOverlay.Risks...)
 	result.Unknowns = append(result.Unknowns, runtimeOverlay.Unknowns...)
 	result.UnresolvedGaps = append(result.UnresolvedGaps, runtimeOverlay.UnresolvedGaps...)
+	result.UnresolvedGapDetails = append(result.UnresolvedGapDetails, runtimeOverlay.UnresolvedGapDetails...)
 
 	result.PackID = cacheKey.ID()
 	result.ArtifactPath = filepath.ToSlash(filepath.Join(".idiom", "comprehension", "views", result.PackID+".json"))
+	result.Provenance.ArtifactPath = result.ArtifactPath
+	result.Cache.PackID = result.PackID
+	result.Cache.StoreKind = firstNonEmpty(result.Cache.StoreKind, result.StoreKind)
 	result.Evidence = append(result.Evidence, PackEvidence{
 		Kind:    "context_view",
 		Label:   "context_pack",
@@ -300,6 +354,7 @@ func Pack(opts PackOptions) (PackResult, error) {
 			Stale:      symbol.Stale,
 		})
 	}
+	AttachPackResultContract(&result)
 	if err := SaveView(root, cacheKey, result); err != nil {
 		return PackResult{}, fmt.Errorf("save graph_views row: %w", err)
 	}
@@ -415,6 +470,7 @@ func finalizePackFiles(files []PackFile, in RankInputs, limit int) []PackFile {
 		Intent:         in.Intent,
 		LearnedWeights: in.LearnedWeights,
 		QueryTokens:    in.QueryTokens,
+		RequiredPaths:  in.RequiredPaths,
 	})
 	if limit > 0 && len(ranked) > limit {
 		ranked = ranked[:limit]
@@ -446,6 +502,17 @@ func packRelationshipLimit(limit int) int {
 		return limit
 	}
 	return relationshipLimit
+}
+
+func packWorkspaceStateFingerprints(root string, learnedWeights map[string]float64) ComprehensionStateFingerprintSet {
+	state := ComprehensionStateFingerprints(root)
+	if learnedWeights == nil {
+		return state
+	}
+	data, _ := json.Marshal(learnedWeights)
+	state.RankerWeightsFingerprint = shortSHA256Hex(append([]byte("learned_weights_override\x00"), data...))
+	state.WorkspaceStateFingerprint = composeWorkspaceStateFingerprint(state.RankerWeightsFingerprint, state.RuntimeTracesFingerprint)
+	return state
 }
 
 type packSymbolBuilder struct {
@@ -670,6 +737,49 @@ func cleanPackPaths(paths []string) []string {
 	return out
 }
 
+func packPathSet(paths []string) map[string]struct{} {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		path = cleanScope(path)
+		if path == "" || path == "." {
+			continue
+		}
+		out[path] = struct{}{}
+	}
+	return out
+}
+
+func packNodesForPaths(nodes []Node, paths map[string]struct{}) []Node {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make([]Node, 0)
+	for _, node := range nodes {
+		path := cleanScope(node.Path)
+		if _, ok := paths[path]; ok {
+			out = append(out, node)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func packPathIsStale(stale map[string]struct{}, path string) bool {
+	if len(stale) == 0 {
+		return false
+	}
+	_, ok := stale[cleanScope(path)]
+	return ok
+}
+
 func packRoleRank(role string) int {
 	switch role {
 	case "editable":
@@ -685,6 +795,8 @@ func packRoleRank(role string) int {
 
 func packReasonRank(reason string) int {
 	switch reason {
+	case "required edit path":
+		return 4
 	case "matched task terms":
 		return 3
 	case "package matched task terms":
@@ -698,7 +810,7 @@ func packReasonRank(reason string) int {
 // PackOptions. Identical option sets produce identical keys across
 // processes; the active graph index_id makes the key invalidate when
 // the codebase content shifts under the harness.
-func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, workspaceStateFingerprint string) ViewKey {
+func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, workspaceStateFingerprints ComprehensionStateFingerprintSet) ViewKey {
 	return ViewKey{
 		IndexID: indexID,
 		Task:    strings.TrimSpace(opts.Task),
@@ -709,9 +821,13 @@ func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, w
 			Limit:                     opts.Limit,
 			BudgetTokens:              opts.BudgetTokens,
 			RequiredTests:             opts.RequiredTests,
+			RequiredEditPaths:         opts.RequiredEditPaths,
 			ForbiddenPaths:            opts.ForbiddenPaths,
 			Intent:                    string(intent),
-			WorkspaceStateFingerprint: workspaceStateFingerprint,
+			IncludeStaleRuntime:       opts.IncludeStaleRuntime,
+			WorkspaceStateFingerprint: workspaceStateFingerprints.WorkspaceStateFingerprint,
+			RankerWeightsFingerprint:  workspaceStateFingerprints.RankerWeightsFingerprint,
+			RuntimeTracesFingerprint:  workspaceStateFingerprints.RuntimeTracesFingerprint,
 		},
 	}
 }

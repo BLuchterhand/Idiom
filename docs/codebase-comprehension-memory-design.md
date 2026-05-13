@@ -806,9 +806,21 @@ CREATE TABLE graph_views (
   output_json TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
   stale INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  index_id TEXT,
+  task TEXT,
+  mode TEXT,
+  workspace_state_fingerprint TEXT,
+  referenced_paths_json TEXT,
+  source_fingerprints_json TEXT
 );
 ```
+
+`query_json` stores the canonical `ViewQueryInputs` used to derive the
+content-addressed view ID. That includes request fields plus workspace-state
+fingerprints. The aggregate `workspace_state_fingerprint` is broken out as a
+column for cache metadata and compatibility; component fingerprints remain in
+`query_json` and the result contract rather than separate normalized columns.
 
 Indexes:
 
@@ -1111,9 +1123,12 @@ Success criteria should be practical:
   (`internal/eval/comprehension_suite.go`).
 - [x] Materialize `graph_views` cache and key by content fingerprint, not
   generation timestamp. (Wired 2026-05-10. `Pack()` reads/writes
-  `graph_views` keyed by `(index_id, task, mode, query_fingerprint)`; the
-  `views/<pack_id>.json` export is now derived from the cached row, not the
-  source of truth.)
+  `graph_views` keyed by `ViewKey`: `(index_id, task, mode, canonical query
+  JSON)`. The canonical query includes `path`, `scope`, `limit`,
+  `budget_tokens`, `required_tests`, `forbidden_paths`, `intent`,
+  `include_stale_runtime`, and workspace-state fingerprints. The
+  `views/<pack_id>.json` export is derived from the cached row, not the source
+  of truth.)
 - [x] Plumb `pack_id` through `PlanArtifact` so the executor can rehydrate
   the planner's packet from `graph_views` instead of re-discovering. (Wired
   2026-05-10. Field is additive and optional; schema stays at
@@ -1170,9 +1185,9 @@ This design follows the north star in these ways:
   artifact, so it's the cheapest first writer of `graph_views`. Subsystem
   summaries already live in `graph_nodes` (kind = "summary") and don't need
   a separate view row. Partial-refresh invalidation sets are emergent: each
-  `graph_views` row records the paths/symbols its `output_json` references,
-  so scoped refresh can mark stale by path lookup without a dedicated
-  invalidation table.
+  `graph_views` row records the paths/symbols its `referenced_paths_json`
+  references, with `output_json` as the legacy fallback, so scoped refresh can
+  mark stale by path lookup without a dedicated invalidation table.
 - Should tree-sitter be introduced directly, or should phase 1 rely entirely on
   existing language tool/index surfaces?
 - What is the minimum useful test mapping for Go: package-level tests, symbol
@@ -1223,56 +1238,69 @@ content-addressed keys but no scoped invalidation, it would have served stale
 results. Both halves had to land together for the table to start carrying
 real load.
 
-### Known cache limitations (post-2026-05-10 audit)
+### Known cache limitations and fingerprint contract
 
-The audit surfaced three correctness/completeness gaps in the wired cache.
-All three are now closed; they're recorded here as a paper trail rather
-than as outstanding work:
+The graph-view cache is keyed by `ViewKey.ID()`: active graph `index_id`, task,
+mode, and canonical `ViewQueryInputs`. `ViewQueryInputs` includes the request
+shape (`path`, `scope`, `limit`, `budget_tokens`, `required_tests`,
+`forbidden_paths`, `intent`, and `include_stale_runtime`) plus
+workspace-state fingerprints. `workspace_state_fingerprint` is the aggregate
+cache validity signal for workspace-side state that can change `Pack()` output
+without changing source files. `ranker_weights_fingerprint` and
+`runtime_traces_fingerprint` are carried separately for result-contract
+attribution.
 
-1. ~~**`graph.ID` hashes `GeneratedAt`, not node fingerprints.**~~ **Resolved
-   2026-05-10.** `graphID` now hashes the sorted (path, fingerprint) set of
-   file nodes plus `(root, git_head, len(edges))`. Identical content produces
-   identical IDs across builds, so cached rows survive no-op refreshes.
-   Regression: `TestGraphIDContentAddressedAcrossNoOpRebuilds` in
-   `internal/comprehension/graph_test.go`. The `MarkViewsStale(changedPaths)`
-   machinery is now genuinely load-bearing — it preserves cache rows whose
-   referenced paths didn't change while invalidating those that did.
-2. ~~**`opts.LearnedWeights` and the on-disk ranker weights file are not in the
-   cache key.**~~ **Resolved 2026-05-10.** `ViewQueryInputs` carries a
-   `WorkspaceStateFingerprint` field that hashes `os.Stat` of
-   `.idiom/ranker/weights.json` (mtime + size). A weight bump via
-   `idiom ranker boost`/`penalize` rewrites the file → mtime advances → next
-   `Pack()` derives a new `pack_id` and recomputes. Cheap (one stat per
-   lookup, no content read). Regression:
-   `TestComprehensionStateFingerprintChangesWhenWeightsChange`.
-3. ~~**Runtime traces under `.idiom/comprehension/traces/` aren't in the key.**~~
-   **Resolved 2026-05-10.** Same `WorkspaceStateFingerprint` field also
-   hashes the traces directory mtime plus the sorted set of trace filenames,
-   so `context_trace_pack` writing a new trace busts cached pack rows that
-   would otherwise miss the new evidence. Regression:
-   `TestComprehensionStateFingerprintChangesWhenTraceAdded`.
+`ComprehensionStateFingerprints()` computes the separated state:
+
+- `ranker_weights_fingerprint` hashes the contents of
+  `.idiom/ranker/weights.json` when the file exists. `Pack()` also replaces
+  this component with a deterministic hash of `opts.LearnedWeights` when the
+  caller supplies in-memory learned weights.
+- `runtime_traces_fingerprint` comes from the runtime trace state. With a trace
+  manifest present, the hash is bounded to the recent manifest horizon
+  (`runtimeTraceRecentLimit`, currently 12) after the manifest itself has been
+  capped (`runtimeTraceManifestLimit`, currently 64). The fingerprint contract
+  uses manifest metadata: schema, trace ID, artifact path, generated time,
+  stored artifact fingerprint, mod time, and size.
+- If no trace manifest exists, the runtime trace fingerprint falls back to a
+  constant-work directory timestamp signal for `.idiom/comprehension/traces`.
+  That legacy fallback avoids scanning every trace body, but it is coarse for
+  hand-edited existing trace files until `context_trace_pack` writes a
+  manifest.
+
+The cache fingerprint contract does not include raw runtime trace bodies,
+prompts, transcript excerpts, source file bodies, secrets, or protected
+contents. Raw evidence can remain in trace artifacts and packet evidence, but
+cache validity is based on bounded fingerprints and metadata.
+
+Cache state/source fields in `GraphViewCacheState` are intentionally explicit:
+
+- `miss_recompute` uses `source: "recompute"` and means no usable row was
+  loaded for the derived key.
+- `hit` uses `source: "graph_views"` and is returned only after `LoadView`
+  validates the current `index_id`, referenced source fingerprints, and scoped
+  freshness for the cached row.
+- `fallback_recompute` uses `source: "fallback"` and `fallback: true` when cache
+  loading fails but packet recomputation can continue.
+
+`Pack()` does not blanket-bypass the cache just because global
+`context_status` reports stale files elsewhere in the workspace. It asks
+`LoadView()` for the derived key, and `LoadView()` performs scoped freshness and
+referenced-source validation before serving a row. Failed validation is treated
+as a miss/recompute. Scoped refresh uses `MarkViewsStale(changedPaths)` for rows
+whose referenced paths changed when a changed-path set is available. Patch or
+unknown-diff paths can still fall back to marking all view rows stale. The
+additive SQLite column handling is a local cache compatibility path, not a
+general production migration guarantee.
 
 The executor side is wired observably but not yet smart-skip-aware:
-`PlanArtifact.PackID` round-trips through `submit_plan`, and the executor
-phase emits `executor_inherits_pack` / `executor_pack_miss` JSON events with
-the cached candidate counts. The executor itself still does its own
-discovery — it doesn't yet shortcut reads based on the planner's ranked
-files. That hook is intentional first-cut scope; downstream consumers (UIs,
-debug tooling, future smart-skip logic) can attach to the JSON events
-without further harness changes.
-
-Pack still gates the cache hit on the current `status.Fresh` value as
-defense-in-depth. With limitations 1–3 closed, file fingerprint changes
-already shift `graph.ID` and bust the key, so the gate is largely
-redundant — but it stays as a belt-and-suspenders check against any future
-state that might be reflected in `status.Fresh` but not in the
-content-addressed key.
-
-The path-aware `MarkViewsStale` machinery used by scoped refresh, plus the
-content-addressed key derivation, plus the workspace-state fingerprint —
-together they make the `graph_views` cache survive both partial refreshes
-and orthogonal workspace-state changes (weights, traces) without serving
-stale data.
+`PlanArtifact.PackID` round-trips through `submit_plan`, and the executor phase
+emits `executor_inherits_pack` / `executor_pack_miss` JSON events with the
+cached candidate counts. The executor itself still does its own discovery - it
+doesn't yet shortcut reads based on the planner's ranked files. That hook is
+intentional first-cut scope; downstream consumers (UIs, debug tooling, future
+smart-skip logic) can attach to the JSON events without further harness
+changes.
 
 ## Immediate Next Step
 

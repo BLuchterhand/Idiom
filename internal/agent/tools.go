@@ -334,7 +334,7 @@ func toolResultMessage(call *llama.ToolCall, result workspace.ToolResult) llama.
 // single file or a patch envelope.
 func toolResultTouchedPaths(req workspace.ToolRequest, _ workspace.ToolResult) []string {
 	switch req.Tool {
-	case "read_file", "edit_file", "write_file", "append_file", "code_navigate", "source_sanity", "go_read_symbol", "go_extract_body", "go_diagnostics", "go_file_outline", "cpp_read_symbol", "cpp_extract_body", "cpp_diagnostics":
+	case "read_file", "edit_file", "write_file", "append_file", "code_navigate", "read_only_capability", "source_sanity", "go_read_symbol", "go_extract_body", "go_diagnostics", "go_file_outline", "cpp_read_symbol", "cpp_extract_body", "cpp_diagnostics":
 		if req.Path != "" {
 			return []string{req.Path}
 		}

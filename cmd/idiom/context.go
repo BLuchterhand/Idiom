@@ -17,27 +17,28 @@ import (
 )
 
 type contextOptions struct {
-	Config          string
-	Path            string
-	Language        string
-	Mode            string
-	Task            string
-	TaskFile        string
-	OutputPath      string
-	Query           string
-	Pattern         string
-	ID              string
-	Command         string
-	Resolution      string
-	Limit           int
-	BudgetTokens    int
-	TimeoutSeconds  int
-	IncludeEvidence bool
-	IncludeSource   bool
-	IncludeFiles    bool
-	Refresh         bool
-	RequiredTests   multiFlag
-	ForbiddenPaths  multiFlag
+	Config            string
+	Path              string
+	Language          string
+	Mode              string
+	Task              string
+	TaskFile          string
+	OutputPath        string
+	Query             string
+	Pattern           string
+	ID                string
+	Command           string
+	Resolution        string
+	Limit             int
+	BudgetTokens      int
+	TimeoutSeconds    int
+	IncludeEvidence   bool
+	IncludeSource     bool
+	IncludeFiles      bool
+	Refresh           bool
+	RequiredTests     multiFlag
+	RequiredEditPaths multiFlag
+	ForbiddenPaths    multiFlag
 }
 
 func runContextMain(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -100,6 +101,7 @@ func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	fs.BoolVar(&opts.IncludeFiles, "include-files", true, "include parsed executed-file and stack-frame evidence for trace packs")
 	fs.BoolVar(&opts.Refresh, "refresh", false, "for context status, attempt bounded or capped stale graph refresh before reporting")
 	fs.Var(&opts.RequiredTests, "required-test", "exact validation command to carry into context pack or impact ranking; repeatable")
+	fs.Var(&opts.RequiredEditPaths, "required-edit-path", "workspace-relative edit path to surface and prioritize in context pack or impact ranking; repeatable")
 	fs.Var(&opts.ForbiddenPaths, "forbidden-path", "workspace-relative path to omit from context pack or impact candidates; repeatable")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -120,24 +122,25 @@ func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 		return 1
 	}
 	req := workspace.ToolRequest{
-		Tool:            tool,
-		ID:              opts.ID,
-		Path:            opts.Path,
-		Pattern:         opts.Pattern,
-		Query:           opts.Query,
-		Command:         opts.Command,
-		Task:            task,
-		Language:        opts.Language,
-		Mode:            opts.Mode,
-		Resolution:      opts.Resolution,
-		Limit:           opts.Limit,
-		BudgetTokens:    opts.BudgetTokens,
-		IncludeEvidence: opts.IncludeEvidence,
-		IncludeSource:   opts.IncludeSource,
-		IncludeFiles:    opts.IncludeFiles,
-		Refresh:         opts.Refresh,
-		RequiredTests:   []string(opts.RequiredTests),
-		ForbiddenPaths:  []string(opts.ForbiddenPaths),
+		Tool:              tool,
+		ID:                opts.ID,
+		Path:              opts.Path,
+		Pattern:           opts.Pattern,
+		Query:             opts.Query,
+		Command:           opts.Command,
+		Task:              task,
+		Language:          opts.Language,
+		Mode:              opts.Mode,
+		Resolution:        opts.Resolution,
+		Limit:             opts.Limit,
+		BudgetTokens:      opts.BudgetTokens,
+		IncludeEvidence:   opts.IncludeEvidence,
+		IncludeSource:     opts.IncludeSource,
+		IncludeFiles:      opts.IncludeFiles,
+		Refresh:           opts.Refresh,
+		RequiredTests:     []string(opts.RequiredTests),
+		RequiredEditPaths: []string(opts.RequiredEditPaths),
+		ForbiddenPaths:    []string(opts.ForbiddenPaths),
 	}
 	logDirectToolRequest(rec, req, 0)
 	mgr := workspace.NewManager(cfg.Workspace)

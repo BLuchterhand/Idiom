@@ -209,6 +209,13 @@ func sourceSanityCoversPath(path string) bool {
 	}
 }
 
+// SourceSanityCoversPath reports whether source_sanity has a concrete
+// diagnostic route or generic fallback for path. Plan/executor gates use this
+// to avoid treating prose/config edits as source edits.
+func SourceSanityCoversPath(path string) bool {
+	return sourceSanityCoversPath(path)
+}
+
 func diagnosticsUnavailable(result ToolResult) bool {
 	text := strings.ToLower(strings.TrimSpace(result.Summary + " " + result.Error))
 	if text == "" {
@@ -252,7 +259,62 @@ func genericSourceSanity(absPath string) (string, error) {
 	if issue := genericDelimiterSanity(filepath.Ext(absPath), string(data)); issue != "" {
 		return "generic source sanity failed", fmt.Errorf("%s", issue)
 	}
+	if strings.EqualFold(filepath.Ext(absPath), ".gd") {
+		if issue := gdscriptStructuralSanity(string(data)); issue != "" {
+			return "generic source sanity failed", fmt.Errorf("%s", issue)
+		}
+	}
 	return "generic delimiter sanity passed", nil
+}
+
+func gdscriptStructuralSanity(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if !gdscriptNeedsIndentedBody(line) {
+			continue
+		}
+		parentIndent := leadingIndentColumns(line)
+		foundBody := false
+		for j := i + 1; j < len(lines); j++ {
+			next := strings.TrimSpace(lines[j])
+			if next == "" || strings.HasPrefix(next, "#") {
+				continue
+			}
+			if leadingIndentColumns(lines[j]) <= parentIndent {
+				return fmt.Sprintf("line %d: GDScript function declaration has no indented body before line %d", i+1, j+1)
+			}
+			foundBody = true
+			break
+		}
+		if !foundBody {
+			return fmt.Sprintf("line %d: GDScript function declaration has no body", i+1)
+		}
+	}
+	return ""
+}
+
+func gdscriptNeedsIndentedBody(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "func ") && !strings.HasPrefix(trimmed, "static func ") {
+		return false
+	}
+	withoutComment := strings.TrimSpace(strings.SplitN(trimmed, "#", 2)[0])
+	return strings.HasSuffix(withoutComment, ":")
+}
+
+func leadingIndentColumns(line string) int {
+	cols := 0
+	for _, r := range line {
+		switch r {
+		case ' ':
+			cols++
+		case '\t':
+			cols += 4
+		default:
+			return cols
+		}
+	}
+	return cols
 }
 
 type delimiterFrame struct {

@@ -9,9 +9,9 @@ A lane turn has three phases:
 1. Read the latest state — the brief, the previous tool result, any
    role events emitted by the runner. Do not re-read evidence already
    present in the conversation.
-2. Decide one action — the next bounded read needed to close a named
-   edit-safety fact, the next allowed write, or stop with a concrete
-   blocker. If the next action is unclear, prefer stopping with
+2. Decide one action — the next semantic discovery step or narrow read
+   needed to close a named edit-safety fact, the next allowed write, or
+   stop with a concrete blocker. If the next action is unclear, prefer stopping with
    `<<QUESTION>>:` over speculative reads.
 3. Take that action via exactly one tool call.
 
@@ -23,4 +23,4 @@ the preamble already authoritatively describes.
 
 Do not retry an action that just failed without changing the inputs.
 A failing edit anchor with the same `old_text` will fail the same way
-— refresh the anchor with one bounded read or report the blocker.
+— refresh the anchor with semantic discovery or one narrow read, or report the blocker.

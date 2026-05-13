@@ -1,6 +1,7 @@
 package comprehension
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -10,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -21,21 +21,22 @@ import (
 // canonicalized (sorted, deduplicated) before hashing so equivalent
 // requests produce identical IDs.
 type ViewQueryInputs struct {
-	Path           string   `json:"path,omitempty"`
-	Scope          string   `json:"scope,omitempty"`
-	Limit          int      `json:"limit,omitempty"`
-	BudgetTokens   int      `json:"budget_tokens,omitempty"`
-	RequiredTests  []string `json:"required_tests,omitempty"`
-	ForbiddenPaths []string `json:"forbidden_paths,omitempty"`
-	Intent         string   `json:"intent,omitempty"`
-	// WorkspaceStateFingerprint captures workspace-side state that
-	// affects Pack output but is not part of the request inputs:
-	// the .idiom/ranker/weights.json file (ranker multipliers) and
-	// the .idiom/comprehension/traces/ directory (runtime overlay).
-	// Computed by ComprehensionStateFingerprint at Pack time so a
-	// weight bump or new trace artifact busts the cache without
-	// waiting for an index rebuild.
+	Path                string   `json:"path,omitempty"`
+	Scope               string   `json:"scope,omitempty"`
+	Limit               int      `json:"limit,omitempty"`
+	BudgetTokens        int      `json:"budget_tokens,omitempty"`
+	RequiredTests       []string `json:"required_tests,omitempty"`
+	RequiredEditPaths   []string `json:"required_edit_paths,omitempty"`
+	ForbiddenPaths      []string `json:"forbidden_paths,omitempty"`
+	Intent              string   `json:"intent,omitempty"`
+	IncludeStaleRuntime bool     `json:"include_stale_runtime,omitempty"`
+	// WorkspaceStateFingerprint is the composite cache key for
+	// workspace-side state that affects Pack output but is not part of
+	// the request inputs. Component fingerprints keep invalidation
+	// attribution separate in the result contract.
 	WorkspaceStateFingerprint string `json:"workspace_state_fingerprint,omitempty"`
+	RankerWeightsFingerprint  string `json:"ranker_weights_fingerprint,omitempty"`
+	RuntimeTracesFingerprint  string `json:"runtime_traces_fingerprint,omitempty"`
 }
 
 // ViewKey is the content-addressed identifier for a graph_views row.
@@ -61,6 +62,7 @@ func (k ViewKey) ID() string {
 // callers don't have to worry about ordering.
 func canonicalQueryJSON(q ViewQueryInputs) string {
 	q.RequiredTests = canonicalStringSlice(q.RequiredTests)
+	q.RequiredEditPaths = canonicalStringSlice(q.RequiredEditPaths)
 	q.ForbiddenPaths = canonicalStringSlice(q.ForbiddenPaths)
 	data, _ := json.Marshal(q)
 	return string(data)
@@ -90,10 +92,26 @@ func canonicalStringSlice(in []string) []string {
 // Package-level cache hit/miss counters. Process-local; persistence is
 // not required since harness_audit consumes the live process state.
 var (
-	viewCacheHits   atomic.Int64
-	viewCacheMisses atomic.Int64
-	viewCacheWrites atomic.Int64
+	viewCacheHits             atomic.Int64
+	viewCacheMisses           atomic.Int64
+	viewCacheWrites           atomic.Int64
+	viewCacheFreshnessHits    atomic.Int64
+	viewCacheStalePreventions atomic.Int64
+	viewCacheStaleRowMisses   atomic.Int64
 )
+
+const viewFreshnessMaxFiles = 200
+
+type cachedViewRow struct {
+	OutputJSON                string
+	IndexID                   string
+	Task                      string
+	Mode                      string
+	QueryJSON                 string
+	WorkspaceStateFingerprint string
+	ReferencedPathsJSON       string
+	SourceFingerprintsJSON    string
+}
 
 // ViewCacheCounters returns the current process-local hit/miss/write
 // counts for the graph_views cache. Used by harness_audit.
@@ -101,11 +119,18 @@ func ViewCacheCounters() (hits, misses, writes int64) {
 	return viewCacheHits.Load(), viewCacheMisses.Load(), viewCacheWrites.Load()
 }
 
+func ViewFreshnessCounters() (freshnessHits, stalePreventions, staleRowMisses int64) {
+	return viewCacheFreshnessHits.Load(), viewCacheStalePreventions.Load(), viewCacheStaleRowMisses.Load()
+}
+
 // ResetViewCacheCounters zeroes the counters. Test-only helper.
 func ResetViewCacheCounters() {
 	viewCacheHits.Store(0)
 	viewCacheMisses.Store(0)
 	viewCacheWrites.Store(0)
+	viewCacheFreshnessHits.Store(0)
+	viewCacheStalePreventions.Store(0)
+	viewCacheStaleRowMisses.Store(0)
 }
 
 // LoadView returns the cached PackResult for the given key, or
@@ -128,12 +153,9 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 	if err := ensureGraphViewsTable(db); err != nil {
 		return PackResult{}, false, err
 	}
-	var outputJSON string
-	err = db.QueryRow(
-		`SELECT output_json FROM graph_views WHERE id = ? AND stale = 0`,
-		key.ID(),
-	).Scan(&outputJSON)
+	row, err := loadCachedViewRow(db, key.ID())
 	if errors.Is(err, sql.ErrNoRows) {
+		recordStaleRowMiss(db, key.ID())
 		viewCacheMisses.Add(1)
 		return PackResult{}, false, nil
 	}
@@ -141,10 +163,22 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 		return PackResult{}, false, err
 	}
 	var result PackResult
-	if err := json.Unmarshal([]byte(outputJSON), &result); err != nil {
+	if err := json.Unmarshal([]byte(row.OutputJSON), &result); err != nil {
 		return PackResult{}, false, fmt.Errorf("decode cached view %s: %w", key.ID(), err)
 	}
+	result, fresh, err := validateCachedViewFreshness(root, row, result, "load_view")
+	if err != nil {
+		return PackResult{}, false, err
+	}
+	if !fresh {
+		viewCacheStalePreventions.Add(1)
+		viewCacheMisses.Add(1)
+		return PackResult{}, false, nil
+	}
+	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
+	result.Cache = GraphViewCacheStateForKey(key, firstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
+	AttachPackResultContract(&result)
 	return result, true, nil
 }
 
@@ -174,12 +208,9 @@ func LoadViewByID(root string, packID string) (PackResult, bool, error) {
 	if err := ensureGraphViewsTable(db); err != nil {
 		return PackResult{}, false, err
 	}
-	var outputJSON string
-	err = db.QueryRow(
-		`SELECT output_json FROM graph_views WHERE id = ? AND stale = 0`,
-		packID,
-	).Scan(&outputJSON)
+	row, err := loadCachedViewRow(db, packID)
 	if errors.Is(err, sql.ErrNoRows) {
+		recordStaleRowMiss(db, packID)
 		viewCacheMisses.Add(1)
 		return PackResult{}, false, nil
 	}
@@ -187,10 +218,25 @@ func LoadViewByID(root string, packID string) (PackResult, bool, error) {
 		return PackResult{}, false, err
 	}
 	var result PackResult
-	if err := json.Unmarshal([]byte(outputJSON), &result); err != nil {
+	if err := json.Unmarshal([]byte(row.OutputJSON), &result); err != nil {
 		return PackResult{}, false, fmt.Errorf("decode cached view %s: %w", packID, err)
 	}
+	result, fresh, err := validateCachedViewFreshness(root, row, result, "load_view_by_id")
+	if err != nil {
+		return PackResult{}, false, err
+	}
+	if !fresh {
+		viewCacheStalePreventions.Add(1)
+		viewCacheMisses.Add(1)
+		return PackResult{}, false, nil
+	}
+	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
+	key := cachedViewKeyFromRow(row, packID)
+	result.Cache = GraphViewCacheStateForKey(key, firstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
+	result.Cache.CacheKey = packID
+	result.Cache.PackID = packID
+	AttachPackResultContract(&result)
 	return result, true, nil
 }
 
@@ -226,6 +272,15 @@ func SaveView(root string, key ViewKey, result PackResult) error {
 	if err != nil {
 		return err
 	}
+	references := referencedPaths(result)
+	referencesJSON, err := json.Marshal(references)
+	if err != nil {
+		return err
+	}
+	sourceFingerprintsJSON, err := json.Marshal(sourceFingerprintsForPaths(root, references))
+	if err != nil {
+		return err
+	}
 	fingerprint := viewFingerprint(result)
 	rootNodeID := strings.TrimSpace(key.Query.Path)
 	resolution := strings.TrimSpace(key.Mode)
@@ -235,8 +290,9 @@ func SaveView(root string, key ViewKey, result PackResult) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.Exec(`INSERT INTO graph_views (
 		id, root_node_id, resolution, query_json, output_json,
-		fingerprint, stale, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+		fingerprint, stale, created_at, index_id, task, mode,
+		workspace_state_fingerprint, referenced_paths_json, source_fingerprints_json
+	) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		root_node_id = excluded.root_node_id,
 		resolution   = excluded.resolution,
@@ -244,7 +300,13 @@ func SaveView(root string, key ViewKey, result PackResult) error {
 		output_json  = excluded.output_json,
 		fingerprint  = excluded.fingerprint,
 		stale        = 0,
-		created_at   = excluded.created_at`,
+		created_at   = excluded.created_at,
+		index_id     = excluded.index_id,
+		task         = excluded.task,
+		mode         = excluded.mode,
+		workspace_state_fingerprint = excluded.workspace_state_fingerprint,
+		referenced_paths_json       = excluded.referenced_paths_json,
+		source_fingerprints_json    = excluded.source_fingerprints_json`,
 		key.ID(),
 		rootNodeID,
 		resolution,
@@ -252,6 +314,12 @@ func SaveView(root string, key ViewKey, result PackResult) error {
 		string(outputJSON),
 		fingerprint,
 		now,
+		key.IndexID,
+		key.Task,
+		key.Mode,
+		key.Query.WorkspaceStateFingerprint,
+		string(referencesJSON),
+		string(sourceFingerprintsJSON),
 	); err != nil {
 		return err
 	}
@@ -283,7 +351,7 @@ func viewFingerprint(result PackResult) string {
 func referencedPaths(result PackResult) []string {
 	seen := make(map[string]struct{})
 	add := func(p string) {
-		p = strings.TrimSpace(p)
+		p = sourceReferencePath(p)
 		if p == "" {
 			return
 		}
@@ -299,11 +367,208 @@ func referencedPaths(result PackResult) []string {
 		add(t.Path)
 	}
 	for _, e := range result.Evidence {
-		add(e.Path)
+		switch e.Kind {
+		case "context_file", "context_symbol", "runtime_anchor", "runtime_file":
+			add(e.Path)
+		}
 	}
 	out := make([]string, 0, len(seen))
 	for p := range seen {
 		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sourceReferencePath(path string) string {
+	path = cleanFreshnessPath(path)
+	if path == "" {
+		return ""
+	}
+	for _, prefix := range []string{".idiom/", ".git/"} {
+		if strings.HasPrefix(path, prefix) {
+			return ""
+		}
+	}
+	return path
+}
+
+func sourceFingerprintsForPaths(root string, paths []string) map[string]string {
+	graph, err := LoadGraph(root)
+	if err != nil {
+		return map[string]string{}
+	}
+	fingerprints := fingerprintsByPath(graph.Nodes)
+	out := make(map[string]string)
+	for _, path := range cleanFreshnessPaths(paths) {
+		if fingerprint := strings.TrimSpace(fingerprints[path]); fingerprint != "" {
+			out[path] = fingerprint
+		}
+	}
+	return out
+}
+
+func loadCachedViewRow(db *sql.DB, id string) (cachedViewRow, error) {
+	var row cachedViewRow
+	err := db.QueryRow(
+		`SELECT output_json,
+			COALESCE(index_id, ''),
+			COALESCE(task, ''),
+			COALESCE(mode, ''),
+			COALESCE(query_json, ''),
+			COALESCE(workspace_state_fingerprint, ''),
+			COALESCE(referenced_paths_json, ''),
+			COALESCE(source_fingerprints_json, '')
+		FROM graph_views WHERE id = ? AND stale = 0`,
+		id,
+	).Scan(
+		&row.OutputJSON,
+		&row.IndexID,
+		&row.Task,
+		&row.Mode,
+		&row.QueryJSON,
+		&row.WorkspaceStateFingerprint,
+		&row.ReferencedPathsJSON,
+		&row.SourceFingerprintsJSON,
+	)
+	return row, err
+}
+
+func cachedViewKeyFromRow(row cachedViewRow, packID string) ViewKey {
+	var query ViewQueryInputs
+	if strings.TrimSpace(row.QueryJSON) != "" {
+		_ = json.Unmarshal([]byte(row.QueryJSON), &query)
+	}
+	if query.WorkspaceStateFingerprint == "" {
+		query.WorkspaceStateFingerprint = row.WorkspaceStateFingerprint
+	}
+	key := ViewKey{
+		IndexID: strings.TrimSpace(row.IndexID),
+		Task:    strings.TrimSpace(row.Task),
+		Mode:    strings.TrimSpace(row.Mode),
+		Query:   query,
+	}
+	if key.ID() == strings.TrimSpace(packID) {
+		return key
+	}
+	return key
+}
+
+func recordStaleRowMiss(db *sql.DB, id string) {
+	var stale int
+	if err := db.QueryRow(`SELECT stale FROM graph_views WHERE id = ?`, id).Scan(&stale); err == nil && stale != 0 {
+		viewCacheStaleRowMisses.Add(1)
+	}
+}
+
+func validateCachedViewFreshness(root string, row cachedViewRow, result PackResult, operation string) (PackResult, bool, error) {
+	references := cachedViewReferencedPaths(row, result)
+	decision, err := EnsureFresh(context.Background(), FreshnessRequest{
+		Root:              root,
+		Operation:         operation,
+		Policy:            FreshnessRequire,
+		ReferencedPaths:   references,
+		Mode:              firstNonEmpty(result.Mode, row.Mode),
+		MaxFiles:          viewFreshnessMaxFiles,
+		ExactScopeRefresh: true,
+	})
+	if err != nil {
+		return PackResult{}, false, err
+	}
+	if !decision.FreshForScope {
+		return PackResult{}, false, nil
+	}
+	if decision.Refresh != nil && decision.Refresh.Attempted {
+		return PackResult{}, false, nil
+	}
+	if !cachedViewIndexMatchesCurrent(root, row, result) {
+		return PackResult{}, false, nil
+	}
+	if !cachedViewFingerprintsMatch(root, row) {
+		return PackResult{}, false, nil
+	}
+	result.Freshness = &decision
+	result.AutoRefresh = decision.Refresh
+	result.Confidence = GraphResultConfidenceForFreshness(result.Fresh, &decision)
+	result.Provenance = graphResultProvenanceFromFreshness(operation, decision, result.ArtifactPath)
+	return result, true, nil
+}
+
+func cachedViewReferencedPaths(row cachedViewRow, result PackResult) []string {
+	var references []string
+	if strings.TrimSpace(row.ReferencedPathsJSON) != "" && json.Unmarshal([]byte(row.ReferencedPathsJSON), &references) == nil {
+		references = filterSourceReferencePaths(references)
+		if len(references) > 0 {
+			return references
+		}
+	}
+	return referencedPaths(result)
+}
+
+func filterSourceReferencePaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		if path = sourceReferencePath(path); path != "" {
+			seen[path] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for path := range seen {
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func cachedViewIndexMatchesCurrent(root string, row cachedViewRow, result PackResult) bool {
+	rowIndexID := firstNonEmpty(row.IndexID, result.IndexID)
+	if rowIndexID == "" {
+		return false
+	}
+	status, err := Status(root)
+	if err != nil || status.IndexID == "" {
+		return false
+	}
+	return rowIndexID == status.IndexID
+}
+
+func cachedViewFingerprintsMatch(root string, row cachedViewRow) bool {
+	stored := cachedViewSourceFingerprints(row)
+	if len(stored) == 0 {
+		return true
+	}
+	current := sourceFingerprintsForPaths(root, mapKeys(stored))
+	for path, fingerprint := range stored {
+		if current[path] != fingerprint {
+			return false
+		}
+	}
+	return true
+}
+
+func cachedViewSourceFingerprints(row cachedViewRow) map[string]string {
+	if strings.TrimSpace(row.SourceFingerprintsJSON) == "" {
+		return nil
+	}
+	var stored map[string]string
+	if err := json.Unmarshal([]byte(row.SourceFingerprintsJSON), &stored); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(stored))
+	for path, fingerprint := range stored {
+		path = sourceReferencePath(path)
+		fingerprint = strings.TrimSpace(fingerprint)
+		if path != "" && fingerprint != "" {
+			out[path] = fingerprint
+		}
+	}
+	return out
+}
+
+func mapKeys(values map[string]string) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
 	}
 	sort.Strings(out)
 	return out
@@ -343,24 +608,23 @@ func MarkViewsStale(root string, paths []string) (int, error) {
 	if len(pathSet) == 0 {
 		return 0, nil
 	}
-	rows, err := db.Query(`SELECT id, output_json FROM graph_views WHERE stale = 0`)
+	rows, err := db.Query(`SELECT id, output_json, COALESCE(referenced_paths_json, '') FROM graph_views WHERE stale = 0`)
 	if err != nil {
 		return 0, err
 	}
 	var staleIDs []string
 	for rows.Next() {
-		var id, output string
-		if err := rows.Scan(&id, &output); err != nil {
+		var id, output, referencesJSON string
+		if err := rows.Scan(&id, &output, &referencesJSON); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		var pr PackResult
-		if err := json.Unmarshal([]byte(output), &pr); err != nil {
-			// Undecodable rows can't be served; treat as stale.
+		references, ok := viewRowReferences(output, referencesJSON)
+		if !ok {
 			staleIDs = append(staleIDs, id)
 			continue
 		}
-		for _, ref := range referencedPaths(pr) {
+		for _, ref := range references {
 			if _, hit := pathSet[ref]; hit {
 				staleIDs = append(staleIDs, id)
 				break
@@ -401,6 +665,18 @@ func MarkViewsStale(root string, paths []string) (int, error) {
 	return len(staleIDs), nil
 }
 
+func viewRowReferences(outputJSON string, referencesJSON string) ([]string, bool) {
+	var references []string
+	if strings.TrimSpace(referencesJSON) != "" && json.Unmarshal([]byte(referencesJSON), &references) == nil {
+		return filterSourceReferencePaths(references), true
+	}
+	var pr PackResult
+	if err := json.Unmarshal([]byte(outputJSON), &pr); err != nil {
+		return nil, false
+	}
+	return referencedPaths(pr), true
+}
+
 // MarkAllViewsStale flips every fresh row to stale. Used by full graph
 // rebuilds where the entire content state has shifted underneath every
 // cached view.
@@ -433,15 +709,23 @@ func MarkAllViewsStale(root string) (int, error) {
 
 // ViewStats aggregates graph_views table state for harness_audit.
 type ViewStats struct {
-	Rows          int    `json:"rows"`
-	Fresh         int    `json:"fresh"`
-	Stale         int    `json:"stale"`
-	BytesStored   int64  `json:"bytes_stored"`
-	OldestCreated string `json:"oldest_created,omitempty"`
-	NewestCreated string `json:"newest_created,omitempty"`
-	Hits          int64  `json:"cache_hits"`
-	Misses        int64  `json:"cache_misses"`
-	Writes        int64  `json:"cache_writes"`
+	Rows                    int    `json:"rows"`
+	Fresh                   int    `json:"fresh"`
+	Stale                   int    `json:"stale"`
+	NonCurrent              int    `json:"non_current"`
+	CurrentIndexID          string `json:"current_index_id,omitempty"`
+	BytesStored             int64  `json:"bytes_stored"`
+	OldestCreated           string `json:"oldest_created,omitempty"`
+	NewestCreated           string `json:"newest_created,omitempty"`
+	WorkspaceStateKeyedRows int    `json:"workspace_state_keyed_rows"`
+	ContractRows            int    `json:"contract_rows"`
+	UnresolvedGapRows       int    `json:"unresolved_gap_rows"`
+	Hits                    int64  `json:"cache_hits"`
+	Misses                  int64  `json:"cache_misses"`
+	Writes                  int64  `json:"cache_writes"`
+	FreshnessHits           int64  `json:"freshness_hits"`
+	StalePreventions        int64  `json:"stale_preventions"`
+	StaleRowMisses          int64  `json:"stale_row_misses"`
 }
 
 // ReadViewStats returns aggregate counters over the graph_views table
@@ -449,7 +733,15 @@ type ViewStats struct {
 // error when the SQLite file is absent.
 func ReadViewStats(root string) (ViewStats, error) {
 	hits, misses, writes := ViewCacheCounters()
-	stats := ViewStats{Hits: hits, Misses: misses, Writes: writes}
+	freshnessHits, stalePreventions, staleRowMisses := ViewFreshnessCounters()
+	stats := ViewStats{
+		Hits:             hits,
+		Misses:           misses,
+		Writes:           writes,
+		FreshnessHits:    freshnessHits,
+		StalePreventions: stalePreventions,
+		StaleRowMisses:   staleRowMisses,
+	}
 	sqlitePath := sqliteGraphPath(root)
 	if _, err := os.Stat(sqlitePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -465,6 +757,9 @@ func ReadViewStats(root string) (ViewStats, error) {
 	if err := ensureGraphViewsTable(db); err != nil {
 		return stats, err
 	}
+	if meta, err := readSQLiteGraphMetadata(db); err == nil {
+		stats.CurrentIndexID = strings.TrimSpace(meta["index_id"])
+	}
 	var oldest, newest sql.NullString
 	err = db.QueryRow(`SELECT
 		COUNT(*),
@@ -472,8 +767,9 @@ func ReadViewStats(root string) (ViewStats, error) {
 		COALESCE(SUM(CASE WHEN stale = 1 THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(LENGTH(output_json)), 0),
 		MIN(created_at),
-		MAX(created_at)
-		FROM graph_views`).Scan(&stats.Rows, &stats.Fresh, &stats.Stale, &stats.BytesStored, &oldest, &newest)
+		MAX(created_at),
+		COALESCE(SUM(CASE WHEN COALESCE(workspace_state_fingerprint, '') <> '' THEN 1 ELSE 0 END), 0)
+		FROM graph_views`).Scan(&stats.Rows, &stats.Fresh, &stats.Stale, &stats.BytesStored, &oldest, &newest, &stats.WorkspaceStateKeyedRows)
 	if err != nil {
 		return stats, err
 	}
@@ -483,14 +779,56 @@ func ReadViewStats(root string) (ViewStats, error) {
 	if newest.Valid {
 		stats.NewestCreated = newest.String
 	}
+	if stats.CurrentIndexID != "" {
+		if err := db.QueryRow(`SELECT COALESCE(SUM(CASE WHEN COALESCE(index_id, '') <> ? THEN 1 ELSE 0 END), 0) FROM graph_views`, stats.CurrentIndexID).Scan(&stats.NonCurrent); err != nil {
+			return stats, err
+		}
+	}
+	contractRows, unresolvedGapRows, err := readViewContractStats(db)
+	if err != nil {
+		return stats, err
+	}
+	stats.ContractRows = contractRows
+	stats.UnresolvedGapRows = unresolvedGapRows
 	return stats, nil
+}
+
+func readViewContractStats(db *sql.DB) (contractRows int, unresolvedGapRows int, err error) {
+	rows, err := db.Query(`SELECT output_json FROM graph_views`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var output string
+		if err := rows.Scan(&output); err != nil {
+			return 0, 0, err
+		}
+		var decoded struct {
+			Contract             *GraphViewResultContract `json:"contract"`
+			UnresolvedGapDetails []GraphUnresolvedGap     `json:"unresolved_gap_details"`
+		}
+		if err := json.Unmarshal([]byte(output), &decoded); err != nil {
+			continue
+		}
+		if decoded.Contract != nil && decoded.Contract.SchemaVersion == GraphViewResultContractVersion {
+			contractRows++
+		}
+		if len(decoded.UnresolvedGapDetails) > 0 {
+			unresolvedGapRows++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+	return contractRows, unresolvedGapRows, nil
 }
 
 // ensureGraphViewsTable creates the graph_views table on a freshly-opened
 // connection if it doesn't already exist. Lets the cache layer be useful
 // even when no `context_index` build has ever run.
 func ensureGraphViewsTable(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS graph_views (
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS graph_views (
 		id TEXT PRIMARY KEY,
 		root_node_id TEXT,
 		resolution TEXT NOT NULL,
@@ -498,9 +836,64 @@ func ensureGraphViewsTable(db *sql.DB) error {
 		output_json TEXT NOT NULL,
 		fingerprint TEXT NOT NULL,
 		stale INTEGER NOT NULL DEFAULT 0,
-		created_at TEXT NOT NULL
-	)`)
-	return err
+		created_at TEXT NOT NULL,
+		index_id TEXT,
+		task TEXT,
+		mode TEXT,
+		workspace_state_fingerprint TEXT,
+		referenced_paths_json TEXT,
+		source_fingerprints_json TEXT
+	)`); err != nil {
+		return err
+	}
+	return ensureGraphViewsColumns(db)
+}
+
+type graphViewsSchemaTarget interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+func ensureGraphViewsColumns(target graphViewsSchemaTarget) error {
+	rows, err := target.Query(`PRAGMA table_info(graph_views)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	existing := make(map[string]struct{})
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{name: "index_id", sql: `ALTER TABLE graph_views ADD COLUMN index_id TEXT`},
+		{name: "task", sql: `ALTER TABLE graph_views ADD COLUMN task TEXT`},
+		{name: "mode", sql: `ALTER TABLE graph_views ADD COLUMN mode TEXT`},
+		{name: "workspace_state_fingerprint", sql: `ALTER TABLE graph_views ADD COLUMN workspace_state_fingerprint TEXT`},
+		{name: "referenced_paths_json", sql: `ALTER TABLE graph_views ADD COLUMN referenced_paths_json TEXT`},
+		{name: "source_fingerprints_json", sql: `ALTER TABLE graph_views ADD COLUMN source_fingerprints_json TEXT`},
+	} {
+		if _, ok := existing[column.name]; ok {
+			continue
+		}
+		if _, err := target.Exec(column.sql); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ChangedPathsBetween returns the repo-relative paths whose file
@@ -529,44 +922,68 @@ func ChangedPathsBetween(previous Graph, current Graph) []string {
 	return out
 }
 
-// ComprehensionStateFingerprint returns a short hex fingerprint over
-// workspace-side state that influences Pack output but isn't part of
-// the request inputs: the ranker weights file and the runtime traces
-// directory. Cheap to compute (one os.Stat per item, no content read).
-// Returned empty string when neither item exists; that's the baseline
-// state and produces a stable empty fingerprint.
+type ComprehensionStateFingerprintSet struct {
+	WorkspaceStateFingerprint string
+	RankerWeightsFingerprint  string
+	RuntimeTracesFingerprint  string
+}
+
+// ComprehensionStateFingerprint returns the composite cache fingerprint
+// for workspace-side state that influences Pack output but is not part
+// of the request inputs. Component fingerprints are available through
+// ComprehensionStateFingerprints.
 func ComprehensionStateFingerprint(root string) string {
-	weightsPath := filepath.Join(root, ".idiom", "ranker", "weights.json")
-	tracesDir := filepath.Join(root, ".idiom", "comprehension", "traces")
-	h := sha256.New()
-	if info, err := os.Stat(weightsPath); err == nil {
-		h.Write([]byte("weights\x00"))
-		h.Write([]byte(info.ModTime().UTC().Format(time.RFC3339Nano)))
-		h.Write([]byte("\x00"))
-		h.Write([]byte(strconv.FormatInt(info.Size(), 10)))
-		h.Write([]byte("\x00"))
-	}
-	if info, err := os.Stat(tracesDir); err == nil {
-		h.Write([]byte("traces_dir\x00"))
-		h.Write([]byte(info.ModTime().UTC().Format(time.RFC3339Nano)))
-		h.Write([]byte("\x00"))
-	}
-	if entries, err := os.ReadDir(tracesDir); err == nil {
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		h.Write([]byte(name))
-		h.Write([]byte("\x00"))
+	return ComprehensionStateFingerprints(root).WorkspaceStateFingerprint
+}
+
+func ComprehensionStateFingerprints(root string) ComprehensionStateFingerprintSet {
+	ranker := rankerWeightsStateFingerprint(root)
+	runtime := runtimeTracesStateFingerprint(root)
+	return comprehensionStateFingerprintSet(ranker, runtime)
+}
+
+func comprehensionStateFingerprintSet(rankerFingerprint string, runtimeFingerprint string) ComprehensionStateFingerprintSet {
+	rankerFingerprint = strings.TrimSpace(rankerFingerprint)
+	runtimeFingerprint = strings.TrimSpace(runtimeFingerprint)
+	return ComprehensionStateFingerprintSet{
+		WorkspaceStateFingerprint: composeWorkspaceStateFingerprint(rankerFingerprint, runtimeFingerprint),
+		RankerWeightsFingerprint:  rankerFingerprint,
+		RuntimeTracesFingerprint:  runtimeFingerprint,
 	}
 }
-sum := h.Sum(nil)
-if len(sum) == 0 {
+
+func composeWorkspaceStateFingerprint(rankerFingerprint string, runtimeFingerprint string) string {
+	rankerFingerprint = strings.TrimSpace(rankerFingerprint)
+	runtimeFingerprint = strings.TrimSpace(runtimeFingerprint)
+	if rankerFingerprint == "" && runtimeFingerprint == "" {
+		return ""
+	}
+	h := sha256.New()
+	if rankerFingerprint != "" {
+		h.Write([]byte("ranker_weights\x00"))
+		h.Write([]byte(rankerFingerprint))
+		h.Write([]byte("\x00"))
+	}
+	if runtimeFingerprint != "" {
+		h.Write([]byte("runtime_traces\x00"))
+		h.Write([]byte(runtimeFingerprint))
+		h.Write([]byte("\x00"))
+	}
+	sum := h.Sum(nil)
+	return hex.EncodeToString(sum[:8])
+}
+
+func rankerWeightsStateFingerprint(root string) string {
+	weightsPath := filepath.Join(root, ".idiom", "ranker", "weights.json")
+	if data, err := os.ReadFile(weightsPath); err == nil {
+		return shortSHA256Hex(data)
+	}
 	return ""
 }
-return hex.EncodeToString(sum[:8])
+
+func shortSHA256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
 }
 
 func fingerprintsByPath(nodes []Node) map[string]string {

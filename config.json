@@ -78,19 +78,20 @@
     "timeout_seconds": 20,
     "start_timeout_seconds": 120,
     "auto_start_server": true,
-    "binary": "llama-server",
+    "kind": "mlx",
+    "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
     "host": "127.0.0.1",
     "port": 11437,
-    "server_model": "models/qwen35-9b/Qwen3.5-9B-Q8_0.gguf",
+    "server_model": "/Users/ben/models/Qwen3-14B-4bit-AWQ",
     "ctx_size": 8192,
     "threads": 0,
     "gpu_layers": 0,
     "log_file": "logs/route-classifier.log",
     "extra_args": [
-      "-md", "models/qwen3-1.7b/Qwen3-1.7B-Q8_0.gguf",
-      "--draft-max", "8",
-      "--draft-min", "2",
-      "--draft-p-min", "0.75"
+      "--chat-template-args", "{\"enable_thinking\":false,\"preserve_thinking\":false}",
+      "--max-tokens", "512",
+      "--temp", "0.1",
+      "--top-p", "0.8"
     ]
   },
   "workspace": {

@@ -104,7 +104,42 @@ func TestDiscoveryQueryUsesFreshContextIndexForOrientation(t *testing.T) {
 	}
 }
 
-func TestDiscoveryQueryFallsBackWhenContextIndexIsStale(t *testing.T) {
+func TestDiscoveryQueryBuildsMissingContextIndexForOrientation(t *testing.T) {
+	root := seedDiscoveryQueryGoRepo(t)
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		EnableShell:           true,
+		EnableWrites:          true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:     "discovery_query",
+		Purpose:  "impact_analysis",
+		Path:     ".",
+		Pattern:  "Target",
+		Language: "go",
+		MaxDepth: 2,
+	})
+	if result.Error != "" {
+		t.Fatalf("discovery_query returned error: %v\n%s", result.Error, result.Output)
+	}
+	packet := readDiscoveryQueryPacket(t, root, result.Output)
+	if packet.ContextFreshness == nil || !packet.ContextFreshness.FreshForScope || packet.ContextFreshness.Refresh == nil || packet.ContextFreshness.Refresh.Reason != "missing_index" {
+		t.Fatalf("expected missing context index to rebuild through freshness gate, got %#v", packet.ContextFreshness)
+	}
+	if !packetHasLayer(packet, "context_pack") {
+		t.Fatalf("rebuilt context graph should generate context_pack layer, got layers %#v", packetLayerNames(packet))
+	}
+	if packetHasLayer(packet, "target_listing") {
+		t.Fatalf("fresh context graph should replace broad target listing, got layers %#v", packetLayerNames(packet))
+	}
+}
+
+func TestDiscoveryQueryRefreshesUnboundedStaleContextBeforeGraphOrientation(t *testing.T) {
 	root := seedDiscoveryQueryGoRepo(t)
 	mgr := NewManager(config.Workspace{
 		Root:                  root,
@@ -138,16 +173,16 @@ func Target(v string) string {
 	}
 	packet := readDiscoveryQueryPacket(t, root, result.Output)
 	if packet.ContextIndexID == "" {
-		t.Fatalf("expected stale context index id to remain visible, got %#v", packet)
+		t.Fatalf("expected context index id to remain visible, got %#v", packet)
 	}
-	if packetHasLayer(packet, "context_pack") {
-		t.Fatalf("stale context graph should not generate context_pack layer, got layers %#v", packetLayerNames(packet))
+	if packet.ContextFreshness == nil || !packet.ContextFreshness.FreshForScope || packet.ContextFreshness.Refresh == nil || !packet.ContextFreshness.Refresh.Attempted {
+		t.Fatalf("expected discovery_query to refresh stale context before graph backing, got %#v", packet.ContextFreshness)
 	}
-	if !packetHasLayer(packet, "target_listing") {
-		t.Fatalf("stale context graph should fall back to live target listing, got layers %#v", packetLayerNames(packet))
+	if !packetHasLayer(packet, "context_pack") {
+		t.Fatalf("refreshed context graph should generate context_pack layer, got layers %#v", packetLayerNames(packet))
 	}
-	if !packetGapsContain(packet, "context index is stale") {
-		t.Fatalf("expected stale context gap, got %#v", packet.Gaps)
+	if packetHasLayer(packet, "target_listing") {
+		t.Fatalf("refreshed context graph should replace live target listing, got layers %#v", packetLayerNames(packet))
 	}
 }
 
@@ -233,6 +268,27 @@ func TestDiscoveryQueryRejectsUnknownPurpose(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "discovery_query", Purpose: "wander", Path: "."})
 	if result.Error == "" || !strings.Contains(result.Error, "purpose must be") {
 		t.Fatalf("expected unknown purpose rejection, got %#v", result)
+	}
+}
+
+func TestDiscoveryQueryLanguageCoverageFollowsRegistry(t *testing.T) {
+	for _, lang := range LanguageRegistry() {
+		glob := globForDiscoveryLanguage(lang.Name)
+		if glob == "" {
+			t.Fatalf("%s should have a discovery glob", lang.Name)
+		}
+		for _, ext := range lang.Extensions {
+			suffix := strings.TrimPrefix(ext, ".")
+			if !strings.Contains(glob, suffix) {
+				t.Fatalf("%s discovery glob %q missing extension %q", lang.Name, glob, ext)
+			}
+		}
+	}
+
+	for _, alias := range []string{"tsx", ".mts", "d.cts", "jsx", "mjs", "javascript"} {
+		if got := normalizeDiscoveryQueryLanguage(alias); got != "typescript" {
+			t.Fatalf("normalizeDiscoveryQueryLanguage(%q) = %q, want typescript", alias, got)
+		}
 	}
 }
 

@@ -113,6 +113,41 @@ func TestLoadHonorsAttachInstructionFilesTrue(t *testing.T) {
 	}
 }
 
+func TestLoadExternalToolDiscoveryContractFlags(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "workspace": {
+    "root": ".",
+    "cwd": ".",
+    "external_tools": [
+      {
+        "name": "trace_code",
+        "description": "Trace source relationships",
+        "command": "true",
+        "read_only": true,
+        "discovery": true
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Workspace.ExternalTools) != 1 {
+		t.Fatalf("expected one external tool, got %#v", cfg.Workspace.ExternalTools)
+	}
+	tool := cfg.Workspace.ExternalTools[0]
+	if !tool.ReadOnly || !tool.Discovery {
+		t.Fatalf("expected read_only/discovery flags to load, got %#v", tool)
+	}
+}
+
 func TestLoadRejectsUnknownConfigKeys(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")

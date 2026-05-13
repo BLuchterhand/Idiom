@@ -27,7 +27,8 @@ type implementOptions struct {
 	// config). Refine's per-iter dispatch passes 16384 here to give
 	// thinking-mode 35B headroom to finish reasoning AND produce the
 	// deliverable inside the same generation budget (#96).
-	MaxTokens int
+	MaxTokens       int
+	DisableThinking bool
 }
 
 func runImplementMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
@@ -78,6 +79,7 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 		TaskFamily:               "implementation",
 		PlannerOwnedVerification: opts.PlannerOwnedVerification && !opts.AllowBuildTests,
 		MaxTokensOverride:        opts.MaxTokens,
+		DisableThinking:          opts.DisableThinking,
 		Telemetry:                rec,
 	}, stdout)
 	if err != nil {
@@ -126,6 +128,7 @@ func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, e
 	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", false, "delegate build/test verification to the caller; implementation may only run cheap non-build sanity checks")
 	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: keep build/test shell commands available inside the implementation lane")
+	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for this run")
 	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override chat max_tokens for this implementation run; 0 uses backend default (8192)")
 	if err := fs.Parse(args); err != nil {
 		return implementOptions{}, err

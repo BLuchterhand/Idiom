@@ -62,6 +62,18 @@ func TestSetForcedTaskFamilyTogglesPlanThenExecutePlannerMode(t *testing.T) {
 	if appPlanModeContains(restored, "submit_plan") {
 		t.Fatalf("restored manifest must NOT include submit_plan, got %v", restored)
 	}
+
+	model.SetForcedTaskFamily("plan_then_execute_review_repair")
+	if !model.workspace.PlanThenExecutePlannerMode() {
+		t.Fatalf("SetForcedTaskFamily(plan_then_execute_review_repair) must enable submit_plan surface")
+	}
+	reviewTools := model.workspace.AllowedTools()
+	if !appPlanModeContains(reviewTools, "submit_plan") {
+		t.Fatalf("review-repair manifest must include submit_plan, got %v", reviewTools)
+	}
+	if appPlanModeContains(reviewTools, "edit_file") {
+		t.Fatalf("review-repair manifest must hide per-edit writes, got %v", reviewTools)
+	}
 }
 
 func appPlanModeContains(haystack []string, needle string) bool {
@@ -94,6 +106,22 @@ func TestNormalizeTurnRoutePlanRecognizesPlanThenExecutePlanner(t *testing.T) {
 	}
 }
 
+func TestNormalizeTurnRoutePlanRecognizesPlanThenExecuteReviewRepair(t *testing.T) {
+	plan := normalizeTurnRoutePlan(turnRoutePlan{
+		Family: "plan_then_execute_review_repair",
+		Reason: "explicit_task_family",
+	}, agent.ModeOrDefault(""))
+	if plan.Family != "plan_then_execute_review_repair" {
+		t.Fatalf("normalizer must preserve review-repair family, got %q", plan.Family)
+	}
+	if plan.InitialLane != "review" {
+		t.Fatalf("review-repair phase should run on review lane, got %q", plan.InitialLane)
+	}
+	if plan.Contract != "review_findings" {
+		t.Fatalf("review-repair phase should carry review_findings contract, got %q", plan.Contract)
+	}
+}
+
 func TestIsImplementationLikeFamilyIncludesPlanThenExecutePlanner(t *testing.T) {
 	// The runtime brief copies several constraints onto implementation-
 	// shaped lanes (planner-owned verification, exact-anchor handling,
@@ -104,4 +132,3 @@ func TestIsImplementationLikeFamilyIncludesPlanThenExecutePlanner(t *testing.T) 
 		t.Fatalf("plan_then_execute_planner must be classified as implementation-like")
 	}
 }
-

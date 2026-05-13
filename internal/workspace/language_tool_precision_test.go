@@ -46,6 +46,21 @@ func TestLanguageRegistryConformanceCapabilities(t *testing.T) {
 	}
 }
 
+func TestLanguageRegistryTypeScriptAliases(t *testing.T) {
+	for _, name := range []string{"javascript", "jsx", "mjs", "cjs", "tsx", "mts", "cts", "d.ts", ".d.mts", ".d.cts"} {
+		lang, ok := LanguageForName(name)
+		if !ok || lang.Name != "typescript" {
+			t.Fatalf("LanguageForName(%q) = %#v, %v; want typescript", name, lang, ok)
+		}
+	}
+	for _, ext := range []string{".d.ts", ".d.mts", ".d.cts"} {
+		lang, ok := LanguageForExtension(ext)
+		if !ok || lang.Name != "typescript" {
+			t.Fatalf("LanguageForExtension(%q) = %#v, %v; want typescript", ext, lang, ok)
+		}
+	}
+}
+
 func TestLanguageToolPrecisionTierConformance(t *testing.T) {
 	ctx := context.Background()
 	for _, fixture := range []languagePrecisionFixture{

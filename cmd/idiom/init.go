@@ -140,6 +140,7 @@ const initSeedConfigJSON = `{
 
 const initSeedBackendsJSON = `{
   "_comment": "Local LLM backend declarations. Uncomment and edit a profile for the models you have on disk; idiom backend start --profile <name> launches them.",
+  "default_profile": "qwen-pair-example",
   "profiles": {
     "qwen-pair-example": {
       "models": [
@@ -165,6 +166,11 @@ Drop one JSON file per project tool here. Each file declares
 ` + "`command`" + `, ` + "`args`" + `, and an ` + "`input_schema`" + ` describing the shape
 idiom passes the model. Set ` + "`workspace.external_tools_dir`" + `
 in ` + "`.idiom/config.json`" + ` to enable directory scanning.
+
+Set both ` + "`read_only: true`" + ` and ` + "`discovery: true`" + ` for project tools
+that only return evidence. Scoped implementation lanes keep those tools
+available for gap-driven lookup/trace work while opaque external tools stay
+hidden behind the write-scope contract.
 
 See the idiom source for the full schema (internal/config/config.go's
 ` + "`ExternalToolDef`" + ` type and internal/workspace/manager.go's

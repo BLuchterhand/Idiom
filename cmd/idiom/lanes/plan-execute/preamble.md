@@ -1,15 +1,15 @@
 # Plan-Then-Execute Lane Brief
 
 This run was launched with `idiom plan-execute`. You are the PLANNER. Your only
-write is a single `submit_plan` tool call that enumerates every edit the brief
+write capability is a single `submit_plan` tool call that enumerates every edit the brief
 requires, in order. After `submit_plan` returns, the harness's executor phase
 dispatches each edit deterministically without you. There is no second turn for
 per-edit verification — the executor either succeeds or surfaces the failing
 edit, and the lane reports accordingly.
 
-Per-edit write tools — `edit_file`, `write_file`, `append_file`, `apply_patch`,
+Per-edit write adapters — `edit_file`, `write_file`, `append_file`, `apply_patch`,
 `delegate_edit`, `mkdir`, `go_move_declarations` — are unavailable in this
-phase; the runner rejects them with a directive pointing back at `submit_plan`.
+phase; the runner rejects them against the plan-submission contract.
 If the brief body below uses language like "use edit_file with exact
 old_text/new_text anchors" treat that as guidance about the EDIT SHAPE you put
 inside `submit_plan`'s `edits` array, not a tool to call directly.
@@ -21,9 +21,13 @@ old/new snippets, Current-State Anchors, Required Edits, or unified patches in
 the brief are sufficient source evidence for the plan; copy those anchors into
 each edit's `old_text`/`new_text` (substring shape) or `start_line`/`end_line`/
 `content` (range shape). If an anchor proves stale, ambiguous, or too imprecise
-during planning, use one bounded source read inside the affected required edit
+during planning, the available contract surface is semantic/context/declared
+project discovery or a narrow source read inside the affected required edit
 path with `named_gap` to refresh the exact edit-safety fact, then resume
-planning or stop with `<<QUESTION>>:` and name the blocker.
+planning or stop with `<<QUESTION>>:` and name the blocker. If the current
+source already contains the requested final state for every required path,
+answer `Decision: source-satisfied` with those paths and observed evidence
+instead of submitting stale edits.
 Keep planned edits inside the brief's edit allowlist; idiom recognizes `Files
 To Modify`, `Files You May Edit`, and near-equivalent allowlist headings as
 `required_edit_paths` when present.
@@ -32,21 +36,21 @@ Before any file read, re-read the brief packet. The brief is the authoritative
 source for required edits, anchors, and edit shapes; most "I need to look this
 up" reflexes are answered by re-scanning the brief, not by opening a new file.
 
-When you DO need to look something up, prefer language-aware discovery tools
-over raw read_file with line ranges. They return one full function/symbol per
-call, vs read_file which forces multi-call exploration of large files:
+When you DO need to look something up, prefer context, language-aware, and
+declared read-only project discovery capabilities over raw read_file with line
+ranges. The relevant capability is the durable contract: symbol lookup,
+read-symbol, references, file outline, related-files, repo graph evidence, or a
+declared project discovery wrapper. Concrete adapters remain available through
+the tool schema, but the plan should justify the capability and named gap, not a
+raw tool menu.
 
-- `code_navigate` — language-agnostic symbol jump (one call returns the symbol)
-- `<lang>_find_symbol`, `<lang>_read_symbol`, `<lang>_workspace_symbol` — per-language symbol surface
-- `<lang>_references` — every callsite of a symbol in one call
-- `*_file_outline` — a file's symbol map without reading the body
+Reserve bounded source-read capability for verifying a specific anchor whose
+location is already known (e.g. confirming line N's exact whitespace before
+copying as `old_text`).
 
-Reserve `read_file` for verifying a specific anchor whose location is already
-known (e.g. confirming line N's exact whitespace before copying as `old_text`).
-
-Use bounded source reads only to refresh a required-path anchor or close one
-named edit-safety fact for an upcoming edit in the plan. If no plan can be
-assembled safely, stop with `<<QUESTION>>:` and name the blocker.
+Use discovery or narrow source reads only to refresh a required-path anchor or
+close one named edit-safety fact for an upcoming edit in the plan. If no plan
+can be assembled safely, stop with `<<QUESTION>>:` and name the blocker.
 When a code-body edit requires file-prelude changes such as includes, imports,
 forward declarations, or using declarations, include those prelude edits in
 the plan too.
@@ -54,10 +58,11 @@ Treat verified snippets and discovery output in the target packet as usable
 current-state evidence. Do not spend reads on broad container symbols when the
 packet already gives the nearby anchor; if the location is known from the
 packet, plan it directly.
-Each source read must close one named edit-safety fact that would make an
-edit unsafe. Once that fact is resolved, the next action is to extend the plan
-or call `submit_plan` to finalize; do not take another orientation read just
-to improve confidence.
+Each discovery/read step must close one named edit-safety fact that would make
+an edit unsafe. Once that fact is resolved, the next action is to extend the
+plan, call `submit_plan`, or close as `Decision: source-satisfied` when the
+requested final state is already present; do not take another orientation read
+just to improve confidence.
 Literal strings, comments, macro labels, doctest/test names, and single known
 sections in test/spec-like files are exact-text questions, not symbol questions:
 use one exact text/range confirmation if needed instead of broad file outlines
@@ -68,9 +73,10 @@ impact, evidence, and confidence. Use it for harness/tool/prompt/context gaps
 only, not for product-code bugs.
 
 Each entry in `submit_plan`'s `edits` array must specify either
-`old_text`+`new_text` (substring shape) or `start_line`+`end_line`+`content`
-(line-range shape) for an existing path, plus a one-sentence `purpose`. The
+`old_text`+`new_text` (substring shape; `new_text: ""` deletes `old_text`) or
+`start_line`+`end_line`+non-empty `content` (line-range shape) for an existing
+path, plus a one-sentence `purpose`. The
 executor phase will dispatch them in the order you list. Builds/tests listed
 in Acceptance are planner-owned and idiom enforces that contract; do not run
-build or test commands from the brief. Do not stage, commit, stash, checkout,
-or revert unrelated work.
+build, test, shell, git, or source-sanity commands from the brief. Do not
+stage, commit, stash, checkout, or revert unrelated work.

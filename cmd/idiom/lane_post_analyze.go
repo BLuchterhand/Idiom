@@ -179,9 +179,16 @@ func hasBlockedCompletionEvent(out []byte) bool {
 // invoked with --json (the wrapper forwards user-supplied --json
 // today; #87's token tracking is opt-in by that flag).
 type laneSessionSummary struct {
+	SessionID        string
+	ModelCalls       int
+	ToolCalls        int
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	PeakPromptTokens int
+	ContextSize      int
+	DurationMS       int
+	StopReason       string
 }
 
 // parseSessionSummary scans the JSONL output stream for the last
@@ -206,13 +213,42 @@ func parseSessionSummary(out []byte) (laneSessionSummary, bool) {
 			continue
 		}
 		result = laneSessionSummary{
+			SessionID:        jsonString(ev["session_id"]),
+			ModelCalls:       jsonInt(ev["model_calls"]),
+			ToolCalls:        jsonInt(ev["tool_calls"]),
 			PromptTokens:     jsonInt(ev["prompt_tokens"]),
 			CompletionTokens: jsonInt(ev["completion_tokens"]),
 			TotalTokens:      jsonInt(ev["total_tokens"]),
+			PeakPromptTokens: jsonInt(ev["peak_prompt_tokens"]),
+			ContextSize:      jsonInt(ev["ctx_size"]),
+			DurationMS:       jsonInt(ev["duration_ms"]),
+			StopReason:       jsonString(ev["stop_reason"]),
 		}
 		found = true
 	}
 	return result, found
+}
+
+func parseLaneQueuePool(out []byte) string {
+	pool := ""
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal(line, &ev); err != nil {
+			continue
+		}
+		eventType := jsonString(ev["type"])
+		if eventType != "idiom.plan_execute.queue_acquired" && eventType != "idiom.implement.queue_acquired" {
+			continue
+		}
+		if candidate := jsonString(ev["pool"]); candidate != "" {
+			pool = candidate
+		}
+	}
+	return pool
 }
 
 // jsonInt coerces a JSON-decoded value (which arrives as float64

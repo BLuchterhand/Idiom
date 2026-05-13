@@ -37,6 +37,19 @@ func TestParseToolRequestPreservesPostReadinessGapFields(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestTreatsSymbolAsPatternAlias(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"go_read_symbol\",\"path\":\"internal/agent/runner.go\",\"symbol\":\"Runner.Run\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Pattern != "Runner.Run" {
+		t.Fatalf("pattern = %q, want symbol alias", req.Pattern)
+	}
+}
+
 func TestParseToolRequestRejectsMalformedOrMissingTool(t *testing.T) {
 	_, _, ok, err := ParseToolRequest("no tool here")
 	if err != nil || ok {

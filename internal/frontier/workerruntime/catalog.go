@@ -14,6 +14,7 @@ const (
 	CapabilityDebugLogInvestigator ToolCapabilityProfile = "debug_log_investigator"
 	CapabilityVerificationOnly     ToolCapabilityProfile = "verification_only"
 	CapabilityLocateOnly           ToolCapabilityProfile = "locate_only"
+	CapabilityPlanSubmissionReview ToolCapabilityProfile = "plan_submission_review"
 	CapabilityGuardedWrite         ToolCapabilityProfile = "guarded_write"
 	CapabilityIsolatedWrite        ToolCapabilityProfile = "isolated_write"
 )
@@ -105,7 +106,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 	case "security_review", "performance_review":
 		searchPolicy := []string{"prefer_discovery_query_for_composite_review", "rank_candidates", "answer_when_bounded_finding_or_no_finding_is_supported", "if_continuing_name_one_exact_missing_claim_and_probe", "deepen_if_no_bounded_finding", "use_structural_search_for_syntax_shapes", "use_dependency_graph_for_boundary_or_import_questions"}
 		if strings.TrimSpace(family) == "security_review" {
-			searchPolicy = append(searchPolicy, "prefer_discovery_query_security_review_before_raw_scans", "prefer_semgrep_scan_for_security_patterns", "reserve_joern_scan_for_heavy_dataflow_questions")
+			searchPolicy = append(searchPolicy, "prefer_discovery_query_security_review_before_raw_scans", "name_heavy_scanner_need_instead_of_default_semgrep_or_joern")
 		}
 		return RuntimeContractSpec{
 			TaskFamily:           strings.TrimSpace(family),
@@ -129,7 +130,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []string{"inspected_paths", "architecture_boundary_evidence", "confidence"},
 			RequiredTools:        []string{"workspace_inspection"},
 			ReadinessGate:        []string{"inspected_paths_reported", "architecture_boundary_evidence_supported_or_uncertainty_declared"},
-			SearchPolicy:         []string{"prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components", "answer_when_boundary_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "use_dependency_graph_for_boundary_or_import_questions", "use_history_only_for_evolution_questions"},
+			SearchPolicy:         []string{"prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components", "answer_when_boundary_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "use_discovery_query_for_boundary_import_or_evolution_questions", "name_heavy_graph_or_history_need_if_unresolved"},
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"required_evidence_satisfied", "budget_exhausted_with_uncertainty_declared"},
 			FinalCritic:          []string{"answers_actual_user_request", "required_evidence_cited"},
@@ -149,13 +150,32 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			Contract:             "implementation_result",
 			PermissionProfile:    "guarded_workspace_write",
 			ToolProfile:          CapabilityGuardedWrite,
-			RequiredEvidence:     []string{"plan_submitted_or_blocker"},
+			RequiredEvidence:     []string{"plan_submitted_or_source_satisfied_or_blocker"},
 			RequiredTools:        []string{"submit_plan"},
-			ReadinessGate:        []string{"submit_plan_called_or_blocker_reported"},
-			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "submit_plan_when_edit_set_is_supported", "do_not_call_per_edit_writes"},
+			ReadinessGate:        []string{"submit_plan_or_source_satisfied_or_blocker_reported"},
+			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"},
 			VerificationContract: "not_required_for_text_mutations",
-			StopConditions:       []string{"submit_plan_returned_ok_or_blocker_reported", "blocked_by_missing_permission_or_information"},
-			FinalCritic:          []string{"answers_actual_user_request", "submit_plan_called", "edits_listed_in_summary"},
+			StopConditions:       []string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"},
+			FinalCritic:          []string{"answers_actual_user_request", "submit_plan_called_or_source_satisfied", "edits_or_source_satisfied_evidence_listed_in_summary"},
+		}
+	case "plan_then_execute_review_repair":
+		// Action-capable review for plan-execute. This lane receives
+		// executor diff/evidence and may submit a corrective plan, but
+		// a clean review closes with a direct checklist-backed pass. Keep
+		// it review-shaped so generic mutation gates do not force a
+		// submit_plan when no repair is needed.
+		return RuntimeContractSpec{
+			TaskFamily:           "plan_then_execute_review_repair",
+			Contract:             "review_findings",
+			PermissionProfile:    "plan_submission_review",
+			ToolProfile:          CapabilityPlanSubmissionReview,
+			RequiredEvidence:     []string{"verification_checklist", "decision_pass_or_corrective_plan_or_blocker"},
+			RequiredTools:        []string{"review_decision"},
+			ReadinessGate:        []string{"verification_checklist_completed", "decision_pass_or_corrective_plan_or_blocker"},
+			SearchPolicy:         []string{"use_phase_evidence_first", "do_not_re_submit_applied_plan_edits", "submit_plan_only_for_new_corrective_edits", "pass_when_open_obligations_are_closed"},
+			VerificationContract: "not_required_for_review_lane",
+			StopConditions:       []string{"decision_pass_with_checklist", "submit_plan_corrective_edits_or_blocker", "blocked_by_missing_information"},
+			FinalCritic:          []string{"answers_actual_user_request", "verification_checklist_present", "decision_reported"},
 		}
 	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		family = strings.TrimSpace(family)
@@ -235,7 +255,8 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 }
 
 func ManifestToolsForCapabilityProfile(profile ToolCapabilityProfile) []string {
-	return workspace.ToolManifestTools(toolManifestOptionsForProfile(profile))
+	available := workspace.ToolManifestTools(toolManifestOptionsForProfile(profile))
+	return AllowedToolsForCapabilityProfile(available, profile)
 }
 
 func AllowedToolsForCapabilityProfile(available []string, profile ToolCapabilityProfile) []string {
@@ -248,9 +269,11 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 	case CapabilityVerificationOnly:
 		return filterAllowedTools(available, "source_sanity", "shell", "read_file", "search_files", "search_content")
 	case CapabilityLocateOnly:
-		return filterAllowedTools(available, "pwd", "search_files", "search_content", "read_file")
+		return filterAllowedTools(available, "pwd", "search_files", "search_content", "read_file", "code_navigate", "context_query", "context_zoom")
 	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
-		return selectAllowedTools(available, true, true, true)
+		return filterAllowedTools(available, guardedWriteToolNames()...)
+	case CapabilityPlanSubmissionReview:
+		return filterAllowedTools(available, planSubmissionReviewToolNames()...)
 	case CapabilityReadOnlyDiscovery:
 		return filterAllowedTools(available, readOnlyDiscoveryToolNames()...)
 	case CapabilityConversationReadOnly:
@@ -274,6 +297,8 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 		opts.IncludeTaskLedger = true
 		opts.IncludeTask = true
 		opts.IncludeWriteTools = true
+	case CapabilityPlanSubmissionReview:
+		opts.IncludePlanThenExecute = true
 	case CapabilityReadOnlyDiscovery, CapabilityConversationReadOnly:
 		opts.IncludeTask = true
 	case CapabilityVerificationOnly, CapabilityLocateOnly, CapabilityDebugLogInvestigator:
@@ -291,72 +316,65 @@ func readOnlyDiscoveryToolNames() []string {
 		"code_navigate",
 		"source_sanity",
 		"harness_audit",
-		"context_index",
 		"context_status",
 		"context_query",
 		"context_zoom",
 		"context_pack",
+		"context_impact",
 		"discovery_query",
 		"structural_search",
-		"dependency_graph",
-		"history_range",
-		"history_symbol",
-		"blame_range",
-		"ctags_symbols",
-		"semgrep_scan",
-		"joern_scan",
-		"list_files",
-		"go_related_files",
-		"go_workspace_symbol",
-		"go_references",
-		"go_definition",
-		"go_calls_from",
-		"go_calls_into",
-		"go_read_symbol",
-		"go_extract_body",
-		"go_file_outline",
-		"cpp_workspace_symbol",
-		"cpp_read_symbol",
-		"cpp_related_files",
-		"cpp_references",
-		"cpp_definition",
-		"cpp_calls_from",
-		"cpp_calls_into",
-		"cpp_extract_body",
-		"cpp_file_outline",
-		"python_workspace_symbol",
-		"python_read_symbol",
-		"python_related_files",
-		"python_references",
-		"python_definition",
-		"python_calls_from",
-		"python_calls_into",
-		"python_file_outline",
-		"ts_workspace_symbol",
-		"ts_read_symbol",
-		"ts_related_files",
-		"ts_definition",
-		"ts_references",
-		"ts_calls_from",
-		"ts_calls_into",
-		"ts_file_outline",
-		"rust_workspace_symbol",
-		"rust_read_symbol",
-		"rust_related_files",
-		"rust_file_outline",
-		"rust_definition",
-		"rust_references",
-		"rust_calls_from",
-		"rust_calls_into",
-		"java_workspace_symbol",
-		"java_read_symbol",
-		"java_related_files",
-		"java_definition",
-		"java_references",
-		"java_calls_from",
-		"java_calls_into",
-		"java_file_outline",
 		"task",
+	}
+}
+
+func planSubmissionReviewToolNames() []string {
+	return []string{
+		"read_file",
+		"file_stats",
+		"code_navigate",
+		"source_sanity",
+		"harness_audit",
+		"harness_feedback",
+		"context_status",
+		"context_query",
+		"context_zoom",
+		"context_pack",
+		"context_impact",
+		"discovery_query",
+		"structural_search",
+		"submit_plan",
+	}
+}
+
+func guardedWriteToolNames() []string {
+	return []string{
+		"task_ledger",
+		"task",
+		"pwd",
+		"search_files",
+		"search_content",
+		"read_file",
+		"file_stats",
+		"code_navigate",
+		"source_sanity",
+		"context_status",
+		"context_query",
+		"context_zoom",
+		"context_pack",
+		"context_impact",
+		"discovery_query",
+		"structural_search",
+		"git_status",
+		"git_diff",
+		"shell",
+		"mkdir",
+		"edit_file",
+		"write_file",
+		"append_file",
+		"apply_patch",
+		"delegate_edit",
+		"submit_plan",
+		"go_move_declarations",
 	}
 }
 

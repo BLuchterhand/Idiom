@@ -1,0 +1,799 @@
+package workspace
+
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+
+	"idiom/internal/autonomy"
+	"idiom/internal/config"
+)
+
+func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) {
+	registry := BuildReadOnlyCapabilityRegistry()
+	if registry.SchemaVersion != readOnlyCapabilitySchemaVersion {
+		t.Fatalf("schema version = %q", registry.SchemaVersion)
+	}
+	if !registry.ResolverRuntimeEnabled {
+		t.Fatal("P3.2 resolver should be enabled by default")
+	}
+	if !registry.PublicStatusEnabled {
+		t.Fatal("public capability status should be enabled by default")
+	}
+	if !registry.DirectToolFallback {
+		t.Fatal("direct tool names must remain available as fallback")
+	}
+
+	wantIDs := []string{
+		string(ReadOnlyCapabilityFileOutline),
+		string(ReadOnlyCapabilitySymbolLookup),
+		string(ReadOnlyCapabilityDefinition),
+		string(ReadOnlyCapabilityReferences),
+		string(ReadOnlyCapabilityRelatedFiles),
+	}
+	gotIDs := make([]string, 0, len(registry.Capabilities))
+	for _, capability := range registry.Capabilities {
+		gotIDs = append(gotIDs, capability.ID)
+		if !capability.ReadOnly {
+			t.Fatalf("%s should be read-only", capability.ID)
+		}
+		if !slices.Equal(capability.SideEffects, []autonomy.SideEffectClass{autonomy.SideEffectReadOnly}) {
+			t.Fatalf("%s side effects = %#v", capability.ID, capability.SideEffects)
+		}
+		if len(capability.Adapters) == 0 {
+			t.Fatalf("%s has no adapter mapping", capability.ID)
+		}
+		for _, adapter := range capability.Adapters {
+			if adapter.Tool == "" {
+				t.Fatalf("%s has empty adapter: %#v", capability.ID, adapter)
+			}
+			if IsWorkspaceWriteTool(adapter.Tool) {
+				t.Fatalf("%s maps to write adapter %s", capability.ID, adapter.Tool)
+			}
+			if !slices.Equal(adapter.SideEffects, []autonomy.SideEffectClass{autonomy.SideEffectReadOnly}) {
+				t.Fatalf("%s adapter %s side effects = %#v", capability.ID, adapter.Tool, adapter.SideEffects)
+			}
+		}
+	}
+	if !slices.Equal(gotIDs, wantIDs) {
+		t.Fatalf("capability IDs = %#v, want %#v", gotIDs, wantIDs)
+	}
+
+	definition, ok := ResolveReadOnlyCapability("definition", nil)
+	if !ok {
+		t.Fatal("definition capability should resolve")
+	}
+	if !slices.ContainsFunc(definition.Capability.Adapters, func(adapter ReadOnlyCapabilityAdapterSpec) bool {
+		return adapter.Tool == "code_navigate" && adapter.Capability == string(CapDefinition)
+	}) {
+		t.Fatalf("definition should map to code_navigate definition route: %#v", definition.Capability.Adapters)
+	}
+	if !slices.ContainsFunc(definition.Capability.Adapters, func(adapter ReadOnlyCapabilityAdapterSpec) bool {
+		return adapter.Tool == "go_definition" && adapter.Language == "go"
+	}) {
+		t.Fatalf("definition should include direct Go adapter fallback: %#v", definition.Capability.Adapters)
+	}
+
+	if _, ok := ResolveReadOnlyCapability("source-sanity", nil); ok {
+		t.Fatal("source-sanity must remain deferred from the initial read-only capability vocabulary")
+	}
+}
+
+func TestReadOnlyCapabilityResolverCanBeDisabled(t *testing.T) {
+	t.Setenv(readOnlyCapabilityResolverEnv, "0")
+	registry := BuildReadOnlyCapabilityRegistry()
+	if registry.ResolverRuntimeEnabled {
+		t.Fatal("resolver should honor disable env")
+	}
+
+	root := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		MaxDirectoryEntries:   1024,
+		EnableShell:           true,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: readOnlyCapabilityToolName, Capability: "definition", Pattern: "Run", Path: "."})
+	if result.Error == "" {
+		t.Fatalf("disabled resolver should return a structured fallback error, got %#v", result)
+	}
+	var payload ReadOnlyCapabilityExecutionResult
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("decode capability fallback payload: %v\n%s", err, result.Output)
+	}
+	if payload.FallbackReason != "resolver_runtime_disabled" || payload.Routed {
+		t.Fatalf("disabled fallback payload = %#v", payload)
+	}
+	if !payload.DirectToolFallback {
+		t.Fatalf("direct tool fallback should remain visible: %#v", payload)
+	}
+	if payload.Status.State != "fallback" ||
+		payload.Status.Fallback.State != "disabled" ||
+		payload.Status.Fallback.Reason != "resolver_runtime_disabled" ||
+		payload.Status.SelectedAdapter != nil ||
+		len(payload.Status.UnresolvedGaps) == 0 {
+		t.Fatalf("disabled status should be machine-readable, got %#v", payload.Status)
+	}
+}
+
+func TestReadOnlyCapabilityRouteCanBeDisabledIndividually(t *testing.T) {
+	t.Setenv(readOnlyCapabilityDisabledRoutesEnv, "definition, related_files")
+	registry := BuildReadOnlyCapabilityRegistry()
+	if !registry.ResolverRuntimeEnabled {
+		t.Fatal("per-route disable should not disable the resolver globally")
+	}
+
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/capability\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(root, "pkg", "runner.go"), "package pkg\n\nfunc Run() string {\n\treturn \"ok\"\n}\n")
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		MaxDirectoryEntries:   1024,
+		EnableShell:           true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       readOnlyCapabilityToolName,
+		Capability: string(ReadOnlyCapabilityDefinition),
+		Path:       filepath.Join("pkg", "runner.go"),
+		Pattern:    "Run",
+	})
+	if result.Error == "" {
+		t.Fatalf("disabled route should return a structured fallback error, got %#v", result)
+	}
+	var payload ReadOnlyCapabilityExecutionResult
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("decode route-disabled payload: %v\n%s", err, result.Output)
+	}
+	if payload.FallbackReason != "capability_route_disabled" ||
+		payload.Routed ||
+		!payload.DirectToolFallback ||
+		payload.Status.Fallback.State != "disabled" ||
+		payload.Status.Fallback.Reason != "capability_route_disabled" {
+		t.Fatalf("route-disabled fallback payload = %#v", payload)
+	}
+
+	coverage := ReadOnlyCapabilityCoverageForTools(nil)
+	if coverage.DisabledCapabilityCount != 2 ||
+		!slices.Contains(coverage.DisabledCapabilities, string(ReadOnlyCapabilityDefinition)) ||
+		!slices.Contains(coverage.DisabledCapabilities, string(ReadOnlyCapabilityRelatedFiles)) {
+		t.Fatalf("coverage should report individually disabled routes, got %#v", coverage)
+	}
+	if slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityDefinition)) {
+		t.Fatalf("disabled definition route should not be counted as routed: %#v", coverage.RoutedCapabilities)
+	}
+	if coverage.RouteStateCounts["disabled"] != 2 || coverage.RouteStateCounts["deferred"] == 0 {
+		t.Fatalf("route state counts should include disabled and deferred states, got %#v", coverage.RouteStateCounts)
+	}
+}
+
+func TestReadOnlyCapabilityPublicStatusCanBeSuppressedForRoutedResults(t *testing.T) {
+	t.Setenv(readOnlyCapabilityPublicStatusEnv, "0")
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/capability\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(root, "pkg", "runner.go"), "package pkg\n\nfunc Run() string {\n\treturn \"ok\"\n}\n")
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		MaxDirectoryEntries:   1024,
+		EnableShell:           true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       readOnlyCapabilityToolName,
+		Capability: string(ReadOnlyCapabilityDefinition),
+		Path:       filepath.Join("pkg", "runner.go"),
+		Pattern:    "Run",
+	})
+	if result.Error != "" {
+		t.Fatalf("read_only_capability returned error: %v\n%s", result.Error, result.Output)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(result.Output), &raw); err != nil {
+		t.Fatalf("decode capability payload: %v\n%s", err, result.Output)
+	}
+	if _, ok := raw["status"]; ok {
+		t.Fatalf("public status should be suppressed, got %s", result.Output)
+	}
+	if raw["schema_version"] != readOnlyCapabilityResultVersion || raw["routed"] != true || raw["routed_tool"] != "code_navigate" {
+		t.Fatalf("suppressed payload should remain structured, got %#v", raw)
+	}
+	fields := ToolTelemetryFields(result.Tool, result.Output)
+	if fields["capability_status_state"] != "routed" ||
+		fields["capability_fallback_state"] != "none" ||
+		fields["capability_selected_adapter"] != "code_navigate" ||
+		fields["capability_precision_tier"] == "" {
+		t.Fatalf("suppressed status telemetry fields = %#v", fields)
+	}
+}
+
+func TestReadOnlyCapabilityPublicStatusCanBeSuppressedForDisabledFallback(t *testing.T) {
+	t.Setenv(readOnlyCapabilityResolverEnv, "0")
+	t.Setenv(readOnlyCapabilityPublicStatusEnv, "0")
+	root := t.TempDir()
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       readOnlyCapabilityToolName,
+		Capability: string(ReadOnlyCapabilityDefinition),
+		Path:       ".",
+		Pattern:    "Run",
+	})
+	if result.Error == "" {
+		t.Fatalf("disabled resolver should return a structured fallback error, got %#v", result)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(result.Output), &raw); err != nil {
+		t.Fatalf("decode capability fallback payload: %v\n%s", err, result.Output)
+	}
+	if _, ok := raw["status"]; ok {
+		t.Fatalf("public status should be suppressed for disabled fallback, got %s", result.Output)
+	}
+	if raw["fallback_reason"] != "resolver_runtime_disabled" ||
+		raw["resolver_runtime_enabled"] != false ||
+		raw["direct_tool_fallback"] != true ||
+		raw["routed"] != false {
+		t.Fatalf("suppressed disabled fallback should remain structured, got %#v", raw)
+	}
+	fields := ToolTelemetryFields(result.Tool, result.Output)
+	if fields["capability_status_state"] != "fallback" ||
+		fields["capability_fallback_state"] != "disabled" ||
+		fields["capability_fallback_reason"] != "resolver_runtime_disabled" ||
+		fields["capability_fallback"] != true {
+		t.Fatalf("suppressed disabled fallback telemetry fields = %#v", fields)
+	}
+}
+
+func TestReadOnlyCapabilityAdaptersMatchSchemaSideEffectTruth(t *testing.T) {
+	export, err := BuildToolSchemaExport(nil)
+	if err != nil {
+		t.Fatalf("BuildToolSchemaExport returned error: %v", err)
+	}
+	exported := make(map[string]ExportedToolSchema, len(export.Tools))
+	for _, tool := range export.Tools {
+		exported[tool.Name] = tool
+	}
+
+	registry := BuildReadOnlyCapabilityRegistry()
+	for _, capability := range registry.Capabilities {
+		for _, adapter := range capability.Adapters {
+			schemaTool, ok := exported[adapter.Tool]
+			if !ok {
+				t.Fatalf("%s adapter %s is not present in schema export", capability.ID, adapter.Tool)
+			}
+			if !slices.Equal(adapter.SideEffects, schemaTool.Policy.SideEffects) {
+				t.Fatalf("%s adapter %s declared side effects %#v, schema truth %#v", capability.ID, adapter.Tool, adapter.SideEffects, schemaTool.Policy.SideEffects)
+			}
+			if !slices.Equal(schemaTool.Policy.SideEffects, []autonomy.SideEffectClass{autonomy.SideEffectReadOnly}) {
+				t.Fatalf("%s adapter %s schema side effects are not read-only-only: %#v", capability.ID, adapter.Tool, schemaTool.Policy.SideEffects)
+			}
+		}
+	}
+
+	sourceSanity, ok := exported["source_sanity"]
+	if !ok {
+		t.Fatal("source_sanity should remain present as a direct tool schema")
+	}
+	if !slices.Contains(sourceSanity.Policy.SideEffects, autonomy.SideEffectUnknown) {
+		t.Fatalf("source_sanity schema truth should expose unknown side effects while it remains deferred: %#v", sourceSanity.Policy.SideEffects)
+	}
+}
+
+func TestResolveReadOnlyCapabilityFiltersAvailableAdaptersAndAliases(t *testing.T) {
+	resolution, ok := ResolveReadOnlyCapability("reference", []string{"code_navigate", "go_references"})
+	if !ok {
+		t.Fatal("reference alias should resolve")
+	}
+	if resolution.Capability.ID != string(ReadOnlyCapabilityReferences) {
+		t.Fatalf("capability ID = %q", resolution.Capability.ID)
+	}
+	gotTools := capabilityAdapterTools(resolution.AvailableAdapters)
+	if !slices.Equal(gotTools, []string{"code_navigate", "go_references"}) {
+		t.Fatalf("available adapters = %#v", gotTools)
+	}
+	if len(resolution.UnavailableAdapters) == 0 {
+		t.Fatal("expected unavailable adapters when filtering to a narrow tool set")
+	}
+
+	outline, ok := ResolveReadOnlyCapability("file_outline", []string{"code_navigate"})
+	if !ok {
+		t.Fatal("underscore alias should resolve")
+	}
+	if outline.Capability.ID != string(ReadOnlyCapabilityFileOutline) {
+		t.Fatalf("outline capability ID = %q", outline.Capability.ID)
+	}
+	if got := capabilityAdapterTools(outline.AvailableAdapters); !slices.Equal(got, []string{"code_navigate"}) {
+		t.Fatalf("outline available adapters = %#v", got)
+	}
+}
+
+func TestReadOnlyCapabilityRuntimeResolutionDoesNotUseWorkspaceManifestDetection(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "notes.txt"), "Run is documented here.\n")
+	writeTestFile(t, filepath.Join(root, "src", "main.cpp"), "void run() {}\n")
+	writeTestFile(t, filepath.Join(root, "scripts", "tool.py"), "def run():\n    return None\n")
+	writeTestFile(t, filepath.Join(root, "web", "main.ts"), "export function run() {}\n")
+	writeTestFile(t, filepath.Join(root, "crates", "lib.rs"), "fn run() {}\n")
+	writeTestFile(t, filepath.Join(root, "java", "App.java"), "class App { void run() {} }\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		MaxDirectoryEntries:   1024,
+		EnableShell:           true,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       readOnlyCapabilityToolName,
+		Capability: string(ReadOnlyCapabilityDefinition),
+		Path:       "notes.txt",
+		Pattern:    "Run",
+	})
+	if result.Error != "" {
+		t.Fatalf("read_only_capability returned error: %v\n%s", result.Error, result.Output)
+	}
+	var payload ReadOnlyCapabilityExecutionResult
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("decode capability payload: %v\n%s", err, result.Output)
+	}
+	if !payload.Routed || payload.RoutedTool != "code_navigate" {
+		t.Fatalf("expected bounded code_navigate route, got %#v", payload)
+	}
+	if got := capabilityAdapterTools(payload.AvailableAdapters); !slices.Equal(got, []string{"code_navigate"}) {
+		t.Fatalf("path-specific runtime resolver should not expose workspace-detected language adapters, got %#v", got)
+	}
+
+	pyResolution, ok := resolveReadOnlyCapabilityForRequest("definition", ToolRequest{Path: filepath.Join("scripts", "tool.py")})
+	if !ok {
+		t.Fatal("python path should resolve definition capability")
+	}
+	pyTools := capabilityAdapterTools(pyResolution.AvailableAdapters)
+	if !slices.Equal(pyTools, []string{"code_navigate", "python_definition"}) {
+		t.Fatalf("python path should keep only code_navigate plus direct python fallback, got %#v", pyTools)
+	}
+}
+
+func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/capability\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(root, "pkg", "runner.go"), "package pkg\n\nfunc Run() string {\n\treturn helper()\n}\n\nfunc helper() string {\n\treturn \"ok\"\n}\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		MaxDirectoryEntries:   1024,
+		EnableShell:           true,
+	})
+	mgr.goplsChecked = true
+	mgr.goplsPath = ""
+	tests := []struct {
+		name           string
+		req            ToolRequest
+		wantCapability string
+		wantAdapter    string
+	}{
+		{
+			name: "file outline",
+			req: ToolRequest{
+				Tool:       readOnlyCapabilityToolName,
+				Capability: string(ReadOnlyCapabilityFileOutline),
+				Path:       filepath.Join("pkg", "runner.go"),
+			},
+			wantCapability: string(ReadOnlyCapabilityFileOutline),
+			wantAdapter:    "go_file_outline",
+		},
+		{
+			name: "symbol lookup",
+			req: ToolRequest{
+				Tool:       readOnlyCapabilityToolName,
+				Capability: string(ReadOnlyCapabilitySymbolLookup),
+				Path:       filepath.Join("pkg", "runner.go"),
+				Pattern:    "Run",
+			},
+			wantCapability: string(ReadOnlyCapabilitySymbolLookup),
+			wantAdapter:    "go_find_symbol",
+		},
+		{
+			name: "references",
+			req: ToolRequest{
+				Tool:       readOnlyCapabilityToolName,
+				Capability: string(ReadOnlyCapabilityReferences),
+				Path:       filepath.Join("pkg", "runner.go"),
+				Pattern:    "Run",
+			},
+			wantCapability: string(ReadOnlyCapabilityReferences),
+			wantAdapter:    "go_references",
+		},
+		{
+			name: "definition",
+			req: ToolRequest{
+				Tool:       readOnlyCapabilityToolName,
+				Capability: string(ReadOnlyCapabilityDefinition),
+				Path:       filepath.Join("pkg", "runner.go"),
+				Pattern:    "Run",
+			},
+			wantCapability: string(ReadOnlyCapabilityDefinition),
+			wantAdapter:    "go_definition",
+		},
+		{
+			name: "related files",
+			req: ToolRequest{
+				Tool:       readOnlyCapabilityToolName,
+				Capability: string(ReadOnlyCapabilityRelatedFiles),
+				Path:       filepath.Join("pkg", "runner.go"),
+				Pattern:    "runner",
+			},
+			wantCapability: string(ReadOnlyCapabilityRelatedFiles),
+			wantAdapter:    "go_related_files",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := mgr.Execute(context.Background(), tc.req)
+			if result.Error != "" {
+				t.Fatalf("read_only_capability returned error: %v\n%s", result.Error, result.Output)
+			}
+			var payload ReadOnlyCapabilityExecutionResult
+			if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+				t.Fatalf("decode capability payload: %v\n%s", err, result.Output)
+			}
+			if !payload.Routed || payload.Capability != tc.wantCapability {
+				t.Fatalf("payload routing = %#v", payload)
+			}
+			if payload.RoutedTool != "code_navigate" || payload.RoutedAdapter == nil || payload.RoutedAdapter.Tool != "code_navigate" {
+				t.Fatalf("expected route through code_navigate adapter, got %#v", payload)
+			}
+			if payload.UnderlyingResult == nil || payload.UnderlyingResult.Tool != "code_navigate" {
+				t.Fatalf("expected underlying code_navigate result, got %#v", payload.UnderlyingResult)
+			}
+			if payload.Status.State != "routed" ||
+				payload.Status.SelectedAdapter == nil ||
+				payload.Status.SelectedAdapter.Tool != "code_navigate" ||
+				payload.Status.SelectedAdapter.Source != "capability_router" ||
+				payload.Status.SelectedAdapter.Provenance == "" ||
+				payload.Status.PrecisionTier == "" ||
+				payload.Status.Confidence == "" ||
+				payload.Status.Fallback.State != "none" {
+				t.Fatalf("expected successful route status with adapter provenance and precision, got %#v", payload.Status)
+			}
+			if !strings.Contains(payload.UnderlyingResult.Output, "routed_tool: "+tc.wantAdapter) {
+				t.Fatalf("expected underlying adapter %s, got:\n%s", tc.wantAdapter, payload.UnderlyingResult.Output)
+			}
+		})
+	}
+}
+
+func TestReadOnlyCapabilityReportsStructuredDeferredSourceSanityFallback(t *testing.T) {
+	root := t.TempDir()
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: readOnlyCapabilityToolName, Capability: "source-sanity", Path: "."})
+	if result.Error == "" {
+		t.Fatalf("deferred capability should return an error with structured fallback, got %#v", result)
+	}
+	var payload ReadOnlyCapabilityExecutionResult
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("decode capability deferred payload: %v\n%s", err, result.Output)
+	}
+	if payload.FallbackReason != "capability_deferred" || payload.Routed || payload.Capability != "source-sanity" {
+		t.Fatalf("unexpected deferred fallback payload: %#v", payload)
+	}
+	if payload.UnderlyingResult == nil ||
+		payload.UnderlyingResult.Tool != "source_sanity" ||
+		!strings.Contains(payload.UnderlyingResult.Error, "schema_side_effects_not_read_only_only") {
+		t.Fatalf("deferred fallback should preserve direct source_sanity schema truth, got %#v", payload.UnderlyingResult)
+	}
+	if payload.Status.State != "fallback" ||
+		payload.Status.Fallback.State != "deferred" ||
+		payload.Status.Fallback.Reason != "capability_deferred" ||
+		len(payload.Status.UnresolvedGaps) == 0 {
+		t.Fatalf("deferred status should expose fallback details, got %#v", payload.Status)
+	}
+	fields := ToolTelemetryFields(result.Tool, result.Output)
+	if fields["capability_fallback_state"] != "deferred" ||
+		fields["capability_fallback_reason"] != "capability_deferred" ||
+		fields["capability_deferred"] != true {
+		t.Fatalf("deferred telemetry fields = %#v", fields)
+	}
+}
+
+func TestReadOnlyCapabilityReportsStructuredUnmappedFallback(t *testing.T) {
+	root := t.TempDir()
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: readOnlyCapabilityToolName, Capability: "unknown-capability", Path: "."})
+	if result.Error == "" {
+		t.Fatalf("unmapped capability should return an error with structured fallback, got %#v", result)
+	}
+	var payload ReadOnlyCapabilityExecutionResult
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("decode capability fallback payload: %v\n%s", err, result.Output)
+	}
+	if payload.FallbackReason != "capability_unmapped" || payload.Routed {
+		t.Fatalf("unexpected unmapped fallback payload: %#v", payload)
+	}
+	if payload.Status.State != "fallback" ||
+		payload.Status.Fallback.State != "unmapped" ||
+		payload.Status.Fallback.Reason != "capability_unmapped" ||
+		len(payload.Status.UnresolvedGaps) == 0 {
+		t.Fatalf("unmapped status should expose fallback details, got %#v", payload.Status)
+	}
+	fields := ToolTelemetryFields(result.Tool, result.Output)
+	if fields["capability_fallback_state"] != "unmapped" ||
+		fields["capability_fallback_reason"] != "capability_unmapped" ||
+		fields["capability_unmapped"] != true {
+		t.Fatalf("unmapped telemetry fields = %#v", fields)
+	}
+}
+
+func TestReadOnlyCapabilityReportsUnsupportedAbsentConfidence(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "scripts", "player.gd"), "extends Node\n\nfunc _ready():\n\tpass\n")
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		MaxDirectoryEntries:   1024,
+		EnableShell:           true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       readOnlyCapabilityToolName,
+		Capability: string(ReadOnlyCapabilityDefinition),
+		Path:       filepath.Join("scripts", "player.gd"),
+		Language:   "elixir",
+		Pattern:    "MissingSymbol",
+	})
+	if result.Error != "" {
+		t.Fatalf("unsupported language fallback should report absence without tool error: %v\n%s", result.Error, result.Output)
+	}
+	var payload ReadOnlyCapabilityExecutionResult
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("decode capability payload: %v\n%s", err, result.Output)
+	}
+	if !payload.Routed || payload.Status.State != "absent" {
+		t.Fatalf("expected routed absent status, got %#v", payload)
+	}
+	if payload.Status.Fallback.State != "unsupported" ||
+		payload.Status.Fallback.Reason != "unsupported_language" ||
+		!strings.Contains(payload.Status.Fallback.SourceReason, "unsupported language") {
+		t.Fatalf("expected unsupported-language fallback status, got %#v", payload.Status.Fallback)
+	}
+	if payload.Status.AbsenceConfidence == nil ||
+		payload.Status.AbsenceConfidence.Level != "low" ||
+		payload.Status.AbsenceConfidence.Reason != "generic_fallback_no_matches" ||
+		payload.Status.AbsenceConfidence.PrecisionTier != PrecisionTierRGFallback {
+		t.Fatalf("expected absence confidence from generic fallback, got %#v", payload.Status.AbsenceConfidence)
+	}
+	if payload.Status.PrecisionTier != PrecisionTierRGFallback || payload.Status.Confidence != "low" {
+		t.Fatalf("expected low-confidence rg fallback status, got %#v", payload.Status)
+	}
+	statusJSON, err := json.Marshal(payload.Status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(statusJSON)), "pass a path") {
+		t.Fatalf("status must not prescribe next actions: %s", statusJSON)
+	}
+	fields := ToolTelemetryFields(result.Tool, result.Output)
+	if fields["capability_status_state"] != "absent" ||
+		fields["capability_fallback_state"] != "unsupported" ||
+		fields["capability_fallback_reason"] != "unsupported_language" ||
+		fields["capability_absence_confidence"] != "low" ||
+		fields["capability_precision_tier"] != PrecisionTierRGFallback {
+		t.Fatalf("absence telemetry fields = %#v", fields)
+	}
+}
+
+func TestReadOnlyCapabilityCoverageReportsUnmappedAdapters(t *testing.T) {
+	coverage := ReadOnlyCapabilityCoverageForTools(nil)
+	if coverage.CapabilityCount != len(BuildReadOnlyCapabilityRegistry().Capabilities) {
+		t.Fatalf("capability count = %d", coverage.CapabilityCount)
+	}
+	if coverage.StatusFieldCount != jsonTaggedFieldCount(reflect.TypeOf(ReadOnlyCapabilityStatus{})) {
+		t.Fatalf("status field count = %d, want current JSON field count", coverage.StatusFieldCount)
+	}
+	if !coverage.PublicStatusEnabled {
+		t.Fatal("coverage should report public status enabled by default")
+	}
+	if coverage.MappedAdapterCount == 0 || coverage.ReadOnlyAdapterCount == 0 {
+		t.Fatalf("expected non-zero mapped/read-only counts: %#v", coverage)
+	}
+	if coverage.MappedReadOnlyAdapterCount == 0 || coverage.Coverage <= 0 {
+		t.Fatalf("expected measurable positive coverage: %#v", coverage)
+	}
+	if coverage.StatusFieldCount == 0 ||
+		coverage.FallbackStateCount == 0 ||
+		!slices.Contains(coverage.FallbackStates, "unmapped") ||
+		!slices.Contains(coverage.FallbackStates, "unsupported") {
+		t.Fatalf("expected status/fallback state metrics in coverage: %#v", coverage)
+	}
+	if coverage.RoutedCapabilityCount != 5 ||
+		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityDefinition)) ||
+		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityRelatedFiles)) {
+		t.Fatalf("expected routed read-only capabilities in coverage: %#v", coverage)
+	}
+	if coverage.FallbackReasonCount == 0 || !slices.Contains(coverage.FallbackReasons, "capability_unmapped") {
+		t.Fatalf("expected fallback reason metrics in coverage: %#v", coverage)
+	}
+	if !slices.Contains(coverage.FallbackReasons, "capability_deferred") ||
+		!slices.Contains(coverage.FallbackStates, "deferred") {
+		t.Fatalf("expected deferred fallback metrics in coverage: %#v", coverage)
+	}
+	if coverage.RouteStateCounts["routed"] != 5 || coverage.RouteStateCounts["deferred"] == 0 || len(coverage.RouteStates) == 0 {
+		t.Fatalf("expected routed/deferred route state metrics in coverage: %#v", coverage)
+	}
+	if coverage.DisabledCapabilityCount != 0 || len(coverage.DisabledCapabilities) != 0 {
+		t.Fatalf("unexpected disabled routes in default coverage: %#v", coverage)
+	}
+	if coverage.UnmappedAdapterCount != len(coverage.UnmappedAdapters) {
+		t.Fatalf("unmapped count drift: %#v", coverage)
+	}
+	if coverage.UnsafeMappedAdapterCount != 0 || len(coverage.UnsafeMappedAdapters) != 0 {
+		t.Fatalf("read-only capability registry should have zero unsafe schema mappings: %#v", coverage.UnsafeMappedAdapters)
+	}
+	if coverage.DeferredAdapterCount != len(coverage.DeferredAdapters) {
+		t.Fatalf("deferred count drift: %#v", coverage)
+	}
+	if !slices.ContainsFunc(coverage.DeferredAdapters, func(adapter ReadOnlyCapabilityDeferredAdapterSpec) bool {
+		return adapter.Capability == "source-sanity" &&
+			adapter.Tool == "source_sanity" &&
+			slices.Contains(adapter.SchemaSideEffects, autonomy.SideEffectUnknown)
+	}) {
+		t.Fatalf("source_sanity should be named as deferred mixed/unknown adapter: %#v", coverage.DeferredAdapters)
+	}
+	if !slices.Contains(coverage.UnmappedAdapters, "context_pack") {
+		t.Fatalf("expected context_pack to remain an unmapped read-only adapter in P3.2: %#v", coverage.UnmappedAdapters)
+	}
+	if slices.Contains(coverage.UnmappedAdapters, "go_definition") {
+		t.Fatalf("go_definition should be covered by the definition capability: %#v", coverage.UnmappedAdapters)
+	}
+}
+
+func TestReadOnlyCapabilityCoverageKeepsStatusMetricsWhenPublicStatusSuppressed(t *testing.T) {
+	t.Setenv(readOnlyCapabilityPublicStatusEnv, "0")
+	coverage := ReadOnlyCapabilityCoverageForTools(nil)
+	if coverage.PublicStatusEnabled {
+		t.Fatal("coverage should report public status suppression")
+	}
+	if coverage.StatusFieldCount != jsonTaggedFieldCount(reflect.TypeOf(ReadOnlyCapabilityStatus{})) {
+		t.Fatalf("status field count = %d, want current JSON field count", coverage.StatusFieldCount)
+	}
+	if coverage.FallbackStateCount == 0 || !slices.Contains(coverage.FallbackStates, "disabled") {
+		t.Fatalf("suppressed public status must retain fallback state metrics: %#v", coverage)
+	}
+	if coverage.FallbackReasonCount == 0 || !slices.Contains(coverage.FallbackReasons, "resolver_runtime_disabled") {
+		t.Fatalf("suppressed public status must retain fallback reason metrics: %#v", coverage)
+	}
+	if coverage.RoutedCapabilityCount == 0 {
+		t.Fatalf("public status suppression should not disable routing metrics: %#v", coverage)
+	}
+}
+
+func TestHarnessAuditReportsCapabilityRegistryMetrics(t *testing.T) {
+	root := t.TempDir()
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "tool_surface"})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	if !strings.Contains(result.Summary, "capability_coverage=") {
+		t.Fatalf("summary should include capability coverage metric, got %q", result.Summary)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.ToolSurface == nil || report.ToolSurface.CapabilityRegistry == nil {
+		t.Fatalf("expected capability registry metrics, got %#v", report.ToolSurface)
+	}
+	got := report.ToolSurface.CapabilityRegistry
+	want := ReadOnlyCapabilityCoverageForTools(toolManifestToolsAcrossBuiltInSurfaces())
+	if got.CapabilityCount != want.CapabilityCount ||
+		got.StatusFieldCount != want.StatusFieldCount ||
+		got.PublicStatusEnabled != want.PublicStatusEnabled ||
+		got.FallbackStateCount != want.FallbackStateCount ||
+		got.RoutedCapabilityCount != want.RoutedCapabilityCount ||
+		got.DisabledCapabilityCount != want.DisabledCapabilityCount ||
+		got.FallbackReasonCount != want.FallbackReasonCount ||
+		got.MappedReadOnlyAdapterCount != want.MappedReadOnlyAdapterCount ||
+		got.ReadOnlyAdapterCount != want.ReadOnlyAdapterCount ||
+		got.UnmappedAdapterCount != want.UnmappedAdapterCount {
+		t.Fatalf("capability registry metrics = %#v, want %#v", got, want)
+	}
+	if !got.ResolverRuntimeEnabled {
+		t.Fatal("harness audit should report enabled runtime resolver for P3.2")
+	}
+	if got.RoutedCapabilityCount < 3 || !slices.Contains(got.RoutedCapabilities, string(ReadOnlyCapabilityFileOutline)) {
+		t.Fatalf("harness audit should report routed capabilities, got %#v", got)
+	}
+	if got.FallbackReasonCount == 0 || !slices.Contains(got.FallbackReasons, "resolver_runtime_disabled") {
+		t.Fatalf("harness audit should report fallback reason metrics, got %#v", got)
+	}
+	if got.FallbackStateCount == 0 || !slices.Contains(got.FallbackStates, "disabled") {
+		t.Fatalf("harness audit should report fallback state metrics, got %#v", got)
+	}
+	if got.RouteStateCounts["routed"] != 5 || got.RouteStateCounts["deferred"] == 0 {
+		t.Fatalf("harness audit should report routed/deferred route states, got %#v", got.RouteStateCounts)
+	}
+	if got.UnsafeMappedAdapterCount != 0 || len(got.UnsafeMappedAdapters) != 0 {
+		t.Fatalf("harness audit should report zero unsafe read-only mappings, got %#v", got.UnsafeMappedAdapters)
+	}
+	if !slices.ContainsFunc(got.DeferredAdapters, func(adapter ReadOnlyCapabilityDeferredAdapterSpec) bool {
+		return adapter.Capability == "source-sanity" && adapter.Tool == "source_sanity"
+	}) {
+		t.Fatalf("harness audit should name deferred source_sanity adapter, got %#v", got.DeferredAdapters)
+	}
+}
+
+func TestUnsafeReadOnlyCapabilityMappingsNameSchemaTruthViolations(t *testing.T) {
+	registry := ReadOnlyCapabilityRegistry{
+		Capabilities: []ReadOnlyCapabilitySpec{
+			readOnlyCapability(
+				ReadOnlyCapabilityID("source-sanity"),
+				"fixture",
+				[]ReadOnlyCapabilityAdapterSpec{readOnlyAdapter("source_sanity", "", "", "fixture")},
+			),
+		},
+	}
+
+	unsafe := unsafeReadOnlyCapabilityMappings(registry)
+	if len(unsafe) != 1 {
+		t.Fatalf("unsafe mapping count = %d, got %#v", len(unsafe), unsafe)
+	}
+	got := unsafe[0]
+	if got.Capability != "source-sanity" || got.Tool != "source_sanity" {
+		t.Fatalf("unsafe mapping should identify capability and tool, got %#v", got)
+	}
+	if got.Reason != "schema_side_effects_not_read_only_only" {
+		t.Fatalf("unsafe reason = %q", got.Reason)
+	}
+	if !slices.Contains(got.SchemaSideEffects, autonomy.SideEffectUnknown) {
+		t.Fatalf("unsafe mapping should carry schema truth, got %#v", got.SchemaSideEffects)
+	}
+}
+
+func capabilityAdapterTools(adapters []ReadOnlyCapabilityAdapterSpec) []string {
+	out := make([]string, 0, len(adapters))
+	for _, adapter := range adapters {
+		out = append(out, adapter.Tool)
+	}
+	return out
+}
+
+func jsonTaggedFieldCount(t reflect.Type) int {
+	count := 0
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		name := strings.Split(field.Tag.Get("json"), ",")[0]
+		if name == "-" {
+			continue
+		}
+		count++
+	}
+	return count
+}

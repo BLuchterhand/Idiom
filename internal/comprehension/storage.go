@@ -1,6 +1,7 @@
 package comprehension
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,14 @@ type SQLiteMetadata struct {
 	SourceIndexID string `json:"source_index_id,omitempty"`
 	CreatedAt     string `json:"created_at,omitempty"`
 	UpdatedAt     string `json:"updated_at,omitempty"`
+}
+
+type sqlitePatchCounts struct {
+	IndexID        string
+	Languages      []string
+	FilesIndexed   int
+	SymbolsIndexed int
+	EdgesIndexed   int
 }
 
 func storageBackends(root string, activeKind string) []StoreBackendReport {
@@ -253,6 +262,494 @@ func saveSQLiteGraph(root string, graph Graph) error {
 	return writeSQLiteMetadata(root, metadata)
 }
 
+func patchSQLiteGraphScope(root string, graph Graph, scope string, existing StatusReport) (sqlitePatchCounts, error) {
+	if err := os.MkdirAll(filepath.Dir(sqliteGraphPath(root)), 0o755); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	if _, err := os.Stat(sqliteGraphPath(root)); err != nil {
+		if err := prepareSQLiteGraphForWrite(root); err != nil {
+			return sqlitePatchCounts{}, err
+		}
+	}
+	db, err := openSQLite(sqliteGraphPath(root))
+	if err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	defer db.Close()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err := createSQLiteSchema(tx); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	replacementIDs := graphNodeIDs(graph.Nodes)
+	if hasSummary, err := hasSQLiteSummaryIndex(tx); err != nil {
+		return sqlitePatchCounts{}, err
+	} else if hasSummary {
+		if err := deleteSQLiteSummaryIndex(tx); err != nil {
+			return sqlitePatchCounts{}, err
+		}
+	}
+	if err := deleteSQLiteScope(tx, scope, replacementIDs); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	if err := upsertSQLiteGraphNodes(tx, graph.Nodes); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	if err := upsertSQLiteGraphEdges(tx, graph.Edges); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	if err := deleteSQLiteOrphanContextNodes(tx); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+
+	indexID := firstNonEmpty(existing.IndexID, graph.ID)
+	if indexID == "" {
+		indexID = graphID(graph)
+	}
+	languages, err := sqliteLanguagesTx(tx)
+	if err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	graph.ID = indexID
+	graph.Languages = languages
+	if err := updateSQLiteGraphMetadata(tx, graph); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	filesIndexed, symbolsIndexed, err := sqliteNodeCountsTx(tx)
+	if err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	edgesIndexed, err := sqliteEdgeCountTx(tx)
+	if err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	if err := updateSQLiteGraphCounts(tx, filesIndexed, symbolsIndexed, edgesIndexed); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	committed = true
+
+	metadata := SQLiteMetadata{
+		StoreKind:     sqliteStoreKind,
+		SchemaVersion: sqliteGraphSchemaVersion,
+		SourceIndexID: indexID,
+	}
+	if existingMeta, err := readSQLiteMetadata(root); err == nil {
+		metadata.CreatedAt = existingMeta.CreatedAt
+	}
+	if err := writeSQLiteMetadata(root, metadata); err != nil {
+		return sqlitePatchCounts{}, err
+	}
+	return sqlitePatchCounts{
+		IndexID:        indexID,
+		Languages:      languages,
+		FilesIndexed:   filesIndexed,
+		SymbolsIndexed: symbolsIndexed,
+		EdgesIndexed:   edgesIndexed,
+	}, nil
+}
+
+func graphNodeIDs(nodes []Node) map[string]struct{} {
+	ids := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		if strings.TrimSpace(node.ID) != "" {
+			ids[node.ID] = struct{}{}
+		}
+	}
+	return ids
+}
+
+func hasSQLiteSummaryIndex(tx *sql.Tx) (bool, error) {
+	var id string
+	err := tx.QueryRow(`SELECT id FROM graph_nodes WHERE collector = 'summary_index' OR kind = 'summary' LIMIT 1`).Scan(&id)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func deleteSQLiteSummaryIndex(tx *sql.Tx) error {
+	if _, err := tx.Exec(`DELETE FROM graph_edges WHERE collector = 'summary_index'`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM graph_edges WHERE source_id IN (SELECT id FROM graph_nodes WHERE collector = 'summary_index' OR kind = 'summary') OR target_id IN (SELECT id FROM graph_nodes WHERE collector = 'summary_index' OR kind = 'summary')`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM graph_nodes WHERE collector = 'summary_index' OR kind = 'summary'`); err != nil {
+		return err
+	}
+	return nil
+}
+
+func deleteSQLiteScope(tx *sql.Tx, scope string, replacementIDs map[string]struct{}) error {
+	scope = cleanScope(scope)
+	rows, err := tx.Query(`SELECT id FROM graph_nodes WHERE COALESCE(path, '') = ? OR COALESCE(path, '') LIKE ?`, scope, scope+"/%")
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		if _, replaced := replacementIDs[id]; replaced {
+			if _, err := tx.Exec(`DELETE FROM graph_edges WHERE source_id = ?`, id); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec(`DELETE FROM graph_edges WHERE source_id = ? OR target_id = ?`, id, id); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`DELETE FROM graph_nodes WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteSQLiteOrphanContextNodes(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT n.id
+		FROM graph_nodes n
+		WHERE (
+			n.kind IN ('external_dependency', 'external_symbol')
+			AND NOT EXISTS (
+				SELECT 1 FROM graph_edges e
+				WHERE e.source_id = n.id OR e.target_id = n.id
+			)
+		) OR (
+			n.kind IN ('package', 'module')
+			AND NOT EXISTS (
+				SELECT 1
+				FROM graph_edges e
+				JOIN graph_nodes f ON f.id = e.target_id
+				WHERE e.source_id = n.id AND e.kind = 'contains' AND f.kind = 'file'
+			)
+		)`)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec(`DELETE FROM graph_edges WHERE source_id = ? OR target_id = ?`, id, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM graph_nodes WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func upsertSQLiteGraphNodes(tx *sql.Tx, nodes []Node) error {
+	stmt, err := tx.Prepare(`INSERT INTO graph_nodes(
+		id, kind, path, language, qualified_name, start_line, end_line, fingerprint,
+		git_head, collector, confidence, properties_json, created_at, updated_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		kind = excluded.kind,
+		path = excluded.path,
+		language = excluded.language,
+		qualified_name = excluded.qualified_name,
+		start_line = excluded.start_line,
+		end_line = excluded.end_line,
+		fingerprint = excluded.fingerprint,
+		git_head = excluded.git_head,
+		collector = excluded.collector,
+		confidence = excluded.confidence,
+		properties_json = excluded.properties_json,
+		updated_at = excluded.updated_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, node := range nodes {
+		propertiesJSON, err := optionalJSON(node.Properties)
+		if err != nil {
+			return fmt.Errorf("encode node %s properties: %w", node.ID, err)
+		}
+		if _, err := stmt.Exec(
+			node.ID,
+			node.Kind,
+			emptyStringAsNil(node.Path),
+			emptyStringAsNil(node.Language),
+			emptyStringAsNil(node.QualifiedName),
+			zeroAsNil(node.StartLine),
+			zeroAsNil(node.EndLine),
+			emptyStringAsNil(node.Fingerprint),
+			emptyStringAsNil(node.GitHead),
+			node.Collector,
+			node.Confidence,
+			propertiesJSON,
+			node.CreatedAt,
+			node.UpdatedAt,
+		); err != nil {
+			return fmt.Errorf("upsert node %s: %w", node.ID, err)
+		}
+	}
+	return nil
+}
+
+func upsertSQLiteGraphEdges(tx *sql.Tx, edges []Edge) error {
+	stmt, err := tx.Prepare(`INSERT INTO graph_edges(
+		id, source_id, target_id, kind, collector, confidence, evidence_json,
+		properties_json, created_at, updated_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		source_id = excluded.source_id,
+		target_id = excluded.target_id,
+		kind = excluded.kind,
+		collector = excluded.collector,
+		confidence = excluded.confidence,
+		evidence_json = excluded.evidence_json,
+		properties_json = excluded.properties_json,
+		updated_at = excluded.updated_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, edge := range edges {
+		evidenceJSON, err := optionalJSON(edge.Evidence)
+		if err != nil {
+			return fmt.Errorf("encode edge %s evidence: %w", edge.ID, err)
+		}
+		propertiesJSON, err := optionalJSON(edge.Properties)
+		if err != nil {
+			return fmt.Errorf("encode edge %s properties: %w", edge.ID, err)
+		}
+		if _, err := stmt.Exec(
+			edge.ID,
+			edge.SourceID,
+			edge.TargetID,
+			edge.Kind,
+			edge.Collector,
+			edge.Confidence,
+			evidenceJSON,
+			propertiesJSON,
+			edge.CreatedAt,
+			edge.UpdatedAt,
+		); err != nil {
+			return fmt.Errorf("upsert edge %s: %w", edge.ID, err)
+		}
+	}
+	return nil
+}
+
+func updateSQLiteGraphMetadata(tx *sql.Tx, graph Graph) error {
+	metadata := map[string]string{
+		"schema_version":    strconv.Itoa(graph.SchemaVersion),
+		"index_id":          graph.ID,
+		"root":              graph.Root,
+		"generated_at":      graph.GeneratedAt,
+		"git_head":          graph.GitHead,
+		"git_dirty":         strconv.FormatBool(graph.GitDirty),
+		"store_kind":        sqliteStoreKind,
+		"collector_version": graph.CollectorVersion,
+	}
+	if len(graph.CollectorVersions) > 0 {
+		data, err := json.Marshal(graph.CollectorVersions)
+		if err != nil {
+			return err
+		}
+		metadata["collector_versions_json"] = string(data)
+	}
+	if len(graph.Languages) > 0 {
+		data, err := json.Marshal(graph.Languages)
+		if err != nil {
+			return err
+		}
+		metadata["languages_json"] = string(data)
+	}
+	if len(graph.CollectorReports) > 0 {
+		data, err := json.Marshal(graph.CollectorReports)
+		if err != nil {
+			return err
+		}
+		metadata["collector_reports_json"] = string(data)
+	}
+	metadata["files_indexed"] = strconv.Itoa(countNodes(graph.Nodes, "file"))
+	metadata["symbols_indexed"] = strconv.Itoa(countSymbolNodes(graph.Nodes))
+	metadata["edges_indexed"] = strconv.Itoa(len(graph.Edges))
+	for key, value := range metadata {
+		if _, err := tx.Exec(`INSERT INTO graph_metadata(key, value) VALUES(?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateSQLiteGraphCounts(tx *sql.Tx, filesIndexed int, symbolsIndexed int, edgesIndexed int) error {
+	values := map[string]string{
+		"files_indexed":   strconv.Itoa(filesIndexed),
+		"symbols_indexed": strconv.Itoa(symbolsIndexed),
+		"edges_indexed":   strconv.Itoa(edgesIndexed),
+	}
+	for key, value := range values {
+		if _, err := tx.Exec(`INSERT INTO graph_metadata(key, value) VALUES(?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sqliteNodeCountsTx(tx *sql.Tx) (filesIndexed int, symbolsIndexed int, err error) {
+	rows, err := tx.Query(`SELECT kind, COUNT(*) FROM graph_nodes GROUP BY kind`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return 0, 0, err
+		}
+		if kind == "file" {
+			filesIndexed = count
+		}
+		if isSymbolKind(kind) {
+			symbolsIndexed += count
+		}
+	}
+	return filesIndexed, symbolsIndexed, rows.Err()
+}
+
+func sqliteEdgeCountTx(tx *sql.Tx) (int, error) {
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM graph_edges`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func sqliteLanguagesTx(tx *sql.Tx) ([]string, error) {
+	rows, err := tx.Query(`SELECT DISTINCT COALESCE(language, '') FROM graph_nodes WHERE COALESCE(language, '') != '' ORDER BY language`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var languages []string
+	for rows.Next() {
+		var language string
+		if err := rows.Scan(&language); err != nil {
+			return nil, err
+		}
+		languages = append(languages, language)
+	}
+	return languages, rows.Err()
+}
+
+func dependencyRefreshPathsFromSQLite(root string, scope string) ([]string, error) {
+	scope = cleanScope(scope)
+	db, err := openSQLite(sqliteGraphPath(root))
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	paths := make(map[string]struct{})
+	fileRows, err := db.Query(`SELECT COALESCE(path, '') FROM graph_nodes WHERE kind = 'file' AND (COALESCE(path, '') = ? OR COALESCE(path, '') LIKE ?)`, scope, scope+"/%")
+	if err != nil {
+		return nil, err
+	}
+	for fileRows.Next() {
+		var path string
+		if err := fileRows.Scan(&path); err != nil {
+			fileRows.Close()
+			return nil, err
+		}
+		path = cleanScope(path)
+		if path != "" && path != "." {
+			paths[path] = struct{}{}
+		}
+	}
+	fileRows.Close()
+	if err := fileRows.Err(); err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 && scope != "." {
+		paths[scope] = struct{}{}
+	}
+
+	edgeRows, err := db.Query(`SELECT COALESCE(source.path, ''), COALESCE(target.path, '')
+		FROM graph_edges edge
+		JOIN graph_nodes source ON source.id = edge.source_id
+		JOIN graph_nodes target ON target.id = edge.target_id
+		WHERE edge.kind IN ('imports', 'calls', 'tests')
+			AND COALESCE(source.path, '') != ''
+			AND COALESCE(target.path, '') != ''
+			AND (
+				COALESCE(source.path, '') = ? OR COALESCE(source.path, '') LIKE ?
+				OR COALESCE(target.path, '') = ? OR COALESCE(target.path, '') LIKE ?
+			)`, scope, scope+"/%", scope, scope+"/%")
+	if err != nil {
+		return nil, err
+	}
+	for edgeRows.Next() {
+		var sourcePath, targetPath string
+		if err := edgeRows.Scan(&sourcePath, &targetPath); err != nil {
+			edgeRows.Close()
+			return nil, err
+		}
+		sourcePath = cleanScope(sourcePath)
+		targetPath = cleanScope(targetPath)
+		sourceInScope := pathInScope(sourcePath, scope)
+		targetInScope := pathInScope(targetPath, scope)
+		switch {
+		case sourceInScope && !targetInScope:
+			paths[targetPath] = struct{}{}
+		case targetInScope && !sourceInScope:
+			paths[sourcePath] = struct{}{}
+		}
+	}
+	edgeRows.Close()
+	if err := edgeRows.Err(); err != nil {
+		return nil, err
+	}
+	return sortedPathSet(paths), nil
+}
+
 func prepareSQLiteGraphForWrite(root string) error {
 	report := sqliteStorageBackend(root, sqliteStoreKind)
 	if report.Status == "absent" || report.Status == "active" || report.Status == "compatible" || report.Status == "migration_available" {
@@ -304,6 +801,309 @@ func loadSQLiteGraph(root string) (Graph, error) {
 	graph.Nodes = nodes
 	graph.Edges = edges
 	return graph, nil
+}
+
+func statusFromSQLite(root string, activeKind string, scope string) (StatusReport, bool, error) {
+	if _, err := os.Stat(sqliteGraphPath(root)); err != nil {
+		if os.IsNotExist(err) {
+			return StatusReport{}, false, os.ErrNotExist
+		}
+		return StatusReport{}, false, err
+	}
+	meta, err := readSQLiteMetadata(root)
+	if err != nil {
+		return StatusReport{}, false, err
+	}
+	if meta.SchemaVersion <= 0 || meta.SchemaVersion > sqliteGraphSchemaVersion {
+		return StatusReport{}, false, fmt.Errorf("SQLite graph backend schema version %d is not supported", meta.SchemaVersion)
+	}
+	if meta.SchemaVersion < sqliteGraphSchemaVersion {
+		return StatusReport{}, false, fmt.Errorf("SQLite graph backend schema version %d needs migration to %d", meta.SchemaVersion, sqliteGraphSchemaVersion)
+	}
+	if meta.StoreKind != "" && meta.StoreKind != sqliteStoreKind {
+		return StatusReport{}, false, fmt.Errorf("SQLite graph store kind %q does not match %q", meta.StoreKind, sqliteStoreKind)
+	}
+	if !looksLikeSQLite(sqliteGraphPath(root)) {
+		return StatusReport{}, false, fmt.Errorf("graph.sqlite does not have a SQLite file header")
+	}
+	db, err := openSQLite(sqliteGraphPath(root))
+	if err != nil {
+		return StatusReport{}, false, err
+	}
+	defer db.Close()
+
+	values, err := readSQLiteGraphMetadata(db)
+	if err != nil {
+		return StatusReport{}, false, err
+	}
+	graph, err := graphFromSQLiteMetadata(values)
+	if err != nil {
+		return StatusReport{}, false, err
+	}
+	if activeKind == "" {
+		activeKind = sqliteStoreKind
+	}
+	currentVersion := currentCollectorVersion()
+	collectorMismatch := strings.TrimSpace(graph.CollectorVersion) == "" || graph.CollectorVersion != currentVersion
+	staleFiles, missingFiles, err := sqliteStaleFilePaths(root, db, scope, graph.Languages)
+	if err != nil {
+		return StatusReport{}, false, err
+	}
+	filesIndexed, symbolsIndexed, edgesIndexed, countsOK := sqliteStatusCountsFromMetadata(values)
+	if !countsOK {
+		filesIndexed, symbolsIndexed, err = sqliteNodeCounts(db)
+		if err != nil {
+			return StatusReport{}, false, err
+		}
+		edgesIndexed, err = sqliteEdgeCount(db)
+		if err != nil {
+			return StatusReport{}, false, err
+		}
+	}
+	staleSymbols, staleSymbolSamples, err := sqliteStaleSymbolSummary(db, staleFiles, missingFiles)
+	if err != nil {
+		return StatusReport{}, false, err
+	}
+	gitHead, gitDirty := gitState(context.Background(), root)
+	status := StatusReport{
+		Indexed:                  true,
+		IndexID:                  graph.ID,
+		StoreKind:                activeKind,
+		Root:                     root,
+		GitHead:                  gitHead,
+		GitDirty:                 gitDirty,
+		GeneratedAt:              graph.GeneratedAt,
+		CollectorVersion:         graph.CollectorVersion,
+		CurrentCollectorVersion:  currentVersion,
+		CollectorVersionMismatch: collectorMismatch,
+		Languages:                graph.Languages,
+		FilesIndexed:             filesIndexed,
+		SymbolsIndexed:           symbolsIndexed,
+		EdgesIndexed:             edgesIndexed,
+		StorageBackends:          fastStorageBackends(root, activeKind),
+		CollectorReports:         graph.CollectorReports,
+		StaleFiles:               staleFiles,
+		StaleSymbols:             staleSymbols,
+		StaleSymbolSamples:       summarizeNodes(staleSymbolSamples, StatusReport{StaleFiles: staleFiles, MissingFiles: missingFiles}),
+		MissingFiles:             missingFiles,
+		Fresh:                    !collectorMismatch && len(staleFiles) == 0 && len(missingFiles) == 0,
+	}
+	return StatusReportWithMetadata(status, "context_status", nil), true, nil
+}
+
+func sqliteStatusCountsFromMetadata(values map[string]string) (filesIndexed int, symbolsIndexed int, edgesIndexed int, ok bool) {
+	filesIndexed, err := strconv.Atoi(values["files_indexed"])
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	symbolsIndexed, err = strconv.Atoi(values["symbols_indexed"])
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	edgesIndexed, err = strconv.Atoi(values["edges_indexed"])
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return filesIndexed, symbolsIndexed, edgesIndexed, true
+}
+
+func fastStorageBackends(root string, activeKind string) []StoreBackendReport {
+	return []StoreBackendReport{
+		fastJSONStorageBackend(root, activeKind),
+		fastSQLiteStorageBackend(root, activeKind),
+	}
+}
+
+func fastJSONStorageBackend(root string, activeKind string) StoreBackendReport {
+	report := StoreBackendReport{
+		Kind:                 storeKind,
+		Path:                 filepath.ToSlash(filepath.Join(".idiom", "comprehension", "graph.json")),
+		Status:               "absent",
+		Active:               activeKind == storeKind || activeKind == "",
+		CurrentSchemaVersion: jsonGraphSchemaVersion,
+		Compatible:           true,
+		Reason:               "JSON graph export is not present",
+	}
+	if _, err := os.Stat(graphPath(root)); err == nil {
+		report.Status = "export"
+		report.Reason = "JSON graph export is present"
+	}
+	return report
+}
+
+func fastSQLiteStorageBackend(root string, activeKind string) StoreBackendReport {
+	report := StoreBackendReport{
+		Kind:                 sqliteStoreKind,
+		Path:                 filepath.ToSlash(filepath.Join(".idiom", "comprehension", "graph.sqlite")),
+		MetadataPath:         filepath.ToSlash(filepath.Join(".idiom", "comprehension", "graph.sqlite.meta.json")),
+		Status:               "absent",
+		Active:               activeKind == sqliteStoreKind,
+		CurrentSchemaVersion: sqliteGraphSchemaVersion,
+		Compatible:           true,
+		Reason:               "SQLite graph store is not present",
+	}
+	if _, err := os.Stat(sqliteGraphPath(root)); err != nil {
+		return report
+	}
+	report.Status = "present"
+	meta, err := readSQLiteMetadata(root)
+	if err != nil {
+		report.Status = "unversioned"
+		report.Compatible = false
+		report.Reason = err.Error()
+		return report
+	}
+	report.SchemaVersion = meta.SchemaVersion
+	if report.Active {
+		report.Status = "active"
+		report.Reason = "SQLite graph is active"
+	} else {
+		report.Status = "compatible"
+		report.Reason = "SQLite graph is compatible"
+	}
+	return report
+}
+
+func sqliteStaleFilePaths(root string, db *sql.DB, scope string, indexedLanguages []string) ([]string, []string, error) {
+	query := `SELECT COALESCE(path, ''), COALESCE(fingerprint, '') FROM graph_nodes WHERE kind = 'file' AND COALESCE(path, '') != ''`
+	var args []any
+	if clean := cleanScope(scope); clean != "" && clean != "." {
+		query += ` AND (path = ? OR path LIKE ?)`
+		args = append(args, clean, clean+"/%")
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var stale []string
+	var missing []string
+	indexedFiles := make(map[string]struct{})
+	for rows.Next() {
+		var path, fingerprint string
+		if err := rows.Scan(&path, &fingerprint); err != nil {
+			return nil, nil, err
+		}
+		indexedFiles[path] = struct{}{}
+		current, err := fileFingerprint(filepath.Join(root, filepath.FromSlash(path)))
+		if os.IsNotExist(err) {
+			missing = append(missing, path)
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		if current != fingerprint {
+			stale = append(stale, path)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	stale = append(stale, unindexedSourceFilePaths(root, cleanScope(scope), indexedLanguages, indexedFiles)...)
+	return uniqueSortedStrings(stale), uniqueSortedStrings(missing), nil
+}
+
+func sqliteNodeCounts(db *sql.DB) (filesIndexed int, symbolsIndexed int, err error) {
+	rows, err := db.Query(`SELECT kind, COUNT(*) FROM graph_nodes GROUP BY kind`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return 0, 0, err
+		}
+		if kind == "file" {
+			filesIndexed = count
+		}
+		if isSymbolKind(kind) {
+			symbolsIndexed += count
+		}
+	}
+	return filesIndexed, symbolsIndexed, rows.Err()
+}
+
+func sqliteEdgeCount(db *sql.DB) (int, error) {
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM graph_edges`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func sqliteStaleSymbolSummary(db *sql.DB, staleFiles []string, missingFiles []string) (int, []Node, error) {
+	staleSet := make(map[string]struct{}, len(staleFiles)+len(missingFiles))
+	paths := make([]string, 0, len(staleFiles)+len(missingFiles))
+	for _, path := range staleFiles {
+		staleSet[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	for _, path := range missingFiles {
+		staleSet[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	paths = uniqueSortedStrings(paths)
+	if len(paths) == 0 {
+		return 0, nil, nil
+	}
+	placeholders := make([]string, 0, len(paths))
+	args := make([]any, 0, len(paths))
+	for _, path := range paths {
+		placeholders = append(placeholders, "?")
+		args = append(args, path)
+	}
+	query := `SELECT
+		id, kind, COALESCE(path, ''), COALESCE(language, ''),
+		COALESCE(qualified_name, ''), COALESCE(start_line, 0), COALESCE(end_line, 0),
+		COALESCE(fingerprint, ''), COALESCE(git_head, ''), collector, confidence,
+		COALESCE(properties_json, ''), created_at, updated_at
+		FROM graph_nodes WHERE path IN (` + strings.Join(placeholders, ",") + `) ORDER BY id`
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+	count := 0
+	samples := make([]Node, 0, 12)
+	for rows.Next() {
+		var propertiesJSON string
+		var node Node
+		if err := rows.Scan(
+			&node.ID,
+			&node.Kind,
+			&node.Path,
+			&node.Language,
+			&node.QualifiedName,
+			&node.StartLine,
+			&node.EndLine,
+			&node.Fingerprint,
+			&node.GitHead,
+			&node.Collector,
+			&node.Confidence,
+			&propertiesJSON,
+			&node.CreatedAt,
+			&node.UpdatedAt,
+		); err != nil {
+			return 0, nil, err
+		}
+		if !isSymbolKind(node.Kind) {
+			continue
+		}
+		if _, ok := staleSet[node.Path]; !ok {
+			continue
+		}
+		count++
+		if len(samples) < 12 {
+			if err := decodeOptionalJSONMap(propertiesJSON, &node.Properties); err != nil {
+				return 0, nil, fmt.Errorf("decode node %s properties: %w", node.ID, err)
+			}
+			samples = append(samples, node)
+		}
+	}
+	return count, samples, rows.Err()
 }
 
 func openSQLite(path string) (*sql.DB, error) {
@@ -361,11 +1161,19 @@ func createSQLiteSchema(tx *sql.Tx) error {
 			output_json TEXT NOT NULL,
 			fingerprint TEXT NOT NULL,
 			stale INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL
+			created_at TEXT NOT NULL,
+			index_id TEXT,
+			task TEXT,
+			mode TEXT,
+			workspace_state_fingerprint TEXT,
+			referenced_paths_json TEXT,
+			source_fingerprints_json TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS graph_nodes_path_idx ON graph_nodes(path)`,
 		`CREATE INDEX IF NOT EXISTS graph_nodes_kind_path_idx ON graph_nodes(kind, path)`,
+		`CREATE INDEX IF NOT EXISTS graph_nodes_collector_kind_idx ON graph_nodes(collector, kind)`,
 		`CREATE INDEX IF NOT EXISTS graph_nodes_qualified_name_idx ON graph_nodes(qualified_name)`,
+		`CREATE INDEX IF NOT EXISTS graph_edges_collector_idx ON graph_edges(collector)`,
 		`CREATE INDEX IF NOT EXISTS graph_edges_source_kind_idx ON graph_edges(source_id, kind)`,
 		`CREATE INDEX IF NOT EXISTS graph_edges_target_kind_idx ON graph_edges(target_id, kind)`,
 	}
@@ -374,7 +1182,7 @@ func createSQLiteSchema(tx *sql.Tx) error {
 			return err
 		}
 	}
-	return nil
+	return ensureGraphViewsColumns(tx)
 }
 
 func replaceSQLiteGraph(tx *sql.Tx, graph Graph) error {
@@ -421,6 +1229,9 @@ func replaceSQLiteGraph(tx *sql.Tx, graph Graph) error {
 		}
 		metadata["collector_reports_json"] = string(data)
 	}
+	metadata["files_indexed"] = strconv.Itoa(countNodes(graph.Nodes, "file"))
+	metadata["symbols_indexed"] = strconv.Itoa(countSymbolNodes(graph.Nodes))
+	metadata["edges_indexed"] = strconv.Itoa(len(graph.Edges))
 	for key, value := range metadata {
 		if _, err := tx.Exec(`INSERT INTO graph_metadata(key, value) VALUES(?, ?)`, key, value); err != nil {
 			return err

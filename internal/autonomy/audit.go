@@ -1,0 +1,893 @@
+package autonomy
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+const AuditReportSchemaVersion = "idiom.autonomy.audit.v1"
+
+type EventAuditOptions struct {
+	ExpectedContractIDs []string
+}
+
+type EventAuditReport struct {
+	SchemaVersion          string                         `json:"schema_version"`
+	TotalEvents            int                            `json:"total_events"`
+	AllClear               bool                           `json:"all_clear"`
+	Contracts              []ContractEventCoverage        `json:"contracts,omitempty"`
+	LifecycleCoverage      LifecycleEventCoverage         `json:"lifecycle_coverage"`
+	PolicyCoverage         PolicyEventCoverage            `json:"policy_coverage"`
+	ObligationCoverage     ObligationEventCoverage        `json:"obligation_coverage"`
+	GateCoverage           GateEventCoverage              `json:"gate_coverage"`
+	ReferenceCoverage      ContractReferenceCoverage      `json:"reference_coverage"`
+	SidecarToolCorrelation SidecarToolCorrelationCoverage `json:"sidecar_tool_correlation"`
+	MetadataCoverage       ContractMetadataCoverage       `json:"metadata_coverage"`
+	Findings               []EventAuditFinding            `json:"findings,omitempty"`
+}
+
+type ContractEventCoverage struct {
+	ContractID             string         `json:"contract_id"`
+	ParentID               string         `json:"parent_id,omitempty"`
+	EventCount             int            `json:"event_count"`
+	FirstSequence          int64          `json:"first_sequence,omitempty"`
+	LastSequence           int64          `json:"last_sequence,omitempty"`
+	LifecycleEvents        map[string]int `json:"lifecycle_events,omitempty"`
+	PolicyEvents           map[string]int `json:"policy_events,omitempty"`
+	PolicyDecisions        map[string]int `json:"policy_decisions,omitempty"`
+	PolicyTools            map[string]int `json:"policy_tools,omitempty"`
+	ObligationEvents       map[string]int `json:"obligation_events,omitempty"`
+	ObligationStatusCounts map[string]int `json:"obligation_status_counts,omitempty"`
+	ObligationKindCounts   map[string]int `json:"obligation_kind_counts,omitempty"`
+	GateEvents             map[string]int `json:"gate_events,omitempty"`
+	GateDecisionCounts     map[string]int `json:"gate_decision_counts,omitempty"`
+	GateKindCounts         map[string]int `json:"gate_kind_counts,omitempty"`
+	OpenObligations        []string       `json:"open_obligations,omitempty"`
+	ResolvedObligations    []string       `json:"resolved_obligations,omitempty"`
+	WaivedObligations      []string       `json:"waived_obligations,omitempty"`
+	SidecarRequestIDs      []string       `json:"sidecar_request_ids,omitempty"`
+	ToolCallIDs            []string       `json:"tool_call_ids,omitempty"`
+}
+
+type LifecycleEventCoverage struct {
+	Total                  int      `json:"total"`
+	Compiled               int      `json:"compiled"`
+	Presented              int      `json:"presented"`
+	Recompiled             int      `json:"recompiled"`
+	Stopped                int      `json:"stopped"`
+	ContractsWithLifecycle []string `json:"contracts_with_lifecycle,omitempty"`
+	LifecycleOnlyContracts []string `json:"lifecycle_only_contracts,omitempty"`
+}
+
+type PolicyEventCoverage struct {
+	Total               int            `json:"total"`
+	IntentClassified    int            `json:"intent_classified"`
+	PathRolesResolved   int            `json:"path_roles_resolved"`
+	DecisionEvents      int            `json:"decision_events"`
+	ResultEvents        int            `json:"result_events"`
+	DecisionCounts      map[string]int `json:"decision_counts,omitempty"`
+	ToolCounts          map[string]int `json:"tool_counts,omitempty"`
+	CapabilityCounts    map[string]int `json:"capability_counts,omitempty"`
+	SideEffectCounts    map[string]int `json:"side_effect_counts,omitempty"`
+	ContractsWithPolicy []string       `json:"contracts_with_policy,omitempty"`
+}
+
+type ObligationEventCoverage struct {
+	Total                    int                  `json:"total"`
+	Opened                   int                  `json:"opened"`
+	Resolved                 int                  `json:"resolved"`
+	Waived                   int                  `json:"waived"`
+	KindCounts               map[string]int       `json:"kind_counts,omitempty"`
+	StatusCounts             map[string]int       `json:"status_counts,omitempty"`
+	OwnerCounts              map[string]int       `json:"owner_counts,omitempty"`
+	ContractsWithObligations []string             `json:"contracts_with_obligations,omitempty"`
+	OpenObligations          []ObligationAuditRef `json:"open_obligations,omitempty"`
+	UnresolvedObligations    []ObligationAuditRef `json:"unresolved_obligations,omitempty"`
+	UnmatchedObligations     []ObligationAuditRef `json:"unmatched_obligations,omitempty"`
+}
+
+type GateEventCoverage struct {
+	Total                          int             `json:"total"`
+	DecisionEvents                 int             `json:"decision_events"`
+	KindCounts                     map[string]int  `json:"kind_counts,omitempty"`
+	DecisionCounts                 map[string]int  `json:"decision_counts,omitempty"`
+	ReasonCounts                   map[string]int  `json:"reason_counts,omitempty"`
+	ToolCounts                     map[string]int  `json:"tool_counts,omitempty"`
+	ContractsWithGateEvents        []string        `json:"contracts_with_gate_events,omitempty"`
+	OpenObligationRefs             []string        `json:"open_obligation_refs,omitempty"`
+	ResolvedObligationRefs         []string        `json:"resolved_obligation_refs,omitempty"`
+	InconsistentOpenObligationRefs []EventAuditRef `json:"inconsistent_open_obligation_refs,omitempty"`
+}
+
+type ContractReferenceCoverage struct {
+	MissingContractIDEvents     []EventAuditRef `json:"missing_contract_id_events,omitempty"`
+	UnmatchedContractReferences []EventAuditRef `json:"unmatched_contract_references,omitempty"`
+	StaleContractReferences     []EventAuditRef `json:"stale_contract_references,omitempty"`
+	UnmatchedParentReferences   []EventAuditRef `json:"unmatched_parent_references,omitempty"`
+	MissingExpectedContracts    []string        `json:"missing_expected_contracts,omitempty"`
+}
+
+type SidecarToolCorrelationCoverage struct {
+	SidecarEventCount     int                           `json:"sidecar_event_count"`
+	ToolCallEventCount    int                           `json:"tool_call_event_count"`
+	CorrelatedEventCount  int                           `json:"correlated_event_count"`
+	SidecarRequestIDs     []string                      `json:"sidecar_request_ids,omitempty"`
+	ToolCallIDs           []string                      `json:"tool_call_ids,omitempty"`
+	UnmatchedCorrelations []SidecarToolCorrelationIssue `json:"unmatched_correlations,omitempty"`
+}
+
+type ContractMetadataCoverage struct {
+	EventsWithMetadata         int            `json:"events_with_metadata"`
+	ClientClassificationCounts map[string]int `json:"client_classification_counts,omitempty"`
+	ProductSignalCounts        map[string]int `json:"product_signal_counts,omitempty"`
+	ClientClassifications      []string       `json:"client_classifications,omitempty"`
+	ProductSignals             []string       `json:"product_signals,omitempty"`
+}
+
+type EventAuditRef struct {
+	EventID    string `json:"event_id,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Sequence   int64  `json:"sequence,omitempty"`
+	ContractID string `json:"contract_id,omitempty"`
+	Reference  string `json:"reference,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+type ObligationAuditRef struct {
+	EventID      string `json:"event_id,omitempty"`
+	Sequence     int64  `json:"sequence,omitempty"`
+	ContractID   string `json:"contract_id,omitempty"`
+	ObligationID string `json:"obligation_id,omitempty"`
+	Kind         string `json:"kind,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+type SidecarToolCorrelationIssue struct {
+	EventID          string `json:"event_id,omitempty"`
+	Type             string `json:"type,omitempty"`
+	Sequence         int64  `json:"sequence,omitempty"`
+	ContractID       string `json:"contract_id,omitempty"`
+	SidecarRequestID string `json:"sidecar_request_id,omitempty"`
+	SidecarTool      string `json:"sidecar_tool,omitempty"`
+	ToolCallID       string `json:"tool_call_id,omitempty"`
+	ToolName         string `json:"tool_name,omitempty"`
+	Reason           string `json:"reason,omitempty"`
+}
+
+type EventAuditFinding struct {
+	ID          string   `json:"id"`
+	Severity    string   `json:"severity"`
+	Evidence    string   `json:"evidence"`
+	EventIDs    []string `json:"event_ids,omitempty"`
+	ContractIDs []string `json:"contract_ids,omitempty"`
+}
+
+type eventAuditState struct {
+	report              EventAuditReport
+	contracts           map[string]*ContractEventCoverage
+	expectedContracts   map[string]struct{}
+	lifecycleContracts  map[string]struct{}
+	referencedContracts map[string]struct{}
+	staleAfterSequence  map[string]staleContractState
+	openObligations     map[string]ObligationAuditRef
+	sidecarRequestIDs   map[string]struct{}
+	toolCallIDs         map[string]struct{}
+}
+
+type staleContractState struct {
+	Sequence int64
+	Reason   string
+}
+
+func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
+	state := eventAuditState{
+		report: EventAuditReport{
+			SchemaVersion: AuditReportSchemaVersion,
+		},
+		contracts:           make(map[string]*ContractEventCoverage),
+		expectedContracts:   make(map[string]struct{}),
+		lifecycleContracts:  make(map[string]struct{}),
+		referencedContracts: make(map[string]struct{}),
+		staleAfterSequence:  make(map[string]staleContractState),
+		openObligations:     make(map[string]ObligationAuditRef),
+		sidecarRequestIDs:   make(map[string]struct{}),
+		toolCallIDs:         make(map[string]struct{}),
+	}
+	for _, contractID := range compactStrings(opts.ExpectedContractIDs) {
+		state.expectedContracts[contractID] = struct{}{}
+	}
+
+	ordered := append([]Event(nil), events...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Sequence == ordered[j].Sequence {
+			return ordered[i].EventID < ordered[j].EventID
+		}
+		return ordered[i].Sequence < ordered[j].Sequence
+	})
+	state.report.TotalEvents = len(ordered)
+	for i := range ordered {
+		event := copyEvent(ordered[i])
+		event.Normalize()
+		state.addEvent(event)
+	}
+	state.finish()
+	return state.report
+}
+
+func (s *eventAuditState) addEvent(event Event) {
+	if event.ContractID == "" {
+		s.report.ReferenceCoverage.MissingContractIDEvents = append(s.report.ReferenceCoverage.MissingContractIDEvents, auditRef(event, "", "event has no contract_id"))
+	} else {
+		s.referencedContracts[event.ContractID] = struct{}{}
+		coverage := s.contractCoverage(event.ContractID)
+		coverage.EventCount++
+		coverage.ParentID = firstNonEmptyAuditValue(coverage.ParentID, event.ParentID)
+		if coverage.FirstSequence == 0 || event.Sequence < coverage.FirstSequence {
+			coverage.FirstSequence = event.Sequence
+		}
+		if event.Sequence > coverage.LastSequence {
+			coverage.LastSequence = event.Sequence
+		}
+		if stale, ok := s.staleAfterSequence[event.ContractID]; ok && sequenceAfter(event.Sequence, stale.Sequence) {
+			s.report.ReferenceCoverage.StaleContractReferences = append(s.report.ReferenceCoverage.StaleContractReferences, auditRef(event, event.ContractID, stale.Reason))
+		}
+	}
+	s.addMetadata(event)
+	s.addSidecarToolCorrelation(event)
+
+	switch event.Type {
+	case EventContractCompiled, EventContractPresented, EventContractRecompiled, EventContractStopped:
+		s.addLifecycle(event)
+	case EventToolIntentClassified, EventPathRolesResolved, EventToolPolicyDecision, EventToolPolicyResult:
+		s.addPolicy(event)
+	case EventObligationOpened, EventObligationResolved, EventObligationWaived:
+		s.addObligation(event)
+	case EventGateDecision:
+		s.addGate(event)
+	}
+}
+
+func (s *eventAuditState) addLifecycle(event Event) {
+	s.report.LifecycleCoverage.Total++
+	if event.ContractID != "" {
+		s.lifecycleContracts[event.ContractID] = struct{}{}
+		incrementContractMap(s.contractCoverage(event.ContractID), "lifecycle", string(event.Type))
+	}
+	if event.Lifecycle != nil && event.Lifecycle.Summary != nil && event.Lifecycle.Summary.ContractID != "" {
+		s.lifecycleContracts[event.Lifecycle.Summary.ContractID] = struct{}{}
+	}
+	switch event.Type {
+	case EventContractCompiled:
+		s.report.LifecycleCoverage.Compiled++
+	case EventContractPresented:
+		s.report.LifecycleCoverage.Presented++
+	case EventContractRecompiled:
+		s.report.LifecycleCoverage.Recompiled++
+		if event.Lifecycle != nil {
+			if event.Lifecycle.OldContractID != "" {
+				if !s.contractKnown(event.Lifecycle.OldContractID) {
+					s.report.ReferenceCoverage.UnmatchedContractReferences = append(s.report.ReferenceCoverage.UnmatchedContractReferences, auditRef(event, event.Lifecycle.OldContractID, "recompiled old_contract_id has no prior lifecycle or expected contract"))
+				}
+				s.staleAfterSequence[event.Lifecycle.OldContractID] = staleContractState{Sequence: event.Sequence, Reason: "contract superseded by recompile"}
+			}
+			if event.Lifecycle.NewContractID != "" {
+				s.lifecycleContracts[event.Lifecycle.NewContractID] = struct{}{}
+			}
+		}
+	case EventContractStopped:
+		s.report.LifecycleCoverage.Stopped++
+		if event.ContractID != "" {
+			s.staleAfterSequence[event.ContractID] = staleContractState{Sequence: event.Sequence, Reason: "contract stopped"}
+		}
+	}
+}
+
+func (s *eventAuditState) addPolicy(event Event) {
+	s.report.PolicyCoverage.Total++
+	if event.ContractID != "" {
+		incrementContractMap(s.contractCoverage(event.ContractID), "policy", string(event.Type))
+	}
+	switch event.Type {
+	case EventToolIntentClassified:
+		s.report.PolicyCoverage.IntentClassified++
+	case EventPathRolesResolved:
+		s.report.PolicyCoverage.PathRolesResolved++
+	case EventToolPolicyDecision:
+		s.report.PolicyCoverage.DecisionEvents++
+	case EventToolPolicyResult:
+		s.report.PolicyCoverage.ResultEvents++
+	}
+	if event.Policy == nil {
+		return
+	}
+	incrementStringMap(&s.report.PolicyCoverage.DecisionCounts, string(event.Policy.Decision))
+	incrementStringMap(&s.report.PolicyCoverage.ToolCounts, event.Policy.ToolName)
+	incrementStringMap(&s.report.PolicyCoverage.CapabilityCounts, string(event.Policy.Capability))
+	incrementStringMap(&s.report.PolicyCoverage.SideEffectCounts, string(event.Policy.SideEffect))
+	if event.ContractID != "" {
+		coverage := s.contractCoverage(event.ContractID)
+		incrementStringMap(&coverage.PolicyDecisions, string(event.Policy.Decision))
+		incrementStringMap(&coverage.PolicyTools, event.Policy.ToolName)
+	}
+}
+
+func (s *eventAuditState) addObligation(event Event) {
+	s.report.ObligationCoverage.Total++
+	if event.ContractID != "" {
+		incrementContractMap(s.contractCoverage(event.ContractID), "obligation", string(event.Type))
+	}
+	switch event.Type {
+	case EventObligationOpened:
+		s.report.ObligationCoverage.Opened++
+	case EventObligationResolved:
+		s.report.ObligationCoverage.Resolved++
+	case EventObligationWaived:
+		s.report.ObligationCoverage.Waived++
+	}
+	if event.Obligation == nil {
+		return
+	}
+	ref := ObligationAuditRef{
+		EventID:      event.EventID,
+		Sequence:     event.Sequence,
+		ContractID:   event.ContractID,
+		ObligationID: event.Obligation.ObligationID,
+		Kind:         string(event.Obligation.Kind),
+		Status:       string(event.Obligation.Status),
+	}
+	incrementStringMap(&s.report.ObligationCoverage.KindCounts, string(event.Obligation.Kind))
+	incrementStringMap(&s.report.ObligationCoverage.StatusCounts, string(event.Obligation.Status))
+	incrementStringMap(&s.report.ObligationCoverage.OwnerCounts, string(event.Obligation.Owner))
+	if event.ContractID != "" {
+		coverage := s.contractCoverage(event.ContractID)
+		incrementStringMap(&coverage.ObligationStatusCounts, string(event.Obligation.Status))
+		incrementStringMap(&coverage.ObligationKindCounts, string(event.Obligation.Kind))
+		switch event.Type {
+		case EventObligationOpened:
+			coverage.OpenObligations = appendUniqueString(coverage.OpenObligations, event.Obligation.ObligationID)
+		case EventObligationResolved:
+			coverage.ResolvedObligations = appendUniqueString(coverage.ResolvedObligations, event.Obligation.ObligationID)
+		case EventObligationWaived:
+			coverage.WaivedObligations = appendUniqueString(coverage.WaivedObligations, event.Obligation.ObligationID)
+		}
+	}
+	key := obligationKey(event.ContractID, event.Obligation.ObligationID)
+	switch event.Type {
+	case EventObligationOpened:
+		s.openObligations[key] = ref
+	case EventObligationResolved, EventObligationWaived:
+		if _, ok := s.openObligations[key]; !ok {
+			ref.Reason = "obligation resolution has no matching opened obligation event"
+			s.report.ObligationCoverage.UnmatchedObligations = append(s.report.ObligationCoverage.UnmatchedObligations, ref)
+		}
+		delete(s.openObligations, key)
+		if event.ContractID != "" {
+			coverage := s.contractCoverage(event.ContractID)
+			coverage.OpenObligations = removeString(coverage.OpenObligations, event.Obligation.ObligationID)
+		}
+	}
+}
+
+func (s *eventAuditState) addGate(event Event) {
+	s.report.GateCoverage.Total++
+	if event.ContractID != "" {
+		incrementContractMap(s.contractCoverage(event.ContractID), "gate", string(event.Type))
+	}
+	switch event.Type {
+	case EventGateDecision:
+		s.report.GateCoverage.DecisionEvents++
+	}
+	if event.Gate == nil {
+		return
+	}
+	incrementStringMap(&s.report.GateCoverage.KindCounts, string(event.Gate.Gate))
+	incrementStringMap(&s.report.GateCoverage.DecisionCounts, string(event.Gate.Decision))
+	incrementStringMap(&s.report.GateCoverage.ReasonCounts, event.Gate.ReasonCode)
+	incrementStringMap(&s.report.GateCoverage.ToolCounts, event.Gate.ToolName)
+	s.report.GateCoverage.OpenObligationRefs = append(s.report.GateCoverage.OpenObligationRefs, event.Gate.OpenObligations...)
+	s.report.GateCoverage.ResolvedObligationRefs = append(s.report.GateCoverage.ResolvedObligationRefs, event.Gate.ResolvedObligations...)
+	for _, obligationID := range event.Gate.OpenObligations {
+		if _, ok := s.openObligations[obligationKey(event.ContractID, obligationID)]; !ok {
+			s.report.GateCoverage.InconsistentOpenObligationRefs = append(s.report.GateCoverage.InconsistentOpenObligationRefs, auditRef(event, obligationID, "gate reported open obligation that was not open at gate sequence"))
+		}
+	}
+	if event.ContractID != "" {
+		coverage := s.contractCoverage(event.ContractID)
+		incrementStringMap(&coverage.GateDecisionCounts, string(event.Gate.Decision))
+		incrementStringMap(&coverage.GateKindCounts, string(event.Gate.Gate))
+	}
+}
+
+func (s *eventAuditState) addMetadata(event Event) {
+	if len(event.Metadata.ClientClassifications) == 0 && len(event.Metadata.ProductSignals) == 0 {
+		return
+	}
+	s.report.MetadataCoverage.EventsWithMetadata++
+	for _, classification := range event.Metadata.ClientClassifications {
+		incrementStringMap(&s.report.MetadataCoverage.ClientClassificationCounts, string(classification))
+	}
+	for _, signal := range event.Metadata.ProductSignals {
+		incrementStringMap(&s.report.MetadataCoverage.ProductSignalCounts, string(signal))
+	}
+}
+
+func (s *eventAuditState) addSidecarToolCorrelation(event Event) {
+	sidecarPresent := event.Correlation.SidecarRequestID != "" || event.Correlation.SidecarCaller != "" || event.Correlation.SidecarProfile != "" || event.Correlation.SidecarTool != ""
+	toolCallID := event.Correlation.ToolCallID
+	toolName := event.Correlation.ToolName
+	if event.Policy != nil {
+		toolCallID = firstNonEmptyAuditValue(toolCallID, event.Policy.ToolCallID)
+		toolName = firstNonEmptyAuditValue(toolName, event.Policy.ToolName)
+	}
+	if sidecarPresent {
+		s.report.SidecarToolCorrelation.SidecarEventCount++
+		if event.Correlation.SidecarRequestID != "" {
+			s.sidecarRequestIDs[event.Correlation.SidecarRequestID] = struct{}{}
+			if event.ContractID != "" {
+				coverage := s.contractCoverage(event.ContractID)
+				coverage.SidecarRequestIDs = appendUniqueString(coverage.SidecarRequestIDs, event.Correlation.SidecarRequestID)
+			}
+		}
+	}
+	if toolCallID != "" || toolName != "" {
+		s.report.SidecarToolCorrelation.ToolCallEventCount++
+		if toolCallID != "" {
+			s.toolCallIDs[toolCallID] = struct{}{}
+			if event.ContractID != "" {
+				coverage := s.contractCoverage(event.ContractID)
+				coverage.ToolCallIDs = appendUniqueString(coverage.ToolCallIDs, toolCallID)
+			}
+		}
+	}
+	if sidecarPresent && toolCallID != "" {
+		s.report.SidecarToolCorrelation.CorrelatedEventCount++
+	}
+	if !sidecarPresent {
+		return
+	}
+	if toolCallID == "" && isPolicyToolEvent(event.Type) {
+		s.addSidecarIssue(event, toolCallID, toolName, "sidecar policy event missing tool_call_id")
+	}
+	if event.Correlation.SidecarRequestID == "" && toolCallID != "" {
+		s.addSidecarIssue(event, toolCallID, toolName, "tool call correlation missing sidecar_request_id")
+	}
+	if event.Correlation.SidecarTool != "" && toolName != "" && event.Correlation.SidecarTool != toolName {
+		s.addSidecarIssue(event, toolCallID, toolName, "sidecar_tool does not match tool_name")
+	}
+	if event.Policy != nil {
+		if event.Correlation.ToolCallID != "" && event.Policy.ToolCallID != "" && event.Correlation.ToolCallID != event.Policy.ToolCallID {
+			s.addSidecarIssue(event, toolCallID, toolName, "correlation tool_call_id does not match policy tool_call_id")
+		}
+		if event.Correlation.ToolName != "" && event.Policy.ToolName != "" && event.Correlation.ToolName != event.Policy.ToolName {
+			s.addSidecarIssue(event, toolCallID, toolName, "correlation tool_name does not match policy tool_name")
+		}
+	}
+}
+
+func (s *eventAuditState) addSidecarIssue(event Event, toolCallID, toolName, reason string) {
+	s.report.SidecarToolCorrelation.UnmatchedCorrelations = append(s.report.SidecarToolCorrelation.UnmatchedCorrelations, SidecarToolCorrelationIssue{
+		EventID:          event.EventID,
+		Type:             string(event.Type),
+		Sequence:         event.Sequence,
+		ContractID:       event.ContractID,
+		SidecarRequestID: event.Correlation.SidecarRequestID,
+		SidecarTool:      event.Correlation.SidecarTool,
+		ToolCallID:       toolCallID,
+		ToolName:         toolName,
+		Reason:           reason,
+	})
+}
+
+func (s *eventAuditState) finish() {
+	for contractID := range s.expectedContracts {
+		if _, ok := s.referencedContracts[contractID]; !ok {
+			s.report.ReferenceCoverage.MissingExpectedContracts = append(s.report.ReferenceCoverage.MissingExpectedContracts, contractID)
+		}
+	}
+	for contractID := range s.referencedContracts {
+		if contractID == "" || s.contractKnown(contractID) {
+			continue
+		}
+		s.report.ReferenceCoverage.UnmatchedContractReferences = append(s.report.ReferenceCoverage.UnmatchedContractReferences, EventAuditRef{
+			ContractID: contractID,
+			Reference:  contractID,
+			Reason:     "contract reference has no lifecycle event or expected contract",
+		})
+	}
+	for _, coverage := range s.contracts {
+		if coverage.ParentID != "" && !s.contractKnown(coverage.ParentID) {
+			s.report.ReferenceCoverage.UnmatchedParentReferences = append(s.report.ReferenceCoverage.UnmatchedParentReferences, EventAuditRef{
+				ContractID: coverage.ContractID,
+				Reference:  coverage.ParentID,
+				Reason:     "parent_id has no lifecycle event or expected contract",
+			})
+		}
+		sort.Strings(coverage.OpenObligations)
+		sort.Strings(coverage.ResolvedObligations)
+		sort.Strings(coverage.WaivedObligations)
+		sort.Strings(coverage.SidecarRequestIDs)
+		sort.Strings(coverage.ToolCallIDs)
+	}
+	for _, ref := range s.openObligations {
+		s.report.ObligationCoverage.OpenObligations = append(s.report.ObligationCoverage.OpenObligations, ref)
+		ref.Reason = "obligation opened without resolved or waived event"
+		s.report.ObligationCoverage.UnresolvedObligations = append(s.report.ObligationCoverage.UnresolvedObligations, ref)
+	}
+	s.report.LifecycleCoverage.ContractsWithLifecycle = sortedKeys(s.lifecycleContracts)
+	s.report.PolicyCoverage.ContractsWithPolicy = s.contractsWithMap("policy")
+	s.report.ObligationCoverage.ContractsWithObligations = s.contractsWithMap("obligation")
+	s.report.GateCoverage.ContractsWithGateEvents = s.contractsWithMap("gate")
+	s.report.LifecycleCoverage.LifecycleOnlyContracts = s.lifecycleOnlyContracts()
+	s.report.SidecarToolCorrelation.SidecarRequestIDs = sortedKeys(s.sidecarRequestIDs)
+	s.report.SidecarToolCorrelation.ToolCallIDs = sortedKeys(s.toolCallIDs)
+	s.report.GateCoverage.OpenObligationRefs = compactStrings(s.report.GateCoverage.OpenObligationRefs)
+	s.report.GateCoverage.ResolvedObligationRefs = compactStrings(s.report.GateCoverage.ResolvedObligationRefs)
+	s.report.MetadataCoverage.ClientClassifications = sortedMapKeys(s.report.MetadataCoverage.ClientClassificationCounts)
+	s.report.MetadataCoverage.ProductSignals = sortedMapKeys(s.report.MetadataCoverage.ProductSignalCounts)
+	s.report.Contracts = sortedContractCoverages(s.contracts)
+	sortObligationRefs(s.report.ObligationCoverage.OpenObligations)
+	sortObligationRefs(s.report.ObligationCoverage.UnresolvedObligations)
+	sortObligationRefs(s.report.ObligationCoverage.UnmatchedObligations)
+	sortAuditRefs(s.report.ReferenceCoverage.MissingContractIDEvents)
+	sortAuditRefs(s.report.ReferenceCoverage.UnmatchedContractReferences)
+	sortAuditRefs(s.report.ReferenceCoverage.StaleContractReferences)
+	sortAuditRefs(s.report.ReferenceCoverage.UnmatchedParentReferences)
+	sortAuditRefs(s.report.GateCoverage.InconsistentOpenObligationRefs)
+	sort.Strings(s.report.ReferenceCoverage.MissingExpectedContracts)
+	sortSidecarIssues(s.report.SidecarToolCorrelation.UnmatchedCorrelations)
+	s.addFindings()
+	s.report.AllClear = s.report.TotalEvents > 0 && len(s.report.Findings) == 0 && len(s.report.ObligationCoverage.UnresolvedObligations) == 0
+}
+
+func (s *eventAuditState) addFindings() {
+	if refs := s.report.ReferenceCoverage.MissingContractIDEvents; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:       "contract_event_missing_contract_id",
+			Severity: "high",
+			Evidence: fmt.Sprintf("%d autonomy event(s) lack contract_id", len(refs)),
+			EventIDs: eventIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.ReferenceCoverage.UnmatchedContractReferences; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_unmatched_contract_reference",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d contract reference(s) have no matching lifecycle event or expected contract", len(refs)),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.ReferenceCoverage.StaleContractReferences; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_stale_contract_reference",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d event(s) reference a stopped or superseded contract", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.ReferenceCoverage.UnmatchedParentReferences; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_unmatched_parent_reference",
+			Severity:    "low",
+			Evidence:    fmt.Sprintf("%d parent contract reference(s) have no matching lifecycle event or expected contract", len(refs)),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if missing := s.report.ReferenceCoverage.MissingExpectedContracts; len(missing) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_expected_contract_missing",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d expected contract(s) had no events", len(missing)),
+			ContractIDs: append([]string(nil), missing...),
+		})
+	}
+	if issues := s.report.SidecarToolCorrelation.UnmatchedCorrelations; len(issues) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_sidecar_tool_correlation_mismatch",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d sidecar/tool-call correlation issue(s)", len(issues)),
+			EventIDs:    eventIDsFromSidecarIssues(issues),
+			ContractIDs: contractIDsFromSidecarIssues(issues),
+		})
+	}
+	if refs := s.report.GateCoverage.InconsistentOpenObligationRefs; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_gate_open_obligation_inconsistent",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d gate open-obligation reference(s) were not open at the gate sequence", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.ObligationCoverage.UnmatchedObligations; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_unmatched_obligation_reference",
+			Severity:    "low",
+			Evidence:    fmt.Sprintf("%d obligation resolution event(s) had no matching opened event", len(refs)),
+			EventIDs:    eventIDsFromObligationRefs(refs),
+			ContractIDs: contractIDsFromObligationRefs(refs),
+		})
+	}
+}
+
+func (s *eventAuditState) contractCoverage(contractID string) *ContractEventCoverage {
+	coverage, ok := s.contracts[contractID]
+	if ok {
+		return coverage
+	}
+	coverage = &ContractEventCoverage{ContractID: contractID}
+	s.contracts[contractID] = coverage
+	return coverage
+}
+
+func (s *eventAuditState) contractKnown(contractID string) bool {
+	if contractID == "" {
+		return false
+	}
+	if _, ok := s.lifecycleContracts[contractID]; ok {
+		return true
+	}
+	if _, ok := s.expectedContracts[contractID]; ok {
+		return true
+	}
+	return false
+}
+
+func (s *eventAuditState) contractsWithMap(kind string) []string {
+	set := make(map[string]struct{})
+	for contractID, coverage := range s.contracts {
+		switch kind {
+		case "policy":
+			if len(coverage.PolicyEvents) > 0 {
+				set[contractID] = struct{}{}
+			}
+		case "obligation":
+			if len(coverage.ObligationEvents) > 0 {
+				set[contractID] = struct{}{}
+			}
+		case "gate":
+			if len(coverage.GateEvents) > 0 {
+				set[contractID] = struct{}{}
+			}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func (s *eventAuditState) lifecycleOnlyContracts() []string {
+	set := make(map[string]struct{})
+	for contractID, coverage := range s.contracts {
+		if len(coverage.LifecycleEvents) > 0 && len(coverage.PolicyEvents) == 0 && len(coverage.ObligationEvents) == 0 && len(coverage.GateEvents) == 0 {
+			set[contractID] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func incrementContractMap(coverage *ContractEventCoverage, kind string, key string) {
+	switch kind {
+	case "lifecycle":
+		incrementStringMap(&coverage.LifecycleEvents, key)
+	case "policy":
+		incrementStringMap(&coverage.PolicyEvents, key)
+	case "obligation":
+		incrementStringMap(&coverage.ObligationEvents, key)
+	case "gate":
+		incrementStringMap(&coverage.GateEvents, key)
+	}
+}
+
+func incrementStringMap(target *map[string]int, key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	if *target == nil {
+		*target = make(map[string]int)
+	}
+	(*target)[key]++
+}
+
+func auditRef(event Event, reference string, reason string) EventAuditRef {
+	return EventAuditRef{
+		EventID:    event.EventID,
+		Type:       string(event.Type),
+		Sequence:   event.Sequence,
+		ContractID: event.ContractID,
+		Reference:  strings.TrimSpace(reference),
+		Reason:     reason,
+	}
+}
+
+func obligationKey(contractID, obligationID string) string {
+	return strings.TrimSpace(contractID) + "\x00" + strings.TrimSpace(obligationID)
+}
+
+func sequenceAfter(sequence, staleAfter int64) bool {
+	if staleAfter <= 0 {
+		return false
+	}
+	if sequence <= 0 {
+		return true
+	}
+	return sequence > staleAfter
+}
+
+func isPolicyToolEvent(eventType EventType) bool {
+	switch eventType {
+	case EventToolIntentClassified, EventPathRolesResolved, EventToolPolicyDecision, EventToolPolicyResult:
+		return true
+	default:
+		return false
+	}
+}
+
+func firstNonEmptyAuditValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func appendUniqueString(values []string, next string) []string {
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return values
+	}
+	for _, value := range values {
+		if value == next {
+			return values
+		}
+	}
+	return append(values, next)
+}
+
+func removeString(values []string, remove string) []string {
+	remove = strings.TrimSpace(remove)
+	if remove == "" || len(values) == 0 {
+		return values
+	}
+	out := values[:0]
+	for _, value := range values {
+		if value != remove {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func sortedKeys(set map[string]struct{}) []string {
+	out := make([]string, 0, len(set))
+	for key := range set {
+		if strings.TrimSpace(key) != "" {
+			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedMapKeys(values map[string]int) []string {
+	out := make([]string, 0, len(values))
+	for key, count := range values {
+		if strings.TrimSpace(key) != "" && count > 0 {
+			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedContractCoverages(values map[string]*ContractEventCoverage) []ContractEventCoverage {
+	out := make([]ContractEventCoverage, 0, len(values))
+	for _, coverage := range values {
+		out = append(out, *coverage)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ContractID < out[j].ContractID
+	})
+	return out
+}
+
+func sortAuditRefs(refs []EventAuditRef) {
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Sequence == refs[j].Sequence {
+			if refs[i].ContractID == refs[j].ContractID {
+				return refs[i].EventID < refs[j].EventID
+			}
+			return refs[i].ContractID < refs[j].ContractID
+		}
+		return refs[i].Sequence < refs[j].Sequence
+	})
+}
+
+func sortObligationRefs(refs []ObligationAuditRef) {
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Sequence == refs[j].Sequence {
+			if refs[i].ContractID == refs[j].ContractID {
+				return refs[i].ObligationID < refs[j].ObligationID
+			}
+			return refs[i].ContractID < refs[j].ContractID
+		}
+		return refs[i].Sequence < refs[j].Sequence
+	})
+}
+
+func sortSidecarIssues(issues []SidecarToolCorrelationIssue) {
+	sort.Slice(issues, func(i, j int) bool {
+		if issues[i].Sequence == issues[j].Sequence {
+			if issues[i].ContractID == issues[j].ContractID {
+				return issues[i].EventID < issues[j].EventID
+			}
+			return issues[i].ContractID < issues[j].ContractID
+		}
+		return issues[i].Sequence < issues[j].Sequence
+	})
+}
+
+func eventIDsFromAuditRefs(refs []EventAuditRef) []string {
+	set := make(map[string]struct{})
+	for _, ref := range refs {
+		if ref.EventID != "" {
+			set[ref.EventID] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func contractIDsFromAuditRefs(refs []EventAuditRef) []string {
+	set := make(map[string]struct{})
+	for _, ref := range refs {
+		if ref.ContractID != "" {
+			set[ref.ContractID] = struct{}{}
+		}
+		if ref.Reference != "" {
+			set[ref.Reference] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func eventIDsFromSidecarIssues(issues []SidecarToolCorrelationIssue) []string {
+	set := make(map[string]struct{})
+	for _, issue := range issues {
+		if issue.EventID != "" {
+			set[issue.EventID] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func contractIDsFromSidecarIssues(issues []SidecarToolCorrelationIssue) []string {
+	set := make(map[string]struct{})
+	for _, issue := range issues {
+		if issue.ContractID != "" {
+			set[issue.ContractID] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func eventIDsFromObligationRefs(refs []ObligationAuditRef) []string {
+	set := make(map[string]struct{})
+	for _, ref := range refs {
+		if ref.EventID != "" {
+			set[ref.EventID] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func contractIDsFromObligationRefs(refs []ObligationAuditRef) []string {
+	set := make(map[string]struct{})
+	for _, ref := range refs {
+		if ref.ContractID != "" {
+			set[ref.ContractID] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}

@@ -28,6 +28,8 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 		return discoveryProfile("file_read", "targeted", "low", false)
 	case "code_navigate":
 		return codeNavigationDiscoveryProfile(req)
+	case "read_only_capability":
+		return readOnlyCapabilityDiscoveryProfile(req)
 	case "source_sanity":
 		return discoveryProfile("diagnostics", "targeted", "medium", false)
 	case "harness_audit":
@@ -71,6 +73,26 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 	default:
 		return languageDiscoveryProfile(tool)
 	}
+}
+
+func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
+	routed := req
+	routed.Tool = "code_navigate"
+	switch normalizeReadOnlyCapabilityID(req.Capability) {
+	case string(ReadOnlyCapabilityFileOutline):
+		routed.Capability = string(CapFileOutline)
+	case string(ReadOnlyCapabilitySymbolLookup):
+		routed.Capability = string(CapFindSymbol)
+	case string(ReadOnlyCapabilityDefinition):
+		routed.Capability = string(CapDefinition)
+	case string(ReadOnlyCapabilityReferences):
+		routed.Capability = string(CapReferences)
+	case string(ReadOnlyCapabilityRelatedFiles):
+		routed.Capability = string(CapRelatedFiles)
+	default:
+		return discoveryProfile("read_only_capability", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Pattern, req.Query)), "medium", true)
+	}
+	return codeNavigationDiscoveryProfile(routed)
 }
 
 func discoveryProfile(class string, scope string, cost string, generic bool) ToolDiscoveryProfile {

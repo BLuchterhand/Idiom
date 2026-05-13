@@ -16,8 +16,12 @@ import (
 )
 
 const (
-	defaultTraceEventLimit = 64
-	traceExcerptLimit      = 4000
+	defaultTraceEventLimit     = 64
+	traceExcerptLimit          = 4000
+	runtimeTraceRecentLimit    = 12
+	runtimeTraceManifestLimit  = 64
+	runtimeTraceManifestFile   = "manifest.json"
+	runtimeTraceManifestSchema = "idiom.runtime_traces.v1"
 )
 
 type TraceOptions struct {
@@ -111,13 +115,29 @@ type TraceCoverage struct {
 	Confidence    string  `json:"confidence"`
 }
 
+type traceManifest struct {
+	SchemaVersion string               `json:"schema_version"`
+	UpdatedAt     string               `json:"updated_at,omitempty"`
+	Traces        []traceManifestEntry `json:"traces,omitempty"`
+}
+
+type traceManifestEntry struct {
+	TraceID      string `json:"trace_id"`
+	ArtifactPath string `json:"artifact_path"`
+	GeneratedAt  string `json:"generated_at,omitempty"`
+	Fingerprint  string `json:"fingerprint,omitempty"`
+	ModTime      string `json:"mod_time,omitempty"`
+	Size         int64  `json:"size,omitempty"`
+}
+
 type runtimePackOverlay struct {
-	Files          []PackFile
-	Tests          []PackTest
-	Evidence       []PackEvidence
-	Risks          []string
-	Unknowns       []string
-	UnresolvedGaps []string
+	Files                []PackFile
+	Tests                []PackTest
+	Evidence             []PackEvidence
+	Risks                []string
+	Unknowns             []string
+	UnresolvedGaps       []string
+	UnresolvedGapDetails []GraphUnresolvedGap
 }
 
 type goTestJSONEvent struct {
@@ -240,11 +260,11 @@ func Trace(opts TraceOptions) (TraceResult, error) {
 	return result, nil
 }
 
-func runtimeOverlayForPack(root string, task string, scope string, limit int) runtimePackOverlay {
+func runtimeOverlayForPack(root string, task string, scope string, limit int, includeStale bool) runtimePackOverlay {
 	if limit <= 0 {
 		limit = defaultPackLimit
 	}
-	traces, err := loadRecentTraces(root, 12)
+	traces, err := loadRecentTraces(root, runtimeTraceRecentLimit)
 	if err != nil || len(traces) == 0 {
 		return runtimePackOverlay{}
 	}
@@ -275,13 +295,23 @@ func runtimeOverlayForPack(root string, task string, scope string, limit int) ru
 		stale := markTraceFreshness(root, &trace)
 		trace.Fresh = len(stale) == 0
 		trace.StaleFiles = stale
+		if !trace.Fresh {
+			if !trace.Success {
+				overlay.Risks = append(overlay.Risks, "Stale runtime trace "+trace.TraceID+" captured a failing command but references changed files.")
+			}
+			overlay.UnresolvedGaps = append(overlay.UnresolvedGaps, staleRuntimeTraceGap(trace))
+			overlay.UnresolvedGapDetails = append(overlay.UnresolvedGapDetails, staleRuntimeTraceGapDetail(trace))
+			if includeStale {
+				overlay.Evidence = append(overlay.Evidence, staleRuntimeEvidence(trace)...)
+			}
+			continue
+		}
 		overlay.Evidence = append(overlay.Evidence, PackEvidence{
 			Kind:    "runtime_trace",
 			Label:   "context_trace_pack",
 			Path:    trace.ArtifactPath,
 			Handle:  "context_trace://" + trace.TraceID,
 			Content: tracePackSummary(trace),
-			Stale:   !trace.Fresh,
 		})
 		for _, anchor := range trace.FailingAnchors {
 			overlay.Files = append(overlay.Files, PackFile{
@@ -298,7 +328,6 @@ func runtimeOverlayForPack(root string, task string, scope string, limit int) ru
 				Path:       anchor.Path,
 				Confidence: anchor.Confidence,
 				Content:    runtimeAnchorContent(anchor),
-				Stale:      anchor.Stale,
 			})
 		}
 		for _, file := range trace.ExecutedFiles {
@@ -325,7 +354,8 @@ func runtimeOverlayForPack(root string, task string, scope string, limit int) ru
 			overlay.Risks = append(overlay.Risks, "Runtime trace "+trace.TraceID+" captured a failing command.")
 		}
 		if !trace.Fresh {
-			overlay.UnresolvedGaps = append(overlay.UnresolvedGaps, "runtime trace "+trace.TraceID+" references stale files; rerun context_trace_pack if those files are decision-critical")
+			overlay.UnresolvedGaps = append(overlay.UnresolvedGaps, staleRuntimeTraceGap(trace))
+			overlay.UnresolvedGapDetails = append(overlay.UnresolvedGapDetails, staleRuntimeTraceGapDetail(trace))
 		}
 		added++
 		if added >= 3 || len(overlay.Files) >= limit {
@@ -333,6 +363,42 @@ func runtimeOverlayForPack(root string, task string, scope string, limit int) ru
 		}
 	}
 	return overlay
+}
+
+func staleRuntimeTraceGap(trace TraceResult) string {
+	return "reason=stale_runtime_trace trace_id=" + strings.TrimSpace(trace.TraceID) + " stale_path_count=" + fmt.Sprint(len(trace.StaleFiles)) + " stale_paths=" + limitedCSV(trace.StaleFiles, 5)
+}
+
+func staleRuntimeTraceGapDetail(trace TraceResult) GraphUnresolvedGap {
+	return GraphUnresolvedGap{
+		Reason:         "stale_runtime_trace",
+		State:          "stale",
+		TraceID:        strings.TrimSpace(trace.TraceID),
+		StalePathCount: len(trace.StaleFiles),
+		StalePaths:     limitedStrings(trace.StaleFiles, 5),
+	}
+}
+
+func staleRuntimeEvidence(trace TraceResult) []PackEvidence {
+	evidence := []PackEvidence{{
+		Kind:    "runtime_trace",
+		Label:   "context_trace_pack",
+		Path:    trace.ArtifactPath,
+		Handle:  "context_trace://" + trace.TraceID,
+		Content: tracePackSummary(trace),
+		Stale:   true,
+	}}
+	for _, anchor := range trace.FailingAnchors {
+		evidence = append(evidence, PackEvidence{
+			Kind:       "runtime_anchor",
+			Label:      anchor.Label,
+			Path:       anchor.Path,
+			Confidence: anchor.Confidence,
+			Content:    runtimeAnchorContent(anchor),
+			Stale:      true,
+		})
+	}
+	return evidence
 }
 
 func parseGoTestJSONEvents(text string, limit int) []TraceEvent {
@@ -775,6 +841,9 @@ func markTraceFreshness(root string, result *TraceResult) []string {
 
 func loadRecentTraces(root string, limit int) ([]TraceResult, error) {
 	dir := filepath.Join(root, ".idiom", "comprehension", "traces")
+	if manifest, ok := loadTraceManifest(root); ok {
+		return loadRecentTracesFromManifest(root, manifest, limit)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -784,7 +853,7 @@ func loadRecentTraces(root string, limit int) ([]TraceResult, error) {
 	}
 	var traces []TraceResult
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() || entry.Name() == runtimeTraceManifestFile || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
@@ -814,7 +883,190 @@ func saveTrace(root string, result TraceResult) error {
 		return err
 	}
 	_ = ensureIgnored(root)
+	written := append(data, '\n')
+	if err := os.WriteFile(path, written, 0o644); err != nil {
+		return err
+	}
+	return updateTraceManifest(root, result, written)
+}
+
+type runtimeTraceFingerprintState struct {
+	Fingerprint string
+	Source      string
+	Considered  int
+	Total       int
+}
+
+func runtimeTracesStateFingerprint(root string) string {
+	return runtimeTraceStateFingerprint(root, runtimeTraceRecentLimit).Fingerprint
+}
+
+func runtimeTraceStateFingerprint(root string, limit int) runtimeTraceFingerprintState {
+	if limit <= 0 {
+		limit = runtimeTraceRecentLimit
+	}
+	if manifest, ok := loadTraceManifest(root); ok {
+		entries := boundedTraceManifestEntries(manifest.Traces, limit)
+		if len(entries) == 0 {
+			return runtimeTraceFingerprintState{Source: "trace_manifest", Total: len(manifest.Traces)}
+		}
+		h := sha256.New()
+		h.Write([]byte(runtimeTraceManifestSchema))
+		h.Write([]byte("\x00"))
+		for _, entry := range entries {
+			h.Write([]byte(entry.TraceID))
+			h.Write([]byte("\x00"))
+			h.Write([]byte(entry.ArtifactPath))
+			h.Write([]byte("\x00"))
+			h.Write([]byte(entry.GeneratedAt))
+			h.Write([]byte("\x00"))
+			h.Write([]byte(entry.Fingerprint))
+			h.Write([]byte("\x00"))
+			h.Write([]byte(entry.ModTime))
+			h.Write([]byte("\x00"))
+			h.Write([]byte(strconv.FormatInt(entry.Size, 10)))
+			h.Write([]byte("\x00"))
+		}
+		sum := h.Sum(nil)
+		return runtimeTraceFingerprintState{
+			Fingerprint: hex.EncodeToString(sum[:8]),
+			Source:      "trace_manifest",
+			Considered:  len(entries),
+			Total:       len(manifest.Traces),
+		}
+	}
+	info, err := os.Stat(filepath.Join(root, ".idiom", "comprehension", "traces"))
+	if err != nil {
+		return runtimeTraceFingerprintState{}
+	}
+	h := sha256.New()
+	h.Write([]byte("runtime_trace_directory\x00"))
+	h.Write([]byte(info.ModTime().UTC().Format(time.RFC3339Nano)))
+	h.Write([]byte("\x00"))
+	sum := h.Sum(nil)
+	return runtimeTraceFingerprintState{
+		Fingerprint: hex.EncodeToString(sum[:8]),
+		Source:      "trace_directory",
+		Considered:  1,
+	}
+}
+
+func loadRecentTracesFromManifest(root string, manifest traceManifest, limit int) ([]TraceResult, error) {
+	entries := boundedTraceManifestEntries(manifest.Traces, limit)
+	traces := make([]TraceResult, 0, len(entries))
+	for _, entry := range entries {
+		path := filepath.Join(root, filepath.FromSlash(strings.TrimSpace(entry.ArtifactPath)))
+		if strings.TrimSpace(entry.ArtifactPath) == "" {
+			path = filepath.Join(root, ".idiom", "comprehension", "traces", entry.TraceID+".json")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var trace TraceResult
+		if err := json.Unmarshal(data, &trace); err != nil || strings.TrimSpace(trace.TraceID) == "" {
+			continue
+		}
+		traces = append(traces, trace)
+	}
+	sort.Slice(traces, func(i, j int) bool { return traces[i].GeneratedAt > traces[j].GeneratedAt })
+	if limit > 0 && len(traces) > limit {
+		traces = traces[:limit]
+	}
+	return traces, nil
+}
+
+func updateTraceManifest(root string, result TraceResult, written []byte) error {
+	traceID := strings.TrimSpace(result.TraceID)
+	if traceID == "" {
+		return nil
+	}
+	manifest, _ := loadTraceManifest(root)
+	path := filepath.Join(root, ".idiom", "comprehension", "traces", traceID+".json")
+	info, _ := os.Stat(path)
+	entry := traceManifestEntry{
+		TraceID:      traceID,
+		ArtifactPath: firstNonEmpty(strings.TrimSpace(result.ArtifactPath), filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", traceID+".json"))),
+		GeneratedAt:  strings.TrimSpace(result.GeneratedAt),
+		Fingerprint:  shortSHA256Hex(written),
+	}
+	if info != nil {
+		entry.ModTime = info.ModTime().UTC().Format(time.RFC3339Nano)
+		entry.Size = info.Size()
+	}
+	merged := make([]traceManifestEntry, 0, len(manifest.Traces)+1)
+	merged = append(merged, entry)
+	for _, existing := range manifest.Traces {
+		if strings.TrimSpace(existing.TraceID) == traceID || strings.TrimSpace(existing.ArtifactPath) == entry.ArtifactPath {
+			continue
+		}
+		merged = append(merged, existing)
+	}
+	manifest = traceManifest{
+		SchemaVersion: runtimeTraceManifestSchema,
+		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
+		Traces:        boundedTraceManifestEntries(merged, runtimeTraceManifestLimit),
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	path = traceManifestPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func loadTraceManifest(root string) (traceManifest, bool) {
+	data, err := os.ReadFile(traceManifestPath(root))
+	if err != nil {
+		return traceManifest{}, false
+	}
+	var manifest traceManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return traceManifest{}, false
+	}
+	manifest.Traces = boundedTraceManifestEntries(manifest.Traces, runtimeTraceManifestLimit)
+	if manifest.SchemaVersion == "" {
+		manifest.SchemaVersion = runtimeTraceManifestSchema
+	}
+	return manifest, true
+}
+
+func boundedTraceManifestEntries(entries []traceManifestEntry, limit int) []traceManifestEntry {
+	cleaned := make([]traceManifestEntry, 0, len(entries))
+	for _, entry := range entries {
+		entry.TraceID = strings.TrimSpace(entry.TraceID)
+		entry.ArtifactPath = filepath.ToSlash(strings.TrimSpace(entry.ArtifactPath))
+		entry.GeneratedAt = strings.TrimSpace(entry.GeneratedAt)
+		entry.Fingerprint = strings.TrimSpace(entry.Fingerprint)
+		entry.ModTime = strings.TrimSpace(entry.ModTime)
+		if entry.TraceID == "" {
+			continue
+		}
+		if entry.ArtifactPath == "" {
+			entry.ArtifactPath = filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", entry.TraceID+".json"))
+		}
+		cleaned = append(cleaned, entry)
+	}
+	sort.Slice(cleaned, func(i, j int) bool {
+		if cleaned[i].GeneratedAt != cleaned[j].GeneratedAt {
+			return cleaned[i].GeneratedAt > cleaned[j].GeneratedAt
+		}
+		if cleaned[i].ModTime != cleaned[j].ModTime {
+			return cleaned[i].ModTime > cleaned[j].ModTime
+		}
+		return cleaned[i].TraceID > cleaned[j].TraceID
+	})
+	if limit > 0 && len(cleaned) > limit {
+		cleaned = cleaned[:limit]
+	}
+	return cleaned
+}
+
+func traceManifestPath(root string) string {
+	return filepath.Join(root, ".idiom", "comprehension", "traces", runtimeTraceManifestFile)
 }
 
 func normalizeTracePath(root string, raw string) (string, bool) {

@@ -34,7 +34,7 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 		return cleaned
 	}
 	if !strings.HasPrefix(answer, "<<QUESTION>>") && !mutationReplyReportsConcreteNoopOrBlocker(strings.ToLower(answer)) {
-		if blocker, ok := canonicalMutationBlockerFinalAnswer(input.Brief, input.Results); ok {
+		if blocker, ok := canonicalMutationBlockerFinalAnswer(input.Brief, input.Results, answer); ok {
 			return blocker
 		}
 	}
@@ -56,7 +56,7 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	return answer
 }
 
-func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	if !runnerBriefRequiresMutation(brief) {
 		return "", false
@@ -73,6 +73,11 @@ func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief,
 	}
 	changed := changedPathsFromToolResults(results)
 	missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
+	if strings.TrimSpace(brief.TaskFamily) == "plan_then_execute_planner" &&
+		PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, missing) &&
+		planThenExecuteSourceSatisfiedResultsCoverPaths(missing, results) {
+		return "", false
+	}
 	if len(missing) == 0 {
 		return "", false
 	}

@@ -5,7 +5,7 @@ import "testing"
 func TestParseSessionSummaryExtractsTokens(t *testing.T) {
 	out := []byte(`{"type":"start","prompt":"x"}
 {"type":"tool_request","tool":"read_file"}
-{"type":"session_summary","prompt_tokens":12345,"completion_tokens":678,"total_tokens":13023,"turns":4}
+{"type":"session_summary","session_id":"abc123","model_calls":5,"tool_calls":4,"prompt_tokens":12345,"completion_tokens":678,"total_tokens":13023,"peak_prompt_tokens":9000,"ctx_size":262144,"duration_ms":4500,"stop_reason":"model_final","turns":4}
 {"type":"final","content":"done"}
 `)
 	summary, ok := parseSessionSummary(out)
@@ -14,6 +14,9 @@ func TestParseSessionSummaryExtractsTokens(t *testing.T) {
 	}
 	if summary.PromptTokens != 12345 || summary.CompletionTokens != 678 || summary.TotalTokens != 13023 {
 		t.Fatalf("got %#v", summary)
+	}
+	if summary.SessionID != "abc123" || summary.ModelCalls != 5 || summary.ToolCalls != 4 || summary.PeakPromptTokens != 9000 || summary.ContextSize != 262144 || summary.DurationMS != 4500 || summary.StopReason != "model_final" {
+		t.Fatalf("missing run metrics: %#v", summary)
 	}
 }
 
@@ -54,5 +57,14 @@ also not json
 	}
 	if summary.TotalTokens != 50 {
 		t.Fatalf("got %#v", summary)
+	}
+}
+
+func TestParseLaneQueuePool(t *testing.T) {
+	out := []byte(`{"type":"idiom.plan_execute.queue_acquired","pool":"qwen-35b"}
+{"type":"session_summary","total_tokens":50}
+`)
+	if got := parseLaneQueuePool(out); got != "qwen-35b" {
+		t.Fatalf("pool = %q, want qwen-35b", got)
 	}
 }

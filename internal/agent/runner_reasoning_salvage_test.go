@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
@@ -91,6 +95,32 @@ func TestExtractStructuredMarkdownFromReasoningRecognizesDraftShape(t *testing.T
 	}
 }
 
+func TestExtractStructuredMarkdownFromReasoningRecognizesRequiredEditsDraftShape(t *testing.T) {
+	reasoning := "Now I have both inputs. Let me apply the review comments to the previous draft.\n\n" +
+		"# Corrected implementation brief\n\n" +
+		"## Problem\n\n" +
+		"Use the exact anchors already captured by the packet.\n\n" +
+		"## Files To Modify\n\n" +
+		"| File | Change |\n|------|--------|\n" +
+		"| `native/src/appraisal.cpp` | MODIFY: add symmetric branch |\n\n" +
+		"## Verified Current State\n\n" +
+		"`native/src/appraisal.cpp:12` contains `if (result.valence < 0.0f) {`.\n\n" +
+		"## Required Edits\n\n" +
+		"1. Insert the positive-valence branch after the existing negative branch.\n\n" +
+		"## Acceptance\n\n" +
+		"- focused tests pass\n"
+	out := extractStructuredMarkdownFromReasoning(reasoning)
+	if out == "" {
+		t.Fatal("expected required-edits draft-shape extraction to succeed")
+	}
+	if strings.Contains(out, "Now I have both inputs") {
+		t.Fatalf("output should not include prose preface: %s", out)
+	}
+	if !strings.Contains(out, "## Required Edits") || !strings.Contains(out, "# Corrected implementation brief") {
+		t.Fatalf("output missing corrected brief sections: %s", out)
+	}
+}
+
 func TestExtractStructuredMarkdownFromReasoningPicksLastReviewWhenIterated(t *testing.T) {
 	reasoning := strings.Repeat("filler-thinking-content. ", 30) +
 		"\n\n## Bugs found\n\n1. First attempt bug\n\n## Verdict\n\nfix-bugs\n\n" +
@@ -147,6 +177,175 @@ func TestAutoSalvageRecoversFromReasoningWhenReplyIsEmpty(t *testing.T) {
 		t.Fatalf("salvaged file should contain Verdict: %s", body)
 	}
 	_ = context.Background()
+}
+
+func TestAutoSalvageExtractsStructuredMarkdownFromReplyProse(t *testing.T) {
+	dir := t.TempDir()
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
+
+	required := "draft.md"
+	reply := "Now I have both inputs. I will apply the review comments before writing the corrected draft.\n\n" +
+		"# Corrected atom brief\n\n" +
+		"## Problem\n\nUse the exact anchors already provided.\n\n" +
+		strings.Repeat("Long evidence paragraph keeps the H1 far away from the final allowlist section.\n", 20) +
+		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | MODIFY: add guard |\n\n" +
+		"## Verified Current State\n\n`a.go:12` contains `return nil`.\n\n" +
+		"## Required Edits\n\n1. Replace the guard with checked behavior.\n\n" +
+		"## Acceptance\n\n- `go test ./...`\n"
+
+	r := &Runner{
+		Workspace: mgr,
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{required},
+		},
+	}
+
+	if !r.tryAutoSalvageMarkdownDeliverable(reply) {
+		t.Fatal("expected auto-salvage to extract structured markdown from reply prose")
+	}
+	body, err := os.ReadFile(filepath.Join(dir, required))
+	if err != nil {
+		t.Fatalf("read salvaged file: %v", err)
+	}
+	text := string(body)
+	if strings.Contains(text, "Now I have both inputs") {
+		t.Fatalf("salvage should omit pre-deliverable prose: %s", text)
+	}
+	if !strings.Contains(text, "# Corrected atom brief") || !strings.Contains(text, "## Problem") || !strings.Contains(text, "## Required Edits") {
+		t.Fatalf("salvaged file missing corrected draft shape: %s", text)
+	}
+}
+
+func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
+	dir := t.TempDir()
+	required := "draft.md"
+	reply := "# Corrected atom brief\n\n" +
+		"## Problem\n\nUse the exact anchors already provided and record blockers in the brief.\n\n" +
+		strings.Repeat("Evidence line keeps this close to the long refine drafts seen in practice.\n", 40) +
+		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | MODIFY: add guard |\n\n" +
+		"## Required Edits\n\n1. Replace the guard with checked behavior.\n\n" +
+		"## Acceptance\n\n- Planner-owned verification remains pending.\n"
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var completion runnerCompletionStatus
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         dir,
+			CWD:          dir,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "not_required_for_text_mutations",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{required},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_status" {
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion status: %v", err)
+				}
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "write the corrected draft"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		t.Fatalf("auto-salvage should satisfy required path blocker, got: %s", answer)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, required))
+	if err != nil {
+		t.Fatalf("read salvaged file: %v", err)
+	}
+	if !strings.Contains(string(body), "## Required Edits") {
+		t.Fatalf("salvaged file missing expected body: %s", body)
+	}
+	if completion.Status != "completed" || completion.Reason != "auto_salvage_markdown_deliverable" {
+		t.Fatalf("expected completed auto-salvage status, got %#v", completion)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one model request, got %d", requests)
+	}
+}
+
+func TestAutoSalvageSkipsQuestionBlockerEvenWithMarkdownShape(t *testing.T) {
+	dir := t.TempDir()
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
+	r := &Runner{
+		Workspace: mgr,
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"draft.md"},
+		},
+	}
+	reply := "<<QUESTION>>: blocked on missing evidence.\n\n" +
+		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | MODIFY |\n\n" +
+		"## Required Edits\n\n1. Cannot write safely.\n"
+	if r.tryAutoSalvageMarkdownDeliverable(reply) {
+		t.Fatal("question blockers must not be salvaged into deliverable files")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "draft.md")); !os.IsNotExist(err) {
+		t.Fatalf("draft.md should not exist after skipped salvage, stat err=%v", err)
+	}
+}
+
+func TestMutationCompletionRejectionRequiresQuestionForMissingPathBlocker(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			RequiredEditPaths: []string{"draft.md"},
+		},
+	}
+	result, rejected := runner.mutationCompletionRejection("blocked because draft.md needs more evidence", nil)
+	if !rejected {
+		t.Fatalf("missing required path should reject blocker-like prose without <<QUESTION>>, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "no successful write tool result") {
+		t.Fatalf("expected no-write gate error, got: %s", result.Error)
+	}
+	result, rejected = runner.mutationCompletionRejection("<<QUESTION>>: blocked because draft.md needs more evidence", nil)
+	if rejected {
+		t.Fatalf("path-specific <<QUESTION>> blocker should be accepted, got %#v", result)
+	}
+}
+
+func TestCompletionGateRecoveryKeepsScratchpadDeliverableOutputBudget(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		RequiredEditPaths: []string{".idiom/refine/example/iter-3/draft.md"},
+	}
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief)
+	if opts.MaxTokens != 16384 {
+		t.Fatalf("scratchpad recovery must preserve full deliverable budget, got %d", opts.MaxTokens)
+	}
+	opts = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief)
+	if opts.MaxTokens != 16384 {
+		t.Fatalf("scratchpad recovery should default to full deliverable budget, got %d", opts.MaxTokens)
+	}
 }
 
 func TestExtractStructuredMarkdownFromReasoningRejectsUnfilledTemplate(t *testing.T) {

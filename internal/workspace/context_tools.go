@@ -5,18 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"idiom/internal/comprehension"
-)
-
-const (
-	contextAutoRefreshMaxFiles       = 200
-	contextStatusAutoRefreshMaxFiles = 25
 )
 
 func (m *Manager) contextIndex(ctx context.Context, req ToolRequest) ToolResult {
@@ -43,15 +37,18 @@ func (m *Manager) contextIndex(ctx context.Context, req ToolRequest) ToolResult 
 }
 
 func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult {
-	report, err := comprehension.Status(m.cfg.Root)
+	report, err := contextStatusReport(m.cfg.Root, req)
 	if err != nil {
 		return ToolResult{Tool: "context_status", Summary: "Context index status failed", Error: err.Error()}
 	}
 	var refresh *comprehension.RefreshReport
+	var freshness *comprehension.FreshnessDecision
 	if req.Refresh {
-		refresh = m.contextStatusAutoRefresh(ctx, req, report)
+		decision := m.contextStatusFreshness(ctx, req, report)
+		freshness = &decision
+		refresh = decision.Refresh
 		if refresh != nil && refresh.Attempted && refresh.Error == "" {
-			refreshed, err := comprehension.Status(m.cfg.Root)
+			refreshed, err := contextStatusReport(m.cfg.Root, req)
 			if err != nil {
 				refresh.Error = err.Error()
 			} else {
@@ -59,6 +56,29 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 			}
 		}
 		report.AutoRefresh = refresh
+		report.Freshness = freshness
+		report = comprehension.StatusReportWithMetadata(report, "context_status", freshness)
+	} else {
+		policy := contextFreshnessPolicy(req, comprehension.FreshnessReportOnly)
+		decision, err := comprehension.EnsureFresh(ctx, comprehension.FreshnessRequest{
+			Root:      m.cfg.Root,
+			Operation: "context_status",
+			Policy:    policy,
+			Path:      firstNonEmptyString(req.Path, req.Workdir),
+			Query:     firstNonEmptyString(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
+			Language:  contextRefreshLanguage(req),
+			Mode:      req.Mode,
+			MaxFiles:  req.FreshnessMaxFiles,
+			Status:    &report,
+		})
+		if err != nil {
+			return ToolResult{Tool: "context_status", Summary: "Context index status freshness report failed", Error: err.Error()}
+		}
+		if boundedContextRefreshScope(req) != "" {
+			decision.GlobalFresh = false
+		}
+		report.Freshness = &decision
+		report = comprehension.StatusReportWithMetadata(report, "context_status", &decision)
 	}
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -78,8 +98,21 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 	return ToolResult{Tool: "context_status", Summary: summary, Output: string(output)}
 }
 
+func contextStatusReport(root string, req ToolRequest) (comprehension.StatusReport, error) {
+	if scope := boundedContextRefreshScope(req); scope != "" {
+		return comprehension.StatusForScope(root, scope)
+	}
+	return comprehension.Status(root)
+}
+
 func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult {
-	refresh := m.contextAutoRefresh(ctx, req, "context_query")
+	freshness, err := m.contextReadFreshness(ctx, req, "context_query")
+	if err != nil {
+		return ToolResult{Tool: "context_query", Summary: "Context query freshness check failed", Error: err.Error()}
+	}
+	if comprehension.StaleEvidenceBlocksUse(freshness) {
+		return contextFreshnessBlockerResult("context_query", freshness)
+	}
 	result, err := comprehension.Query(comprehension.QueryOptions{
 		Root:            m.cfg.Root,
 		Query:           req.Query,
@@ -93,7 +126,10 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 	if err != nil {
 		return ToolResult{Tool: "context_query", Summary: "Context query failed", Error: err.Error()}
 	}
-	result.AutoRefresh = refresh
+	result.AutoRefresh = freshness.Refresh
+	result.Freshness = &freshness
+	result.Confidence = comprehension.GraphResultConfidenceForFreshness(result.Fresh, &freshness)
+	result.StaleEvidence = comprehension.StaleEvidenceSafetyForFreshness(freshness)
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return ToolResult{Tool: "context_query", Summary: "Context query report encode failed", Error: err.Error()}
@@ -102,7 +138,7 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 	if len(result.UnresolvedGaps) > 0 {
 		gap = fmt.Sprintf("; %d gap(s)", len(result.UnresolvedGaps))
 	}
-	refreshSummary := contextRefreshSummary(refresh)
+	refreshSummary := contextRefreshSummary(freshness.Refresh)
 	return ToolResult{
 		Tool:    "context_query",
 		Summary: fmt.Sprintf("Context query returned %d node(s) and %d edge(s)%s%s", len(result.Nodes), len(result.Edges), gap, refreshSummary),
@@ -110,8 +146,26 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 	}
 }
 
-func (m *Manager) contextZoom(req ToolRequest) ToolResult {
-	handle := strings.TrimSpace(firstNonEmptyString(req.ID, req.Pattern, req.Path))
+func (m *Manager) contextZoom(ctx context.Context, req ToolRequest) ToolResult {
+	handle := strings.TrimSpace(firstNonEmptyString(req.ID, req.Handle, req.Pattern, req.Path))
+	freshness, err := m.contextReadFreshness(ctx, ToolRequest{
+		Tool:              req.Tool,
+		ID:                handle,
+		Handle:            handle,
+		Pattern:           req.Pattern,
+		Path:              req.Path,
+		Language:          req.Language,
+		Mode:              req.Mode,
+		Resolution:        req.Resolution,
+		FreshnessPolicy:   req.FreshnessPolicy,
+		FreshnessMaxFiles: req.FreshnessMaxFiles,
+	}, "context_zoom")
+	if err != nil {
+		return ToolResult{Tool: "context_zoom", Summary: "Context zoom freshness check failed", Error: err.Error()}
+	}
+	if comprehension.StaleEvidenceBlocksUse(freshness) {
+		return contextFreshnessBlockerResult("context_zoom", freshness)
+	}
 	result, err := comprehension.Zoom(comprehension.ZoomOptions{
 		Root:          m.cfg.Root,
 		Handle:        handle,
@@ -122,6 +176,9 @@ func (m *Manager) contextZoom(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "context_zoom", Summary: "Context zoom failed", Error: err.Error()}
 	}
+	result.Freshness = &freshness
+	result.Confidence = comprehension.GraphResultConfidenceForFreshness(result.Fresh, &freshness)
+	result.StaleEvidence = comprehension.StaleEvidenceSafetyForFreshness(freshness)
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return ToolResult{Tool: "context_zoom", Summary: "Context zoom report encode failed", Error: err.Error()}
@@ -138,22 +195,46 @@ func (m *Manager) contextZoom(req ToolRequest) ToolResult {
 
 func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 	task := strings.TrimSpace(firstNonEmptyString(req.Task, req.Query, req.Prompt, req.Content, req.Pattern))
-	refresh := m.contextAutoRefresh(ctx, req, "context_pack")
+	freshness, err := m.contextReadFreshness(ctx, req, "context_pack")
+	if err != nil {
+		return ToolResult{Tool: "context_pack", Summary: "Context pack freshness check failed", Error: err.Error()}
+	}
+	if comprehension.StaleEvidenceBlocksUse(freshness) {
+		return contextFreshnessBlockerResult("context_pack", freshness)
+	}
 	result, err := comprehension.Pack(comprehension.PackOptions{
-		Root:           m.cfg.Root,
-		Task:           task,
-		Path:           req.Path,
-		Scope:          req.Workdir,
-		Mode:           req.Mode,
-		Limit:          req.Limit,
-		BudgetTokens:   req.BudgetTokens,
-		RequiredTests:  req.RequiredTests,
-		ForbiddenPaths: req.ForbiddenPaths,
+		Root:              m.cfg.Root,
+		Task:              task,
+		Path:              req.Path,
+		Scope:             req.Workdir,
+		Mode:              req.Mode,
+		Limit:             req.Limit,
+		BudgetTokens:      req.BudgetTokens,
+		RequiredTests:     req.RequiredTests,
+		RequiredEditPaths: req.RequiredEditPaths,
+		ForbiddenPaths:    req.ForbiddenPaths,
+		Freshness:         &freshness,
 	})
 	if err != nil {
 		return ToolResult{Tool: "context_pack", Summary: "Context pack generation failed", Error: err.Error()}
 	}
-	result.AutoRefresh = refresh
+	result.AutoRefresh = freshness.Refresh
+	result.Freshness = &freshness
+	result.Confidence = comprehension.GraphResultConfidenceForFreshness(result.Fresh, &freshness)
+	result.StaleEvidence = comprehension.StaleEvidenceSafetyForFreshness(freshness)
+	result.Provenance.Operation = "context_pack"
+	if result.Provenance.Source == "" {
+		result.Provenance.Source = "context_graph"
+	}
+	if result.Provenance.ArtifactPath == "" {
+		result.Provenance.ArtifactPath = result.ArtifactPath
+	}
+	if result.Provenance.IndexID == "" {
+		result.Provenance.IndexID = freshness.IndexID
+		result.Provenance.StoreKind = freshness.StoreKind
+		result.Provenance.GeneratedAt = freshness.GeneratedAt
+	}
+	comprehension.AttachPackResultContract(&result)
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return ToolResult{Tool: "context_pack", Summary: "Context pack report encode failed", Error: err.Error()}
@@ -162,7 +243,7 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 	if len(result.UnresolvedGaps) > 0 {
 		gap = fmt.Sprintf("; %d gap(s)", len(result.UnresolvedGaps))
 	}
-	refreshSummary := contextRefreshSummary(refresh)
+	refreshSummary := contextRefreshSummary(freshness.Refresh)
 	return ToolResult{
 		Tool:    "context_pack",
 		Summary: fmt.Sprintf("Context pack wrote %s with %d candidate file(s), %d symbol(s), and %d test(s)%s%s", result.ArtifactPath, len(result.CandidateFiles), len(result.CandidateSymbols), len(result.Tests), gap, refreshSummary),
@@ -171,20 +252,25 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 }
 
 type contextImpactReport struct {
-	Task              string                       `json:"task"`
-	ArtifactPath      string                       `json:"artifact_path,omitempty"`
-	IndexID           string                       `json:"index_id,omitempty"`
-	Fresh             bool                         `json:"fresh"`
-	GeneratedAt       string                       `json:"generated_at,omitempty"`
-	BudgetTokens      int                          `json:"budget_tokens,omitempty"`
-	ImpactScope       []contextImpactItem          `json:"impact_scope,omitempty"`
-	Tests             []comprehension.PackTest     `json:"tests,omitempty"`
-	Risks             []string                     `json:"risks,omitempty"`
-	Unknowns          []string                     `json:"unknowns,omitempty"`
-	UnresolvedGaps    []string                     `json:"unresolved_gaps,omitempty"`
-	AutoRefresh       *comprehension.RefreshReport `json:"auto_refresh,omitempty"`
-	ContextViewPath   string                       `json:"context_view_path,omitempty"`
-	ContextViewHandle string                       `json:"context_view_handle,omitempty"`
+	Task              string                              `json:"task"`
+	ArtifactPath      string                              `json:"artifact_path,omitempty"`
+	IndexID           string                              `json:"index_id,omitempty"`
+	StoreKind         string                              `json:"store_kind,omitempty"`
+	Fresh             bool                                `json:"fresh"`
+	Freshness         *comprehension.FreshnessDecision    `json:"freshness,omitempty"`
+	Confidence        comprehension.GraphResultConfidence `json:"confidence"`
+	Provenance        comprehension.GraphResultProvenance `json:"provenance"`
+	GeneratedAt       string                              `json:"generated_at,omitempty"`
+	BudgetTokens      int                                 `json:"budget_tokens,omitempty"`
+	ImpactScope       []contextImpactItem                 `json:"impact_scope,omitempty"`
+	Tests             []comprehension.PackTest            `json:"tests,omitempty"`
+	Risks             []string                            `json:"risks,omitempty"`
+	Unknowns          []string                            `json:"unknowns,omitempty"`
+	UnresolvedGaps    []string                            `json:"unresolved_gaps,omitempty"`
+	AutoRefresh       *comprehension.RefreshReport        `json:"auto_refresh,omitempty"`
+	StaleEvidence     comprehension.StaleEvidenceSafety   `json:"stale_evidence"`
+	ContextViewPath   string                              `json:"context_view_path,omitempty"`
+	ContextViewHandle string                              `json:"context_view_handle,omitempty"`
 }
 
 type contextImpactItem struct {
@@ -205,28 +291,44 @@ type contextImpactSignal struct {
 }
 
 func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult {
-	task := strings.TrimSpace(firstNonEmptyString(req.Task, req.Query, req.Prompt, req.Content, req.Pattern))
-	refresh := m.contextAutoRefresh(ctx, req, "context_impact")
+	task := m.contextImpactTask(req)
+	freshness, err := m.contextReadFreshness(ctx, req, "context_impact")
+	if err != nil {
+		return ToolResult{Tool: "context_impact", Summary: "Context impact freshness check failed", Error: err.Error()}
+	}
+	if comprehension.StaleEvidenceBlocksUse(freshness) {
+		return contextFreshnessBlockerResult("context_impact", freshness)
+	}
 	pack, err := comprehension.Pack(comprehension.PackOptions{
-		Root:           m.cfg.Root,
-		Task:           task,
-		Path:           req.Path,
-		Scope:          req.Workdir,
-		Mode:           firstNonEmptyString(req.Mode, "plan"),
-		Limit:          req.Limit,
-		BudgetTokens:   req.BudgetTokens,
-		RequiredTests:  req.RequiredTests,
-		ForbiddenPaths: req.ForbiddenPaths,
+		Root:              m.cfg.Root,
+		Task:              task,
+		Path:              req.Path,
+		Scope:             req.Workdir,
+		Mode:              firstNonEmptyString(req.Mode, "plan"),
+		Limit:             req.Limit,
+		BudgetTokens:      req.BudgetTokens,
+		RequiredTests:     req.RequiredTests,
+		RequiredEditPaths: req.RequiredEditPaths,
+		ForbiddenPaths:    req.ForbiddenPaths,
+		Freshness:         &freshness,
 	})
 	if err != nil {
 		return ToolResult{Tool: "context_impact", Summary: "Context impact ranking failed", Error: err.Error()}
 	}
-	pack.AutoRefresh = refresh
+	pack.AutoRefresh = freshness.Refresh
+	pack.Freshness = &freshness
+	pack.StaleEvidence = comprehension.StaleEvidenceSafetyForFreshness(freshness)
+	provenance := pack.Provenance
+	provenance.Operation = "context_impact"
 	report := contextImpactReport{
 		Task:              pack.Task,
 		ArtifactPath:      pack.ArtifactPath,
 		IndexID:           pack.IndexID,
+		StoreKind:         pack.StoreKind,
 		Fresh:             pack.Fresh,
+		Freshness:         &freshness,
+		Confidence:        comprehension.GraphResultConfidenceForFreshness(pack.Fresh, &freshness),
+		Provenance:        provenance,
 		GeneratedAt:       pack.GeneratedAt,
 		BudgetTokens:      pack.BudgetTokens,
 		ImpactScope:       contextImpactItems(pack, req.Limit),
@@ -234,7 +336,8 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 		Risks:             append([]string(nil), pack.Risks...),
 		Unknowns:          append([]string(nil), pack.Unknowns...),
 		UnresolvedGaps:    append([]string(nil), pack.UnresolvedGaps...),
-		AutoRefresh:       refresh,
+		AutoRefresh:       freshness.Refresh,
+		StaleEvidence:     comprehension.StaleEvidenceSafetyForFreshness(freshness),
 		ContextViewPath:   pack.ArtifactPath,
 		ContextViewHandle: "context_pack://" + pack.PackID,
 	}
@@ -248,9 +351,20 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 	}
 	return ToolResult{
 		Tool:    "context_impact",
-		Summary: fmt.Sprintf("Context impact ranked %d item(s), %d test(s); context view: %s%s%s", len(report.ImpactScope), len(report.Tests), report.ContextViewPath, gap, contextRefreshSummary(refresh)),
+		Summary: fmt.Sprintf("Context impact ranked %d item(s), %d test(s); context view: %s%s%s", len(report.ImpactScope), len(report.Tests), report.ContextViewPath, gap, contextRefreshSummary(freshness.Refresh)),
 		Output:  string(output),
 	}
+}
+
+func (m *Manager) contextImpactTask(req ToolRequest) string {
+	if task := strings.TrimSpace(firstNonEmptyString(req.Task, req.Query, req.Prompt, req.Content, req.Pattern)); task != "" {
+		return task
+	}
+	path := normalizeGraphOutputPath(req.Path, m.cfg.Root)
+	if path == "" {
+		return ""
+	}
+	return "Graph-backed impact evidence for " + path
 }
 
 func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpactItem {
@@ -373,190 +487,125 @@ func contextImpactStableHandle(value string) string {
 	return fmt.Sprintf("%08x", sum)
 }
 
+func contextFreshnessPolicy(req ToolRequest, fallback comprehension.FreshnessPolicy) comprehension.FreshnessPolicy {
+	switch strings.ToLower(strings.TrimSpace(req.FreshnessPolicy)) {
+	case "":
+		return fallback
+	case string(comprehension.FreshnessReportOnly):
+		return comprehension.FreshnessReportOnly
+	case string(comprehension.FreshnessReadThrough):
+		return comprehension.FreshnessReadThrough
+	case string(comprehension.FreshnessRequire):
+		return comprehension.FreshnessRequire
+	case string(comprehension.FreshnessAllowStale):
+		return comprehension.FreshnessAllowStale
+	default:
+		return fallback
+	}
+}
+
+func (m *Manager) contextReadFreshness(ctx context.Context, req ToolRequest, operation string) (comprehension.FreshnessDecision, error) {
+	return comprehension.EnsureFresh(ctx, comprehension.FreshnessRequest{
+		Root:             m.cfg.Root,
+		Operation:        operation,
+		Policy:           contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
+		Path:             firstNonEmptyString(req.Path, req.Workdir),
+		Handle:           firstNonEmptyString(req.ID, req.Handle, req.Pattern),
+		Query:            firstNonEmptyString(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
+		ReferencedPaths:  req.RequiredEditPaths,
+		Language:         contextRefreshLanguage(req),
+		Mode:             req.Mode,
+		MaxFiles:         req.FreshnessMaxFiles,
+		PatchActiveStore: true,
+		Enrichers:        m.contextGraphEnrichers(contextRefreshIndexMode(req.Mode)),
+	})
+}
+
 func (m *Manager) contextAutoRefresh(ctx context.Context, req ToolRequest, purpose string) *comprehension.RefreshReport {
-	scope := boundedContextRefreshScope(req)
-	status, statusErr := comprehension.Status(m.cfg.Root)
-	if statusErr != nil {
+	decision, err := m.contextReadFreshness(ctx, req, purpose)
+	if err != nil {
 		return &comprehension.RefreshReport{
 			Attempted:     false,
-			Scope:         scope,
+			Scope:         boundedContextRefreshScope(req),
 			Language:      contextRefreshLanguage(req),
 			Reason:        "status_error",
-			SkippedReason: "context status failed",
-			Error:         statusErr.Error(),
+			SkippedReason: "status_error",
+			Error:         err.Error(),
 		}
 	}
-	reason := contextRefreshReason(m.cfg.Root, status, scope)
-	if reason == "" {
-		return nil
-	}
-	report := &comprehension.RefreshReport{
-		Attempted: false,
-		Scope:     scope,
-		Language:  contextRefreshLanguage(req),
-		Reason:    reason,
-	}
-	if scope == "" {
-		report.SkippedReason = "automatic context refresh needs a bounded path scope; run context_index with path . for an intentional full rebuild"
-		return report
-	}
-	report.Attempted = true
-	build, err := comprehension.Build(ctx, comprehension.BuildOptions{
-		Root:      m.cfg.Root,
-		Path:      scope,
-		Language:  report.Language,
-		Mode:      contextRefreshIndexMode(req.Mode),
-		MaxFiles:  contextAutoRefreshMaxFiles,
-		Enrichers: m.contextGraphEnrichers(contextRefreshIndexMode(req.Mode)),
+	return decision.Refresh
+}
+
+func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, status comprehension.StatusReport) comprehension.FreshnessDecision {
+	freshnessStatus := status
+	decision, err := comprehension.EnsureFresh(ctx, comprehension.FreshnessRequest{
+		Root:             m.cfg.Root,
+		Operation:        "context_status",
+		Policy:           contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
+		Path:             firstNonEmptyString(req.Path, req.Workdir),
+		Query:            firstNonEmptyString(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
+		ReferencedPaths:  req.RequiredEditPaths,
+		Language:         contextRefreshLanguage(req),
+		Mode:             req.Mode,
+		MaxFiles:         req.FreshnessMaxFiles,
+		PatchActiveStore: true,
+		Enrichers:        m.contextGraphEnrichers(contextRefreshIndexMode(req.Mode)),
+		Status:           &freshnessStatus,
 	})
 	if err != nil {
-		report.Error = err.Error()
-		return report
+		refresh := &comprehension.RefreshReport{
+			Attempted:     false,
+			Scope:         boundedContextRefreshScope(req),
+			Language:      contextRefreshLanguage(req),
+			Reason:        "status_error",
+			SkippedReason: "status_error",
+			Error:         err.Error(),
+		}
+		return comprehension.FreshnessDecision{
+			Policy:        comprehension.FreshnessReadThrough,
+			Operation:     "context_status",
+			FreshForScope: false,
+			GlobalFresh:   status.Fresh,
+			Scope:         refresh.Scope,
+			Reason:        refresh.Reason,
+			Blocker:       refresh.SkippedReason,
+			Refresh:       refresh,
+		}
 	}
-	report.IndexID = build.IndexID
-	report.FilesIndexed = build.FilesIndexed
-	report.SymbolsIndexed = build.SymbolsIndexed
-	report.EdgesIndexed = build.EdgesIndexed
-	report.PartialRefreshReason = build.PartialRefreshReason
-	report.FullRebuildReason = build.FullRebuildReason
-	report.RefreshedFiles = build.RefreshedStaleFiles
-	if after, err := comprehension.Status(m.cfg.Root); err == nil {
-		report.FreshAfter = after.Fresh
+	if boundedContextRefreshScope(req) != "" {
+		decision.GlobalFresh = false
 	}
-	return report
+	return decision
 }
 
 func (m *Manager) contextStatusAutoRefresh(ctx context.Context, req ToolRequest, status comprehension.StatusReport) *comprehension.RefreshReport {
-	scope := boundedContextRefreshScope(req)
-	if scope != "" {
-		return m.contextAutoRefresh(ctx, req, "context_status")
-	}
-	if !status.Indexed {
-		return m.contextRefreshRoot(ctx, req, "missing_index")
-	}
-	reason := contextRefreshReason(m.cfg.Root, status, "")
-	if reason == "" {
-		return nil
-	}
-	if reason == "collector_version_mismatch" {
-		return m.contextRefreshRoot(ctx, req, reason)
-	}
-	paths := contextStatusRefreshPaths(status)
-	report := &comprehension.RefreshReport{
-		Attempted: false,
-		Language:  contextRefreshLanguage(req),
-		Reason:    reason,
-	}
-	if len(paths) == 0 {
-		report.SkippedReason = "automatic context refresh needs a bounded path scope; run context_index with path . for an intentional full rebuild"
-		return report
-	}
-	if len(paths) > contextStatusAutoRefreshMaxFiles {
-		report.SkippedReason = fmt.Sprintf("automatic context status refresh found %d stale/missing file(s), above cap %d; provide a bounded path or run context_index with path . for an intentional full rebuild", len(paths), contextStatusAutoRefreshMaxFiles)
-		return report
-	}
-	return m.contextRefreshFileSet(ctx, req, paths, "small_stale_file_set")
+	decision := m.contextStatusFreshness(ctx, req, status)
+	return decision.Refresh
 }
 
-func (m *Manager) contextRefreshRoot(ctx context.Context, req ToolRequest, reason string) *comprehension.RefreshReport {
-	report := &comprehension.RefreshReport{
-		Attempted: true,
-		Scope:     ".",
-		Language:  contextRefreshLanguage(req),
-		Reason:    reason,
-	}
-	mode := contextRefreshIndexMode(req.Mode)
-	build, err := comprehension.Build(ctx, comprehension.BuildOptions{
-		Root:      m.cfg.Root,
-		Path:      ".",
-		Language:  report.Language,
-		Mode:      mode,
-		Enrichers: m.contextGraphEnrichers(mode),
-	})
+func contextFreshnessBlockerResult(tool string, freshness comprehension.FreshnessDecision) ToolResult {
+	output, err := json.MarshalIndent(struct {
+		Error         string                            `json:"error"`
+		Freshness     comprehension.FreshnessDecision   `json:"freshness"`
+		StaleEvidence comprehension.StaleEvidenceSafety `json:"stale_evidence"`
+	}{
+		Error:         "freshness_blocker",
+		Freshness:     freshness,
+		StaleEvidence: comprehension.StaleEvidenceSafetyForFreshness(freshness),
+	}, "", "  ")
 	if err != nil {
-		report.Error = err.Error()
-		return report
+		return ToolResult{Tool: tool, Summary: "Context freshness blocker encode failed", Error: err.Error()}
 	}
-	report.IndexID = build.IndexID
-	report.FilesIndexed = build.FilesIndexed
-	report.SymbolsIndexed = build.SymbolsIndexed
-	report.EdgesIndexed = build.EdgesIndexed
-	report.PartialRefreshReason = build.PartialRefreshReason
-	report.FullRebuildReason = build.FullRebuildReason
-	report.RefreshedFiles = build.RefreshedStaleFiles
-	if after, err := comprehension.Status(m.cfg.Root); err == nil {
-		report.FreshAfter = after.Fresh
+	reason := strings.TrimSpace(freshness.Reason)
+	if reason == "" {
+		reason = "freshness_blocker"
 	}
-	return report
-}
-
-func (m *Manager) contextRefreshFileSet(ctx context.Context, req ToolRequest, paths []string, reason string) *comprehension.RefreshReport {
-	report := &comprehension.RefreshReport{
-		Attempted:      true,
-		Scope:          fmt.Sprintf("%d stale/missing file(s)", len(paths)),
-		Language:       contextRefreshLanguage(req),
-		Reason:         reason,
-		RefreshedFiles: append([]string(nil), paths...),
+	return ToolResult{
+		Tool:    tool,
+		Summary: fmt.Sprintf("%s blocked by context freshness (%s)", tool, reason),
+		Output:  string(output),
+		Error:   "freshness_blocker",
 	}
-	mode := contextRefreshIndexMode(req.Mode)
-	for _, path := range paths {
-		language := contextRefreshLanguageForPath(m.cfg.Root, path, req)
-		build, err := comprehension.Build(ctx, comprehension.BuildOptions{
-			Root:      m.cfg.Root,
-			Path:      path,
-			Language:  language,
-			Mode:      mode,
-			MaxFiles:  contextAutoRefreshMaxFiles,
-			Enrichers: m.contextGraphEnrichers(mode),
-		})
-		if err != nil {
-			report.Error = err.Error()
-			return report
-		}
-		report.IndexID = build.IndexID
-		report.FilesIndexed += build.FilesIndexed
-		report.SymbolsIndexed += build.SymbolsIndexed
-		report.EdgesIndexed += build.EdgesIndexed
-		if report.PartialRefreshReason == "" {
-			report.PartialRefreshReason = build.PartialRefreshReason
-		}
-		if report.FullRebuildReason == "" {
-			report.FullRebuildReason = build.FullRebuildReason
-		}
-	}
-	if after, err := comprehension.Status(m.cfg.Root); err == nil {
-		report.FreshAfter = after.Fresh
-	}
-	return report
-}
-
-func contextStatusRefreshPaths(status comprehension.StatusReport) []string {
-	seen := make(map[string]struct{}, len(status.StaleFiles)+len(status.MissingFiles))
-	for _, path := range append(append([]string(nil), status.StaleFiles...), status.MissingFiles...) {
-		path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
-		if path == "" || path == "." {
-			continue
-		}
-		seen[path] = struct{}{}
-	}
-	paths := make([]string, 0, len(seen))
-	for path := range seen {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	return paths
-}
-
-func contextRefreshLanguageForPath(root string, path string, req ToolRequest) string {
-	language := contextRefreshLanguage(req)
-	if language == "auto" {
-		return language
-	}
-	abs := filepath.Join(root, filepath.FromSlash(path))
-	if _, err := os.Stat(abs); err != nil && os.IsNotExist(err) {
-		return "auto"
-	}
-	return language
 }
 
 func boundedContextRefreshScope(req ToolRequest) string {
@@ -570,10 +619,13 @@ func boundedContextRefreshScope(req ToolRequest) string {
 
 func contextRefreshLanguage(req ToolRequest) string {
 	language := strings.TrimSpace(req.Language)
-	if language == "" {
-		return "auto"
+	if language != "" && !strings.EqualFold(language, "auto") {
+		return language
 	}
-	return language
+	if support, ok := LanguageForFile(boundedContextRefreshScope(req)); ok {
+		return support.Name
+	}
+	return "auto"
 }
 
 func contextRefreshIndexMode(mode string) string {
@@ -583,52 +635,6 @@ func contextRefreshIndexMode(mode string) string {
 	default:
 		return "standard"
 	}
-}
-
-func contextRefreshReason(root string, status comprehension.StatusReport, scope string) string {
-	if !status.Indexed {
-		return "missing_index"
-	}
-	if scope != "" && !contextGraphHasFileInScope(root, scope) {
-		return "scope_not_indexed"
-	}
-	if status.CollectorVersionMismatch {
-		return "collector_version_mismatch"
-	}
-	if scope == "" {
-		if !status.Fresh {
-			return "stale_unbounded_graph"
-		}
-		return ""
-	}
-	for _, path := range append(append([]string(nil), status.StaleFiles...), status.MissingFiles...) {
-		if pathInContextToolScope(path, scope) {
-			return "stale_scope_files"
-		}
-	}
-	return ""
-}
-
-func contextGraphHasFileInScope(root string, scope string) bool {
-	graph, err := comprehension.LoadGraph(root)
-	if err != nil {
-		return false
-	}
-	for _, node := range graph.Nodes {
-		if node.Kind == "file" && pathInContextToolScope(node.Path, scope) {
-			return true
-		}
-	}
-	return false
-}
-
-func pathInContextToolScope(path string, scope string) bool {
-	path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
-	scope = filepath.ToSlash(filepath.Clean(strings.TrimSpace(scope)))
-	if path == "" || scope == "" || scope == "." {
-		return false
-	}
-	return path == scope || strings.HasPrefix(path, scope+"/")
 }
 
 func contextRefreshSummary(refresh *comprehension.RefreshReport) string {

@@ -33,6 +33,34 @@ func writeSubmitPlanFixture(t *testing.T, root string, path string, content stri
 	}
 }
 
+func submitPlanTestContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func assertSubmitPlanNoSensitiveMarkers(t *testing.T, root string, result ToolResult, forbidden []string) PlanArtifact {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("read last.plan.json: %v", err)
+	}
+	combined := strings.ToLower(result.Output + "\n" + result.Error + "\n" + string(body))
+	for _, marker := range forbidden {
+		if strings.Contains(combined, strings.ToLower(marker)) {
+			t.Fatalf("submit_plan leaked sensitive marker %q in output/error/artifact:\noutput=%s\nerror=%s\nartifact=%s", marker, result.Output, result.Error, string(body))
+		}
+	}
+	var artifact PlanArtifact
+	if err := json.Unmarshal(body, &artifact); err != nil {
+		t.Fatalf("last.plan.json is not valid plan JSON: %v", err)
+	}
+	return artifact
+}
+
 func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
@@ -81,12 +109,319 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	if artifact.Rationale == "" {
 		t.Fatalf("rationale should be persisted")
 	}
+	if artifact.Task.Summary == "" {
+		t.Fatalf("durable artifact should include task summary")
+	}
+	if artifact.Contract.Kind != "plan_then_execute" || artifact.Contract.ContractOwner != "harness" || artifact.Contract.StrategyOwner != "model" {
+		t.Fatalf("durable artifact contract not populated: %#v", artifact.Contract)
+	}
+	if artifact.Packet.Status == "" {
+		t.Fatalf("durable artifact packet status should be populated")
+	}
+	if !submitPlanTestContains(artifact.Paths.Editable, "a.txt") || !submitPlanTestContains(artifact.Paths.Changed, "b.txt") {
+		t.Fatalf("durable artifact paths should include planned edit paths: %#v", artifact.Paths)
+	}
+	if len(artifact.Evidence) == 0 {
+		t.Fatalf("durable artifact should include bounded evidence")
+	}
+	if len(artifact.VerificationObligations) == 0 || artifact.VerificationObligations[0].Status == "" {
+		t.Fatalf("durable artifact should include verification obligations: %#v", artifact.VerificationObligations)
+	}
+	if artifact.Approval.Status == "" {
+		t.Fatalf("durable artifact should include approval metadata")
+	}
+	if artifact.Handoff.Status == "" || !artifact.Handoff.Ready {
+		t.Fatalf("durable artifact should include ready handoff fields: %#v", artifact.Handoff)
+	}
 	pointer, err := os.ReadFile(filepath.Join(planDir, "last.plan.json"))
 	if err != nil {
 		t.Fatalf("last.plan.json missing: %v", err)
 	}
 	if !json.Valid(pointer) {
 		t.Fatalf("last.plan.json is not valid JSON")
+	}
+}
+
+func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			PlanID:        "plan-structured",
+			Task: PlanArtifactTask{
+				ID:                    "task-structured",
+				Summary:               "Add auditable handoff metadata",
+				ClientClassifications: []string{"finance"},
+			},
+			Contract: PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "executor",
+			},
+			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []PlanArtifactEvidence{{
+				ID:        "evidence-1",
+				Kind:      "context_packet",
+				Handle:    "context_pack://feedfacecafebeef",
+				Freshness: "fresh",
+			}},
+			UnresolvedQuestions: []PlanArtifactQuestion{{
+				ID:     "question-1",
+				Claim:  "No blocker remains before handoff",
+				Status: "closed",
+			}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				ID:       "verification-1",
+				Kind:     "focused_tests",
+				Command:  "go test ./internal/workspace",
+				Owner:    "executor",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []PlanEdit{
+				{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "Update the fixture."},
+			},
+		},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan rejected structured durable artifact: %s", result.Error)
+	}
+	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("load structured plan: %v", err)
+	}
+	if plan.PlanID != "plan-structured" || plan.Task.ID != "task-structured" {
+		t.Fatalf("structured identity fields not persisted: %#v", plan)
+	}
+	if plan.PackID != "feedfacecafebeef" || plan.Packet.PackID != "feedfacecafebeef" {
+		t.Fatalf("pack_id mirror not preserved: top=%q packet=%q", plan.PackID, plan.Packet.PackID)
+	}
+	if len(plan.UnresolvedQuestions) != 1 || len(plan.VerificationObligations) != 1 {
+		t.Fatalf("structured question/verification fields not preserved: %#v %#v", plan.UnresolvedQuestions, plan.VerificationObligations)
+	}
+}
+
+func TestSubmitPlanSanitizesStructuredEditPurposeMetadata(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			PlanID:        "plan-structured-purpose-privacy",
+			Task: PlanArtifactTask{
+				ID:                    "task-structured-purpose-privacy",
+				Summary:               "Bound edit-purpose metadata before durable persistence",
+				ClientClassifications: []string{"finance", "local_model_private_code"},
+			},
+			Contract: PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "executor",
+			},
+			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []PlanArtifactEvidence{{
+				ID:        "evidence-1",
+				Kind:      "context_packet",
+				Handle:    "context_pack://feedfacecafebeef",
+				Freshness: "fresh",
+			}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				ID:       "verification-1",
+				Kind:     "focused_tests",
+				Command:  "go test ./internal/workspace",
+				Owner:    "executor",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []PlanEdit{{
+				Path:    "a.txt",
+				OldText: "before",
+				NewText: "after",
+				Purpose: "SECRET raw_prompt customer-acme transcript token=SECRET logs/telemetry/secrets/customer-acme/file_body rotate session token for customer acme at /Users/ben/private/client/repo",
+			}},
+		},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan rejected structured artifact with sensitive metadata: %s", result.Error)
+	}
+	artifact := assertSubmitPlanNoSensitiveMarkers(t, root, result, []string{
+		"SECRET",
+		"raw_prompt",
+		"customer-acme",
+		"customer_acme",
+		"transcript",
+		"token=",
+		"rotate session token",
+		"customer acme",
+		"logs/telemetry/secrets",
+		"file_body",
+		"/Users/ben/private/client/repo",
+		"/users/ben/private/client/repo",
+		"private/client/repo",
+	})
+	if len(artifact.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(artifact.Edits))
+	}
+	edit := artifact.Edits[0]
+	if !strings.HasPrefix(edit.Purpose, "redacted:") {
+		t.Fatalf("sensitive purpose should persist as bounded redaction, got %q", edit.Purpose)
+	}
+	if edit.Path != "a.txt" || edit.OldText != "before" || edit.NewText != "after" {
+		t.Fatalf("executor-required edit contract changed: %#v", edit)
+	}
+}
+
+func TestSubmitPlanSanitizesLegacyEditPurposeMetadata(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "legacy path purpose privacy",
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "SECRET raw_prompt customer-acme transcript token=SECRET prompt_body rotate session token for customer acme at /Users/ben/private/client/repo",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan rejected legacy artifact with sensitive metadata: %s", result.Error)
+	}
+	artifact := assertSubmitPlanNoSensitiveMarkers(t, root, result, []string{
+		"SECRET",
+		"raw_prompt",
+		"customer-acme",
+		"customer_acme",
+		"transcript",
+		"token=",
+		"rotate session token",
+		"customer acme",
+		"prompt_body",
+		"/Users/ben/private/client/repo",
+		"/users/ben/private/client/repo",
+		"private/client/repo",
+	})
+	if len(artifact.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(artifact.Edits))
+	}
+	edit := artifact.Edits[0]
+	if !strings.HasPrefix(edit.Purpose, "redacted:") {
+		t.Fatalf("sensitive legacy purpose should persist as bounded redaction, got %q", edit.Purpose)
+	}
+	if edit.Path != "a.txt" || edit.OldText != "before" || edit.NewText != "after" {
+		t.Fatalf("executor-required edit contract changed: %#v", edit)
+	}
+}
+
+func TestSubmitPlanStaleOldTextReportsSourceSatisfiedHintWhenReplacementPresent(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "after\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "stale old text",
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "replace before with after",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("stale old_text should be rejected")
+	}
+	for _, want := range []string{"replacement text already appears", "Decision: source-satisfied"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("stale old_text error should include %q, got %q", want, result.Error)
+		}
+	}
+}
+
+func TestSubmitPlanStructuredSchemaErrorsAreBoundedAndPrivate(t *testing.T) {
+	mgr, _ := newSubmitPlanTestManager(t)
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			PlanID:        "token=SECRET",
+			Task: PlanArtifactTask{
+				Summary:               "raw_prompt customer transcript token=SECRET",
+				ClientClassifications: []string{"customer-acme-session"},
+			},
+			Edits: []PlanEdit{{Path: "a.txt"}},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("malformed structured artifact should be rejected")
+	}
+	for _, want := range []string{"plan_artifact.schema_errors", "contract.kind", "verification_obligations", "unsupported_client_classification"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("schema error should include %q, got %q", want, result.Error)
+		}
+	}
+	for _, leaked := range []string{"SECRET", "raw_prompt", "customer-acme", "customer_acme", "transcript"} {
+		if strings.Contains(result.Error, leaked) {
+			t.Fatalf("schema error leaked sensitive text %q: %s", leaked, result.Error)
+		}
+	}
+}
+
+func TestLoadPlanArtifactAcceptsLegacyV1AndSynthesizesDurableFields(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "legacy.plan.json")
+	body := []byte(`{"schema_version":"idiom.plan.v1","rationale":"legacy prose rationale","edits":[{"path":"a.txt","old_text":"a","new_text":"b"}]}`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("seed legacy artifact: %v", err)
+	}
+	plan, err := LoadPlanArtifact(path)
+	if err != nil {
+		t.Fatalf("legacy v1 artifact should load: %v", err)
+	}
+	if plan.SchemaVersion != PlanArtifactLegacySchemaVersion {
+		t.Fatalf("legacy schema version should be preserved for attribution, got %q", plan.SchemaVersion)
+	}
+	if plan.Contract.Kind == "" || len(plan.Evidence) == 0 || len(plan.VerificationObligations) == 0 || plan.Handoff.Status == "" {
+		t.Fatalf("legacy artifact should synthesize durable fields: %#v", plan)
+	}
+}
+
+func TestPlanArtifactClientClassificationExamplesCoverApprovedClasses(t *testing.T) {
+	for _, class := range approvedPlanArtifactClientClasses() {
+		artifact := normalizePlanArtifactForSubmit(PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			PlanID:        "plan-" + class,
+			Task: PlanArtifactTask{
+				ID:                    "task-" + class,
+				ClientClassifications: []string{class},
+			},
+			Contract: PlanArtifactContract{Kind: "plan_then_execute"},
+			Packet:   PlanArtifactPacket{Status: "not_provided"},
+			Paths:    PlanArtifactPaths{Editable: []string{"a.txt"}},
+			Evidence: []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded client classification coverage"}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				Kind:     "example_verification",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{Status: "awaiting_approval"},
+			Handoff:  PlanArtifactHandoff{Status: "ready", Ready: true},
+			Edits:    []PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
+		}, "", "2026-05-13T00:00:00Z", "plan-"+class, false)
+		if err := ValidatePlanArtifact(artifact); err != nil {
+			t.Fatalf("approved client classification %q should validate: %v", class, err)
+		}
 	}
 }
 
@@ -120,6 +455,45 @@ func TestSubmitPlanRejectsEditWithoutShape(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, "replace_all=true") {
 		t.Fatalf("rejection should name the whole-file/new-file shape, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanAcceptsSubstringDeletion(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "keep\nremove me\nkeep\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "x.txt", OldText: "remove me\n", NewText: "", Purpose: "delete obsolete line"},
+		},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("substring deletion should be a valid plan edit: %s", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); err != nil {
+		t.Fatalf("submit_plan should write an artifact for valid deletion edit: %v", err)
+	}
+}
+
+func TestSubmitPlanRejectsLineRangeDeletionWithExactTextGuidance(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "one\ntwo\nthree\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "x.txt", StartLine: 2, EndLine: 2, Content: "", Purpose: "delete obsolete line"},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("empty line-range content should be rejected")
+	}
+	for _, want := range []string{"line-range edits require non-empty content", "old_text", "empty new_text"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("rejection should guide deletion shape with %q, got %q", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
 	}
 }
 
@@ -157,6 +531,54 @@ func TestSubmitPlanRejectsMissingOldTextBeforeWritingArtifact(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, "did not appear") {
 		t.Fatalf("rejection should report missing old_text, got %q", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRejectsAdjacentDuplicateCodeLine(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "sim.cpp", "void tick() {\n    auto& c = entities_->colonists.data()[i];\n    c.cultural_work_mult = 1.0f;\n}\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{
+				Path:    "sim.cpp",
+				OldText: "    c.cultural_work_mult = 1.0f;\n",
+				NewText: "    auto& c = entities_->colonists.data()[i];\n    c.cultural_work_mult = 1.0f;\n",
+			},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("duplicate adjacent code line should be rejected")
+	}
+	if !strings.Contains(result.Error, "adjacent duplicate code line") {
+		t.Fatalf("rejection should name adjacent duplicate code, got %q", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRejectsCompletedPlanningArtifactOverwrite(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, ".planning/atoms/done.md", "# Done\n\nStatus: accepted\n\nKeep this spec.\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{
+				Path:       ".planning/atoms/done.md",
+				NewText:    "# Done\n\nNew draft.\n",
+				ReplaceAll: true,
+			},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("completed artifact overwrite should be rejected")
+	}
+	if !strings.Contains(result.Error, "completed planning artifact") {
+		t.Fatalf("rejection should name completed planning artifact, got %q", result.Error)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
 		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)

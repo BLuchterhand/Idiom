@@ -84,6 +84,35 @@ func TestDecorateFinalAnswerKeepsBlockerWhenRequiredPathsRemaining(t *testing.T)
 	}
 }
 
+func TestDecorateFinalAnswerKeepsPlanExecuteSourceSatisfiedAnswer(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10"},
+	}
+	answer := "Decision: source-satisfied\n- a.go: already implemented; no changes needed.\n- b.go: already implemented; no changes needed."
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "model_stop",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	if strings.Contains(got, "Required edit path") {
+		t.Fatalf("decorator must not rewrite source-satisfied plan-execute answer into a blocker, got:\n%s", got)
+	}
+	if !strings.Contains(got, "source-satisfied") {
+		t.Fatalf("decorator should preserve source-satisfied answer, got:\n%s", got)
+	}
+}
+
 func TestDecorateFinalAnswerKeepsBlockerWhenVerificationNotPlannerOwned(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",

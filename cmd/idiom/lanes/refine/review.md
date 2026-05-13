@@ -17,28 +17,32 @@ section with a one-sentence rationale per warning).
 {{LINT_OUTPUT}}
 ```
 
-## Hard tool budget
+## Required reads (exactly 1)
 
-- **Exactly ONE `read_file`** of the drafted brief is required.
-- **At most ONE additional `read_file`** is permitted, only if the
-  brief makes a single specific anchor claim you genuinely doubt
-  (e.g., "line 424 has X" and X looks implausible). Skip this when
-  the brief's claims look internally consistent — most reviews
-  don't need it.
-- **No grep, search_content, code_navigate, or shell.** Validate
-  from the brief's stated content alone.
-- After the budget, your VERY NEXT TOOL CALL MUST be `write_file`.
-  Repeated read attempts trigger the doom-loop guard and the lane
-  fails with `no_edit_attempt`.
+1. Drafted brief: `{{DRAFT_PATH}}` (full read).
+
+## Review evidence discipline
+
+- **One `read_file`** of the drafted brief is required.
+- Do not perform source reads, discovery queries, broad orientation, or
+  lookup repair from this scratchpad review phase.
+- Judge the draft from the drafted brief plus the pre-loaded lint output.
+  If a concern depends on source truth (for example a doubtful
+  `<file>:<line>` anchor, duplicate test name, or claimed existing
+  symbol), record the uncertainty as a bug or OK caveat in the review
+  instead of reopening source discovery. A bounded `Source verification
+  pending:` note is not a bug by itself when the brief still gives a
+  concrete edit shape and names the exact in-scope path/fact the
+  implementation lane must confirm with one narrow read or discovery call.
+- After the required read, write the review. Stop with `<<QUESTION>>:`
+  only if the drafted brief is unreadable or too incomplete to review.
 
 ## Required steps (in order)
 
 1. **Read** `{{DRAFT_PATH}}` (the drafted brief; full read).
-2. (OPTIONAL, ONCE) spot-check ONE anchor against its source file
-   ONLY if you genuinely doubt a specific line-number claim.
-3. **`write_file`** to `{{REVIEW_PATH}}` with the content described
+2. **`write_file`** to `{{REVIEW_PATH}}` with the content described
    in "Write `{{REVIEW_PATH}}` with this exact shape" below.
-4. Single-sentence final answer ("Done. Review at `{{REVIEW_PATH}}`.").
+3. Single-sentence final answer ("Done. Review at `{{REVIEW_PATH}}`.").
 
 ## Write `{{REVIEW_PATH}}` with this exact shape
 
@@ -99,17 +103,32 @@ reads needed:
 - **Self-contradictory**: the Problem says one thing and the
   Required Behavior does something different.
 
-## What to spot-check (requires the ONE optional read)
+## What to record as uncertainty
 
-These ONLY need the optional source-file read:
+These should be recorded in the review rather than checked through
+source discovery:
 
 - A specific `<file>:<line>` anchor that seems wrong (e.g., "line
   424 has `--lane-mode`" when you suspect the actual line has
-  different content). Read the file's narrow range around that
-  line ONCE, then write the review.
+  different content).
+- A duplicate test name or exact symbol ownership question that would
+  change whether the draft is executable.
 
-If you don't have a specific reason to doubt an anchor, skip the
-spot-check and write the review now.
+Put bounded `Source verification pending:` entries in OK, not Bugs,
+when all of the following are true:
+
+- The pending fact is inside a file already listed in Files To Modify.
+- The brief names the exact symbol, sentinel, boundary, or test
+  insertion point to verify.
+- The edit still has concrete behavior or replacement text once that
+  single fact is confirmed.
+
+Promote source uncertainty to Bugs only when it leaves the edit with no
+concrete write shape, requires a source path outside Files To Modify, or
+contradicts evidence already present in the draft/lint packet.
+
+If you don't have a specific reason to doubt an anchor, skip the caveat
+and write the review now.
 
 ## Files To Modify
 
@@ -119,14 +138,13 @@ spot-check and write the review now.
 
 ## STOP AND WRITE NOW
 
-After the required read (and the optional spot-check, if any), your
-VERY NEXT TOOL CALL MUST be `write_file` with:
+After the required read, write the review with:
 
 - `path`: `{{REVIEW_PATH}}`
 - `content`: the filled-in review from "Write `{{REVIEW_PATH}}` with
   this exact shape" above, with every `<bracket>` replaced.
 
-Do NOT continue reading. Do NOT do grep / search / code_navigate.
+Do NOT continue reading after the required draft read.
 Do NOT put the review content into a final-answer text — the gate
 will reject it. The deliverable IS the file. After `write_file`
 returns success, give the single-sentence final answer and stop.
@@ -135,6 +153,8 @@ If you genuinely cannot write a review (e.g., the brief is
 unreadable), surface `<<QUESTION>>:` with the specific blocker —
 do NOT just stop or summarize without writing.
 
-## Done when
+## Completion
 
-`test -f {{REVIEW_PATH}}` returns 0.
+The successful `write_file` result is the completion proof. Do not run
+`test -f`, `git diff`, `shell`, or any other follow-up check for this
+scratchpad file.

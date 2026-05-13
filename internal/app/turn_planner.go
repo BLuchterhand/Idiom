@@ -28,6 +28,9 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 		return fallbackTurnRoute(prompt, mode)
 	}
 	fallback := fallbackTurnRoute(prompt, mode)
+	if deterministicTurnRouteIsDecisive(fallback, prompt, mode) {
+		return fallback
+	}
 	if planned, ok := m.classifyTurnRouteWithModel(ctx, prompt, mode); ok {
 		planned = correctTurnRoutePlanForPrompt(planned, prompt, mode)
 		if shouldPreferFallbackRoute(fallback, planned) {
@@ -36,6 +39,19 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 		return planned
 	}
 	return fallback
+}
+
+func deterministicTurnRouteIsDecisive(plan turnRoutePlan, prompt string, mode agent.Mode) bool {
+	plan = normalizeTurnRoutePlan(plan, mode)
+	family := strings.TrimSpace(plan.Family)
+	if family == "" || family == "direct_question" || family == "multi_turn_state" {
+		return false
+	}
+	words := plannerWordText(prompt)
+	if isAnalysisContinuationPrompt(words) {
+		return false
+	}
+	return true
 }
 
 func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, mode agent.Mode) (turnRoutePlan, bool) {
@@ -83,9 +99,10 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	defer cancel()
 	thinkingOff := false
 	text, err := m.completeChatWithFallback(classifyCtx, messages, llama.ChatOptions{
-		MaxTokens:      256,
-		Temperature:    0.1,
-		EnableThinking: &thinkingOff,
+		MaxTokens:          256,
+		Temperature:        0.1,
+		EnableThinking:     &thinkingOff,
+		ChatTemplateKwargs: true,
 	})
 	if err != nil {
 		return turnRoutePlan{}, false
@@ -231,6 +248,15 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
 		plan.Reason = firstNonEmptyString(plan.Reason, "plan_then_execute_planner")
+	case "plan_then_execute_review_repair":
+		// Post-executor review phase for `idiom plan-execute`. This is
+		// review-shaped, not implementation-shaped: the model may close
+		// with a checklist-backed pass, or use submit_plan only for
+		// corrective edits found by the review.
+		plan.InitialLane = "review"
+		plan.FollowupLane = ""
+		plan.Contract = "review_findings"
+		plan.Reason = firstNonEmptyString(plan.Reason, "plan_then_execute_review_repair")
 	case "multi_turn_state":
 		plan.InitialLane = "main"
 		plan.Contract = "direct_answer"

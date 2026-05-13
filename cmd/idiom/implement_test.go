@@ -68,6 +68,29 @@ func TestRunImplementMainCanDelegateBuildTestsToPlanner(t *testing.T) {
 	}
 }
 
+func TestRunImplementMainCanDisableThinking(t *testing.T) {
+	configPath := writeMainConfig(t)
+	var stdout, stderr bytes.Buffer
+	var gotOpts runOptions
+
+	code := runImplementMain(
+		[]string{"-config", configPath, "-prompt", "write the brief", "-no-thinking"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			gotOpts = opts
+			return "done", nil
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !gotOpts.DisableThinking {
+		t.Fatal("--no-thinking should force request-level thinking off")
+	}
+}
+
 func TestRunImplementMainAllowBuildTestsOverridesPlannerOwnedVerification(t *testing.T) {
 	configPath := writeMainConfig(t)
 	var stdout, stderr bytes.Buffer

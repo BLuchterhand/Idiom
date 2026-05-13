@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"idiom/internal/llama"
@@ -80,11 +81,7 @@ func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.
 		c.metrics.CompletionGateRejections++
 	}
 	if c.turnMessages != nil {
-		*c.turnMessages = append(*c.turnMessages, llama.ChatMessage{
-			Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
-			Content:          reply.Content,
-			ReasoningContent: reply.ReasoningContent,
-		})
+		*c.turnMessages = append(*c.turnMessages, completionGateRejectedHistoryMessage(c.runner, reply, result, c.snapshotResults()))
 	}
 	c.runner.emitThinkingTrace(step, "completion_gate_reply_preserved", reply, c.currentOpts(), true)
 	c.recorder.activeToolCall = activeToolCall
@@ -92,6 +89,43 @@ func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.
 		IncrementNoProgress: true,
 		SetLastToolKey:      false,
 	})
+}
+
+func completionGateRejectedHistoryMessage(r *Runner, reply llama.ChatMessage, result workspace.ToolResult, results []workspace.ToolResult) llama.ChatMessage {
+	message := llama.ChatMessage{
+		Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+		Content:          reply.Content,
+		ReasoningContent: reply.ReasoningContent,
+	}
+	if !shouldCompactRejectedCompletionReply(r, reply, result, results) {
+		return message
+	}
+	content := strings.TrimSpace(reply.Content)
+	message.Content = fmt.Sprintf(
+		"[omitted rejected final answer: %d chars. The completion gate rejected it before required workspace changes were recorded: %s. Next action must satisfy the gate with an allowed tool call or a concrete blocker. Preview: %s]",
+		len(content),
+		truncateRunnerStateText(result.Error, 240),
+		truncateRunnerStateText(content, 500),
+	)
+	message.ReasoningContent = ""
+	return message
+}
+
+func shouldCompactRejectedCompletionReply(r *Runner, reply llama.ChatMessage, result workspace.ToolResult, results []workspace.ToolResult) bool {
+	if r == nil || strings.TrimSpace(result.Tool) != "completion_gate" {
+		return false
+	}
+	if !runnerBriefRequiresMutation(r.RuntimeBrief) || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
+		return false
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
+		return false
+	}
+	content := strings.TrimSpace(reply.Content)
+	if len(content) < 4000 {
+		return false
+	}
+	return strings.TrimSpace(result.Error) != ""
 }
 
 func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llama.ToolCall, raw string, parseErr error) {

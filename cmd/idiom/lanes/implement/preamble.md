@@ -22,9 +22,10 @@ asks you to "create" or "write".
 Modify only the allowlisted files named in the brief. Exact anchors, exact
 old/new snippets, Current-State Anchors, Required Edits, or unified patches in
 the brief are sufficient source evidence for an initial write attempt. If an
-anchor proves stale, ambiguous, or too imprecise during that attempt, use one
-bounded source read inside the affected required edit path with `named_gap` to
-refresh the exact edit-safety fact, then retry the edit or stop with
+anchor proves stale, ambiguous, or too imprecise during that attempt, use
+semantic/context/declared project discovery or a narrow source read inside the
+affected required edit path with `named_gap` to refresh the exact edit-safety
+fact, then retry the edit or stop with
 `<<QUESTION>>:` and name the blocker.
 Keep writes inside the brief's edit allowlist; idiom recognizes `Files To
 Modify`, `Files You May Edit`, and near-equivalent allowlist headings as
@@ -34,30 +35,28 @@ Before any file read, re-read the brief packet. The brief is the authoritative
 source for required edits, anchors, and edit shapes; most "I need to look this
 up" reflexes are answered by re-scanning the brief, not by opening a new file.
 
-When you DO need to look something up, prefer language-aware discovery tools
-over raw read_file with line ranges. They return one full function/symbol per
-call, vs read_file which forces multi-call exploration of large files:
+When you DO need to look something up, ask for the capability that matches the
+missing edit-safety fact: source sanity, symbol navigation or body inspection,
+reference/callsite evidence, file structure, project-declared read-only
+evidence, or exact text/range confirmation. Prefer focused evidence
+capabilities over broad path-body exploration.
 
-- `code_navigate` — language-agnostic symbol jump (one call returns the symbol)
-- `<lang>_find_symbol`, `<lang>_read_symbol`, `<lang>_workspace_symbol` — per-language symbol surface
-- `<lang>_references` — every callsite of a symbol in one call
-- `*_file_outline` — a file's symbol map without reading the body
+Reserve direct file-body reads for verifying a specific anchor whose location is
+already known (e.g. confirming line N's exact whitespace before applying an
+edit).
 
-Reserve `read_file` for verifying a specific anchor whose location is already
-known (e.g. confirming line N's exact whitespace before applying an edit).
-
-Use bounded source reads only to refresh a required-path anchor or close one
-named edit-safety fact. If no edit can be attempted safely, stop with
-`<<QUESTION>>:` and name the blocker.
+Use discovery or narrow source reads only to refresh a required-path anchor or
+close one named edit-safety fact. If no edit can be attempted safely, stop
+with `<<QUESTION>>:` and name the blocker.
 When a code-body edit requires file-prelude changes such as includes, imports,
 forward declarations, or using declarations, make those prelude edits too.
 Treat verified snippets and discovery output in the target packet as usable
 current-state evidence. Do not spend reads on broad container symbols when the
 packet already gives the nearby anchor; if the location is known from the
 packet, write first.
-Each source read must close one named edit-safety fact that would make an edit
-unsafe. Once that fact is resolved, the next action is an allowed edit or
-`<<QUESTION>>:` with the exact blocker; do not take another orientation read
+Each discovery/read step must close one named edit-safety fact that would make
+an edit unsafe. Once that fact is resolved, the next action is an allowed edit
+or `<<QUESTION>>:` with the exact blocker; do not take another orientation read
 just to improve confidence.
 Literal strings, comments, macro labels, doctest/test names, and single known
 sections in test/spec-like files are exact-text questions, not symbol questions:

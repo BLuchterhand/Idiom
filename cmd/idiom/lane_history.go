@@ -24,16 +24,26 @@ const laneHistoryRelPath = ".idiom/lane-history.jsonl"
 // from the on-disk record; lane history aggregations skip zero
 // values so the breakdown still works for mixed history.
 type laneHistoryEvent struct {
-	Timestamp        string `json:"ts"`
-	Mode             string `json:"mode"`
-	Brief            string `json:"brief"`
-	BriefMtime       string `json:"brief_mtime,omitempty"`
-	BriefProvenance  string `json:"brief_provenance,omitempty"`
-	Title            string `json:"title,omitempty"`
-	ExitCode         int    `json:"exit_code"`
-	PromptTokens     int    `json:"prompt_tokens,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty"`
-	TotalTokens      int    `json:"total_tokens,omitempty"`
+	Timestamp        string   `json:"ts"`
+	Mode             string   `json:"mode"`
+	Brief            string   `json:"brief"`
+	BriefMtime       string   `json:"brief_mtime,omitempty"`
+	BriefProvenance  string   `json:"brief_provenance,omitempty"`
+	Title            string   `json:"title,omitempty"`
+	ExitCode         int      `json:"exit_code"`
+	FinalState       string   `json:"final_state,omitempty"`
+	SessionID        string   `json:"session_id,omitempty"`
+	QueuePool        string   `json:"queue_pool,omitempty"`
+	ModelCalls       int      `json:"model_calls,omitempty"`
+	ToolCalls        int      `json:"tool_calls,omitempty"`
+	PromptTokens     int      `json:"prompt_tokens,omitempty"`
+	CompletionTokens int      `json:"completion_tokens,omitempty"`
+	TotalTokens      int      `json:"total_tokens,omitempty"`
+	PeakPromptTokens int      `json:"peak_prompt_tokens,omitempty"`
+	ContextSize      int      `json:"ctx_size,omitempty"`
+	DurationMS       int      `json:"duration_ms,omitempty"`
+	StopReason       string   `json:"stop_reason,omitempty"`
+	Degradations     []string `json:"degradations,omitempty"`
 }
 
 // refineDraftedMarker is the HTML comment finalizeRefine prepends to
@@ -97,18 +107,63 @@ func appendLaneHistory(projectRoot string, evt laneHistoryEvent) error {
 	return nil
 }
 
+func laneRunFinalState(exitCode int, degradations []laneDegradation) string {
+	if exitCode != 0 {
+		return "failed"
+	}
+	if len(degradations) > 0 {
+		return "degraded"
+	}
+	return "success"
+}
+
+func laneDegradationKinds(degradations []laneDegradation) []string {
+	if len(degradations) == 0 {
+		return nil
+	}
+	kinds := make([]string, 0, len(degradations))
+	for _, degradation := range degradations {
+		if strings.TrimSpace(degradation.kind) == "" {
+			continue
+		}
+		kinds = append(kinds, degradation.kind)
+	}
+	if len(kinds) == 0 {
+		return nil
+	}
+	return kinds
+}
+
+func laneHistoryEventFields(evt laneHistoryEvent) map[string]any {
+	body, err := json.Marshal(evt)
+	if err != nil {
+		return map[string]any{}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return map[string]any{}
+	}
+	delete(fields, "ts")
+	return fields
+}
+
 // laneHistorySummary aggregates the on-disk history into a
 // human-readable report.
 type laneHistorySummary struct {
 	Total                 int
 	ByMode                map[string]int
 	ByExitCode            map[int]int
+	ByFinalState          map[string]int
 	BriefsByPath          map[string]int
 	ByProvenance          map[string]int
+	TotalModelCalls       int
+	TotalToolCalls        int
 	TotalPromptTokens     int
 	TotalCompletionTokens int
 	TotalTokens           int
+	TotalDurationMS       int
 	EventsWithTokens      int
+	EventsWithRunMetrics  int
 }
 
 // laneHistoryFilter constrains which events a summary includes.
@@ -127,21 +182,11 @@ func summarizeLaneHistoryWithFilter(projectRoot string, filter laneHistoryFilter
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return laneHistorySummary{
-				ByMode:       map[string]int{},
-				ByExitCode:   map[int]int{},
-				BriefsByPath: map[string]int{},
-				ByProvenance: map[string]int{},
-			}, nil
+			return newLaneHistorySummary(), nil
 		}
 		return laneHistorySummary{}, err
 	}
-	out := laneHistorySummary{
-		ByMode:       map[string]int{},
-		ByExitCode:   map[int]int{},
-		BriefsByPath: map[string]int{},
-		ByProvenance: map[string]int{},
-	}
+	out := newLaneHistorySummary()
 	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -169,31 +214,49 @@ func summarizeLaneHistoryWithFilter(projectRoot string, filter laneHistoryFilter
 		out.Total++
 		out.ByMode[evt.Mode]++
 		out.ByExitCode[evt.ExitCode]++
+		if evt.FinalState != "" {
+			out.ByFinalState[evt.FinalState]++
+		}
 		if evt.Brief != "" {
 			out.BriefsByPath[evt.Brief]++
 		}
 		if evt.BriefProvenance != "" {
 			out.ByProvenance[evt.BriefProvenance]++
 		}
-		accumulateLaneHistoryTokens(&out, evt)
+		accumulateLaneHistoryRunMetrics(&out, evt)
 	}
 	return out, nil
 }
 
-// accumulateLaneHistoryTokens folds one event's token totals into
+func newLaneHistorySummary() laneHistorySummary {
+	return laneHistorySummary{
+		ByMode:       map[string]int{},
+		ByExitCode:   map[int]int{},
+		ByFinalState: map[string]int{},
+		BriefsByPath: map[string]int{},
+		ByProvenance: map[string]int{},
+	}
+}
+
+// accumulateLaneHistoryRunMetrics folds one event's run metrics into
 // the running summary. Zero-token events (subcommand ran without
 // --json) are skipped so EventsWithTokens reflects only events
 // that actually contributed numbers — the display layer uses this
 // to print the per-event-with-tokens average, not the per-total-
 // dispatch average.
-func accumulateLaneHistoryTokens(out *laneHistorySummary, evt laneHistoryEvent) {
-	if evt.PromptTokens == 0 && evt.CompletionTokens == 0 && evt.TotalTokens == 0 {
-		return
+func accumulateLaneHistoryRunMetrics(out *laneHistorySummary, evt laneHistoryEvent) {
+	if evt.ModelCalls != 0 || evt.ToolCalls != 0 || evt.DurationMS != 0 {
+		out.TotalModelCalls += evt.ModelCalls
+		out.TotalToolCalls += evt.ToolCalls
+		out.TotalDurationMS += evt.DurationMS
+		out.EventsWithRunMetrics++
 	}
-	out.TotalPromptTokens += evt.PromptTokens
-	out.TotalCompletionTokens += evt.CompletionTokens
-	out.TotalTokens += evt.TotalTokens
-	out.EventsWithTokens++
+	if evt.PromptTokens != 0 || evt.CompletionTokens != 0 || evt.TotalTokens != 0 {
+		out.TotalPromptTokens += evt.PromptTokens
+		out.TotalCompletionTokens += evt.CompletionTokens
+		out.TotalTokens += evt.TotalTokens
+		out.EventsWithTokens++
+	}
 }
 
 // summarizeLaneHistory reads the history file and aggregates.
@@ -204,21 +267,11 @@ func summarizeLaneHistory(projectRoot string) (laneHistorySummary, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return laneHistorySummary{
-				ByMode:       map[string]int{},
-				ByExitCode:   map[int]int{},
-				BriefsByPath: map[string]int{},
-				ByProvenance: map[string]int{},
-			}, nil
+			return newLaneHistorySummary(), nil
 		}
 		return laneHistorySummary{}, err
 	}
-	out := laneHistorySummary{
-		ByMode:       map[string]int{},
-		ByExitCode:   map[int]int{},
-		BriefsByPath: map[string]int{},
-		ByProvenance: map[string]int{},
-	}
+	out := newLaneHistorySummary()
 	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -231,13 +284,16 @@ func summarizeLaneHistory(projectRoot string) (laneHistorySummary, error) {
 		out.Total++
 		out.ByMode[evt.Mode]++
 		out.ByExitCode[evt.ExitCode]++
+		if evt.FinalState != "" {
+			out.ByFinalState[evt.FinalState]++
+		}
 		if evt.Brief != "" {
 			out.BriefsByPath[evt.Brief]++
 		}
 		if evt.BriefProvenance != "" {
 			out.ByProvenance[evt.BriefProvenance]++
 		}
-		accumulateLaneHistoryTokens(&out, evt)
+		accumulateLaneHistoryRunMetrics(&out, evt)
 	}
 	return out, nil
 }
@@ -247,21 +303,11 @@ func summarizeLaneHistoryByMode(projectRoot string, mode string) (laneHistorySum
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return laneHistorySummary{
-				ByMode:       map[string]int{},
-				ByExitCode:   map[int]int{},
-				BriefsByPath: map[string]int{},
-				ByProvenance: map[string]int{},
-			}, nil
+			return newLaneHistorySummary(), nil
 		}
 		return laneHistorySummary{}, err
 	}
-	out := laneHistorySummary{
-		ByMode:       map[string]int{},
-		ByExitCode:   map[int]int{},
-		BriefsByPath: map[string]int{},
-		ByProvenance: map[string]int{},
-	}
+	out := newLaneHistorySummary()
 	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -277,13 +323,16 @@ func summarizeLaneHistoryByMode(projectRoot string, mode string) (laneHistorySum
 		out.Total++
 		out.ByMode[evt.Mode]++
 		out.ByExitCode[evt.ExitCode]++
+		if evt.FinalState != "" {
+			out.ByFinalState[evt.FinalState]++
+		}
 		if evt.Brief != "" {
 			out.BriefsByPath[evt.Brief]++
 		}
 		if evt.BriefProvenance != "" {
 			out.ByProvenance[evt.BriefProvenance]++
 		}
-		accumulateLaneHistoryTokens(&out, evt)
+		accumulateLaneHistoryRunMetrics(&out, evt)
 	}
 	return out, nil
 }
@@ -312,6 +361,12 @@ func printLaneHistorySummary(projectRoot string, w io.Writer, filter laneHistory
 	for code, n := range s.ByExitCode {
 		fmt.Fprintf(w, "  %d: %d\n", code, n)
 	}
+	if len(s.ByFinalState) > 0 {
+		fmt.Fprintln(w, "by final state:")
+		for state, n := range s.ByFinalState {
+			fmt.Fprintf(w, "  %s: %d\n", state, n)
+		}
+	}
 	rerun := 0
 	for _, n := range s.BriefsByPath {
 		if n > 1 {
@@ -329,6 +384,12 @@ func printLaneHistorySummary(projectRoot string, w io.Writer, filter laneHistory
 		if s.EventsWithTokens > 1 {
 			fmt.Fprintf(w, "  avg total/dispatch: %d\n", s.TotalTokens/s.EventsWithTokens)
 		}
+	}
+	if s.EventsWithRunMetrics > 0 {
+		fmt.Fprintf(w, "run metrics (across %d dispatch(es) with summaries):\n", s.EventsWithRunMetrics)
+		fmt.Fprintf(w, "  model calls: %d\n", s.TotalModelCalls)
+		fmt.Fprintf(w, "  tool calls: %d\n", s.TotalToolCalls)
+		fmt.Fprintf(w, "  duration_ms: %d\n", s.TotalDurationMS)
 	}
 	return nil
 }
