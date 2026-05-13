@@ -112,11 +112,11 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "required_edit_paths_define_write_scope")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_paths_covered_or_blocked")
 		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
-			"use reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>",
+			"use semantic/context/declared project discovery or narrow reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>",
 		)
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
 		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
-			"treat required_edit_paths plus packet evidence as edit scope; allow only bounded required-path reads for named edit-safety facts",
+			"treat required_edit_paths plus packet evidence as edit scope; prefer semantic/context/declared project discovery before narrow required-path reads for named edit-safety facts",
 		)
 		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_paths_reported")
 		if len(brief.RequiredEditSnippets) > 0 {
@@ -230,6 +230,14 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 		if line == "" {
 			if sawPath {
 				active = false
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "|") && strings.Count(line, "|") >= 2 {
+			linePaths := pathparse.MentionedWorkspacePathsInMarkdownTableFirstCell(line)
+			if len(linePaths) > 0 {
+				sawPath = true
+				paths = appendUniqueBriefStrings(paths, linePaths...)
 			}
 			continue
 		}
@@ -349,7 +357,7 @@ func workspacePathsUnderPromptHeadings(prompt string, headings []string) []strin
 	for _, rawLine := range strings.Split(prompt, "\n") {
 		line := strings.TrimSpace(rawLine)
 		normalized := normalizePromptSectionHeading(line)
-		if _, ok := headingSet[normalized]; ok {
+		if promptHeadingInSet(normalized, headingSet) {
 			active = true
 			sawPath = false
 			continue
@@ -402,6 +410,12 @@ func promptContextEvidencePaths(prompt string) []string {
 		"implementation context",
 		"discovery evidence",
 		"evidence",
+		"evidence paths",
+		"primary evidence paths",
+		"read-only evidence paths",
+		"required reads",
+		"required read",
+		"input files",
 		"relevant files",
 		"candidate scope",
 	}
@@ -613,7 +627,7 @@ func markdownSectionByHeading(markdown string, headingName string) string {
 			continue
 		}
 		level, text, ok := markdownHeading(trimmed)
-		if !ok || normalizeMarkdownHeadingText(text) != want {
+		if !ok || !markdownHeadingMatches(normalizeMarkdownHeadingText(text), want) {
 			continue
 		}
 		start = i + 1
@@ -674,6 +688,12 @@ func normalizeMarkdownHeadingText(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
+func markdownHeadingMatches(candidate string, want string) bool {
+	candidate = trimPromptHeadingQualifier(candidate)
+	want = trimPromptHeadingQualifier(want)
+	return candidate == want
+}
+
 func normalizePromptSectionHeading(text string) string {
 	text = strings.TrimSpace(text)
 	text = strings.Trim(text, "#*: `\"'")
@@ -681,6 +701,27 @@ func normalizePromptSectionHeading(text string) string {
 	text = strings.ToLower(text)
 	text = strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(text)
 	return strings.Join(strings.Fields(text), " ")
+}
+
+func promptHeadingInSet(candidate string, headingSet map[string]struct{}) bool {
+	if _, ok := headingSet[candidate]; ok {
+		return true
+	}
+	if trimmed := trimPromptHeadingQualifier(candidate); trimmed != candidate {
+		_, ok := headingSet[trimmed]
+		return ok
+	}
+	return false
+}
+
+func trimPromptHeadingQualifier(heading string) string {
+	heading = strings.TrimSpace(heading)
+	for _, marker := range []string{" (", " [", " - ", " -- "} {
+		if idx := strings.Index(heading, marker); idx > 0 {
+			return strings.TrimSpace(heading[:idx])
+		}
+	}
+	return heading
 }
 
 func requiredEditCodeBlocks(section string) []string {
@@ -912,18 +953,12 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 		thinkingOff := false
 		opts.EnableThinking = &thinkingOff
 		opts.PreserveThinking = false
+		opts.ChatTemplateKwargs = true
 	}
-	// NOTE on plan-then-execute thinking control: setting
-	// EnableThinking=false here was tried 2026-05-09 and proved a
-	// no-op on Colony's MLX backend. internal/llama/client.go's
-	// buildChatTemplateKwargs short-circuits for non-llama.cpp
-	// backends, so chat_template_kwargs never reaches mlx_lm.server.
-	// MLX does honor the server-startup arg
-	// `--chat-template-args {"enable_thinking":false}`, so the
-	// effective control point is the launcher, not idiom. If/when we
-	// also support llama.cpp for the planner, a per-task-family
-	// override at this site would activate; until then this comment
-	// is the breadcrumb.
+	// MLX 0.31.3+ accepts per-request chat_template_kwargs, so this
+	// now disables Qwen thinking for read-only routes without requiring
+	// a separate nothink server. Older MLX builds may ignore the field;
+	// launcher-level --chat-template-args remains the fallback there.
 	_ = taskFamily
 	switch contract {
 	case "direct_answer":

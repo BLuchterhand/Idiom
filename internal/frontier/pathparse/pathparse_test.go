@@ -7,7 +7,7 @@ import (
 
 // TestMentionedWorkspacePathsRejectsBacktickProseTokens guards the
 // regression from the Phase 6.5 / Phase 5b dispatch debugging: the
-// embedded plan-execute preamble has prose like ``start_line`/`end_line``
+// embedded plan-execute preamble has prose like “start_line`/`end_line“
 // that the extractor used to pick up as a fake required_edit_path
 // because outer-trim left the inner backticks intact. Reject any
 // candidate containing a backtick so prose-tokens never reach the
@@ -103,6 +103,32 @@ func TestLooksLikeWorkspacePathTokenRejectsBackticks(t *testing.T) {
 	}
 }
 
+func TestLooksLikeWorkspacePathTokenRejectsSlashSeparatedSymbolProse(t *testing.T) {
+	for _, candidate := range []string{"RIVAL/NEMESIS", "LONER/GREGARIOUS", "API/V1"} {
+		if LooksLikeWorkspacePathToken(candidate) {
+			t.Fatalf("LooksLikeWorkspacePathToken(%q) should be false for uppercase slash-separated prose", candidate)
+		}
+	}
+	if !LooksLikeWorkspacePathToken("internal/API.md") {
+		t.Fatal("uppercase path segments with a real file extension should still pass")
+	}
+	if !LooksLikeWorkspacePathToken("internal/workspace") {
+		t.Fatal("lowercase extensionless workspace paths should still pass")
+	}
+}
+
+func TestMentionedWorkspacePathsUnderHeadingsRejectsSlashProseInListRows(t *testing.T) {
+	text := strings.Join([]string{
+		"Files To Modify:",
+		"- native/tests/test_funeral.cpp — Add STRANGER, BEST_FRIEND, and RIVAL/NEMESIS coverage",
+	}, "\n")
+	got := MentionedWorkspacePathsUnderHeadings(text, "files to modify")
+	want := []string{"native/tests/test_funeral.cpp"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("expected only %#v, got %#v", want, got)
+	}
+}
+
 func TestMentionedWorkspacePathsNormalizesEscapedNewlinePrefix(t *testing.T) {
 	text := `"\ninternal/agent/runner_child_tasks.go" internal/agent/runner.go`
 	got := MentionedWorkspacePaths(text)
@@ -171,6 +197,37 @@ func TestMentionedWorkspacePathsUnderHeadings(t *testing.T) {
 	for i, value := range want {
 		if got[i] != value {
 			t.Fatalf("expected paths %#v, got %#v", want, got)
+		}
+	}
+}
+
+func TestMentionedWorkspacePathsUnderHeadingsOnlyUsesFirstTableCell(t *testing.T) {
+	text := strings.Join([]string{
+		"# Narrow atom",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"| --- | --- |",
+		"| native/tests/test_funeral.cpp | Add STRANGER, BEST_FRIEND, and RIVAL/NEMESIS coverage |",
+		"| `native/src/simulation/creatures/social_welfare.cpp` | Adjust unburied penalty scaling |",
+		"",
+		"## Evidence",
+		"- docs/design/spec.md",
+	}, "\n")
+	got := MentionedWorkspacePathsUnderHeadings(text, "files to modify")
+	want := []string{"native/tests/test_funeral.cpp", "native/src/simulation/creatures/social_welfare.cpp"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d paths, got %#v", len(want), got)
+	}
+	for i, value := range want {
+		if got[i] != value {
+			t.Fatalf("expected paths %#v, got %#v", want, got)
+		}
+	}
+	for _, value := range got {
+		if value == "RIVAL/NEMESIS" {
+			t.Fatalf("table prose leaked into path set: %#v", got)
 		}
 	}
 }

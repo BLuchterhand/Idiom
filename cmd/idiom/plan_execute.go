@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"idiom/internal/agent"
+	"idiom/internal/app"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/runner"
@@ -25,12 +26,14 @@ import (
 
 // planExecuteOptions configures `idiom plan-execute`.
 type planExecuteOptions struct {
-	ConfigPath string
-	Prompt     string
-	PromptFile string
-	Model      string
-	Resume     string
-	JSONEvents bool
+	ConfigPath      string
+	Prompt          string
+	PromptFile      string
+	Model           string
+	Resume          string
+	JSONEvents      bool
+	DisableThinking bool
+	MaxTokens       int
 	// PlannerOwnedVerification is accepted for compatibility with
 	// `idiom implement` invocations that pass the flag. Plan-execute
 	// always treats verification as planner-owned (the executor phase
@@ -105,6 +108,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	requiredEditPaths := app.RequiredEditPathsFromPrompt(prompt)
 
 	// Phase 1: planner. The planner runs as an implementation lane
 	// with the plan-then-execute system addendum that swaps per-edit
@@ -112,6 +116,10 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// because that lane already has the right read-side guards and
 	// brief audit; only the tool surface differs.
 	plannerPrompt := planExecutePlannerSystemAddendum() + "\n\n" + prompt
+	plannerMaxTokens := 16384
+	if opts.MaxTokens > 0 {
+		plannerMaxTokens = opts.MaxTokens
+	}
 	answer, err := promptRun(cfg, plannerPrompt, runOptions{
 		JSONEvents:               opts.JSONEvents,
 		Resume:                   opts.Resume,
@@ -121,19 +129,19 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		//
 		// Originally 4096 ("planner emits one submit_plan + short answer,
 		// 4096 is plenty"). That assumption broke when submit_plan's
-		// `new_text` field carries the full content of NEW FILE edits —
+		// `new_text` field carried the full content of NEW FILE edits —
 		// a 400-line Go file plus structure overhead easily exceeds
 		// 4096 tokens, and the response truncates silently mid-JSON
 		// (manifesting as "completion gate rejected, no write present"
 		// because the truncated JSON failed to parse as a valid tool
 		// call). See task-64b for the failure repro.
 		//
-		// Qwen3 documents 32768 as the recommended default; 16384 is a
-		// middle ground that handles 1000+ line briefs while still
-		// constraining latency on small atoms (most planner responses
-		// stay well under 4096 anyway — the cap only matters when the
-		// content is large).
-		MaxTokensOverride: 16384,
+		// submit_plan now spills large persisted bodies into sidecar refs,
+		// but the planner may still need enough output budget to emit a
+		// new-file body once. Keep this above the historical 4096 until
+		// planner-side content refs can avoid emitting those bytes at all.
+		MaxTokensOverride: plannerMaxTokens,
+		DisableThinking:   opts.DisableThinking,
 		Telemetry:         rec,
 	}, stdout)
 	if err != nil {
@@ -170,7 +178,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		"path":  planPath,
 		"edits": len(plan.Edits),
 	})
-	report, runErr := runExecutorPhase(cfg, plan, opts.JSONEvents, stdout)
+	report, runErr := runExecutorPhase(cfg, plan, requiredEditPaths, opts.JSONEvents, stdout)
 	_ = sessionStart // findLatestPlanArtifact already filtered; keep referenced.
 	if !opts.JSONEvents {
 		fmt.Fprintln(stdout, "")
@@ -194,6 +202,8 @@ func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOption
 	fs.BoolVar(&opts.JSONEvents, "json", false, "emit structured JSONL events to stdout")
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id before running")
 	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
+	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for this planner run")
+	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override planner max_tokens for this run; 0 uses plan-execute default (16384)")
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", false, "compatibility flag: plan-execute always treats verification as planner-owned; this is a no-op")
 	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: plan-execute does not run builds or tests; this is a no-op")
 	if err := fs.Parse(args); err != nil {
@@ -244,7 +254,7 @@ func planExecutePlannerSystemAddendum() string {
 		"Call `submit_plan` once with every brief-required edit; the executor dispatches them after you stop.",
 		"",
 		"1. Per-edit writes (edit_file / apply_patch / delegate_edit / write_file / append_file / mkdir / go_move_declarations) are blocked. Use `submit_plan`.",
-		"2. Each edit: `path` + ONE of: (`old_text`+`new_text` | `start_line`+`end_line`+`content` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`.",
+		"2. Each edit: `path` + ONE of: (`old_text`+`new_text` | `start_line`+`end_line`+`content` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. Prefer substring/range edits; large bodies are spilled to artifact refs after submit_plan.",
 		"3. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, do ONE `read_file` of the path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"5. At most one `read_file` per path, only when the brief's anchor needs verification. Never re-read the same file at a different range — if the brief is wrong, stop with `<<QUESTION>>:`.",
@@ -401,7 +411,7 @@ func (r executorPhaseReport) String() string {
 // truth. Failure of one edit aborts the phase and surfaces the
 // specific failure so the caller (planner re-run, human, etc.) can
 // react.
-func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, jsonEvents bool, stdout io.Writer) (executorPhaseReport, error) {
+func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, jsonEvents bool, stdout io.Writer) (executorPhaseReport, error) {
 	report := executorPhaseReport{Total: len(plan.Edits)}
 	if len(plan.Edits) == 0 {
 		return report, fmt.Errorf("plan has no edits")
@@ -409,6 +419,18 @@ func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, jsonEvents
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
 	ctx := context.Background()
+
+	if mismatch := preflightPlanRequiredEditPaths(requiredEditPaths, plan); mismatch != nil {
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
+			"edit_index": mismatch.Index,
+			"path":       mismatch.Path,
+			"reason":     mismatch.Reason,
+		})
+		if !jsonEvents {
+			fmt.Fprintf(stdout, "  preflight FAILED on required_edit_paths %s: %s\n", mismatch.Path, mismatch.Reason)
+		}
+		return report, fmt.Errorf("plan required_edit_paths preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
+	}
 
 	// Pre-execute plan validator: walk every edit's old_text and
 	// confirm it appears in the file before any edit lands. This
@@ -505,9 +527,9 @@ func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, jsonEvents
 			status = "failed"
 		}
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_edit", map[string]any{
-			"step":  i + 1,
-			"total": len(plan.Edits),
-			"path":  edit.Path,
+			"step":   i + 1,
+			"total":  len(plan.Edits),
+			"path":   edit.Path,
 			"status": status,
 			"error":  strings.TrimSpace(result.Error),
 		})
@@ -544,6 +566,60 @@ type planEditPreflightMismatch struct {
 	Index  int
 	Path   string
 	Reason string
+}
+
+// preflightPlanRequiredEditPaths validates the executor's plan
+// against the brief-derived required_edit_paths before any file write
+// runs. The planner-phase runner normally rejects bad submit_plan
+// calls, but the executor is the final deterministic boundary: stale,
+// hand-written, or future plan artifacts must not be able to skip a
+// required path or write outside the scoped packet.
+func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifact) *planEditPreflightMismatch {
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, path := range required {
+		normalized := normalizePlanExecutePath(path)
+		if normalized != "" {
+			requiredSet[normalized] = struct{}{}
+		}
+	}
+	if len(requiredSet) == 0 {
+		return nil
+	}
+	planned := make(map[string]struct{}, len(plan.Edits))
+	for i, edit := range plan.Edits {
+		path := normalizePlanExecutePath(edit.Path)
+		if path == "" {
+			return &planEditPreflightMismatch{Index: i, Reason: "edit has no path"}
+		}
+		planned[path] = struct{}{}
+		if _, ok := requiredSet[path]; !ok {
+			return &planEditPreflightMismatch{
+				Index:  i,
+				Path:   path,
+				Reason: "plan edit path is outside required_edit_paths allowlist",
+			}
+		}
+	}
+	for _, path := range required {
+		normalized := normalizePlanExecutePath(path)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := planned[normalized]; !ok {
+			return &planEditPreflightMismatch{
+				Index:  -1,
+				Path:   normalized,
+				Reason: "plan does not include an edit for this required_edit_paths entry",
+			}
+		}
+	}
+	return nil
+}
+
+func normalizePlanExecutePath(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.TrimPrefix(path, "./")
+	return path
 }
 
 // preflightPlanEdits validates every plan edit's old_text against the
@@ -588,11 +664,20 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *plan
 			body = content
 			cache[abs] = body
 		}
-		if !strings.Contains(string(body), edit.OldText) {
+		current := string(body)
+		matchCount := strings.Count(current, edit.OldText)
+		if matchCount == 0 {
 			return &planEditPreflightMismatch{
 				Index:  i,
 				Path:   path,
 				Reason: "old_text does not appear in file (whitespace/indentation mismatch is the most common cause)",
+			}
+		}
+		if matchCount > 1 && !edit.ReplaceAll {
+			return &planEditPreflightMismatch{
+				Index:  i,
+				Path:   path,
+				Reason: fmt.Sprintf("old_text matched %d locations; use a line-range edit, extend old_text with surrounding context, or set replace_all=true when every occurrence is intended", matchCount),
 			}
 		}
 	}

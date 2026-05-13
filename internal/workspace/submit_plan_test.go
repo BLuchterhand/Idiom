@@ -22,8 +22,20 @@ func newSubmitPlanTestManager(t *testing.T) (*Manager, string) {
 	return mgr, root
 }
 
+func writeSubmitPlanFixture(t *testing.T, root string, path string, content string) {
+	t.Helper()
+	fullPath := filepath.Join(root, path)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("create fixture parent: %v", err)
+	}
+	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write fixture %s: %v", path, err)
+	}
+}
+
 func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add donkey across the codebase",
@@ -106,10 +118,133 @@ func TestSubmitPlanRejectsEditWithoutShape(t *testing.T) {
 	if !strings.Contains(result.Error, "edits[0]") {
 		t.Fatalf("rejection should index the bad edit, got %q", result.Error)
 	}
+	if !strings.Contains(result.Error, "replace_all=true") {
+		t.Fatalf("rejection should name the whole-file/new-file shape, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanRejectsAmbiguousOldTextBeforeWritingArtifact(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "matrix.cpp", "set_floor(30.0f);\nother();\nset_floor(30.0f);\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "matrix.cpp", OldText: "set_floor(30.0f);", NewText: "floor = 30.0f;"},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("ambiguous old_text should be rejected")
+	}
+	if !strings.Contains(result.Error, "matched 2 locations") {
+		t.Fatalf("rejection should report duplicate match count, got %q", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRejectsMissingOldTextBeforeWritingArtifact(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "actual\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "x.txt", OldText: "expected", NewText: "replacement"},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("missing old_text should be rejected")
+	}
+	if !strings.Contains(result.Error, "did not appear") {
+		t.Fatalf("rejection should report missing old_text, got %q", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanAllowsReplaceAllForRepeatedOldText(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "matrix.cpp", "set_floor(30.0f);\nset_floor(30.0f);\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "matrix.cpp", OldText: "set_floor(30.0f);", NewText: "floor = 30.0f;", ReplaceAll: true},
+		},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("replace_all should allow repeated old_text: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanAcceptsWholeFileNewFileShape(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "create a new config file",
+		Edits: []PlanEdit{
+			{
+				Path:       "config/new.json",
+				NewText:    "{\n  \"ok\": true\n}\n",
+				ReplaceAll: true,
+				Purpose:    "Create the new config file body.",
+			},
+		},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan rejected whole-file/new-file shape: %s", result.Error)
+	}
+	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(plan.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(plan.Edits))
+	}
+	edit := plan.Edits[0]
+	if !edit.ReplaceAll || edit.OldText != "" || !strings.Contains(edit.NewText, `"ok": true`) {
+		t.Fatalf("whole-file/new-file shape not persisted correctly: %#v", edit)
+	}
+}
+
+func TestSubmitPlanSpillsLargeEditBodiesToRefs(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	large := strings.Repeat("line\n", 1200)
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "large.txt", NewText: large, ReplaceAll: true, Purpose: "Create the large file body."},
+		},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan rejected large whole-file body: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "content_refs: 1") {
+		t.Fatalf("expected submit_plan to report one content ref, got %q", result.Output)
+	}
+	body, err := os.ReadFile(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	var raw PlanArtifact
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode raw plan: %v", err)
+	}
+	if len(raw.Edits) != 1 || raw.Edits[0].NewText != "" || raw.Edits[0].NewTextRef == "" {
+		t.Fatalf("expected raw artifact to store new_text_ref instead of inline body: %#v", raw.Edits)
+	}
+	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("load plan: %v", err)
+	}
+	if plan.Edits[0].NewText != large {
+		t.Fatalf("hydrated large body mismatch: got %d bytes, want %d", len(plan.Edits[0].NewText), len(large))
+	}
 }
 
 func TestLoadPlanArtifactRoundTrip(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "old\n")
 	mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "test plan",
@@ -142,6 +277,7 @@ func TestLoadPlanArtifactRejectsWrongSchemaVersion(t *testing.T) {
 
 func TestSubmitPlanPersistsPackIDForExecutorRehydration(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "old\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "exercise pack_id plumbing",
@@ -167,6 +303,7 @@ func TestSubmitPlanStampsSessionIDFromConfig(t *testing.T) {
 	// disambiguate concurrent plan-execute runs in the same workspace.
 	t.Helper()
 	root := t.TempDir()
+	writeSubmitPlanFixture(t, root, "a.txt", "x\n")
 	mgr := NewManager(config.Workspace{
 		Root:         root,
 		CWD:          root,
@@ -196,6 +333,7 @@ func TestSubmitPlanOmitsEmptySessionID(t *testing.T) {
 	// cfg.Workspace.SessionID must still produce valid v1 artifacts
 	// with the field omitted.
 	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "x\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
 		Edits: []PlanEdit{
@@ -218,6 +356,7 @@ func TestSubmitPlanOmitsEmptyPackID(t *testing.T) {
 	// pack_id is optional and additive — older planners that don't
 	// provide it must still produce valid v1 artifacts.
 	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "x\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "no pack id provided",

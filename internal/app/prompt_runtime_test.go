@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/backends"
 	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
@@ -177,6 +178,88 @@ func TestSystemPromptSourcesUseCachedModePromptUntilInvalidated(t *testing.T) {
 	}
 }
 
+func TestRoleSpecExplicitAliasCanTargetNonDefaultProfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	body := `{
+		"default_profile": "qwen-pair",
+		"profiles": {
+			"qwen-pair": {
+				"models": [
+					{"alias": "qwen3.6-35b", "model_path": "/models/qwen3.6-35b", "port": 47780, "roles": ["planner"]},
+					{"alias": "qwen3-coder-30b", "model_path": "/models/qwen3-coder-30b", "port": 47781, "roles": ["executor"]}
+				]
+			},
+			"qwen-27b-pair": {
+				"models": [
+					{"alias": "qwen3.6-27b", "model_path": "/models/qwen3.6-27b", "port": 47783, "roles": ["planner"]},
+					{"alias": "qwen3-coder-30b", "model_path": "/models/qwen3-coder-30b", "port": 47781, "roles": ["executor"]}
+				]
+			}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	spec, ok := roleSpec(root, backends.RolePlanner, config.LlamaServer{
+		Kind:  "mlx",
+		Host:  "127.0.0.1",
+		Port:  47680,
+		Model: "qwen3.6-27b",
+	})
+
+	if !ok {
+		t.Fatalf("expected explicit 27B alias to resolve")
+	}
+	if spec.Port != 47783 || spec.Model != "/models/qwen3.6-27b" {
+		t.Fatalf("resolved spec = %+v, want 27B profile target", spec)
+	}
+}
+
+func TestRoleSpecExecutorIgnoresExplicitPlannerAlias(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	body := `{
+		"default_profile": "qwen-pair",
+		"profiles": {
+			"qwen-pair": {
+				"models": [
+					{"alias": "qwen3.6-35b", "model_path": "/models/qwen3.6-35b", "port": 47780, "roles": ["planner"]},
+					{"alias": "qwen3-coder-30b", "model_path": "/models/qwen3-coder-30b", "port": 47781, "roles": ["executor"]}
+				]
+			},
+			"qwen-27b-pair": {
+				"models": [
+					{"alias": "qwen3.6-27b", "model_path": "/models/qwen3.6-27b", "port": 47783, "roles": ["planner"]},
+					{"alias": "qwen3-coder-30b", "model_path": "/models/qwen3-coder-30b", "port": 47781, "roles": ["executor"]}
+				]
+			}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	spec, ok := roleSpec(root, backends.RoleExecutor, config.LlamaServer{
+		Kind:  "mlx",
+		Host:  "127.0.0.1",
+		Port:  47680,
+		Model: "qwen3.6-27b",
+	})
+
+	if !ok {
+		t.Fatalf("expected executor role to resolve")
+	}
+	if spec.Port != 47781 || spec.Model != "/models/qwen3-coder-30b" {
+		t.Fatalf("resolved spec = %+v, want coder executor", spec)
+	}
+}
+
 func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.T) {
 	thinkingOn := true
 	opts := llama.ChatOptions{
@@ -198,8 +281,90 @@ func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.
 	if tuned.PreserveThinking {
 		t.Fatalf("expected preserve thinking off for read-only lane")
 	}
+	if !tuned.ChatTemplateKwargs {
+		t.Fatalf("expected read-only lane to send explicit chat template kwargs")
+	}
 	if tuned.MaxTokens != 1536 {
 		t.Fatalf("expected grounded explanation token cap, got %d", tuned.MaxTokens)
+	}
+}
+
+func TestChatOptionsCanForceThinkingOffForRun(t *testing.T) {
+	thinkingOn := true
+	model := &Model{
+		cfg: config.Config{
+			Chat: config.Chat{
+				EnableThinking:   &thinkingOn,
+				PreserveThinking: true,
+				MaxTokens:        8192,
+			},
+		},
+		modelID: "qwen3.6-35b",
+	}
+
+	model.SetDisableThinkingOverride(true)
+	opts := model.chatOptions()
+
+	if opts.Model != "qwen3.6-35b" {
+		t.Fatalf("model = %q", opts.Model)
+	}
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("expected thinking disabled, got %#v", opts.EnableThinking)
+	}
+	if opts.PreserveThinking {
+		t.Fatalf("expected preserve thinking off")
+	}
+	if !opts.ChatTemplateKwargs {
+		t.Fatalf("expected explicit chat template kwargs for thinking override")
+	}
+}
+
+func TestChatOptionsSendsTemplateKwargsForConfigThinkingOff(t *testing.T) {
+	thinkingOff := false
+	model := &Model{
+		cfg: config.Config{
+			Chat: config.Chat{
+				EnableThinking:   &thinkingOff,
+				PreserveThinking: true,
+				MaxTokens:        8192,
+			},
+		},
+		modelID: "qwen3.6-35b",
+	}
+
+	opts := model.chatOptions()
+
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("expected config thinking disabled, got %#v", opts.EnableThinking)
+	}
+	if opts.PreserveThinking != true {
+		t.Fatalf("expected preserve thinking to follow config")
+	}
+	if !opts.ChatTemplateKwargs {
+		t.Fatalf("expected explicit chat template kwargs for config thinking off")
+	}
+}
+
+func TestChatOptionsOmitsTemplateKwargsForConfigThinkingOn(t *testing.T) {
+	thinkingOn := true
+	model := &Model{
+		cfg: config.Config{
+			Chat: config.Chat{
+				EnableThinking:   &thinkingOn,
+				PreserveThinking: true,
+				MaxTokens:        8192,
+			},
+		},
+		modelID: "qwen3.6-35b",
+	}
+
+	opts := model.chatOptions()
+
+	if opts.EnableThinking == nil || !*opts.EnableThinking {
+		t.Fatalf("expected config thinking enabled, got %#v", opts.EnableThinking)
+	}
+	if opts.ChatTemplateKwargs {
+		t.Fatalf("did not expect template kwargs for config thinking on")
 	}
 }
 
@@ -384,8 +549,37 @@ enqueue_loader_job_once();
 	if !slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt") {
 		t.Fatalf("expected broad-read invalid action, got %#v", plan.runtimeBrief.InvalidActions)
 	}
-	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "treat required_edit_paths plus packet evidence as edit scope; allow only bounded required-path reads for named edit-safety facts") {
+	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "treat required_edit_paths plus packet evidence as edit scope; prefer semantic/context/declared project discovery before narrow required-path reads for named edit-safety facts") {
 		t.Fatalf("expected required-path scoped search policy, got %#v", plan.runtimeBrief.SearchPolicy)
+	}
+}
+
+func TestRequiredEditPathsTableDoesNotCaptureProseSlashTokens(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files To Modify
+
+| File | Purpose |
+| --- | --- |
+| native/tests/test_funeral.cpp | Add STRANGER, BEST_FRIEND, and RIVAL/NEMESIS unburied penalty coverage |
+| native/src/simulation/creatures/social_welfare.cpp | Scale the emitted mood value |
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	for _, want := range []string{"native/tests/test_funeral.cpp", "native/src/simulation/creatures/social_welfare.cpp"} {
+		if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, want) {
+			t.Fatalf("expected required edit path %q, got %#v", want, plan.runtimeBrief.RequiredEditPaths)
+		}
+	}
+	if slices.Contains(plan.runtimeBrief.RequiredEditPaths, "RIVAL/NEMESIS") {
+		t.Fatalf("slash-shaped prose leaked into required edit paths: %#v", plan.runtimeBrief.RequiredEditPaths)
 	}
 }
 
@@ -432,8 +626,8 @@ Add a new test that wires the existing systems together using local APIs.
 	if slices.Contains(plan.runtimeBrief.InvalidActions, "broad_read_before_first_edit_attempt") {
 		t.Fatalf("non-exact add-test brief should allow bounded prewrite reads, got %#v", plan.runtimeBrief.InvalidActions)
 	}
-	if !slices.Contains(plan.runtimeBrief.RequiredNext, "use reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>") {
-		t.Fatalf("expected non-exact required-path packet to bias toward edit/block after bounded reads, got %#v", plan.runtimeBrief.RequiredNext)
+	if !slices.Contains(plan.runtimeBrief.RequiredNext, "use semantic/context/declared project discovery or narrow reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>") {
+		t.Fatalf("expected non-exact required-path packet to bias toward discovery/read/edit/block after bounded probes, got %#v", plan.runtimeBrief.RequiredNext)
 	}
 }
 
@@ -534,6 +728,45 @@ Files To Modify:
 	}
 	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/tests/test_transport_system.cpp") {
 		t.Fatalf("expected colon-style required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+}
+
+func TestBuildPromptExecutionPlanCapturesRequiredReadsAsEvidence(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := strings.Join([]string{
+		"## Required reads (exactly 2)",
+		"",
+		"1. Previous draft: `.idiom/refine/example/iter-1/draft.md`",
+		"2. Review with bug list: `.idiom/refine/example/iter-1/review.md`",
+		"",
+		"## Primary evidence paths (read-only)",
+		"",
+		"- `native/src/simulation/ai/appraisal.cpp`",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|------|--------|",
+		"| `.idiom/refine/example/iter-2/draft.md` | NEW FILE |",
+	}, "\n")
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	for _, want := range []string{
+		".idiom/refine/example/iter-1/draft.md",
+		".idiom/refine/example/iter-1/review.md",
+		"native/src/simulation/ai/appraisal.cpp",
+	} {
+		if !slices.Contains(plan.runtimeBrief.EvidencePaths, want) {
+			t.Fatalf("expected required-read evidence path %q, got %#v", want, plan.runtimeBrief.EvidencePaths)
+		}
+	}
+	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, ".idiom/refine/example/iter-2/draft.md") {
+		t.Fatalf("expected output draft as required edit path, got %#v", plan.runtimeBrief.RequiredEditPaths)
 	}
 }
 

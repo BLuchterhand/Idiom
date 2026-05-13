@@ -26,6 +26,9 @@ func LooksLikeWorkspacePathToken(candidate string) bool {
 		return false
 	}
 	if strings.Contains(candidate, "/") {
+		if !HasWorkspaceFileExtension(candidate) && looksLikeSlashSeparatedSymbolToken(candidate) {
+			return false
+		}
 		return true
 	}
 	switch candidate {
@@ -33,6 +36,30 @@ func LooksLikeWorkspacePathToken(candidate string) bool {
 		return true
 	}
 	return HasWorkspaceFileExtension(candidate)
+}
+
+func looksLikeSlashSeparatedSymbolToken(candidate string) bool {
+	parts := strings.Split(candidate, "/")
+	if len(parts) < 2 {
+		return false
+	}
+	sawLetter := false
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			switch {
+			case r >= 'A' && r <= 'Z':
+				sawLetter = true
+			case r >= '0' && r <= '9':
+			case r == '_' || r == '-':
+			default:
+				return false
+			}
+		}
+	}
+	return sawLetter
 }
 
 func HasWorkspaceFileExtension(candidate string) bool {
@@ -90,6 +117,21 @@ func MentionedWorkspacePathsUnderHeadings(text string, headings ...string) []str
 		if sawPath && looksLikeMarkdownHeading(line) {
 			break
 		}
+		if looksLikeMarkdownTableRow(line) {
+			paths := MentionedWorkspacePathsInMarkdownTableFirstCell(line)
+			if len(paths) == 0 {
+				continue
+			}
+			sawPath = true
+			for _, path := range paths {
+				if _, ok := seen[path]; ok {
+					continue
+				}
+				seen[path] = struct{}{}
+				out = append(out, path)
+			}
+			continue
+		}
 		paths := MentionedWorkspacePaths(line)
 		if len(paths) == 0 {
 			continue
@@ -104,6 +146,50 @@ func MentionedWorkspacePathsUnderHeadings(text string, headings ...string) []str
 		}
 	}
 	return out
+}
+
+func MentionedWorkspacePathsInMarkdownTableFirstCell(line string) []string {
+	cells, ok := markdownTableCells(line)
+	if !ok || len(cells) == 0 {
+		return nil
+	}
+	if markdownTableSeparatorCell(cells[0]) {
+		return nil
+	}
+	return MentionedWorkspacePaths(cells[0])
+}
+
+func looksLikeMarkdownTableRow(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "|") && strings.Count(trimmed, "|") >= 2
+}
+
+func markdownTableCells(line string) ([]string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !looksLikeMarkdownTableRow(trimmed) {
+		return nil, false
+	}
+	trimmed = strings.TrimPrefix(trimmed, "|")
+	trimmed = strings.TrimSuffix(trimmed, "|")
+	parts := strings.Split(trimmed, "|")
+	cells := make([]string, 0, len(parts))
+	for _, part := range parts {
+		cells = append(cells, strings.TrimSpace(part))
+	}
+	return cells, len(cells) > 0
+}
+
+func markdownTableSeparatorCell(cell string) bool {
+	cell = strings.TrimSpace(cell)
+	if cell == "" {
+		return false
+	}
+	for _, r := range cell {
+		if r != '-' && r != ':' && r != ' ' {
+			return false
+		}
+	}
+	return strings.Contains(cell, "-")
 }
 
 func normalizeSectionHeading(value string) string {
