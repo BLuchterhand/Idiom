@@ -105,6 +105,13 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 			return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: fmt.Sprintf("edits[%d]: %s", i, err.Error())}
 		}
 	}
+	if err := ValidatePlanArtifact(artifact); err != nil {
+		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
+	}
+	audit := AuditPlanArtifact(m.cfg.Root, artifact, PlanArtifactAuditOptions{EnforcePacketEvidence: req.PlanArtifact != nil})
+	if !audit.OK {
+		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Output: audit.SummaryLine(), Error: audit.ErrorSummary()}
+	}
 	dir := m.planArtifactDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan failed", Error: fmt.Sprintf("create plan dir: %s", err.Error())}
@@ -116,14 +123,17 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	artifact.Edits = edits
 	artifact = normalizePlanArtifactForSubmit(artifact, m.cfg.SessionID, created, planID, req.PlanArtifact == nil)
 	if err := ValidatePlanArtifact(artifact); err != nil {
+		cleanupPlanEditBodyRefs(dir, artifact.Edits)
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
 	}
 	path := filepath.Join(dir, stamp+".plan.json")
 	body, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
+		cleanupPlanEditBodyRefs(dir, artifact.Edits)
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan failed", Error: fmt.Sprintf("marshal artifact: %s", err.Error())}
 	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
+		cleanupPlanEditBodyRefs(dir, artifact.Edits)
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan failed", Error: fmt.Sprintf("write artifact: %s", err.Error())}
 	}
 	pointer := filepath.Join(dir, "last.plan.json")
@@ -131,7 +141,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	return ToolResult{
 		Tool:    "submit_plan",
 		Summary: fmt.Sprintf("Plan submitted with %d edit(s); the executor phase will dispatch them.", len(artifact.Edits)),
-		Output:  fmt.Sprintf("plan_path: %s\nedits: %d\nschema_version: %s\ncontent_refs: %d", path, len(artifact.Edits), PlanArtifactSchemaVersion, spilled),
+		Output:  fmt.Sprintf("plan_path: %s\nedits: %d\nschema_version: %s\ncontent_refs: %d\n%s", path, len(artifact.Edits), PlanArtifactSchemaVersion, spilled, audit.SummaryLine()),
 	}
 }
 
@@ -292,6 +302,7 @@ func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]Pla
 		if shouldSpillPlanInlineText(out[i].NewText) {
 			ref, err := writePlanEditBodyRef(dir, stamp, i, "new_text", out[i].NewText)
 			if err != nil {
+				cleanupPlanEditBodyRefs(dir, out)
 				return nil, 0, err
 			}
 			out[i].NewText = ""
@@ -301,6 +312,7 @@ func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]Pla
 		if shouldSpillPlanInlineText(out[i].Content) {
 			ref, err := writePlanEditBodyRef(dir, stamp, i, "content", out[i].Content)
 			if err != nil {
+				cleanupPlanEditBodyRefs(dir, out)
 				return nil, 0, err
 			}
 			out[i].Content = ""
@@ -313,6 +325,18 @@ func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]Pla
 
 func shouldSpillPlanInlineText(value string) bool {
 	return len(value) > planInlineTextSpillThreshold
+}
+
+func cleanupPlanEditBodyRefs(dir string, edits []PlanEdit) {
+	for _, edit := range edits {
+		for _, ref := range []string{edit.NewTextRef, edit.ContentRef} {
+			path, ok := planEditBodyRefPath(dir, ref)
+			if !ok {
+				continue
+			}
+			_ = os.Remove(path)
+		}
+	}
 }
 
 func writePlanEditBodyRef(dir string, stamp string, index int, field string, content string) (string, error) {
@@ -410,4 +434,21 @@ func readPlanEditBodyRef(baseDir string, ref string) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func planEditBodyRefPath(baseDir string, ref string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" || filepath.IsAbs(ref) {
+		return "", false
+	}
+	clean := filepath.Clean(filepath.FromSlash(ref))
+	if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+		return "", false
+	}
+	path := filepath.Join(baseDir, clean)
+	rel, err := filepath.Rel(baseDir, path)
+	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", false
+	}
+	return path, true
 }

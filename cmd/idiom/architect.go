@@ -158,6 +158,7 @@ func runArchitectPlanAudit(args []string, stdout io.Writer, stderr io.Writer) in
 	packetPath := fs.String("packet", "", "path to architect packet JSON; reads stdin when omitted")
 	planText := fs.String("plan", "", "candidate plan text")
 	planFile := fs.String("plan-file", "", "read candidate plan text from file")
+	planArtifact := fs.String("plan-artifact", "", "read submitted idiom.plan artifact JSON from file")
 	outputPath := fs.String("output", "", "write audit JSON to path; default stdout")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -166,8 +167,14 @@ func runArchitectPlanAudit(args []string, stdout io.Writer, stderr io.Writer) in
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
 		return 2
 	}
-	if strings.TrimSpace(*planText) != "" && strings.TrimSpace(*planFile) != "" {
-		fmt.Fprintln(stderr, "--plan and --plan-file are mutually exclusive")
+	planInputs := 0
+	for _, value := range []string{*planText, *planFile, *planArtifact} {
+		if strings.TrimSpace(value) != "" {
+			planInputs++
+		}
+	}
+	if planInputs > 1 {
+		fmt.Fprintln(stderr, "--plan, --plan-file, and --plan-artifact are mutually exclusive")
 		return 2
 	}
 	packet, err := readPacket(*packetPath, os.Stdin)
@@ -175,16 +182,31 @@ func runArchitectPlanAudit(args []string, stdout io.Writer, stderr io.Writer) in
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	plan := strings.TrimSpace(*planText)
-	if strings.TrimSpace(*planFile) != "" {
-		data, err := os.ReadFile(filepath.Clean(*planFile))
+	var result architect.PlanAuditResult
+	if strings.TrimSpace(*planArtifact) != "" {
+		data, err := os.ReadFile(filepath.Clean(*planArtifact))
 		if err != nil {
-			fmt.Fprintf(stderr, "read plan file: %v\n", err)
+			fmt.Fprintf(stderr, "read plan artifact: %v\n", err)
 			return 1
 		}
-		plan = string(data)
+		var artifact architect.PlanArtifactAuditSubject
+		if err := json.Unmarshal(data, &artifact); err != nil {
+			fmt.Fprintf(stderr, "parse plan artifact: %v\n", err)
+			return 1
+		}
+		result = architect.AuditPlanArtifact(packet, artifact)
+	} else {
+		plan := strings.TrimSpace(*planText)
+		if strings.TrimSpace(*planFile) != "" {
+			data, err := os.ReadFile(filepath.Clean(*planFile))
+			if err != nil {
+				fmt.Fprintf(stderr, "read plan file: %v\n", err)
+				return 1
+			}
+			plan = string(data)
+		}
+		result = architect.AuditPlan(packet, plan)
 	}
-	result := architect.AuditPlan(packet, plan)
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -595,6 +617,7 @@ func printArchitectUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  idiom architect packet --task <text> [--profile <path-or-name>] [--output <packet.json>]")
 	fmt.Fprintln(stderr, "  idiom architect lint --packet <packet.json>")
 	fmt.Fprintln(stderr, "  idiom architect plan-audit --packet <packet.json> --plan-file <plan.md>")
+	fmt.Fprintln(stderr, "  idiom architect plan-audit --packet <packet.json> --plan-artifact <last.plan.json>")
 	fmt.Fprintln(stderr, "  idiom architect budget --packet <packet.json>")
 	fmt.Fprintln(stderr, "  idiom architect packet-compare --base <v1.json> --candidate <v2.json>")
 	fmt.Fprintln(stderr, "  idiom architect replay-compare --base <v1.json> --candidate <v2.json> --base-plan <plan.md> --candidate-plan <plan.md>")

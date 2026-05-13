@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,24 @@ func writeSubmitPlanFixture(t *testing.T, root string, path string, content stri
 	}
 }
 
+func writeSubmitPlanContextView(t *testing.T, root string, packID string, paths ...string) {
+	t.Helper()
+	var files []map[string]string
+	for _, path := range paths {
+		files = append(files, map[string]string{"path": path, "role": "editable"})
+	}
+	body, err := json.Marshal(map[string]any{
+		"pack_id":         packID,
+		"index_id":        "idx-" + packID[:6],
+		"fresh":           true,
+		"candidate_files": files,
+	})
+	if err != nil {
+		t.Fatalf("marshal context view: %v", err)
+	}
+	writeSubmitPlanFixture(t, root, filepath.Join(".idiom", "comprehension", "views", packID+".json"), string(body))
+}
+
 func submitPlanTestContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -59,6 +78,36 @@ func assertSubmitPlanNoSensitiveMarkers(t *testing.T, root string, result ToolRe
 		t.Fatalf("last.plan.json is not valid plan JSON: %v", err)
 	}
 	return artifact
+}
+
+func assertSubmitPlanPlansTreeDoesNotContain(t *testing.T, root string, forbidden []string) {
+	t.Helper()
+	planDir := filepath.Join(root, ".idiom", "plans")
+	err := filepath.WalkDir(planDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		lower := strings.ToLower(string(body))
+		for _, marker := range forbidden {
+			if strings.Contains(lower, strings.ToLower(marker)) {
+				t.Fatalf("plan artifact tree leaked sensitive marker %q in %s", marker, path)
+			}
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("scan plan artifact tree: %v", err)
+	}
 }
 
 func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
@@ -145,6 +194,7 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	writeSubmitPlanContextView(t, root, "feedfacecafebeef", "a.txt")
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
 		PlanArtifact: &PlanArtifact{
@@ -206,11 +256,204 @@ func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
 	if len(plan.UnresolvedQuestions) != 1 || len(plan.VerificationObligations) != 1 {
 		t.Fatalf("structured question/verification fields not preserved: %#v %#v", plan.UnresolvedQuestions, plan.VerificationObligations)
 	}
+	if !strings.Contains(result.Output, "audit_ok=true") {
+		t.Fatalf("accepted structured artifact should report passing audit, got %q", result.Output)
+	}
+}
+
+func TestSubmitPlanBlocksReadyHandoffWhenRequiredApprovalPending(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	writeSubmitPlanContextView(t, root, "feedfacecafebeef", "a.txt")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			PlanID:        "plan-pending-approval",
+			Task: PlanArtifactTask{
+				ID:                    "task-pending-approval",
+				Summary:               "Block dispatch until approval is satisfied",
+				ClientClassifications: []string{"finance", "healthcare_life_sciences", "public_sector", "enterprise_saas", "tooling_vendor", "local_model_private_code", "open_source"},
+			},
+			Contract: PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "executor",
+			},
+			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []PlanArtifactEvidence{{
+				ID:        "evidence-1",
+				Kind:      "context_packet",
+				Handle:    "context_pack://feedfacecafebeef",
+				Freshness: "fresh",
+			}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				ID:       "verification-1",
+				Kind:     "focused_tests",
+				Command:  "go test ./internal/workspace",
+				Owner:    "executor",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []PlanEdit{{
+				Path:    "a.txt",
+				OldText: "before",
+				NewText: "after",
+				Purpose: "Update the fixture.",
+			}},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("submit_plan should block handoff-ready artifact with pending required approval")
+	}
+	for _, want := range []string{"plan_artifact.audit_errors", "approval_handoff_mismatch"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("approval handoff rejection should include %q, got %q", want, result.Error)
+		}
+	}
+	if !strings.Contains(result.Output, "audit_ok=false") || !strings.Contains(result.Output, "approval_handoff_mismatches=1") {
+		t.Fatalf("approval handoff rejection should expose bounded audit status, got %q", result.Output)
+	}
+	if strings.Contains(result.Summary+result.Output+result.Error, "executor phase will dispatch") {
+		t.Fatalf("blocked artifact should not claim executor dispatch will proceed: %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("blocked artifact should not persist last.plan.json, stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanBlocksPendingApprovalBeforeSpillingLargeEditBodies(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanContextView(t, root, "feedfacecafebeef", "large.txt")
+	sensitiveBody := strings.Repeat("P5_8_SECRET_BODY raw_prompt transcript token customer acme\n", 120)
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			PlanID:        "plan-pending-approval-large-edit",
+			Task: PlanArtifactTask{
+				ID:                    "task-pending-approval-large-edit",
+				Summary:               "Block private large edit body until approval is satisfied",
+				ClientClassifications: []string{"finance", "healthcare_life_sciences", "public_sector", "enterprise_saas", "tooling_vendor", "local_model_private_code", "open_source"},
+			},
+			Contract: PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "executor",
+			},
+			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  PlanArtifactPaths{Editable: []string{"large.txt"}, Required: []string{"large.txt"}},
+			Evidence: []PlanArtifactEvidence{{
+				ID:        "evidence-1",
+				Kind:      "context_packet",
+				Handle:    "context_pack://feedfacecafebeef",
+				Freshness: "fresh",
+			}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				ID:       "verification-1",
+				Kind:     "focused_tests",
+				Command:  "go test ./internal/workspace",
+				Owner:    "executor",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []PlanEdit{{
+				Path:       "large.txt",
+				NewText:    sensitiveBody,
+				ReplaceAll: true,
+				Purpose:    "Create large private plan body after approval.",
+			}},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("submit_plan should block handoff-ready large edit artifact with pending required approval")
+	}
+	if !strings.Contains(result.Output, "audit_ok=false") || !strings.Contains(result.Error, "approval_handoff_mismatch") {
+		t.Fatalf("approval handoff rejection should expose bounded audit status, got output=%q error=%q", result.Output, result.Error)
+	}
+	combined := strings.ToLower(result.Output + "\n" + result.Error)
+	for _, leaked := range []string{"p5_8_secret_body", "raw_prompt", "transcript", "customer acme"} {
+		if strings.Contains(combined, leaked) {
+			t.Fatalf("approval rejection leaked sensitive body marker %q: output=%q error=%q", leaked, result.Output, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("blocked large edit artifact should not persist last.plan.json, stat err=%v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, ".idiom", "plans", "assets", "*new_text.txt"))
+	if err != nil {
+		t.Fatalf("glob plan assets: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("blocked large edit should not spill new_text assets, got %v", matches)
+	}
+	assertSubmitPlanPlansTreeDoesNotContain(t, root, []string{
+		"P5_8_SECRET_BODY",
+		"raw_prompt",
+		"transcript",
+		"customer acme",
+	})
+}
+
+func TestPlanArtifactAuditKeepsPendingApprovalNonBlockingWhenHandoffNotReady(t *testing.T) {
+	root := t.TempDir()
+	result := AuditPlanArtifact(root, PlanArtifact{
+		SchemaVersion: PlanArtifactSchemaVersion,
+		PlanID:        "plan-non-ready-handoff",
+		Created:       "2026-05-13T00:00:00Z",
+		Task: PlanArtifactTask{
+			Summary:               "Keep non-ready approval handoff visible",
+			ClientClassifications: []string{"enterprise_saas"},
+		},
+		Contract: PlanArtifactContract{
+			Kind:              "plan_then_execute",
+			StrategyOwner:     "model",
+			ContractOwner:     "harness",
+			PermissionProfile: "plan_then_execute",
+			VerificationOwner: "executor",
+		},
+		Paths: PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+		VerificationObligations: []PlanArtifactVerificationObligation{{
+			ID:       "verification-1",
+			Kind:     "focused_tests",
+			Status:   "open",
+			Required: true,
+		}},
+		Approval: PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
+		Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "blocked", Ready: false},
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "Update the fixture.",
+		}},
+	}, PlanArtifactAuditOptions{EnforcePacketEvidence: true})
+	if !result.OK {
+		t.Fatalf("pending approval should remain report-only while handoff is not ready: %#v", result)
+	}
+	if result.Metrics.ApprovalHandoffMismatches != 1 {
+		t.Fatalf("expected visible approval mismatch metric, got %#v", result.Metrics)
+	}
+	for _, finding := range result.Findings {
+		if finding.Kind == "approval_handoff_mismatch" && finding.Severity == "error" {
+			t.Fatalf("non-ready handoff should not promote approval mismatch to error: %#v", result.Findings)
+		}
+	}
 }
 
 func TestSubmitPlanSanitizesStructuredEditPurposeMetadata(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	writeSubmitPlanContextView(t, root, "feedfacecafebeef", "a.txt")
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
 		PlanArtifact: &PlanArtifact{
@@ -323,6 +566,99 @@ func TestSubmitPlanSanitizesLegacyEditPurposeMetadata(t *testing.T) {
 	}
 	if edit.Path != "a.txt" || edit.OldText != "before" || edit.NewText != "after" {
 		t.Fatalf("executor-required edit contract changed: %#v", edit)
+	}
+}
+
+func TestSubmitPlanStructuredAuditRejectsPacketAndScopeMismatchPrivately(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	writeSubmitPlanFixture(t, root, "b.txt", "before\n")
+	writeSubmitPlanContextView(t, root, "feedfacecafebeef", "a.txt")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			PlanID:        "plan-audit-scope",
+			Task: PlanArtifactTask{
+				ID:                    "task-audit-scope",
+				Summary:               "Check submitted scope against packet evidence",
+				ClientClassifications: []string{"enterprise_saas"},
+			},
+			Contract: PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "executor",
+				RequiredEditPaths: []string{"a.txt"},
+			},
+			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []PlanArtifactEvidence{{
+				ID:        "evidence-1",
+				Kind:      "context_packet",
+				Handle:    "context_pack://feedfacecafebeef",
+				Path:      "logs/telemetry/secrets/customer-acme/feedback.jsonl",
+				Freshness: "fresh",
+			}},
+			UnresolvedQuestions: []PlanArtifactQuestion{{
+				ID:                    "question-1",
+				Claim:                 "raw_prompt customer transcript body",
+				Status:                "open",
+				RequiredBeforeHandoff: true,
+			}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				ID:       "verification-1",
+				Kind:     "focused_tests",
+				Command:  "go test ./internal/workspace",
+				Owner:    "executor",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []PlanEdit{{
+				Path:    "b.txt",
+				OldText: "before",
+				NewText: "after",
+				Purpose: "Update fixture outside packet scope.",
+			}},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("structured plan with packet/scope mismatch should be rejected")
+	}
+	for _, want := range []string{"plan_artifact.audit_errors", "scope_path_mismatch", "unresolved_question_mismatch"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("audit rejection should include %q, got %q", want, result.Error)
+		}
+	}
+	for _, leaked := range []string{"customer-acme", "customer_acme", "raw_prompt", "transcript", "logs/telemetry/secrets"} {
+		if strings.Contains(result.Error, leaked) {
+			t.Fatalf("audit rejection leaked sensitive marker %q: %s", leaked, result.Error)
+		}
+	}
+}
+
+func TestSubmitPlanLegacyPacketMismatchIsReportOnly(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "legacy packet id without graph view remains executable",
+		PackID:    "feedfacecafebeef",
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "Update fixture.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("legacy submit_plan should keep packet audit report-only: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "packet_identity_mismatches=1") || !strings.Contains(result.Output, "audit_ok=true") {
+		t.Fatalf("legacy audit mismatch should be visible but non-blocking, got %q", result.Output)
 	}
 }
 
@@ -654,6 +990,14 @@ func TestSubmitPlanSpillsLargeEditBodiesToRefs(t *testing.T) {
 	}
 	if len(raw.Edits) != 1 || raw.Edits[0].NewText != "" || raw.Edits[0].NewTextRef == "" {
 		t.Fatalf("expected raw artifact to store new_text_ref instead of inline body: %#v", raw.Edits)
+	}
+	refPath := filepath.Join(root, ".idiom", "plans", filepath.FromSlash(raw.Edits[0].NewTextRef))
+	refBody, err := os.ReadFile(refPath)
+	if err != nil {
+		t.Fatalf("read spilled edit body %s: %v", refPath, err)
+	}
+	if string(refBody) != large {
+		t.Fatalf("spilled large body mismatch: got %d bytes, want %d", len(refBody), len(large))
 	}
 	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
 	if err != nil {

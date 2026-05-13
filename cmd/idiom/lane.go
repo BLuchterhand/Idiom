@@ -453,10 +453,14 @@ func laneBriefNeedsAtomIntake(body string) bool {
 	if _, ok := atomRefineDraftReason(body); ok {
 		return true
 	}
-	if len(extractDeliverableTargets(body, refineDetectMode(body))) == 0 {
+	targets := extractDeliverableTargets(body, refineDetectMode(body))
+	if len(targets) == 0 {
 		return false
 	}
 	if atomSpecHasAcceptedResult(body) {
+		return true
+	}
+	if len(atomRequiredEditSnippetsFromSpec(body, targets)) > 0 {
 		return true
 	}
 	for _, heading := range []string{"required edits", "edits to apply", "implementation shape"} {

@@ -2,6 +2,7 @@ package architect
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -514,6 +515,192 @@ func TestAuditPlanRejectsProtectedPathEdit(t *testing.T) {
 	}
 }
 
+func TestAuditPlanReportsPacketScopeAndIdentityMismatches(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "internal/architect/packet.go"), "package architect\n")
+	writeFile(t, filepath.Join(root, "internal/architect/outside.go"), "package architect\n")
+	fresh := true
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Implement packet work",
+		Workspace:     WorkspaceSummary{Root: root},
+		CandidateScope: []RankedScopeItem{{
+			Handle: "file://internal/architect/packet.go",
+			Path:   "internal/architect/packet.go",
+			Kind:   "file",
+			Rank:   0.9,
+		}},
+		Freshness: &FreshnessReport{Fresh: &fresh, ContextViews: []ContextFreshnessSource{{PackID: "feedfacecafebeef"}}},
+	}
+	result := AuditPlan(packet, "Modify internal/architect/outside.go using context_pack://deadbeefdeadbeef.")
+	if result.OK {
+		t.Fatalf("expected packet/scope mismatch failure")
+	}
+	if !hasAuditFinding(result, "packet_identity_mismatch", "error") || !hasAuditFinding(result, "scope_path_mismatch", "error") {
+		t.Fatalf("expected packet identity and scope findings, got %#v", result.Findings)
+	}
+	if result.MismatchMetrics.PacketIdentityMismatches == 0 || result.MismatchMetrics.ScopePathMismatches == 0 {
+		t.Fatalf("expected mismatch metrics, got %#v", result.MismatchMetrics)
+	}
+}
+
+func TestAuditPlanArtifactComparesSubmittedFieldsPrivately(t *testing.T) {
+	fresh := false
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Implement submitted artifact audit",
+		Contracts: &PlanningContracts{
+			ValidationRequirements: []CommandRef{{Command: "go test ./internal/architect"}},
+		},
+		CandidateScope: []RankedScopeItem{{
+			Handle: "file://internal/architect/packet.go",
+			Path:   "internal/architect/packet.go",
+			Kind:   "file",
+			Rank:   0.9,
+		}},
+		Freshness: &FreshnessReport{
+			IndexID:      "idx-current",
+			Fresh:        &fresh,
+			StaleNodes:   []string{"logs/telemetry/secrets/customer-acme/feedback.jsonl"},
+			ContextViews: []ContextFreshnessSource{{PackID: "feedfacecafebeef", IndexID: "idx-current", Fresh: &fresh}},
+		},
+	}
+	result := AuditPlanArtifact(packet, PlanArtifactAuditSubject{
+		PackID: "deadbeefdeadbeef",
+		Packet: PlanArtifactPacketAuditSubject{
+			PackID:    "deadbeefdeadbeef",
+			Status:    "available",
+			IndexID:   "idx-old",
+			Freshness: "fresh",
+		},
+		Paths: PlanArtifactPathsAuditSubject{
+			Editable: []string{"internal/architect/packet.go"},
+			Required: []string{"internal/architect/packet.go"},
+		},
+		Evidence: []PlanArtifactEvidenceAuditSubject{{
+			ID:        "evidence-1",
+			Kind:      "context_packet",
+			Handle:    "context_pack://deadbeefdeadbeef",
+			Path:      "logs/telemetry/secrets/customer-acme/feedback.jsonl",
+			Freshness: "fresh",
+		}},
+		UnresolvedQuestions: []PlanArtifactQuestionAuditSubject{{
+			ID:                    "question-1",
+			Claim:                 "raw_prompt patient transcript body",
+			Status:                "open",
+			RequiredBeforeHandoff: true,
+		}},
+		VerificationObligations: []PlanArtifactVerifyAuditSubject{{
+			ID:       "verification-1",
+			Kind:     "focused_tests",
+			Command:  "go test ./internal/workspace",
+			Status:   "open",
+			Required: true,
+		}},
+		Approval: PlanArtifactApprovalAuditSubject{Required: true, Status: "pending"},
+		Handoff:  PlanArtifactHandoffAuditSubject{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/architect/outside.go"}},
+	})
+	if result.OK {
+		t.Fatalf("expected artifact audit failure")
+	}
+	for _, want := range []string{"packet_identity_mismatch", "packet_freshness_mismatch", "scope_path_mismatch", "unresolved_question_mismatch", "validation_gap"} {
+		if !hasAuditFinding(result, want, "") {
+			t.Fatalf("expected finding kind %q, got %#v", want, result.Findings)
+		}
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	for _, leaked := range []string{"customer-acme", "customer_acme", "raw_prompt", "transcript", "logs/telemetry/secrets"} {
+		if strings.Contains(string(encoded), leaked) {
+			t.Fatalf("artifact audit leaked sensitive marker %q: %s", leaked, encoded)
+		}
+	}
+}
+
+func TestAuditPlanArtifactBlocksReadyHandoffWithoutRequiredApproval(t *testing.T) {
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Audit approval handoff",
+		CandidateScope: []RankedScopeItem{{
+			Handle: "file://internal/architect/packet.go",
+			Path:   "internal/architect/packet.go",
+			Kind:   "file",
+			Rank:   0.9,
+		}},
+	}
+	result := AuditPlanArtifact(packet, PlanArtifactAuditSubject{
+		Paths: PlanArtifactPathsAuditSubject{
+			Editable: []string{"internal/architect/packet.go"},
+			Required: []string{"internal/architect/packet.go"},
+		},
+		Approval: PlanArtifactApprovalAuditSubject{
+			Required: true,
+			Status:   "pending raw_prompt customer-acme transcript",
+		},
+		Handoff: PlanArtifactHandoffAuditSubject{
+			ID:     "handoff-1",
+			Status: "ready",
+			Ready:  true,
+		},
+		Edits: []PlanArtifactEditAuditSubject{{Path: "internal/architect/packet.go"}},
+	})
+	if result.OK {
+		t.Fatalf("expected ready handoff with unsatisfied required approval to fail")
+	}
+	if !hasAuditFinding(result, "approval_handoff_mismatch", "error") {
+		t.Fatalf("expected blocking approval handoff finding, got %#v", result.Findings)
+	}
+	if result.MismatchMetrics.ApprovalHandoffMismatches != 1 {
+		t.Fatalf("expected approval handoff metric, got %#v", result.MismatchMetrics)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	for _, leaked := range []string{"customer-acme", "customer_acme", "raw_prompt", "transcript"} {
+		if strings.Contains(string(encoded), leaked) {
+			t.Fatalf("approval handoff audit leaked sensitive marker %q: %s", leaked, encoded)
+		}
+	}
+}
+
+func TestAuditPlanArtifactAllowsPendingApprovalWhenHandoffNotReady(t *testing.T) {
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Audit non-ready approval handoff",
+		CandidateScope: []RankedScopeItem{{
+			Handle: "file://internal/architect/packet.go",
+			Path:   "internal/architect/packet.go",
+			Kind:   "file",
+			Rank:   0.9,
+		}},
+	}
+	result := AuditPlanArtifact(packet, PlanArtifactAuditSubject{
+		Paths: PlanArtifactPathsAuditSubject{
+			Editable: []string{"internal/architect/packet.go"},
+			Required: []string{"internal/architect/packet.go"},
+		},
+		Approval: PlanArtifactApprovalAuditSubject{Required: true, Status: "pending"},
+		Handoff:  PlanArtifactHandoffAuditSubject{ID: "handoff-1", Status: "blocked", Ready: false},
+		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/architect/packet.go"}},
+	})
+	if !result.OK {
+		t.Fatalf("pending approval should remain non-blocking while handoff is not ready: %#v", result)
+	}
+	if result.MismatchMetrics.ApprovalHandoffMismatches != 1 {
+		t.Fatalf("expected visible approval handoff metric, got %#v", result.MismatchMetrics)
+	}
+	if hasAuditFinding(result, "approval_handoff_mismatch", "error") {
+		t.Fatalf("non-ready handoff should not emit blocking approval finding: %#v", result.Findings)
+	}
+	if !hasAuditFinding(result, "approval_handoff_mismatch", "warning") {
+		t.Fatalf("non-ready handoff should keep warning signal visible: %#v", result.Findings)
+	}
+}
+
 func TestRenderPromptIncludesPacketAndPrior(t *testing.T) {
 	packet := Packet{SchemaVersion: SchemaVersion, Task: "x", Profile: ProfileSummary{Name: "demo"}}
 	prompt, err := RenderPrompt(PromptCritique, packet, "candidate plan")
@@ -573,7 +760,7 @@ func containsWarning(warnings []string, pattern string) bool {
 
 func hasAuditFinding(result PlanAuditResult, kind string, severity string) bool {
 	for _, finding := range result.Findings {
-		if finding.Kind == kind && finding.Severity == severity {
+		if finding.Kind == kind && (severity == "" || finding.Severity == severity) {
 			return true
 		}
 	}

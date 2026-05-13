@@ -9,6 +9,7 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 ## Start Here
 
 - Read [README.md](README.md), [docs/idiom-strategic-thesis.md](docs/idiom-strategic-thesis.md), [docs/idiom-design-roadmap.md](docs/idiom-design-roadmap.md), [docs/decisioning-north-star.md](docs/decisioning-north-star.md), and [.codex/project-context.md](.codex/project-context.md) before changing agent behavior, prompt layers, routing, control rails, readiness gates, verification logic, or strategic direction.
+- Before changing harness behavior, prompt contracts, queueing, atom intake, audit, or lane orchestration, also read [docs/idiom-maintenance-best-practices.md](docs/idiom-maintenance-best-practices.md).
 - Always use the OpenAI developer documentation MCP server for OpenAI API, Codex, MCP, or ChatGPT-app questions without waiting for the user to ask explicitly.
 - Keep terminology precise: the model owns strategy; the harness owns contracts.
 

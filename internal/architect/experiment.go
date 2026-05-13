@@ -187,13 +187,14 @@ type PacketReplayComparison struct {
 }
 
 type PlanVariantAuditSummary struct {
-	Label          string             `json:"label"`
-	OK             bool               `json:"ok"`
-	Errors         int                `json:"errors,omitempty"`
-	Warnings       int                `json:"warnings,omitempty"`
-	Findings       int                `json:"findings,omitempty"`
-	FindingsByKind map[string]int     `json:"findings_by_kind,omitempty"`
-	AuditFindings  []PlanAuditFinding `json:"audit_findings,omitempty"`
+	Label           string                   `json:"label"`
+	OK              bool                     `json:"ok"`
+	Errors          int                      `json:"errors,omitempty"`
+	Warnings        int                      `json:"warnings,omitempty"`
+	Findings        int                      `json:"findings,omitempty"`
+	FindingsByKind  map[string]int           `json:"findings_by_kind,omitempty"`
+	MismatchMetrics PlanAuditMismatchMetrics `json:"mismatch_metrics"`
+	AuditFindings   []PlanAuditFinding       `json:"audit_findings,omitempty"`
 }
 
 func ComparePacketReplay(base Packet, candidate Packet, basePlan string, candidatePlan string) PacketReplayComparison {
@@ -215,11 +216,12 @@ func ComparePacketReplay(base Packet, candidate Packet, basePlan string, candida
 func planVariantAuditSummary(label string, packet Packet, plan string) PlanVariantAuditSummary {
 	result := AuditPlan(packet, plan)
 	summary := PlanVariantAuditSummary{
-		Label:          label,
-		OK:             result.OK,
-		Findings:       len(result.Findings),
-		FindingsByKind: make(map[string]int),
-		AuditFindings:  append([]PlanAuditFinding(nil), result.Findings...),
+		Label:           label,
+		OK:              result.OK,
+		Findings:        len(result.Findings),
+		FindingsByKind:  make(map[string]int),
+		MismatchMetrics: result.MismatchMetrics,
+		AuditFindings:   append([]PlanAuditFinding(nil), result.Findings...),
 	}
 	for _, finding := range result.Findings {
 		switch finding.Severity {
@@ -240,6 +242,9 @@ func planVariantAuditSummary(label string, packet Packet, plan string) PlanVaria
 
 func planAuditDeltas(base PlanVariantAuditSummary, candidate PlanVariantAuditSummary) []string {
 	var deltas []string
+	if totalPacketScopeMismatches(candidate.MismatchMetrics) < totalPacketScopeMismatches(base.MismatchMetrics) {
+		deltas = append(deltas, "candidate plan has fewer packet/scope mismatch signals")
+	}
 	if candidate.Errors < base.Errors {
 		deltas = append(deltas, "candidate plan has fewer audit errors")
 	}
@@ -257,6 +262,14 @@ func planAuditDeltas(base PlanVariantAuditSummary, candidate PlanVariantAuditSum
 		}
 	}
 	return deltas
+}
+
+func totalPacketScopeMismatches(metrics PlanAuditMismatchMetrics) int {
+	return metrics.PacketIdentityMismatches +
+		metrics.PacketFreshnessMismatches +
+		metrics.ScopePathMismatches +
+		metrics.EvidenceMismatches +
+		metrics.UnresolvedQuestionMismatches
 }
 
 func preferredPlanVariant(base PlanVariantAuditSummary, candidate PlanVariantAuditSummary) string {

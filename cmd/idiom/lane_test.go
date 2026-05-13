@@ -161,6 +161,30 @@ func TestRunLaneMainAtomIntakeBlocksNonDispatchableBeforeRunner(t *testing.T) {
 	}
 }
 
+func TestRunLaneMainAtomIntakeRecognizesImplementationSnippetWithoutStatus(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n\nfunc done() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	briefPath := filepath.Join(root, "atom.md")
+	brief := "# Atom\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `foo.go` | Add done helper. |\n\n## Implementation\n\nIn `foo.go`, insert:\n\n```go\nfunc done() {}\n```\n"
+	if err := os.WriteFile(briefPath, []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	code := runLaneMainTest(t, []string{"plan-execute", "--json", "--project-root", root, briefPath}, &stdout, &stderr, fake)
+	if code == 0 {
+		t.Fatalf("expected implementation snippet intake to block dispatch")
+	}
+	if fake.calledMode != "" {
+		t.Fatalf("fake runner should not be called, got mode %q", fake.calledMode)
+	}
+	if !strings.Contains(stderr.String(), "source-satisfied") {
+		t.Fatalf("stderr should explain source-satisfied implementation snippet, got:\n%s", stderr.String())
+	}
+}
+
 func TestRunLaneMainAtomIntakeBlocksDirtyScopedPathBeforeRunner(t *testing.T) {
 	root := initGitRepoForStaleness(t)
 	gitCommit(t, root, "src/foo.go", "package src\n", "initial")

@@ -127,6 +127,79 @@ func TestArchitectPlanAuditCommandFailsMissingFile(t *testing.T) {
 	}
 }
 
+func TestArchitectPlanAuditCommandChecksSubmittedPlanArtifact(t *testing.T) {
+	dir := t.TempDir()
+	packetPath := filepath.Join(dir, "packet.json")
+	artifactPath := filepath.Join(dir, "last.plan.json")
+	writeArchitectTestFile(t, packetPath, `{
+  "schema_version": "idiom.architect.planning_packet.v2",
+  "task": "Implement submitted artifact audit",
+  "candidate_scope": [{"handle":"file://internal/architect/packet.go","path":"internal/architect/packet.go","kind":"file","rank":0.9}],
+  "freshness": {"index_id":"idx-current","fresh":true,"context_views":[{"pack_id":"feedfacecafebeef","index_id":"idx-current","fresh":true}]},
+  "contracts": {"validation_requirements":[{"command":"go test ./internal/architect"}]}
+}`)
+	writeArchitectTestFile(t, artifactPath, `{
+  "schema_version": "idiom.plan.v2",
+  "pack_id": "deadbeefdeadbeef",
+  "packet": {"pack_id":"deadbeefdeadbeef","status":"available","index_id":"idx-old","freshness":"fresh"},
+  "paths": {"editable":["internal/architect/packet.go"],"required":["internal/architect/packet.go"]},
+  "evidence": [{"kind":"context_packet","handle":"context_pack://deadbeefdeadbeef","path":"logs/telemetry/secrets/customer-acme/feedback.jsonl"}],
+  "unresolved_questions": [{"id":"question-1","claim":"raw_prompt transcript body","status":"open","required_before_handoff":true}],
+  "verification_obligations": [{"id":"verification-1","kind":"focused_tests","command":"go test ./cmd/idiom","status":"open","required":true}],
+  "approval": {"required":true,"status":"pending"},
+  "handoff": {"id":"handoff-1","status":"ready","ready":true},
+  "edits": [{"path":"internal/architect/outside.go"}]
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runArchitectMain([]string{"plan-audit", "--packet", packetPath, "--plan-artifact", artifactPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected artifact audit failure, code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	for _, want := range []string{"packet_identity_mismatch", "scope_path_mismatch", "unresolved_question_mismatch", "mismatch_metrics"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("artifact audit output missing %q: %s", want, stdout.String())
+		}
+	}
+	for _, leaked := range []string{"customer-acme", "customer_acme", "raw_prompt", "transcript", "logs/telemetry/secrets"} {
+		if strings.Contains(stdout.String(), leaked) {
+			t.Fatalf("artifact audit leaked sensitive marker %q: %s", leaked, stdout.String())
+		}
+	}
+}
+
+func TestArchitectPlanAuditCommandBlocksReadyHandoffWithoutApproval(t *testing.T) {
+	dir := t.TempDir()
+	packetPath := filepath.Join(dir, "packet.json")
+	artifactPath := filepath.Join(dir, "last.plan.json")
+	writeArchitectTestFile(t, packetPath, `{
+  "schema_version": "idiom.architect.planning_packet.v2",
+  "task": "Audit approval handoff",
+  "candidate_scope": [{"handle":"file://internal/architect/packet.go","path":"internal/architect/packet.go","kind":"file","rank":0.9}]
+}`)
+	writeArchitectTestFile(t, artifactPath, `{
+  "schema_version": "idiom.plan.v2",
+  "paths": {"editable":["internal/architect/packet.go"],"required":["internal/architect/packet.go"]},
+  "approval": {"required":true,"status":"pending raw_prompt customer-acme transcript"},
+  "handoff": {"id":"handoff-1","status":"ready","ready":true},
+  "edits": [{"path":"internal/architect/packet.go"}]
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runArchitectMain([]string{"plan-audit", "--packet", packetPath, "--plan-artifact", artifactPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected approval handoff audit failure, code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	for _, want := range []string{`"ok": false`, "approval_handoff_mismatch", `"approval_handoff_mismatches": 1`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("approval handoff audit output missing %q: %s", want, stdout.String())
+		}
+	}
+	for _, leaked := range []string{"customer-acme", "customer_acme", "raw_prompt", "transcript"} {
+		if strings.Contains(stdout.String(), leaked) {
+			t.Fatalf("approval handoff audit leaked sensitive marker %q: %s", leaked, stdout.String())
+		}
+	}
+}
+
 func TestArchitectBudgetCommandReportsTiers(t *testing.T) {
 	packetPath := filepath.Join(t.TempDir(), "packet.json")
 	writeArchitectTestFile(t, packetPath, `{
@@ -207,6 +280,9 @@ func TestArchitectReplayCompareCommandAuditsPlanVariants(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "candidate plan has fewer audit warnings") || !strings.Contains(stdout.String(), `"preferred_variant": "candidate"`) {
 		t.Fatalf("replay compare output missing expected improvement: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"mismatch_metrics"`) {
+		t.Fatalf("replay compare output should expose bounded mismatch metrics: %s", stdout.String())
 	}
 }
 
