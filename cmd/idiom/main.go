@@ -102,6 +102,9 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "queue" {
 		return runQueueMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
+	if len(args) > 0 && args[0] == "local-ops" {
+		return runLocalOpsMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
 	if len(args) > 0 && args[0] == "init" {
 		return runInitMain(args[1:], stdout, stderr)
 	}
@@ -725,7 +728,7 @@ func startCommandTelemetry(args []string) *telemetry.Recorder {
 	wd = config.CanonicalizeExistingPath(wd)
 	rec, err := telemetry.Open(telemetry.Options{
 		Command:       commandTelemetryName(args),
-		Args:          args,
+		Args:          commandTelemetryArgs(args),
 		WorkspaceRoot: wd,
 		// Stamp the binary version into telemetry so debugging from
 		// a log file alone can attribute behavior to a specific build
@@ -738,6 +741,43 @@ func startCommandTelemetry(args []string) *telemetry.Recorder {
 		return nil
 	}
 	return rec
+}
+
+func commandTelemetryArgs(args []string) []string {
+	if len(args) >= 2 && args[0] == "local-ops" && args[1] == "benchmark" {
+		return sanitizeLocalOpsBenchmarkTelemetryArgs(args)
+	}
+	return args
+}
+
+func sanitizeLocalOpsBenchmarkTelemetryArgs(args []string) []string {
+	out := append([]string(nil), args...)
+	for i := 0; i < len(out); i++ {
+		arg := strings.TrimSpace(out[i])
+		if flag, value, ok := strings.Cut(arg, "="); ok {
+			switch flag {
+			case "--replay-log", "--replay-glob":
+				out[i] = flag + "=" + redactedLocalOpsReplayArg(value)
+			}
+			continue
+		}
+		switch arg {
+		case "--replay-log", "--replay-glob":
+			if i+1 < len(out) {
+				i++
+				out[i] = redactedLocalOpsReplayArg(out[i])
+			}
+		}
+	}
+	return out
+}
+
+func redactedLocalOpsReplayArg(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "<empty>"
+	}
+	return "<redacted_replay_log id=" + localOpsStableID(value) + ">"
 }
 
 func commandTelemetryName(args []string) string {
@@ -757,6 +797,11 @@ func commandTelemetryName(args []string) string {
 		return "context"
 	case "artifact", "implement", "doctor":
 		return args[0]
+	case "local-ops":
+		if len(args) > 1 {
+			return "local-ops:" + args[1]
+		}
+		return "local-ops"
 	case "lane":
 		if len(args) > 1 {
 			return "lane:" + args[1]

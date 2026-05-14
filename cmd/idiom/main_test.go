@@ -406,6 +406,12 @@ func TestCommandTelemetryNameClassifiesDoctor(t *testing.T) {
 	}
 }
 
+func TestCommandTelemetryNameClassifiesLocalOpsBenchmark(t *testing.T) {
+	if got := commandTelemetryName([]string{"local-ops", "benchmark", "--json"}); got != "local-ops:benchmark" {
+		t.Fatalf("commandTelemetryName local-ops benchmark = %q, want local-ops:benchmark", got)
+	}
+}
+
 func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
 	telemetryDir := t.TempDir()
 	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)

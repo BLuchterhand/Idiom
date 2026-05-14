@@ -96,6 +96,11 @@ Other useful subcommands:
 - `idiom queue serve | run | status | ping | cancel` — local job queue
   daemon for gating concurrent lanes/agents against an OOM-safe cap;
   see [Local job queue](#local-job-queue) below.
+- `idiom local-ops benchmark --json` — local smoke/capacity/replay
+  benchmark evidence for readiness profiles. It reports pass/degraded/blocked
+  prerequisites, bounded capacity assumptions, replay-log signals when supplied,
+  and metadata-only privacy guarantees without requiring a live model in the
+  default smoke.
 - `idiom brief lint <brief.md>` — pre-flight lint on an
   implementation brief.
 - `idiom lane postflight --diff <patch>` — QC pipeline against a

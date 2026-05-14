@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -35,6 +36,19 @@ type readinessCheck struct {
 	Detail   string `json:"detail,omitempty"`
 	Remedy   string `json:"remedy,omitempty"`
 	Optional bool   `json:"optional,omitempty"`
+}
+
+type readinessProfileSelectionError struct {
+	Selected string
+}
+
+func (e readinessProfileSelectionError) Error() string {
+	return fmt.Sprintf("doctor: unknown readiness profile %q (expected all, discovery, plan, implement, eval, or sidecar)", e.Selected)
+}
+
+func isReadinessProfileSelectionError(err error) bool {
+	var selectionErr readinessProfileSelectionError
+	return errors.As(err, &selectionErr)
 }
 
 type readinessUnavailable struct {
@@ -562,7 +576,7 @@ func buildDoctorReadinessProfiles(configPath, selected string, hostChecks []chec
 		}
 	}
 	if len(specs) == 0 {
-		return nil, fmt.Errorf("doctor: unknown readiness profile %q (expected all, discovery, plan, implement, eval, or sidecar)", selected)
+		return nil, readinessProfileSelectionError{Selected: selected}
 	}
 
 	root := workspaceRootFromConfig(configPath)
