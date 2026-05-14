@@ -358,6 +358,21 @@ var p711RequiredIntegrationPrivacyFields = []string{
 	"private_repo_or_customer_ids",
 }
 
+var p98RequiredMCPParityReadinessFields = []string{
+	"protocol_implemented",
+	"initialize_present",
+	"tools_list_present",
+	"allowed_tools_call_present",
+	"denied_tools_call_present",
+	"roots_resources_metadata_present",
+	"caller_metadata_present",
+	"transport_attribution_present",
+	"protected_resource_denial_present",
+	"redaction_denial_present",
+	"report_only_freshness_present",
+	"product_evidence_export_parity",
+}
+
 type p711IntegrationProofSet struct {
 	SchemaVersion string                 `json:"schema_version"`
 	Name          string                 `json:"name"`
@@ -725,6 +740,15 @@ type p97ValidationGateResult struct {
 	Blockers    []string
 }
 
+type p98IntegrationGateResult struct {
+	Status      string
+	Evidence    string
+	ClaimImpact string
+	Counts      map[string]int
+	EvidenceIDs []string
+	Blockers    []string
+}
+
 func p97ValidationGate(records []p711ValidationRecord) p97ValidationGateResult {
 	out := p97ValidationGateResult{
 		Status:      "needs_evidence",
@@ -1006,6 +1030,18 @@ func p711IntegrationSignal(proofs p711IntegrationProofSet) p711SignalSummary {
 	return s
 }
 
+func p98IntegrationEvidenceSummary(counts map[string]int) string {
+	return fmt.Sprintf(
+		"paths:%d required:%d shell_ci:%d external_agent:%d mcp_stdio:%d mcp_parity:%d",
+		counts["proof_paths"],
+		counts["executable_required_paths"],
+		counts["executable_required_path_shell_ci_script"],
+		counts["executable_required_path_external_coding_agent_workflow"],
+		counts["executable_required_path_mcp_stdio"],
+		counts["mcp_stdio_parity_paths"],
+	)
+}
+
 type p711ProofValidityIndex struct {
 	duplicateIDs map[string]bool
 }
@@ -1074,15 +1110,18 @@ func p711IntegrationProofPrivacyFieldsPresent(proof p711IntegrationProof) bool {
 }
 
 func p711MCPStdioProofHasParity(proof p711IntegrationProof, validity p711ProofValidityIndex) bool {
-	return validity.validProof(proof) &&
-		proof.Path == "mcp_stdio" &&
-		proof.Readiness["protocol_implemented"] &&
-		proof.Readiness["caller_metadata_present"] &&
-		proof.Readiness["roots_resources_present"] &&
-		proof.Readiness["redaction_denial_present"] &&
-		proof.Readiness["product_evidence_export_parity"] &&
-		proof.ProductEvidenceExportParity &&
-		proof.ReplayFixture != ""
+	if !validity.validProof(proof) ||
+		proof.Path != "mcp_stdio" ||
+		!proof.ProductEvidenceExportParity ||
+		proof.ReplayFixture == "" {
+		return false
+	}
+	for _, field := range p98RequiredMCPParityReadinessFields {
+		if !proof.Readiness[field] {
+			return false
+		}
+	}
+	return true
 }
 
 func p711IsRequiredIntegrationPath(path string) bool {
@@ -1199,13 +1238,78 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 		}
 	}
 	p97 := p97ValidationGate(records)
+	p98 := p98IntegrationGateFromSignals(signals)
 	return []p711ReleaseGateLinkage{
 		{Gate: "P9.1", Status: p711GateFromSignal(signals, "benchmark"), Evidence: "benchmark,audit,learning summaries", ClaimImpact: "release bundle input; not a release decision"},
 		{Gate: "P9.6", Status: p96ActivationReleaseGateStatus(localOps), Evidence: "standalone product export cannot close P9.6 without current release validation evidence", ClaimImpact: "release activation claims are no-go until the release bundle consumes activation plus validation evidence"},
 		{Gate: "P9.7", Status: p97.Status, Evidence: p97.Evidence, ClaimImpact: p97.ClaimImpact, Counts: p97.Counts, Blockers: p97.Blockers, EvidenceIDs: p97.EvidenceIDs},
-		{Gate: "P9.8", Status: p711GateFromSignal(signals, "integration_proof"), Evidence: "shell/CI, external coding-agent, and MCP stdio integration proofs", ClaimImpact: "substrate integration claim depends on all three paths"},
+		{Gate: "P9.8", Status: p98.Status, Evidence: p98.Evidence, ClaimImpact: p98.ClaimImpact, Counts: p98.Counts, Blockers: p98.Blockers, EvidenceIDs: p98.EvidenceIDs},
 		{Gate: "P9.12", Status: classStatus, Evidence: "classification coverage rows and limitations", ClaimImpact: "packaging/support thesis must cite statuses"},
 	}
+}
+
+func p98IntegrationGateFromSignals(signals []p711SignalSummary) p98IntegrationGateResult {
+	for _, signal := range signals {
+		if signal.ID != "integration_proof" {
+			continue
+		}
+		out := p98IntegrationGateResult{
+			Status:      p711GateFromSignal(signals, "integration_proof"),
+			Evidence:    p98IntegrationEvidenceSummary(signal.Counts),
+			ClaimImpact: "substrate integration claim depends on shell/CI, external coding-agent, and MCP stdio proof parity",
+			Counts:      signal.Counts,
+			EvidenceIDs: append([]string(nil), signal.EvidenceIDs...),
+		}
+		if out.Status == "evidence_present" {
+			out.ClaimImpact = "P9.8 can cite three executable integration proof paths with MCP stdio parity"
+			return out
+		}
+		out.Blockers = p98IntegrationBlockersFromSignal(signal)
+		out.Evidence = out.Evidence + "; blockers:" + strings.Join(out.Blockers, "|")
+		return out
+	}
+	return p98IntegrationGateResult{
+		Status:      "needs_evidence",
+		Evidence:    "integration proof signal missing",
+		ClaimImpact: "substrate integration claims are no-go until all three proof paths pass",
+		Counts:      map[string]int{},
+		Blockers:    []string{"integration proof signal missing"},
+	}
+}
+
+func p98IntegrationBlockersFromSignal(signal p711SignalSummary) []string {
+	var blockers []string
+	if signal.Counts["executable_required_path_shell_ci_script"] == 0 {
+		blockers = append(blockers, "missing executable integration proof path: shell_ci_script")
+	}
+	if signal.Counts["executable_required_path_external_coding_agent_workflow"] == 0 {
+		blockers = append(blockers, "missing executable integration proof path: external_coding_agent_workflow")
+	}
+	if signal.Counts["executable_required_path_mcp_stdio"] == 0 {
+		blockers = append(blockers, "missing executable integration proof path: mcp_stdio")
+	}
+	if signal.Counts["mcp_stdio_parity_paths"] == 0 {
+		blockers = append(blockers, "MCP stdio proof is missing required parity fields on the mcp_stdio path")
+	}
+	if signal.Counts["duplicate_ids"] > 0 {
+		blockers = append(blockers, "duplicate proof IDs cannot satisfy required integration paths")
+	}
+	if signal.Counts["missing_ids"] > 0 {
+		blockers = append(blockers, "proof rows without IDs cannot satisfy required integration paths")
+	}
+	if signal.Counts["non_validated_statuses"] > 0 {
+		blockers = append(blockers, "non-test-validated proof rows cannot satisfy required integration paths")
+	}
+	if signal.Counts["missing_privacy"] > 0 || signal.Counts["incomplete_privacy"] > 0 || signal.Counts["malformed_privacy"] > 0 {
+		blockers = append(blockers, "proof rows require explicit safe privacy semantics")
+	}
+	if signal.Counts["privacy_blockers"] > 0 {
+		blockers = append(blockers, "proof rows report forbidden privacy leakage")
+	}
+	if len(blockers) == 0 && signal.Completeness != "complete" {
+		blockers = append(blockers, "integration proof signal is incomplete")
+	}
+	return p711Compact(blockers...)
 }
 
 func summarizeP711Signals(signals []p711SignalSummary) p711SignalCompleteness {

@@ -286,8 +286,12 @@ func TestP78IntegrationProofRecords(t *testing.T) {
 				!proof.ProductEvidenceExportParity {
 				t.Fatalf("MCP proof missing replay/product-evidence linkage: %#v", proof)
 			}
-			if !proof.Readiness["caller_metadata_present"] || !proof.Readiness["roots_resources_present"] ||
-				!proof.Readiness["redaction_denial_present"] || !proof.Readiness["product_evidence_export_parity"] {
+			for _, field := range p98RequiredMCPParityReadinessFields {
+				if !proof.Readiness[field] {
+					t.Fatalf("MCP proof missing required P9.8 parity field %q: %#v", field, proof.Readiness)
+				}
+			}
+			if !proof.Readiness["roots_resources_present"] {
 				t.Fatalf("MCP proof missing required P8.6 readiness fields: %#v", proof.Readiness)
 			}
 			if proof.MCPContract["transport"] != "mcp_stdio" || proof.MCPContract["sidecar_schema_version"] != "idiom.tool.v1" || proof.MCPContract["profile"] != "discovery" {

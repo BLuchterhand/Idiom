@@ -75,6 +75,11 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 	}
 	if linkage := p711TestReleaseGate(reparsed.ReleaseGateLinkage, "P9.8"); linkage.Status != "evidence_present" {
 		t.Fatalf("P9.8 linkage should consume integration proof parity: %#v", reparsed.ReleaseGateLinkage)
+	} else if linkage.Counts["executable_required_paths"] != 3 ||
+		linkage.Counts["mcp_stdio_parity_paths"] != 1 ||
+		len(linkage.Blockers) != 0 ||
+		!stringSliceContains(linkage.EvidenceIDs, "p7.8-mcp-stdio") {
+		t.Fatalf("P9.8 linkage should expose structured counts and evidence IDs: %#v", linkage)
 	}
 	if got := p711TestSignal(reparsed.Signals, "learning"); got.Status != "pass" || got.Counts["accepted"] == 0 {
 		t.Fatalf("learning signal should summarize sanitized ranker learning: %#v", got)
@@ -258,6 +263,13 @@ func TestP810IntegrationProofRequiresDistinctExecutablePaths(t *testing.T) {
 			},
 		},
 		{
+			name: "missing_mcp_stdio_path",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+			},
+		},
+		{
 			name: "duplicate_and_unrelated_executables_do_not_fill_missing_path",
 			proofs: []map[string]any{
 				p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
@@ -274,6 +286,13 @@ func TestP810IntegrationProofRequiresDistinctExecutablePaths(t *testing.T) {
 				p711IntegrationProofWithoutMCPParityFixture("p7.8-mcp-stdio"),
 			},
 		},
+		{
+			name: "mcp_parity_fields_on_wrong_path_do_not_satisfy_mcp",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
+				p711IntegrationProofWithMCPParityOnPath("p7.8-external-coding-agent", "external_coding_agent_workflow"),
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -287,6 +306,8 @@ func TestP810IntegrationProofRequiresDistinctExecutablePaths(t *testing.T) {
 			}
 			if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.8"); linkage.Status != "needs_evidence" {
 				t.Fatalf("P9.8 should need evidence for incomplete integration paths: %#v", report.ReleaseGateLinkage)
+			} else if len(linkage.Blockers) == 0 {
+				t.Fatalf("P9.8 linkage should expose blockers for incomplete proofs: %#v", linkage)
 			}
 			if report.ProductSuccessGates.IntegrationProof != "needs_evidence" {
 				t.Fatalf("product integration gate should need evidence, got %q", report.ProductSuccessGates.IntegrationProof)
@@ -1156,11 +1177,19 @@ func p711IntegrationProofFixture(id string, path string, executable bool, placeh
 	if path == "mcp_stdio" {
 		fixture["replay_fixture"] = "testdata/sidecar/mcp-stdio-integration-proof.json"
 		fixture["product_evidence_export_parity"] = true
-		fixture["readiness"].(map[string]bool)["protocol_implemented"] = true
-		fixture["readiness"].(map[string]bool)["caller_metadata_present"] = true
-		fixture["readiness"].(map[string]bool)["roots_resources_present"] = true
-		fixture["readiness"].(map[string]bool)["redaction_denial_present"] = true
-		fixture["readiness"].(map[string]bool)["product_evidence_export_parity"] = true
+		for _, field := range p98RequiredMCPParityReadinessFields {
+			fixture["readiness"].(map[string]bool)[field] = true
+		}
+	}
+	return fixture
+}
+
+func p711IntegrationProofWithMCPParityOnPath(id string, path string) map[string]any {
+	fixture := p711IntegrationProofFixture(id, path, true, false)
+	fixture["replay_fixture"] = "testdata/sidecar/mcp-stdio-integration-proof.json"
+	fixture["product_evidence_export_parity"] = true
+	for _, field := range p98RequiredMCPParityReadinessFields {
+		fixture["readiness"].(map[string]bool)[field] = true
 	}
 	return fixture
 }
@@ -1170,13 +1199,7 @@ func p711IntegrationProofWithoutMCPParityFixture(id string) map[string]any {
 	delete(fixture, "replay_fixture")
 	fixture["product_evidence_export_parity"] = false
 	readiness := fixture["readiness"].(map[string]bool)
-	for _, field := range []string{
-		"protocol_implemented",
-		"caller_metadata_present",
-		"roots_resources_present",
-		"redaction_denial_present",
-		"product_evidence_export_parity",
-	} {
+	for _, field := range p98RequiredMCPParityReadinessFields {
 		delete(readiness, field)
 	}
 	return fixture

@@ -151,12 +151,23 @@
         "sidecar_schema_version": "idiom.tool.v1",
         "readiness_fields": [
           "protocol_implemented",
+          "initialize_present",
+          "tools_list_present",
+          "allowed_tools_call_present",
+          "denied_tools_call_present",
           "shared_contract_shape",
           "profile_bound",
           "schema_version_present",
           "freshness_fields_present",
           "audit_fields_present",
-          "privacy_reviewed"
+          "privacy_reviewed",
+          "roots_resources_metadata_present",
+          "caller_metadata_present",
+          "transport_attribution_present",
+          "protected_resource_denial_present",
+          "redaction_denial_present",
+          "report_only_freshness_present",
+          "product_evidence_export_parity"
         ],
         "limitation": "MCP resources are metadata-only; resource file bodies remain unavailable until safe body redaction is implemented."
       },
@@ -171,9 +182,17 @@
         "reviewed_placeholder": false,
         "protocol_implemented": true,
         "phase8_deferred": false,
+        "initialize_present": true,
+        "tools_list_present": true,
+        "allowed_tools_call_present": true,
+        "denied_tools_call_present": true,
         "caller_metadata_present": true,
+        "transport_attribution_present": true,
         "roots_resources_present": true,
+        "roots_resources_metadata_present": true,
+        "protected_resource_denial_present": true,
         "redaction_denial_present": true,
+        "report_only_freshness_present": true,
         "product_evidence_export_parity": true
       },
       "limitations": [

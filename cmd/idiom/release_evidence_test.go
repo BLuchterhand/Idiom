@@ -82,6 +82,14 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		gate.Counts["daily_user_activation_records"] != 3 || len(gate.EvidenceIDs) != 3 || len(gate.Blockers) != 0 {
 		t.Fatalf("complete P9.7 release readiness should expose structured gate data: %#v", gate)
 	}
+	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.8"); gate.Status != "evidence_present" {
+		t.Fatalf("complete integration fixture should satisfy P9.8 release readiness: %#v", gate)
+	} else if gate.Counts["executable_required_paths"] != 3 ||
+		gate.Counts["mcp_stdio_parity_paths"] != 1 ||
+		len(gate.Blockers) != 0 ||
+		!stringSliceContains(gate.EvidenceIDs, "p7.8-mcp-stdio") {
+		t.Fatalf("P9.8 release readiness should expose structured gate data: %#v", gate)
+	}
 	assertReleaseEvidenceClassifications(t, report.ClientReadiness)
 	if forbidden := localOpsForbiddenEvidenceLeak(string(body)); forbidden != "" {
 		t.Fatalf("release evidence leaked forbidden class %q: %s", forbidden, string(body))
@@ -374,6 +382,56 @@ func TestP97ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
 	if strings.Join(productGate.Blockers, "|") != strings.Join(releaseGate.Blockers, "|") ||
 		strings.Join(productGate.EvidenceIDs, "|") != strings.Join(releaseGate.EvidenceIDs, "|") {
 		t.Fatalf("product/release P9.7 structured gate data should agree: product=%#v release=%#v", productGate, releaseGate)
+	}
+}
+
+func TestP98ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+
+	product := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot: root,
+	})
+	release := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot: root,
+		CurrentDir:  "current",
+	})
+	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.8")
+	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.8")
+	if productGate.Status != "evidence_present" || releaseGate.Status != productGate.Status {
+		t.Fatalf("product/release P9.8 readiness should agree and pass for complete fixture: product=%#v release=%#v", productGate, releaseGate)
+	}
+	for _, key := range []string{"proof_rows", "executable_required_paths", "executable_required_path_shell_ci_script", "executable_required_path_external_coding_agent_workflow", "executable_required_path_mcp_stdio", "mcp_stdio_parity_paths"} {
+		if productGate.Counts[key] != releaseGate.Counts[key] {
+			t.Fatalf("product/release P9.8 count %q should agree: product=%#v release=%#v", key, productGate, releaseGate)
+		}
+	}
+	if strings.Join(productGate.Blockers, "|") != strings.Join(releaseGate.Blockers, "|") ||
+		strings.Join(productGate.EvidenceIDs, "|") != strings.Join(releaseGate.EvidenceIDs, "|") {
+		t.Fatalf("product/release P9.8 structured gate data should agree: product=%#v release=%#v", productGate, releaseGate)
+	}
+}
+
+func TestP98ReleaseReadinessNeedsEvidenceWhenIntegrationProofsIncomplete(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	writeP711IntegrationProofs(t, root, []map[string]any{
+		p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
+		p711IntegrationProofWithMCPParityOnPath("p7.8-external-coding-agent", "external_coding_agent_workflow"),
+	})
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot: root,
+	})
+	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.8")
+	if gate.Status != "needs_evidence" {
+		t.Fatalf("P9.8 must not pass when MCP parity is on the wrong path: %#v", gate)
+	}
+	if gate.Counts["executable_required_paths"] >= 3 || len(gate.Blockers) == 0 {
+		t.Fatalf("P9.8 release readiness should expose missing-path counts and blockers: %#v", gate)
+	}
+	if !releaseEvidenceHasBlockerReason(report.Blockers, "release_readiness", "P9.8") {
+		t.Fatalf("release blockers should include P9.8 integration evidence gap: %#v", report.Blockers)
 	}
 }
 
