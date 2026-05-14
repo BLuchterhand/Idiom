@@ -1764,7 +1764,7 @@ Review signoff:
 | P7.13 | Add executable validation for sidecar recipe commands | P7.3 | Kuhn the 3rd | - [x] | Epicurus the 3rd | - [x] |
 | P7.4 | Add sidecar v1 API compatibility, caller metadata, error-class, stale-freshness, backend-fallback, and no-strategy-leakage golden tests | P7.1, P7.2 | Schrodinger the 3rd | - [x] | Ampere the 3rd + P7.14/Newton the 3rd follow-up | - [x] |
 | P7.14 | Close P7.4 strategy-leakage and caller-metadata privacy gaps | P7.4 | Carson the 3rd | - [x] | Newton the 3rd | - [x] |
-| P7.5 | Add discovery-profile containment, protected-path, redaction, permission-denial, and external side-effect tests | P7.2, P1.6 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
+| P7.5 | Add discovery-profile containment, protected-path, redaction, permission-denial, and external side-effect tests | P7.2, P1.6 | Popper the 3rd | - [ ] | unassigned review subagent | - [ ] |
 | P7.6 | Add CLI-side example tests for finance, healthcare, public-sector, enterprise SaaS, tooling-vendor, local-model, and open-source classification scenarios | P7.1-P7.5, P6.5 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P7.7 | Add install, quickstart, time-to-first-value, and clean-uninstall smoke coverage for CLI-only local use | P7.1-P7.3, P0.10 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P7.8 | Add three integration proof paths: shell/CI script, one external coding-agent workflow, and a placeholder handoff to MCP stdio | P7.1-P7.5 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
