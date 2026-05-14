@@ -117,6 +117,12 @@ Other useful subcommands:
   time-to-first-value fields, and cleanup evidence without requiring a live
   model or network. Use `--quickstart-cleanup remove-local-state` only on a
   clean fixture when you want the smoke to remove generated local context state.
+- `idiom product-evidence export --project-root .` — local P7.11 go/no-go
+  evidence export. It summarizes activation, retained use, integration,
+  benchmark, audit, learning, release-gate linkage, and client-classification
+  coverage using IDs, hashes, counts, and statuses instead of prompt bodies,
+  file bodies, private paths, or secrets. See
+  [docs/product-evidence-export.md](docs/product-evidence-export.md).
 - `idiom brief lint <brief.md>` — pre-flight lint on an
   implementation brief.
 - `idiom lane postflight --diff <patch>` — QC pipeline against a
