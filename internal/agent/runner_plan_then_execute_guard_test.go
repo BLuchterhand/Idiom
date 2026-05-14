@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
+	"idiom/internal/llama"
 	"idiom/internal/workspace"
 )
 
@@ -66,6 +68,59 @@ func TestPlanThenExecuteWriteGuardLetsSubmitPlanThrough(t *testing.T) {
 	})
 	if got.Intercepted {
 		t.Fatalf("submit_plan must pass through during planner phase, got %#v", got)
+	}
+}
+
+func TestMLXPlanThenExecuteAdvertisesTextualSubmitPlanProtocol(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(llama.BackendMLX),
+	}
+	brief := workerruntime.NormalizeRuntimeBrief(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"submit_plan", "read_file"},
+		RequiredTools:     []string{"submit_plan"},
+		RequiredEditPaths: []string{"a.txt"},
+	})
+	got := runner.textualToolProtocolPrompt(brief)
+	for _, want := range []string{
+		"# Textual Tool Call Protocol",
+		"```tool",
+		`"tool":"submit_plan"`,
+		"no prose",
+		"XML tags",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in textual protocol prompt:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "submit_plan") || !strings.Contains(got, "read_file") {
+		t.Fatalf("prompt should include required tool first and bounded allowed examples:\n%s", got)
+	}
+}
+
+func TestNativeToolBackendSkipsTextualToolProtocolPrompt(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(llama.BackendLlama),
+	}
+	brief := workerruntime.NormalizeRuntimeBrief(workerruntime.WorkerRuntimeBrief{
+		AllowedTools:  []string{"submit_plan"},
+		RequiredTools: []string{"submit_plan"},
+	})
+	if got := runner.textualToolProtocolPrompt(brief); got != "" {
+		t.Fatalf("native-tool backend should not receive duplicate textual protocol prompt:\n%s", got)
+	}
+}
+
+func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
+	got := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief)
+	if got.MaxTokens != 16384 {
+		t.Fatalf("plan-execute recovery must preserve submit_plan budget, got %d", got.MaxTokens)
+	}
+	got = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief)
+	if got.MaxTokens != 16384 {
+		t.Fatalf("plan-execute recovery should default to planner-sized budget, got %d", got.MaxTokens)
 	}
 }
 

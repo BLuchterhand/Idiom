@@ -50,6 +50,53 @@ func TestParseToolRequestTreatsSymbolAsPatternAlias(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestAcceptsQwenXMLFunctionEnvelope(t *testing.T) {
+	req, raw, ok, err := ParseToolRequest(`<tool_call>
+<function=submit_plan>
+<parameter=rationale>
+Add the required policy gate.
+</parameter>
+<parameter=edits>
+[{"path":"scripts/affected_suites.py","start_line":"10","end_line":"12","content":"new","purpose":"update inventory"}]
+</parameter>
+</function>
+</tool_call>`)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "submit_plan" || req.Rationale != "Add the required policy gate." {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "scripts/affected_suites.py" || req.Edits[0].StartLine != 10 || req.Edits[0].EndLine != 12 {
+		t.Fatalf("unexpected edits: %#v", req.Edits)
+	}
+	if !strings.Contains(raw, `"tool":"submit_plan"`) {
+		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
+	}
+}
+
+func TestParseToolRequestIgnoresProseQwenXMLFunctionReference(t *testing.T) {
+	_, _, ok, err := ParseToolRequest("Use `<function=submit_plan>` only inside a tool envelope.")
+	if err != nil || ok {
+		t.Fatalf("expected prose reference to remain a final answer, ok=%t err=%v", ok, err)
+	}
+}
+
+func TestParseToolRequestReportsMalformedQwenXMLObjectParameter(t *testing.T) {
+	_, _, ok, err := ParseToolRequest(`<function=submit_plan>
+<parameter=edits>
+[{"path":"a.py","old_text":"def f():
+    pass"}]
+</parameter>
+</function>`)
+	if !ok || err == nil || !strings.Contains(err.Error(), "edits") {
+		t.Fatalf("expected malformed edits error, ok=%t err=%v", ok, err)
+	}
+}
+
 func TestParseToolRequestRejectsMalformedOrMissingTool(t *testing.T) {
 	_, _, ok, err := ParseToolRequest("no tool here")
 	if err != nil || ok {
@@ -120,6 +167,23 @@ func TestParseToolRequestRepairsNumericStringFields(t *testing.T) {
 	}
 	if req.StartLine != 10 || req.EndLine != 12 {
 		t.Fatalf("line range = %d-%d, want 10-12", req.StartLine, req.EndLine)
+	}
+}
+
+func TestParseToolRequestRepairsStringifiedStructuredFields(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"submit_plan\",\"rationale\":\"plan\",\"edits\":\"[{\\\"path\\\":\\\"a.py\\\",\\\"start_line\\\":\\\"10\\\",\\\"end_line\\\":\\\"12\\\",\\\"content\\\":\\\"updated\\\\n\\\",\\\"purpose\\\":\\\"update a\\\"}]\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "submit_plan" || len(req.Edits) != 1 {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	edit := req.Edits[0]
+	if edit.Path != "a.py" || edit.StartLine != 10 || edit.EndLine != 12 || edit.Content != "updated\n" {
+		t.Fatalf("unexpected repaired edit: %#v", edit)
 	}
 }
 

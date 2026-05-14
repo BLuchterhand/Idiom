@@ -308,6 +308,9 @@ func (r *Runner) Run(
 	if initialBrief := workerruntime.RenderInitialRuntimeBrief(visibleRuntimeBrief); strings.TrimSpace(initialBrief) != "" {
 		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: initialBrief})
 	}
+	if protocol := r.textualToolProtocolPrompt(visibleRuntimeBrief); strings.TrimSpace(protocol) != "" {
+		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: protocol})
+	}
 	if bootstrap := r.initialBootstrapInstruction(); strings.TrimSpace(bootstrap) != "" {
 		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: bootstrap})
 	}
@@ -2127,6 +2130,82 @@ func (r *Runner) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBri
 		visible.ToolManifest = workerruntime.BuildToolManifest(allowed)
 	}
 	return workerruntime.NormalizeRuntimeBrief(visible)
+}
+
+func (r *Runner) textualToolProtocolPrompt(brief workerruntime.WorkerRuntimeBrief) string {
+	if r == nil || r.Client == nil || r.Client.SupportsNativeTools() {
+		return ""
+	}
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if len(brief.ToolManifest) == 0 {
+		return ""
+	}
+	entries := textualToolProtocolEntries(brief)
+	var b strings.Builder
+	b.WriteString("# Textual Tool Call Protocol\n\n")
+	b.WriteString("Native tool calls are unavailable for this backend. Idiom will execute tools only when your entire reply is one textual JSON tool request.\n\n")
+	b.WriteString("When taking a tool action, reply with exactly this shape and no prose, markdown commentary, XML tags, or second JSON object:\n\n")
+	b.WriteString("```tool\n{\"tool\":\"tool_name\",\"field\":\"value\"}\n```\n\n")
+	b.WriteString("Use the runtime brief's `tool_manifest` for allowed tools and fields. If the runtime brief requires a tool, do not answer in prose while that tool contract is still open.\n")
+	if len(entries) > 0 {
+		b.WriteString("\nCurrent required/allowed examples:\n")
+		for _, entry := range entries {
+			b.WriteString("- ")
+			b.WriteString(strings.TrimSpace(entry.Tool))
+			if req := strings.TrimSpace(entry.Request); req != "" {
+				b.WriteByte(' ')
+				b.WriteString(req)
+			}
+			if purpose := strings.TrimSpace(entry.Purpose); purpose != "" {
+				b.WriteString(" (")
+				b.WriteString(purpose)
+				b.WriteString(")")
+			}
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func textualToolProtocolEntries(brief workerruntime.WorkerRuntimeBrief) []workerruntime.ToolManifestEntry {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if len(brief.ToolManifest) == 0 {
+		return nil
+	}
+	required := make(map[string]struct{}, len(brief.RequiredTools))
+	for _, tool := range brief.RequiredTools {
+		tool = strings.TrimSpace(tool)
+		if tool != "" {
+			required[tool] = struct{}{}
+		}
+	}
+	selected := make([]workerruntime.ToolManifestEntry, 0, len(brief.ToolManifest))
+	seen := make(map[string]struct{}, len(brief.ToolManifest))
+	if len(required) > 0 {
+		for _, entry := range brief.ToolManifest {
+			tool := strings.TrimSpace(entry.Tool)
+			if _, ok := required[tool]; ok {
+				selected = append(selected, entry)
+				seen[tool] = struct{}{}
+			}
+		}
+	}
+	const maxExamples = 8
+	for _, entry := range brief.ToolManifest {
+		if len(selected) >= maxExamples {
+			break
+		}
+		tool := strings.TrimSpace(entry.Tool)
+		if tool == "" {
+			continue
+		}
+		if _, ok := seen[tool]; ok {
+			continue
+		}
+		selected = append(selected, entry)
+		seen[tool] = struct{}{}
+	}
+	return selected
 }
 
 func exactAnchorPreWriteSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -4617,6 +4696,12 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 
 func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief) llama.ChatOptions {
 	if briefIsScratchpadDeliverableLane(brief) {
+		if opts.MaxTokens <= 0 {
+			opts.MaxTokens = 16384
+		}
+		return opts
+	}
+	if planThenExecutePlannerBrief(brief) {
 		if opts.MaxTokens <= 0 {
 			opts.MaxTokens = 16384
 		}

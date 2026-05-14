@@ -233,6 +233,21 @@ func TestLlamaBackendKeepsNativeToolDefinitions(t *testing.T) {
 	}
 }
 
+func TestBackendSupportsNativeTools(t *testing.T) {
+	if BackendSupportsNativeTools(BackendMLX) {
+		t.Fatal("MLX should use idiom textual JSON tools, not native tool parsing")
+	}
+	if !BackendSupportsNativeTools(BackendLlama) {
+		t.Fatal("llama backend should keep native tools")
+	}
+	if !NewClient("http://example.invalid", time.Second).WithBackend(BackendLlama).SupportsNativeTools() {
+		t.Fatal("llama client should report native tool support")
+	}
+	if NewClient("http://example.invalid", time.Second).WithBackend(BackendMLX).SupportsNativeTools() {
+		t.Fatal("MLX client should report textual tool mode")
+	}
+}
+
 func TestWithBackendNormalizesValue(t *testing.T) {
 	c := NewClient("http://example.invalid", time.Second)
 	if c.Backend() != BackendLlama {

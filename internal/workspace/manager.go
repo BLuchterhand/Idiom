@@ -1386,7 +1386,14 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 	payload, ok := extractToolPayload(text)
 	if !ok {
-		return ToolRequest{}, "", false, nil
+		var err error
+		payload, ok, err = extractQwenXMLToolPayload(text)
+		if !ok {
+			return ToolRequest{}, "", false, nil
+		}
+		if err != nil {
+			return ToolRequest{}, payload, true, err
+		}
 	}
 
 	req, err := DecodeToolRequestJSON([]byte(payload))
@@ -1409,16 +1416,69 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
 	var req ToolRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
+		if repaired, ok := repairStringifiedJSONToolFields(payload); ok {
+			if repairErr := json.Unmarshal(repaired, &req); repairErr == nil {
+				normalizeToolRequestAliases(&req)
+				return req, nil
+			}
+			if repairedAgain, ok := repairNumericStringToolFields(repaired); ok {
+				if repairErr := json.Unmarshal(repairedAgain, &req); repairErr == nil {
+					normalizeToolRequestAliases(&req)
+					return req, nil
+				}
+			}
+		}
 		if repaired, ok := repairNumericStringToolFields(payload); ok {
 			if repairErr := json.Unmarshal(repaired, &req); repairErr == nil {
 				normalizeToolRequestAliases(&req)
 				return req, nil
+			}
+			if repairedAgain, ok := repairStringifiedJSONToolFields(repaired); ok {
+				if repairErr := json.Unmarshal(repairedAgain, &req); repairErr == nil {
+					normalizeToolRequestAliases(&req)
+					return req, nil
+				}
 			}
 		}
 		return ToolRequest{}, err
 	}
 	normalizeToolRequestAliases(&req)
 	return req, nil
+}
+
+func repairStringifiedJSONToolFields(payload []byte) ([]byte, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil, false
+	}
+	repaired := false
+	for _, field := range []string{
+		"edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths",
+		"declarations", "moves", "todos", "items", "plan_artifact",
+	} {
+		raw, ok := obj[field]
+		if !ok {
+			continue
+		}
+		var encoded string
+		if err := json.Unmarshal(raw, &encoded); err != nil {
+			continue
+		}
+		decoded := strings.TrimSpace(encoded)
+		if decoded == "" || !json.Valid([]byte(decoded)) {
+			continue
+		}
+		obj[field] = json.RawMessage(decoded)
+		repaired = true
+	}
+	if !repaired {
+		return nil, false
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 func normalizeToolRequestAliases(req *ToolRequest) {
@@ -1431,39 +1491,72 @@ func normalizeToolRequestAliases(req *ToolRequest) {
 }
 
 func repairNumericStringToolFields(payload []byte) ([]byte, bool) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &obj); err != nil {
+	var value any
+	if err := json.Unmarshal(payload, &value); err != nil {
 		return nil, false
 	}
-	repaired := false
-	for _, field := range []string{"start_line", "end_line", "max_depth", "limit", "budget_tokens"} {
-		raw, ok := obj[field]
-		if !ok {
-			continue
-		}
-		var value string
-		if err := json.Unmarshal(raw, &value); err != nil {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		if value == "" || strings.HasPrefix(value, "-") || strings.HasPrefix(value, "+") {
-			return nil, false
-		}
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return nil, false
-		}
-		obj[field] = json.RawMessage(strconv.Itoa(parsed))
-		repaired = true
-	}
-	if !repaired {
+	repaired, invalid := repairNumericStringToolValue(value)
+	if invalid || !repaired {
 		return nil, false
 	}
-	out, err := json.Marshal(obj)
+	out, err := json.Marshal(value)
 	if err != nil {
 		return nil, false
 	}
 	return out, true
+}
+
+func repairNumericStringToolValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		repaired := false
+		for key, raw := range typed {
+			if numericToolField(key) {
+				text, ok := raw.(string)
+				if !ok {
+					continue
+				}
+				text = strings.TrimSpace(text)
+				if text == "" || strings.HasPrefix(text, "-") || strings.HasPrefix(text, "+") {
+					return repaired, true
+				}
+				parsed, err := strconv.Atoi(text)
+				if err != nil {
+					return repaired, true
+				}
+				typed[key] = parsed
+				repaired = true
+				continue
+			}
+			childRepaired, invalid := repairNumericStringToolValue(raw)
+			if invalid {
+				return repaired, true
+			}
+			repaired = repaired || childRepaired
+		}
+		return repaired, false
+	case []any:
+		repaired := false
+		for _, item := range typed {
+			childRepaired, invalid := repairNumericStringToolValue(item)
+			if invalid {
+				return repaired, true
+			}
+			repaired = repaired || childRepaired
+		}
+		return repaired, false
+	default:
+		return false, false
+	}
+}
+
+func numericToolField(field string) bool {
+	switch field {
+	case "start_line", "end_line", "max_depth", "limit", "budget_tokens", "freshness_max_files":
+		return true
+	default:
+		return false
+	}
 }
 
 func inferMissingToolRequest(req ToolRequest) (ToolRequest, bool) {
@@ -1571,6 +1664,121 @@ func extractToolPayload(text string) (string, bool) {
 	}
 
 	return "", false
+}
+
+var (
+	qwenXMLFunctionPattern  = regexp.MustCompile(`(?s)^<function=([^>\s]+)>(.*)</function>$`)
+	qwenXMLParameterPattern = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>(.*?)</parameter>`)
+)
+
+func extractQwenXMLToolPayload(text string) (string, bool, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || !strings.Contains(trimmed, "<function=") {
+		return "", false, nil
+	}
+	envelope, ok := trimQwenXMLToolEnvelope(trimmed)
+	if !ok {
+		return "", false, nil
+	}
+	match := qwenXMLFunctionPattern.FindStringSubmatch(envelope)
+	if len(match) != 3 {
+		return trimmed, true, fmt.Errorf("malformed qwen XML tool request")
+	}
+	tool := strings.TrimSpace(match[1])
+	if tool == "" {
+		return trimmed, true, fmt.Errorf("qwen XML tool request is missing function name")
+	}
+	fields := map[string]json.RawMessage{}
+	toolRaw, _ := json.Marshal(tool)
+	fields["tool"] = toolRaw
+	for _, param := range qwenXMLParameterPattern.FindAllStringSubmatch(match[2], -1) {
+		if len(param) != 3 {
+			continue
+		}
+		name := strings.TrimSpace(param[1])
+		if name == "" {
+			continue
+		}
+		raw, err := qwenXMLParameterRaw(name, param[2])
+		if err != nil {
+			return trimmed, true, err
+		}
+		fields[name] = raw
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return trimmed, true, err
+	}
+	return string(data), true, nil
+}
+
+func trimQwenXMLToolEnvelope(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "<tool_call>") {
+		if !strings.HasSuffix(text, "</tool_call>") {
+			return text, true
+		}
+		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "<tool_call>"), "</tool_call>"))
+		return text, true
+	}
+	if strings.HasPrefix(text, "<function=") {
+		return text, true
+	}
+	return "", false
+}
+
+func qwenXMLParameterRaw(name string, value string) (json.RawMessage, error) {
+	value = trimQwenXMLParameterValue(value)
+	trimmed := strings.TrimSpace(value)
+	switch strings.TrimSpace(name) {
+	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+		if trimmed == "" {
+			return json.RawMessage("[]"), nil
+		}
+		if !json.Valid([]byte(trimmed)) {
+			return nil, fmt.Errorf("qwen XML parameter %q must be valid JSON array/object content", name)
+		}
+		return json.RawMessage(trimmed), nil
+	case "plan_artifact":
+		if trimmed == "" {
+			return json.RawMessage("null"), nil
+		}
+		if !json.Valid([]byte(trimmed)) {
+			return nil, fmt.Errorf("qwen XML parameter %q must be valid JSON object content", name)
+		}
+		return json.RawMessage(trimmed), nil
+	case "replace_all", "recursive", "include_evidence", "include_source", "include_files", "refresh":
+		parsed, err := strconv.ParseBool(strings.ToLower(trimmed))
+		if err != nil {
+			return nil, fmt.Errorf("qwen XML parameter %q must be boolean: %w", name, err)
+		}
+		if parsed {
+			return json.RawMessage("true"), nil
+		}
+		return json.RawMessage("false"), nil
+	case "start_line", "end_line", "max_depth", "limit", "budget_tokens", "freshness_max_files":
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("qwen XML parameter %q must be integer: %w", name, err)
+		}
+		return json.RawMessage(strconv.Itoa(parsed)), nil
+	default:
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		return raw, nil
+	}
+}
+
+func trimQwenXMLParameterValue(value string) string {
+	if strings.HasPrefix(value, "\n") {
+		value = value[1:]
+	}
+	if strings.HasSuffix(value, "\n") {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 func extractFirstJSONObject(text string) (string, bool) {

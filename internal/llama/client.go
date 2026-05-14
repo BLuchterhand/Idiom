@@ -226,7 +226,7 @@ func normalizeChatRequestForBackend(req *chatRequest, backend string) {
 	if req == nil {
 		return
 	}
-	if strings.EqualFold(strings.TrimSpace(backend), BackendMLX) {
+	if !BackendSupportsNativeTools(backend) {
 		// mlx_lm.server owns its own Qwen XML tool parser when a native
 		// OpenAI `tools` array is present. Current MLX parser failures can
 		// close the HTTP connection before idiom receives a structured model
@@ -234,6 +234,15 @@ func normalizeChatRequestForBackend(req *chatRequest, backend string) {
 		// MLX and let the backend generate plain assistant content.
 		req.Tools = nil
 		req.ToolChoice = ""
+	}
+}
+
+func BackendSupportsNativeTools(backend string) bool {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case BackendMLX:
+		return false
+	default:
+		return true
 	}
 }
 
@@ -269,6 +278,13 @@ func (c *Client) Backend() string {
 		return BackendLlama
 	}
 	return c.backend
+}
+
+func (c *Client) SupportsNativeTools() bool {
+	if c == nil {
+		return true
+	}
+	return BackendSupportsNativeTools(c.Backend())
 }
 
 func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
