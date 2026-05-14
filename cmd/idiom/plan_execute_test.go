@@ -136,6 +136,78 @@ func TestRunPlanExecuteMainStillFailsMissingArtifactWithoutSourceSatisfiedEviden
 	}
 }
 
+func TestRunPlanExecuteMainFailsMissingArtifactDespiteExplicitFullBodyNewFileBrief(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	prompt := "## Files To Modify\n\n" +
+		"| File | Change |\n" +
+		"|------|--------|\n" +
+		"| `docs/generated-note.txt` | Create the new note. |\n\n" +
+		"## SubmitPlan Shortcut\n\n" +
+		"This is a new-file atom. Use this full file body for the `replace_all:true` / empty `old_text` / `new_text` submit_plan shape:\n\n" +
+		"```text\n" +
+		"alpha\n" +
+		"beta\n" +
+		"```\n"
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "I can create docs/generated-note.txt, but I did not call submit_plan.", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("missing planner artifact must fail even with inline full body, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
+		t.Fatalf("expected missing-artifact failure, stderr=%s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "generated-note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("host fallback must not create a file from prompt body, stat err=%v", err)
+	}
+	if strings.Contains(stdout.String(), "idiom.plan_execute.auto_submit_full_body_plan") {
+		t.Fatalf("host fallback telemetry must not be emitted, stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "idiom.plan_execute.plan_artifact_missing") {
+		t.Fatalf("expected missing-artifact telemetry event, stdout=%s", stdout.String())
+	}
+}
+
+func TestRunPlanExecuteMainDoesNotAutoSubmitRealQuestionBlocker(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	prompt := "## Files To Modify\n\n" +
+		"| File | Change |\n" +
+		"|------|--------|\n" +
+		"| `docs/generated-note.txt` | Create the new note. |\n\n" +
+		"## SubmitPlan Shortcut\n\n" +
+		"Use this full file body for the `replace_all:true` / empty `old_text` / `new_text` submit_plan shape:\n\n" +
+		"```text\n" +
+		"alpha\n" +
+		"```\n"
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt, "-skip-review-repair"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "<<QUESTION>>: docs/generated-note.txt: current API evidence contradicts the requested body; do not create the file until the brief is rebased.", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("real question blockers must not be auto-submitted, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "generated-note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("auto-submit created a file despite a real blocker, stat err=%v", err)
+	}
+}
+
 func TestRunPlanExecuteMainDoesNotTreatQuestionBlockerMentioningSourceSatisfiedAsCleanNoop(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n"

@@ -4037,7 +4037,7 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Plan-execute completion gate rejected final answer",
-			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names every required path and cites current-state evidence. Submit one edit entry for every required_edit_paths entry, answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact path-specific blocker.",
+			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names every required path and cites current-state evidence. Call `submit_plan` with one edit entry for every required_edit_paths entry, answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact path-specific blocker.",
 		}, true
 	}
 	if len(changedPathsFromToolResults(results)) == 0 {
@@ -4556,7 +4556,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 	}
 	if missing := r.remainingRequiredEditPaths(results); len(missing) > 0 {
 		if r.planThenExecutePlannerPhase() {
-			return fmt.Sprintf("The completion gate rejected a final answer before the plan-submission contract (`submit_plan`) covered required edit path(s): %s. Read/search tools are hidden for this turn. Required evidence is one plan edit entry for every remaining required path, `Decision: source-satisfied` naming every required path plus current-state evidence if the requested final state is already present, or <<QUESTION>> naming the exact path-specific blocker. Do not repeat the final answer in prose.", strings.Join(missing, ", ")), true, true
+			return fmt.Sprintf("The completion gate rejected a final answer before the plan-submission contract (`submit_plan`) covered required edit path(s): %s. Read/search tools are hidden for this turn. If the brief supplies exact anchors, full new-file content, or explicit replacement edit shapes and you do not have a path-specific blocker, your next response must be a `submit_plan` tool call, not prose. Include one edit entry for every remaining required path. For a new file or whole-file write use `replace_all:true` with empty `old_text`, `new_text` as the full file body, and a one-sentence `purpose`. If a required missing source/test path has only behavior/helper requirements and no substantial inline body or explicit replacement shape, answer with <<QUESTION>> naming the missing body evidence. The other valid outcome is `Decision: source-satisfied` naming every required path plus current-state evidence if the requested final state is already present. Do not repeat the final answer in prose.", strings.Join(missing, ", ")), true, true
 		}
 		if briefIsScratchpadDeliverableLane(r.RuntimeBrief) {
 			return fmt.Sprintf("The completion gate rejected a final answer while non-source deliverable path(s) remain unwritten: %s. The deliverable-write contract requires full corrected content with gathered evidence plus any missing, stale, ambiguous, or out-of-scope source fact recorded as `Source verification pending:` or `## Scope Correction Required`. Answer with <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty.", strings.Join(missing, ", ")), false, true
@@ -9063,7 +9063,7 @@ func rewriteReadFileForPlannedNewFile(req workspace.ToolRequest, result workspac
 	for _, p := range brief.RequiredEditPaths {
 		if normalizeRunnerPath(p) == target {
 			result.Summary = "Required new-file path does not exist yet"
-			result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to read it. In submit_plan, include this edit shape: {\"path\":%q, \"replace_all\": true, \"old_text\": \"\", \"new_text\": \"<full file body>\", \"purpose\": \"...\"}. The brief's Implementation Shape / Required Behavior section is the source for new_text; large bodies are moved to artifact refs after submission.", target, target)
+			result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to read it. In submit_plan, include this edit shape: {\"path\":%q, \"replace_all\": true, \"old_text\": \"\", \"new_text\": \"<full file body>\", \"purpose\": \"...\"}. The brief must provide the full file body or an explicit replacement edit shape for missing source/test paths; if that evidence is absent, answer with <<QUESTION>> naming the missing body evidence. Large bodies are moved to artifact refs after submission.", target, target)
 			return result
 		}
 	}

@@ -29,6 +29,9 @@ func TestRewriteReadFileForPlannedNewFileFiresOnRequiredPath(t *testing.T) {
 	if !strings.Contains(got.Error, "submit_plan") {
 		t.Fatalf("rewrite should point at submit_plan; got: %s", got.Error)
 	}
+	if !strings.Contains(got.Error, "full file body or an explicit replacement edit shape") {
+		t.Fatalf("rewrite should point at the new-file body evidence contract; got: %s", got.Error)
+	}
 }
 
 // TestRewriteReadFileForPlannedNewFileLeavesUnrelatedErrorsAlone

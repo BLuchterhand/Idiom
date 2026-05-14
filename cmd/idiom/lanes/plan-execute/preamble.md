@@ -17,17 +17,23 @@ inside `submit_plan`'s `edits` array, not a tool to call directly.
 Treat the brief below as the planner target packet.
 
 Modify only the allowlisted files named in the brief. Exact anchors, exact
-old/new snippets, Current-State Anchors, Required Edits, or unified patches in
-the brief are sufficient source evidence for the plan; copy those anchors into
-each edit's `old_text`/`new_text` (substring shape) or `start_line`/`end_line`/
-`content` (range shape). If an anchor proves stale, ambiguous, or too imprecise
-during planning, the available contract surface is semantic/context/declared
-project discovery or a narrow source read inside the affected required edit
-path with `named_gap` to refresh the exact edit-safety fact, then resume
-planning or stop with `<<QUESTION>>:` and name the blocker. If the current
-source already contains the requested final state for every required path,
-answer `Decision: source-satisfied` with those paths and observed evidence
-instead of submitting stale edits.
+old/new snippets, Current-State Anchors, Required Edits, full new-file bodies,
+explicit `replace_all:true` edit shapes, or unified patches in the brief are
+sufficient source evidence for the plan.
+Copy those anchors into each edit's `old_text`/`new_text` (substring shape) or
+`start_line`/`end_line`/`content` (range shape). For a new file or intentional
+whole-file write, use `replace_all:true` with empty `old_text` and `new_text`
+set to the full file body. If the brief names a missing required source/test
+path but gives only behavior, helper, or implementation-shape requirements
+without a substantial inline body or explicit replacement edit shape, stop with
+`<<QUESTION>>:` and name the missing body evidence. If an anchor proves stale,
+ambiguous, or too imprecise during planning, the available contract surface is
+semantic/context/declared project discovery or a narrow source read inside the
+affected required edit path with `named_gap` to refresh the exact edit-safety
+fact, then resume planning or stop with `<<QUESTION>>:` and name the blocker.
+If the current source already contains the requested final state for every
+required path, answer `Decision: source-satisfied` with those paths and
+observed evidence instead of submitting stale edits.
 Keep planned edits inside the brief's edit allowlist; idiom recognizes `Files
 To Modify`, `Files You May Edit`, and near-equivalent allowlist headings as
 `required_edit_paths` when present.
@@ -72,10 +78,12 @@ If idiom itself creates generic friction that changes the task outcome, call
 impact, evidence, and confidence. Use it for harness/tool/prompt/context gaps
 only, not for product-code bugs.
 
-Each entry in `submit_plan`'s `edits` array must specify either
-`old_text`+`new_text` (substring shape; `new_text: ""` deletes `old_text`) or
-`start_line`+`end_line`+non-empty `content` (line-range shape) for an existing
-path, plus a one-sentence `purpose`. The
+Each entry in `submit_plan`'s `edits` array must specify exactly one edit
+shape plus a one-sentence `purpose`: `old_text`+`new_text` (substring shape;
+`new_text: ""` deletes `old_text`), `start_line`+`end_line`+non-empty
+`content` (line-range shape) for an existing path, or `replace_all:true` with
+empty `old_text` and `new_text` as the full body for a new file or intentional
+whole-file write. The
 executor phase will dispatch them in the order you list. Builds/tests listed
 in Acceptance are planner-owned and idiom enforces that contract; do not run
 build, test, shell, git, or source-sanity commands from the brief. Do not

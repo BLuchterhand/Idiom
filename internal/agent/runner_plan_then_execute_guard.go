@@ -376,7 +376,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		"PLANNER READINESS REACHED: every required_edit_path has been read at least once in this turn. State is sufficient to submit the plan or close as source-satisfied.",
 		"",
 		"Next action MUST be one of:",
-		"  1. `submit_plan` with the full ordered edits[] array (substring or line-range shape, plus a one-sentence purpose per edit), then a short final answer summarizing the planned edits.",
+		"  1. `submit_plan` with the full ordered edits[] array (substring, line-range, or whole-file/new-file shape, plus a one-sentence purpose per edit), then a short final answer summarizing the planned edits. For a missing/new source or test file, the brief must provide a substantial inline body or explicit replacement edit shape.",
 		"  2. `Decision: source-satisfied` naming every required path and the observed current-state evidence when the requested final state is already present.",
 		"  3. `<<QUESTION>>:` with the exact path-specific blocker that prevents you from drafting the plan.",
 		"",

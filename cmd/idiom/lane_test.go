@@ -690,6 +690,9 @@ func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
 		"Plan-Then-Execute Lane Brief",
 		"You are the PLANNER",
 		"submit_plan",
+		"replace_all:true",
+		"full body for a new file or intentional",
+		"missing body evidence",
 	}
 	for _, marker := range required {
 		if !strings.Contains(prompt, marker) {

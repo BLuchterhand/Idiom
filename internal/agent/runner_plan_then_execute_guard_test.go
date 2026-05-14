@@ -335,7 +335,19 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 	if !hideReads {
 		t.Fatalf("planner-phase recovery should hide reads and leave submit_plan as the write surface")
 	}
-	for _, want := range []string{"submit_plan", "source-satisfied", "a.txt", "b.txt", "<<QUESTION>>"} {
+	for _, want := range []string{
+		"your next response must be a `submit_plan` tool call, not prose",
+		"explicit replacement edit shapes",
+		"replace_all:true",
+		"empty `old_text`",
+		"`new_text` as the full file body",
+		"no substantial inline body or explicit replacement shape",
+		"one-sentence `purpose`",
+		"source-satisfied",
+		"a.txt",
+		"b.txt",
+		"<<QUESTION>>",
+	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("recovery prompt missing %q: %q", want, prompt)
 		}
@@ -523,6 +535,12 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresWhenAllPathsRead(t *testing.T) {
 	}
 	if !strings.Contains(got, "submit_plan") {
 		t.Fatalf("nudge must point at submit_plan; got %q", got)
+	}
+	if !strings.Contains(got, "whole-file/new-file shape") {
+		t.Fatalf("nudge must include the new-file/whole-file submit_plan shape; got %q", got)
+	}
+	if !strings.Contains(got, "substantial inline body or explicit replacement edit shape") {
+		t.Fatalf("nudge must explain required new-file body evidence; got %q", got)
 	}
 	if !strings.Contains(got, "<<QUESTION>>") {
 		t.Fatalf("nudge must offer the QUESTION escape hatch; got %q", got)

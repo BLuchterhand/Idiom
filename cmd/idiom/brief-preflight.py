@@ -463,6 +463,25 @@ def main() -> int:
             "locating the insertion site and frequently exhaust the pre-write budget."
         )
 
+    new_file_body_gaps = [
+        file_path
+        for file_path, action in rows
+        if (is_newfile_action(action) or is_missing_create_file_row(file_path, action, workspace_root))
+        and looks_like_plan_execute_brief(text)
+        and is_code_or_test_path(file_path)
+        and not has_substantial_new_file_body(text, file_path)
+    ]
+    if new_file_body_gaps:
+        failures.append(
+            "plan-execute new-file body missing for required path(s): "
+            + ", ".join(new_file_body_gaps)
+            + ". Plan-execute is an exact-plan lane; for missing source/test "
+            "files, inline the full file body in a ```text fence or a "
+            "`replace_all:true`/`new_text` edit shape before dispatch. "
+            "Behavior-only implementation shape belongs in an implementation "
+            "lane, not a plan-execute atom."
+        )
+
     # Atom-size estimation. The planner phase emits submit_plan with all
     # inlined ```text content escaped as JSON `new_text` strings; once the
     # estimated escaped size approaches the backend's max_tokens cap, the
@@ -718,6 +737,119 @@ def is_newfile_action(action: str) -> bool:
             lower,
         )
     )
+
+
+def is_missing_create_file_row(
+    file_path: str,
+    action: str,
+    workspace_root: Path | None,
+) -> bool:
+    if not action or workspace_root is None:
+        return False
+    lower = action.strip().lower()
+    if not re.match(r"^(create|add|write|produce|generate)\b", lower):
+        return False
+    try:
+        return not (workspace_root / file_path).exists()
+    except OSError:
+        return False
+
+
+def looks_like_plan_execute_brief(text: str) -> bool:
+    scannable = strip_fenced_blocks(text).lower()
+    if re.search(r"(?im)^\s*routing:\s*idiom\s+plan-execute\b", scannable):
+        return True
+    if re.search(r"(?im)^\s*mode:\s*plan-execute\b", scannable):
+        return True
+    return (
+        "plan-then-execute lane brief" in scannable
+        or "this run was launched with `idiom plan-execute`" in scannable
+    )
+
+
+def is_code_or_test_path(file_path: str) -> bool:
+    path = Path(file_path)
+    suffix = path.suffix.lower()
+    return suffix in {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".h",
+        ".hh",
+        ".hpp",
+        ".hxx",
+        ".ipp",
+        ".inl",
+        ".tpp",
+        ".gd",
+        ".py",
+        ".pyi",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".rs",
+        ".java",
+        ".kt",
+        ".kts",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".go",
+    } or file_path.startswith("native/tests/") or "/tests/" in file_path
+
+
+def has_substantial_new_file_body(text: str, file_path: str) -> bool:
+    if has_explicit_replace_all_new_file_shape(text, file_path):
+        return True
+    name = Path(file_path).name
+    suffix = Path(file_path).suffix.lower()
+    for match in FENCE_RE.finditer(text):
+        fence = match.group(0)
+        fence_context = (
+            text[max(0, match.start() - 500):match.start()]
+            + fence.splitlines()[0]
+        )
+        if file_path not in fence_context and (not name or name not in fence_context):
+            continue
+        body = "\n".join(fence.splitlines()[1:-1])
+        nonblank = [line for line in body.splitlines() if line.strip()]
+        if len(nonblank) < 8:
+            continue
+        body_low = body.lower()
+        if suffix in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl", ".tpp"}:
+            if "#include" in body_low or "test_case" in body_low or "namespace" in body_low:
+                return True
+        elif suffix == ".gd":
+            if "extends " in body_low or "func " in body_low:
+                return True
+        elif suffix in {".py", ".pyi"}:
+            if "def " in body_low or "class " in body_low or "import " in body_low:
+                return True
+        elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
+            if "function " in body_low or "export " in body_low or "const " in body_low:
+                return True
+        elif suffix in {".sh", ".bash", ".zsh"}:
+            if body.startswith("#!") or "\nset -" in body:
+                return True
+        elif len(nonblank) >= 16:
+            return True
+    return False
+
+
+def has_explicit_replace_all_new_file_shape(text: str, file_path: str) -> bool:
+    escaped_path = re.escape(file_path)
+    escaped_name = re.escape(Path(file_path).name)
+    path_pattern = rf"(?:{escaped_path}|{escaped_name})"
+    replace_all_pattern = r"replace_all[\"'`\s]*[:=][\"'`\s]*(?:true|True)"
+    new_text_pattern = r"new_text[\"'`\s]*[:=]"
+    window_pattern = re.compile(
+        rf"{path_pattern}.{{0,1600}}{replace_all_pattern}.{{0,1600}}{new_text_pattern}|"
+        rf"{replace_all_pattern}.{{0,1600}}{new_text_pattern}.{{0,1600}}{path_pattern}",
+        re.DOTALL | re.IGNORECASE,
+    )
+    return bool(window_pattern.search(text))
 
 
 def looks_like_outer_fenced(text: str) -> bool:

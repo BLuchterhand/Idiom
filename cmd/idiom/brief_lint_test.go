@@ -408,6 +408,127 @@ func TestBriefLintAnchorVerificationSkipsExplicitNewFileRows(t *testing.T) {
 	}
 }
 
+func TestBriefLintPlanExecuteNewSourceFileRequiresInlineBody(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"native/tests/test_existing.cpp": "#include \"doctest.h\"\nTEST_CASE(\"existing\") {}\n",
+		"native/tests/run_tests.py":      "#!/usr/bin/env python3\n",
+	})
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
+		"Routing: idiom plan-execute\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `native/tests/test_new_pairwise.cpp` | Create new file: focused pairwise test owner. |\n\n"+
+		"## Current state\n\n"+
+		"`native/tests/test_existing.cpp:L1-L2` defines the nearest existing suite.\n\n"+
+		"## Required Behavior\n\n"+
+		"Create `native/tests/test_new_pairwise.cpp` starting at line 1.\n\n"+
+		"## Acceptance\n\n"+
+		"- `python3 native/tests/run_tests.py -- -ts=NewPairwise`\n"))
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected FAIL for plan-execute new source file without body, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "plan-execute new-file body missing") {
+		t.Fatalf("stderr should name missing new-file body failure: %s", out)
+	}
+}
+
+func TestBriefLintPlanExecuteNewSourceFileAcceptsInlineBody(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"native/tests/test_existing.cpp": "#include \"doctest.h\"\nTEST_CASE(\"existing\") {}\n",
+		"native/tests/run_tests.py":      "#!/usr/bin/env python3\n",
+	})
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
+		"Routing: idiom plan-execute\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `native/tests/test_new_pairwise.cpp` | Create new file: focused pairwise test owner. |\n\n"+
+		"## Current state\n\n"+
+		"`native/tests/test_existing.cpp:L1-L2` defines the nearest existing suite.\n\n"+
+		"## Required Behavior\n\n"+
+		"Create `native/tests/test_new_pairwise.cpp` starting at line 1 with this body:\n\n"+
+		"```text\n"+
+		"#include \"doctest.h\"\n"+
+		"\n"+
+		"using namespace colony;\n"+
+		"\n"+
+		"namespace {\n"+
+		"int helper() { return 1; }\n"+
+		"}\n"+
+		"\n"+
+		"TEST_SUITE(\"NewPairwise\") {\n"+
+		"TEST_CASE(\"covers new pairwise owner\") {\n"+
+		"    CHECK(helper() == 1);\n"+
+		"}\n"+
+		"}\n"+
+		"```\n\n"+
+		"## Acceptance\n\n"+
+		"- `python3 native/tests/run_tests.py -- -ts=NewPairwise`\n"))
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("expected OK with inline new-file body, got exit=%d output=%s", exit, out)
+	}
+	if strings.Contains(out, "plan-execute new-file body missing") {
+		t.Fatalf("inline body should satisfy new-file plan-execute gate: %s", out)
+	}
+}
+
+func TestBriefLintPlanExecuteNewSourceFileAcceptsReplaceAllShape(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"native/tests/test_existing.cpp": "#include \"doctest.h\"\nTEST_CASE(\"existing\") {}\n",
+		"native/tests/run_tests.py":      "#!/usr/bin/env python3\n",
+	})
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
+		"Routing: idiom plan-execute\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `native/tests/test_new_pairwise.cpp` | Create focused pairwise test owner. |\n\n"+
+		"## Current state\n\n"+
+		"`native/tests/test_existing.cpp:L1-L2` defines the nearest existing suite.\n\n"+
+		"## Required Behavior\n\n"+
+		"Use this explicit replacement shape for `native/tests/test_new_pairwise.cpp`:\n\n"+
+		"```text\n"+
+		"{\"path\":\"native/tests/test_new_pairwise.cpp\",\"replace_all\":true,\"old_text\":\"\",\"new_text\":\"#include \\\"doctest.h\\\"\\n\\nTEST_CASE(\\\"covers new pairwise owner\\\") {\\n    CHECK(1 == 1);\\n}\\n\",\"purpose\":\"Create the new focused pairwise test owner.\"}\n"+
+		"```\n\n"+
+		"## Acceptance\n\n"+
+		"- `python3 native/tests/run_tests.py -- -ts=NewPairwise`\n"))
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("expected OK with explicit replace_all shape, got exit=%d output=%s", exit, out)
+	}
+}
+
+func TestBriefLintImplementationNewSourceFileAllowsImplementationShape(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"native/tests/test_existing.cpp": "#include \"doctest.h\"\nTEST_CASE(\"existing\") {}\n",
+		"native/tests/run_tests.py":      "#!/usr/bin/env python3\n",
+	})
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
+		"Routing: idiom implement\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `native/tests/test_new_pairwise.cpp` | Create new file: focused pairwise test owner. |\n\n"+
+		"## Current state\n\n"+
+		"`native/tests/test_existing.cpp:L1-L2` defines the nearest existing suite.\n\n"+
+		"## Required Behavior\n\n"+
+		"Create `native/tests/test_new_pairwise.cpp` with a doctest suite named NewPairwise.\n"+
+		"This implementation-lane brief mentions `submit_plan` only to warn that the implementation route must not use it.\n\n"+
+		"## Acceptance\n\n"+
+		"- `python3 native/tests/run_tests.py -- -ts=NewPairwise`\n"))
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("implementation lane should not require a full new-file body, got exit=%d output=%s", exit, out)
+	}
+}
+
 // TestBriefLintAnchorVerificationOldTextMatches confirms a labeled
 // `old_text:` block that exactly matches the file passes verification.
 func TestBriefLintAnchorVerificationOldTextMatches(t *testing.T) {
