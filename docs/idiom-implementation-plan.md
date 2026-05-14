@@ -1793,7 +1793,7 @@ Review signoff:
 | P9.14 | Synchronize embedded release gate linkage with downgraded release readiness | P9.13 | Banach the 3rd | - [x] | Nietzsche the 3rd + P9.15 follow-up | - [x] |
 | P9.15 | Refresh stale generated release evidence artifacts | P9.14 | Zeno the 3rd | - [x] | Kepler the 3rd | - [x] |
 | P9.2 | Record project go/no-go/pivot decision against measured criteria | P9.1 | Galileo the 3rd | - [x] | Socrates the 3rd | - [x] |
-| P9.3 | Gate release on no unresolved high contract/security regressions and owned high/medium audit findings with evidence and reproduce commands | P9.1 | Pascal the 3rd | - [x] | unassigned review subagent | - [ ] |
+| P9.3 | Gate release on no unresolved high contract/security regressions and owned high/medium audit findings with evidence and reproduce commands | P9.1 | Pascal the 3rd | - [x] | Hooke the 3rd | - [ ] |
 | P9.4 | Gate release on complete client-classification example-test coverage and reviewer signoff that every example maps to generic architecture primitives | P7.6, P8.5, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.5 | Gate release on review-protocol compliance for every implemented ledger task | P0.6, P9.1-P9.4 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.6 | Gate release on activation/onboarding evidence, including measured install-to-first-value and cleanup path | P7.7, P7.11, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
