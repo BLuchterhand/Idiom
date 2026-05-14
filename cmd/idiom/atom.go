@@ -499,7 +499,7 @@ func (m atomRequiredEditMatch) Better(other atomRequiredEditMatch) atomRequiredE
 }
 
 func atomRequiredEditSnippetMatch(content, snippet, anchor, path string) atomRequiredEditMatch {
-	if atomEditSnippetMatchesContent(content, snippet) {
+	if atomEditSnippetContiguousMatchesContent(content, snippet) {
 		lines := atomNonEmptyTrimmedLines(snippet)
 		return atomRequiredEditMatch{
 			Kind:         atomSnippetMatchExact,
@@ -881,6 +881,38 @@ func atomEditSnippetMatchesContent(content string, snippet string) bool {
 		}
 		next++
 		if next == len(snippetLines) {
+			return true
+		}
+	}
+	return false
+}
+
+func atomEditSnippetContiguousMatchesContent(content string, snippet string) bool {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	snippet = strings.ReplaceAll(strings.TrimSpace(snippet), "\r\n", "\n")
+	if snippet == "" {
+		return true
+	}
+	if strings.Contains(content, snippet) {
+		return true
+	}
+	snippetLines := atomNonEmptyTrimmedLines(snippet)
+	if len(snippetLines) == 0 {
+		return true
+	}
+	contentLines := atomNonEmptyTrimmedLines(content)
+	if len(snippetLines) > len(contentLines) {
+		return false
+	}
+	for start := 0; start <= len(contentLines)-len(snippetLines); start++ {
+		matched := true
+		for offset, line := range snippetLines {
+			if contentLines[start+offset] != line {
+				matched = false
+				break
+			}
+		}
+		if matched {
 			return true
 		}
 	}

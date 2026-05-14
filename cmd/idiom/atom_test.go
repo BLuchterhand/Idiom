@@ -182,6 +182,33 @@ import (
 	}
 }
 
+func TestAtomIntakeAllowsAnchoredDeletionWhenNewTextIsOrderedSubset(t *testing.T) {
+	root := t.TempDir()
+	current := `package main
+
+import (
+	"a"
+	"b"
+	"c"
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte(current), 0o644); err != nil {
+		t.Fatalf("write foo: %v", err)
+	}
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `foo.go` | Remove the obsolete import. |\n\n## Required Edits\n\nIn `foo.go`, replace the import block.\n\nold_text:\n\n```go\nimport (\n    \"a\"\n    \"b\"\n    \"c\"\n)\n```\n\nnew_text:\n\n```go\nimport (\n    \"a\"\n    \"c\"\n)\n```\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code != 0 {
+		t.Fatalf("expected dispatchable exit 0, got %d stderr=%s report=%+v", code, stderr, report)
+	}
+	if report.State != atomStateDispatchable || !report.Dispatchable {
+		t.Fatalf("anchored deletion should remain dispatchable, got %+v", report)
+	}
+	if reportReasonContains(report, "contains required_edit_1") || reportReasonContains(report, "near-matches required_edit_1") {
+		t.Fatalf("anchored deletion should not be reported stale, got %+v", report.Reasons)
+	}
+}
+
 func TestAtomIntakeBlocksAnchoredNearMatchWhenOldTextNoLongerMatches(t *testing.T) {
 	root := t.TempDir()
 	current := `package main
