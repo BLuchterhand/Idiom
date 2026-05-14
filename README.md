@@ -87,6 +87,11 @@ Other useful subcommands:
   LLM runners.
 - `idiom tool schemas` — export built-in workspace tool schemas plus
   profile, side-effect, and policy metadata as JSON.
+- `idiom tool <name> --input '<json>'` — run one workspace tool and print JSON
+  with the legacy top-level `Tool`/`Summary`/`Output`/`Error` fields plus a
+  stable `sidecar` envelope (`schema_version:"idiom.tool.v1"`) carrying
+  profile, contract metadata, freshness, warnings, audit IDs, structured
+  output, and typed errors for integrations.
 - `idiom atom intake --spec <atom.md> [--project-root <root>] [--json]` —
   classify an atom/spec before dispatch. Intake fails closed for complete,
   source-satisfied, stale accepted-result, failed-refine best drafts, dirty

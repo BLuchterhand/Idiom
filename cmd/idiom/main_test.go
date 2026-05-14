@@ -448,6 +448,91 @@ func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
 	}
 }
 
+func TestRunMainDirectToolJSONIncludesSidecarEnvelopeAndLegacyFields(t *testing.T) {
+	configPath := writeMainConfig(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "pwd", "-config", configPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Tool    string `json:"Tool"`
+		Summary string `json:"Summary"`
+		Output  string `json:"Output"`
+		Error   string `json:"Error"`
+		Sidecar struct {
+			SchemaVersion    string         `json:"schema_version"`
+			Tool             string         `json:"tool"`
+			Profile          string         `json:"profile"`
+			Contract         map[string]any `json:"contract"`
+			Warnings         []any          `json:"warnings"`
+			AuditEventIDs    []any          `json:"audit_event_ids"`
+			StructuredOutput map[string]any `json:"structured_output"`
+			Error            any            `json:"error"`
+		} `json:"sidecar"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode tool output: %v\n%s", err, stdout.String())
+	}
+	if payload.Tool != "pwd" || payload.Summary == "" || payload.Output == "" || payload.Error != "" {
+		t.Fatalf("legacy fields changed: %#v", payload)
+	}
+	if payload.Sidecar.SchemaVersion != "idiom.tool.v1" || payload.Sidecar.Tool != "pwd" || payload.Sidecar.Profile != "default" {
+		t.Fatalf("missing sidecar identity fields: %#v", payload.Sidecar)
+	}
+	if payload.Sidecar.Contract["id"] != "idiom.tool.v1:pwd" || payload.Sidecar.Contract["metadata"] == nil {
+		t.Fatalf("missing sidecar contract metadata: %#v", payload.Sidecar.Contract)
+	}
+	if payload.Sidecar.Warnings == nil || payload.Sidecar.AuditEventIDs == nil {
+		t.Fatalf("warnings and audit ids should be parseable arrays: %#v", payload.Sidecar)
+	}
+	if payload.Sidecar.StructuredOutput["format"] != "text" {
+		t.Fatalf("expected text output to be wrapped structurally, got %#v", payload.Sidecar.StructuredOutput)
+	}
+	if payload.Sidecar.Error != nil {
+		t.Fatalf("success envelope should not include structured error: %#v", payload.Sidecar.Error)
+	}
+}
+
+func TestRunMainDirectToolUnknownToolIncludesStructuredSidecarError(t *testing.T) {
+	configPath := writeMainConfig(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "not_a_tool", "-config", configPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var payload struct {
+		Tool    string `json:"Tool"`
+		Summary string `json:"Summary"`
+		Error   string `json:"Error"`
+		Sidecar struct {
+			SchemaVersion string `json:"schema_version"`
+			Error         struct {
+				Class   string `json:"class"`
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"sidecar"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error output: %v\n%s", err, stdout.String())
+	}
+	if payload.Tool != "not_a_tool" || payload.Summary == "" || payload.Error == "" {
+		t.Fatalf("legacy error fields changed: %#v", payload)
+	}
+	if payload.Sidecar.SchemaVersion != "idiom.tool.v1" {
+		t.Fatalf("missing sidecar schema version: %#v", payload.Sidecar)
+	}
+	if payload.Sidecar.Error.Class != "unsupported_tool" || payload.Sidecar.Error.Code != "unsupported_tool" {
+		t.Fatalf("unexpected structured error: %#v", payload.Sidecar.Error)
+	}
+	if !strings.Contains(payload.Sidecar.Error.Message, "unsupported tool") {
+		t.Fatalf("structured error message should preserve bounded diagnostic: %#v", payload.Sidecar.Error)
+	}
+}
+
 func TestRunMainWritesTelemetryForRejectedDirectToolInput(t *testing.T) {
 	telemetryDir := t.TempDir()
 	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)

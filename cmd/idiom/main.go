@@ -426,7 +426,14 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(result); err != nil {
+	payload := struct {
+		workspace.ToolResult
+		Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
+	}{
+		ToolResult: result,
+		Sidecar:    workspace.BuildToolSidecarEnvelope(req, result, "default"),
+	}
+	if err := enc.Encode(payload); err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
 		return 1
 	}
@@ -458,6 +465,10 @@ func toolHelpRequested(args []string) bool {
 func printToolHelp(stdout io.Writer, toolName string) {
 	toolName = strings.TrimSpace(toolName)
 	fmt.Fprintf(stdout, "Usage:\n  idiom tool %s --input '<json>'\n\n", toolName)
+	fmt.Fprintln(stdout, "Output:")
+	fmt.Fprintln(stdout, "  JSON with legacy Tool/Summary/Output/Error fields plus sidecar.schema_version=\"idiom.tool.v1\".")
+	fmt.Fprintln(stdout, "  The sidecar envelope carries profile, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
+	fmt.Fprintln(stdout)
 	defs := workspace.BuildToolDefinitions([]string{toolName})
 	if len(defs) > 0 {
 		def := defs[0]
@@ -561,6 +572,8 @@ func printToolUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  idiom tool schemas")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Run a single workspace tool and print its result as JSON.")
+	fmt.Fprintln(stderr, "Output preserves legacy Tool/Summary/Output/Error fields and adds sidecar.schema_version=\"idiom.tool.v1\" for structured integrations.")
+	fmt.Fprintln(stderr, "The sidecar envelope includes profile, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
 	fmt.Fprintln(stderr, "Does not require llama-server.")
 	fmt.Fprintln(stderr, "For persistent codebase context, use `idiom context build|status|query|zoom|pack|impact|trace`.")
 	fmt.Fprintln(stderr)
