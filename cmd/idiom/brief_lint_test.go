@@ -397,7 +397,7 @@ func TestBriefLintAnchorVerificationSkipsExplicitNewFileRows(t *testing.T) {
 		"|------|--------|\n"+
 		"| `internal/foo/bar.go` | MODIFY `Existing` at line 2 |\n"+
 		"| `scripts/new_guard.sh` | Create this new shell helper. |\n"+
-		"| `.idiom/postflight/checks/new_guard.json` | Create this new idiom project check JSON. |\n\n"+
+		"| `.idiom/postflight/checks/new_guard.json` | New file target. Create the idiom project check JSON. |\n\n"+
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
 	if exit != 0 {
@@ -752,6 +752,37 @@ func TestBriefLintBlocksMissingAcceptanceCommandPath(t *testing.T) {
 	}
 	if !strings.Contains(out, "acceptance command references missing path") {
 		t.Fatalf("stderr should report missing command path: %s", out)
+	}
+}
+
+func TestBriefLintAllowsAcceptanceCommandForDeclaredNewFileTarget(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"scripts/run_scenario.sh": "#!/usr/bin/env bash\n",
+	})
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
+		"Routing: idiom plan-execute\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `scripts/run_scenario.sh` | MODIFY validation at line 1 |\n"+
+		"| `tests/scenarios/smoke/wild_wolf_seed.json` | New file target. Add a scenario fixture. |\n\n"+
+		"## Verified Current State\n\n"+
+		"- `scripts/run_scenario.sh:1`: `#!/usr/bin/env bash`\n\n"+
+		"## Required Behavior\n\n"+
+		"Use this explicit replacement shape for `tests/scenarios/smoke/wild_wolf_seed.json`:\n\n"+
+		"```text\n"+
+		"{\"path\":\"tests/scenarios/smoke/wild_wolf_seed.json\",\"replace_all\":true,\"old_text\":\"\",\"new_text\":\"{\\n  \\\"name\\\": \\\"wild_wolf_seed\\\",\\n  \\\"actions\\\": [\\n    {\\\"type\\\": \\\"debug_seed_animal\\\", \\\"species\\\": \\\"Wolf\\\"}\\n  ]\\n}\\n\",\"purpose\":\"Create the new scenario fixture.\"}\n"+
+		"```\n\n"+
+		"## Acceptance\n\n"+
+		"- `bash scripts/run_scenario.sh tests/scenarios/smoke/wild_wolf_seed.json`\n"+
+		"- `git diff --check -- scripts/run_scenario.sh tests/scenarios/smoke/wild_wolf_seed.json`\n"))
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("expected OK when commands reference a declared new-file target, got exit=%d output=%s", exit, out)
+	}
+	if strings.Contains(out, "acceptance command references missing path") {
+		t.Fatalf("declared new-file target should satisfy command-path validation: %s", out)
 	}
 }
 

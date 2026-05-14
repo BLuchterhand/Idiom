@@ -524,7 +524,7 @@ def main() -> int:
 
     failures.extend(language_mismatch_failures(text, rows, lint_profile))
     command_failures, command_warnings = validate_acceptance_command_references(
-        text, workspace_root
+        text, rows, workspace_root
     )
     failures.extend(command_failures)
     warnings.extend(command_warnings)
@@ -726,8 +726,19 @@ def is_newfile_action(action: str) -> bool:
         return False
     lower = action.strip().lower()
     if lower.startswith(
-        ("new file:", "create file:", "create new file:", "add new file:")
+        (
+            "new file:",
+            "new file target:",
+            "new file target.",
+            "new-file target:",
+            "new-file target.",
+            "create file:",
+            "create new file:",
+            "add new file:",
+        )
     ):
+        return True
+    if re.match(r"^new[- ]file\s+target\b", lower):
         return True
     return bool(
         re.match(
@@ -1221,6 +1232,7 @@ def acceptance_and_required_edit_text(text: str) -> str:
 
 def validate_acceptance_command_references(
     text: str,
+    rows: list[tuple[str, str]],
     workspace_root: Path | None,
 ) -> tuple[list[str], list[str]]:
     body = acceptance_and_required_edit_text(text)
@@ -1232,12 +1244,17 @@ def validate_acceptance_command_references(
             "acceptance command reference validation skipped: could not resolve "
             "workspace root from cwd."
         ]
+    declared_newfile_targets = declared_newfile_target_paths(
+        text, rows, workspace_root
+    )
     failures: list[str] = []
     warnings: list[str] = []
     for command in commands:
         for rel in command_reference_paths(command):
             full = workspace_root / rel
             if full.exists():
+                continue
+            if rel in declared_newfile_targets:
                 continue
             failures.append(
                 "acceptance command references missing path: "
@@ -1246,6 +1263,30 @@ def validate_acceptance_command_references(
                 "exact missing command/path."
             )
     return failures, warnings
+
+
+def declared_newfile_target_paths(
+    text: str,
+    rows: list[tuple[str, str]],
+    workspace_root: Path,
+) -> set[str]:
+    targets: set[str] = set()
+    for file_path, action in rows:
+        if not file_path:
+            continue
+        try:
+            exists = (workspace_root / file_path).exists()
+        except OSError:
+            exists = False
+        if exists:
+            continue
+        if (
+            is_newfile_action(action)
+            or has_explicit_replace_all_new_file_shape(text, file_path)
+            or has_substantial_new_file_body(text, file_path)
+        ):
+            targets.add(file_path)
+    return targets
 
 
 def extract_inline_commands(text: str) -> list[str]:
@@ -1356,7 +1397,12 @@ def verify_anchors(
         )
         return failures, warnings
 
-    nonfile_rows = [(fp, act) for fp, act in rows if not is_newfile_action(act)]
+    nonfile_rows = [
+        (fp, act)
+        for fp, act in rows
+        if not is_newfile_action(act)
+        and not has_explicit_replace_all_new_file_shape(text, fp)
+    ]
     if not nonfile_rows:
         return failures, warnings
 
