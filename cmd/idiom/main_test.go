@@ -400,6 +400,12 @@ func TestCommandTelemetryNameClassifiesAuditSubcommands(t *testing.T) {
 	}
 }
 
+func TestCommandTelemetryNameClassifiesDoctor(t *testing.T) {
+	if got := commandTelemetryName([]string{"doctor", "--json", "--profile", "implement"}); got != "doctor" {
+		t.Fatalf("commandTelemetryName doctor = %q, want doctor", got)
+	}
+}
+
 func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
 	telemetryDir := t.TempDir()
 	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)

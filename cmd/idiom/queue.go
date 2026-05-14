@@ -38,7 +38,7 @@ func runQueueMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer
 	case "serve":
 		return runQueueServe(args[1:], stdout, stderr)
 	case "run":
-		return runQueueRun(args[1:], stdout, stderr)
+		return runQueueRunWithTelemetry(args[1:], stdout, stderr, rec)
 	case "status":
 		return runQueueStatus(args[1:], stdout, stderr)
 	case "ping":
@@ -92,6 +92,10 @@ func runQueueServe(args []string, stdout, stderr io.Writer) int {
 // exit (success or failure). Exit code mirrors the wrapped command,
 // so this composes with shell-level error handling.
 func runQueueRun(args []string, stdout, stderr io.Writer) int {
+	return runQueueRunWithTelemetry(args, stdout, stderr, nil)
+}
+
+func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *telemetry.Recorder) int {
 	fs := flag.NewFlagSet("idiom queue run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	socketPath := fs.String("socket", runner.DefaultSocketPath(), "Unix socket path of the daemon")
@@ -131,16 +135,20 @@ func runQueueRun(args []string, stdout, stderr io.Writer) int {
 	resolvedPool := *pool
 	heldPoolsEnv := os.Getenv(runner.HeldPoolsEnv)
 	if runner.PoolHeldByAncestor(heldPoolsEnv, *pool) {
+		logCLIPhase(rec, "queue_admission", map[string]any{"state": "nested_same_pool", "pool": *pool, "degraded": false})
 		if !*quiet {
 			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot in same pool; skipping nested acquire\n", *pool)
 		}
 	} else if strings.TrimSpace(heldPoolsEnv) != "" {
+		logCLIPhase(rec, "queue_admission", map[string]any{"state": "nested_cross_pool", "pool": *pool, "degraded": true})
 		if !*quiet {
 			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot in different pool(s) (%s); skipping nested acquire to prevent cross-pool deadlock — wrap the outer command with the pool the inner inference actually uses\n", *pool, heldPoolsEnv)
 		}
 	} else {
+		startedAt := time.Now()
 		l, err := runner.Acquire(ctx, *socketPath, *pool, *label, *clientID)
 		if err != nil {
+			logCLIPhase(rec, "queue_admission", map[string]any{"state": "failed", "pool": *pool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err.Error()), "degraded": true})
 			if errors.Is(err, runner.ErrDaemonUnreachable) {
 				fmt.Fprintf(stderr, "queue run: %v\nstart the daemon with `idiom queue serve` (or set IDIOM_RUNNER_SOCKET).\n", err)
 			} else {
@@ -162,10 +170,13 @@ func runQueueRun(args []string, stdout, stderr io.Writer) int {
 
 		select {
 		case <-lease.Granted():
+			logCLIPhase(rec, "queue_admission", map[string]any{"state": "granted", "pool": lease.Pool, "wait_ms": time.Since(startedAt).Milliseconds(), "degraded": false})
 		case err := <-lease.Err():
+			logCLIPhase(rec, "queue_admission", map[string]any{"state": "failed_before_grant", "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err.Error()), "degraded": true})
 			fmt.Fprintf(stderr, "queue run: lease error before grant: %v\n", err)
 			return 1
 		case <-ctx.Done():
+			logCLIPhase(rec, "queue_admission", map[string]any{"state": "canceled_before_grant", "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": "timeout_or_canceled", "degraded": true})
 			fmt.Fprintln(stderr, "queue run: canceled before grant")
 			return 130
 		}

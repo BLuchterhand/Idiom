@@ -1558,6 +1558,23 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 			Tools:          []string{"harness_feedback", "harness_audit"},
 		})
 	}
+	if aggregate.LocalOps != nil {
+		if aggregate.LocalOps.QueueDegraded > 0 || aggregate.LocalOps.ContextBudgetDegraded > 0 || aggregate.LocalOps.ClassifierDegraded > 0 || aggregate.LocalOps.DoctorDegradedProfiles > 0 || aggregate.LocalOps.DoctorBlockedProfiles > 0 {
+			severity := "low"
+			if aggregate.LocalOps.DoctorBlockedProfiles > 0 {
+				severity = "high"
+			} else if aggregate.LocalOps.QueueDegraded > 0 || aggregate.LocalOps.ContextBudgetDegraded > 0 {
+				severity = "medium"
+			}
+			findings = append(findings, harnessAuditFinding{
+				ID:             "local_ops_degraded_mode_reported",
+				Severity:       severity,
+				Evidence:       fmt.Sprintf("queue_degraded=%d context_budget_degraded=%d classifier_degraded=%d doctor_degraded=%d doctor_blocked=%d", aggregate.LocalOps.QueueDegraded, aggregate.LocalOps.ContextBudgetDegraded, aggregate.LocalOps.ClassifierDegraded, aggregate.LocalOps.DoctorDegradedProfiles, aggregate.LocalOps.DoctorBlockedProfiles),
+				Recommendation: "Use doctor readiness and queue/status telemetry to decide whether to keep degraded local operation report-only or add profile gates.",
+				Tools:          []string{"harness_audit", "idiom doctor", "idiom queue"},
+			})
+		}
+	}
 	if len(incompleteSessions) > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "incomplete_implement_session_lifecycle",

@@ -31,6 +31,25 @@ func TestMaybeAcquireNoOpWhenDaemonAbsent(t *testing.T) {
 	release() // idempotent on no-op
 }
 
+func TestMaybeAcquireWithResultReportsUnavailableWhenDaemonAbsent(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "definitely-not-a-socket.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	result := MaybeAcquireWithResult(ctx, missing, "qwen-35b", "label", "test", nil)
+	if result.State != MaybeAcquireStateUnavailable {
+		t.Fatalf("State = %q, want %q", result.State, MaybeAcquireStateUnavailable)
+	}
+	if result.Err != nil {
+		t.Fatalf("unavailable opportunistic queue should not return an error, got %v", result.Err)
+	}
+	if result.Release == nil {
+		t.Fatal("Release must be non-nil for unavailable no-op path")
+	}
+	result.Release()
+}
+
 func TestMaybeAcquireGrantsImmediatelyWhenSlotFree(t *testing.T) {
 	_, sock := startTestServer(t, DefaultConfig())
 	var statusBuf bytes.Buffer
@@ -68,6 +87,24 @@ func TestMaybeAcquireGrantsImmediatelyWhenSlotFree(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("expected release to drop in-flight count to 0; snap=%+v", snap)
+}
+
+func TestMaybeAcquireWithResultReportsAcquiredWhenSlotGranted(t *testing.T) {
+	_, sock := startTestServer(t, DefaultConfig())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result := MaybeAcquireWithResult(ctx, sock, "default", "typed-label", "typed-client", nil)
+	if result.Err != nil {
+		t.Fatalf("MaybeAcquireWithResult: %v", result.Err)
+	}
+	if result.State != MaybeAcquireStateAcquired {
+		t.Fatalf("State = %q, want %q", result.State, MaybeAcquireStateAcquired)
+	}
+	if result.Release == nil {
+		t.Fatal("Release must be non-nil")
+	}
+	result.Release()
 }
 
 func TestMaybeAcquireSerializesUnderPoolCap(t *testing.T) {

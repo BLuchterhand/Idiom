@@ -65,14 +65,23 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 			Fail int `json:"fail"`
 		} `json:"summary"`
 		ReadinessProfiles []struct {
-			Name        string `json:"name"`
-			State       string `json:"state"`
-			TaskFamily  string `json:"task_family"`
-			Contract    string `json:"contract"`
+			Name       string `json:"name"`
+			State      string `json:"state"`
+			TaskFamily string `json:"task_family"`
+			Contract   string `json:"contract"`
+			Checks     []struct {
+				Name  string `json:"name"`
+				State string `json:"state"`
+			} `json:"checks"`
 			Unavailable []struct {
 				Check  string `json:"check"`
 				Reason string `json:"reason"`
 			} `json:"unavailable"`
+			Metrics struct {
+				QueueState         string `json:"queue_state"`
+				ContextBudgetState string `json:"context_budget_state"`
+				ClassifierState    string `json:"classifier_state"`
+			} `json:"metrics"`
 		} `json:"readiness_profiles"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
@@ -95,10 +104,27 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 		if !validReadinessState(profile.State) {
 			t.Fatalf("profile %q has invalid state %q", profile.Name, profile.State)
 		}
-		if len(profile.Unavailable) == 0 {
-			t.Fatalf("profile %q should carry explicit unavailable markers for deferred live probes", profile.Name)
+		if profile.Metrics.QueueState == "" || profile.Metrics.ContextBudgetState == "" || profile.Metrics.ClassifierState == "" {
+			t.Fatalf("profile %q should carry local-ops metrics, got %#v", profile.Name, profile)
+		}
+		for _, want := range []string{"queue admission", "context budget", "route classifier"} {
+			if !doctorProfileHasCheck(profile.Checks, want) {
+				t.Fatalf("profile %q missing readiness check %q in %#v", profile.Name, want, profile.Checks)
+			}
 		}
 	}
+}
+
+func doctorProfileHasCheck(checks []struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}, name string) bool {
+	for _, check := range checks {
+		if check.Name == name && check.State != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunDoctorMainProfileFlagFiltersReadinessProfiles(t *testing.T) {

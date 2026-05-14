@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"idiom/internal/config"
 	"idiom/internal/runner"
@@ -59,13 +61,14 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 		"json_events": opts.JSONEvents,
 		"resume":      strings.TrimSpace(opts.Resume) != "",
 		"session_id":  cfg.Workspace.SessionID,
+		"local_ops":   localOpsTelemetryFields(cfg, "implement"),
 	})
 
 	// Queue gate: same opportunistic acquire pattern as plan-execute.
 	// When the queue daemon is up, concurrent `idiom implement` runs
 	// serialize through the configured pool instead of trampling the
 	// MLX backend at once.
-	queueRelease := implementAcquireQueueSlot(cfg, cfg.Workspace.SessionID, stderr)
+	queueRelease := implementAcquireQueueSlot(cfg, cfg.Workspace.SessionID, stdout, stderr, opts.JSONEvents, rec)
 	defer queueRelease()
 
 	prompt, err := implementPrompt(opts)
@@ -97,23 +100,102 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 // configured model alias (or IDIOM_QUEUE_POOL override) and acquires
 // from the daemon at IDIOM_QUEUE_SOCKET / DefaultSocketPath() when
 // reachable. Returns a no-op release on daemon absence.
-func implementAcquireQueueSlot(cfg config.Config, sessionID string, stderr io.Writer) func() {
+func implementAcquireQueueSlot(cfg config.Config, sessionID string, stdout io.Writer, stderr io.Writer, jsonEvents bool, rec *telemetry.Recorder) func() {
 	pool := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_POOL"))
 	if pool == "" {
 		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)
 	}
 	if pool == "" {
+		logImplementQueueTelemetry(rec, stdout, jsonEvents, "disabled", "", 0, "pool_disabled", false)
 		return func() {}
 	}
 	socket := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_SOCKET"))
 	label := "implement:" + sessionID
 	client := fmt.Sprintf("idiom-implement/%d", os.Getpid())
-	release, err := runner.MaybeAcquire(context.Background(), socket, pool, label, client, stderr)
-	if err != nil {
-		fmt.Fprintf(stderr, "[idiom queue %s] acquire failed: %v — proceeding un-gated\n", pool, err)
+	startedAt := time.Now()
+	result := runner.MaybeAcquireWithResult(context.Background(), socket, pool, label, client, stderr)
+	waitMillis := time.Since(startedAt).Milliseconds()
+	if result.Err != nil {
+		fmt.Fprintf(stderr, "[idiom queue %s] acquire failed: %v — proceeding un-gated\n", pool, result.Err)
+	}
+	state := string(result.State)
+	if state == "" {
+		state = "error"
+	}
+	reason := result.Reason
+	degraded := state == "unavailable" || state == "degraded" || state == "error"
+	logImplementQueueTelemetry(rec, stdout, jsonEvents, state, pool, waitMillis, reason, degraded)
+	if result.Release == nil {
 		return func() {}
 	}
-	return release
+	return result.Release
+}
+
+func logImplementQueueTelemetry(rec *telemetry.Recorder, stdout io.Writer, jsonEvents bool, state string, pool string, waitMillis int64, reason string, degraded bool) {
+	fields := map[string]any{
+		"state":        state,
+		"pool":         pool,
+		"wait_ms":      waitMillis,
+		"degraded":     degraded,
+		"reason_class": queueReasonClass(reason),
+	}
+	emitImplementJSONEvent(stdout, jsonEvents, implementQueueEventName(state), fields)
+	logCLIPhase(rec, "implement_queue", fields)
+}
+
+func implementQueueEventName(state string) string {
+	switch state {
+	case "acquired":
+		return "queue_acquired"
+	case "unavailable":
+		return "queue_unavailable"
+	case "disabled":
+		return "queue_disabled"
+	case "degraded":
+		return "queue_degraded"
+	default:
+		return "queue_error"
+	}
+}
+
+func emitImplementJSONEvent(stdout io.Writer, jsonEvents bool, eventType string, fields map[string]any) {
+	if !jsonEvents {
+		return
+	}
+	payload := map[string]any{
+		"type": "idiom.implement." + eventType,
+		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	for key, value := range fields {
+		payload[key] = value
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(stdout, string(body))
+}
+
+func queueReasonClass(reason string) string {
+	reason = strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case reason == "":
+		return ""
+	case strings.Contains(reason, "pool_disabled"):
+		return "pool_disabled"
+	case strings.Contains(reason, "nested_same_pool"):
+		return "nested_same_pool"
+	case strings.Contains(reason, "nested_cross_pool"):
+		return "nested_cross_pool"
+	case strings.Contains(reason, "unknown pool"):
+		return "unknown_pool"
+	case strings.Contains(reason, "daemon_unreachable"), strings.Contains(reason, "unreachable"), strings.Contains(reason, "connection refused"):
+		return "daemon_unreachable"
+	case strings.Contains(reason, "context canceled"), strings.Contains(reason, "deadline"):
+		return "timeout_or_canceled"
+	default:
+		return "queue_error"
+	}
 }
 
 func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, error) {

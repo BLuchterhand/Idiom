@@ -270,6 +270,37 @@ func TestAnalyzeLogIngestsHarnessFeedbackTelemetryFields(t *testing.T) {
 	}
 }
 
+func TestAnalyzeLogIngestsLocalOpsTelemetryFields(t *testing.T) {
+	records := []Record{
+		{Type: "implement_start", Data: map[string]any{
+			"local_ops": map[string]any{
+				"backend_configured":        true,
+				"backend_kind":              "mlx",
+				"context_budget_state":      "degraded",
+				"classifier_state":          "disabled_fallback",
+				"classifier_enabled":        false,
+				"backend_ctx_size":          262144,
+				"context_budget_max_output": 8192,
+			},
+		}},
+		{Type: "implement_queue", Data: map[string]any{"state": "degraded", "pool": "qwen-coder", "wait_ms": 42, "degraded": true}},
+		{Type: "implement_session_closeout", Data: map[string]any{"session_id": "abc", "summary_event": "session_summary"}},
+		{Type: "doctor_readiness_profile", Data: map[string]any{"profile": "implement", "state": "degraded", "degraded": true, "queue_state": "unavailable", "context_budget_state": "pass", "route_classifier_state": "degraded", "backend_state": "pass"}},
+	}
+
+	rep := analyzeRecords("test", records)
+	if rep.LocalOps == nil {
+		t.Fatal("expected local ops telemetry summary")
+	}
+	if rep.LocalOps.BackendConfigured != 1 || rep.LocalOps.ContextBudgetDegraded != 1 || rep.LocalOps.ClassifierDegraded != 1 || rep.LocalOps.QueueDegraded != 1 || rep.LocalOps.QueueMaxWaitMillis != 42 || rep.LocalOps.ImplementCloseouts != 1 || rep.LocalOps.DoctorDegradedProfiles != 1 {
+		t.Fatalf("unexpected local ops telemetry: %#v", rep.LocalOps)
+	}
+	agg := Aggregate([]PerfReport{rep})
+	if agg.LocalOps == nil || agg.LocalOps.QueueDegraded != 1 || agg.LocalOps.ImplementCloseouts != 1 {
+		t.Fatalf("aggregate did not preserve local ops telemetry: %#v", agg.LocalOps)
+	}
+}
+
 func TestDetectPromptSurfaceOverlap(t *testing.T) {
 	records := []Record{
 		{Type: "session_start", Data: map[string]any{

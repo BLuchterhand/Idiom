@@ -112,7 +112,7 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 		return runVersionMain(args[1:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "doctor" {
-		return runDoctorMain(args[1:], stdout, stderr)
+		return runDoctorMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
 	return runWithTelemetry(args, stdout, stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions, rec)
 }
@@ -590,8 +590,9 @@ func printToolUsage(stderr io.Writer) {
 
 func runTUI(cfg config.Config, opts runOptions) error {
 	model := app.New(cfg)
-	unregisterCloseout := opts.Telemetry.RegisterCloseout(model.Close)
-	defer model.Close()
+	closeModel := modelCloseout(opts.Telemetry, model, "tui", opts.TaskFamily)
+	unregisterCloseout := opts.Telemetry.RegisterCloseout(closeModel)
+	defer closeModel()
 	defer unregisterCloseout()
 	logModelSessionLink(opts.Telemetry, "tui", model.DebugLogPath())
 
@@ -610,8 +611,9 @@ func runTUI(cfg config.Config, opts runOptions) error {
 
 func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.Writer) (string, error) {
 	model := app.New(cfg)
-	unregisterCloseout := opts.Telemetry.RegisterCloseout(model.Close)
-	defer model.Close()
+	closeModel := modelCloseout(opts.Telemetry, model, "prompt", opts.TaskFamily)
+	unregisterCloseout := opts.Telemetry.RegisterCloseout(closeModel)
+	defer closeModel()
 	defer unregisterCloseout()
 	model.SetForcedTaskFamily(opts.TaskFamily)
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
@@ -641,8 +643,9 @@ func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.
 
 func runPromptsOnce(cfg config.Config, prompts []string, opts runOptions, stdout io.Writer) ([]string, error) {
 	model := app.New(cfg)
-	unregisterCloseout := opts.Telemetry.RegisterCloseout(model.Close)
-	defer model.Close()
+	closeModel := modelCloseout(opts.Telemetry, model, "turns_file", opts.TaskFamily)
+	unregisterCloseout := opts.Telemetry.RegisterCloseout(closeModel)
+	defer closeModel()
 	defer unregisterCloseout()
 	model.SetForcedTaskFamily(opts.TaskFamily)
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
@@ -676,6 +679,37 @@ func runPromptsOnce(cfg config.Config, prompts []string, opts runOptions, stdout
 		answers = append(answers, answer)
 	}
 	return answers, nil
+}
+
+func modelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskFamily string) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			sessionID := ""
+			debugLogPath := ""
+			if model != nil {
+				debugLogPath = model.DebugLogPath()
+				if debugLogPath != "" {
+					sessionID = sessionIDFromPath(debugLogPath)
+				}
+			}
+			if strings.TrimSpace(taskFamily) == "implementation" {
+				fields := map[string]any{
+					"mode":          mode,
+					"task_family":   taskFamily,
+					"session_id":    sessionID,
+					"summary_event": "session_summary",
+				}
+				if strings.TrimSpace(debugLogPath) != "" {
+					fields["debug_log_path"] = filepath.Clean(debugLogPath)
+				}
+				logCLIPhase(rec, "implement_session_closeout", fields)
+			}
+			if model != nil {
+				model.Close()
+			}
+		})
+	}
 }
 
 func sessionIDFromPath(path string) string {
@@ -721,7 +755,7 @@ func commandTelemetryName(args []string) string {
 			return "context:" + args[1]
 		}
 		return "context"
-	case "artifact", "implement":
+	case "artifact", "implement", "doctor":
 		return args[0]
 	case "architect":
 		if len(args) > 1 {

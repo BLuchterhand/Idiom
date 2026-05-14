@@ -25,6 +25,23 @@ import (
 // repro.
 const HeldPoolsEnv = "IDIOM_QUEUE_HELD_POOLS"
 
+type MaybeAcquireState string
+
+const (
+	MaybeAcquireStateAcquired    MaybeAcquireState = "acquired"
+	MaybeAcquireStateUnavailable MaybeAcquireState = "unavailable"
+	MaybeAcquireStateDegraded    MaybeAcquireState = "degraded"
+	MaybeAcquireStateError       MaybeAcquireState = "error"
+)
+
+type MaybeAcquireResult struct {
+	State   MaybeAcquireState
+	Pool    string
+	Reason  string
+	Release func()
+	Err     error
+}
+
 // PoolHeldByAncestor reports whether the given colon-separated
 // HeldPoolsEnv value contains the named pool. Treats empty entries
 // and whitespace-only entries as absent. Caller-side helper so the
@@ -72,6 +89,11 @@ func PoolHeldByAncestor(heldPools, pool string) bool {
 // opportunistic — if you want a hard "queue is required" contract,
 // run `idiom queue ping` separately first.
 func MaybeAcquire(ctx context.Context, socketPath, pool, label, client string, statusOut io.Writer) (release func(), err error) {
+	result := MaybeAcquireWithResult(ctx, socketPath, pool, label, client, statusOut)
+	return result.Release, result.Err
+}
+
+func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client string, statusOut io.Writer) MaybeAcquireResult {
 	// Reentrant short-circuit: if an ancestor process already holds
 	// a lease in ANY pool, return a no-op release immediately.
 	heldPools := os.Getenv(HeldPoolsEnv)
@@ -79,33 +101,33 @@ func MaybeAcquire(ctx context.Context, socketPath, pool, label, client string, s
 		if statusOut != nil {
 			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot in same pool; nested acquire is no-op\n", pool)
 		}
-		return func() {}, nil
+		return MaybeAcquireResult{State: MaybeAcquireStateDegraded, Pool: pool, Reason: "nested_same_pool", Release: func() {}}
 	}
 	if strings.TrimSpace(heldPools) != "" {
 		if statusOut != nil {
 			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot in different pool(s) (%s); skipping nested acquire to prevent cross-pool deadlock — wrap the outer command with the pool the inner inference actually uses\n", pool, heldPools)
 		}
-		return func() {}, nil
+		return MaybeAcquireResult{State: MaybeAcquireStateDegraded, Pool: pool, Reason: "nested_cross_pool", Release: func() {}}
 	}
 	socketPath = strings.TrimSpace(socketPath)
 	if socketPath == "" {
 		socketPath = DefaultSocketPath()
 	}
 	if !socketReachable(socketPath) {
-		return func() {}, nil
+		return MaybeAcquireResult{State: MaybeAcquireStateUnavailable, Pool: pool, Reason: "daemon_unreachable", Release: func() {}}
 	}
 	lease, err := Acquire(ctx, socketPath, pool, label, client)
 	if err != nil {
 		// Reachable but acquire failed (unknown pool, daemon error
 		// mid-handshake). Surface so the caller can decide whether to
 		// fail loud or proceed un-gated; current callers proceed.
-		return func() {}, err
+		return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: pool, Reason: err.Error(), Release: func() {}, Err: err}
 	}
 	for {
 		select {
 		case <-lease.Granted():
 			closer := lease
-			return func() { _ = closer.Close() }, nil
+			return MaybeAcquireResult{State: MaybeAcquireStateAcquired, Pool: lease.Pool, Release: func() { _ = closer.Close() }}
 		case pos := <-lease.Updates():
 			if statusOut != nil {
 				fmt.Fprintf(statusOut, "[idiom queue %s] waiting at position %d\n", lease.Pool, pos)
@@ -113,12 +135,14 @@ func MaybeAcquire(ctx context.Context, socketPath, pool, label, client string, s
 		case e := <-lease.Err():
 			_ = lease.Close()
 			if e != nil {
-				return func() {}, e
+				return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: e.Error(), Release: func() {}, Err: e}
 			}
-			return func() {}, errors.New("queue connection closed before grant")
+			err := errors.New("queue connection closed before grant")
+			return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
 		case <-ctx.Done():
 			_ = lease.Close()
-			return func() {}, ctx.Err()
+			err := ctx.Err()
+			return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
 		}
 	}
 }

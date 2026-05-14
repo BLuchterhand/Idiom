@@ -63,9 +63,31 @@ type PerfReport struct {
 	Tools            ToolCounts     `json:"tools"`
 	Context          *ContextStats  `json:"context,omitempty"`
 	Feedback         *FeedbackStats `json:"feedback,omitempty"`
+	LocalOps         *LocalOpsStats `json:"local_ops,omitempty"`
 	AntiPatterns     []AntiPattern  `json:"anti_patterns,omitempty"`
 	AntiPatternScore int            `json:"anti_pattern_score"`
 	FinalAnswerChars int            `json:"final_answer_chars,omitempty"`
+}
+
+type LocalOpsStats struct {
+	BackendEvents           int            `json:"backend_events,omitempty"`
+	BackendConfigured       int            `json:"backend_configured,omitempty"`
+	QueueEvents             int            `json:"queue_events,omitempty"`
+	QueueDegraded           int            `json:"queue_degraded,omitempty"`
+	QueueMaxWaitMillis      int            `json:"queue_max_wait_ms,omitempty"`
+	ContextBudgetEvents     int            `json:"context_budget_events,omitempty"`
+	ContextBudgetDegraded   int            `json:"context_budget_degraded,omitempty"`
+	ClassifierEvents        int            `json:"classifier_events,omitempty"`
+	ClassifierDegraded      int            `json:"classifier_degraded,omitempty"`
+	ImplementCloseouts      int            `json:"implement_closeouts,omitempty"`
+	DoctorReadinessProfiles int            `json:"doctor_readiness_profiles,omitempty"`
+	DoctorDegradedProfiles  int            `json:"doctor_degraded_profiles,omitempty"`
+	DoctorBlockedProfiles   int            `json:"doctor_blocked_profiles,omitempty"`
+	ByQueueState            map[string]int `json:"by_queue_state,omitempty"`
+	ByContextBudgetState    map[string]int `json:"by_context_budget_state,omitempty"`
+	ByClassifierState       map[string]int `json:"by_classifier_state,omitempty"`
+	ByBackendState          map[string]int `json:"by_backend_state,omitempty"`
+	ByReadinessProfileState map[string]int `json:"by_readiness_profile_state,omitempty"`
 }
 
 type ContextStats struct {
@@ -180,6 +202,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 	agentBehavior := false
 	// Walk records once, collecting what every pattern needs.
 	for _, rec := range records {
+		ingestLocalOpsTelemetry(&rep, rec.Type, rec.Data)
 		switch rec.Type {
 		case "session_start":
 			if v, ok := rec.Data["workspace_root"].(string); ok && v != "" {
@@ -493,6 +516,80 @@ func ingestFeedbackTelemetry(rep *PerfReport, data map[string]any) {
 		feedback.MediumSeverity++
 	case "low":
 		feedback.LowSeverity++
+	}
+}
+
+func ingestLocalOpsTelemetry(rep *PerfReport, eventType string, data map[string]any) {
+	if data == nil {
+		return
+	}
+	localOpsPayload, _ := data["local_ops"].(map[string]any)
+	hasLocalOps := localOpsPayload != nil
+	isQueue := eventType == "implement_queue" || eventType == "queue_admission" || strings.HasPrefix(eventType, "idiom.implement.queue_")
+	isDoctor := eventType == "doctor_readiness_profile"
+	isCloseout := eventType == "implement_session_closeout"
+	if !hasLocalOps && !isQueue && !isDoctor && !isCloseout {
+		return
+	}
+	if rep.LocalOps == nil {
+		rep.LocalOps = newLocalOpsStats()
+	}
+	stats := rep.LocalOps
+	if hasLocalOps {
+		stats.BackendEvents++
+		if boolField(localOpsPayload, "backend_configured") {
+			stats.BackendConfigured++
+		}
+		incrementStringCount(stats.ByBackendState, stringField(localOpsPayload, "backend_kind"))
+		stats.ContextBudgetEvents++
+		contextState := stringField(localOpsPayload, "context_budget_state")
+		incrementStringCount(stats.ByContextBudgetState, contextState)
+		if contextState != "" && contextState != "pass" {
+			stats.ContextBudgetDegraded++
+		}
+		stats.ClassifierEvents++
+		classifierState := stringField(localOpsPayload, "classifier_state")
+		incrementStringCount(stats.ByClassifierState, classifierState)
+		if classifierState != "configured" && classifierState != "pass" && classifierState != "" {
+			stats.ClassifierDegraded++
+		}
+	}
+	if isQueue {
+		stats.QueueEvents++
+		state := stringField(data, "state")
+		incrementStringCount(stats.ByQueueState, state)
+		if boolField(data, "degraded") || (state != "" && state != "granted" && state != "acquired" && state != "disabled" && state != "nested_same_pool") {
+			stats.QueueDegraded++
+		}
+		stats.QueueMaxWaitMillis = maxInt(stats.QueueMaxWaitMillis, intField(data, "wait_ms"))
+	}
+	if isDoctor {
+		stats.DoctorReadinessProfiles++
+		state := stringField(data, "state")
+		incrementStringCount(stats.ByReadinessProfileState, state)
+		if boolField(data, "degraded") || state == "degraded" {
+			stats.DoctorDegradedProfiles++
+		}
+		if boolField(data, "blocked") || state == "blocked" {
+			stats.DoctorBlockedProfiles++
+		}
+		incrementStringCount(stats.ByBackendState, stringField(data, "backend_state"))
+		incrementStringCount(stats.ByQueueState, stringField(data, "queue_state"))
+		incrementStringCount(stats.ByContextBudgetState, stringField(data, "context_budget_state"))
+		incrementStringCount(stats.ByClassifierState, stringField(data, "route_classifier_state"))
+	}
+	if isCloseout {
+		stats.ImplementCloseouts++
+	}
+}
+
+func newLocalOpsStats() *LocalOpsStats {
+	return &LocalOpsStats{
+		ByQueueState:            make(map[string]int),
+		ByContextBudgetState:    make(map[string]int),
+		ByClassifierState:       make(map[string]int),
+		ByBackendState:          make(map[string]int),
+		ByReadinessProfileState: make(map[string]int),
 	}
 }
 
@@ -1265,6 +1362,7 @@ type PerfAggregate struct {
 	ToolMix              []PerfToolMix          `json:"tool_mix"`
 	Context              *ContextStats          `json:"context,omitempty"`
 	Feedback             *FeedbackStats         `json:"feedback,omitempty"`
+	LocalOps             *LocalOpsStats         `json:"local_ops,omitempty"`
 	StopReasonCounts     map[string]int         `json:"stop_reason_counts,omitempty"`
 	WorstOffenders       []PerfWorstOffender    `json:"worst_offenders,omitempty"`
 	Extras               map[string]interface{} `json:"extras,omitempty"`
@@ -1339,6 +1437,7 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 		}
 		mergeContextStats(&agg.Context, r.Context)
 		mergeFeedbackStats(&agg.Feedback, r.Feedback)
+		mergeLocalOpsStats(&agg.LocalOps, r.LocalOps)
 	}
 	agg.MedianToolResults = median(toolResults)
 	agg.MaxToolResults = maxOf(toolResults)
@@ -1500,6 +1599,34 @@ func mergeFeedbackStats(target **FeedbackStats, source *FeedbackStats) {
 	mergeStringCounts(dst.ByConfidence, source.ByConfidence)
 	mergeStringCounts(dst.BySeverity, source.BySeverity)
 	mergeStringCounts(dst.ByPlanningCategory, source.ByPlanningCategory)
+}
+
+func mergeLocalOpsStats(target **LocalOpsStats, source *LocalOpsStats) {
+	if source == nil {
+		return
+	}
+	if *target == nil {
+		*target = newLocalOpsStats()
+	}
+	dst := *target
+	dst.BackendEvents += source.BackendEvents
+	dst.BackendConfigured += source.BackendConfigured
+	dst.QueueEvents += source.QueueEvents
+	dst.QueueDegraded += source.QueueDegraded
+	dst.QueueMaxWaitMillis = maxInt(dst.QueueMaxWaitMillis, source.QueueMaxWaitMillis)
+	dst.ContextBudgetEvents += source.ContextBudgetEvents
+	dst.ContextBudgetDegraded += source.ContextBudgetDegraded
+	dst.ClassifierEvents += source.ClassifierEvents
+	dst.ClassifierDegraded += source.ClassifierDegraded
+	dst.ImplementCloseouts += source.ImplementCloseouts
+	dst.DoctorReadinessProfiles += source.DoctorReadinessProfiles
+	dst.DoctorDegradedProfiles += source.DoctorDegradedProfiles
+	dst.DoctorBlockedProfiles += source.DoctorBlockedProfiles
+	mergeStringCounts(dst.ByQueueState, source.ByQueueState)
+	mergeStringCounts(dst.ByContextBudgetState, source.ByContextBudgetState)
+	mergeStringCounts(dst.ByClassifierState, source.ByClassifierState)
+	mergeStringCounts(dst.ByBackendState, source.ByBackendState)
+	mergeStringCounts(dst.ByReadinessProfileState, source.ByReadinessProfileState)
 }
 
 func mergeStringCounts(target map[string]int, source map[string]int) {

@@ -2239,6 +2239,39 @@ func TestHarnessAuditIgnoresImplementProcessWithoutModelSessionSummary(t *testin
 	}
 }
 
+func TestHarnessAuditSurfacesLocalOpsDegradedTelemetry(t *testing.T) {
+	root := t.TempDir()
+	telemetryPath := filepath.Join(root, "logs", "telemetry", "local-ops.jsonl")
+	writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
+		`{"type":"session_start","command":"implement","workspace_root":"` + root + `"}`,
+		`{"type":"implement_start","local_ops":{"backend_configured":true,"backend_kind":"mlx","context_budget_state":"degraded","classifier_state":"disabled_fallback"}}`,
+		`{"type":"implement_queue","state":"degraded","pool":"qwen-coder","wait_ms":25,"degraded":true}`,
+		`{"type":"doctor_readiness_profile","profile":"implement","state":"degraded","degraded":true,"queue_state":"unavailable","context_budget_state":"degraded","route_classifier_state":"degraded","backend_state":"pass"}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil || report.LogBehavior.Aggregate.LocalOps == nil {
+		t.Fatalf("expected local ops aggregate, got %#v", report.LogBehavior)
+	}
+	if report.LogBehavior.Aggregate.LocalOps.QueueDegraded != 1 || report.LogBehavior.Aggregate.LocalOps.ContextBudgetDegraded == 0 {
+		t.Fatalf("unexpected local ops aggregate: %#v", report.LogBehavior.Aggregate.LocalOps)
+	}
+	if !slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "local_ops_degraded_mode_reported"
+	}) {
+		t.Fatalf("expected local ops degraded finding, got %#v", report.Findings)
+	}
+}
+
 func TestContextTelemetryFieldsIncludeCollectorReports(t *testing.T) {
 	fields := ContextTelemetryFields("context_index", `{
   "store_kind": "sqlite-graph-v1",

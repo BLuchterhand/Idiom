@@ -13,7 +13,10 @@ import (
 
 	"idiom/internal/autodetect"
 	"idiom/internal/backends"
+	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
+	"idiom/internal/runner"
+	"idiom/internal/telemetry"
 )
 
 // checkResult is one diagnostic outcome. Status is "pass" | "warn" |
@@ -55,6 +58,24 @@ type readinessProfileReport struct {
 	RoleAliases          map[string]string      `json:"role_aliases,omitempty"`
 	Checks               []readinessCheck       `json:"checks,omitempty"`
 	Unavailable          []readinessUnavailable `json:"unavailable,omitempty"`
+	Metrics              readinessMetrics       `json:"metrics,omitempty"`
+}
+
+type readinessMetrics struct {
+	PassChecks         int    `json:"pass_checks,omitempty"`
+	DegradedChecks     int    `json:"degraded_checks,omitempty"`
+	BlockedChecks      int    `json:"blocked_checks,omitempty"`
+	UnavailableChecks  int    `json:"unavailable_checks,omitempty"`
+	QueuePools         int    `json:"queue_pools,omitempty"`
+	QueueInFlight      int    `json:"queue_in_flight,omitempty"`
+	QueueWaiting       int    `json:"queue_waiting,omitempty"`
+	QueueIdle          int    `json:"queue_idle,omitempty"`
+	ContextTokens      int    `json:"context_tokens,omitempty"`
+	MaxOutputTokens    int    `json:"max_output_tokens,omitempty"`
+	ClassifierState    string `json:"classifier_state,omitempty"`
+	BackendState       string `json:"backend_state,omitempty"`
+	QueueState         string `json:"queue_state,omitempty"`
+	ContextBudgetState string `json:"context_budget_state,omitempty"`
 }
 
 type readinessProfileSpec struct {
@@ -83,6 +104,10 @@ var doctorReadinessProfileSpecs = []readinessProfileSpec{
 //	1 — at least one check failed (a hard blocker for `idiom start`)
 //	2 — argument parse error
 func runDoctorMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	return runDoctorMainWithTelemetry(args, stdout, stderr, nil)
+}
+
+func runDoctorMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	fs := flag.NewFlagSet("idiom doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", ".idiom/config.json", "path to project config (relative or absolute)")
@@ -105,6 +130,7 @@ func runDoctorMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
+	logDoctorReadinessTelemetry(rec, profiles)
 
 	if *asJSON {
 		emitDoctorJSON(stdout, results, profiles)
@@ -118,6 +144,33 @@ func runDoctorMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+func logDoctorReadinessTelemetry(rec *telemetry.Recorder, profiles []readinessProfileReport) {
+	for _, profile := range profiles {
+		logCLIPhase(rec, "doctor_readiness_profile", map[string]any{
+			"profile":                 profile.Name,
+			"state":                   profile.State,
+			"pass_checks":             profile.Metrics.PassChecks,
+			"degraded_checks":         profile.Metrics.DegradedChecks,
+			"blocked_checks":          profile.Metrics.BlockedChecks,
+			"unavailable_checks":      profile.Metrics.UnavailableChecks,
+			"backend_state":           profile.Metrics.BackendState,
+			"queue_state":             profile.Metrics.QueueState,
+			"queue_pools":             profile.Metrics.QueuePools,
+			"queue_in_flight":         profile.Metrics.QueueInFlight,
+			"queue_waiting":           profile.Metrics.QueueWaiting,
+			"queue_idle":              profile.Metrics.QueueIdle,
+			"context_budget_state":    profile.Metrics.ContextBudgetState,
+			"context_tokens":          profile.Metrics.ContextTokens,
+			"max_output_tokens":       profile.Metrics.MaxOutputTokens,
+			"route_classifier_state":  profile.Metrics.ClassifierState,
+			"degraded":                profile.State == "degraded",
+			"blocked":                 profile.State == "blocked",
+			"metadata_only_contract":  true,
+			"contains_prompt_content": false,
+		})
+	}
 }
 
 // checkBackends looks for at least one supported runner on $PATH. A
@@ -433,16 +486,18 @@ func buildDoctorReadinessProfiles(configPath, selected string, hostChecks []chec
 		}
 	}
 	backendFile, backendFound, backendErr := backends.LoadFromProjectRoot(root)
+	cfg, cfgOK := loadDoctorConfig(configPath)
 	contextReady, contextDetail := doctorContextIndexReadiness(root)
+	queueCheck, queueMetrics, queueUnavailable := doctorQueueReadiness()
 
 	reports := make([]readinessProfileReport, 0, len(specs))
 	for _, spec := range specs {
-		reports = append(reports, buildDoctorReadinessProfile(spec, hostChecks, backendFile, backendFound, backendErr, contextReady, contextDetail))
+		reports = append(reports, buildDoctorReadinessProfile(spec, hostChecks, backendFile, backendFound, backendErr, cfg, cfgOK, contextReady, contextDetail, queueCheck, queueMetrics, queueUnavailable))
 	}
 	return reports, nil
 }
 
-func buildDoctorReadinessProfile(spec readinessProfileSpec, hostChecks []checkResult, backendFile backends.File, backendFound bool, backendErr error, contextReady bool, contextDetail string) readinessProfileReport {
+func buildDoctorReadinessProfile(spec readinessProfileSpec, hostChecks []checkResult, backendFile backends.File, backendFound bool, backendErr error, cfg config.Config, cfgOK bool, contextReady bool, contextDetail string, queueCheck readinessCheck, queueMetrics readinessMetrics, queueUnavailable *readinessUnavailable) readinessProfileReport {
 	contract := workerruntime.RuntimeContractForTaskFamily(spec.taskFamily)
 	report := readinessProfileReport{
 		Name:                 spec.name,
@@ -475,25 +530,136 @@ func buildDoctorReadinessProfile(spec readinessProfileSpec, hostChecks []checkRe
 			})
 		}
 	}
-	report.Checks = append(report.Checks, readinessCheck{
-		Name:     "queue admission",
-		State:    "unavailable",
-		Detail:   "doctor does not probe the queue daemon in this P6.1 profile report",
-		Remedy:   "use `idiom queue status` for live queue state until P6.2/P6.3 wire queue readiness into doctor",
-		Optional: true,
-	})
+	report.Checks = append(report.Checks, queueCheck)
+	if queueUnavailable != nil {
+		report.Unavailable = append(report.Unavailable, *queueUnavailable)
+	}
+	report.Checks = append(report.Checks, doctorContextBudgetCheck(cfg, cfgOK))
+	report.Checks = append(report.Checks, doctorRouteClassifierCheck(cfg, cfgOK))
 	report.Unavailable = append(report.Unavailable, readinessUnavailable{
-		Check:  "queue admission",
-		Reason: "live queue probe is not part of the P6.1 doctor contract",
-		Remedy: "use `idiom queue status` for live queue state",
+		Check:  "route classifier live probe",
+		Reason: "doctor reports route-classifier configuration state but defers live classifier calls",
+		Remedy: "use a deep readiness or route-classifier-specific probe when live classification health is required",
 	})
 	report = applyBackendRoleReadiness(report, backendFile, backendFound, backendErr)
 	report.State = readinessProfileState(report.Checks)
 	report.Detail = readinessProfileDetail(report.State)
+	report.Metrics = readinessMetricsFor(report.Checks, queueMetrics)
 	if len(report.RoleAliases) == 0 {
 		report.RoleAliases = nil
 	}
 	return report
+}
+
+func loadDoctorConfig(configPath string) (config.Config, bool) {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return config.Config{}, false
+	}
+	return cfg, true
+}
+
+func doctorQueueReadiness() (readinessCheck, readinessMetrics, *readinessUnavailable) {
+	socket := runner.DefaultSocketPath()
+	snap, err := runner.Status(socket)
+	if err != nil {
+		check := readinessCheck{
+			Name:     "queue admission",
+			State:    "unavailable",
+			Detail:   "queue daemon not reachable",
+			Remedy:   "start the daemon with `idiom queue serve` or treat queue gating as opportunistic",
+			Optional: true,
+		}
+		unavailable := readinessUnavailable{
+			Check:  "queue admission",
+			Reason: "queue daemon not reachable",
+			Remedy: "start the daemon with `idiom queue serve` for live queue capacity evidence",
+		}
+		return check, readinessMetrics{QueueState: "unavailable"}, &unavailable
+	}
+	metrics := readinessMetrics{QueueState: "pass", QueuePools: len(snap.Pools), QueueWaiting: len(snap.Waiting), QueueInFlight: len(snap.InFlight)}
+	for _, job := range snap.InFlight {
+		if job.Idle {
+			metrics.QueueIdle++
+		}
+	}
+	state := "pass"
+	detail := fmt.Sprintf("reachable, pools=%d, in_flight=%d, waiting=%d", metrics.QueuePools, metrics.QueueInFlight, metrics.QueueWaiting)
+	remedy := ""
+	if metrics.QueueIdle > 0 {
+		state = "degraded"
+		metrics.QueueState = "degraded"
+		detail = fmt.Sprintf("%s, idle=%d", detail, metrics.QueueIdle)
+		remedy = "inspect `idiom queue status --json` and cancel or restart stale in-flight jobs if they are wedged"
+	}
+	return readinessCheck{Name: "queue admission", State: state, Detail: detail, Remedy: remedy, Optional: true}, metrics, nil
+}
+
+func doctorContextBudgetCheck(cfg config.Config, cfgOK bool) readinessCheck {
+	if !cfgOK {
+		return readinessCheck{
+			Name:     "context budget",
+			State:    "unavailable",
+			Detail:   "project config did not load",
+			Remedy:   "fix project config so context capacity can be computed",
+			Optional: true,
+		}
+	}
+	ctxSize := cfg.LlamaServer.CtxSize
+	maxOutput := cfg.Chat.MaxTokens
+	switch {
+	case ctxSize <= 0:
+		return readinessCheck{Name: "context budget", State: "degraded", Detail: "llama_server.ctx_size is not configured", Remedy: "set llama_server.ctx_size to the backend-supported context window", Optional: true}
+	case maxOutput <= 0:
+		return readinessCheck{Name: "context budget", State: "degraded", Detail: fmt.Sprintf("ctx_size=%d but chat.max_tokens is not configured", ctxSize), Remedy: "set chat.max_tokens to reserve output space per lane", Optional: true}
+	case maxOutput >= ctxSize:
+		return readinessCheck{Name: "context budget", State: "degraded", Detail: fmt.Sprintf("ctx_size=%d max_output=%d leaves no prompt budget", ctxSize, maxOutput), Remedy: "lower chat.max_tokens or raise the configured backend context", Optional: true}
+	default:
+		return readinessCheck{Name: "context budget", State: "pass", Detail: fmt.Sprintf("ctx_size=%d max_output=%d", ctxSize, maxOutput), Optional: true}
+	}
+}
+
+func doctorRouteClassifierCheck(cfg config.Config, cfgOK bool) readinessCheck {
+	if !cfgOK {
+		return readinessCheck{Name: "route classifier", State: "unavailable", Detail: "project config did not load", Remedy: "fix project config so classifier fallback state can be reported", Optional: true}
+	}
+	if !cfg.RouteClassifier.Enabled {
+		return readinessCheck{Name: "route classifier", State: "degraded", Detail: "disabled; deterministic routing fallback active", Remedy: "enable route_classifier when classifier-backed routing or summaries are required", Optional: true}
+	}
+	if strings.TrimSpace(cfg.RouteClassifier.BaseURL) == "" && cfg.RouteClassifier.Port <= 0 {
+		return readinessCheck{Name: "route classifier", State: "degraded", Detail: "enabled but no base_url or server port is configured", Remedy: "set route_classifier.base_url or route_classifier.port", Optional: true}
+	}
+	return readinessCheck{Name: "route classifier", State: "pass", Detail: "configured; live JSON probe is deferred to deep readiness", Optional: true}
+}
+
+func readinessMetricsFor(checks []readinessCheck, queue readinessMetrics) readinessMetrics {
+	metrics := queue
+	for _, check := range checks {
+		switch check.State {
+		case "pass":
+			metrics.PassChecks++
+		case "blocked":
+			metrics.BlockedChecks++
+		case "degraded":
+			metrics.DegradedChecks++
+		case "unavailable":
+			metrics.UnavailableChecks++
+		}
+		switch check.Name {
+		case "backend role config":
+			metrics.BackendState = check.State
+		case "context budget":
+			metrics.ContextBudgetState = check.State
+			fmt.Sscanf(check.Detail, "ctx_size=%d max_output=%d", &metrics.ContextTokens, &metrics.MaxOutputTokens)
+		case "route classifier":
+			metrics.ClassifierState = check.State
+		case "queue admission":
+			if metrics.QueueState == "" {
+				metrics.QueueState = check.State
+			}
+		}
+	}
+	return metrics
 }
 
 func readinessChecksFromHost(hostChecks []checkResult) []readinessCheck {
