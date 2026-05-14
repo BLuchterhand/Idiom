@@ -111,6 +111,9 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "product-evidence" {
 		return runProductEvidenceMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
+	if len(args) > 0 && args[0] == "release" {
+		return runReleaseMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
 	if len(args) > 0 && args[0] == "init" {
 		return runInitMain(args[1:], stdout, stderr)
 	}
@@ -837,6 +840,9 @@ func commandTelemetryArgs(args []string) []string {
 	if len(args) >= 2 && args[0] == "product-evidence" && args[1] == "export" {
 		return sanitizeProductEvidenceTelemetryArgs(args)
 	}
+	if len(args) >= 2 && args[0] == "release" && args[1] == "evidence" {
+		return sanitizeReleaseEvidenceTelemetryArgs(args)
+	}
 	return args
 }
 
@@ -902,6 +908,11 @@ func commandTelemetryName(args []string) string {
 			return "product-evidence:" + args[1]
 		}
 		return "product-evidence"
+	case "release":
+		if len(args) > 1 {
+			return "release:" + args[1]
+		}
+		return "release"
 	case "lane":
 		if len(args) > 1 {
 			return "lane:" + args[1]

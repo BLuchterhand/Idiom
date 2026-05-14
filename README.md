@@ -123,6 +123,11 @@ Other useful subcommands:
   coverage using IDs, hashes, counts, and statuses instead of prompt bodies,
   file bodies, private paths, or secrets. See
   [docs/product-evidence-export.md](docs/product-evidence-export.md).
+- `idiom release evidence --project-root . --output .idiom/release/bundle.json` —
+  P9.1 release evidence bundle. It compares baseline/current command artifacts
+  and summarizes validation, audit/security, local-ops/benchmark, sidecar
+  integration, product-evidence export, and all seven client classifications
+  with metadata-only IDs, hashes, relative paths, statuses, and blockers.
 - `idiom mcp serve --stdio --profile discovery` — experimental MCP stdio
   sidecar. It serves `initialize`, `tools/list`, `tools/call`, `roots/list`,
   `resources/list`, and metadata-only `resources/read` for schema-derived graph
