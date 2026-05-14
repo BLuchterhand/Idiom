@@ -1817,7 +1817,7 @@ Review signoff:
 | P9.28 | Require demo approval-claim blocking and executable command evidence | P9.27 | Fermat the 4th | - [x] | Averroes the 4th NO-GO + P9.30 closeout | - [x] |
 | P9.29 | Constrain P9.11 executable demo replay to safe commands | P9.28 | Gibbs the 4th | - [x] | Hilbert the 4th NO-GO + P9.30 closeout | - [x] |
 | P9.30 | Require every declared demo command to pass safe replay | P9.29 | Volta the 4th | - [x] | Bernoulli the 4th | - [x] |
-| P9.12 | Gate release on packaging, pricing, support, admin, and ICP thesis with explicit continue/pivot decision | P0.7, P0.11, P9.1-P9.11 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
+| P9.12 | Gate release on packaging, pricing, support, admin, and ICP thesis with explicit continue/pivot decision | P0.7, P0.11, P9.1-P9.11 | Dalton the 4th | - [ ] | unassigned review subagent | - [ ] |
 
 ## Work Packages
 
