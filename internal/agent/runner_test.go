@@ -5190,10 +5190,9 @@ func TestRunnerReplaysFirstRepeatedToolRequestThenRejectsExactLoop(t *testing.T)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// DOOM_LOOP guard (threshold=3) trips on the third identical pwd call
-	// and terminates the loop with a doom_loop reason. The test seed
-	// sends pwd three times and then a plaintext final reply; we should
-	// never reach the final reply because the guard fires first.
+	// DOOM_LOOP guard (threshold=3) trips on the third identical pwd call,
+	// records the rejection, then forces a no-tools closeout so callers do
+	// not receive an empty final answer.
 	if requests < 3 {
 		t.Fatalf("expected at least 3 model requests before doom-loop guard, got %d", requests)
 	}
@@ -5208,6 +5207,12 @@ func TestRunnerReplaysFirstRepeatedToolRequestThenRejectsExactLoop(t *testing.T)
 	}
 	if ledger.StopReason != "doom_loop_guard" {
 		t.Fatalf("expected stop_reason=doom_loop_guard, got %#v", ledger)
+	}
+	if answer != "Stopped after repeated loops." {
+		t.Fatalf("expected forced closeout answer, got %q", answer)
+	}
+	if requests != 4 {
+		t.Fatalf("expected three loop requests plus one forced closeout, got %d", requests)
 	}
 }
 
@@ -5331,7 +5336,7 @@ func TestRunnerEmitsRecoveryNudgeBeforeGivingUpOnRepeatedBroadInspection(t *test
 		}
 	}
 
-	_, err := runner.Run(
+	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "identify small refactor opportunities"}},
 		llama.ChatOptions{},
@@ -5343,13 +5348,16 @@ func TestRunnerEmitsRecoveryNudgeBeforeGivingUpOnRepeatedBroadInspection(t *test
 		t.Fatalf("Run: %v", err)
 	}
 	// DOOM_LOOP guard (threshold=3) catches the third identical list_files
-	// call before the rejection_recovery_nudge path is reached. The
-	// fourth scripted reply is unused — we should not see it.
+	// call before the rejection_recovery_nudge path is reached, then forces
+	// a no-tools closeout.
 	if stopReason != "doom_loop_guard" {
 		t.Fatalf("expected stop_reason=doom_loop_guard, got %q", stopReason)
 	}
-	if requests > 3 {
-		t.Fatalf("expected guard to fire on the third call; model was invoked %d times", requests)
+	if answer != "Answered from prior evidence after nudge." {
+		t.Fatalf("expected forced closeout answer, got %q", answer)
+	}
+	if requests != 4 {
+		t.Fatalf("expected three loop requests plus one forced closeout, got %d", requests)
 	}
 }
 
@@ -10005,9 +10013,9 @@ func TestRunnerEmitsRecoveryNudgeOnRepeatedSameStemSoftFailures(t *testing.T) {
 }
 
 // TestDoomLoopGateDenyPathStops verifies that when a DoomLoopGate is wired and
-// returns false, the runner stops with stop_reason=doom_loop_guard exactly as
-// the nil-gate fallback would. Proves the gate is reachable and its deny path
-// short-circuits.
+// returns false, the runner stops with stop_reason=doom_loop_guard after
+// forcing a no-tools closeout from gathered evidence. Proves the gate is
+// reachable and its deny path does not return an empty answer.
 func TestDoomLoopGateDenyPathStops(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "internal/app/app.go", "package app\n"); err != nil {
@@ -10018,7 +10026,7 @@ func TestDoomLoopGateDenyPathStops(t *testing.T) {
 		`{"tool":"list_files","path":".","recursive":true}`,
 		`{"tool":"list_files","path":".","recursive":true}`,
 		`{"tool":"list_files","path":".","recursive":true}`,
-		"Unused reply; the gate should stop the turn.",
+		"Answered after doom-loop denial.",
 	}
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -10064,7 +10072,7 @@ func TestDoomLoopGateDenyPathStops(t *testing.T) {
 		}
 	}
 
-	_, err := runner.Run(
+	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "loop on broad listing"}},
 		llama.ChatOptions{},
@@ -10081,8 +10089,11 @@ func TestDoomLoopGateDenyPathStops(t *testing.T) {
 	if stopReason != "doom_loop_guard" {
 		t.Fatalf("expected stop_reason=doom_loop_guard, got %q", stopReason)
 	}
-	if requests > 3 {
-		t.Fatalf("expected guard to fire on the third call; model invoked %d times", requests)
+	if answer != "Answered after doom-loop denial." {
+		t.Fatalf("expected forced closeout answer, got %q", answer)
+	}
+	if requests != 4 {
+		t.Fatalf("expected three loop requests plus one forced closeout, got %d", requests)
 	}
 }
 

@@ -805,24 +805,33 @@ func (r *Runner) Run(
 					// User approved — reset the streak and let this call execute.
 					requestBudget.identicalCallRun = 0
 				} else {
-					// User denied — feed a blocker result and end the turn.
-					answer, err, _ := controller.rejectTool(
+					// User denied — feed a blocker result, then force a
+					// no-tools closeout from gathered evidence. Returning the
+					// raw rejectTool result can produce an empty final answer
+					// when this is the first rejection in the turn.
+					answer, err, done := controller.rejectTool(
 						stepNumber,
 						activeToolCall,
 						req,
 						"Doom-loop guard: user denied continuation",
 						fmt.Sprintf("the model repeated %s with the same arguments %d turns in a row; user denied continuation. Answer from the evidence already gathered, and mention only one unsupported claim if that repetition prevented completion.", req.Tool, identicalCallRun),
 					)
+					if !done {
+						answer, err = controller.completeWithoutMoreToolsWithReason(doomLoopForcedCloseoutPrompt(req, identicalCallRun))
+					}
 					return finish(answer, err, "doom_loop_guard", true)
 				}
 			} else {
-				answer, err, _ := controller.rejectTool(
+				answer, err, done := controller.rejectTool(
 					stepNumber,
 					activeToolCall,
 					req,
 					"Doom-loop guard tripped",
 					fmt.Sprintf("the model repeated %s with the same arguments %d turns in a row; stopping to prevent budget exhaustion. Answer from the evidence already gathered, and mention only one unsupported claim if that repetition prevented completion.", req.Tool, identicalCallRun),
 				)
+				if !done {
+					answer, err = controller.completeWithoutMoreToolsWithReason(doomLoopForcedCloseoutPrompt(req, identicalCallRun))
+				}
 				return finish(answer, err, "doom_loop_guard", true)
 			}
 		}
@@ -6010,6 +6019,14 @@ func normalizedToolRequestRaw(req workspace.ToolRequest) string {
 		return string(data) + "|args=" + string(req.Args)
 	}
 	return string(data)
+}
+
+func doomLoopForcedCloseoutPrompt(req workspace.ToolRequest, identicalCallRun int) string {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "the same tool"
+	}
+	return fmt.Sprintf("The exact same %s request was stopped after %d identical attempts. Tools are now disabled. Complete the active contract from the evidence already gathered. If the evidence is sufficient, answer with the required final decision or summary. If one concrete claim remains unsupported, answer with <<QUESTION>> and the exact unresolved blocker; do not request more tools.", tool, identicalCallRun)
 }
 
 func normalizeRunnerToolRequest(req workspace.ToolRequest) workspace.ToolRequest {
