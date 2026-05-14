@@ -90,8 +90,9 @@ Other useful subcommands:
 - `idiom tool <name> --input '<json>'` — run one workspace tool and print JSON
   with the legacy top-level `Tool`/`Summary`/`Output`/`Error` fields plus a
   stable `sidecar` envelope (`schema_version:"idiom.tool.v1"`) carrying
-  profile, contract metadata, freshness, warnings, audit IDs, structured
-  output, and typed errors for integrations.
+  profile, allowlisted short opaque caller metadata, contract metadata,
+  freshness, warnings, audit IDs, structured output, and typed errors for
+  integrations.
   See [docs/sidecar-recipes.md](docs/sidecar-recipes.md) for external caller
   recipes covering shell/CI scripts, coding-agent harnesses, local/private-code
   users, and the replayed discovery-profile smoke transcript.

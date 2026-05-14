@@ -2,8 +2,10 @@ package workspace
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"idiom/internal/autonomy"
 )
@@ -15,6 +17,7 @@ type ToolSidecarEnvelope struct {
 	SchemaVersion    string                    `json:"schema_version"`
 	Tool             string                    `json:"tool"`
 	Profile          string                    `json:"profile"`
+	Caller           ToolSidecarCaller         `json:"caller"`
 	Contract         ToolSidecarContract       `json:"contract"`
 	Freshness        any                       `json:"freshness"`
 	Warnings         []ToolSidecarWarning      `json:"warnings"`
@@ -22,6 +25,16 @@ type ToolSidecarEnvelope struct {
 	StructuredOutput any                       `json:"structured_output"`
 	Error            *ToolSidecarError         `json:"error"`
 	Metadata         autonomy.ContractMetadata `json:"metadata,omitempty"`
+}
+
+type ToolSidecarOptions struct {
+	Caller ToolSidecarCaller
+}
+
+type ToolSidecarCaller struct {
+	CallerID  string `json:"caller_id,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
+	TraceID   string `json:"trace_id,omitempty"`
 }
 
 type ToolSidecarContract struct {
@@ -48,6 +61,10 @@ type ToolSidecarError struct {
 }
 
 func BuildToolSidecarEnvelope(req ToolRequest, result ToolResult, profile string) ToolSidecarEnvelope {
+	return BuildToolSidecarEnvelopeWithOptions(req, result, profile, ToolSidecarOptions{})
+}
+
+func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, profile string, opts ToolSidecarOptions) ToolSidecarEnvelope {
 	tool := firstNonEmptyString(strings.TrimSpace(result.Tool), strings.TrimSpace(req.Tool))
 	profile = firstNonEmptyString(strings.TrimSpace(profile), "default")
 	structuredOutput := toolSidecarStructuredOutput(result.Output)
@@ -57,6 +74,7 @@ func BuildToolSidecarEnvelope(req ToolRequest, result ToolResult, profile string
 		SchemaVersion:    ToolSidecarEnvelopeVersion,
 		Tool:             tool,
 		Profile:          profile,
+		Caller:           opts.Caller,
 		Contract:         toolSidecarContract(tool, profile, metadata),
 		Freshness:        toolSidecarFreshness(outputObject),
 		Warnings:         toolSidecarWarnings(outputObject),
@@ -65,6 +83,117 @@ func BuildToolSidecarEnvelope(req ToolRequest, result ToolResult, profile string
 		Error:            toolSidecarError(result),
 		Metadata:         metadata,
 	}
+}
+
+func NewToolSidecarCaller(callerID string, requestID string, traceID string) (ToolSidecarCaller, error) {
+	caller := ToolSidecarCaller{}
+	var err error
+	if caller.CallerID, err = normalizeSidecarCallerField("caller-id", callerID); err != nil {
+		return ToolSidecarCaller{}, err
+	}
+	if caller.RequestID, err = normalizeSidecarCallerField("request-id", requestID); err != nil {
+		return ToolSidecarCaller{}, err
+	}
+	if caller.TraceID, err = normalizeSidecarCallerField("trace-id", traceID); err != nil {
+		return ToolSidecarCaller{}, err
+	}
+	return caller, nil
+}
+
+func normalizeSidecarCallerField(name string, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) > 128 {
+		return "", fmt.Errorf("%s must be 128 bytes or fewer", name)
+	}
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{"sk-", "sk_", "ghp_", "github_pat_", "xoxb-"} {
+		if strings.HasPrefix(lower, prefix) {
+			return "", fmt.Errorf("%s must be a short opaque identifier, not a credential-shaped value", name)
+		}
+	}
+	for _, forbidden := range []string{"secret", "token", "password", "passwd", "api_key", "apikey", "private_key", "credential"} {
+		if strings.Contains(lower, forbidden) {
+			return "", fmt.Errorf("%s must be an opaque non-secret identifier", name)
+		}
+	}
+	if looksLikePathOrPrivateLocator(value) {
+		return "", fmt.Errorf("%s must be a short opaque identifier, not a path-shaped value", name)
+	}
+	if strings.Contains(value, "@") {
+		return "", fmt.Errorf("%s must be a short opaque identifier, not an email address", name)
+	}
+	if looksLikeJWT(value) || looksLikeLongHexOrBase64Blob(value) {
+		return "", fmt.Errorf("%s must be a short opaque identifier, not a token-shaped value", name)
+	}
+	for _, r := range value {
+		if r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' || r == ':') {
+			return "", fmt.Errorf("%s may contain only ASCII letters, digits, '.', '-', '_', or ':'", name)
+		}
+	}
+	return value, nil
+}
+
+func looksLikePathOrPrivateLocator(value string) bool {
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(value, "~") || strings.Contains(value, "/") || strings.Contains(value, `\`) {
+		return true
+	}
+	if strings.Contains(value, "..") {
+		return true
+	}
+	for _, marker := range []string{".ssh", ".aws", ".config", ".env", "id_rsa", "id_ed25519"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeJWT(value string) bool {
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 || len(value) < 24 {
+		return false
+	}
+	for _, part := range parts {
+		if len(part) < 6 || !allRunesInSet(part, isBase64URLRune) {
+			return false
+		}
+	}
+	return true
+}
+
+func looksLikeLongHexOrBase64Blob(value string) bool {
+	if len(value) >= 32 && allRunesInSet(value, isHexRune) {
+		return true
+	}
+	if len(value) >= 48 && allRunesInSet(value, isBase64LikeRune) {
+		return true
+	}
+	return false
+}
+
+func allRunesInSet(value string, allowed func(rune) bool) bool {
+	for _, r := range value {
+		if r > unicode.MaxASCII || !allowed(r) {
+			return false
+		}
+	}
+	return value != ""
+}
+
+func isHexRune(r rune) bool {
+	return unicode.IsDigit(r) || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
+func isBase64URLRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_'
+}
+
+func isBase64LikeRune(r rune) bool {
+	return isBase64URLRune(r) || r == '+' || r == '/' || r == '='
 }
 
 func toolSidecarContract(tool string, profile string, metadata autonomy.ContractMetadata) ToolSidecarContract {

@@ -16,12 +16,23 @@ Every `idiom tool <name>` result should be treated as JSON:
 
 - `sidecar.schema_version`: currently `idiom.tool.v1`.
 - `sidecar.profile`: the active permission profile, for example `discovery`.
+- `sidecar.caller`: optional allowlisted caller metadata from `--caller-id`,
+  `--request-id`, and `--trace-id`. Values must be short opaque identifiers.
+  The CLI rejects common secret-, token-, email-, and path-shaped values, but
+  this is a conservative boundary check rather than comprehensive secret
+  scanning.
 - `sidecar.contract`: stable contract metadata, transport, profile, policy, and
   decision authority.
 - `sidecar.freshness`: graph freshness for graph-backed evidence when present.
 - `sidecar.structured_output`: parsed tool output when the tool emits JSON.
 - `sidecar.error`: typed error object with `class`, `code`, and `message`; null
   on success.
+
+Backend fallback is not a first-class `sidecar.backend_fallback` field in v1.
+Current callers should read fallback evidence from the tool's structured output
+or summary, such as `source_sanity` reporting a generic fallback. A future
+compatibility task should add a typed fallback field only after CLI and MCP can
+emit the same contract.
 
 Do not ask an external agent to interpolate a prompt phrase to choose a
 contract. Choose the CLI mode, profile, tool name, and JSON input explicitly.
@@ -37,12 +48,15 @@ set -euo pipefail
 status_json="$(
   idiom tool context_status \
     --profile discovery \
+    --caller-id ci-script \
+    --request-id build-123 \
     --input '{"limit":1}'
 )"
 
 jq -e '
   .sidecar.schema_version == "idiom.tool.v1" and
   .sidecar.profile == "discovery" and
+  .sidecar.caller.caller_id == "ci-script" and
   .sidecar.error == null and
   .sidecar.contract.transport == "cli" and
   .sidecar.freshness.policy == "report_only"
@@ -134,7 +148,8 @@ The checked transcript fixture is
 [`testdata/sidecar/discovery-smoke.transcript.json`](../testdata/sidecar/discovery-smoke.transcript.json).
 It covers:
 
-- `context_status --profile discovery --input '{"limit":1}'` success with
+- `context_status --profile discovery --caller-id ci-script --request-id build-123 --input '{"limit":1}'`
+  success with caller attribution,
   `sidecar.schema_version`, `sidecar.profile`, `sidecar.contract`, and
   freshness fields.
 - `tool list --profile discovery` profile inventory that includes read-only
@@ -151,3 +166,5 @@ It covers:
   typed `sidecar.error.class == "profile_denied"` before execution.
 
 The fixture is replayed by `go test ./cmd/idiom -run TestSidecarSmokeTranscript`.
+The v1 compatibility golden tests are replayed by
+`go test ./cmd/idiom -run TestSidecarV1CompatibilityGoldenCases`.

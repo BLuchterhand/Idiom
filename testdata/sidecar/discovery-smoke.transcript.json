@@ -5,9 +5,9 @@
   "steps": [
     {
       "id": "context-status-report-only",
-      "command": "idiom tool context_status --profile discovery --input '{\"limit\":1}'",
+      "command": "idiom tool context_status --profile discovery --caller-id ci-script --request-id build-123 --input '{\"limit\":1}'",
       "documented_recipe": true,
-      "argv": ["tool", "context_status", "--profile", "discovery", "--input", "{\"limit\":1}"],
+      "argv": ["tool", "context_status", "--profile", "discovery", "--caller-id", "ci-script", "--request-id", "build-123", "--input", "{\"limit\":1}"],
       "exit_code": 0,
       "json": true,
       "expect_json_string": {
@@ -16,6 +16,8 @@
         "sidecar.schema_version": "idiom.tool.v1",
         "sidecar.tool": "context_status",
         "sidecar.profile": "discovery",
+        "sidecar.caller.caller_id": "ci-script",
+        "sidecar.caller.request_id": "build-123",
         "sidecar.contract.id": "idiom.tool.v1:context_status",
         "sidecar.contract.transport": "cli",
         "sidecar.contract.decision_authority": "runtime_contract",

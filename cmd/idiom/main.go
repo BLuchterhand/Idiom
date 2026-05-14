@@ -350,6 +350,9 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 	toolFs.SetOutput(stderr)
 	configPath := toolFs.String("config", "config.json", "path to config file")
 	profileFlag := toolFs.String("profile", workspace.ToolProfileDefault, "tool permission profile: default or discovery")
+	callerID := toolFs.String("caller-id", "", "opaque caller identifier for sidecar.caller metadata")
+	requestID := toolFs.String("request-id", "", "opaque request identifier for sidecar.caller metadata")
+	traceID := toolFs.String("trace-id", "", "opaque trace identifier for sidecar.caller metadata")
 	inputJSON := toolFs.String("input", "", "JSON object with tool request parameters (reads from stdin if omitted and not a terminal)")
 	if err := toolFs.Parse(args[1:]); err != nil {
 		return 2
@@ -359,8 +362,14 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
+	caller, err := workspace.NewToolSidecarCaller(*callerID, *requestID, *traceID)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 
 	req := workspace.ToolRequest{Tool: toolName}
+	sidecarOptions := workspace.ToolSidecarOptions{Caller: caller}
 	requestLogged := false
 	logRequest := func(rawInputBytes int) {
 		if requestLogged {
@@ -437,7 +446,7 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 			Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
 		}{
 			ToolResult: result,
-			Sidecar:    workspace.BuildToolSidecarEnvelope(req, result, profile),
+			Sidecar:    workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
 		}
 		if err := enc.Encode(payload); err != nil {
 			fmt.Fprintf(stderr, "encode result: %v\n", err)
@@ -466,7 +475,7 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
 	}{
 		ToolResult: result,
-		Sidecar:    workspace.BuildToolSidecarEnvelope(req, result, profile),
+		Sidecar:    workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
 	}
 	if err := enc.Encode(payload); err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
@@ -501,7 +510,7 @@ func toolHelpRequested(args []string) bool {
 		switch strings.TrimSpace(arg) {
 		case "help", "--help", "-h":
 			return true
-		case "--input", "-input", "--config", "-config":
+		case "--input", "-input", "--config", "-config", "--caller-id", "-caller-id", "--request-id", "-request-id", "--trace-id", "-trace-id":
 			skipValue = true
 		}
 	}
@@ -513,7 +522,7 @@ func printToolHelp(stdout io.Writer, toolName string) {
 	fmt.Fprintf(stdout, "Usage:\n  idiom tool %s [--profile default|discovery] --input '<json>'\n\n", toolName)
 	fmt.Fprintln(stdout, "Output:")
 	fmt.Fprintln(stdout, "  JSON with legacy Tool/Summary/Output/Error fields plus sidecar.schema_version=\"idiom.tool.v1\".")
-	fmt.Fprintln(stdout, "  The sidecar envelope carries profile, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
+	fmt.Fprintln(stdout, "  The sidecar envelope carries profile, caller metadata, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
 	fmt.Fprintln(stdout, "  --profile discovery is read-only and denies mutation, shell, destructive, and unknown side-effect tools before execution.")
 	fmt.Fprintln(stdout)
 	defs := workspace.BuildToolDefinitions([]string{toolName})
@@ -626,7 +635,8 @@ func printToolUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Run a single workspace tool and print its result as JSON.")
 	fmt.Fprintln(stderr, "Output preserves legacy Tool/Summary/Output/Error fields and adds sidecar.schema_version=\"idiom.tool.v1\" for structured integrations.")
-	fmt.Fprintln(stderr, "The sidecar envelope includes profile, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
+	fmt.Fprintln(stderr, "The sidecar envelope includes profile, caller metadata, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
+	fmt.Fprintln(stderr, "Caller metadata flags accept short opaque identifiers only and reject common secret-, token-, email-, and path-shaped values: --caller-id, --request-id, and --trace-id.")
 	fmt.Fprintln(stderr, "--profile discovery is read-only/default-deny for mutation, shell, destructive, and unknown side-effect tools; denied calls return a structured sidecar error without executing.")
 	fmt.Fprintln(stderr, "Does not require llama-server.")
 	fmt.Fprintln(stderr, "For persistent codebase context, use `idiom context build|status|query|zoom|pack|impact|trace`.")
