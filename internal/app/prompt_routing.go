@@ -592,15 +592,20 @@ func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []wor
 		if content == "" {
 			continue
 		}
-		blockPath := strings.TrimSpace(block.Path)
-		if blockPath == "" {
-			blockPath = path
+		blockPaths := block.Paths
+		if len(blockPaths) == 0 && path != "" {
+			blockPaths = []string{path}
 		}
-		snippets = append(snippets, workerruntime.RequiredEditSnippet{
-			ID:      fmt.Sprintf("required_edit_%d", len(snippets)+1),
-			Path:    blockPath,
-			Content: content,
-		})
+		if len(blockPaths) == 0 {
+			blockPaths = []string{""}
+		}
+		for _, blockPath := range blockPaths {
+			snippets = append(snippets, workerruntime.RequiredEditSnippet{
+				ID:      fmt.Sprintf("required_edit_%d", len(snippets)+1),
+				Path:    strings.TrimSpace(blockPath),
+				Content: content,
+			})
+		}
 	}
 	if len(snippets) == 0 {
 		return nil
@@ -738,7 +743,7 @@ func requiredEditCodeBlocks(section string) []string {
 }
 
 type requiredEditBlock struct {
-	Path    string
+	Paths   []string
 	Content string
 }
 
@@ -746,8 +751,8 @@ func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []r
 	var blocks []requiredEditBlock
 	var current []string
 	previousNonEmpty := ""
-	currentPath := ""
-	blockPath := ""
+	var currentPaths []string
+	var blockPaths []string
 	fence := ""
 	skipCurrent := false
 	for _, rawLine := range strings.Split(section, "\n") {
@@ -756,13 +761,13 @@ func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []r
 			if marker, info, ok := markdownFenceOpen(trimmed); ok {
 				fence = marker
 				current = nil
-				blockPath = currentPath
+				blockPaths = append([]string(nil), currentPaths...)
 				skipCurrent = skipRequiredEditCodeBlock(previousNonEmpty, info)
 				continue
 			}
 			if trimmed != "" {
-				if path := requiredEditPathMentionedInLine(trimmed, requiredPaths); path != "" {
-					currentPath = path
+				if paths := requiredEditPathsMentionedInLine(trimmed, requiredPaths); len(paths) > 0 {
+					currentPaths = paths
 				}
 				previousNonEmpty = trimmed
 			}
@@ -771,12 +776,12 @@ func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []r
 		if strings.HasPrefix(trimmed, fence) {
 			if !skipCurrent {
 				if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
-					blocks = append(blocks, requiredEditBlock{Path: blockPath, Content: block})
+					blocks = append(blocks, requiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block})
 				}
 			}
 			fence = ""
 			current = nil
-			blockPath = ""
+			blockPaths = nil
 			skipCurrent = false
 			previousNonEmpty = ""
 			continue
@@ -786,41 +791,56 @@ func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []r
 	return blocks
 }
 
-func requiredEditPathMentionedInLine(line string, requiredPaths []string) string {
+func requiredEditPathsMentionedInLine(line string, requiredPaths []string) []string {
 	if len(requiredPaths) == 0 {
-		return ""
+		return nil
 	}
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return ""
+		return nil
 	}
+	matched := make(map[string]struct{}, len(requiredPaths))
 	for _, path := range requiredPaths {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
 		}
 		if strings.Contains(line, path) || strings.Contains(line, "`"+path+"`") {
-			return path
+			matched[path] = struct{}{}
 		}
 	}
-	baseMatches := ""
+	baseCounts := make(map[string]int, len(requiredPaths))
+	for _, path := range requiredPaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		baseCounts[filepath.Base(path)]++
+	}
 	for _, path := range requiredPaths {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
 		}
 		base := filepath.Base(path)
-		if base == "." || base == "/" || base == "" {
+		if base == "." || base == "/" || base == "" || baseCounts[base] != 1 {
 			continue
 		}
-		if strings.Contains(line, "`"+base+"`") || strings.Contains(line, base) {
-			if baseMatches != "" && baseMatches != path {
-				return ""
-			}
-			baseMatches = path
+		if strings.Contains(line, "`"+base+"`") {
+			matched[path] = struct{}{}
 		}
 	}
-	return baseMatches
+	if len(matched) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(matched))
+	for _, path := range requiredPaths {
+		path = strings.TrimSpace(path)
+		if _, ok := matched[path]; ok {
+			out = append(out, path)
+		}
+	}
+	return out
 }
 
 func markdownFenceOpen(line string) (marker string, info string, ok bool) {

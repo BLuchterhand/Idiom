@@ -73,6 +73,24 @@ func TestAtomIntakeDetectsSourceSatisfiedRequiredEditSnippets(t *testing.T) {
 	}
 }
 
+func TestAtomIntakeDuplicatesSharedRequiredEditSnippetPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.h", "a.cpp"} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte("// new shared comment\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `a.h` | Update header comment. |\n| `a.cpp` | Update implementation comment. |\n\n## Required Edits\n\nUpdate the `a.h` and `a.cpp` comments.\n\nold_text:\n\n```text\n// old shared comment\n```\n\nnew_text:\n\n```text\n// new shared comment\n```\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code == 0 {
+		t.Fatalf("expected source-satisfied exit, got 0 stderr=%s report=%+v", stderr, report)
+	}
+	if report.State != atomStateSourceSatisfied || report.Dispatchable {
+		t.Fatalf("shared snippet should satisfy both mentioned paths, got %+v", report)
+	}
+}
+
 func TestAtomIntakeBlocksPartiallyAppliedRequiredEditSnippets(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n\nfunc bounded() int {\n\treturn 42\n}\n"), 0o644); err != nil {

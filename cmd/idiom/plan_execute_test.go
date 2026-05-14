@@ -69,7 +69,7 @@ func TestRunPlanExecuteMainUsesDefaultPlannerTokenBudget(t *testing.T) {
 }
 
 func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
-	addendum := planExecutePlannerSystemAddendum()
+	addendum := planExecutePlannerSystemAddendum(nil)
 	for _, forbidden := range []string{
 		"At most one bounded source-read",
 		"Never re-read the same file",
@@ -85,6 +85,22 @@ func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 	} {
 		if !strings.Contains(addendum, want) {
 			t.Fatalf("planner addendum missing readiness-oriented wording %q:\n%s", want, addendum)
+		}
+	}
+}
+
+func TestPlanExecutePlannerAddendumIncludesRequiredPathChecklist(t *testing.T) {
+	addendum := planExecutePlannerSystemAddendum([]string{"a.cpp", "b.cpp", "a.cpp"})
+
+	for _, want := range []string{
+		"Required `submit_plan` coverage for this run: 2 required path(s).",
+		"- a.cpp",
+		"- b.cpp",
+		"must include at least one real edit for every path above",
+		"Do not submit a partial plan",
+	} {
+		if !strings.Contains(addendum, want) {
+			t.Fatalf("planner addendum missing %q:\n%s", want, addendum)
 		}
 	}
 }

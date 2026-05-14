@@ -382,6 +382,11 @@ type atomRequiredEditSnippet struct {
 	Content string
 }
 
+type atomRequiredEditBlock struct {
+	Paths   []string
+	Content string
+}
+
 type atomRequiredEditEvaluation struct {
 	SnippetCount int
 	ExactMatches int
@@ -588,11 +593,12 @@ func atomRequiredEditSnippetsFromSpec(specBody string, scopePaths []string) []at
 }
 
 func atomRequiredEditCodeBlocks(section string, scopePaths []string) []atomRequiredEditSnippet {
-	var snippets []atomRequiredEditSnippet
+	var blocks []atomRequiredEditBlock
 	var current []string
 	previousNonEmpty := ""
 	fence := ""
-	path := ""
+	var currentPaths []string
+	var blockPaths []string
 	skipCurrent := false
 	for _, rawLine := range strings.Split(section, "\n") {
 		trimmed := strings.TrimSpace(rawLine)
@@ -600,11 +606,14 @@ func atomRequiredEditCodeBlocks(section string, scopePaths []string) []atomRequi
 			if marker, info, ok := atomMarkdownFenceOpen(trimmed); ok {
 				fence = marker
 				current = nil
-				path = atomRequiredEditPathFromLabel(previousNonEmpty, scopePaths)
+				blockPaths = append([]string(nil), currentPaths...)
 				skipCurrent = atomSkipRequiredEditCodeBlock(previousNonEmpty, info)
 				continue
 			}
 			if trimmed != "" {
+				if paths := atomRequiredEditPathsFromLabel(trimmed, scopePaths); len(paths) > 0 {
+					currentPaths = paths
+				}
 				previousNonEmpty = trimmed
 			}
 			continue
@@ -612,20 +621,33 @@ func atomRequiredEditCodeBlocks(section string, scopePaths []string) []atomRequi
 		if strings.HasPrefix(trimmed, fence) {
 			if !skipCurrent {
 				if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
-					snippets = append(snippets, atomRequiredEditSnippet{
-						Path:    path,
-						Content: block,
-					})
+					blocks = append(blocks, atomRequiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block})
 				}
 			}
 			fence = ""
 			current = nil
-			path = ""
+			blockPaths = nil
 			skipCurrent = false
 			previousNonEmpty = ""
 			continue
 		}
 		current = append(current, rawLine)
+	}
+	var snippets []atomRequiredEditSnippet
+	for _, block := range blocks {
+		paths := block.Paths
+		if len(paths) == 0 && len(scopePaths) == 1 {
+			paths = []string{strings.TrimSpace(scopePaths[0])}
+		}
+		if len(paths) == 0 {
+			paths = []string{""}
+		}
+		for _, path := range paths {
+			snippets = append(snippets, atomRequiredEditSnippet{
+				Path:    strings.TrimSpace(path),
+				Content: block.Content,
+			})
+		}
 	}
 	if len(scopePaths) == 1 {
 		for i := range snippets {
@@ -638,28 +660,46 @@ func atomRequiredEditCodeBlocks(section string, scopePaths []string) []atomRequi
 }
 
 func atomRequiredEditPathFromLabel(label string, scopePaths []string) string {
+	paths := atomRequiredEditPathsFromLabel(label, scopePaths)
+	if len(paths) == 1 {
+		return paths[0]
+	}
+	return ""
+}
+
+func atomRequiredEditPathsFromLabel(label string, scopePaths []string) []string {
 	label = strings.ReplaceAll(strings.TrimSpace(label), "\\", "/")
 	if label == "" {
-		return ""
+		return nil
 	}
 	baseCounts := make(map[string]int, len(scopePaths))
 	for _, path := range scopePaths {
 		baseCounts[filepath.Base(filepath.FromSlash(path))]++
 	}
+	matched := make(map[string]struct{}, len(scopePaths))
 	for _, path := range scopePaths {
 		normalized := strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
 		if normalized == "" {
 			continue
 		}
 		if strings.Contains(label, "`"+normalized+"`") || strings.Contains(label, normalized) {
-			return path
+			matched[path] = struct{}{}
 		}
 		base := filepath.Base(filepath.FromSlash(normalized))
 		if base != "" && baseCounts[base] == 1 && strings.Contains(label, "`"+base+"`") {
-			return path
+			matched[path] = struct{}{}
 		}
 	}
-	return ""
+	if len(matched) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(matched))
+	for _, path := range scopePaths {
+		if _, ok := matched[path]; ok {
+			out = append(out, path)
+		}
+	}
+	return out
 }
 
 func atomMarkdownSectionByHeading(markdown string, headingName string) string {

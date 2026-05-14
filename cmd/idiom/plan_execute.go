@@ -123,7 +123,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// writes for submit_plan. We reuse the existing implement runner
 	// because that lane already has the right read-side guards and
 	// brief audit; only the tool surface differs.
-	plannerPrompt := planExecutePlannerSystemAddendum() + "\n\n" + prompt
+	plannerPrompt := planExecutePlannerSystemAddendum(requiredEditPaths) + "\n\n" + prompt
 	plannerMaxTokens := 16384
 	if opts.MaxTokens > 0 {
 		plannerMaxTokens = opts.MaxTokens
@@ -393,8 +393,8 @@ func patchPlanArtifactPackID(path string, packID string) error {
 // budget before it can emit submit_plan. Every rule earned its place
 // from a real failure mode; if you add another, compress an existing
 // rule to make room.
-func planExecutePlannerSystemAddendum() string {
-	return strings.Join([]string{
+func planExecutePlannerSystemAddendum(requiredEditPaths []string) string {
+	lines := []string{
 		"# Plan-then-execute (planner phase)",
 		"",
 		"The plan-submission capability must cover every brief-required edit once; the executor dispatches the submitted edits after you stop.",
@@ -405,7 +405,39 @@ func planExecutePlannerSystemAddendum() string {
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"5. Use source-read capability only for a new named edit-safety fact on a required path. Do not re-read for confidence; if the brief/evidence is contradicted and no safe plan can be assembled, stop with `<<QUESTION>>:`.",
 		"6. Submit as soon as you have anchors for every required path. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every required path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
-	}, "\n")
+	}
+	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
+		lines = append(lines, "", checklist)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
+	var paths []string
+	seen := make(map[string]struct{}, len(requiredEditPaths))
+	for _, path := range requiredEditPaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Required `submit_plan` coverage for this run: %d required path(s).\n", len(paths))
+	for _, path := range paths {
+		b.WriteString("- ")
+		b.WriteString(path)
+		b.WriteByte('\n')
+	}
+	b.WriteString("Your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
+	return strings.TrimSpace(b.String())
 }
 
 // findLatestPlanArtifact returns the most recently written plan

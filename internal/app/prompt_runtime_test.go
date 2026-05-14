@@ -1049,6 +1049,52 @@ TEST_CASE("after") {}
 	}
 }
 
+func TestBuildPromptExecutionPlanDuplicatesSharedRequiredEditSnippetPaths(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files To Modify
+
+| File | Change |
+|---|---|
+| ` + "`native/src/a.h`" + ` | Update header comment |
+| ` + "`native/src/a.cpp`" + ` | Update implementation comment |
+
+## Required Edits
+
+Update the ` + "`a.h`" + ` and ` + "`a.cpp`" + ` comments.
+
+old_text:
+
+` + "```text" + `
+// old shared comment
+` + "```" + `
+
+new_text:
+
+` + "```text" + `
+// new shared comment
+` + "```" + `
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	got := map[string]string{}
+	for _, snippet := range plan.runtimeBrief.RequiredEditSnippets {
+		got[snippet.Path] = snippet.Content
+	}
+	for _, path := range []string{"native/src/a.h", "native/src/a.cpp"} {
+		if !strings.Contains(got[path], "// new shared comment") {
+			t.Fatalf("shared snippet was not duplicated for %s: %#v", path, plan.runtimeBrief.RequiredEditSnippets)
+		}
+	}
+}
+
 func TestBuildPromptExecutionPlanCapturesImplementationShapeSnippets(t *testing.T) {
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
