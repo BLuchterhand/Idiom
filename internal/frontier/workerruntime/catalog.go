@@ -266,21 +266,21 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 	}
 	switch profile {
 	case CapabilityDebugLogInvestigator:
-		return filterAllowedTools(available, "search_files", "search_content", "read_file")
+		return filterAllowedTools(available, profile, "search_files", "search_content", "read_file")
 	case CapabilityVerificationOnly:
-		return filterAllowedTools(available, "source_sanity", "shell", "read_file", "search_files", "search_content")
+		return filterAllowedTools(available, profile, "source_sanity", "shell", "read_file", "search_files", "search_content")
 	case CapabilityLocateOnly:
-		return filterAllowedTools(available, "pwd", "search_files", "search_content", "read_file", "code_navigate", "context_query", "context_zoom")
+		return filterAllowedTools(available, profile, "pwd", "search_files", "search_content", "read_file", "code_navigate", "context_query", "context_zoom")
 	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
-		return filterAllowedTools(available, guardedWriteToolNames()...)
+		return filterAllowedTools(available, profile, guardedWriteToolNames()...)
 	case CapabilityPlanSubmissionPlanner:
-		return filterAllowedTools(available, planSubmissionPlannerToolNames()...)
+		return filterAllowedTools(available, profile, planSubmissionPlannerToolNames()...)
 	case CapabilityPlanSubmissionReview:
-		return filterAllowedTools(available, planSubmissionReviewToolNames()...)
+		return filterAllowedTools(available, profile, planSubmissionReviewToolNames()...)
 	case CapabilityReadOnlyDiscovery:
-		return filterAllowedTools(available, readOnlyDiscoveryToolNames()...)
+		return filterAllowedTools(available, profile, readOnlyDiscoveryToolNames()...)
 	case CapabilityConversationReadOnly:
-		return filterAllowedTools(available, readOnlyConversationToolNames()...)
+		return filterAllowedTools(available, profile, readOnlyConversationToolNames()...)
 	default:
 		return append([]string(nil), available...)
 	}
@@ -432,7 +432,7 @@ func selectAllowedTools(available []string, allowWrites bool, allowShell bool, a
 	return out
 }
 
-func filterAllowedTools(available []string, names ...string) []string {
+func filterAllowedTools(available []string, profile ToolCapabilityProfile, names ...string) []string {
 	if len(available) == 0 || len(names) == 0 {
 		return nil
 	}
@@ -450,25 +450,25 @@ func filterAllowedTools(available []string, names ...string) []string {
 			out = append(out, tool)
 			continue
 		}
-		// Pass project-defined external tools through every capability
-		// profile. Built-ins are gated by the hardcoded allow-lists
-		// because their semantics (read vs write, mutating vs not) are
-		// known to idiom; externals are opaque shell invocations whose
-		// safety the host project owns. Always-passing-through means
-		// `external_tools` registered in the workspace config remain
-		// callable from any turn route, which is the contract host
-		// projects expect when registering project-specific discovery
-		// tools.
-		//
-		// MCP tools (`mcp:<server>/<tool>`) are also pass-through here
-		// to preserve their existing behavior; the qualifier lets the
-		// dispatcher route them through executeMCP regardless of the
-		// turn's capability profile.
-		if isExternalToolName(trimmed) {
+		// External/MCP tools are opaque to idiom, so only broad discovery,
+		// planning, and implementation profiles may inherit them by
+		// default. Bounded review/verification profiles use exact
+		// allow-lists so a project-defined helper cannot widen the phase
+		// contract or distract the model from the supplied evidence.
+		if capabilityProfileAllowsExternalTools(profile) && isExternalToolName(trimmed) {
 			out = append(out, tool)
 		}
 	}
 	return out
+}
+
+func capabilityProfileAllowsExternalTools(profile ToolCapabilityProfile) bool {
+	switch profile {
+	case CapabilityDebugLogInvestigator, CapabilityVerificationOnly, CapabilityPlanSubmissionReview:
+		return false
+	default:
+		return true
+	}
 }
 
 // isExternalToolName reports whether a tool name belongs to a host-project
@@ -508,37 +508,44 @@ func isExternalToolName(name string) bool {
 // Manager.Execute. New built-ins must be added here so external-tool
 // pass-through doesn't accidentally include them.
 var builtinToolNames = map[string]struct{}{
-	"task_ledger":        {},
-	"task":               {},
-	"pwd":                {},
-	"list_files":         {},
-	"search_files":       {},
-	"search_content":     {},
-	"rg":                 {},
-	"read_file":          {},
-	"file_stats":         {},
-	"harness_audit":      {},
-	"context_index":      {},
-	"context_status":     {},
-	"context_query":      {},
-	"context_zoom":       {},
-	"context_pack":       {},
-	"context_trace_pack": {},
-	"discovery_query":    {},
-	"structural_search":  {},
-	"dependency_graph":   {},
-	"history_range":      {},
-	"history_symbol":     {},
-	"blame_range":        {},
-	"ctags_symbols":      {},
-	"semgrep_scan":       {},
-	"joern_scan":         {},
-	"git_status":         {},
-	"git_diff":           {},
-	"shell":              {},
-	"mkdir":              {},
-	"edit_file":          {},
-	"write_file":         {},
-	"append_file":        {},
-	"apply_patch":        {},
+	"task_ledger":          {},
+	"task":                 {},
+	"pwd":                  {},
+	"list_files":           {},
+	"search_files":         {},
+	"search_content":       {},
+	"rg":                   {},
+	"read_file":            {},
+	"file_stats":           {},
+	"code_navigate":        {},
+	"read_only_capability": {},
+	"source_sanity":        {},
+	"harness_audit":        {},
+	"harness_feedback":     {},
+	"context_index":        {},
+	"context_status":       {},
+	"context_query":        {},
+	"context_zoom":         {},
+	"context_pack":         {},
+	"context_impact":       {},
+	"context_trace_pack":   {},
+	"discovery_query":      {},
+	"structural_search":    {},
+	"dependency_graph":     {},
+	"history_range":        {},
+	"history_symbol":       {},
+	"blame_range":          {},
+	"ctags_symbols":        {},
+	"semgrep_scan":         {},
+	"joern_scan":           {},
+	"git_status":           {},
+	"git_diff":             {},
+	"shell":                {},
+	"mkdir":                {},
+	"edit_file":            {},
+	"write_file":           {},
+	"append_file":          {},
+	"apply_patch":          {},
+	"submit_plan":          {},
+	"delegate_edit":        {},
 }

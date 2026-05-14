@@ -862,6 +862,27 @@ func TestPlanThenExecuteShortCircuitSkipsOtherTools(t *testing.T) {
 	}
 }
 
+func TestReviewRepairDoesNotAppendExternalTools(t *testing.T) {
+	if runnerBriefAllowsExternalToolAppend(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		PermissionProfile: "plan_submission_review",
+	}) {
+		t.Fatalf("review-repair must keep the exact phase tool surface and not append project externals")
+	}
+	if !runnerBriefAllowsExternalToolAppend(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		PermissionProfile: "guarded_workspace_write",
+	}) {
+		t.Fatalf("planner phase should still inherit project discovery externals")
+	}
+	if runnerBriefAllowsExternalToolAppend(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "verification_only",
+		PermissionProfile: "read_only_verification_shell",
+	}) {
+		t.Fatalf("verification-only lanes must not widen their shell/check surface with project externals")
+	}
+}
+
 func TestImplementationScopedEditAllowsSubmitPlan(t *testing.T) {
 	// The scoped-edit tool surface filter trims the brief's
 	// allowed_tools to write tools + read_file + code_navigate. Without

@@ -1188,6 +1188,9 @@ func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) 
 		"_assert_true(true)",
 		"Decision: pass",
 		"submit_plan.rationale",
+		"Empty corrective plans are invalid",
+		"pending outside this lane unless Phase Evidence names the exact command as successful",
+		"Do not call `ask`",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("review-repair prompt missing %q:\n%s", want, prompt)
@@ -1446,6 +1449,20 @@ func TestReviewAnswerPassContradictionRejectsUnverifiableRequiredEdit(t *testing
 	}, "\n")
 	if reason := reviewAnswerPassContradictionReason(answer); reason == "" {
 		t.Fatalf("review pass that admits missing evidence must be contradictory")
+	}
+}
+
+func TestReviewAnswerPassContradictionRejectsProjectedVerificationClaims(t *testing.T) {
+	answer := strings.Join([]string{
+		"Verification Checklist",
+		"- Required behavior: the new scenario file matches the requested body.",
+		"- Smoke Test Execution: ./tests/run_scenarios.sh tests/scenarios/smoke/example.json should pass.",
+		"- Git Diff Check: git diff --check should pass with no whitespace errors.",
+		"",
+		"Decision: pass",
+	}, "\n")
+	if reason := reviewAnswerPassContradictionReason(answer); reason != "unsupported_verification_projection" {
+		t.Fatalf("projected verification should be contradictory, got %q", reason)
 	}
 }
 

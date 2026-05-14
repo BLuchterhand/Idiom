@@ -153,20 +153,12 @@ func (r *Runner) Run(
 			}
 			allowed = filtered
 		}
-		// Always include project-defined external tools, regardless of
-		// the route's capability profile or the runtime brief's
-		// AllowedTools narrowing. Externals are opaque shell invocations
-		// the host project owns; idiom doesn't know whether a given
-		// external is read-class or write-class, and the project's
-		// intent in registering it is "make this callable from any
-		// agent turn". MCP tools follow the same logic — once the user
-		// configured an MCP server, its tools should remain reachable.
-		//
-		// Exception: write-only implementation recovery and scoped
-		// required-path edit surfaces are invariant boundaries. At that
-		// point the model has a computed implementation contract, so
-		// opaque project-defined tools should not be advertised as detours.
-		if !writeOnlySurface && !scopedEditSurface {
+		// Broad discovery/planning/implementation lanes inherit
+		// project-defined external tools because those are host-owned
+		// context affordances. Bounded review and verification contracts
+		// keep the exact runtime allow-list; otherwise opaque externals
+		// can widen the phase after the contract layer already narrowed it.
+		if runnerBriefAllowsExternalToolAppend(r.RuntimeBrief) && !writeOnlySurface && !scopedEditSurface {
 			if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
 				seen := make(map[string]struct{}, len(allowed))
 				for _, name := range allowed {
@@ -9021,6 +9013,19 @@ func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.Work
 		return true
 	}
 	return strings.TrimSpace(brief.PermissionProfile) == "read_only_workspace" && postChildPacketClosureReadyWithBrief(brief, results)
+}
+
+func runnerBriefAllowsExternalToolAppend(brief workerruntime.WorkerRuntimeBrief) bool {
+	switch strings.TrimSpace(brief.PermissionProfile) {
+	case "plan_submission_review", "read_only_verification_shell":
+		return false
+	}
+	switch strings.TrimSpace(brief.TaskFamily) {
+	case PlanThenExecuteReviewRepairTaskFamily, "debug_logs":
+		return false
+	default:
+		return true
+	}
 }
 
 func (r *Runner) advertisedAllowedTools(base []string) []string {

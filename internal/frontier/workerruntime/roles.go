@@ -38,7 +38,7 @@ func RoleSpecFor(name string) RoleSpec {
 			TaskFamily:           "delegated_read_only",
 			Contract:             "grounded_evidence_summary",
 			PermissionProfile:    "read_only_workspace",
-			AllowedTools:         filterAllowedTools(ManifestToolsForCapabilityProfile(CapabilityConversationReadOnly), readOnlyChildAllowedTools()...),
+			AllowedTools:         filterAllowedTools(ManifestToolsForCapabilityProfile(CapabilityConversationReadOnly), CapabilityConversationReadOnly, readOnlyChildAllowedTools()...),
 			ForbiddenTools:       []string{"edit_file", "write_file", "append_file", "mkdir", "apply_patch", "go_move_declarations", "mutating_shell", "task"},
 			RequiredEvidence:     []string{"inspected_paths", "answer_addresses_delegated_question", "confidence"},
 			SearchPolicy:         []string{"prefer_discovery_query_for_composite_questions", "prefer_symbol_or_handle_probes_over_raw_path_reads", "answer_when_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "avoid_broad_loops"},

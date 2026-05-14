@@ -1353,8 +1353,11 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("Outcomes:\n\n")
 	b.WriteString("- If any checklist item fails and the repair is inside Allowed Repair Paths, call `submit_plan` once with corrective edits only. The `submit_plan.rationale` must start with `Verification Checklist:` and include the checklist plus the failing item each edit addresses.\n")
 	b.WriteString("- The submitted plan is pre-executor intent. If `submitted_plan_state` says those edits are already applied, do not re-submit them; submit only new corrective edits for defects found by the checklist.\n")
-	b.WriteString("- If the diff satisfies the checklist, do not call `submit_plan`; answer with `Decision: pass` and include the `Verification Checklist`.\n")
+	b.WriteString("- If the diff satisfies the checklist, do not call `submit_plan`; answer with `Decision: pass` and include the `Verification Checklist`. Empty corrective plans are invalid.\n")
 	b.WriteString("- If the issue is ambiguous or outside Allowed Repair Paths, stop with `<<QUESTION>>:` and name the blocker. Do not improvise out-of-scope writes.\n\n")
+	b.WriteString("Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful. Do not mark them checked/pass or say they ran.\n\n")
+	b.WriteString("Patch hygiene and source_sanity may be marked checked only when Phase Evidence shows those results. Unsupported or absent source_sanity is not a failure for non-source files.\n\n")
+	b.WriteString("Do not call `ask` or external question tools in this phase. If blocked, return `<<QUESTION>>:` with the blocker.\n\n")
 	b.WriteString("A repair that replaces missing behavioral evidence with a tautology (`assert true`, `CHECK(true)`, `_assert_true(true)`) or with comments admitting behavior is not inspected is not a valid repair. Submit a concrete state assertion or stop with `<<QUESTION>>:`.\n\n")
 	b.WriteString("## Allowed Repair Paths\n\n")
 	for _, path := range allowedRepairPaths {
@@ -1839,6 +1842,8 @@ func reviewAnswerPassContradictionReason(answer string) string {
 			"no evidence",
 		):
 			return "unresolved_failure_claim"
+		case reviewLineContainsProjectedVerificationClaim(line):
+			return "unsupported_verification_projection"
 		}
 	}
 	return ""
@@ -1866,6 +1871,26 @@ func reviewLineHasPassNegation(line string) bool {
 		"no unresolved",
 		"no blocker",
 		"no blockers",
+	)
+}
+
+func reviewLineContainsProjectedVerificationClaim(line string) bool {
+	if !reviewLineContainsAny(line, "should pass", "should still pass", "should pass with", "would pass") {
+		return false
+	}
+	return reviewLineContainsAny(line,
+		"test",
+		"tests",
+		"scenario",
+		"scenarios",
+		"command",
+		"verification",
+		"acceptance",
+		"git diff",
+		"diff --check",
+		"go test",
+		"pytest",
+		"run_scenarios",
 	)
 }
 

@@ -28,6 +28,7 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 		"read_file", "search_content", "code_navigate", "shell", "git_diff",
 		"submit_plan", "edit_file", "apply_patch",
 		"task", "task_ledger",
+		"gdscript_trace",
 	}
 	brief := RuntimeBriefForTaskFamily("plan_then_execute_planner", "main", available)
 	if !planThenExecuteToolListContains(brief.AllowedTools, "submit_plan") {
@@ -35,6 +36,9 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 	}
 	if !planThenExecuteToolListContains(brief.AllowedTools, "read_file") {
 		t.Fatalf("planner brief must surface read_file for evidence gathering, got %v", brief.AllowedTools)
+	}
+	if !planThenExecuteToolListContains(brief.AllowedTools, "gdscript_trace") {
+		t.Fatalf("planner brief should preserve project discovery externals, got %v", brief.AllowedTools)
 	}
 	for _, forbidden := range []string{"edit_file", "apply_patch", "shell", "git_diff", "task", "task_ledger"} {
 		if planThenExecuteToolListContains(brief.AllowedTools, forbidden) {
@@ -67,6 +71,7 @@ func TestRuntimeBriefForPlanThenExecuteReviewRepairKeepsSubmitPlanWithoutWrites(
 		"read_file", "search_content", "code_navigate",
 		"submit_plan", "edit_file", "apply_patch",
 		"task", "task_ledger",
+		"ask", "gdscript_trace", "mcp:question/ask",
 	}
 	brief := RuntimeBriefForTaskFamily("plan_then_execute_review_repair", "review", available)
 	if !planThenExecuteToolListContains(brief.AllowedTools, "submit_plan") {
@@ -80,6 +85,27 @@ func TestRuntimeBriefForPlanThenExecuteReviewRepairKeepsSubmitPlanWithoutWrites(
 	}
 	if planThenExecuteToolListContains(brief.AllowedTools, "task") {
 		t.Fatalf("review-repair brief must not surface broad delegation, got %v", brief.AllowedTools)
+	}
+	for _, forbidden := range []string{"ask", "gdscript_trace", "mcp:question/ask"} {
+		if planThenExecuteToolListContains(brief.AllowedTools, forbidden) {
+			t.Fatalf("review-repair brief must not surface external tool %s; got %v", forbidden, brief.AllowedTools)
+		}
+	}
+}
+
+func TestBuiltInToolNamesDoNotLookExternal(t *testing.T) {
+	for _, tool := range []string{
+		"code_navigate",
+		"read_only_capability",
+		"source_sanity",
+		"harness_feedback",
+		"context_impact",
+		"submit_plan",
+		"delegate_edit",
+	} {
+		if isExternalToolName(tool) {
+			t.Fatalf("built-in tool %q must not be classified as a project external", tool)
+		}
 	}
 }
 
