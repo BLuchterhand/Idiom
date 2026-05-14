@@ -1796,7 +1796,7 @@ Review signoff:
 | P9.3 | Gate release on no unresolved high contract/security regressions and owned high/medium audit findings with evidence and reproduce commands | P9.1 | Pascal the 3rd | - [x] | Hooke the 3rd + P9.16 follow-up | - [x] |
 | P9.16 | Clarify P9.3 no-go gate scope and correct audit inventory counts | P9.3 | Bacon the 3rd | - [x] | Arendt the 3rd | - [x] |
 | P9.4 | Gate release on complete client-classification example-test coverage and reviewer signoff that every example maps to generic architecture primitives | P7.6, P8.5, P9.1 | Planck the 3rd | - [x] | Lovelace the 3rd + P9.17 follow-up | - [ ] |
-| P9.17 | Ground P9.4 report in P9.2 decision and current release-bundle evidence IDs | P9.4 | Peirce the 3rd | - [ ] | unassigned review subagent | - [ ] |
+| P9.17 | Ground P9.4 report in P9.2 decision and current release-bundle evidence IDs | P9.4 | Peirce the 3rd | - [x] | unassigned review subagent | - [ ] |
 | P9.5 | Gate release on review-protocol compliance for every implemented ledger task | P0.6, P9.1-P9.4 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.6 | Gate release on activation/onboarding evidence, including measured install-to-first-value and cleanup path | P7.7, P7.11, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.7 | Gate release on design-partner validation, retained-use evidence, and at least one credible paid or internal-platform adoption signal | P0.8, P7.10, P7.11, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
