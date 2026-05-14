@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -258,6 +259,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 	records, recordsRef := loadP711ValidationRecords(opts.ValidationRecords)
 	learning, learningRef := loadP711LearningSummary(root)
 	competitive, competitiveRef := loadP910CompetitiveBenchmarkEvidence(root, opts.BenchmarkReport)
+	packaging, packagingRef := loadP912PackagingSupportThesis(root)
 	signals := buildP711Signals(localOps, records, integration, security, learning)
 	classCoverage := buildP711ClassCoverage(demos, security, integration, records)
 	completeness := summarizeP711Signals(signals)
@@ -331,8 +333,9 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			recordsRef,
 			learningRef,
 			competitiveRef,
+			packagingRef,
 		},
-		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records, p99, p910CompetitiveBenchmarkGate(competitive, competitiveRef), p911),
+		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records, p99, p910CompetitiveBenchmarkGate(competitive, competitiveRef), p911, packaging, packagingRef),
 		Limitations:        productEvidenceExportLimitations(integration),
 		Metadata: map[string]any{
 			"generated_by": "idiom product-evidence export",
@@ -625,6 +628,78 @@ type p711ValidationRecord struct {
 	AdoptPaySponsorScore      int    `json:"adopt_pay_sponsor_score,omitempty"`
 }
 
+type p912PackagingSupportThesis struct {
+	SchemaVersion        string                        `json:"schema_version"`
+	ArtifactID           string                        `json:"artifact_id"`
+	ICP                  p912ICPThesis                 `json:"icp"`
+	Packaging            p912EvidenceText              `json:"packaging"`
+	Pricing              p912PricingThesis             `json:"pricing"`
+	Support              p912SupportThesis             `json:"support"`
+	Admin                p912AdminThesis               `json:"admin"`
+	LocalEvidenceExport  p912LocalEvidenceExportThesis `json:"local_evidence_export"`
+	ClassificationStance []p912ClassificationStance    `json:"classification_stances"`
+	Decision             p912PackagingSupportDecision  `json:"decision"`
+}
+
+type p912ICPThesis struct {
+	PrimaryBuyer      string   `json:"primary_buyer"`
+	AdoptionWedge     string   `json:"adoption_wedge"`
+	Secondary         []string `json:"secondary"`
+	DeferredProofOnly []string `json:"deferred_proof_only"`
+	Buyer             string   `json:"buyer"`
+	DailyUser         string   `json:"daily_user"`
+	EvidenceIDs       []string `json:"evidence_ids"`
+}
+
+type p912EvidenceText struct {
+	MVP         string   `json:"mvp"`
+	FinalState  string   `json:"final_state"`
+	EvidenceIDs []string `json:"evidence_ids"`
+}
+
+type p912PricingThesis struct {
+	Hypothesis    string   `json:"hypothesis"`
+	SignalQuality string   `json:"signal_quality"`
+	EvidenceIDs   []string `json:"evidence_ids"`
+}
+
+type p912SupportThesis struct {
+	Boundary    string   `json:"boundary"`
+	Level       string   `json:"level"`
+	EvidenceIDs []string `json:"evidence_ids"`
+}
+
+type p912AdminThesis struct {
+	NonGoals                []string `json:"non_goals"`
+	EnterpriseSurfaceLimits []string `json:"enterprise_surface_limits"`
+	UnsupportedRequests     []string `json:"unsupported_requests"`
+	UnsupportedRequestCount int      `json:"unsupported_request_count"`
+	EvidenceIDs             []string `json:"evidence_ids"`
+}
+
+type p912LocalEvidenceExportThesis struct {
+	Status         string   `json:"status"`
+	PrivacyPosture string   `json:"privacy_posture"`
+	EvidenceIDs    []string `json:"evidence_ids"`
+}
+
+type p912ClassificationStance struct {
+	Classification       string   `json:"classification"`
+	PackagingStance      string   `json:"packaging_stance"`
+	MVPPackagingStance   string   `json:"mvp_packaging_stance"`
+	FinalStateHypothesis string   `json:"final_state_hypothesis"`
+	SupportAdminBoundary string   `json:"support_admin_boundary"`
+	GoNoGoEvidence       string   `json:"go_no_go_evidence"`
+	EvidenceIDs          []string `json:"evidence_ids"`
+}
+
+type p912PackagingSupportDecision struct {
+	Outcome     string   `json:"outcome"`
+	Trigger     string   `json:"trigger"`
+	ClaimImpact string   `json:"claim_impact"`
+	EvidenceIDs []string `json:"evidence_ids"`
+}
+
 func loadP711LocalOpsReport(root string, path string) (*localOpsBenchmarkReport, p711SourceReference) {
 	ref := p711SourceReference{ID: "local_ops_benchmark", Kind: "local_ops", Status: "not_available"}
 	if strings.TrimSpace(path) == "" {
@@ -746,6 +821,32 @@ func loadP711LearningSummary(root string) (*comprehension.LearningLogSummary, p7
 	ref.Status = "present"
 	ref.ArtifactHash = localOpsStableID(fmt.Sprintf("%d:%d:%d", summary.TotalEntries, summary.AcceptedCount, summary.RejectedCount))
 	return &summary, ref
+}
+
+func loadP912PackagingSupportThesis(root string) (p912PackagingSupportThesis, p711SourceReference) {
+	path := filepath.Join(root, "docs", "packaging-support-thesis.json")
+	ref := p711FileRef("p0.11_packaging_support_thesis", "packaging_support_thesis", path)
+	var out p912PackagingSupportThesis
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return out, ref
+	}
+	ref.ArtifactHash = p711Hash(data)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		ref.Status = "blocked"
+		return out, ref
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		ref.Status = "blocked"
+		return out, ref
+	}
+	ref.Status = "present"
+	if strings.TrimSpace(out.ArtifactID) != "" {
+		ref.ID = out.ArtifactID
+	}
+	return out, ref
 }
 
 func buildP711Signals(localOps *localOpsBenchmarkReport, records []p711ValidationRecord, integration p711IntegrationProofSet, security p711SecurityPosture, learning *comprehension.LearningLogSummary) []p711SignalSummary {
@@ -2567,7 +2668,7 @@ func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPo
 	return rows
 }
 
-func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord, p99 p711ReleaseGateLinkage, p910 p711ReleaseGateLinkage, p911 p711ReleaseGateLinkage) []p711ReleaseGateLinkage {
+func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord, p99 p711ReleaseGateLinkage, p910 p711ReleaseGateLinkage, p911 p711ReleaseGateLinkage, packaging p912PackagingSupportThesis, packagingRef p711SourceReference) []p711ReleaseGateLinkage {
 	classStatus := "evidence_present"
 	for _, row := range classes {
 		if row.Status != "pass" {
@@ -2580,6 +2681,7 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 	}
 	p97 := p97ValidationGate(records)
 	p98 := p98IntegrationGateFromSignals(signals)
+	p912 := p912PackagingSupportGate(packaging, packagingRef, p97, p98, p99, p910, p911)
 	return []p711ReleaseGateLinkage{
 		{Gate: "P9.1", Status: p711GateFromSignal(signals, "benchmark"), Evidence: "benchmark,audit,learning summaries", ClaimImpact: "release bundle input; not a release decision"},
 		{Gate: "P9.6", Status: p96ActivationReleaseGateStatus(localOps), Evidence: "standalone product export cannot close P9.6 without current release validation evidence", ClaimImpact: "release activation claims are no-go until the release bundle consumes activation plus validation evidence"},
@@ -2588,8 +2690,583 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 		{Gate: "P9.9", Status: p99.Status, Evidence: p99.Evidence, ClaimImpact: p99.ClaimImpact, Counts: p99.Counts, Blockers: p99.Blockers, EvidenceIDs: p99.EvidenceIDs},
 		{Gate: "P9.10", Status: p910.Status, Evidence: p910.Evidence, ClaimImpact: p910.ClaimImpact, Counts: p910.Counts, Blockers: p910.Blockers, EvidenceIDs: p910.EvidenceIDs},
 		{Gate: "P9.11", Status: p911.Status, Evidence: p911.Evidence, ClaimImpact: p911.ClaimImpact, Counts: p911.Counts, Blockers: p911.Blockers, EvidenceIDs: p911.EvidenceIDs},
-		{Gate: "P9.12", Status: classStatus, Evidence: "classification coverage rows and limitations", ClaimImpact: "packaging/support thesis must cite statuses"},
+		p912WithClassCoverageStatus(p912, classStatus),
 	}
+}
+
+func p912WithClassCoverageStatus(row p711ReleaseGateLinkage, classStatus string) p711ReleaseGateLinkage {
+	if classStatus == "evidence_present" {
+		return row
+	}
+	row.Status = "needs_evidence"
+	row.Blockers = p711Compact(append(row.Blockers, "classification coverage rows or P9.11 demo evidence incomplete")...)
+	if row.Counts == nil {
+		row.Counts = map[string]int{}
+	}
+	row.Counts["classification_coverage_blockers"]++
+	row.Counts["blockers"] = len(row.Blockers)
+	return row
+}
+
+func p912PackagingSupportGate(thesis p912PackagingSupportThesis, ref p711SourceReference, p97 p97ValidationGateResult, p98 p98IntegrationGateResult, p99 p711ReleaseGateLinkage, p910 p711ReleaseGateLinkage, p911 p711ReleaseGateLinkage) p711ReleaseGateLinkage {
+	counts := map[string]int{
+		"required_fields":                      8,
+		"required_fields_present":              0,
+		"required_fields_with_evidence_ids":    0,
+		"classification_stances_required":      len(p711Classifications()),
+		"classification_stances_covered":       0,
+		"classification_stances_with_evidence": 0,
+		"packaging_support_complete":           0,
+		"pricing_signal_quality_hypothesis":    0,
+		"pricing_signal_quality_validated":     0,
+		"unsupported_admin_request_count":      0,
+		"decision_evidence_ids":                0,
+		"decision_continue":                    0,
+		"decision_pivot":                       0,
+		"decision_no_go":                       0,
+		"prior_gate_evidence_present":          0,
+		"privacy_blockers":                     0,
+		"overclaim_blockers":                   0,
+		"contradiction_blockers":               0,
+		"admin_count_blockers":                 0,
+	}
+	var blockers []string
+	var evidenceIDs []string
+	addBlocker := func(reason string) {
+		reason = strings.TrimSpace(reason)
+		if reason != "" {
+			blockers = append(blockers, reason)
+		}
+	}
+
+	if ref.Status == "present" {
+		evidenceIDs = append(evidenceIDs, ref.ID)
+	} else if ref.Status == "blocked" {
+		counts["privacy_blockers"]++
+		addBlocker("packaging/support thesis artifact is malformed or privacy-blocked")
+	} else {
+		addBlocker("packaging/support thesis artifact not available")
+	}
+	if thesis.SchemaVersion != "idiom.packaging_support_thesis.v1" || thesis.ArtifactID == "" {
+		addBlocker("packaging/support thesis identity is missing or unexpected")
+	}
+
+	p912RequireField("icp", p912ICPComplete(thesis.ICP), p912EvidenceIDsPresent(thesis.ICP.EvidenceIDs), counts, addBlocker)
+	p912RequireField("packaging", p912EvidenceTextComplete(thesis.Packaging), p912EvidenceIDsPresent(thesis.Packaging.EvidenceIDs), counts, addBlocker)
+	p912RequireField("pricing", p912PricingComplete(thesis.Pricing), p912EvidenceIDsPresent(thesis.Pricing.EvidenceIDs), counts, addBlocker)
+	p912RequireField("support", p912SupportComplete(thesis.Support), p912EvidenceIDsPresent(thesis.Support.EvidenceIDs), counts, addBlocker)
+	p912RequireField("admin", p912AdminComplete(thesis.Admin), p912EvidenceIDsPresent(thesis.Admin.EvidenceIDs), counts, addBlocker)
+	p912RequireField("local_evidence_export", p912LocalEvidenceExportComplete(thesis.LocalEvidenceExport), p912EvidenceIDsPresent(thesis.LocalEvidenceExport.EvidenceIDs), counts, addBlocker)
+	p912RequireField("classification_stances", len(thesis.ClassificationStance) > 0, p912ClassificationEvidencePresent(thesis.ClassificationStance), counts, addBlocker)
+	p912RequireField("decision", p912DecisionComplete(thesis.Decision), p912EvidenceIDsPresent(thesis.Decision.EvidenceIDs), counts, addBlocker)
+
+	evidenceIDs = append(evidenceIDs, thesis.ICP.EvidenceIDs...)
+	evidenceIDs = append(evidenceIDs, thesis.Packaging.EvidenceIDs...)
+	evidenceIDs = append(evidenceIDs, thesis.Pricing.EvidenceIDs...)
+	evidenceIDs = append(evidenceIDs, thesis.Support.EvidenceIDs...)
+	evidenceIDs = append(evidenceIDs, thesis.Admin.EvidenceIDs...)
+	evidenceIDs = append(evidenceIDs, thesis.LocalEvidenceExport.EvidenceIDs...)
+	evidenceIDs = append(evidenceIDs, thesis.Decision.EvidenceIDs...)
+	counts["decision_evidence_ids"] = len(p711Compact(thesis.Decision.EvidenceIDs...))
+	counts["unsupported_admin_request_count"] = p912UnsupportedAdminRequestCount(thesis.Admin, counts, addBlocker)
+	p912CountPricingQuality(thesis.Pricing.SignalQuality, counts)
+	p912EvaluateNorthStarStance(thesis, counts, addBlocker)
+	p912EvaluateClassificationStances(thesis.ClassificationStance, counts, &evidenceIDs, addBlocker)
+	p912EvaluateLocalEvidenceExport(thesis.LocalEvidenceExport, counts, addBlocker)
+	p912EvaluatePriorGateEvidence(p97, p98, p99, p910, p911, counts, addBlocker)
+	p912EvaluateDecision(thesis.Decision, p97, p98, p99, p910, p911, counts, addBlocker)
+	p912ScanThesisPrivacy(thesis, counts, addBlocker)
+	p912ScanThesisClaims(thesis, counts, addBlocker)
+
+	if p912PackagingSupportFieldsComplete(counts) {
+		counts["packaging_support_complete"] = 1
+	}
+	counts["blockers"] = len(blockers)
+	status := "needs_evidence"
+	claimImpact := "packaging, pricing, support, admin, and ICP claims remain no-go until the P0.11 thesis is complete, evidence-linked, and aligned with prior gates"
+	if len(blockers) == 0 {
+		status = "evidence_present"
+		claimImpact = "P9.12 may cite the evidence-linked P0.11 thesis and bounded continue decision; commercial claims remain limited to proven prior gates"
+		if p711SafeToken(thesis.Decision.Outcome) == "pivot" {
+			claimImpact = "P9.12 may cite the evidence-linked pivot decision without claiming primary enterprise-SaaS paid demand"
+		}
+		if p711SafeToken(thesis.Decision.Outcome) == "no_go" {
+			claimImpact = "P9.12 records an evidence-linked no-go decision for commercial or production release claims"
+		}
+	}
+	return p711ReleaseGateLinkage{
+		Gate:        "P9.12",
+		Status:      status,
+		Evidence:    p912EvidenceSummary(counts, thesis.Decision.Outcome),
+		ClaimImpact: claimImpact,
+		Counts:      counts,
+		Blockers:    p711Compact(blockers...),
+		EvidenceIDs: p711Compact(evidenceIDs...),
+	}
+}
+
+func p912PackagingSupportFieldsComplete(counts map[string]int) bool {
+	return counts["required_fields_present"] == counts["required_fields"] &&
+		counts["required_fields_with_evidence_ids"] == counts["required_fields"] &&
+		counts["classification_stances_covered"] == counts["classification_stances_required"] &&
+		counts["classification_stances_with_evidence"] == counts["classification_stances_required"] &&
+		counts["privacy_blockers"] == 0 &&
+		counts["overclaim_blockers"] == 0 &&
+		counts["contradiction_blockers"] == 0 &&
+		counts["admin_count_blockers"] == 0
+}
+
+func p912RequireField(name string, present bool, evidenceLinked bool, counts map[string]int, addBlocker func(string)) {
+	if present {
+		counts["required_fields_present"]++
+	} else {
+		addBlocker("required packaging/support field missing or empty: " + name)
+	}
+	if evidenceLinked {
+		counts["required_fields_with_evidence_ids"]++
+	} else {
+		addBlocker("required packaging/support field lacks evidence IDs: " + name)
+	}
+}
+
+func p912ICPComplete(icp p912ICPThesis) bool {
+	return strings.TrimSpace(icp.PrimaryBuyer) != "" &&
+		strings.TrimSpace(icp.AdoptionWedge) != "" &&
+		len(p711Compact(icp.Secondary...)) > 0 &&
+		len(p711Compact(icp.DeferredProofOnly...)) > 0 &&
+		strings.TrimSpace(icp.Buyer) != "" &&
+		strings.TrimSpace(icp.DailyUser) != ""
+}
+
+func p912EvidenceTextComplete(value p912EvidenceText) bool {
+	return strings.TrimSpace(value.MVP) != "" && strings.TrimSpace(value.FinalState) != ""
+}
+
+func p912PricingComplete(value p912PricingThesis) bool {
+	return strings.TrimSpace(value.Hypothesis) != "" && strings.TrimSpace(value.SignalQuality) != ""
+}
+
+func p912SupportComplete(value p912SupportThesis) bool {
+	return strings.TrimSpace(value.Boundary) != "" && strings.TrimSpace(value.Level) != ""
+}
+
+func p912AdminComplete(value p912AdminThesis) bool {
+	return len(p711Compact(value.NonGoals...)) > 0 &&
+		len(p711Compact(value.EnterpriseSurfaceLimits...)) > 0 &&
+		len(p711Compact(value.UnsupportedRequests...)) > 0
+}
+
+func p912LocalEvidenceExportComplete(value p912LocalEvidenceExportThesis) bool {
+	return strings.TrimSpace(value.Status) != "" && strings.TrimSpace(value.PrivacyPosture) != ""
+}
+
+func p912DecisionComplete(value p912PackagingSupportDecision) bool {
+	return strings.TrimSpace(value.Outcome) != "" &&
+		strings.TrimSpace(value.Trigger) != "" &&
+		strings.TrimSpace(value.ClaimImpact) != ""
+}
+
+func p912EvidenceIDsPresent(ids []string) bool {
+	return len(p711Compact(ids...)) > 0
+}
+
+func p912ClassificationEvidencePresent(rows []p912ClassificationStance) bool {
+	for _, row := range rows {
+		if !p912EvidenceIDsPresent(row.EvidenceIDs) {
+			return false
+		}
+	}
+	return len(rows) > 0
+}
+
+func p912UnsupportedAdminRequestCount(admin p912AdminThesis, counts map[string]int, addBlocker func(string)) int {
+	actual := len(p711Compact(admin.UnsupportedRequests...))
+	if admin.UnsupportedRequestCount != actual {
+		counts["admin_count_blockers"]++
+		addBlocker(fmt.Sprintf("unsupported_admin_request_count mismatch: thesis=%d actual=%d", admin.UnsupportedRequestCount, actual))
+	}
+	return actual
+}
+
+func p912CountPricingQuality(value string, counts map[string]int) {
+	switch p711SafeToken(value) {
+	case "validated", "paid_signal", "budget_owner_signal", "internal_platform_signal":
+		counts["pricing_signal_quality_validated"] = 1
+	default:
+		if strings.TrimSpace(value) != "" {
+			counts["pricing_signal_quality_hypothesis"] = 1
+		}
+	}
+}
+
+func p912EvaluateNorthStarStance(thesis p912PackagingSupportThesis, counts map[string]int, addBlocker func(string)) {
+	if thesis.ICP.PrimaryBuyer != "enterprise-saas" {
+		counts["contradiction_blockers"]++
+		addBlocker("ICP primary buyer must remain enterprise-saas unless a supported pivot is recorded")
+	}
+	if thesis.ICP.AdoptionWedge != "open-source" {
+		counts["contradiction_blockers"]++
+		addBlocker("ICP adoption wedge must remain open-source")
+	}
+	if !p912StringSetContains(thesis.ICP.Secondary, "tooling-vendor") || !p912StringSetContains(thesis.ICP.Secondary, "local-model") {
+		counts["contradiction_blockers"]++
+		addBlocker("ICP secondary lanes must include tooling-vendor and local-model")
+	}
+	for _, class := range []string{"finance", "healthcare", "public-sector"} {
+		if !p912StringSetContains(thesis.ICP.DeferredProofOnly, class) {
+			counts["contradiction_blockers"]++
+			addBlocker("regulated ICP row must be deferred/proof-only: " + class)
+		}
+	}
+}
+
+func p912EvaluateClassificationStances(rows []p912ClassificationStance, counts map[string]int, evidenceIDs *[]string, addBlocker func(string)) {
+	required := map[string]bool{}
+	for _, class := range p711Classifications() {
+		required[class] = true
+	}
+	seen := map[string]int{}
+	for _, row := range rows {
+		class := strings.TrimSpace(row.Classification)
+		if !required[class] {
+			counts["unsupported_classification_stances"]++
+			addBlocker("unsupported packaging classification stance: " + firstNonEmptyCLIString(class, "missing"))
+			continue
+		}
+		seen[class]++
+		if seen[class] > 1 {
+			counts["duplicate_classification_stances"]++
+			addBlocker("duplicate packaging classification stance: " + class)
+			continue
+		}
+		*evidenceIDs = append(*evidenceIDs, row.EvidenceIDs...)
+		if p912ClassificationStanceComplete(row) {
+			counts["classification_stances_covered"]++
+		} else {
+			addBlocker("packaging classification stance missing required fields: " + class)
+		}
+		if p912EvidenceIDsPresent(row.EvidenceIDs) {
+			counts["classification_stances_with_evidence"]++
+		} else {
+			addBlocker("packaging classification stance lacks evidence IDs: " + class)
+		}
+		if !p912ClassificationStanceAligned(row) {
+			counts["contradiction_blockers"]++
+			addBlocker("packaging classification stance contradicts north-star priority: " + class)
+		}
+	}
+	for class := range required {
+		if seen[class] == 0 {
+			counts["missing_classification_stances"]++
+			addBlocker("missing packaging classification stance: " + class)
+		}
+	}
+}
+
+func p912ClassificationStanceComplete(row p912ClassificationStance) bool {
+	return strings.TrimSpace(row.Classification) != "" &&
+		strings.TrimSpace(row.PackagingStance) != "" &&
+		strings.TrimSpace(row.MVPPackagingStance) != "" &&
+		strings.TrimSpace(row.FinalStateHypothesis) != "" &&
+		strings.TrimSpace(row.SupportAdminBoundary) != "" &&
+		strings.TrimSpace(row.GoNoGoEvidence) != ""
+}
+
+func p912ClassificationStanceAligned(row p912ClassificationStance) bool {
+	text := strings.ToLower(strings.Join([]string{row.PackagingStance, row.MVPPackagingStance, row.SupportAdminBoundary, row.GoNoGoEvidence}, " "))
+	switch row.Classification {
+	case "enterprise-saas":
+		return strings.Contains(text, "primary") && strings.Contains(text, "beachhead")
+	case "open-source":
+		return strings.Contains(text, "adoption") && strings.Contains(text, "wedge")
+	case "tooling-vendor", "local-model":
+		return strings.Contains(text, "secondary")
+	case "finance", "healthcare", "public-sector":
+		return strings.Contains(text, "proof-only") || strings.Contains(text, "proof only") || strings.Contains(text, "deferred")
+	default:
+		return false
+	}
+}
+
+func p912EvaluateLocalEvidenceExport(value p912LocalEvidenceExportThesis, counts map[string]int, addBlocker func(string)) {
+	text := strings.ToLower(value.Status + " " + value.PrivacyPosture)
+	if !strings.Contains(text, "local") || !strings.Contains(text, "metadata") {
+		counts["privacy_blockers"]++
+		addBlocker("local evidence export must be local and metadata-only")
+	}
+	for _, forbidden := range []string{"raw prompt", "raw_prompt", "raw file", "raw_file", "secret", "credential", "hosted telemetry"} {
+		if strings.Contains(text, forbidden) && !p99NegatesPattern(text, forbidden) {
+			counts["privacy_blockers"]++
+			addBlocker("local evidence export contains privacy-blocked posture: " + forbidden)
+			return
+		}
+	}
+}
+
+type p912ThesisPrivacyField struct {
+	path string
+	text string
+}
+
+func p912ScanThesisPrivacy(thesis p912PackagingSupportThesis, counts map[string]int, addBlocker func(string)) {
+	for _, field := range p912ThesisPrivacyFields(thesis) {
+		if marker := p912PrivacyMarker(field.text); marker != "" {
+			counts["privacy_blockers"]++
+			addBlocker("packaging/support thesis contains privacy-blocked field " + field.path + ": " + marker)
+		}
+	}
+}
+
+func p912ThesisPrivacyFields(thesis p912PackagingSupportThesis) []p912ThesisPrivacyField {
+	fields := []p912ThesisPrivacyField{
+		{path: "schema_version", text: thesis.SchemaVersion},
+		{path: "artifact_id", text: thesis.ArtifactID},
+		{path: "icp.primary_buyer", text: thesis.ICP.PrimaryBuyer},
+		{path: "icp.adoption_wedge", text: thesis.ICP.AdoptionWedge},
+		{path: "icp.buyer", text: thesis.ICP.Buyer},
+		{path: "icp.daily_user", text: thesis.ICP.DailyUser},
+		{path: "packaging.mvp", text: thesis.Packaging.MVP},
+		{path: "packaging.final_state", text: thesis.Packaging.FinalState},
+		{path: "pricing.hypothesis", text: thesis.Pricing.Hypothesis},
+		{path: "pricing.signal_quality", text: thesis.Pricing.SignalQuality},
+		{path: "support.boundary", text: thesis.Support.Boundary},
+		{path: "support.level", text: thesis.Support.Level},
+		{path: "local_evidence_export.status", text: thesis.LocalEvidenceExport.Status},
+		{path: "local_evidence_export.privacy_posture", text: thesis.LocalEvidenceExport.PrivacyPosture},
+		{path: "decision.outcome", text: thesis.Decision.Outcome},
+		{path: "decision.trigger", text: thesis.Decision.Trigger},
+		{path: "decision.claim_impact", text: thesis.Decision.ClaimImpact},
+	}
+	fields = append(fields, p912SlicePrivacyFields("icp.secondary", thesis.ICP.Secondary)...)
+	fields = append(fields, p912SlicePrivacyFields("icp.deferred_proof_only", thesis.ICP.DeferredProofOnly)...)
+	fields = append(fields, p912SlicePrivacyFields("icp.evidence_ids", thesis.ICP.EvidenceIDs)...)
+	fields = append(fields, p912SlicePrivacyFields("packaging.evidence_ids", thesis.Packaging.EvidenceIDs)...)
+	fields = append(fields, p912SlicePrivacyFields("pricing.evidence_ids", thesis.Pricing.EvidenceIDs)...)
+	fields = append(fields, p912SlicePrivacyFields("support.evidence_ids", thesis.Support.EvidenceIDs)...)
+	fields = append(fields, p912SlicePrivacyFields("admin.non_goals", thesis.Admin.NonGoals)...)
+	fields = append(fields, p912SlicePrivacyFields("admin.enterprise_surface_limits", thesis.Admin.EnterpriseSurfaceLimits)...)
+	fields = append(fields, p912SlicePrivacyFields("admin.unsupported_requests", thesis.Admin.UnsupportedRequests)...)
+	fields = append(fields, p912SlicePrivacyFields("admin.evidence_ids", thesis.Admin.EvidenceIDs)...)
+	fields = append(fields, p912SlicePrivacyFields("local_evidence_export.evidence_ids", thesis.LocalEvidenceExport.EvidenceIDs)...)
+	fields = append(fields, p912SlicePrivacyFields("decision.evidence_ids", thesis.Decision.EvidenceIDs)...)
+	for i, row := range thesis.ClassificationStance {
+		prefix := fmt.Sprintf("classification_stances[%d]", i)
+		fields = append(fields,
+			p912ThesisPrivacyField{path: prefix + ".classification", text: row.Classification},
+			p912ThesisPrivacyField{path: prefix + ".packaging_stance", text: row.PackagingStance},
+			p912ThesisPrivacyField{path: prefix + ".mvp_packaging_stance", text: row.MVPPackagingStance},
+			p912ThesisPrivacyField{path: prefix + ".final_state_hypothesis", text: row.FinalStateHypothesis},
+			p912ThesisPrivacyField{path: prefix + ".support_admin_boundary", text: row.SupportAdminBoundary},
+			p912ThesisPrivacyField{path: prefix + ".go_no_go_evidence", text: row.GoNoGoEvidence},
+		)
+		fields = append(fields, p912SlicePrivacyFields(prefix+".evidence_ids", row.EvidenceIDs)...)
+	}
+	return fields
+}
+
+func p912SlicePrivacyFields(path string, values []string) []p912ThesisPrivacyField {
+	fields := make([]p912ThesisPrivacyField, 0, len(values))
+	for i, value := range values {
+		fields = append(fields, p912ThesisPrivacyField{path: fmt.Sprintf("%s[%d]", path, i), text: value})
+	}
+	return fields
+}
+
+func p912PrivacyMarker(text string) string {
+	for _, assertion := range p99ClaimAssertions(text) {
+		if marker := p912PrivacyAssertionMarker(assertion); marker != "" {
+			return marker
+		}
+	}
+	return ""
+}
+
+func p912PrivacyAssertionMarker(assertion string) string {
+	if localOpsContainsAbsolutePath(assertion) {
+		return "private_path"
+	}
+	if p912ContainsSecretValue(assertion) {
+		return "secret_value"
+	}
+	lower := strings.ToLower(assertion)
+	for _, entry := range p912PrivacyPhrasePatterns() {
+		for _, pattern := range entry.patterns {
+			if strings.Contains(lower, pattern) && !p99NegatesPattern(lower, pattern) {
+				return entry.marker
+			}
+		}
+	}
+	if p912NamedCustomerIdentifier(assertion) {
+		return "customer_identifier"
+	}
+	return ""
+}
+
+func p912ContainsSecretValue(assertion string) bool {
+	if !localOpsSecretValuePattern.MatchString(assertion) {
+		return false
+	}
+	lower := strings.ToLower(assertion)
+	for _, pattern := range []string{"secret", "token", "credential", "password", "api key", "api_key"} {
+		if strings.Contains(lower, pattern) && !p99NegatesPattern(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+type p912PrivacyPattern struct {
+	marker   string
+	patterns []string
+}
+
+func p912PrivacyPhrasePatterns() []p912PrivacyPattern {
+	return []p912PrivacyPattern{
+		{marker: "raw_prompt", patterns: []string{"raw prompt", "raw_prompt", "prompt body", "prompt_body"}},
+		{marker: "raw_file_body", patterns: []string{"raw file body", "raw_file_body", "raw file", "raw_file", "file body", "file_body", "source body", "source_body"}},
+		{marker: "raw_task", patterns: []string{"raw task", "raw_task", "task body", "task_body", "raw capture", "raw_capture"}},
+		{marker: "private_path", patterns: []string{"private path", "private_path", "private paths", "private_paths", "telemetry path", "log path", "logs/telemetry/", "logs/conversations/", ".idiom/logs/", ".idiom/telemetry/"}},
+		{marker: "private_identifier", patterns: []string{"private repo", "private repository", "private workspace", "private project", "private customer"}},
+		{marker: "secret", patterns: []string{"secret", "secrets", "credential", "credentials", "api key", "api_key", "password", "token"}},
+		{marker: "customer_identifier", patterns: []string{"customer identifier", "customer_identifier", "customer name", "customer_name", "client identifier", "client_identifier", "private identifier", "private_identifier", "patient name", "patient_name", "account number", "account_number"}},
+		{marker: "hosted_telemetry", patterns: []string{"hosted telemetry", "hosted_telemetry"}},
+	}
+}
+
+var p912NamedCustomerIdentifierPattern = regexp.MustCompile(`\bCustomer[A-Z0-9][A-Za-z0-9_-]*\b|\bcustomer[_-]?[0-9]+[A-Za-z0-9_-]*\b|\b[A-Z][A-Za-z0-9_-]*Customer[A-Za-z0-9_-]*\b`)
+
+func p912NamedCustomerIdentifier(text string) bool {
+	return p912NamedCustomerIdentifierPattern.MatchString(text)
+}
+
+func p912EvaluatePriorGateEvidence(p97 p97ValidationGateResult, p98 p98IntegrationGateResult, p99 p711ReleaseGateLinkage, p910 p711ReleaseGateLinkage, p911 p711ReleaseGateLinkage, counts map[string]int, addBlocker func(string)) {
+	for _, gate := range []p711ReleaseGateLinkage{
+		{Gate: "P9.7", Status: p97.Status, Evidence: p97.Evidence},
+		{Gate: "P9.8", Status: p98.Status, Evidence: p98.Evidence},
+		p99,
+		p910,
+		p911,
+	} {
+		if gate.Status == "evidence_present" {
+			counts["prior_gate_evidence_present"]++
+			continue
+		}
+		addBlocker(gate.Gate + " evidence incomplete for P9.12 packaging/support decision: " + firstNonEmptyCLIString(gate.Status, "missing"))
+	}
+}
+
+func p912EvaluateDecision(decision p912PackagingSupportDecision, p97 p97ValidationGateResult, p98 p98IntegrationGateResult, p99 p711ReleaseGateLinkage, p910 p711ReleaseGateLinkage, p911 p711ReleaseGateLinkage, counts map[string]int, addBlocker func(string)) {
+	outcome := p711SafeToken(decision.Outcome)
+	switch outcome {
+	case "continue":
+		counts["decision_continue"] = 1
+	case "pivot":
+		counts["decision_pivot"] = 1
+	case "no_go", "nogo":
+		counts["decision_no_go"] = 1
+	default:
+		addBlocker("P9.12 decision outcome must be continue, pivot, or no_go")
+		return
+	}
+	if outcome == "pivot" && !p912DecisionEvidenceMentions(decision, "pivot") {
+		addBlocker("P9.12 pivot decision must name pivot evidence and failed assumption")
+	}
+	if (outcome == "no_go" || outcome == "nogo") && !p912DecisionEvidenceMentions(decision, "no-go") && !p912DecisionEvidenceMentions(decision, "no_go") {
+		addBlocker("P9.12 no-go decision must name no-go evidence")
+	}
+	if outcome == "continue" {
+		for _, status := range []string{p97.Status, p98.Status, p99.Status, p910.Status, p911.Status} {
+			if status != "evidence_present" {
+				addBlocker("P9.12 continue decision is unsupported by prior gate evidence")
+				return
+			}
+		}
+	}
+}
+
+func p912DecisionEvidenceMentions(decision p912PackagingSupportDecision, token string) bool {
+	text := strings.ToLower(decision.Trigger + " " + decision.ClaimImpact + " " + strings.Join(decision.EvidenceIDs, " "))
+	return strings.Contains(text, token)
+}
+
+func p912ScanThesisClaims(thesis p912PackagingSupportThesis, counts map[string]int, addBlocker func(string)) {
+	texts := []string{
+		thesis.ICP.PrimaryBuyer, thesis.ICP.AdoptionWedge, thesis.ICP.Buyer, thesis.ICP.DailyUser,
+		thesis.Packaging.MVP, thesis.Packaging.FinalState,
+		thesis.Pricing.Hypothesis, thesis.Pricing.SignalQuality,
+		thesis.Support.Boundary, thesis.Support.Level,
+		strings.Join(thesis.Admin.NonGoals, " "),
+		strings.Join(thesis.Admin.EnterpriseSurfaceLimits, " "),
+		strings.Join(thesis.Admin.UnsupportedRequests, " "),
+		thesis.LocalEvidenceExport.Status, thesis.LocalEvidenceExport.PrivacyPosture,
+		thesis.Decision.Outcome, thesis.Decision.Trigger, thesis.Decision.ClaimImpact,
+	}
+	for _, row := range thesis.ClassificationStance {
+		texts = append(texts, row.PackagingStance, row.MVPPackagingStance, row.FinalStateHypothesis, row.SupportAdminBoundary, row.GoNoGoEvidence)
+	}
+	for _, text := range texts {
+		if overclaim := p99ComplianceOverclaim(text); overclaim != "" {
+			counts["overclaim_blockers"]++
+			addBlocker("packaging/support thesis contains regulated/compliance overclaim language: " + overclaim)
+		}
+		if overclaim := p912CommercialOverclaim(text); overclaim != "" {
+			counts["overclaim_blockers"]++
+			addBlocker("packaging/support thesis contains unsupported commercial/admin overclaim language: " + overclaim)
+		}
+	}
+}
+
+func p912CommercialOverclaim(text string) string {
+	patterns := []string{
+		"final-state enterprise support",
+		"final state enterprise support",
+		"enterprise support ready",
+		"support readiness",
+		"admin readiness",
+		"admin ready",
+		"production release ready",
+		"production release readiness",
+		"release readiness",
+		"paid demand proven",
+		"paid demand validated",
+		"paid demand ready",
+		"procurement ready",
+		"24/7 sla",
+		"dedicated support engineer",
+		"regulated readiness",
+	}
+	for _, assertion := range p99ClaimAssertions(text) {
+		lower := strings.ToLower(assertion)
+		for _, pattern := range patterns {
+			if strings.Contains(lower, pattern) && !p99NegatesPattern(lower, pattern) {
+				return pattern
+			}
+		}
+	}
+	return ""
+}
+
+func p912EvidenceSummary(counts map[string]int, outcome string) string {
+	return fmt.Sprintf(
+		"outcome:%s required_fields:%d/%d class_stances:%d/%d pricing_hypothesis:%d unsupported_admin_requests:%d blockers:%d",
+		p711SafeToken(outcome),
+		counts["required_fields_present"],
+		counts["required_fields"],
+		counts["classification_stances_covered"],
+		counts["classification_stances_required"],
+		counts["pricing_signal_quality_hypothesis"],
+		counts["unsupported_admin_request_count"],
+		counts["blockers"],
+	)
+}
+
+func p912StringSetContains(values []string, want string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) p711ReleaseGateLinkage {

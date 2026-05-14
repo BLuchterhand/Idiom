@@ -1438,6 +1438,307 @@ func TestP97ProductEvidenceSufficientPrimaryICPRecordsCanPass(t *testing.T) {
 	}
 }
 
+func TestP912ProductEvidenceCurrentValidThesisStatusAndCounts(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	recordsPath := writeP711ValidationRecords(t, root)
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:       root,
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+		BenchmarkReport:   benchmarkPath,
+	})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.12")
+	if gate.Status != "evidence_present" {
+		t.Fatalf("complete P0.11 thesis plus prior gate evidence should satisfy P9.12: %#v", gate)
+	}
+	for _, key := range []string{
+		"required_fields",
+		"required_fields_present",
+		"required_fields_with_evidence_ids",
+		"classification_stances_required",
+		"classification_stances_covered",
+		"classification_stances_with_evidence",
+		"packaging_support_complete",
+		"pricing_signal_quality_hypothesis",
+		"unsupported_admin_request_count",
+		"decision_evidence_ids",
+		"decision_continue",
+		"prior_gate_evidence_present",
+		"blockers",
+	} {
+		if _, ok := gate.Counts[key]; !ok {
+			t.Fatalf("P9.12 count %q missing: %#v", key, gate.Counts)
+		}
+	}
+	if gate.Counts["required_fields_present"] != gate.Counts["required_fields"] ||
+		gate.Counts["classification_stances_covered"] != 7 ||
+		gate.Counts["classification_stances_with_evidence"] != 7 ||
+		gate.Counts["unsupported_admin_request_count"] != 7 ||
+		gate.Counts["privacy_blockers"] != 0 ||
+		gate.Counts["admin_count_blockers"] != 0 ||
+		gate.Counts["decision_continue"] != 1 ||
+		gate.Counts["prior_gate_evidence_present"] != 5 ||
+		gate.Counts["blockers"] != 0 {
+		t.Fatalf("unexpected P9.12 counts: %#v", gate.Counts)
+	}
+	for _, id := range []string{"p0.11-packaging-support-thesis", "p0.11-icp", "p7.11-product-evidence-export", "p0.11-class-enterprise-saas"} {
+		if !stringSliceContains(gate.EvidenceIDs, id) {
+			t.Fatalf("P9.12 evidence IDs missing %q: %#v", id, gate.EvidenceIDs)
+		}
+	}
+}
+
+func TestP912ProductEvidenceMissingRequiredFieldFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	p912MutateThesis(t, root, func(thesis map[string]any) {
+		delete(thesis, "pricing")
+	})
+	gate := p912ProductGateForCompleteEvidence(t, root)
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "required packaging/support field missing or empty: pricing") {
+		t.Fatalf("missing P9.12 required field must fail closed: %#v", gate)
+	}
+}
+
+func TestP912ProductEvidenceBlankStructuredFieldFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	p912MutateThesis(t, root, func(thesis map[string]any) {
+		support := thesis["support"].(map[string]any)
+		support["boundary"] = " "
+	})
+	gate := p912ProductGateForCompleteEvidence(t, root)
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "required packaging/support field missing or empty: support") {
+		t.Fatalf("blank P9.12 structured field must fail closed: %#v", gate)
+	}
+}
+
+func TestP912ProductEvidenceSupportAdminAndCommercialOverclaimsFailClosed(t *testing.T) {
+	cases := []struct {
+		name        string
+		mutate      func(map[string]any)
+		wantBlocker string
+	}{
+		{
+			name: "admin_readiness",
+			mutate: func(thesis map[string]any) {
+				admin := thesis["admin"].(map[string]any)
+				admin["enterprise_surface_limits"] = []any{"Admin readiness is complete for billing and SSO."}
+			},
+			wantBlocker: "unsupported commercial/admin overclaim",
+		},
+		{
+			name: "final_state_support",
+			mutate: func(thesis map[string]any) {
+				packaging := thesis["packaging"].(map[string]any)
+				packaging["final_state"] = "Final-state enterprise support is available now."
+			},
+			wantBlocker: "unsupported commercial/admin overclaim",
+		},
+		{
+			name: "paid_demand",
+			mutate: func(thesis map[string]any) {
+				pricing := thesis["pricing"].(map[string]any)
+				pricing["hypothesis"] = "Paid demand proven by open-source activation."
+			},
+			wantBlocker: "unsupported commercial/admin overclaim",
+		},
+		{
+			name: "release_readiness",
+			mutate: func(thesis map[string]any) {
+				decision := thesis["decision"].(map[string]any)
+				decision["claim_impact"] = "Production release readiness is proven."
+			},
+			wantBlocker: "unsupported commercial/admin overclaim",
+		},
+		{
+			name: "compliance",
+			mutate: func(thesis map[string]any) {
+				rows := thesis["classification_stances"].([]any)
+				row := rows[0].(map[string]any)
+				row["support_admin_boundary"] = "HIPAA compliance is included."
+			},
+			wantBlocker: "regulated/compliance overclaim",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			p912MutateThesis(t, root, tc.mutate)
+			gate := p912ProductGateForCompleteEvidence(t, root)
+			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
+				t.Fatalf("P9.12 overclaim %s must fail closed: %#v", tc.name, gate)
+			}
+		})
+	}
+}
+
+func TestP912ProductEvidenceFullThesisPrivacyMarkersFailClosed(t *testing.T) {
+	cases := []struct {
+		name        string
+		mutate      func(map[string]any)
+		wantBlocker string
+	}{
+		{
+			name: "support_boundary_private_path",
+			mutate: func(thesis map[string]any) {
+				support := thesis["support"].(map[string]any)
+				support["boundary"] = "Support requires reproducer notes from /Users/ben/Documents/GitHub/CustomerX-private-repo."
+			},
+			wantBlocker: "support.boundary: private_path",
+		},
+		{
+			name: "pricing_hypothesis_secret",
+			mutate: func(thesis map[string]any) {
+				pricing := thesis["pricing"].(map[string]any)
+				pricing["hypothesis"] = "Design-partner pilot captured secret token=abc123 in pricing notes."
+			},
+			wantBlocker: "pricing.hypothesis: secret_value",
+		},
+		{
+			name: "classification_stance_raw_task",
+			mutate: func(thesis map[string]any) {
+				rows := thesis["classification_stances"].([]any)
+				row := rows[1].(map[string]any)
+				row["go_no_go_evidence"] = "GO because raw task capture from CustomerX was reviewed."
+			},
+			wantBlocker: "classification_stances[1].go_no_go_evidence: raw_task",
+		},
+		{
+			name: "classification_stance_customer_identifier",
+			mutate: func(thesis map[string]any) {
+				rows := thesis["classification_stances"].([]any)
+				row := rows[2].(map[string]any)
+				row["support_admin_boundary"] = "Integration triage includes CustomerX-specific repository notes."
+			},
+			wantBlocker: "classification_stances[2].support_admin_boundary: customer_identifier",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			p912MutateThesis(t, root, tc.mutate)
+			gate := p912ProductGateForCompleteEvidence(t, root)
+			if gate.Status != "needs_evidence" ||
+				gate.Counts["privacy_blockers"] == 0 ||
+				!p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
+				t.Fatalf("P9.12 privacy marker %s must fail closed: %#v", tc.name, gate)
+			}
+		})
+	}
+}
+
+func TestP912ProductEvidenceUnsupportedAdminCountMismatchFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	p912MutateThesis(t, root, func(thesis map[string]any) {
+		admin := thesis["admin"].(map[string]any)
+		admin["unsupported_request_count"] = 99
+	})
+	gate := p912ProductGateForCompleteEvidence(t, root)
+	if gate.Status != "needs_evidence" ||
+		gate.Counts["unsupported_admin_request_count"] != 7 ||
+		gate.Counts["admin_count_blockers"] != 1 ||
+		!p711TestBlockerContains(gate.Blockers, "unsupported_admin_request_count mismatch: thesis=99 actual=7") {
+		t.Fatalf("P9.12 unsupported-admin mismatch must fail closed with list-derived count: %#v", gate)
+	}
+}
+
+func TestP912ProductEvidenceDecisionMissingOrUnsupportedFailsClosed(t *testing.T) {
+	cases := []struct {
+		name        string
+		mutate      func(map[string]any)
+		wantBlocker string
+	}{
+		{
+			name: "missing_decision",
+			mutate: func(thesis map[string]any) {
+				delete(thesis, "decision")
+			},
+			wantBlocker: "required packaging/support field missing or empty: decision",
+		},
+		{
+			name: "unsupported_outcome",
+			mutate: func(thesis map[string]any) {
+				decision := thesis["decision"].(map[string]any)
+				decision["outcome"] = "maybe"
+			},
+			wantBlocker: "decision outcome must be continue, pivot, or no_go",
+		},
+		{
+			name: "unsupported_continue",
+			mutate: func(thesis map[string]any) {
+				decision := thesis["decision"].(map[string]any)
+				decision["outcome"] = "continue"
+			},
+			wantBlocker: "continue decision is unsupported by prior gate evidence",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			p912MutateThesis(t, root, tc.mutate)
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.12")
+			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
+				t.Fatalf("P9.12 decision case %s must fail closed: %#v", tc.name, gate)
+			}
+		})
+	}
+}
+
+func TestP912ProductEvidenceRequiresAllSevenClassificationStances(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	p912MutateThesis(t, root, func(thesis map[string]any) {
+		rows := thesis["classification_stances"].([]any)
+		thesis["classification_stances"] = rows[:len(rows)-1]
+	})
+	gate := p912ProductGateForCompleteEvidence(t, root)
+	if gate.Status != "needs_evidence" ||
+		gate.Counts["classification_stances_covered"] != 6 ||
+		!p711TestBlockerContains(gate.Blockers, "missing packaging classification stance:") {
+		t.Fatalf("P9.12 must require all seven classification stances: %#v", gate)
+	}
+}
+
+func TestP912ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	recordsPath := writeP711ValidationRecords(t, root)
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
+
+	product := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:       root,
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+		BenchmarkReport:   benchmarkPath,
+	})
+	release := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:       root,
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+		BenchmarkReport:   benchmarkPath,
+	})
+	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.12")
+	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.12")
+	if productGate.Status != releaseGate.Status ||
+		productGate.ClaimImpact != releaseGate.ClaimImpact ||
+		!reflect.DeepEqual(productGate.Counts, releaseGate.Counts) ||
+		!reflect.DeepEqual(productGate.Blockers, releaseGate.Blockers) ||
+		!reflect.DeepEqual(productGate.EvidenceIDs, releaseGate.EvidenceIDs) {
+		t.Fatalf("product/release P9.12 structured gate data should agree: product=%#v release=%#v", productGate, releaseGate)
+	}
+}
+
 func TestP718TopLevelStatusReflectsMissingSignals(t *testing.T) {
 	root := t.TempDir()
 	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
@@ -2260,6 +2561,7 @@ func stageP711ProductEvidenceFixtures(t *testing.T, root string) {
 		transcripts = append(transcripts, p911TranscriptFixture(class, commandID))
 	}
 	stageP99PostureGateFixtures(t, root, securityRows)
+	writeP912PackagingSupportThesis(t, root, "continue")
 	writeP711JSON(t, filepath.Join(root, "testdata", "sidecar", "client-demo-transcripts.json"), map[string]any{
 		"schema_version": "idiom.client_demo_transcripts.v1",
 		"name":           "p7.10-client-demo-transcripts",
@@ -2352,6 +2654,111 @@ func stageP99PostureGateFixtures(t *testing.T, root string, securityRows []map[s
 	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.8.md"), "# P9.8 Release Gate\n\nDecision: GO\n")
 	writeP711Text(t, filepath.Join(root, "docs", "release-decision-p9.2.md"), "# P9.2 Release Decision\n\nDecision: GO\n")
 	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.9.md"), "# P9.9 Security Privacy Gate\n\nReviewer signoff: GO\n\nThreat model\nData-flow\nPrivacy\nControl mapping\n\n## Reproduction Commands\n")
+}
+
+func writeP912PackagingSupportThesis(t *testing.T, root string, outcome string) {
+	t.Helper()
+	classRows := []map[string]any{
+		p912ClassThesisRow("enterprise-saas", "primary paid beachhead", "Primary paid beachhead local CLI sidecar package for platform teams.", "Final-state platform package can add policy and evidence management after proof.", "Limited async platform-team support; no SSO, fleet policy, billing admin, hosted dashboard, or managed deployment.", "GO only with P9.7 buyer signal, P9.8 integration, P9.11 demos, and P9.12 decision evidence."),
+		p912ClassThesisRow("open-source", "adoption wedge", "Adoption wedge and proof pool with quickstart, fixture, local install, cleanup docs, and export examples.", "Community package can remain low-friction while feeding docs, demos, and retained-use evidence.", "No paid-enterprise demand credit unless a record independently satisfies primary ICP criteria.", "GO for activation, docs, and demo proof; NO-GO as paid proof without enterprise-SaaS buyer evidence."),
+		p912ClassThesisRow("tooling-vendor", "secondary integration path", "Secondary integration path with schema/profile docs, CLI transcript, no-strategy-leakage examples, and MCP parity.", "Partner package can add conformance tests and compatibility guarantees after substrate proof.", "Integration-question triage only; no custom embedding or vendor roadmap commitment.", "GO as pivot or expansion only with vendor sponsor signal and parity evidence."),
+		p912ClassThesisRow("local-model", "secondary enabling segment", "Secondary enabling segment with readiness docs, local smoke fixture, capacity evidence, and no-hosted-telemetry proof.", "Local-operations package can add backend readiness and offline-friendly evidence management.", "Support covers harness readiness, not model tuning as a service.", "GO when P6/P9 readiness and activation evidence are strong."),
+		p912ClassThesisRow("finance", "deferred proof-only row", "Deferred proof-only row with local evidence, protected-path posture, audit controls, and finance demo limitations.", "Regulated package can add control mapping and customer-owned review after controls pass.", "No formal attestation, no regulated sales claim, and no compliance claim in MVP.", "GO for proof-only demos with controls; NO-GO for sales claims before P9.9 evidence."),
+		p912ClassThesisRow("healthcare", "deferred proof-only row", "Deferred proof-only row with local/privacy posture and healthcare demo limitations.", "Regulated package can add retention, redaction, and customer-owned review after controls pass.", "No e-PHI handling, no raw prompts, no raw file bodies, and no HIPAA claim.", "GO for non-sensitive proof; NO-GO if value requires hosted telemetry or formal compliance before controls."),
+		p912ClassThesisRow("public-sector", "deferred proof-only row", "Deferred proof-only row with offline-friendly commands, reproducible evidence, checksums, and policy-limit demos.", "Self-hosted package can add supply-chain artifacts and admin policy after proof.", "No FedRAMP claim, no air-gapped support, and no procurement package in MVP.", "GO for executable local proof; NO-GO if adoption requires certification, fleet admin, or managed support before substrate proof."),
+	}
+	decisionTrigger := "continue evidence IDs show P0.11 and P9.7 through P9.11 evidence can support bounded packaging."
+	claimImpact := "Continue evidence gathering for primary enterprise-SaaS packaging; paid claims are limited to P9.7 evidence and no production release claim is made."
+	if outcome == "pivot" {
+		decisionTrigger = "pivot trigger: primary enterprise-SaaS budget ownership failed while secondary sidecar evidence remained strong."
+		claimImpact = "Pivot decision limits claims to the named sidecar subset and does not claim primary enterprise-SaaS paid demand."
+	}
+	if outcome == "no_go" {
+		decisionTrigger = "no-go trigger: prior gates are incomplete for commercial packaging."
+		claimImpact = "No-go decision blocks commercial and production claims until the missing gate evidence is supplied."
+	}
+	writeP711JSON(t, filepath.Join(root, "docs", "packaging-support-thesis.json"), map[string]any{
+		"schema_version": "idiom.packaging_support_thesis.v1",
+		"artifact_id":    "p0.11-packaging-support-thesis",
+		"icp": map[string]any{
+			"primary_buyer":       "enterprise-saas",
+			"adoption_wedge":      "open-source",
+			"secondary":           []string{"tooling-vendor", "local-model"},
+			"deferred_proof_only": []string{"finance", "healthcare", "public-sector"},
+			"buyer":               "platform, DevEx, DevSecOps, or AI-enablement owner",
+			"daily_user":          "developer or reviewer using several coding agents on merge-facing repo work",
+			"evidence_ids":        []string{"p0.7-icp", "p0.11-icp"},
+		},
+		"packaging": map[string]any{
+			"mvp":          "Local CLI sidecar, fixture/demo pack, CI/script output, product-evidence export, install/cleanup docs, and limited platform-team support.",
+			"final_state":  "Enterprise platform package may add policy-as-code, evidence management, procurement artifacts, and support tiers after local substrate proof.",
+			"evidence_ids": []string{"p0.11-mvp-packaging", "p7.11-local-product-evidence-export"},
+		},
+		"pricing": map[string]any{
+			"hypothesis":     "Unquoted design-partner or internal-platform pilot tied to repo/team/caller evidence value, not token resale or chat seats.",
+			"signal_quality": "hypothesis",
+			"evidence_ids":   []string{"p0.11-pricing-hypothesis", "p9.7-demand-gate"},
+		},
+		"support": map[string]any{
+			"boundary":     "Limited async support for installation blockers, reproducible activation failures, docs gaps, privacy-safe export issues, and sidecar integration questions.",
+			"level":        "limited_async_design_partner",
+			"evidence_ids": []string{"p0.11-support-boundary"},
+		},
+		"admin": map[string]any{
+			"non_goals":                 []string{"sso", "rbac", "billing_admin", "fleet_rollout", "hosted_dashboard", "managed_deployment", "formal_compliance_attestation"},
+			"enterprise_surface_limits": []string{"repo_local_configuration", "environment_variables", "profile_files", "redaction_retention_settings", "machine_readable_output"},
+			"unsupported_requests":      []string{"24x7_sla", "dedicated_support_engineer", "custom_compliance_attestation", "managed_deployment", "bespoke_feature_development", "fleet_policy_console", "hosted_admin_dashboard"},
+			"unsupported_request_count": 7,
+			"evidence_ids":              []string{"p0.11-admin-non-goals"},
+		},
+		"local_evidence_export": map[string]any{
+			"status":          "required local metadata-only artifact with IDs, hashes, counts, blockers, classifications, and gate links.",
+			"privacy_posture": "metadata-only local export; no raw prompt, raw file body, secret, credential, private path, customer identifier, or hosted telemetry requirement.",
+			"evidence_ids":    []string{"p7.11-product-evidence-export", "p9.12-local-export-link"},
+		},
+		"classification_stances": classRows,
+		"decision": map[string]any{
+			"outcome":      outcome,
+			"trigger":      decisionTrigger,
+			"claim_impact": claimImpact,
+			"evidence_ids": []string{"p0.11-packaging-support-thesis", "p9.7-demand-gate", "p9.8-integration-gate", "p9.9-security-privacy-gate", "p9.10-competitive-gate", "p9.11-demo-gate"},
+		},
+	})
+}
+
+func p912ClassThesisRow(class string, stance string, mvp string, finalState string, boundary string, goNoGo string) map[string]any {
+	return map[string]any{
+		"classification":         class,
+		"packaging_stance":       stance,
+		"mvp_packaging_stance":   mvp,
+		"final_state_hypothesis": finalState,
+		"support_admin_boundary": boundary,
+		"go_no_go_evidence":      goNoGo,
+		"evidence_ids":           []string{"p0.11-class-" + class, "p7.10-" + class},
+	}
+}
+
+func p912MutateThesis(t *testing.T, root string, mutate func(map[string]any)) {
+	t.Helper()
+	path := filepath.Join(root, "docs", "packaging-support-thesis.json")
+	var thesis map[string]any
+	p711ReadTestJSON(t, path, &thesis)
+	mutate(thesis)
+	writeP711JSON(t, path, thesis)
+}
+
+func p912ProductGateForCompleteEvidence(t *testing.T, root string) p711ReleaseGateLinkage {
+	t.Helper()
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	recordsPath := writeP711ValidationRecords(t, root)
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:       root,
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+		BenchmarkReport:   benchmarkPath,
+	})
+	return p711TestReleaseGate(report.ReleaseGateLinkage, "P9.12")
 }
 
 func p99PlanFixtureText(includeUnreachableMethod bool) string {

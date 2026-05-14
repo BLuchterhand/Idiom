@@ -778,6 +778,9 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 		if gate.Gate == "P9.11" && gate.Status != "evidence_present" {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.11 client demo transcript evidence incomplete", Evidence: gate.Status})
 		}
+		if gate.Gate == "P9.12" && gate.Status != "evidence_present" {
+			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.12 packaging/support decision evidence incomplete", Evidence: gate.Status})
+		}
 	}
 	return releaseEvidenceCompactBlockers(blockers)
 }
@@ -1132,9 +1135,7 @@ func releaseGateLinkageFromProduct(rows []p711ReleaseGateLinkage, clients []rele
 			foundP96 = true
 		}
 		if row.Gate == "P9.12" {
-			row.Status = p912Status
-			row.Evidence = "downgraded client readiness rows and limitations"
-			row.ClaimImpact = "packaging/support thesis must cite downgraded classification statuses"
+			row = releaseP912GateLinkage(row, p912Status)
 			foundP912 = true
 		}
 		out = append(out, row)
@@ -1156,6 +1157,26 @@ func releaseGateLinkageFromProduct(rows []p711ReleaseGateLinkage, clients []rele
 		}, activation))
 	}
 	return out
+}
+
+func releaseP912GateLinkage(row p711ReleaseGateLinkage, releaseStatus string) p711ReleaseGateLinkage {
+	if row.Counts == nil {
+		row.Counts = map[string]int{}
+	}
+	if row.Status != "evidence_present" {
+		row.Counts["blockers"] = len(row.Blockers)
+		return row
+	}
+	if releaseStatus == "evidence_present" {
+		return row
+	}
+	row.Status = "needs_evidence"
+	row.Evidence = strings.TrimSpace(row.Evidence + "; downgraded client readiness rows and limitations")
+	row.ClaimImpact = "packaging/support thesis must cite downgraded classification statuses before release claims"
+	row.Blockers = p711Compact(append(row.Blockers, "release client readiness or P9.11 evidence incomplete")...)
+	row.Counts["release_client_readiness_blockers"]++
+	row.Counts["blockers"] = len(row.Blockers)
+	return row
 }
 
 func releaseP96GateLinkage(row p711ReleaseGateLinkage, activation releaseEvidenceActivationSection) p711ReleaseGateLinkage {
