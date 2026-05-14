@@ -97,7 +97,7 @@ func TestLocalOpsBenchmarkRedactsReplayPathFromErrorsAndTelemetry(t *testing.T) 
 	t.Chdir(root)
 	stageDoctorConfigWithBudget(t, root, 16384, 1024)
 	stageDoctorBackends(t, root)
-	replayPath := "/tmp/AcmeCustomer-secret-session.jsonl"
+	replayPath := filepath.Join(root, "AcmeCustomer-secret-session.jsonl")
 	telemetryDir := t.TempDir()
 	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
 
@@ -131,7 +131,7 @@ func TestLocalOpsBenchmarkRedactsReplayPathFromErrorsAndTelemetry(t *testing.T) 
 		filepath.Base(replayPath),
 		"AcmeCustomer",
 		"secret-session",
-		"open /tmp",
+		"open " + root,
 	} {
 		if strings.Contains(combined, forbidden) {
 			t.Fatalf("local-ops replay output leaked %q in %s", forbidden, combined)

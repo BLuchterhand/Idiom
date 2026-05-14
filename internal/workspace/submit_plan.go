@@ -179,6 +179,9 @@ func validatePlanEdit(edit PlanEdit) error {
 	if !hasSubstring && !hasRange && !hasReplace {
 		return fmt.Errorf("requires one edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref")
 	}
+	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
+		return fmt.Errorf("old_text and new_text are identical; submit only real edits, or close as source-satisfied/pass when no correction is needed")
+	}
 	return nil
 }
 
@@ -330,6 +333,8 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 			if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
 				return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 			}
+		} else {
+			return fmt.Errorf("edit would not change %s; submit only real edits, or close as source-satisfied/pass when no correction is needed", edit.Path)
 		}
 		return nil
 	}
@@ -358,6 +363,8 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 		if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
 			return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 		}
+	} else {
+		return fmt.Errorf("edit would not change %s; submit only real edits, or close as source-satisfied/pass when no correction is needed", edit.Path)
 	}
 	return nil
 }

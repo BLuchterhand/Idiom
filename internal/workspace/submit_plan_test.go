@@ -898,6 +898,22 @@ func TestLoadPlanArtifactAcceptsLegacyV1AndSynthesizesDurableFields(t *testing.T
 	}
 }
 
+func TestLoadPlanArtifactRejectsNoOpLegacyEdit(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "noop.plan.json")
+	body := []byte(`{"schema_version":"idiom.plan.v1","rationale":"legacy prose rationale","edits":[{"path":"a.txt","old_text":"a","new_text":"a"}]}`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("seed legacy artifact: %v", err)
+	}
+	_, err := LoadPlanArtifact(path)
+	if err == nil {
+		t.Fatalf("expected no-op legacy artifact to be rejected")
+	}
+	if !strings.Contains(err.Error(), "old_text and new_text are identical") {
+		t.Fatalf("expected no-op validation error, got %v", err)
+	}
+}
+
 func TestPlanArtifactClientClassificationExamplesCoverApprovedClasses(t *testing.T) {
 	for _, class := range approvedPlanArtifactClientClasses() {
 		artifact := normalizePlanArtifactForSubmit(PlanArtifact{
@@ -1056,6 +1072,48 @@ func TestSubmitPlanAcceptsSubstringDeletion(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); err != nil {
 		t.Fatalf("submit_plan should write an artifact for valid deletion edit: %v", err)
+	}
+}
+
+func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "keep\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "x.txt", OldText: "keep\n", NewText: "keep\n", Purpose: "no-op repair"},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("no-op substring edit should be rejected")
+	}
+	for _, want := range []string{"old_text and new_text are identical", "source-satisfied/pass"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("no-op rejection should include %q, got %q", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRejectsNoOpRangeEditBeforeWritingArtifact(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "keep\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "x.txt", StartLine: 1, EndLine: 1, Content: "keep\n", Purpose: "no-op repair"},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("no-op range edit should be rejected")
+	}
+	if !strings.Contains(result.Error, "edit would not change x.txt") {
+		t.Fatalf("no-op range rejection should name unchanged edit, got %q", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
 	}
 }
 
