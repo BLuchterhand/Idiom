@@ -222,6 +222,64 @@ func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainAutoExactPlanInfersUnlabeledMultiFileAndNewFile(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\nomega\n"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("ticks row\nfooter\n"), 0o644); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	prompt := "## Files To Modify\n\n" +
+		"| File | Change |\n" +
+		"|---|---|\n" +
+		"| `a.txt` | Update first existing file. |\n" +
+		"| `b.txt` | Update second existing file. |\n" +
+		"| `c.json` | New file target. Add generated fixture. |\n\n" +
+		"## Required Edits\n\n" +
+		"1. Add the first update.\n\n" +
+		"old_text:\n\n```text\nalpha\n```\n\n" +
+		"new_text:\n\n```text\nalpha\nseed\n```\n\n" +
+		"2. Add the second update.\n\n" +
+		"old_text:\n\n```text\nticks row\n```\n\n" +
+		"new_text:\n\n```text\nticks row\nlast result\n```\n\n" +
+		"3. Create new file `c.json`.\n\n" +
+		"replace_all: true\n\n" +
+		"```text\n{\"ok\": true}\n```\n"
+	var stdout, stderr bytes.Buffer
+	modelCalled := false
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			modelCalled = true
+			return "", fmt.Errorf("planner model should not be called for inferable exact-anchor packets")
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("auto exact plan should infer multi-file paths and new-file body, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if modelCalled {
+		t.Fatal("planner model was called despite inferable exact-anchor packet")
+	}
+	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "alpha\nseed\nomega\n" {
+		t.Fatalf("a.txt = %q", got)
+	}
+	if got := readFileString(t, filepath.Join(root, "b.txt")); got != "ticks row\nlast result\nfooter\n" {
+		t.Fatalf("b.txt = %q", got)
+	}
+	if got := readFileString(t, filepath.Join(root, "c.json")); got != "{\"ok\": true}" {
+		t.Fatalf("c.json = %q", got)
+	}
+	if !strings.Contains(stdout.String(), "auto_exact_plan_submitted") {
+		t.Fatalf("auto exact plan event missing from stdout=%s", stdout.String())
+	}
+}
+
 func TestRunPlanExecuteMainRequiredEditPathFlagEnablesAutoExactPlan(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)

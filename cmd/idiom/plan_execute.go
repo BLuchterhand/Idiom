@@ -466,7 +466,7 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 }
 
 func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) (bool, workspace.ToolResult, string, int) {
-	edits, reason := planExecuteExactPlanEdits(prompt, requiredEditPaths)
+	edits, reason := planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, cfg.Workspace.Root)
 	if len(edits) == 0 {
 		return false, workspace.ToolResult{}, reason, 0
 	}
@@ -483,6 +483,10 @@ func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditP
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
+	return planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, "")
+}
+
+func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
 	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	if len(required) == 0 {
 		return nil, "no required_edit_paths"
@@ -541,6 +545,9 @@ func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]wor
 				if len(paths) == 0 && len(required) == 1 {
 					paths = required
 				}
+				if len(paths) == 0 {
+					paths = planExecuteInferPathsForOldText(workspaceRoot, required, pending.text)
+				}
 				for _, path := range paths {
 					path = strings.TrimSpace(path)
 					if path == "" || strings.TrimSpace(pending.text) == "" {
@@ -554,6 +561,24 @@ func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]wor
 					})
 				}
 				pending = pendingOldBlock{}
+			case "replace_all":
+				paths := blockPaths
+				if len(paths) == 0 && len(required) == 1 {
+					paths = required
+				}
+				for _, path := range paths {
+					path = strings.TrimSpace(path)
+					if path == "" || strings.TrimSpace(block) == "" {
+						continue
+					}
+					edits = append(edits, workspace.PlanEdit{
+						Path:       path,
+						OldText:    "",
+						NewText:    block,
+						ReplaceAll: true,
+						Purpose:    "Create or replace the full file body from the Required Edits packet.",
+					})
+				}
 			}
 			fence = ""
 			current = nil
@@ -574,6 +599,32 @@ func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]wor
 	return edits, ""
 }
 
+func planExecuteInferPathsForOldText(workspaceRoot string, required []string, oldText string) []string {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	oldText = strings.TrimSpace(oldText)
+	if workspaceRoot == "" || oldText == "" {
+		return nil
+	}
+	var matches []string
+	for _, requiredPath := range required {
+		path := normalizePlanExecutePath(requiredPath)
+		if path == "" {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(workspaceRoot, filepath.FromSlash(path)))
+		if err != nil {
+			continue
+		}
+		if strings.Count(string(body), oldText) == 1 {
+			matches = append(matches, path)
+		}
+	}
+	if len(matches) != 1 {
+		return nil
+	}
+	return matches
+}
+
 func planExecuteExactEditBlockKind(label string) string {
 	normalized := strings.Trim(strings.ToLower(strings.TrimSpace(label)), ":. ")
 	normalized = strings.ReplaceAll(normalized, "-", "_")
@@ -583,6 +634,8 @@ func planExecuteExactEditBlockKind(label string) string {
 		return "old"
 	case strings.HasPrefix(normalized, "new_text"), strings.HasPrefix(normalized, "new"):
 		return "new"
+	case strings.HasPrefix(normalized, "replace_all"):
+		return "replace_all"
 	default:
 		return ""
 	}
