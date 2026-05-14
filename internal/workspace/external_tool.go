@@ -84,6 +84,23 @@ func (r *ExternalToolRegistry) Names() []string {
 	return out
 }
 
+// AvailableNames returns registered tool names whose command can be
+// resolved from the same base directory Invoke uses. Unavailable tools
+// remain registered so direct invocations can return a typed error, but
+// they should not be advertised to models as callable affordances.
+func (r *ExternalToolRegistry) AvailableNames(baseDir string) []string {
+	if r == nil {
+		return nil
+	}
+	out := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		if ok, _ := r.Availability(name, baseDir); ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // Has reports whether name is registered.
 func (r *ExternalToolRegistry) Has(name string) bool {
 	if r == nil {
@@ -100,6 +117,20 @@ func (r *ExternalToolRegistry) Tool(name string) (ExternalTool, bool) {
 	}
 	t, ok := r.tools[strings.TrimSpace(name)]
 	return t, ok
+}
+
+// Availability reports whether a registered external tool can be invoked
+// from baseDir. The reason is stable enough for logs and direct CLI
+// errors, but intentionally avoids raw input or environment details.
+func (r *ExternalToolRegistry) Availability(name string, baseDir string) (bool, string) {
+	tool, ok := r.Tool(name)
+	if !ok {
+		return false, "not registered"
+	}
+	if reason := externalToolUnavailableReason(tool, baseDir); reason != "" {
+		return false, reason
+	}
+	return true, ""
 }
 
 // IsReadOnlyDiscovery reports whether the host project declared an external
@@ -132,6 +163,32 @@ func (r *ExternalToolRegistry) Definitions() []ToolDefinition {
 	return out
 }
 
+// DefinitionsForBaseDir converts available registered tools into
+// ToolDefinition entries suitable for BuildToolDefinitions. Invalid or
+// missing commands are omitted from the advertised model surface; direct
+// execution still returns a typed unavailable-tool result.
+func (r *ExternalToolRegistry) DefinitionsForBaseDir(baseDir string) []ToolDefinition {
+	if r == nil {
+		return nil
+	}
+	out := make([]ToolDefinition, 0, len(r.tools))
+	for name, t := range r.tools {
+		if ok, _ := r.Availability(name, baseDir); !ok {
+			continue
+		}
+		params := string(t.InputSchema)
+		if strings.TrimSpace(params) == "" {
+			params = `{"type":"object","properties":{}}`
+		}
+		out = append(out, ToolDefinition{
+			Name:           t.Name,
+			Description:    t.Description,
+			ParametersJSON: params,
+		})
+	}
+	return out
+}
+
 // Invoke runs the registered tool with the provided JSON-encoded input.
 // The input is passed via two channels:
 //   - Each Args entry is template-substituted: `{key}` → string value of
@@ -150,6 +207,9 @@ func (r *ExternalToolRegistry) Invoke(ctx context.Context, name string, input js
 	tool, ok := r.tools[name]
 	if !ok {
 		return "", fmt.Errorf("external tool %q: not registered", name)
+	}
+	if ok, reason := r.Availability(name, baseDir); !ok {
+		return "", fmt.Errorf("external tool %q: unavailable: %s", name, reason)
 	}
 
 	parsed := map[string]any{}
@@ -191,6 +251,47 @@ func (r *ExternalToolRegistry) Invoke(ctx context.Context, name string, input js
 		return output, fmt.Errorf("external tool %q: %w", name, err)
 	}
 	return output, nil
+}
+
+func externalToolUnavailableReason(tool ExternalTool, baseDir string) string {
+	command := strings.TrimSpace(tool.Command)
+	if command == "" {
+		return "empty command"
+	}
+	if strings.ContainsRune(command, os.PathSeparator) {
+		path := command
+		if !filepath.IsAbs(path) {
+			workingDir := externalToolWorkingDir(tool, baseDir)
+			if workingDir != "" {
+				path = filepath.Join(workingDir, path)
+			}
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "command path does not exist"
+			}
+			return "command path is not accessible"
+		}
+		if info.IsDir() {
+			return "command path is a directory"
+		}
+		if info.Mode().Perm()&0o111 == 0 {
+			return "command path is not executable"
+		}
+		return ""
+	}
+	if _, err := exec.LookPath(command); err != nil {
+		return "command not found on PATH"
+	}
+	return ""
+}
+
+func externalToolWorkingDir(tool ExternalTool, baseDir string) string {
+	if cwd := strings.TrimSpace(tool.Cwd); cwd != "" {
+		return expandCwd(cwd, baseDir)
+	}
+	return baseDir
 }
 
 // substituteArgs expands one argv template token into zero, one, or many

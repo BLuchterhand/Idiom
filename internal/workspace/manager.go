@@ -377,6 +377,19 @@ func (m *Manager) ExternalToolsRegistry() *ExternalToolRegistry {
 	return m.externalToolsRegistry
 }
 
+// AvailableExternalToolNames returns project external tools whose command
+// can be resolved from the manager's configured workspace directory.
+func (m *Manager) AvailableExternalToolNames() []string {
+	if m == nil {
+		return nil
+	}
+	registry := m.ExternalToolsRegistry()
+	if registry == nil {
+		return nil
+	}
+	return registry.AvailableNames(m.externalToolBaseDir())
+}
+
 func (m *Manager) IsExploreMode() bool {
 	return m.Mode() == ModeExplore
 }
@@ -517,11 +530,21 @@ func (m *Manager) AllowedTools() []string {
 		tools = append(tools, names...)
 	}
 	if registry := m.ExternalToolsRegistry(); registry != nil {
-		names := registry.Names()
+		names := registry.AvailableNames(m.externalToolBaseDir())
 		sort.Strings(names)
 		tools = append(tools, names...)
 	}
 	return tools
+}
+
+func (m *Manager) externalToolBaseDir() string {
+	if m == nil {
+		return ""
+	}
+	if strings.TrimSpace(m.cfg.CWD) != "" {
+		return m.cfg.CWD
+	}
+	return m.cfg.Root
 }
 
 // BuildToolDefinitions returns the OpenAI-shaped function specs the
@@ -548,7 +571,7 @@ func (m *Manager) BuildToolDefinitions(allowed []string) []ToolDefinition {
 	}
 	// Add project-defined external tools BEFORE the MCP early-return so
 	// they reach the LLM tool spec even when no MCP servers are wired in.
-	defs = appendExternalToolDefinitions(defs, m.ExternalToolsRegistry(), allowedSet)
+	defs = appendExternalToolDefinitions(defs, m.ExternalToolsRegistry(), allowedSet, m.externalToolBaseDir())
 	registry := m.MCPRegistry()
 	if registry == nil {
 		return defs
@@ -591,11 +614,11 @@ func (m *Manager) BuildToolDefinitions(allowed []string) []ToolDefinition {
 // in the registry, filtered by allowedSet (when non-empty). Sorted for
 // deterministic tool-spec order. Pulled out of BuildToolDefinitions so
 // the externals merge runs whether or not an MCP registry is attached.
-func appendExternalToolDefinitions(defs []ToolDefinition, extReg *ExternalToolRegistry, allowedSet map[string]struct{}) []ToolDefinition {
+func appendExternalToolDefinitions(defs []ToolDefinition, extReg *ExternalToolRegistry, allowedSet map[string]struct{}, baseDir string) []ToolDefinition {
 	if extReg == nil {
 		return defs
 	}
-	extDefs := extReg.Definitions()
+	extDefs := extReg.DefinitionsForBaseDir(baseDir)
 	sort.Slice(extDefs, func(i, j int) bool { return extDefs[i].Name < extDefs[j].Name })
 	for _, ed := range extDefs {
 		if allowedSet != nil {
@@ -1034,7 +1057,7 @@ func (m *Manager) unsupportedToolError(tool string) string {
 func (m *Manager) knownToolNames() []string {
 	names := append([]string(nil), builtinToolNamesForSuggest()...)
 	if reg := m.ExternalToolsRegistry(); reg != nil {
-		names = append(names, reg.Names()...)
+		names = append(names, reg.AvailableNames(m.externalToolBaseDir())...)
 	}
 	if mcpReg := m.MCPRegistry(); mcpReg != nil {
 		for name := range mcpReg.Tools() {
@@ -1148,6 +1171,9 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 	}
 	if !registry.Has(req.Tool) {
 		return ToolResult{Tool: req.Tool, Summary: "Unknown external tool", Error: "external tool not registered: " + req.Tool}
+	}
+	if ok, reason := registry.Availability(req.Tool, m.externalToolBaseDir()); !ok {
+		return ToolResult{Tool: req.Tool, Summary: "External tool unavailable", Error: "external tool " + req.Tool + " unavailable: " + reason}
 	}
 	args := req.Args
 	if len(args) == 0 {

@@ -172,7 +172,7 @@ func (r *Runner) Run(
 				for _, name := range allowed {
 					seen[name] = struct{}{}
 				}
-				for _, name := range extReg.Names() {
+				for _, name := range r.Workspace.AvailableExternalToolNames() {
 					if _, ok := seen[name]; !ok {
 						allowed = append(allowed, name)
 						seen[name] = struct{}{}
@@ -8930,11 +8930,10 @@ func (r *Runner) advertisedAllowedTools(base []string) []string {
 		if r.Workspace == nil {
 			return nil
 		}
-		extReg := r.Workspace.ExternalToolsRegistry()
-		if extReg == nil {
+		if r.Workspace.ExternalToolsRegistry() == nil {
 			return nil
 		}
-		names := extReg.Names()
+		names := r.Workspace.AvailableExternalToolNames()
 		// Preserve order by filtering base to only externals; this also
 		// drops any non-external entry that snuck into base via prior
 		// pipeline mutations.
