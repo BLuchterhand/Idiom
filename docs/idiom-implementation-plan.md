@@ -1812,11 +1812,11 @@ Review signoff:
 | P9.25 | Extend P9.9 certification overclaim checks to posture matrix output | P9.24 | Nietzsche the 4th | - [x] | Carson the 4th | - [x] |
 | P9.10 | Gate release on competitive benchmark coverage or documented infeasibility for each external baseline | P4.6, P9.1 | Hume the 4th | - [x] | Lagrange the 4th + P9.26 follow-up | - [x] |
 | P9.26 | Make P9.10 zero counts explicit and cover missing competitive evidence cases | P9.10 | Noether the 4th | - [x] | Descartes the 4th | - [x] |
-| P9.11 | Gate release on runnable client demo transcripts and honest MVP/final-state limitations for every client classification | P7.10, P8.5, P9.1 | Mill the 4th | - [x] | Socrates the 4th + P9.27/P9.28/P9.29/P9.30 follow-ups | - [ ] |
-| P9.27 | Block regulated-readiness demo overclaims and blank demo evidence items | P9.11 | Hypatia the 4th | - [x] | Chandrasekhar the 4th + Aristotle the 4th NO-GO | - [ ] |
-| P9.28 | Require demo approval-claim blocking and executable command evidence | P9.27 | Fermat the 4th | - [x] | Averroes the 4th NO-GO | - [ ] |
-| P9.29 | Constrain P9.11 executable demo replay to safe commands | P9.28 | Gibbs the 4th | - [x] | Hilbert the 4th NO-GO | - [ ] |
-| P9.30 | Require every declared demo command to pass safe replay | P9.29 | Volta the 4th | - [x] | Bernoulli the 4th | - [ ] |
+| P9.11 | Gate release on runnable client demo transcripts and honest MVP/final-state limitations for every client classification | P7.10, P8.5, P9.1 | Mill the 4th | - [x] | Socrates the 4th + P9.27/P9.28/P9.29/P9.30 follow-ups | - [x] |
+| P9.27 | Block regulated-readiness demo overclaims and blank demo evidence items | P9.11 | Hypatia the 4th | - [x] | Chandrasekhar the 4th + Aristotle the 4th NO-GO + P9.30 closeout | - [x] |
+| P9.28 | Require demo approval-claim blocking and executable command evidence | P9.27 | Fermat the 4th | - [x] | Averroes the 4th NO-GO + P9.30 closeout | - [x] |
+| P9.29 | Constrain P9.11 executable demo replay to safe commands | P9.28 | Gibbs the 4th | - [x] | Hilbert the 4th NO-GO + P9.30 closeout | - [x] |
+| P9.30 | Require every declared demo command to pass safe replay | P9.29 | Volta the 4th | - [x] | Bernoulli the 4th | - [x] |
 | P9.12 | Gate release on packaging, pricing, support, admin, and ICP thesis with explicit continue/pivot decision | P0.7, P0.11, P9.1-P9.11 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 
 ## Work Packages
