@@ -1756,7 +1756,7 @@ Review signoff:
 | P6.4 | Add lane-start role, backend, queue, classifier, and context telemetry parity tests | P6.2, P6.3 | Copernicus the 2nd | - [x] | Dirac the 2nd | - [x] |
 | P6.5 | Add local-operations smoke, capacity, and replay benchmark harness | P6.3, P6.4, P5.17 | Darwin the 2nd | - [x] | Nash the 2nd + P6.7 follow-up | - [x] |
 | P6.7 | Sanitize local-ops replay export and normalize invalid-profile exits | P6.5 | Nietzsche the 2nd | - [x] | Linnaeus the 2nd | - [x] |
-| P7.1 | Ship the stable structured CLI envelope for `idiom tool` results | P2, P3, P4, P6.7 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
+| P7.1 | Ship the stable structured CLI envelope for `idiom tool` results | P2, P3, P4, P6.7 | Bernoulli the 3rd | - [ ] | unassigned review subagent | - [ ] |
 | P7.2 | Implement read-only `--profile discovery` filtering | P7.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P7.3 | Add external caller recipes and at least one sidecar smoke transcript | P7.2 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P7.4 | Add sidecar v1 API compatibility, caller metadata, error-class, stale-freshness, backend-fallback, and no-strategy-leakage golden tests | P7.1, P7.2 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
