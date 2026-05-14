@@ -528,6 +528,9 @@ func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]wor
 				if len(paths) == 0 {
 					paths = blockPaths
 				}
+				if len(paths) == 0 && len(required) == 1 {
+					paths = required
+				}
 				for _, path := range paths {
 					path = strings.TrimSpace(path)
 					if path == "" || strings.TrimSpace(pending.text) == "" {
@@ -1760,6 +1763,17 @@ func reviewAnswerPassContradictionReason(answer string) string {
 			"fails the checklist",
 			"checklist item fails",
 			"required behavior fails",
+			"not visible",
+			"not shown",
+			"not available in the diff",
+			"not visible in the diff",
+			"cannot verify",
+			"can't verify",
+			"could not verify",
+			"unable to verify",
+			"not enough evidence",
+			"insufficient evidence",
+			"no evidence",
 		):
 			return "unresolved_failure_claim"
 		}

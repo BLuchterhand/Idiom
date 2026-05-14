@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -129,6 +131,106 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardAcceptsFullCoverage(t *testing.T)
 	})
 	if got.Intercepted {
 		t.Fatalf("submit_plan with full required path coverage must pass, got %#v", got)
+	}
+}
+
+func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsMissingRequiredSnippet(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old behavior\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.txt"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
+				ID:      "required_edit_2",
+				Path:    "a.txt",
+				Content: "old behavior\nnew regression coverage",
+			}},
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "old behavior", NewText: "old behavior\n#include \"only-one-edit\""},
+		},
+	})
+	if !got.Intercepted {
+		t.Fatalf("submit_plan missing a required final-state snippet must be rejected")
+	}
+	if !strings.Contains(got.Result.Error, "required_edit_2") || !strings.Contains(got.Result.Error, "required_edit_snippets") {
+		t.Fatalf("rejection should name the missing required snippet, got %q", got.Result.Error)
+	}
+}
+
+func TestPlanThenExecuteSubmitPlanCoverageGuardAcceptsSnippetAlreadyPresentOrPlanned(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old behavior\nnew regression coverage\nfooter\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.txt"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
+				ID:      "required_edit_1",
+				Path:    "a.txt",
+				Content: "old behavior\nnew regression coverage",
+			}},
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "footer", NewText: "footer updated"},
+		},
+	})
+	if got.Intercepted {
+		t.Fatalf("already-present required snippet should satisfy coverage, got %#v", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old behavior\n"), 0o644); err != nil {
+		t.Fatalf("reset a.txt: %v", err)
+	}
+	got = runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "old behavior", NewText: "old behavior\nnew regression coverage"},
+		},
+	})
+	if got.Intercepted {
+		t.Fatalf("planned required snippet should satisfy coverage, got %#v", got)
+	}
+}
+
+func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsPlanThatRemovesRequiredSnippet(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old behavior\nnew regression coverage\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.txt"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
+				ID:      "required_edit_1",
+				Path:    "a.txt",
+				Content: "old behavior\nnew regression coverage",
+			}},
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "new regression coverage\n", NewText: ""},
+		},
+	})
+	if !got.Intercepted {
+		t.Fatalf("plan removing a required final-state snippet must be rejected")
 	}
 }
 

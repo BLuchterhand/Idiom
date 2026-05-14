@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
 	"idiom/internal/frontier/workerruntime"
@@ -116,7 +118,8 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 			missing = append(missing, normalized)
 		}
 	}
-	if len(missing) == 0 && len(outside) == 0 {
+	missingSnippets := r.missingSubmitPlanRequiredEditSnippets(req, planned)
+	if len(missing) == 0 && len(outside) == 0 && len(missingSnippets) == 0 {
 		return verificationInterceptResult{}
 	}
 	var parts []string
@@ -126,17 +129,136 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	if len(outside) > 0 {
 		parts = append(parts, "path(s) outside required_edit_paths: "+quotedRunnerStrings(outside))
 	}
+	if len(missingSnippets) > 0 {
+		parts = append(parts, "missing required edit snippet(s): "+quotedRunnerStrings(missingSnippets))
+	}
 	return verificationInterceptResult{
 		Intercepted: true,
 		Result: workspace.ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
-			Error: "submit_plan must include at least one edit entry for every required_edit_paths entry and no edits outside that scope; " +
+			Error: "submit_plan must include at least one edit entry for every required_edit_paths entry, no edits outside that scope, and coverage for every required_edit_snippets final-state snippet; " +
 				strings.Join(parts, "; ") +
-				". Submit a corrected plan, or answer with <<QUESTION>> and name the exact blocker for each skipped required path.",
+				". Submit a corrected plan, answer `Decision: source-satisfied` when current source already contains the requested final state, or answer with <<QUESTION>> and name the exact blocker for each skipped requirement.",
 		},
-		Reason: "plan-then-execute planner phase: submit_plan edit paths did not satisfy required_edit_paths",
+		Reason: "plan-then-execute planner phase: submit_plan edits did not satisfy required path/snippet coverage",
 	}
+}
+
+func (r *Runner) missingSubmitPlanRequiredEditSnippets(req workspace.ToolRequest, planned map[string]struct{}) []string {
+	if r == nil {
+		return nil
+	}
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	if len(brief.RequiredEditSnippets) == 0 {
+		return nil
+	}
+	root := ""
+	if r.Workspace != nil {
+		root = strings.TrimSpace(r.Workspace.Root())
+	}
+	projectedContent := projectedPlanContentByPath(root, req.Edits)
+	var missing []string
+	for i, snippet := range brief.RequiredEditSnippets {
+		candidates := requiredEditSnippetCandidatePaths(snippet, brief.RequiredEditPaths, planned)
+		if len(candidates) == 0 {
+			candidates = mapKeys(planned)
+		}
+		if planThenExecuteRequiredSnippetCovered(candidates, snippet.Content, projectedContent) {
+			continue
+		}
+		missing = append(missing, requiredEditSnippetName(snippet, i))
+	}
+	return missing
+}
+
+func projectedPlanContentByPath(root string, edits []workspace.PlanEdit) map[string]string {
+	out := make(map[string]string, len(edits))
+	for _, edit := range edits {
+		path := normalizeRunnerPath(edit.Path)
+		if path == "" {
+			continue
+		}
+		content, loaded := out[path]
+		if !loaded {
+			content = readPlanProjectionBase(root, path)
+		}
+		out[path] = applyPlanProjectionEdit(content, edit)
+	}
+	return out
+}
+
+func readPlanProjectionBase(root string, path string) string {
+	if strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
+		return ""
+	}
+	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+func applyPlanProjectionEdit(current string, edit workspace.PlanEdit) string {
+	if edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != "" {
+		return edit.NewText
+	}
+	if strings.TrimSpace(edit.OldText) != "" {
+		if strings.Contains(current, edit.OldText) {
+			return strings.Replace(current, edit.OldText, edit.NewText, 1)
+		}
+		return current + "\n" + edit.NewText
+	}
+	if edit.StartLine > 0 || edit.EndLine > 0 {
+		if projected, ok := applyPlanProjectionRange(current, edit.StartLine, edit.EndLine, edit.Content); ok {
+			return projected
+		}
+		return current + "\n" + edit.Content
+	}
+	if strings.TrimSpace(edit.NewText) != "" {
+		return current + "\n" + edit.NewText
+	}
+	if strings.TrimSpace(edit.Content) != "" {
+		return current + "\n" + edit.Content
+	}
+	return current
+}
+
+func applyPlanProjectionRange(current string, startLine int, endLine int, replacement string) (string, bool) {
+	if startLine < 1 || endLine < startLine {
+		return "", false
+	}
+	lines := strings.SplitAfter(current, "\n")
+	if current == "" {
+		lines = nil
+	}
+	if endLine > len(lines) {
+		return "", false
+	}
+	start := startLine - 1
+	before := strings.Join(lines[:start], "")
+	after := strings.Join(lines[endLine:], "")
+	if replacement != "" && !strings.HasSuffix(replacement, "\n") && after != "" {
+		replacement += "\n"
+	}
+	return before + replacement + after, true
+}
+
+func planThenExecuteRequiredSnippetCovered(candidates []string, snippet string, projectedContent map[string]string) bool {
+	snippet = strings.TrimSpace(snippet)
+	if snippet == "" {
+		return true
+	}
+	for _, candidate := range candidates {
+		path := normalizeRunnerPath(candidate)
+		if path == "" {
+			continue
+		}
+		if editSnippetMatchesContent(projectedContent[path], snippet) {
+			return true
+		}
+	}
+	return false
 }
 
 // preflightPlanThenExecutePlannerToolGuard keeps verification and shell

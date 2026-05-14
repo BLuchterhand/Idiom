@@ -137,6 +137,40 @@ func TestPlanExecuteExactPlanEditsDuplicatesSharedPathBlock(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteExactPlanEditsDefaultsUnlabeledBlocksToSoleRequiredPath(t *testing.T) {
+	prompt := "## Files To Modify\n\n" +
+		"| File | Change |\n" +
+		"|---|---|\n" +
+		"| `suite.cpp` | Add focused tests. |\n\n" +
+		"## Required Edits\n\n" +
+		"### Required Edit 1 -- include constants\n\n" +
+		"old_text:\n\n" +
+		"```text\n#include \"old.h\"\n```\n\n" +
+		"new_text:\n\n" +
+		"```text\n#include \"old.h\"\n#include \"constants.h\"\n```\n\n" +
+		"### Required Edit 2 -- append regression tests\n\n" +
+		"old_text:\n\n" +
+		"```text\n// next section\n```\n\n" +
+		"new_text:\n\n" +
+		"```text\nTEST_CASE(\"regression\") {}\n\n// next section\n```\n"
+
+	edits, reason := planExecuteExactPlanEdits(prompt, []string{"suite.cpp"})
+	if reason != "" {
+		t.Fatalf("unexpected parse skip reason: %s", reason)
+	}
+	if len(edits) != 2 {
+		t.Fatalf("expected both unlabeled exact edits to target the sole required path, got %#v", edits)
+	}
+	for _, edit := range edits {
+		if edit.Path != "suite.cpp" {
+			t.Fatalf("unlabeled edit should target suite.cpp, got %#v", edits)
+		}
+	}
+	if !strings.Contains(edits[1].NewText, `TEST_CASE("regression")`) {
+		t.Fatalf("second edit did not capture test body: %#v", edits[1])
+	}
+}
+
 func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
@@ -1293,6 +1327,21 @@ func TestReviewAnswerPassContradictionAllowsNegatedMissingCoverage(t *testing.T)
 	}, "\n")
 	if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
 		t.Fatalf("clean negated checklist should not be contradictory, got %q", reason)
+	}
+}
+
+func TestReviewAnswerPassContradictionRejectsUnverifiableRequiredEdit(t *testing.T) {
+	answer := strings.Join([]string{
+		"Verification Checklist",
+		"- Required behavior: WIRE cap tests were added.",
+		"",
+		"The actual test content from Required Edit 2 was not visible in the diff evidence provided.",
+		"We cannot verify that the full test content was properly added.",
+		"",
+		"Decision: pass",
+	}, "\n")
+	if reason := reviewAnswerPassContradictionReason(answer); reason == "" {
+		t.Fatalf("review pass that admits missing evidence must be contradictory")
 	}
 }
 
