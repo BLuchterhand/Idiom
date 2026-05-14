@@ -1781,7 +1781,7 @@ Review signoff:
 | P8.7 | Deny protected `secrets` resource paths before MCP metadata exposure | P8.2 | McClintock the 3rd | - [x] | Sartre the 3rd + P8.8/Rawls the 3rd follow-up | - [x] |
 | P8.8 | Deny hyphenated private-key MCP resource path segments | P8.7 | Franklin the 3rd | - [x] | Rawls the 3rd | - [x] |
 | P8.3 | Add MCP client smoke tests and telemetry/caller attribution parity with CLI | P8.1, P8.2 | Hubble the 3rd | - [x] | Heisenberg the 3rd | - [x] |
-| P8.4 | Add MCP resource redaction, protected-path containment, and stale-freshness parity tests | P8.2, P7.5 | Laplace the 3rd | - [ ] | unassigned review subagent | - [ ] |
+| P8.4 | Add MCP resource redaction, protected-path containment, and stale-freshness parity tests | P8.2, P7.5 | Laplace the 3rd | - [x] | Meitner the 3rd | - [ ] |
 | P8.5 | Add MCP parity coverage for any classification example that depends on resources, caller metadata, or redaction semantics | P8.1-P8.4, P7.6 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P8.6 | Complete MCP stdio integration proof with protocol, caller metadata, roots, resources, redaction, and product-evidence export parity | P8.1-P8.5, P7.8, P7.11 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.1 | Produce release evidence bundle from baseline/current metrics, tests, audit, benchmark, and sidecar smoke | P0-P8 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
