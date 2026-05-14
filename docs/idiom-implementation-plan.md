@@ -1788,7 +1788,7 @@ Review signoff:
 | P8.10 | Tighten MCP integration proof gate and remove deferred metadata | P8.6 | Averroes the 3rd | - [x] | Harvey the 3rd + P8.11/P8.12 follow-ups | - [x] |
 | P8.11 | Reject malformed product-evidence integration proof rows | P8.10 | Fermat the 3rd | - [x] | Descartes the 3rd + P8.12 follow-up | - [x] |
 | P8.12 | Require explicit privacy semantics on integration proof rows | P8.11 | Sagan the 3rd | - [x] | Goodall the 3rd | - [x] |
-| P9.1 | Produce release evidence bundle from baseline/current metrics, tests, audit, benchmark, and sidecar smoke | P0-P8 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
+| P9.1 | Produce release evidence bundle from baseline/current metrics, tests, audit, benchmark, and sidecar smoke | P0-P8 | Wegener the 3rd | - [ ] | unassigned review subagent | - [ ] |
 | P9.2 | Record project go/no-go/pivot decision against measured criteria | P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.3 | Gate release on no unresolved high contract/security regressions and owned high/medium audit findings with evidence and reproduce commands | P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.4 | Gate release on complete client-classification example-test coverage and reviewer signoff that every example maps to generic architecture primitives | P7.6, P8.5, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
