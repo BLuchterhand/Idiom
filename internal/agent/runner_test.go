@@ -4136,9 +4136,6 @@ func TestPlanExecuteExactAnchorPlannerDoesNotPreHideReadTools(t *testing.T) {
 			Constraints:       []string{"exact_anchor_implementation"},
 			RequiredEditPaths: []string{"target.txt"},
 			TargetRefs:        []string{"target.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
-				{Path: "target.txt", Content: "actual\n"},
-			},
 		},
 	}
 	answer, err := runner.Run(
@@ -4177,6 +4174,29 @@ func TestPlanExecuteExactAnchorPlannerDoesNotPreHideReadTools(t *testing.T) {
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected read then submit_plan, got %d request(s)", requests)
+	}
+}
+
+func TestPlanExecuteExactAnchorPreWriteRequiresSnippetCoverageForEveryRequiredPath(t *testing.T) {
+	covered := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		Constraints:       []string{"exact_anchor_implementation"},
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+		RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			{Path: "a.txt", Content: "old a"},
+			{Path: "b.txt", Content: "old b"},
+		},
+	}
+	if !exactAnchorPreWriteSurfaceActive(covered, nil) {
+		t.Fatal("plan-execute exact-anchor packet with snippets for every required path should start on submit_plan-only surface")
+	}
+
+	missing := covered
+	missing.RequiredEditSnippets = []workerruntime.RequiredEditSnippet{{Path: "a.txt", Content: "old a"}}
+	if exactAnchorPreWriteSurfaceActive(missing, nil) {
+		t.Fatal("plan-execute exact-anchor packet with an uncovered required path must keep scoped reads visible")
 	}
 }
 

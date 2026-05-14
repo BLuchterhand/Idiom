@@ -2121,13 +2121,40 @@ func (r *Runner) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBri
 }
 
 func exactAnchorPreWriteSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if planThenExecutePlannerBrief(brief) {
+	if planThenExecutePlannerBrief(brief) && !planThenExecuteExactAnchorPlanReady(brief) {
 		return false
 	}
 	if !exactAnchorImplementationActive(brief) {
 		return false
 	}
 	return len(brief.ChangedPaths) == 0 && len(changedPathsFromToolResults(results)) == 0
+}
+
+func planThenExecuteExactAnchorPlanReady(brief workerruntime.WorkerRuntimeBrief) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !planThenExecutePlannerBrief(brief) || len(brief.RequiredEditPaths) == 0 || len(brief.RequiredEditSnippets) == 0 {
+		return false
+	}
+	required := normalizedRequiredEditPathSet(brief.RequiredEditPaths)
+	if len(required) == 0 {
+		return false
+	}
+	covered := make(map[string]struct{}, len(brief.RequiredEditSnippets))
+	for _, snippet := range brief.RequiredEditSnippets {
+		path := normalizeRunnerPath(snippet.Path)
+		if path == "" {
+			continue
+		}
+		if _, ok := required[path]; ok {
+			covered[path] = struct{}{}
+		}
+	}
+	for path := range required {
+		if _, ok := covered[path]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func implementationPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
