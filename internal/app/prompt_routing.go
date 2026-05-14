@@ -568,13 +568,13 @@ func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []wor
 		"implementation shape",
 		"implementation",
 	}
-	var blocks []string
+	var blocks []requiredEditBlock
 	for _, heading := range headings {
 		candidate := markdownSectionByHeading(prompt, heading)
 		if strings.TrimSpace(candidate) == "" {
 			continue
 		}
-		if found := requiredEditCodeBlocks(candidate); len(found) > 0 {
+		if found := requiredEditCodeBlocksWithPaths(candidate, requiredPaths); len(found) > 0 {
 			blocks = found
 			break
 		}
@@ -588,14 +588,18 @@ func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []wor
 	}
 	snippets := make([]workerruntime.RequiredEditSnippet, 0, len(blocks))
 	for _, block := range blocks {
-		block = strings.TrimSpace(block)
-		if block == "" {
+		content := strings.TrimSpace(block.Content)
+		if content == "" {
 			continue
+		}
+		blockPath := strings.TrimSpace(block.Path)
+		if blockPath == "" {
+			blockPath = path
 		}
 		snippets = append(snippets, workerruntime.RequiredEditSnippet{
 			ID:      fmt.Sprintf("required_edit_%d", len(snippets)+1),
-			Path:    path,
-			Content: block,
+			Path:    blockPath,
+			Content: content,
 		})
 	}
 	if len(snippets) == 0 {
@@ -725,9 +729,25 @@ func trimPromptHeadingQualifier(heading string) string {
 }
 
 func requiredEditCodeBlocks(section string) []string {
-	var blocks []string
+	blocks := requiredEditCodeBlocksWithPaths(section, nil)
+	out := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		out = append(out, block.Content)
+	}
+	return out
+}
+
+type requiredEditBlock struct {
+	Path    string
+	Content string
+}
+
+func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []requiredEditBlock {
+	var blocks []requiredEditBlock
 	var current []string
 	previousNonEmpty := ""
+	currentPath := ""
+	blockPath := ""
 	fence := ""
 	skipCurrent := false
 	for _, rawLine := range strings.Split(section, "\n") {
@@ -736,10 +756,14 @@ func requiredEditCodeBlocks(section string) []string {
 			if marker, info, ok := markdownFenceOpen(trimmed); ok {
 				fence = marker
 				current = nil
+				blockPath = currentPath
 				skipCurrent = skipRequiredEditCodeBlock(previousNonEmpty, info)
 				continue
 			}
 			if trimmed != "" {
+				if path := requiredEditPathMentionedInLine(trimmed, requiredPaths); path != "" {
+					currentPath = path
+				}
 				previousNonEmpty = trimmed
 			}
 			continue
@@ -747,11 +771,12 @@ func requiredEditCodeBlocks(section string) []string {
 		if strings.HasPrefix(trimmed, fence) {
 			if !skipCurrent {
 				if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
-					blocks = append(blocks, block)
+					blocks = append(blocks, requiredEditBlock{Path: blockPath, Content: block})
 				}
 			}
 			fence = ""
 			current = nil
+			blockPath = ""
 			skipCurrent = false
 			previousNonEmpty = ""
 			continue
@@ -759,6 +784,43 @@ func requiredEditCodeBlocks(section string) []string {
 		current = append(current, rawLine)
 	}
 	return blocks
+}
+
+func requiredEditPathMentionedInLine(line string, requiredPaths []string) string {
+	if len(requiredPaths) == 0 {
+		return ""
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	for _, path := range requiredPaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if strings.Contains(line, path) || strings.Contains(line, "`"+path+"`") {
+			return path
+		}
+	}
+	baseMatches := ""
+	for _, path := range requiredPaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		base := filepath.Base(path)
+		if base == "." || base == "/" || base == "" {
+			continue
+		}
+		if strings.Contains(line, "`"+base+"`") || strings.Contains(line, base) {
+			if baseMatches != "" && baseMatches != path {
+				return ""
+			}
+			baseMatches = path
+		}
+	}
+	return baseMatches
 }
 
 func markdownFenceOpen(line string) (marker string, info string, ok bool) {

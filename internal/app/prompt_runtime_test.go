@@ -985,6 +985,70 @@ The planner will run the test slice.
 	}
 }
 
+func TestBuildPromptExecutionPlanAssignsMultiFileRequiredEditSnippetPaths(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files To Modify
+
+| File | Change |
+|---|---|
+| ` + "`native/src/a.cpp`" + ` | Update source |
+| ` + "`native/tests/test_a.cpp`" + ` | Update test |
+
+## Required Edits
+
+In ` + "`native/src/a.cpp`" + `, replace the source line.
+
+old_text:
+
+` + "```text" + `
+int before();
+` + "```" + `
+
+new_text:
+
+` + "```text" + `
+int after();
+` + "```" + `
+
+In ` + "`native/tests/test_a.cpp`" + `, replace the test case.
+
+old_text:
+
+` + "```text" + `
+TEST_CASE("before") {}
+` + "```" + `
+
+new_text:
+
+` + "```text" + `
+TEST_CASE("after") {}
+` + "```" + `
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 2 {
+		t.Fatalf("expected two new snippets, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	}
+	got := map[string]string{}
+	for _, snippet := range plan.runtimeBrief.RequiredEditSnippets {
+		got[snippet.Path] = snippet.Content
+	}
+	if !strings.Contains(got["native/src/a.cpp"], "int after();") {
+		t.Fatalf("source snippet path/content not captured correctly: %#v", plan.runtimeBrief.RequiredEditSnippets)
+	}
+	if !strings.Contains(got["native/tests/test_a.cpp"], `TEST_CASE("after")`) {
+		t.Fatalf("test snippet path/content not captured correctly: %#v", plan.runtimeBrief.RequiredEditSnippets)
+	}
+}
+
 func TestBuildPromptExecutionPlanCapturesImplementationShapeSnippets(t *testing.T) {
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
