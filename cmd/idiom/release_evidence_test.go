@@ -24,8 +24,7 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		"schema_version": "idiom.sidecar_smoke_transcript.v1",
 		"name":           "p9.1-smoke",
 	})
-	benchmarkPath := filepath.Join(root, "testdata", "benchmarks", "localization.json")
-	writeP711JSON(t, benchmarkPath, map[string]any{"schema_version": "idiom.localization_benchmark.v1", "status": "pass"})
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Source:    "eval",
@@ -90,6 +89,14 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		!stringSliceContains(gate.EvidenceIDs, "p7.8-mcp-stdio") {
 		t.Fatalf("P9.8 release readiness should expose structured gate data: %#v", gate)
 	}
+	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.10"); gate.Status != "evidence_present" {
+		t.Fatalf("complete competitive benchmark fixture should satisfy P9.10 release readiness: %#v", gate)
+	} else if gate.Counts["required_external_baselines"] != 2 ||
+		gate.Counts["covered_external_baselines"] != 2 ||
+		len(gate.Blockers) != 0 ||
+		!stringSliceContains(gate.EvidenceIDs, "competitive_baseline:aider_repo_map") {
+		t.Fatalf("P9.10 release readiness should expose structured gate data: %#v", gate)
+	}
 	assertReleaseEvidenceClassifications(t, report.ClientReadiness)
 	if forbidden := localOpsForbiddenEvidenceLeak(string(body)); forbidden != "" {
 		t.Fatalf("release evidence leaked forbidden class %q: %s", forbidden, string(body))
@@ -125,8 +132,7 @@ func TestP913ReleaseEvidenceDowngradesClientRowsWhenValidationRecordsMissing(t *
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
 	localOpsPath := writeP711LocalOpsReport(t, root)
-	benchmarkPath := filepath.Join(root, "testdata", "benchmarks", "localization.json")
-	writeP711JSON(t, benchmarkPath, map[string]any{"schema_version": "idiom.localization_benchmark.v1", "status": "pass"})
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
 	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
@@ -151,8 +157,7 @@ func TestP913ReleaseReadinessNeedsEvidenceWhenClientValidationMissing(t *testing
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
 	localOpsPath := writeP711LocalOpsReport(t, root)
-	benchmarkPath := filepath.Join(root, "testdata", "benchmarks", "localization.json")
-	writeP711JSON(t, benchmarkPath, map[string]any{"schema_version": "idiom.localization_benchmark.v1", "status": "pass"})
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
 	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
@@ -466,8 +471,7 @@ func TestP914ReleaseBundleDowngradesEveryP912ObjectWhenClientValidationMissing(t
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
 	localOpsPath := writeP711LocalOpsReport(t, root)
-	benchmarkPath := filepath.Join(root, "testdata", "benchmarks", "localization.json")
-	writeP711JSON(t, benchmarkPath, map[string]any{"schema_version": "idiom.localization_benchmark.v1", "status": "pass"})
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
 	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
@@ -517,6 +521,9 @@ func TestP913ReleaseBenchmarkNeedsCompetitiveEvidenceWithPassingLocalOps(t *test
 	}
 	if !releaseEvidenceHasBlockerReason(report.BenchmarkLocalOps.Blockers, "benchmark_local_ops", "competitive benchmark") {
 		t.Fatalf("benchmark section missing competitive evidence blocker: %#v", report.BenchmarkLocalOps.Blockers)
+	}
+	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.10"); gate.Status != "needs_evidence" {
+		t.Fatalf("P9.10 release readiness must fail closed without competitive evidence: %#v", gate)
 	}
 }
 

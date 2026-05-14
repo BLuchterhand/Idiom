@@ -162,10 +162,11 @@ type releaseEvidenceAuditSecuritySection struct {
 }
 
 type releaseEvidenceBenchmarkSection struct {
-	Status             string                    `json:"status"`
-	LocalOps           releaseEvidenceLocalOps   `json:"local_ops"`
-	CompetitiveSignals []releaseEvidenceArtifact `json:"competitive_signals,omitempty"`
-	Blockers           []releaseEvidenceBlocker  `json:"blockers,omitempty"`
+	Status              string                    `json:"status"`
+	LocalOps            releaseEvidenceLocalOps   `json:"local_ops"`
+	CompetitiveSignals  []releaseEvidenceArtifact `json:"competitive_signals,omitempty"`
+	CompetitiveCoverage p711ReleaseGateLinkage    `json:"competitive_coverage"`
+	Blockers            []releaseEvidenceBlocker  `json:"blockers,omitempty"`
 }
 
 type releaseEvidenceActivationSection struct {
@@ -355,6 +356,7 @@ func buildReleaseEvidenceBundle(root string, laneSummary laneHistorySummary, opt
 		ProjectRoot:       root,
 		LocalOpsReport:    opts.LocalOpsReport,
 		ValidationRecords: opts.ValidationRecords,
+		BenchmarkReport:   opts.BenchmarkReport,
 	})
 	clientReadiness := buildReleaseClientReadiness(product.ClassCoverage)
 	validation := buildReleaseValidationSection(current, product)
@@ -382,7 +384,7 @@ func buildReleaseEvidenceBundle(root string, laneSummary laneHistorySummary, opt
 		},
 		Validation:           validation,
 		AuditSecurity:        buildReleaseAuditSecuritySection(current, product, securityRef),
-		BenchmarkLocalOps:    buildReleaseBenchmarkSection(root, opts, localOps, localOpsRef),
+		BenchmarkLocalOps:    buildReleaseBenchmarkSection(root, opts, localOps, localOpsRef, releaseGateLinkageByGate(releaseGateLinkage, "P9.10")),
 		ActivationOnboarding: activation,
 		SidecarIntegration:   buildReleaseSidecarSection(root, opts, integration, integrationRef),
 		ProductEvidence: releaseEvidenceProductSection{
@@ -398,7 +400,7 @@ func buildReleaseEvidenceBundle(root string, laneSummary laneHistorySummary, opt
 		ReleaseReadiness: releaseReadinessFromProduct(releaseGateLinkage, clientReadiness, activation),
 		Limitations: []string{
 			"P9.1 produces release evidence only; P9.2-P9.12 own go/no-go decisions and gate pass/fail signoff.",
-			"External competitive baselines are summarized only when a benchmark artifact is supplied.",
+			"P9.10 summarizes the default P4.6 localization corpus and any supplied competitive benchmark artifact.",
 		},
 		Metadata: map[string]any{
 			"generated_by": "idiom release evidence",
@@ -567,9 +569,10 @@ func buildReleaseAuditSecuritySection(current releaseEvidenceInputBundle, produc
 	}
 }
 
-func buildReleaseBenchmarkSection(root string, opts releaseEvidenceOptions, localOps *localOpsBenchmarkReport, ref p711SourceReference) releaseEvidenceBenchmarkSection {
+func buildReleaseBenchmarkSection(root string, opts releaseEvidenceOptions, localOps *localOpsBenchmarkReport, ref p711SourceReference, competitiveCoverage p711ReleaseGateLinkage) releaseEvidenceBenchmarkSection {
 	out := releaseEvidenceBenchmarkSection{
-		Status: "needs_evidence",
+		Status:              "needs_evidence",
+		CompetitiveCoverage: competitiveCoverage,
 		LocalOps: releaseEvidenceLocalOps{
 			Status:       "not_available",
 			ReportSource: ref,
@@ -615,6 +618,11 @@ func buildReleaseBenchmarkSection(root string, opts releaseEvidenceOptions, loca
 		}
 	} else {
 		out.Blockers = append(out.Blockers, releaseEvidenceBlocker{Section: "benchmark_local_ops", Reason: "competitive benchmark artifact not supplied; P9.10 owns external-baseline gate"})
+	}
+	if competitiveCoverage.Status != "evidence_present" {
+		for _, blocker := range competitiveCoverage.Blockers {
+			out.Blockers = append(out.Blockers, releaseEvidenceBlocker{Section: "benchmark_local_ops", Reason: "P9.10 competitive benchmark coverage incomplete", Evidence: blocker})
+		}
 	}
 	out.Status = releaseBenchmarkSectionStatus(localOpsPresent, out.LocalOps.Status, out.Blockers)
 	return out
@@ -763,6 +771,9 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 		}
 		if gate.Gate == "P9.9" && gate.Status != "evidence_present" {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.9 security/privacy posture evidence incomplete", Evidence: gate.Status})
+		}
+		if gate.Gate == "P9.10" && gate.Status != "evidence_present" {
+			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.10 competitive benchmark evidence incomplete", Evidence: gate.Status})
 		}
 	}
 	return releaseEvidenceCompactBlockers(blockers)
@@ -1083,6 +1094,21 @@ func releaseReadinessFromProduct(rows []p711ReleaseGateLinkage, clients []releas
 		})
 	}
 	return out
+}
+
+func releaseGateLinkageByGate(rows []p711ReleaseGateLinkage, gate string) p711ReleaseGateLinkage {
+	for _, row := range rows {
+		if row.Gate == gate {
+			return row
+		}
+	}
+	return p711ReleaseGateLinkage{
+		Gate:        gate,
+		Status:      "needs_evidence",
+		Evidence:    "release gate linkage missing",
+		ClaimImpact: "release claims remain no-go until gate evidence is present",
+		Blockers:    []string{"release gate linkage missing: " + gate},
+	}
 }
 
 func releaseGateLinkageFromProduct(rows []p711ReleaseGateLinkage, clients []releaseEvidenceClientReadiness, activation releaseEvidenceActivationSection) []p711ReleaseGateLinkage {

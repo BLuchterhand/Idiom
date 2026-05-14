@@ -118,6 +118,7 @@ type LocalizationCompetitiveConditionInput struct {
 	Budget                *LocalizationCompetitiveBudgetEvidence `json:"budget,omitempty"`
 	CommandID             string                                 `json:"command_id,omitempty"`
 	ArtifactPath          string                                 `json:"artifact_path,omitempty"`
+	VerificationMethod    string                                 `json:"verification_method,omitempty"`
 	InfeasibilityReason   string                                 `json:"infeasibility_reason,omitempty"`
 	ClaimImpact           string                                 `json:"claim_impact,omitempty"`
 	ClientClassifications []string                               `json:"client_classifications,omitempty"`
@@ -399,6 +400,7 @@ func lintLocalizationCompetitiveCondition(condition LocalizationCompetitiveCondi
 		value string
 	}{
 		{name: "command_id", value: condition.CommandID},
+		{name: "verification_method", value: condition.VerificationMethod},
 		{name: "infeasibility_reason", value: condition.InfeasibilityReason},
 		{name: "claim_impact", value: condition.ClaimImpact},
 	} {
@@ -427,6 +429,9 @@ func lintLocalizationCompetitiveCondition(condition LocalizationCompetitiveCondi
 		if !localizationCompetitiveConditionHasReproducibility(condition) {
 			add("competitive condition %q measured status requires command_id or artifact_path", condition.Baseline)
 		}
+		if !localizationCompetitiveConditionHasVerificationMethod(condition) {
+			add("competitive condition %q measured status requires verification_method", condition.Baseline)
+		}
 	case localizationCompetitiveStatusInfeasible:
 		if strings.TrimSpace(condition.InfeasibilityReason) == "" {
 			add("competitive condition %q infeasible status requires infeasibility_reason", condition.Baseline)
@@ -436,6 +441,9 @@ func lintLocalizationCompetitiveCondition(condition LocalizationCompetitiveCondi
 		}
 		if !localizationCompetitiveConditionHasReproducibility(condition) {
 			add("competitive condition %q infeasible status requires command_id or artifact_path", condition.Baseline)
+		}
+		if !localizationCompetitiveConditionHasVerificationMethod(condition) {
+			add("competitive condition %q infeasible status requires verification_method", condition.Baseline)
 		}
 	}
 }

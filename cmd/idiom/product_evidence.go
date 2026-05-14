@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"idiom/internal/comprehension"
+	idiomeval "idiom/internal/eval"
 	"idiom/internal/telemetry"
 )
 
@@ -83,6 +84,7 @@ type productEvidenceExportOptions struct {
 	OutputPath        string
 	LocalOpsReport    string
 	ValidationRecords string
+	BenchmarkReport   string
 }
 
 type p711SignalCompleteness struct {
@@ -175,6 +177,7 @@ func runProductEvidenceExport(args []string, stdout io.Writer, stderr io.Writer,
 	fs.StringVar(&opts.OutputPath, "output", "", "optional path to write the JSON export")
 	fs.StringVar(&opts.LocalOpsReport, "local-ops-report", "", "optional local-ops benchmark JSON report to fold into the export")
 	fs.StringVar(&opts.ValidationRecords, "validation-records", "", "optional privacy-safe P0.8 validation records JSON or JSONL")
+	fs.StringVar(&opts.BenchmarkReport, "benchmark-report", "", "optional localization benchmark or corpus JSON report to fold into P9.10")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -252,6 +255,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 	demos, demosRef := loadP711ClientDemoTranscripts(root)
 	records, recordsRef := loadP711ValidationRecords(opts.ValidationRecords)
 	learning, learningRef := loadP711LearningSummary(root)
+	competitive, competitiveRef := loadP910CompetitiveBenchmarkEvidence(root, opts.BenchmarkReport)
 	signals := buildP711Signals(localOps, records, integration, security, learning)
 	classCoverage := buildP711ClassCoverage(demos, security, integration, records)
 	completeness := summarizeP711Signals(signals)
@@ -324,8 +328,9 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			demosRef,
 			recordsRef,
 			learningRef,
+			competitiveRef,
 		},
-		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records, p99),
+		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records, p99, p910CompetitiveBenchmarkGate(competitive, competitiveRef)),
 		Limitations:        productEvidenceExportLimitations(integration),
 		Metadata: map[string]any{
 			"generated_by": "idiom product-evidence export",
@@ -1201,6 +1206,285 @@ func p711BenchmarkSignal(localOps *localOpsBenchmarkReport) p711SignalSummary {
 	return s
 }
 
+type p910CompetitiveBenchmarkEvidence struct {
+	Conditions []idiomeval.LocalizationCompetitiveConditionMetric
+	Findings   []string
+}
+
+func loadP910CompetitiveBenchmarkEvidence(root string, path string) (p910CompetitiveBenchmarkEvidence, p711SourceReference) {
+	if strings.TrimSpace(path) == "" {
+		path = filepath.Join(root, "testdata", "localization", "recent-implementation-corpus.json")
+	} else {
+		path = resolveReleaseEvidencePath(root, path)
+	}
+	ref := p711FileRef("p4.6_localization_competitive_benchmark", "competitive_benchmark", path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return p910CompetitiveBenchmarkEvidence{}, ref
+	}
+	ref.Status = "present"
+	ref.ArtifactHash = p711Hash(data)
+	evidence, err := decodeP910CompetitiveBenchmarkEvidence(data)
+	if err != nil {
+		ref.Status = "blocked"
+		evidence.Findings = append(evidence.Findings, err.Error())
+	}
+	return evidence, ref
+}
+
+func decodeP910CompetitiveBenchmarkEvidence(data []byte) (p910CompetitiveBenchmarkEvidence, error) {
+	var corpus idiomeval.LocalizationCorpus
+	if err := json.Unmarshal(data, &corpus); err == nil && strings.TrimSpace(corpus.Name) != "" && len(corpus.Tasks) > 0 {
+		report := idiomeval.AnalyzeLocalizationCorpusWithOptions(corpus, idiomeval.LocalizationBenchmarkOptions{TopK: []int{1}})
+		return p910CompetitiveBenchmarkEvidence{
+			Conditions: report.Benchmark.CompetitiveConditions,
+			Findings:   idiomeval.LintLocalizationCorpus(corpus),
+		}, nil
+	}
+	var report struct {
+		Status                string                                             `json:"status"`
+		SchemaVersion         string                                             `json:"schema_version"`
+		CompetitiveConditions []idiomeval.LocalizationCompetitiveConditionMetric `json:"competitive_conditions"`
+		Outcome               struct {
+			CompetitiveConditions []idiomeval.LocalizationCompetitiveConditionMetric `json:"competitive_conditions"`
+		} `json:"outcome"`
+		Benchmark struct {
+			CompetitiveConditions []idiomeval.LocalizationCompetitiveConditionMetric `json:"competitive_conditions"`
+		} `json:"benchmark"`
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		return p910CompetitiveBenchmarkEvidence{}, fmt.Errorf("malformed competitive benchmark JSON")
+	}
+	conditions := report.Outcome.CompetitiveConditions
+	if len(conditions) == 0 {
+		conditions = report.Benchmark.CompetitiveConditions
+	}
+	if len(conditions) == 0 {
+		conditions = report.CompetitiveConditions
+	}
+	evidence := p910CompetitiveBenchmarkEvidence{Conditions: conditions}
+	switch p711SafeToken(report.Status) {
+	case "stale", "no_go", "nogo", "incomplete", "blocked", "fail", "failed":
+		evidence.Findings = append(evidence.Findings, "competitive benchmark result status is "+p711SafeToken(report.Status))
+	}
+	if len(conditions) == 0 {
+		evidence.Findings = append(evidence.Findings, "competitive benchmark conditions missing")
+	}
+	return evidence, nil
+}
+
+func p910CompetitiveBenchmarkGate(evidence p910CompetitiveBenchmarkEvidence, ref p711SourceReference) p711ReleaseGateLinkage {
+	required := idiomeval.RequiredLocalizationExternalCompetitiveBaselineIDs()
+	known := map[string]bool{}
+	for _, baseline := range idiomeval.LocalizationCompetitiveBaselineIDs() {
+		known[baseline] = true
+	}
+	counts := map[string]int{
+		"required_external_baselines":              len(required),
+		"baseline_rows":                            len(evidence.Conditions),
+		"covered_external_baselines":               0,
+		"measured_external_baselines":              0,
+		"documented_infeasible_external_baselines": 0,
+		"missing_external_baselines":               0,
+		"malformed_baseline_rows":                  0,
+		"self_referential_baselines":               0,
+		"external_baseline_rows":                   0,
+		"external_measured_tasks":                  0,
+		"external_infeasible_tasks":                0,
+		"external_missing_tasks":                   0,
+		"external_invalid_client_classifications":  0,
+		"target_client_coverage_baselines":         0,
+	}
+	var blockers []string
+	var evidenceIDs []string
+	if ref.Status == "present" {
+		evidenceIDs = append(evidenceIDs, ref.ID)
+	} else if ref.Status == "blocked" {
+		blockers = append(blockers, "competitive benchmark artifact is malformed")
+	} else {
+		blockers = append(blockers, "competitive benchmark artifact not available")
+	}
+	for _, finding := range evidence.Findings {
+		blockers = append(blockers, "benchmark evidence finding: "+localOpsSafeText(finding))
+	}
+	byBaseline := map[string]idiomeval.LocalizationCompetitiveConditionMetric{}
+	selfReferentialEvidence := 0
+	for _, condition := range evidence.Conditions {
+		baseline := p711SafeToken(condition.Baseline)
+		if baseline == "" || !known[baseline] {
+			counts["malformed_baseline_rows"]++
+			blockers = append(blockers, "malformed or unsupported competitive baseline row")
+			continue
+		}
+		if !p910RequiredBaseline(required, baseline) {
+			if condition.MeasuredTasks+condition.InfeasibleTasks > 0 {
+				selfReferentialEvidence++
+			}
+			continue
+		}
+		byBaseline[baseline] = condition
+	}
+	counts["self_referential_baselines"] = selfReferentialEvidence
+	for _, baseline := range required {
+		condition, ok := byBaseline[baseline]
+		if !ok {
+			counts["missing_external_baselines"]++
+			blockers = append(blockers, "missing external competitive baseline: "+baseline)
+			continue
+		}
+		counts["external_baseline_rows"]++
+		counts["external_measured_tasks"] += condition.MeasuredTasks
+		counts["external_infeasible_tasks"] += condition.InfeasibleTasks
+		counts["external_missing_tasks"] += condition.MissingTasks
+		counts["external_invalid_client_classifications"] += condition.InvalidClientClasses + p910UnsupportedClientCoverageCount(condition.ClientCoverage)
+		if p910CompetitiveConditionHasTargetClientCoverage(condition) {
+			counts["target_client_coverage_baselines"]++
+		}
+		if condition.MeasuredTasks > 0 {
+			counts["measured_external_baselines"]++
+		}
+		if condition.InfeasibleTasks > 0 {
+			counts["documented_infeasible_external_baselines"]++
+		}
+		if p910CompetitiveConditionCovered(condition) {
+			counts["covered_external_baselines"]++
+			evidenceIDs = append(evidenceIDs, "competitive_baseline:"+baseline)
+			continue
+		}
+		blockers = append(blockers, p910CompetitiveConditionBlocker(condition))
+	}
+	if counts["covered_external_baselines"] == 0 && selfReferentialEvidence > 0 {
+		blockers = append(blockers, "competitive benchmark evidence is self-referential only; external baselines are required")
+	}
+	status := "needs_evidence"
+	claimImpact := "competitive readiness and productivity claims remain no-go until each external baseline is measured or documented infeasible with claim impact"
+	if len(blockers) == 0 && counts["covered_external_baselines"] == len(required) {
+		status = "evidence_present"
+		claimImpact = "competitive claims may cite only the covered external-baseline evidence and documented limitations"
+	}
+	return p711ReleaseGateLinkage{
+		Gate:        "P9.10",
+		Status:      status,
+		Evidence:    fmt.Sprintf("required_external_baselines=%d; covered_external_baselines=%d; measured_external_baselines=%d; documented_infeasible_external_baselines=%d", counts["required_external_baselines"], counts["covered_external_baselines"], counts["measured_external_baselines"], counts["documented_infeasible_external_baselines"]),
+		ClaimImpact: claimImpact,
+		Counts:      counts,
+		Blockers:    p711Compact(blockers...),
+		EvidenceIDs: p711Compact(evidenceIDs...),
+	}
+}
+
+func p910CompetitiveConditionCovered(condition idiomeval.LocalizationCompetitiveConditionMetric) bool {
+	covered := condition.MeasuredTasks + condition.InfeasibleTasks
+	if covered == 0 || condition.TotalTasks == 0 || condition.MissingTasks > 0 || condition.InvalidClientClasses > 0 || p910UnsupportedClientCoverageCount(condition.ClientCoverage) > 0 {
+		return false
+	}
+	if !p910CompetitiveConditionHasTargetClientCoverage(condition) {
+		return false
+	}
+	if condition.CommandedTasks < covered || condition.ArtifactedTasks < covered || condition.VerifiedTasks < covered || condition.ReproducibleTasks < covered {
+		return false
+	}
+	if condition.MeasuredTasks > 0 {
+		if condition.BudgetedTasks < condition.MeasuredTasks || len(condition.TopKEditPathCoverage) == 0 {
+			return false
+		}
+		for _, coverage := range condition.TopKEditPathCoverage {
+			if !coverage.Available {
+				return false
+			}
+		}
+	}
+	if condition.InfeasibleTasks > 0 && (len(condition.InfeasibilityReasons) == 0 || len(condition.ClaimImpacts) == 0) {
+		return false
+	}
+	return len(condition.FailureReasons) == 0 && p910CompetitiveStatusCovers(condition.Status)
+}
+
+func p910CompetitiveConditionBlocker(condition idiomeval.LocalizationCompetitiveConditionMetric) string {
+	baseline := p711SafeToken(condition.Baseline)
+	covered := condition.MeasuredTasks + condition.InfeasibleTasks
+	switch {
+	case covered == 0:
+		return "external competitive baseline has no measured result or documented infeasibility: " + baseline
+	case condition.MissingTasks > 0:
+		return "external competitive baseline is missing task coverage: " + baseline
+	case !p910CompetitiveStatusCovers(condition.Status):
+		return "external competitive baseline has stale, no-go, incomplete, or unsupported status: " + baseline
+	case condition.InvalidClientClasses > 0 || p910UnsupportedClientCoverageCount(condition.ClientCoverage) > 0:
+		return "external competitive baseline has unsupported client classifications: " + baseline
+	case !p910CompetitiveConditionHasTargetClientCoverage(condition):
+		return "external competitive baseline is missing enterprise-saas/open-source/tooling-vendor client coverage: " + baseline
+	case condition.CommandedTasks < covered:
+		return "external competitive baseline is missing command ID evidence: " + baseline
+	case condition.ArtifactedTasks < covered:
+		return "external competitive baseline is missing artifact evidence: " + baseline
+	case condition.VerifiedTasks < covered:
+		return "external competitive baseline is missing verification method evidence: " + baseline
+	case condition.ReproducibleTasks < covered:
+		return "external competitive baseline is missing reproducibility evidence: " + baseline
+	case condition.MeasuredTasks > 0 && condition.BudgetedTasks < condition.MeasuredTasks:
+		return "external competitive baseline is missing fair budget evidence: " + baseline
+	case condition.MeasuredTasks > 0 && len(condition.TopKEditPathCoverage) == 0:
+		return "external competitive baseline measured result is incomplete: " + baseline
+	case condition.InfeasibleTasks > 0 && len(condition.InfeasibilityReasons) == 0:
+		return "external competitive baseline infeasibility reason missing: " + baseline
+	case condition.InfeasibleTasks > 0 && len(condition.ClaimImpacts) == 0:
+		return "external competitive baseline claim impact missing: " + baseline
+	case len(condition.FailureReasons) > 0:
+		return "external competitive baseline has benchmark failure reasons: " + baseline + ":" + strings.Join(condition.FailureReasons, ",")
+	default:
+		return "external competitive baseline needs evidence: " + baseline
+	}
+}
+
+func p910CompetitiveStatusCovers(status string) bool {
+	switch p711SafeToken(status) {
+	case "measured", "documented_infeasible", "mixed_measured_infeasible":
+		return true
+	default:
+		return false
+	}
+}
+
+func p910CompetitiveConditionHasTargetClientCoverage(condition idiomeval.LocalizationCompetitiveConditionMetric) bool {
+	for _, class := range []string{"enterprise_saas", "open_source", "tooling_vendor"} {
+		if condition.ClientCoverage[class] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func p910UnsupportedClientCoverageCount(coverage map[string]int) int {
+	allowed := map[string]bool{
+		"finance":                  true,
+		"healthcare":               true,
+		"healthcare_life_sciences": true,
+		"public_sector":            true,
+		"enterprise_saas":          true,
+		"tooling_vendor":           true,
+		"local_model":              true,
+		"local_model_private_code": true,
+		"open_source":              true,
+	}
+	unsupported := 0
+	for class := range coverage {
+		if !allowed[p711SafeToken(class)] {
+			unsupported++
+		}
+	}
+	return unsupported
+}
+
+func p910RequiredBaseline(required []string, baseline string) bool {
+	for _, value := range required {
+		if value == baseline {
+			return true
+		}
+	}
+	return false
+}
+
 func p711AuditSignal(localOps *localOpsBenchmarkReport, security p711SecurityPosture) p711SignalSummary {
 	s := p711SignalSummary{ID: "audit", Status: "partial", Completeness: "partial", SourceRefs: []string{"local_ops_benchmark", "p7.9_security_privacy_posture"}, RedactionStatus: "redacted", ReleaseGates: []string{"P7.9", "P9.1", "P9.3", "P9.9"}, Counts: map[string]int{"security_controls": len(security.RequiredControls)}}
 	if localOps != nil && localOps.Quickstart != nil {
@@ -1269,7 +1553,7 @@ func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPo
 	return rows
 }
 
-func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord, p99 p711ReleaseGateLinkage) []p711ReleaseGateLinkage {
+func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord, p99 p711ReleaseGateLinkage, p910 p711ReleaseGateLinkage) []p711ReleaseGateLinkage {
 	classStatus := "evidence_present"
 	for _, row := range classes {
 		if row.Status != "pass" {
@@ -1285,6 +1569,7 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 		{Gate: "P9.7", Status: p97.Status, Evidence: p97.Evidence, ClaimImpact: p97.ClaimImpact, Counts: p97.Counts, Blockers: p97.Blockers, EvidenceIDs: p97.EvidenceIDs},
 		{Gate: "P9.8", Status: p98.Status, Evidence: p98.Evidence, ClaimImpact: p98.ClaimImpact, Counts: p98.Counts, Blockers: p98.Blockers, EvidenceIDs: p98.EvidenceIDs},
 		{Gate: "P9.9", Status: p99.Status, Evidence: p99.Evidence, ClaimImpact: p99.ClaimImpact, Counts: p99.Counts, Blockers: p99.Blockers, EvidenceIDs: p99.EvidenceIDs},
+		{Gate: "P9.10", Status: p910.Status, Evidence: p910.Evidence, ClaimImpact: p910.ClaimImpact, Counts: p910.Counts, Blockers: p910.Blockers, EvidenceIDs: p910.EvidenceIDs},
 		{Gate: "P9.12", Status: classStatus, Evidence: "classification coverage rows and limitations", ClaimImpact: "packaging/support thesis must cite statuses"},
 	}
 }
@@ -2485,13 +2770,13 @@ func sanitizeProductEvidenceTelemetryArgs(args []string) []string {
 		arg := strings.TrimSpace(out[i])
 		if flag, value, ok := strings.Cut(arg, "="); ok {
 			switch flag {
-			case "--project-root", "--output", "--local-ops-report", "--validation-records":
+			case "--project-root", "--output", "--local-ops-report", "--validation-records", "--benchmark-report":
 				out[i] = flag + "=" + redactedProductEvidencePathArg(value)
 			}
 			continue
 		}
 		switch arg {
-		case "--project-root", "--output", "--local-ops-report", "--validation-records":
+		case "--project-root", "--output", "--local-ops-report", "--validation-records", "--benchmark-report":
 			if i+1 < len(out) {
 				i++
 				out[i] = redactedProductEvidencePathArg(out[i])

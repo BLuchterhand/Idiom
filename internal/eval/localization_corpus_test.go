@@ -159,7 +159,7 @@ func TestLocalizationBenchmarkReportsCompetitiveConditions(t *testing.T) {
 		t.Fatalf("expected one competitive metric per required baseline, got %#v", report.Benchmark.CompetitiveConditions)
 	}
 	raw := localizationCompetitiveConditionByBaselineForTest(report.Benchmark.CompetitiveConditions, "raw_search_read")
-	if raw.Status != "measured" || raw.MeasuredTasks != 1 || raw.BudgetedTasks != 1 || raw.ReproducibleTasks != 1 || raw.MissingTasks != 0 {
+	if raw.Status != "measured" || raw.MeasuredTasks != 1 || raw.BudgetedTasks != 1 || raw.ReproducibleTasks != 1 || raw.CommandedTasks != 1 || raw.ArtifactedTasks != 1 || raw.VerifiedTasks != 1 || raw.MissingTasks != 0 {
 		t.Fatalf("raw search/read condition should be measured, budgeted, and reproducible: %#v", raw)
 	}
 	if len(raw.TopKEditPathCoverage) != 1 || raw.TopKEditPathCoverage[0].Numerator != 1 || raw.TopKEditPathCoverage[0].Denominator != 1 {
@@ -169,7 +169,7 @@ func TestLocalizationBenchmarkReportsCompetitiveConditions(t *testing.T) {
 		t.Fatalf("competitive condition should carry all client classifications, got %#v", raw.ClientCoverage)
 	}
 	aider := localizationCompetitiveConditionByBaselineForTest(report.Benchmark.CompetitiveConditions, "aider_repo_map")
-	if aider.Status != "documented_infeasible" || aider.InfeasibleTasks != 1 || aider.InfeasibilityReasons["tool_unavailable"] != 1 || aider.ClaimImpacts["claim_weakened_until_external_run"] != 1 {
+	if aider.Status != "documented_infeasible" || aider.InfeasibleTasks != 1 || aider.CommandedTasks != 1 || aider.ArtifactedTasks != 1 || aider.VerifiedTasks != 1 || aider.InfeasibilityReasons["tool_unavailable"] != 1 || aider.ClaimImpacts["claim_weakened_until_external_run"] != 1 {
 		t.Fatalf("Aider-style condition should record bounded infeasibility, got %#v", aider)
 	}
 	if len(aider.FailureReasons) != 0 {
@@ -375,6 +375,7 @@ func localizationCompetitiveConditionsForTest(expectedPath string, classificatio
 			Budget:                &LocalizationCompetitiveBudgetEvidence{ToolCallBudget: 8, WallClockBudgetMS: 60000, UsedToolCalls: 3, ElapsedMS: 1200},
 			CommandID:             baseline + "_fixture",
 			ArtifactPath:          "testdata/localization/competitive/" + baseline + ".json",
+			VerificationMethod:    "fixture_replay",
 			ClientClassifications: append([]string(nil), classifications...),
 		})
 	}
@@ -384,6 +385,7 @@ func localizationCompetitiveConditionsForTest(expectedPath string, classificatio
 			Status:                "infeasible",
 			CommandID:             baseline + "_probe",
 			ArtifactPath:          "testdata/localization/competitive/" + baseline + ".json",
+			VerificationMethod:    "fixture_probe",
 			InfeasibilityReason:   "tool_unavailable",
 			ClaimImpact:           "claim_weakened_until_external_run",
 			ClientClassifications: append([]string(nil), classifications...),

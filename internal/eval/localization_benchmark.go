@@ -19,6 +19,9 @@ const (
 	localizationFailurePartialCompetitiveCandidates = "partial_competitive_condition_candidates"
 	localizationFailureCompetitiveBudget            = "competitive_budget_missing"
 	localizationFailureCompetitiveReproducibility   = "competitive_reproducibility_missing"
+	localizationFailureCompetitiveCommand           = "competitive_command_id_missing"
+	localizationFailureCompetitiveArtifact          = "competitive_artifact_missing"
+	localizationFailureCompetitiveVerification      = "competitive_verification_method_missing"
 	localizationFailureCompetitiveClientClasses     = "competitive_condition_client_classification_invalid"
 )
 
@@ -109,6 +112,9 @@ type LocalizationCompetitiveConditionMetric struct {
 	MissingTasks         int                              `json:"missing_tasks"`
 	BudgetedTasks        int                              `json:"budgeted_tasks"`
 	ReproducibleTasks    int                              `json:"reproducible_tasks"`
+	CommandedTasks       int                              `json:"commanded_tasks"`
+	ArtifactedTasks      int                              `json:"artifacted_tasks"`
+	VerifiedTasks        int                              `json:"verified_tasks"`
 	InvalidClientClasses int                              `json:"invalid_client_classifications,omitempty"`
 	ClientCoverage       map[string]int                   `json:"client_coverage,omitempty"`
 	InfeasibilityReasons map[string]int                   `json:"infeasibility_reasons,omitempty"`
@@ -309,10 +315,28 @@ func localizationCompetitiveConditionMetrics(corpus LocalizationCorpus, topK []i
 				if localizationCompetitiveConditionHasReproducibility(condition) {
 					metric.ReproducibleTasks++
 				}
+				if strings.TrimSpace(condition.CommandID) != "" {
+					metric.CommandedTasks++
+				}
+				if strings.TrimSpace(condition.ArtifactPath) != "" {
+					metric.ArtifactedTasks++
+				}
+				if localizationCompetitiveConditionHasVerificationMethod(condition) {
+					metric.VerifiedTasks++
+				}
 			case localizationCompetitiveStatusInfeasible:
 				metric.InfeasibleTasks++
 				if localizationCompetitiveConditionHasReproducibility(condition) {
 					metric.ReproducibleTasks++
+				}
+				if strings.TrimSpace(condition.CommandID) != "" {
+					metric.CommandedTasks++
+				}
+				if strings.TrimSpace(condition.ArtifactPath) != "" {
+					metric.ArtifactedTasks++
+				}
+				if localizationCompetitiveConditionHasVerificationMethod(condition) {
+					metric.VerifiedTasks++
 				}
 				if reason := normalizedLocalizationKey(condition.InfeasibilityReason); reason != "" {
 					metric.InfeasibilityReasons[reason]++
@@ -422,8 +446,18 @@ func localizationCompetitiveConditionFailureReasons(metric LocalizationCompetiti
 	if metric.MeasuredTasks > 0 && metric.BudgetedTasks < metric.MeasuredTasks {
 		reasons = append(reasons, localizationFailureCompetitiveBudget)
 	}
-	if metric.MeasuredTasks+metric.InfeasibleTasks > 0 && metric.ReproducibleTasks < metric.MeasuredTasks+metric.InfeasibleTasks {
+	coveredTasks := metric.MeasuredTasks + metric.InfeasibleTasks
+	if coveredTasks > 0 && metric.ReproducibleTasks < coveredTasks {
 		reasons = append(reasons, localizationFailureCompetitiveReproducibility)
+	}
+	if coveredTasks > 0 && metric.CommandedTasks < coveredTasks {
+		reasons = append(reasons, localizationFailureCompetitiveCommand)
+	}
+	if coveredTasks > 0 && metric.ArtifactedTasks < coveredTasks {
+		reasons = append(reasons, localizationFailureCompetitiveArtifact)
+	}
+	if coveredTasks > 0 && metric.VerifiedTasks < coveredTasks {
+		reasons = append(reasons, localizationFailureCompetitiveVerification)
 	}
 	if metric.InvalidClientClasses > 0 {
 		reasons = append(reasons, localizationFailureCompetitiveClientClasses)
@@ -513,6 +547,28 @@ func localizationCompetitiveConditionHasBudget(condition LocalizationCompetitive
 
 func localizationCompetitiveConditionHasReproducibility(condition LocalizationCompetitiveConditionInput) bool {
 	return strings.TrimSpace(condition.CommandID) != "" || strings.TrimSpace(condition.ArtifactPath) != ""
+}
+
+func localizationCompetitiveConditionHasVerificationMethod(condition LocalizationCompetitiveConditionInput) bool {
+	return strings.TrimSpace(condition.VerificationMethod) != ""
+}
+
+func RequiredLocalizationExternalCompetitiveBaselineIDs() []string {
+	var out []string
+	for _, definition := range localizationCompetitiveBaselineDefinitions {
+		if definition.External {
+			out = append(out, definition.ID)
+		}
+	}
+	return out
+}
+
+func LocalizationCompetitiveBaselineIDs() []string {
+	out := make([]string, 0, len(localizationCompetitiveBaselineDefinitions))
+	for _, definition := range localizationCompetitiveBaselineDefinitions {
+		out = append(out, definition.ID)
+	}
+	return out
 }
 
 func localizationUniqueStrings(values []string) []string {

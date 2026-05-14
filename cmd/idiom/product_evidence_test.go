@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 	stageP711ProductEvidenceFixtures(t, root)
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Source:    "cli",
@@ -34,6 +36,7 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
+		BenchmarkReport:   benchmarkPath,
 	})
 	body, err := json.Marshal(report)
 	if err != nil {
@@ -80,6 +83,14 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 		len(linkage.Blockers) != 0 ||
 		!stringSliceContains(linkage.EvidenceIDs, "p7.8-mcp-stdio") {
 		t.Fatalf("P9.8 linkage should expose structured counts and evidence IDs: %#v", linkage)
+	}
+	if linkage := p711TestReleaseGate(reparsed.ReleaseGateLinkage, "P9.10"); linkage.Status != "evidence_present" {
+		t.Fatalf("P9.10 linkage should consume external competitive benchmark coverage: %#v", linkage)
+	} else if linkage.Counts["required_external_baselines"] != 2 ||
+		linkage.Counts["covered_external_baselines"] != 2 ||
+		len(linkage.Blockers) != 0 ||
+		!stringSliceContains(linkage.EvidenceIDs, "competitive_baseline:aider_repo_map") {
+		t.Fatalf("P9.10 linkage should expose structured counts and evidence IDs: %#v", linkage)
 	}
 	if got := p711TestSignal(reparsed.Signals, "learning"); got.Status != "pass" || got.Counts["accepted"] == 0 {
 		t.Fatalf("learning signal should summarize sanitized ranker learning: %#v", got)
@@ -206,6 +217,199 @@ func TestP96ProductEvidenceZeroRankedPacketDoesNotPassActivationOrP96(t *testing
 	}
 	if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.6"); linkage.Status == "evidence_present" {
 		t.Fatalf("zero-ranked packet evidence must not close P9.6: %#v", linkage)
+	}
+}
+
+func TestP910ProductEvidenceNeedsExternalCompetitiveBaselines(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	path := writeP910CompetitiveBenchmarkReport(t, root, []map[string]any{p910MeasuredCondition("aider_repo_map")})
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:     root,
+		BenchmarkReport: path,
+	})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.10")
+	if gate.Status != "needs_evidence" || gate.Counts["missing_external_baselines"] != 1 {
+		t.Fatalf("P9.10 should fail closed when an external baseline is missing: %#v", gate)
+	}
+	if !p711TestBlockerContains(gate.Blockers, "missing external competitive baseline") {
+		t.Fatalf("P9.10 missing-baseline blocker not exposed: %#v", gate)
+	}
+}
+
+func TestP910ProductEvidenceRejectsSelfReferentialOnlyEvidence(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	path := writeP910CompetitiveBenchmarkReport(t, root, []map[string]any{
+		p910MeasuredCondition("raw_search_read"),
+		p910MeasuredCondition("context_pack"),
+	})
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:     root,
+		BenchmarkReport: path,
+	})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.10")
+	if gate.Status != "needs_evidence" || gate.Counts["covered_external_baselines"] != 0 {
+		t.Fatalf("P9.10 should reject self-referential-only benchmark evidence: %#v", gate)
+	}
+	if !p711TestBlockerContains(gate.Blockers, "self-referential only") {
+		t.Fatalf("P9.10 self-referential blocker not exposed: %#v", gate)
+	}
+}
+
+func TestP910ProductAndReleaseJSONIncludeZeroCountKeysForDefaultCorpus(t *testing.T) {
+	root := t.TempDir()
+	stageP910DefaultCorpusFixture(t, root)
+
+	product := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	release := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root})
+
+	productBody, err := json.Marshal(product)
+	if err != nil {
+		t.Fatalf("marshal product evidence: %v", err)
+	}
+	releaseBody, err := json.Marshal(release)
+	if err != nil {
+		t.Fatalf("marshal release evidence: %v", err)
+	}
+
+	productCounts := p910JSONCountsFromProduct(t, productBody)
+	releaseCounts := p910JSONCountsFromReleaseReadiness(t, releaseBody)
+	releaseCompetitiveCounts := p910JSONCountsFromReleaseCompetitiveCoverage(t, releaseBody)
+	for _, counts := range []map[string]int{productCounts, releaseCounts, releaseCompetitiveCounts} {
+		assertP910RequiredCountKeys(t, counts)
+		for _, key := range []string{
+			"covered_external_baselines",
+			"measured_external_baselines",
+			"documented_infeasible_external_baselines",
+			"missing_external_baselines",
+			"malformed_baseline_rows",
+			"self_referential_baselines",
+			"target_client_coverage_baselines",
+		} {
+			if counts[key] != 0 {
+				t.Fatalf("default corpus P9.10 count %q should be explicit zero, got counts=%#v", key, counts)
+			}
+		}
+	}
+	if !reflect.DeepEqual(productCounts, releaseCounts) || !reflect.DeepEqual(productCounts, releaseCompetitiveCounts) {
+		t.Fatalf("P9.10 product/release JSON counts diverged: product=%#v release=%#v competitive=%#v", productCounts, releaseCounts, releaseCompetitiveCounts)
+	}
+}
+
+func TestP910ProductEvidenceRejectsMalformedBaselineRow(t *testing.T) {
+	assertP910ConditionNeedsEvidence(t,
+		p910MeasuredCondition("unsupported_tool"),
+		"malformed or unsupported competitive baseline row",
+	)
+}
+
+func TestP910ProductEvidenceRejectsUnsupportedClientClassification(t *testing.T) {
+	assertP910ConditionNeedsEvidence(t,
+		p910ConditionPatch(p910MeasuredCondition("aider_repo_map"), map[string]any{
+			"invalid_client_classifications": 1,
+		}),
+		"unsupported client classifications",
+	)
+}
+
+func TestP910ProductEvidenceRejectsMissingCommandID(t *testing.T) {
+	assertP910ConditionNeedsEvidence(t,
+		p910ConditionPatch(p910MeasuredCondition("aider_repo_map"), map[string]any{
+			"commanded_tasks": 0,
+		}),
+		"missing command ID evidence",
+	)
+}
+
+func TestP910ProductEvidenceRejectsMissingArtifactEvidence(t *testing.T) {
+	assertP910ConditionNeedsEvidence(t,
+		p910ConditionPatch(p910MeasuredCondition("aider_repo_map"), map[string]any{
+			"artifacted_tasks": 0,
+		}),
+		"missing artifact evidence",
+	)
+}
+
+func TestP910ProductEvidenceRejectsMissingVerificationMethod(t *testing.T) {
+	assertP910ConditionNeedsEvidence(t,
+		p910ConditionPatch(p910MeasuredCondition("aider_repo_map"), map[string]any{
+			"verified_tasks": 0,
+		}),
+		"missing verification method evidence",
+	)
+}
+
+func TestP910ProductEvidenceRejectsNoGoStatus(t *testing.T) {
+	assertP910ConditionNeedsEvidence(t,
+		p910ConditionPatch(p910MeasuredCondition("aider_repo_map"), map[string]any{
+			"status": "no_go",
+		}),
+		"stale, no-go, incomplete, or unsupported status",
+	)
+}
+
+func TestP910ProductEvidenceRejectsDocumentedInfeasibilityMissingClaimImpact(t *testing.T) {
+	assertP910ConditionNeedsEvidence(t,
+		p910ConditionPatch(p910InfeasibleCondition("aider_repo_map"), map[string]any{
+			"claim_impacts": map[string]int{},
+		}),
+		"claim impact missing",
+	)
+}
+
+func assertP910ConditionNeedsEvidence(t *testing.T, condition map[string]any, wantBlocker string) {
+	t.Helper()
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	path := writeP910CompetitiveBenchmarkReport(t, root, []map[string]any{
+		condition,
+		p910InfeasibleCondition("external_agent_native"),
+	})
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:     root,
+		BenchmarkReport: path,
+	})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.10")
+	if gate.Status != "needs_evidence" {
+		t.Fatalf("P9.10 should fail closed: %#v", gate)
+	}
+	if !p711TestBlockerContains(gate.Blockers, wantBlocker) {
+		t.Fatalf("P9.10 blocker %q not exposed: %#v", wantBlocker, gate)
+	}
+}
+
+func TestP910ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	recordsPath := writeP711ValidationRecords(t, root)
+	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
+
+	product := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:       root,
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+		BenchmarkReport:   benchmarkPath,
+	})
+	release := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:       root,
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+		BenchmarkReport:   benchmarkPath,
+	})
+	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.10")
+	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.10")
+	if productGate.Status != releaseGate.Status ||
+		productGate.Counts["covered_external_baselines"] != releaseGate.Counts["covered_external_baselines"] ||
+		len(productGate.Blockers) != len(releaseGate.Blockers) {
+		t.Fatalf("P9.10 product/release structured fields diverged: product=%#v release=%#v", productGate, releaseGate)
+	}
+	if release.BenchmarkLocalOps.CompetitiveCoverage.Status != "evidence_present" {
+		t.Fatalf("release benchmark section should carry P9.10 coverage: %#v", release.BenchmarkLocalOps.CompetitiveCoverage)
 	}
 }
 
@@ -1018,6 +1222,178 @@ func writeP711LocalOpsReport(t *testing.T, root string) string {
 	path := filepath.Join(root, ".idiom", "local-ops", "report.json")
 	writeP711JSON(t, path, report)
 	return path
+}
+
+func writeP910CompetitiveBenchmarkReport(t *testing.T, root string, conditions []map[string]any) string {
+	t.Helper()
+	path := filepath.Join(root, "testdata", "benchmarks", "localization-competitive.json")
+	writeP711JSON(t, path, map[string]any{
+		"schema_version":         "idiom.localization_benchmark.v1",
+		"status":                 "pass",
+		"competitive_conditions": conditions,
+	})
+	return path
+}
+
+func stageP910DefaultCorpusFixture(t *testing.T, root string) {
+	t.Helper()
+	sourcePath := filepath.Join("..", "..", "testdata", "localization", "recent-implementation-corpus.json")
+	data, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read default localization corpus fixture: %v", err)
+	}
+	path := filepath.Join(root, "testdata", "localization", "recent-implementation-corpus.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create default corpus fixture directory: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write default localization corpus fixture: %v", err)
+	}
+}
+
+func p910JSONCountsFromProduct(t *testing.T, body []byte) map[string]int {
+	t.Helper()
+	var report struct {
+		ReleaseGateLinkage []struct {
+			Gate   string         `json:"gate"`
+			Counts map[string]int `json:"counts"`
+		} `json:"release_gate_linkage"`
+	}
+	if err := json.Unmarshal(body, &report); err != nil {
+		t.Fatalf("parse product evidence JSON: %v\n%s", err, string(body))
+	}
+	for _, gate := range report.ReleaseGateLinkage {
+		if gate.Gate == "P9.10" {
+			return gate.Counts
+		}
+	}
+	t.Fatalf("product evidence JSON missing P9.10 release gate: %s", string(body))
+	return nil
+}
+
+func p910JSONCountsFromReleaseReadiness(t *testing.T, body []byte) map[string]int {
+	t.Helper()
+	var report struct {
+		ReleaseReadiness []struct {
+			Gate   string         `json:"gate"`
+			Counts map[string]int `json:"counts"`
+		} `json:"release_readiness"`
+	}
+	if err := json.Unmarshal(body, &report); err != nil {
+		t.Fatalf("parse release evidence JSON: %v\n%s", err, string(body))
+	}
+	for _, gate := range report.ReleaseReadiness {
+		if gate.Gate == "P9.10" {
+			return gate.Counts
+		}
+	}
+	t.Fatalf("release evidence JSON missing P9.10 readiness gate: %s", string(body))
+	return nil
+}
+
+func p910JSONCountsFromReleaseCompetitiveCoverage(t *testing.T, body []byte) map[string]int {
+	t.Helper()
+	var report struct {
+		BenchmarkLocalOps struct {
+			CompetitiveCoverage struct {
+				Counts map[string]int `json:"counts"`
+			} `json:"competitive_coverage"`
+		} `json:"benchmark_local_ops"`
+	}
+	if err := json.Unmarshal(body, &report); err != nil {
+		t.Fatalf("parse release evidence JSON: %v\n%s", err, string(body))
+	}
+	return report.BenchmarkLocalOps.CompetitiveCoverage.Counts
+}
+
+func assertP910RequiredCountKeys(t *testing.T, counts map[string]int) {
+	t.Helper()
+	for _, key := range []string{
+		"required_external_baselines",
+		"baseline_rows",
+		"covered_external_baselines",
+		"measured_external_baselines",
+		"documented_infeasible_external_baselines",
+		"missing_external_baselines",
+		"malformed_baseline_rows",
+		"self_referential_baselines",
+		"external_baseline_rows",
+		"external_measured_tasks",
+		"external_infeasible_tasks",
+		"external_missing_tasks",
+		"external_invalid_client_classifications",
+		"target_client_coverage_baselines",
+	} {
+		if _, ok := counts[key]; !ok {
+			t.Fatalf("P9.10 JSON counts missing key %q: %#v", key, counts)
+		}
+	}
+}
+
+func p910CoveredCompetitiveConditions() []map[string]any {
+	return []map[string]any{
+		p910MeasuredCondition("aider_repo_map"),
+		p910InfeasibleCondition("external_agent_native"),
+	}
+}
+
+func p910MeasuredCondition(baseline string) map[string]any {
+	return map[string]any{
+		"baseline":           baseline,
+		"label":              baseline,
+		"status":             "measured",
+		"required":           true,
+		"external":           baseline == "aider_repo_map" || baseline == "external_agent_native",
+		"total_tasks":        1,
+		"measured_tasks":     1,
+		"missing_tasks":      0,
+		"budgeted_tasks":     1,
+		"reproducible_tasks": 1,
+		"commanded_tasks":    1,
+		"artifacted_tasks":   1,
+		"verified_tasks":     1,
+		"client_coverage":    map[string]int{"enterprise_saas": 1, "open_source": 1, "tooling_vendor": 1},
+		"top_k_edit_path_coverage": []map[string]any{{
+			"k":                1,
+			"available":        true,
+			"numerator":        1,
+			"denominator":      1,
+			"rate":             1,
+			"tasks_with_input": 1,
+			"total_tasks":      1,
+		}},
+	}
+}
+
+func p910InfeasibleCondition(baseline string) map[string]any {
+	return map[string]any{
+		"baseline":              baseline,
+		"label":                 baseline,
+		"status":                "documented_infeasible",
+		"required":              true,
+		"external":              true,
+		"total_tasks":           1,
+		"infeasible_tasks":      1,
+		"missing_tasks":         0,
+		"reproducible_tasks":    1,
+		"commanded_tasks":       1,
+		"artifacted_tasks":      1,
+		"verified_tasks":        1,
+		"client_coverage":       map[string]int{"enterprise_saas": 1, "open_source": 1, "tooling_vendor": 1},
+		"infeasibility_reasons": map[string]int{"tool_unavailable": 1},
+		"claim_impacts":         map[string]int{"claim_weakened_until_external_run": 1},
+	}
+}
+
+func p910ConditionPatch(condition map[string]any, patch map[string]any) map[string]any {
+	out := make(map[string]any, len(condition)+len(patch))
+	for key, value := range condition {
+		out[key] = value
+	}
+	for key, value := range patch {
+		out[key] = value
+	}
+	return out
 }
 
 func writeP711ValidationRecords(t *testing.T, root string) string {
