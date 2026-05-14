@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,11 +66,30 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 			Fail int `json:"fail"`
 		} `json:"summary"`
 		ReadinessProfiles []struct {
-			Name       string `json:"name"`
-			State      string `json:"state"`
-			TaskFamily string `json:"task_family"`
-			Contract   string `json:"contract"`
-			Checks     []struct {
+			Name        string `json:"name"`
+			State       string `json:"state"`
+			Enforcement string `json:"enforcement"`
+			TaskFamily  string `json:"task_family"`
+			Contract    string `json:"contract"`
+			Gates       []struct {
+				Name              string `json:"name"`
+				Status            string `json:"status"`
+				Severity          string `json:"severity"`
+				Enforcement       string `json:"enforcement"`
+				RequiredForLaunch bool   `json:"required_for_launch"`
+				Evidence          string `json:"evidence"`
+				Reason            string `json:"reason"`
+				Remedy            string `json:"remedy"`
+			} `json:"gates"`
+			HardFailures []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			} `json:"hard_failures"`
+			SoftDegradations []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			} `json:"soft_degradations"`
+			Checks []struct {
 				Name  string `json:"name"`
 				State string `json:"state"`
 			} `json:"checks"`
@@ -98,11 +118,22 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 		t.Fatalf("expected all readiness profiles in JSON output, got %#v", got.ReadinessProfiles)
 	}
 	for _, profile := range got.ReadinessProfiles {
-		if profile.Name == "" || profile.State == "" || profile.TaskFamily == "" || profile.Contract == "" {
+		if profile.Name == "" || profile.State == "" || profile.Enforcement == "" || profile.TaskFamily == "" || profile.Contract == "" {
 			t.Fatalf("profile readiness missing machine-readable fields: %#v", profile)
 		}
 		if !validReadinessState(profile.State) {
 			t.Fatalf("profile %q has invalid state %q", profile.Name, profile.State)
+		}
+		if len(profile.Gates) == 0 {
+			t.Fatalf("profile %q should carry readiness gate decisions", profile.Name)
+		}
+		for _, gate := range profile.Gates {
+			if gate.Name == "" || gate.Status == "" || gate.Severity == "" || gate.Enforcement == "" || gate.Evidence == "" {
+				t.Fatalf("profile %q has incomplete gate decision: %#v", profile.Name, gate)
+			}
+			if gate.Status != "pass" && (gate.Reason == "" || gate.Remedy == "") {
+				t.Fatalf("profile %q non-pass gate must carry reason and remedy: %#v", profile.Name, gate)
+			}
 		}
 		if profile.Metrics.QueueState == "" || profile.Metrics.ContextBudgetState == "" || profile.Metrics.ClassifierState == "" {
 			t.Fatalf("profile %q should carry local-ops metrics, got %#v", profile.Name, profile)
@@ -112,6 +143,85 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 				t.Fatalf("profile %q missing readiness check %q in %#v", profile.Name, want, profile.Checks)
 			}
 		}
+	}
+}
+
+func TestDoctorReadinessGatePolicyBlocksMissingBackendRolesForPlanAndImplement(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	stageDoctorConfig(t, dir)
+
+	for _, profileName := range []string{"plan", "implement"} {
+		var stdout, stderr bytes.Buffer
+		_ = runDoctorMain([]string{"--json", "--profile", profileName}, &stdout, &stderr)
+		profile := decodeSingleDoctorProfile(t, stdout.Bytes())
+		if profile.State != "blocked" {
+			t.Fatalf("%s profile should be blocked when backend role config is missing, got %#v", profileName, profile)
+		}
+		gate := findDoctorGate(t, profile.Gates, "backend_roles_resolved")
+		if gate.Status != "blocked" || gate.Severity != "hard" || !gate.RequiredForLaunch {
+			t.Fatalf("%s backend gate should be a hard launch blocker, got %#v", profileName, gate)
+		}
+		if gate.Enforcement != "report_only" {
+			t.Fatalf("P6.3 gate enforcement should stay report_only, got %#v", gate)
+		}
+	}
+}
+
+func TestDoctorReadinessQueueUnavailablePolicyIsProfileSpecific(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("IDIOM_RUNNER_SOCKET", filepath.Join(dir, "missing-runner.sock"))
+	stageDoctorConfig(t, dir)
+	stageDoctorBackends(t, dir)
+
+	implement := runDoctorProfileJSON(t, "implement")
+	implementGate := findDoctorGate(t, implement.Gates, "queue_admission_known")
+	if implementGate.Status != "degraded" || implementGate.Severity != "soft" {
+		t.Fatalf("implement queue daemon absence should be a soft degraded gate, got %#v", implementGate)
+	}
+
+	eval := runDoctorProfileJSON(t, "eval")
+	evalGate := findDoctorGate(t, eval.Gates, "queue_admission_known")
+	if evalGate.Status != "blocked" || evalGate.Severity != "hard" {
+		t.Fatalf("eval queue daemon absence should be a hard report-only blocker, got %#v", evalGate)
+	}
+	if eval.Enforcement != "report_only" || evalGate.Enforcement != "report_only" {
+		t.Fatalf("queue gate must remain visible/report-only until lane-start enforcement lands, got profile=%#v gate=%#v", eval, evalGate)
+	}
+}
+
+func TestDoctorReadinessClassifierDisabledIsSoftDegradation(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("IDIOM_RUNNER_SOCKET", filepath.Join(dir, "missing-runner.sock"))
+	stageDoctorConfig(t, dir)
+	stageDoctorBackends(t, dir)
+
+	profile := runDoctorProfileJSON(t, "implement")
+	gate := findDoctorGate(t, profile.Gates, "route_classifier_available_or_fallback_recorded")
+	if gate.Status != "degraded" || gate.Severity != "soft" || gate.RequiredForLaunch {
+		t.Fatalf("disabled classifier should be a soft degradation with deterministic fallback, got %#v", gate)
+	}
+}
+
+func TestDoctorReadinessInvalidContextBudgetBlocksWriteProfilesOnly(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("IDIOM_RUNNER_SOCKET", filepath.Join(dir, "missing-runner.sock"))
+	stageDoctorConfigWithBudget(t, dir, 1024, 2048)
+	stageDoctorBackends(t, dir)
+
+	discovery := runDoctorProfileJSON(t, "discovery")
+	discoveryGate := findDoctorGate(t, discovery.Gates, "context_budget_valid")
+	if discoveryGate.Status != "degraded" || discoveryGate.Severity != "soft" {
+		t.Fatalf("discovery invalid context budget should degrade, got %#v", discoveryGate)
+	}
+
+	implement := runDoctorProfileJSON(t, "implement")
+	implementGate := findDoctorGate(t, implement.Gates, "context_budget_valid")
+	if implementGate.Status != "blocked" || implementGate.Severity != "hard" {
+		t.Fatalf("implement invalid context budget should block by policy, got %#v", implementGate)
 	}
 }
 
@@ -311,6 +421,90 @@ func validReadinessState(state string) bool {
 	}
 }
 
+type doctorProfileJSON struct {
+	Name              string `json:"name"`
+	State             string `json:"state"`
+	Enforcement       string `json:"enforcement"`
+	RequiredForLaunch bool   `json:"required_for_launch"`
+	Gates             []struct {
+		Name              string `json:"name"`
+		Status            string `json:"status"`
+		Severity          string `json:"severity"`
+		Enforcement       string `json:"enforcement"`
+		RequiredForLaunch bool   `json:"required_for_launch"`
+		Evidence          string `json:"evidence"`
+		Reason            string `json:"reason"`
+		Remedy            string `json:"remedy"`
+	} `json:"gates"`
+	HardFailures []struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	} `json:"hard_failures"`
+	SoftDegradations []struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	} `json:"soft_degradations"`
+}
+
+func runDoctorProfileJSON(t *testing.T, profileName string) doctorProfileJSON {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	_ = runDoctorMain([]string{"--json", "--profile", profileName}, &stdout, &stderr)
+	return decodeSingleDoctorProfile(t, stdout.Bytes())
+}
+
+func decodeSingleDoctorProfile(t *testing.T, body []byte) doctorProfileJSON {
+	t.Helper()
+	var got struct {
+		ReadinessProfiles []doctorProfileJSON `json:"readiness_profiles"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("doctor --json profile output not parseable: %v\noutput: %s", err, string(body))
+	}
+	if len(got.ReadinessProfiles) != 1 {
+		t.Fatalf("expected one readiness profile, got %#v", got.ReadinessProfiles)
+	}
+	return got.ReadinessProfiles[0]
+}
+
+func findDoctorGate(t *testing.T, gates []struct {
+	Name              string `json:"name"`
+	Status            string `json:"status"`
+	Severity          string `json:"severity"`
+	Enforcement       string `json:"enforcement"`
+	RequiredForLaunch bool   `json:"required_for_launch"`
+	Evidence          string `json:"evidence"`
+	Reason            string `json:"reason"`
+	Remedy            string `json:"remedy"`
+}, name string) struct {
+	Name              string `json:"name"`
+	Status            string `json:"status"`
+	Severity          string `json:"severity"`
+	Enforcement       string `json:"enforcement"`
+	RequiredForLaunch bool   `json:"required_for_launch"`
+	Evidence          string `json:"evidence"`
+	Reason            string `json:"reason"`
+	Remedy            string `json:"remedy"`
+} {
+	t.Helper()
+	for _, gate := range gates {
+		if gate.Name == name {
+			return gate
+		}
+	}
+	t.Fatalf("missing gate %q in %#v", name, gates)
+	return struct {
+		Name              string `json:"name"`
+		Status            string `json:"status"`
+		Severity          string `json:"severity"`
+		Enforcement       string `json:"enforcement"`
+		RequiredForLaunch bool   `json:"required_for_launch"`
+		Evidence          string `json:"evidence"`
+		Reason            string `json:"reason"`
+		Remedy            string `json:"remedy"`
+	}{}
+}
+
 func stageDoctorConfig(t *testing.T, root string) {
 	t.Helper()
 	cfg := filepath.Join(root, ".idiom", "config.json")
@@ -318,6 +512,22 @@ func stageDoctorConfig(t *testing.T, root string) {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
 	if err := os.WriteFile(cfg, []byte(`{"workspace": {"root": "`+root+`"}}`), 0o644); err != nil {
+		t.Fatalf("stage config: %v", err)
+	}
+}
+
+func stageDoctorConfigWithBudget(t *testing.T, root string, ctxSize int, maxTokens int) {
+	t.Helper()
+	cfg := filepath.Join(root, ".idiom", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	body := fmt.Sprintf(`{
+  "workspace": {"root": %q},
+  "llama_server": {"ctx_size": %d},
+  "chat": {"max_tokens": %d}
+}`, root, ctxSize, maxTokens)
+	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
 		t.Fatalf("stage config: %v", err)
 	}
 }

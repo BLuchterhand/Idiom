@@ -1747,7 +1747,7 @@ Review signoff:
 | P6.1 | Extend `idiom doctor` with readiness profiles | P1, P5.12 | Herschel the 2nd | - [x] | Volta the 2nd | - [x] |
 | P6.2 | Add backend, queue, context budget, route classifier, implement-session closeout, and degraded-mode telemetry | P6.1, P5.13 | Carver the 2nd | - [x] | James the 2nd + P6.6 follow-up | - [x] |
 | P6.6 | Make implement queue telemetry unavailable states and doctor command attribution explicit | P6.2 | Parfit the 2nd | - [x] | Bacon the 2nd | - [x] |
-| P6.3 | Define soft and hard readiness gates by profile | P6.6, P5.15 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
+| P6.3 | Define soft and hard readiness gates by profile | P6.6, P5.15 | Curie the 2nd | - [x] | Hypatia the 2nd | - [x] |
 | P6.4 | Add lane-start role, backend, queue, classifier, and context telemetry parity tests | P6.2, P6.3 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P6.5 | Add local-operations smoke, capacity, and replay benchmark harness | P6.3, P6.4 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P7.1 | Ship the stable structured CLI envelope for `idiom tool` results | P2, P3, P4 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |

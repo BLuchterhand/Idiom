@@ -52,10 +52,13 @@ idiom doctor
 `~/.cache/huggingface`/`~/models`/`~/.ollama/models`, project config,
 and supporting tools (`python3`, `git`). It also reports generic
 readiness profiles for `discovery`, `plan`, `implement`, `eval`, and
-`sidecar` workflows. Each non-pass result carries an exact remedy line;
-`--json` emits structured checks plus machine-readable profile readiness
-for CI. Use `--profile <name>` to limit the readiness section while
-keeping the legacy host checks.
+`sidecar` workflows. Each profile includes machine-readable readiness
+gates with `pass`, `degraded`, or `blocked` status, hard failures, soft
+degradations, launch-required flags, and exact remedy lines. P6 doctor
+gates are `enforcement:"report_only"` until lane-start enforcement is
+wired through the runner; `--json` emits the structured checks and gate
+policy for CI or local evidence export. Use `--profile <name>` to limit
+the readiness section while keeping the legacy host checks.
 
 Run a lane against a brief:
 

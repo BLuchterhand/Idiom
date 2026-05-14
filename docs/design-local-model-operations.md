@@ -842,6 +842,77 @@ Language/workspace readiness:
 }
 ```
 
+P6.3 readiness gates are explicit policy decisions over the underlying
+readiness facts. The profile report distinguishes `pass`, `degraded`, and
+`blocked` with machine-readable reasons and remedies:
+
+```json
+{
+  "name": "implement",
+  "state": "blocked",
+  "enforcement": "report_only",
+  "required_for_launch": true,
+  "gates": [
+    {
+      "name": "backend_roles_resolved",
+      "status": "blocked",
+      "severity": "hard",
+      "enforcement": "report_only",
+      "required_for_launch": true,
+      "evidence": "backend role config",
+      "reason": ".idiom/backends.json not found",
+      "remedy": "create .idiom/backends.json to make role readiness machine-readable"
+    },
+    {
+      "name": "queue_admission_known",
+      "status": "degraded",
+      "severity": "soft",
+      "enforcement": "report_only",
+      "required_for_launch": false,
+      "evidence": "queue admission",
+      "reason": "queue daemon not reachable",
+      "remedy": "start the daemon with `idiom queue serve` for live queue capacity evidence"
+    }
+  ],
+  "hard_failures": [
+    {
+      "name": "backend_roles_resolved",
+      "status": "blocked",
+      "severity": "hard"
+    }
+  ],
+  "soft_degradations": [
+    {
+      "name": "queue_admission_known",
+      "status": "degraded",
+      "severity": "soft"
+    }
+  ]
+}
+```
+
+Policy is profile-shaped, not client-shaped:
+
+- `backend_roles_resolved` is hard for `plan`, `implement`, `eval`, and
+  `sidecar`, and soft for `discovery`.
+- `queue_admission_known` is hard for `eval` because repeatable evaluation
+  should not silently saturate local inference, and soft for `discovery`,
+  `plan`, `implement`, and `sidecar` while current lane-start queue plumbing is
+  opportunistic.
+- `context_budget_valid` is hard for `plan`, `implement`, and `eval`, and soft
+  for `discovery` and `sidecar`.
+- `route_classifier_available_or_fallback_recorded` is soft for every profile;
+  deterministic routing fallback remains visible instead of becoming a hidden
+  strategy choice.
+
+Until P6.4/P6.5 wire equivalent lane-start enforcement and parity tests, the
+doctor policy stays `enforcement:"report_only"`. The harness reports unsafe or
+degraded starts before launch, but P6.3 does not claim broad runtime blocking
+that the lane runner cannot yet prove. Gate telemetry and exported evidence
+must remain metadata-only: profile name, status, counts, queue/context/backend
+states, and remedies, with no raw prompts, file bodies, secrets, or
+customer-identifying payloads.
+
 Human output should be the same information with exact remedy lines.
 
 ## Benchmarks

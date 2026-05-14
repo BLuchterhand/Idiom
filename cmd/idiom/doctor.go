@@ -43,22 +43,38 @@ type readinessUnavailable struct {
 	Remedy string `json:"remedy,omitempty"`
 }
 
+type readinessGateDecision struct {
+	Name              string `json:"name"`
+	Status            string `json:"status"`
+	Severity          string `json:"severity"`
+	Enforcement       string `json:"enforcement"`
+	RequiredForLaunch bool   `json:"required_for_launch"`
+	Evidence          string `json:"evidence"`
+	Reason            string `json:"reason,omitempty"`
+	Remedy            string `json:"remedy,omitempty"`
+}
+
 type readinessProfileReport struct {
-	Name                 string                 `json:"name"`
-	State                string                 `json:"state"`
-	Detail               string                 `json:"detail,omitempty"`
-	TaskFamily           string                 `json:"task_family"`
-	Contract             string                 `json:"contract"`
-	PermissionProfile    string                 `json:"permission_profile,omitempty"`
-	ToolProfile          string                 `json:"tool_profile,omitempty"`
-	RequiredEvidence     []string               `json:"required_evidence,omitempty"`
-	ReadinessGate        []string               `json:"readiness_gate,omitempty"`
-	VerificationContract string                 `json:"verification_contract,omitempty"`
-	RequiredRoles        []string               `json:"required_roles,omitempty"`
-	RoleAliases          map[string]string      `json:"role_aliases,omitempty"`
-	Checks               []readinessCheck       `json:"checks,omitempty"`
-	Unavailable          []readinessUnavailable `json:"unavailable,omitempty"`
-	Metrics              readinessMetrics       `json:"metrics,omitempty"`
+	Name                 string                  `json:"name"`
+	State                string                  `json:"state"`
+	Detail               string                  `json:"detail,omitempty"`
+	Enforcement          string                  `json:"enforcement"`
+	RequiredForLaunch    bool                    `json:"required_for_launch"`
+	TaskFamily           string                  `json:"task_family"`
+	Contract             string                  `json:"contract"`
+	PermissionProfile    string                  `json:"permission_profile,omitempty"`
+	ToolProfile          string                  `json:"tool_profile,omitempty"`
+	RequiredEvidence     []string                `json:"required_evidence,omitempty"`
+	ReadinessGate        []string                `json:"readiness_gate,omitempty"`
+	VerificationContract string                  `json:"verification_contract,omitempty"`
+	RequiredRoles        []string                `json:"required_roles,omitempty"`
+	RoleAliases          map[string]string       `json:"role_aliases,omitempty"`
+	Gates                []readinessGateDecision `json:"gates,omitempty"`
+	HardFailures         []readinessGateDecision `json:"hard_failures,omitempty"`
+	SoftDegradations     []readinessGateDecision `json:"soft_degradations,omitempty"`
+	Checks               []readinessCheck        `json:"checks,omitempty"`
+	Unavailable          []readinessUnavailable  `json:"unavailable,omitempty"`
+	Metrics              readinessMetrics        `json:"metrics,omitempty"`
 }
 
 type readinessMetrics struct {
@@ -76,6 +92,8 @@ type readinessMetrics struct {
 	BackendState       string `json:"backend_state,omitempty"`
 	QueueState         string `json:"queue_state,omitempty"`
 	ContextBudgetState string `json:"context_budget_state,omitempty"`
+	HardFailures       int    `json:"hard_failures,omitempty"`
+	SoftDegradations   int    `json:"soft_degradations,omitempty"`
 }
 
 type readinessProfileSpec struct {
@@ -91,6 +109,52 @@ var doctorReadinessProfileSpecs = []readinessProfileSpec{
 	{name: "implement", taskFamily: "implementation", requiredRoles: []string{backends.RoleExecutor}, needsContext: true},
 	{name: "eval", taskFamily: "verification_only", requiredRoles: []string{backends.RoleExecutor}},
 	{name: "sidecar", taskFamily: "debug_logs", requiredRoles: []string{backends.RoleClassifier}},
+}
+
+type readinessGatePolicy struct {
+	name              string
+	checkName         string
+	hardProfiles      map[string]bool
+	softProfiles      map[string]bool
+	requiredForLaunch bool
+}
+
+var doctorReadinessGatePolicies = []readinessGatePolicy{
+	{
+		name:              "backend_roles_resolved",
+		checkName:         "backend role config",
+		hardProfiles:      profileSet("plan", "implement", "eval", "sidecar"),
+		softProfiles:      profileSet("discovery"),
+		requiredForLaunch: true,
+	},
+	{
+		name:              "queue_admission_known",
+		checkName:         "queue admission",
+		hardProfiles:      profileSet("eval"),
+		softProfiles:      profileSet("discovery", "plan", "implement", "sidecar"),
+		requiredForLaunch: true,
+	},
+	{
+		name:              "context_budget_valid",
+		checkName:         "context budget",
+		hardProfiles:      profileSet("plan", "implement", "eval"),
+		softProfiles:      profileSet("discovery", "sidecar"),
+		requiredForLaunch: true,
+	},
+	{
+		name:              "route_classifier_available_or_fallback_recorded",
+		checkName:         "route classifier",
+		softProfiles:      profileSet("discovery", "plan", "implement", "eval", "sidecar"),
+		requiredForLaunch: false,
+	},
+}
+
+func profileSet(names ...string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, name := range names {
+		out[name] = true
+	}
+	return out
 }
 
 // runDoctorMain implements `idiom doctor` — a preflight diagnostic that
@@ -165,6 +229,10 @@ func logDoctorReadinessTelemetry(rec *telemetry.Recorder, profiles []readinessPr
 			"context_tokens":          profile.Metrics.ContextTokens,
 			"max_output_tokens":       profile.Metrics.MaxOutputTokens,
 			"route_classifier_state":  profile.Metrics.ClassifierState,
+			"hard_failures":           profile.Metrics.HardFailures,
+			"soft_degradations":       profile.Metrics.SoftDegradations,
+			"enforcement":             profile.Enforcement,
+			"required_for_launch":     profile.RequiredForLaunch,
 			"degraded":                profile.State == "degraded",
 			"blocked":                 profile.State == "blocked",
 			"metadata_only_contract":  true,
@@ -448,7 +516,25 @@ func emitDoctorReadinessText(w io.Writer, profiles []readinessProfileReport) {
 		if len(profile.Unavailable) > 0 {
 			fmt.Fprintf(w, " unavailable=%d", len(profile.Unavailable))
 		}
+		if profile.Enforcement != "" {
+			fmt.Fprintf(w, " enforcement=%s", profile.Enforcement)
+		}
+		if len(profile.HardFailures) > 0 {
+			fmt.Fprintf(w, " hard_failures=%d", len(profile.HardFailures))
+		}
+		if len(profile.SoftDegradations) > 0 {
+			fmt.Fprintf(w, " soft_degradations=%d", len(profile.SoftDegradations))
+		}
 		fmt.Fprintln(w)
+		for _, gate := range profile.Gates {
+			if gate.Status == "pass" {
+				continue
+			}
+			fmt.Fprintf(w, "      gate %s %s/%s: %s\n", gate.Name, gate.Status, gate.Severity, gate.Reason)
+			if gate.Remedy != "" {
+				fmt.Fprintf(w, "        remedy: %s\n", gate.Remedy)
+			}
+		}
 		for _, unavailable := range profile.Unavailable {
 			fmt.Fprintf(w, "      unavailable %s: %s\n", unavailable.Check, unavailable.Reason)
 			if unavailable.Remedy != "" {
@@ -510,6 +596,8 @@ func buildDoctorReadinessProfile(spec readinessProfileSpec, hostChecks []checkRe
 		VerificationContract: contract.VerificationContract,
 		RequiredRoles:        append([]string(nil), spec.requiredRoles...),
 		RoleAliases:          map[string]string{},
+		Enforcement:          "report_only",
+		RequiredForLaunch:    true,
 	}
 	report.Checks = append(report.Checks, readinessCheck{
 		Name:   "runtime contract",
@@ -542,9 +630,10 @@ func buildDoctorReadinessProfile(spec readinessProfileSpec, hostChecks []checkRe
 		Remedy: "use a deep readiness or route-classifier-specific probe when live classification health is required",
 	})
 	report = applyBackendRoleReadiness(report, backendFile, backendFound, backendErr)
-	report.State = readinessProfileState(report.Checks)
+	report = applyDoctorReadinessGatePolicy(report)
+	report.State = readinessProfileState(report.Checks, report.Gates)
 	report.Detail = readinessProfileDetail(report.State)
-	report.Metrics = readinessMetricsFor(report.Checks, queueMetrics)
+	report.Metrics = readinessMetricsFor(report.Checks, report.Gates, queueMetrics)
 	if len(report.RoleAliases) == 0 {
 		report.RoleAliases = nil
 	}
@@ -632,7 +721,7 @@ func doctorRouteClassifierCheck(cfg config.Config, cfgOK bool) readinessCheck {
 	return readinessCheck{Name: "route classifier", State: "pass", Detail: "configured; live JSON probe is deferred to deep readiness", Optional: true}
 }
 
-func readinessMetricsFor(checks []readinessCheck, queue readinessMetrics) readinessMetrics {
+func readinessMetricsFor(checks []readinessCheck, gates []readinessGateDecision, queue readinessMetrics) readinessMetrics {
 	metrics := queue
 	for _, check := range checks {
 		switch check.State {
@@ -659,7 +748,92 @@ func readinessMetricsFor(checks []readinessCheck, queue readinessMetrics) readin
 			}
 		}
 	}
+	for _, gate := range gates {
+		switch gate.Status {
+		case "blocked":
+			metrics.HardFailures++
+		case "degraded":
+			metrics.SoftDegradations++
+		}
+	}
 	return metrics
+}
+
+func applyDoctorReadinessGatePolicy(report readinessProfileReport) readinessProfileReport {
+	checks := map[string]readinessCheck{}
+	for _, check := range report.Checks {
+		checks[check.Name] = check
+	}
+	for _, policy := range doctorReadinessGatePolicies {
+		check, ok := checks[policy.checkName]
+		if !ok {
+			continue
+		}
+		severity := readinessGateSeverity(report.Name, policy)
+		if severity == "" {
+			continue
+		}
+		gate := readinessGateDecision{
+			Name:              policy.name,
+			Status:            readinessGateStatus(check, severity),
+			Severity:          severity,
+			Enforcement:       report.Enforcement,
+			RequiredForLaunch: policy.requiredForLaunch && severity == "hard",
+			Evidence:          check.Name,
+			Reason:            readinessGateReason(check),
+			Remedy:            check.Remedy,
+		}
+		if gate.Status == "pass" {
+			gate.Reason = ""
+			gate.Remedy = ""
+		}
+		report.Gates = append(report.Gates, gate)
+		switch gate.Status {
+		case "blocked":
+			report.HardFailures = append(report.HardFailures, gate)
+		case "degraded":
+			report.SoftDegradations = append(report.SoftDegradations, gate)
+		}
+	}
+	return report
+}
+
+func readinessGateSeverity(profile string, policy readinessGatePolicy) string {
+	profile = strings.ToLower(strings.TrimSpace(profile))
+	switch {
+	case policy.hardProfiles[profile]:
+		return "hard"
+	case policy.softProfiles[profile]:
+		return "soft"
+	default:
+		return ""
+	}
+}
+
+func readinessGateStatus(check readinessCheck, severity string) string {
+	switch check.State {
+	case "pass":
+		return "pass"
+	case "blocked":
+		return "blocked"
+	case "degraded", "unavailable":
+		if severity == "hard" {
+			return "blocked"
+		}
+		return "degraded"
+	default:
+		if severity == "hard" {
+			return "blocked"
+		}
+		return "degraded"
+	}
+}
+
+func readinessGateReason(check readinessCheck) string {
+	if strings.TrimSpace(check.Detail) != "" {
+		return check.Detail
+	}
+	return check.State
 }
 
 func readinessChecksFromHost(hostChecks []checkResult) []readinessCheck {
@@ -781,8 +955,16 @@ func doctorContextIndexReadiness(root string) (bool, string) {
 	return false, "no local context graph found under .idiom/comprehension"
 }
 
-func readinessProfileState(checks []readinessCheck) string {
+func readinessProfileState(checks []readinessCheck, gates []readinessGateDecision) string {
 	state := "pass"
+	for _, gate := range gates {
+		switch gate.Status {
+		case "blocked":
+			return "blocked"
+		case "degraded":
+			state = "degraded"
+		}
+	}
 	for _, check := range checks {
 		switch check.State {
 		case "blocked":
