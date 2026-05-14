@@ -105,6 +105,89 @@ func TestPlanExecutePlannerAddendumIncludesRequiredPathChecklist(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteExactPlanEditsDuplicatesSharedPathBlock(t *testing.T) {
+	prompt := "## Files To Modify\n\n" +
+		"| File | Change |\n" +
+		"|---|---|\n" +
+		"| `a.h` | Update header. |\n" +
+		"| `a.cpp` | Update implementation. |\n\n" +
+		"## Required Edits\n\n" +
+		"Update the `a.h` and `a.cpp` comments.\n\n" +
+		"old_text:\n\n" +
+		"```text\n// old shared comment\n```\n\n" +
+		"new_text:\n\n" +
+		"```text\n// new shared comment\n```\n"
+
+	edits, reason := planExecuteExactPlanEdits(prompt, []string{"a.h", "a.cpp"})
+	if reason != "" {
+		t.Fatalf("unexpected parse skip reason: %s", reason)
+	}
+	if len(edits) != 2 {
+		t.Fatalf("expected two duplicated edits, got %#v", edits)
+	}
+	got := map[string]workspace.PlanEdit{}
+	for _, edit := range edits {
+		got[edit.Path] = edit
+	}
+	for _, path := range []string{"a.h", "a.cpp"} {
+		edit, ok := got[path]
+		if !ok || edit.OldText != "// old shared comment" || edit.NewText != "// new shared comment" {
+			t.Fatalf("shared edit missing for %s: %#v", path, edits)
+		}
+	}
+}
+
+func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old a\n"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("old b\n"), 0o644); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	prompt := "## Files To Modify\n\n" +
+		"| File | Change |\n" +
+		"|---|---|\n" +
+		"| `a.txt` | Update a. |\n" +
+		"| `b.txt` | Update b. |\n\n" +
+		"## Required Edits\n\n" +
+		"In `a.txt`, replace the text.\n\n" +
+		"old_text:\n\n```text\nold a\n```\n\n" +
+		"new_text:\n\n```text\nnew a\n```\n\n" +
+		"In `b.txt`, replace the text.\n\n" +
+		"old_text:\n\n```text\nold b\n```\n\n" +
+		"new_text:\n\n```text\nnew b\n```\n"
+	var stdout, stderr bytes.Buffer
+	modelCalled := false
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			modelCalled = true
+			return "", fmt.Errorf("planner model should not be called for complete exact-anchor packets")
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("auto exact plan should execute cleanly, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if modelCalled {
+		t.Fatal("planner model was called despite complete exact-anchor packet")
+	}
+	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new a\n" {
+		t.Fatalf("a.txt = %q", got)
+	}
+	if got := readFileString(t, filepath.Join(root, "b.txt")); got != "new b\n" {
+		t.Fatalf("b.txt = %q", got)
+	}
+	if !strings.Contains(stdout.String(), "auto_exact_plan_submitted") {
+		t.Fatalf("auto exact plan event missing from stdout=%s", stdout.String())
+	}
+}
+
 func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"
@@ -340,6 +423,15 @@ func writePlanExecuteConfig(t *testing.T) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }
 
 func mustTime(value string) time.Time {

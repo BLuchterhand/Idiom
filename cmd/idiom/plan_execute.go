@@ -128,33 +128,48 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	if opts.MaxTokens > 0 {
 		plannerMaxTokens = opts.MaxTokens
 	}
-	answer, err := promptRun(cfg, plannerPrompt, runOptions{
-		JSONEvents:               opts.JSONEvents,
-		Resume:                   opts.Resume,
-		TaskFamily:               agent.PlanThenExecutePlannerTaskFamily,
-		PlannerOwnedVerification: true,
-		// max_tokens for the planner phase: 16384.
-		//
-		// Originally 4096 ("planner emits one submit_plan + short answer,
-		// 4096 is plenty"). That assumption broke when submit_plan's
-		// `new_text` field carried the full content of NEW FILE edits —
-		// a 400-line Go file plus structure overhead easily exceeds
-		// 4096 tokens, and the response truncates silently mid-JSON
-		// (manifesting as "completion gate rejected, no write present"
-		// because the truncated JSON failed to parse as a valid tool
-		// call). See task-64b for the failure repro.
-		//
-		// submit_plan now spills large persisted bodies into sidecar refs,
-		// but the planner may still need enough output budget to emit a
-		// new-file body once. Keep this above the historical 4096 until
-		// planner-side content refs can avoid emitting those bytes at all.
-		MaxTokensOverride: plannerMaxTokens,
-		DisableThinking:   opts.DisableThinking,
-		Telemetry:         rec,
-	}, stdout)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+	answer := ""
+	if submitted, result, reason, editCount := planExecuteTryAutoExactPlan(cfg, prompt, requiredEditPaths); submitted {
+		answer = result.Summary
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_submitted", map[string]any{
+			"edits":  editCount,
+			"reason": reason,
+		})
+	} else {
+		if strings.TrimSpace(reason) != "" {
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_skipped", map[string]any{
+				"reason": reason,
+				"error":  result.Error,
+			})
+		}
+		answer, err = promptRun(cfg, plannerPrompt, runOptions{
+			JSONEvents:               opts.JSONEvents,
+			Resume:                   opts.Resume,
+			TaskFamily:               agent.PlanThenExecutePlannerTaskFamily,
+			PlannerOwnedVerification: true,
+			// max_tokens for the planner phase: 16384.
+			//
+			// Originally 4096 ("planner emits one submit_plan + short answer,
+			// 4096 is plenty"). That assumption broke when submit_plan's
+			// `new_text` field carried the full content of NEW FILE edits —
+			// a 400-line Go file plus structure overhead easily exceeds
+			// 4096 tokens, and the response truncates silently mid-JSON
+			// (manifesting as "completion gate rejected, no write present"
+			// because the truncated JSON failed to parse as a valid tool
+			// call). See task-64b for the failure repro.
+			//
+			// submit_plan now spills large persisted bodies into sidecar refs,
+			// but the planner may still need enough output budget to emit a
+			// new-file body once. Keep this above the historical 4096 until
+			// planner-side content refs can avoid emitting those bytes at all.
+			MaxTokensOverride: plannerMaxTokens,
+			DisableThinking:   opts.DisableThinking,
+			Telemetry:         rec,
+		}, stdout)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 
 	// Phase 2: executor. Locate the plan artifact written by THIS
@@ -438,6 +453,160 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 	}
 	b.WriteString("Your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
 	return strings.TrimSpace(b.String())
+}
+
+func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) (bool, workspace.ToolResult, string, int) {
+	edits, reason := planExecuteExactPlanEdits(prompt, requiredEditPaths)
+	if len(edits) == 0 {
+		return false, workspace.ToolResult{}, reason, 0
+	}
+	mgr := workspace.NewManager(cfg.Workspace)
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Deterministic exact-anchor plan synthesized from the Required Edits packet.",
+		Edits:     edits,
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		return false, result, "exact-anchor auto-plan rejected by submit_plan validation", len(edits)
+	}
+	return true, result, "all required paths covered by parseable exact old_text/new_text pairs", len(edits)
+}
+
+func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
+	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	if len(required) == 0 {
+		return nil, "no required_edit_paths"
+	}
+	section := ""
+	for _, heading := range []string{"required edits", "edits to apply", "edits"} {
+		if candidate := atomMarkdownSectionByHeading(prompt, heading); strings.TrimSpace(candidate) != "" {
+			section = candidate
+			break
+		}
+	}
+	if strings.TrimSpace(section) == "" {
+		return nil, "no exact-edit section"
+	}
+
+	type pendingOldBlock struct {
+		paths []string
+		text  string
+	}
+	var edits []workspace.PlanEdit
+	var pending pendingOldBlock
+	var current []string
+	var currentPaths []string
+	var blockPaths []string
+	blockKind := ""
+	previousNonEmpty := ""
+	fence := ""
+	for _, rawLine := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(rawLine)
+		if fence == "" {
+			if marker, _, ok := atomMarkdownFenceOpen(trimmed); ok {
+				fence = marker
+				current = nil
+				blockPaths = append([]string(nil), currentPaths...)
+				blockKind = planExecuteExactEditBlockKind(previousNonEmpty)
+				continue
+			}
+			if trimmed != "" {
+				if paths := atomRequiredEditPathsFromLabel(trimmed, required); len(paths) > 0 {
+					currentPaths = paths
+				}
+				previousNonEmpty = trimmed
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, fence) {
+			block := strings.TrimSpace(strings.Join(current, "\n"))
+			switch blockKind {
+			case "old":
+				pending = pendingOldBlock{paths: append([]string(nil), blockPaths...), text: block}
+			case "new":
+				paths := pending.paths
+				if len(paths) == 0 {
+					paths = blockPaths
+				}
+				for _, path := range paths {
+					path = strings.TrimSpace(path)
+					if path == "" || strings.TrimSpace(pending.text) == "" {
+						continue
+					}
+					edits = append(edits, workspace.PlanEdit{
+						Path:    path,
+						OldText: pending.text,
+						NewText: block,
+						Purpose: "Apply the exact old_text/new_text edit from the Required Edits packet.",
+					})
+				}
+				pending = pendingOldBlock{}
+			}
+			fence = ""
+			current = nil
+			blockPaths = nil
+			blockKind = ""
+			previousNonEmpty = ""
+			continue
+		}
+		current = append(current, rawLine)
+	}
+	if len(edits) == 0 {
+		return nil, "no parseable exact old_text/new_text pairs"
+	}
+	missing := planExecuteMissingEditPaths(required, edits)
+	if len(missing) > 0 {
+		return nil, "exact old_text/new_text pairs do not cover required path(s): " + strings.Join(missing, ", ")
+	}
+	return edits, ""
+}
+
+func planExecuteExactEditBlockKind(label string) string {
+	normalized := strings.Trim(strings.ToLower(strings.TrimSpace(label)), ":. ")
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	switch {
+	case strings.HasPrefix(normalized, "old_text"), strings.HasPrefix(normalized, "old"):
+		return "old"
+	case strings.HasPrefix(normalized, "new_text"), strings.HasPrefix(normalized, "new"):
+		return "new"
+	default:
+		return ""
+	}
+}
+
+func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
+	var out []string
+	seen := make(map[string]struct{}, len(requiredEditPaths))
+	for _, path := range requiredEditPaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out
+}
+
+func planExecuteMissingEditPaths(required []string, edits []workspace.PlanEdit) []string {
+	covered := make(map[string]struct{}, len(edits))
+	for _, edit := range edits {
+		path := strings.TrimSpace(edit.Path)
+		if path != "" {
+			covered[path] = struct{}{}
+		}
+	}
+	var missing []string
+	for _, path := range required {
+		if _, ok := covered[path]; !ok {
+			missing = append(missing, path)
+		}
+	}
+	return missing
 }
 
 // findLatestPlanArtifact returns the most recently written plan
