@@ -13,7 +13,10 @@ import (
 	"idiom/internal/comprehension"
 )
 
-const defaultContextStatusOutputLimit = 50
+const (
+	defaultContextStatusOutputLimit              = 50
+	defaultContextStatusUnboundedRefreshMaxFiles = 200
+)
 
 func (m *Manager) contextIndex(ctx context.Context, req ToolRequest) ToolResult {
 	report, err := comprehension.Build(ctx, comprehension.BuildOptions{
@@ -596,6 +599,9 @@ func contextStatusRefreshMaxFiles(req ToolRequest, status comprehension.StatusRe
 	}
 	if req.Limit > 0 {
 		return req.Limit
+	}
+	if status.Indexed && !status.Fresh && !status.CollectorVersionMismatch {
+		return defaultContextStatusUnboundedRefreshMaxFiles
 	}
 	return 0
 }

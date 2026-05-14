@@ -933,11 +933,11 @@ func TestContextStatusRefreshesSmallStaleFileSetWithoutScope(t *testing.T) {
 	}
 }
 
-func TestContextStatusRefreshMaxFilesUsesExplicitCapsOnlyForUnscopedStatus(t *testing.T) {
+func TestContextStatusRefreshMaxFilesUsesDefaultBudgetForUnscopedIndexedStaleStatus(t *testing.T) {
 	staleStatus := comprehension.StatusReport{Indexed: true, Fresh: false}
 
-	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status"}, staleStatus); got != 0 {
-		t.Fatalf("expected default unscoped refresh to be uncapped, got %d", got)
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status"}, staleStatus); got != defaultContextStatusUnboundedRefreshMaxFiles {
+		t.Fatalf("expected default unscoped stale refresh budget %d, got %d", defaultContextStatusUnboundedRefreshMaxFiles, got)
 	}
 	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status", Limit: 12}, staleStatus); got != 12 {
 		t.Fatalf("expected limit to cap unscoped refresh when freshness_max_files is absent, got %d", got)
@@ -954,15 +954,18 @@ func TestContextStatusRefreshMaxFilesUsesExplicitCapsOnlyForUnscopedStatus(t *te
 	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status"}, comprehension.StatusReport{Indexed: true, Fresh: false, CollectorVersionMismatch: true}); got != 0 {
 		t.Fatalf("expected collector-version rebuild path to remain uncapped by stale-file default, got %d", got)
 	}
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status"}, comprehension.StatusReport{Indexed: false, Fresh: false}); got != 0 {
+		t.Fatalf("expected missing-index rebuild path to remain uncapped by stale-file default, got %d", got)
+	}
 	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status"}, comprehension.StatusReport{Indexed: true, Fresh: true}); got != 0 {
 		t.Fatalf("expected fresh status to need no refresh budget, got %d", got)
 	}
 }
 
-func TestContextStatusRefreshDoesNotDefaultCapLargeUnboundedStaleSet(t *testing.T) {
+func TestContextStatusRefreshDefaultBudgetBlocksLargeUnboundedStaleSet(t *testing.T) {
 	root := t.TempDir()
-	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statusuncappedlarge\n\ngo 1.22\n")
-	const staleFileCount = 205
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statusdefaultbudgetlarge\n\ngo 1.22\n")
+	const staleFileCount = defaultContextStatusUnboundedRefreshMaxFiles + 5
 	for i := 0; i < staleFileCount; i++ {
 		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("file_%03d.go", i)), fmt.Sprintf("package pkg\n\nfunc File%03d() string { return \"old\" }\n", i))
 	}
@@ -981,8 +984,11 @@ func TestContextStatusRefreshDoesNotDefaultCapLargeUnboundedStaleSet(t *testing.
 		t.Fatalf("context_status returned error: %v\n%s", result.Error, result.Output)
 	}
 	var statusReport struct {
-		Fresh       bool `json:"fresh"`
-		AutoRefresh struct {
+		Fresh          bool     `json:"fresh"`
+		StalePathCount int      `json:"stale_path_count"`
+		StaleFileCount int      `json:"stale_file_count"`
+		StaleFiles     []string `json:"stale_files"`
+		AutoRefresh    struct {
 			Attempted      bool     `json:"attempted"`
 			Reason         string   `json:"reason"`
 			SkippedReason  string   `json:"skipped_reason"`
@@ -993,24 +999,34 @@ func TestContextStatusRefreshDoesNotDefaultCapLargeUnboundedStaleSet(t *testing.
 			RefreshScopes  []string `json:"refresh_scopes"`
 		} `json:"auto_refresh"`
 		Freshness struct {
-			FreshForScope  bool `json:"fresh_for_scope"`
-			BudgetExceeded bool `json:"budget_exceeded"`
+			FreshForScope  bool     `json:"fresh_for_scope"`
+			Reason         string   `json:"reason"`
+			Blocker        string   `json:"blocker"`
+			BudgetExceeded bool     `json:"budget_exceeded"`
+			StalePathCount int      `json:"stale_path_count"`
+			StalePaths     []string `json:"stale_paths"`
 		} `json:"freshness"`
 	}
 	if err := json.Unmarshal([]byte(result.Output), &statusReport); err != nil {
 		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
 	}
-	if !statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Reason != "small_stale_file_set" || statusReport.AutoRefresh.SkippedReason != "" || statusReport.AutoRefresh.FilesIndexed != staleFileCount || !statusReport.AutoRefresh.FreshAfter {
-		t.Fatalf("expected uncapped stale-set refresh, got %#v", statusReport.AutoRefresh)
+	if statusReport.Fresh || statusReport.StalePathCount != staleFileCount || statusReport.StaleFileCount != staleFileCount {
+		t.Fatalf("expected large stale status to remain reported, got %#v", statusReport)
 	}
-	if statusReport.AutoRefresh.MaxFiles != 0 || statusReport.AutoRefresh.StalePathCount != 0 {
-		t.Fatalf("default refresh should not report budget fields, got %#v", statusReport.AutoRefresh)
+	if len(statusReport.StaleFiles) != defaultContextStatusOutputLimit {
+		t.Fatalf("expected display sample to remain capped, got %d stale file(s)", len(statusReport.StaleFiles))
 	}
-	if len(statusReport.AutoRefresh.RefreshScopes) != 1 || statusReport.AutoRefresh.RefreshScopes[0] != "pkg" {
-		t.Fatalf("expected large stale set to refresh the shared directory once, got %#v", statusReport.AutoRefresh.RefreshScopes)
+	if statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Reason != "budget_exceeded" || statusReport.AutoRefresh.SkippedReason != "budget_exceeded" || statusReport.AutoRefresh.FilesIndexed != 0 || statusReport.AutoRefresh.FreshAfter {
+		t.Fatalf("expected default-budget blocker without refresh, got %#v", statusReport.AutoRefresh)
 	}
-	if !statusReport.Fresh || !statusReport.Freshness.FreshForScope || statusReport.Freshness.BudgetExceeded {
-		t.Fatalf("expected fresh read-through decision without budget blocker, got %#v", statusReport)
+	if statusReport.AutoRefresh.StalePathCount != staleFileCount || statusReport.AutoRefresh.MaxFiles != defaultContextStatusUnboundedRefreshMaxFiles || len(statusReport.AutoRefresh.RefreshScopes) != 0 {
+		t.Fatalf("expected default budget fields and no refresh scopes, got %#v", statusReport.AutoRefresh)
+	}
+	if statusReport.Freshness.FreshForScope || statusReport.Freshness.Reason != "budget_exceeded" || statusReport.Freshness.Blocker != "budget_exceeded" || !statusReport.Freshness.BudgetExceeded {
+		t.Fatalf("expected freshness budget blocker, got %#v", statusReport.Freshness)
+	}
+	if statusReport.Freshness.StalePathCount != staleFileCount || len(statusReport.Freshness.StalePaths) != defaultContextStatusOutputLimit {
+		t.Fatalf("expected default-capped freshness paths with full stale count, got %#v", statusReport.Freshness)
 	}
 }
 
