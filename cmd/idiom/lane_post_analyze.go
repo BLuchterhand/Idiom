@@ -74,10 +74,10 @@ var editToolNames = []string{
 //  1. Read-only lane: write-capable brief routed to a read-only
 //     contract (an idiom routing regression).
 //  2. No edit attempt: run completed without any write-class tool
-//     call AND without a `<<QUESTION>>:` blocker AND without a
-//     typed `completion_status: blocked` event, and without a typed
-//     plan-execute source-satisfied closeout (an idiom completion-
-//     contract regression).
+//     call AND without a plan-execute typed edit event AND without a
+//     `<<QUESTION>>:` blocker AND without a typed `completion_status:
+//     blocked` event, and without a typed plan-execute source-satisfied
+//     closeout (an idiom completion-contract regression).
 //  3. Non-zero subcommand exit: handled by the caller; we only
 //     surface (1) and (2) here.
 //
@@ -100,7 +100,7 @@ func analyzeLaneOutput(out []byte, subcommandExit int) []laneDegradation {
 	if subcommandExit == 0 && !sawEditAttempt(out) {
 		degraded = append(degraded, laneDegradation{
 			kind:    "no_edit_attempt",
-			details: "no edit_file/write_file/append_file/apply_patch/submit_plan call AND no <<QUESTION>>: blocker AND no typed completion_status=blocked/source_satisfied event",
+			details: "no edit_file/write_file/append_file/apply_patch/submit_plan call AND no typed plan-execute edit event AND no <<QUESTION>>: blocker AND no typed completion_status=blocked/source_satisfied event",
 		})
 	}
 
@@ -123,7 +123,10 @@ func containsAnyReadOnlyMarker(out []byte) (string, bool) {
 // lane reached an edit-capable conclusion: either it called a
 // write-class tool, emitted a `<<QUESTION>>:` blocker, terminated
 // with a typed `completion_status: blocked` event, or emitted a typed
-// plan-execute source-satisfied event.
+// plan-execute source-satisfied event. Plan-execute also emits typed
+// executor events when it bypasses model tool telemetry with a
+// deterministic submitted plan; those count as edit attempts for the
+// same reason an accepted `submit_plan` call does.
 //
 // "Edit attempt" is broader than "edit succeeded" — a tool call
 // that the runner rejected still counts because it proves the lane
@@ -138,6 +141,9 @@ func sawEditAttempt(out []byte) bool {
 	if hasSourceSatisfiedEvent(out) {
 		return true
 	}
+	if hasPlanExecuteEditEvent(out) {
+		return true
+	}
 	for _, tool := range editToolNames {
 		// Match the JSON shape `"tool":"<name>"` to avoid false
 		// positives on prose mentions. The actual emission point
@@ -149,6 +155,53 @@ func sawEditAttempt(out []byte) bool {
 		}
 	}
 	return false
+}
+
+// hasPlanExecuteEditEvent recognizes write attempts emitted by the
+// plan-execute orchestrator itself, outside the agent tool-call stream.
+// The auto-exact path can submit and execute a complete plan without a
+// model `submit_plan` tool event, so the lane ledger must key on these
+// typed events rather than assuming all edits originate in the runner.
+func hasPlanExecuteEditEvent(out []byte) bool {
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal(line, &ev); err != nil {
+			continue
+		}
+		switch jsonString(ev["type"]) {
+		case "idiom.plan_execute.auto_exact_plan_submitted", "auto_exact_plan_submitted":
+			return true
+		case "idiom.plan_execute.executor_edit", "executor_edit":
+			return true
+		case "idiom.plan_execute.executor_complete", "executor_complete":
+			if jsonNumberPositive(ev["total"]) || jsonNumberPositive(ev["succeeded"]) || jsonNumberPositive(ev["failed"]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func jsonNumberPositive(v any) bool {
+	switch n := v.(type) {
+	case float64:
+		return n > 0
+	case float32:
+		return n > 0
+	case int:
+		return n > 0
+	case int64:
+		return n > 0
+	case json.Number:
+		f, err := n.Float64()
+		return err == nil && f > 0
+	default:
+		return false
+	}
 }
 
 // hasSourceSatisfiedEvent walks the JSONL stream looking for the

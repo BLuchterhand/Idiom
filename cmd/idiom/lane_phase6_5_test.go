@@ -210,6 +210,20 @@ func TestAnalyzeLaneOutputAcceptsEditAttempt(t *testing.T) {
 	}
 }
 
+func TestAnalyzeLaneOutputAcceptsPlanExecuteTypedEditEvents(t *testing.T) {
+	cases := []string{
+		`{"type":"idiom.plan_execute.auto_exact_plan_submitted","edits":4}`,
+		`{"type":"idiom.plan_execute.executor_edit","path":"a.go","status":"ok"}`,
+		`{"type":"idiom.plan_execute.executor_complete","total":4,"succeeded":4,"failed":0}`,
+	}
+	for _, line := range cases {
+		deg := analyzeLaneOutput([]byte(line), 0)
+		if len(deg) != 0 {
+			t.Fatalf("plan-execute typed edit event must satisfy the edit-attempt check; event=%s got %+v", line, deg)
+		}
+	}
+}
+
 // TestAnalyzeLaneOutputAcceptsTypedBlocker covers the typed-blocker
 // path: a completion_status=blocked event proves the lane reached a
 // defined stopping point (tool-step budget exhausted, write guard
