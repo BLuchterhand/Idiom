@@ -1,0 +1,241 @@
+{
+  "schema_version": "idiom.security_privacy_posture.v1",
+  "artifact_id": "p7.9-security-privacy-posture",
+  "scope": {
+    "product": "Idiom local sidecar and coding-agent harness",
+    "mvp_stance": "evidence-backed local posture, not a compliance attestation",
+    "decision_boundary": "harness owns privacy, permission, side-effect, telemetry, retention, and readiness contracts; model owns strategy",
+    "source_artifacts": [
+      "docs/security-privacy-posture.md",
+      "docs/idiom-implementation-plan.md#p09-product-security-and-privacy-posture"
+    ]
+  },
+  "required_controls": [
+    {
+      "id": "protected_path_denial",
+      "claim": "Protected and forbidden paths resolve to host-owned deny decisions before use as editable or evidence paths.",
+      "mvp_limitations": "This proves the generic path-role resolver and discovery-profile denial surfaces. Transport parity for MCP resources remains P8.4/P9.9 scope.",
+      "evidence": [
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "check_id": "p79-protected-path-role-denial"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./internal/autonomy -run TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect",
+          "path": "internal/autonomy/path_roles_test.go",
+          "check_id": "p14-path-role-resolver"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP75DiscoveryProfileDeniesPrivatePathMutationWithoutLeakingInput",
+          "path": "cmd/idiom/p7_5_containment_test.go",
+          "check_id": "p75-private-path-mutation-denial"
+        }
+      ]
+    },
+    {
+      "id": "redaction_no_raw_prompt_or_file_body",
+      "claim": "Public denial, sidecar, local-ops, and product-evidence-shaped outputs exclude raw prompts, raw file bodies, secrets, and private content markers by default.",
+      "mvp_limitations": "Historical conversation/debug logs may contain sensitive data when full debug modes are explicitly enabled; P7.9 evidence only supports summarized sidecar/local-ops/posture outputs.",
+      "evidence": [
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "check_id": "p79-no-raw-prompt-or-file-body"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP76CLIClassificationExamplesUseGenericPrimitives",
+          "path": "cmd/idiom/p7_6_classification_examples_test.go",
+          "check_id": "p76-forbidden-example-leakage"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./internal/telemetry -run TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs",
+          "path": "internal/telemetry/recorder_test.go",
+          "check_id": "telemetry-arg-redaction"
+        }
+      ]
+    },
+    {
+      "id": "retention_local_artifact_scope",
+      "claim": "MVP evidence identifies local artifact directories, hashes or IDs, cleanup status, and retention limitations without depending on hosted collection.",
+      "mvp_limitations": "Exact global deletion windows for all logs and graph caches are documented as a limitation until P7.11/P9.9 export and review hardening.",
+      "evidence": [
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "check_id": "p79-local-artifact-scope"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestLocalOpsBenchmarkQuickstartSmokeRecordsP010ActivationEvidence",
+          "path": "cmd/idiom/local_ops_test.go",
+          "check_id": "p010-quickstart-cleanup-evidence"
+        }
+      ]
+    },
+    {
+      "id": "telemetry_minimization_no_hosted_default",
+      "claim": "Telemetry and local-ops evidence are local, metadata-oriented, and do not require hosted telemetry by default.",
+      "mvp_limitations": "The current local telemetry recorder can write local diagnostic JSONL; it is not a hosted analytics pipeline or formal DLP system.",
+      "evidence": [
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "check_id": "p79-no-hosted-telemetry-default"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestLocalOpsBenchmarkReportsSmokeCapacityReplayBlockers",
+          "path": "cmd/idiom/local_ops_test.go",
+          "check_id": "local-ops-metadata-only-privacy"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestRunMainWritesTelemetryForRejectedDirectToolInput",
+          "path": "cmd/idiom/main_test.go",
+          "check_id": "direct-tool-telemetry-redaction"
+        }
+      ]
+    },
+    {
+      "id": "side_effect_policy_read_only_discovery",
+      "claim": "The discovery profile is request-aware and denies writes, shell, destructive effects, open-world effects, and local context-artifact writes.",
+      "mvp_limitations": "Discovery-profile checks cover CLI sidecar behavior. MCP resource parity remains P8.4/P8.5/P9.9 scope.",
+      "evidence": [
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "check_id": "p79-read-only-discovery-policy"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./internal/workspace -run TestToolAllowedForDiscoveryProfileDeniesMutationShellAndUnknownEffects",
+          "path": "internal/workspace/tool_profile_policy_test.go",
+          "check_id": "workspace-discovery-profile-denials"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP75DiscoveryProfileDeniesShellBeforeExternalSideEffect",
+          "path": "cmd/idiom/p7_5_containment_test.go",
+          "check_id": "p75-shell-side-effect-denial"
+        }
+      ]
+    }
+  ],
+  "client_classification_coverage": [
+    {
+      "classification": "finance",
+      "stance": "regulated proof-only",
+      "p7_6_command_id": "finance-discovery-policy",
+      "covered_control_ids": [
+        "protected_path_denial",
+        "redaction_no_raw_prompt_or_file_body",
+        "retention_local_artifact_scope",
+        "telemetry_minimization_no_hosted_default",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "limitation": "No regulated finance compliance or FINRA-specific product claim."
+    },
+    {
+      "classification": "healthcare",
+      "stance": "regulated proof-only",
+      "p7_6_command_id": "healthcare-redaction-denial",
+      "covered_control_ids": [
+        "protected_path_denial",
+        "redaction_no_raw_prompt_or_file_body",
+        "retention_local_artifact_scope",
+        "telemetry_minimization_no_hosted_default",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "limitation": "No HIPAA compliance claim or PHI-processing attestation."
+    },
+    {
+      "classification": "public-sector",
+      "stance": "regulated proof-only",
+      "p7_6_command_id": "public-sector-offline-side-effect-denial",
+      "covered_control_ids": [
+        "protected_path_denial",
+        "redaction_no_raw_prompt_or_file_body",
+        "retention_local_artifact_scope",
+        "telemetry_minimization_no_hosted_default",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "limitation": "No FedRAMP, DoD, or NIST certification claim."
+    },
+    {
+      "classification": "enterprise-saas",
+      "stance": "primary MVP buyer posture",
+      "p7_6_command_id": "enterprise-source-sanity-contract",
+      "covered_control_ids": [
+        "protected_path_denial",
+        "redaction_no_raw_prompt_or_file_body",
+        "retention_local_artifact_scope",
+        "telemetry_minimization_no_hosted_default",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "limitation": "Buyer-value, retained-use, and paid-signal claims remain P7.11/P9.7 scope."
+    },
+    {
+      "classification": "tooling-vendor",
+      "stance": "integration proof",
+      "p7_6_command_id": "tooling-vendor-schema-metadata",
+      "covered_control_ids": [
+        "redaction_no_raw_prompt_or_file_body",
+        "telemetry_minimization_no_hosted_default",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "limitation": "MCP resource parity remains P8.4/P8.5/P9.9 scope."
+    },
+    {
+      "classification": "local-model",
+      "stance": "private-code/local readiness proof",
+      "p7_6_command_id": "local-model-readiness-evidence",
+      "covered_control_ids": [
+        "redaction_no_raw_prompt_or_file_body",
+        "retention_local_artifact_scope",
+        "telemetry_minimization_no_hosted_default",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "limitation": "Live model quality, capacity, and operational reliability remain P6/P9.9 scope."
+    },
+    {
+      "classification": "open-source",
+      "stance": "activation and adoption wedge",
+      "p7_6_command_id": "open-source-context-pack",
+      "covered_control_ids": [
+        "redaction_no_raw_prompt_or_file_body",
+        "retention_local_artifact_scope",
+        "telemetry_minimization_no_hosted_default"
+      ],
+      "limitation": "Open-source activation is not paid enterprise demand evidence."
+    }
+  ],
+  "forbidden_evidence_fields": [
+    "raw_prompt",
+    "raw_file_body",
+    "secret_value",
+    "private_repo_url",
+    "unredacted_log_excerpt",
+    "customer_identifier",
+    "patient_name",
+    "account_number"
+  ],
+  "release_gate_tiebacks": [
+    "P0.9",
+    "P7.2",
+    "P7.5",
+    "P7.6",
+    "P7.11",
+    "P9.7",
+    "P9.9"
+  ]
+}
