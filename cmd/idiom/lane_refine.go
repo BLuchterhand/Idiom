@@ -1480,13 +1480,15 @@ func pathLooksLikeFile(path string) bool {
 	if path == "" {
 		return false
 	}
-	if strings.ContainsAny(path, "\n\r\t<>|*?\"") {
+	if strings.ContainsAny(path, "\n\r\t <>|*?\"{}:") {
 		return false
 	}
-	if strings.Contains(path, " ") && !strings.ContainsAny(path, "/\\.") {
-		return false
+	slashed := filepath.ToSlash(path)
+	base := filepath.Base(slashed)
+	if strings.ContainsAny(path, "/\\") {
+		return filepath.Ext(base) != "" || refineKnownFileBasenames[base]
 	}
-	if strings.ContainsAny(path, "/\\") || strings.HasPrefix(path, ".") {
+	if strings.HasPrefix(path, ".") {
 		return true
 	}
 	if filepath.Ext(path) != "" {

@@ -1858,6 +1858,30 @@ func TestExtractDeliverableTargetsPrefersFilesTableOverScope(t *testing.T) {
 	}
 }
 
+func TestExtractDeliverableTargetsRejectsSlashSeparatedProseAndCommands(t *testing.T) {
+	spec := `# Atom
+
+## Files To Modify
+
+| File | Change |
+|------|--------|
+| ` + "`save/load`" + ` | Explain the persistence risk, not a file. |
+| ` + "`UI/Codex`" + ` | Prose lane label, not a file. |
+| ` + "`quern/trough`" + ` | Domain shorthand, not a file. |
+| ` + "`gdscript_trace.sh --renderer farm_overlay`" + ` | Command example, not a file. |
+| ` + "`native/src/simulation/hazards/collapse_event.cpp`" + ` | Create source file. |
+| ` + "`docs/research/collapse-event.md`" + ` | Create design note. |
+`
+	got := extractDeliverableTargets(spec, refineModeAnchored)
+	want := []string{
+		"native/src/simulation/hazards/collapse_event.cpp",
+		"docs/research/collapse-event.md",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+	}
+}
+
 // TestRefineDeliverableTargetMismatchSurfacesAsBlock locks in the
 // validation path: when refine extracts a target from the spec but
 // the produced brief's Files To Modify references a DIFFERENT path

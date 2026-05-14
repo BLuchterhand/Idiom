@@ -27,6 +27,11 @@ const (
 	atomStateInvalidScope     atomIntakeState = "invalid-scope"
 )
 
+const (
+	atomInvalidScopeOutsideProjectRoot     = "outside_project_root"
+	atomInvalidScopeAmbiguousBareShorthand = "ambiguous_bare_shorthand"
+)
+
 type atomIntakeOptions struct {
 	SpecPath    string
 	ProjectRoot string
@@ -35,19 +40,20 @@ type atomIntakeOptions struct {
 }
 
 type atomIntakeReport struct {
-	Type         string          `json:"type"`
-	SpecPath     string          `json:"spec_path"`
-	ProjectRoot  string          `json:"project_root"`
-	Status       string          `json:"status,omitempty"`
-	State        atomIntakeState `json:"state"`
-	Dispatchable bool            `json:"dispatchable"`
-	ScopePaths   []string        `json:"scope_paths,omitempty"`
-	Existing     []string        `json:"existing_paths,omitempty"`
-	Missing      []string        `json:"missing_paths,omitempty"`
-	Invalid      []string        `json:"invalid_paths,omitempty"`
-	Dirty        []string        `json:"dirty_paths,omitempty"`
-	Reasons      []string        `json:"reasons,omitempty"`
-	NextActions  []string        `json:"next_actions,omitempty"`
+	Type           string            `json:"type"`
+	SpecPath       string            `json:"spec_path"`
+	ProjectRoot    string            `json:"project_root"`
+	Status         string            `json:"status,omitempty"`
+	State          atomIntakeState   `json:"state"`
+	Dispatchable   bool              `json:"dispatchable"`
+	ScopePaths     []string          `json:"scope_paths,omitempty"`
+	Existing       []string          `json:"existing_paths,omitempty"`
+	Missing        []string          `json:"missing_paths,omitempty"`
+	Invalid        []string          `json:"invalid_paths,omitempty"`
+	InvalidReasons map[string]string `json:"invalid_path_reasons,omitempty"`
+	Dirty          []string          `json:"dirty_paths,omitempty"`
+	Reasons        []string          `json:"reasons,omitempty"`
+	NextActions    []string          `json:"next_actions,omitempty"`
 }
 
 func runAtomMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -167,7 +173,7 @@ func evaluateAtomIntake(specBody, specPath, projectRoot string, allowDirty bool)
 		report.NextActions = append(report.NextActions, "inspect the refine review, rerun refine from the source spec, or write a corrected dispatchable brief")
 		return report
 	}
-	report.Existing, report.Missing, report.Invalid = classifyAtomScopePaths(projectRoot, scopePaths)
+	report.Existing, report.Missing, report.Invalid, report.InvalidReasons = classifyAtomScopePaths(projectRoot, scopePaths)
 	if len(scopePaths) == 0 {
 		report.State = atomStateMissingScope
 		report.Reasons = append(report.Reasons, "spec does not expose any scoped file paths")
@@ -176,8 +182,8 @@ func evaluateAtomIntake(specBody, specPath, projectRoot string, allowDirty bool)
 	}
 	if len(report.Invalid) > 0 {
 		report.State = atomStateInvalidScope
-		report.Reasons = append(report.Reasons, "spec scope includes paths outside the project root")
-		report.NextActions = append(report.NextActions, "rebase the atom/spec so every scoped path is repository-relative and inside the workspace")
+		report.Reasons = append(report.Reasons, atomInvalidScopeSummary(report.InvalidReasons))
+		report.NextActions = append(report.NextActions, atomInvalidScopeNextAction(report.InvalidReasons))
 		return report
 	}
 	if atomSpecHasAcceptedResult(specBody) {
@@ -819,20 +825,81 @@ func atomNonEmptyTrimmedLines(text string) []string {
 	return lines
 }
 
-func classifyAtomScopePaths(projectRoot string, paths []string) (existing []string, missing []string, invalid []string) {
+func classifyAtomScopePaths(projectRoot string, paths []string) (existing []string, missing []string, invalid []string, invalidReasons map[string]string) {
 	for _, path := range paths {
 		fullPath, ok := atomScopeFullPath(projectRoot, path)
 		if !ok {
+			invalidReasons = atomRecordInvalidScopeReason(invalidReasons, path, atomInvalidScopeOutsideProjectRoot)
 			invalid = append(invalid, path)
 			continue
 		}
 		if _, err := os.Stat(fullPath); err == nil {
 			existing = append(existing, path)
 		} else if os.IsNotExist(err) {
+			if atomScopeMissingPathLooksLikeBareShorthand(path) {
+				invalidReasons = atomRecordInvalidScopeReason(invalidReasons, path, atomInvalidScopeAmbiguousBareShorthand)
+				invalid = append(invalid, path)
+				continue
+			}
 			missing = append(missing, path)
 		}
 	}
-	return existing, missing, invalid
+	return existing, missing, invalid, invalidReasons
+}
+
+func atomRecordInvalidScopeReason(reasons map[string]string, path, reason string) map[string]string {
+	if reasons == nil {
+		reasons = map[string]string{}
+	}
+	reasons[path] = reason
+	return reasons
+}
+
+func atomInvalidScopeSummary(invalidReasons map[string]string) string {
+	hasOutsideRoot := atomInvalidScopeReasonsInclude(invalidReasons, atomInvalidScopeOutsideProjectRoot)
+	hasBareShorthand := atomInvalidScopeReasonsInclude(invalidReasons, atomInvalidScopeAmbiguousBareShorthand)
+	switch {
+	case hasOutsideRoot && hasBareShorthand:
+		return "spec scope includes paths outside the project root and ambiguous bare shorthand paths that could imply repository-root writes"
+	case hasBareShorthand:
+		return "spec scope includes ambiguous bare shorthand paths that could imply repository-root writes"
+	default:
+		return "spec scope includes paths outside the project root"
+	}
+}
+
+func atomInvalidScopeNextAction(invalidReasons map[string]string) string {
+	hasOutsideRoot := atomInvalidScopeReasonsInclude(invalidReasons, atomInvalidScopeOutsideProjectRoot)
+	hasBareShorthand := atomInvalidScopeReasonsInclude(invalidReasons, atomInvalidScopeAmbiguousBareShorthand)
+	switch {
+	case hasOutsideRoot && hasBareShorthand:
+		return "rebase the atom/spec so every scoped path is explicit, repository-relative, and inside the workspace"
+	case hasBareShorthand:
+		return "rebase the atom/spec so new scoped files use explicit repository-relative paths instead of bare basenames"
+	default:
+		return "rebase the atom/spec so every scoped path is repository-relative and inside the workspace"
+	}
+}
+
+func atomInvalidScopeReasonsInclude(invalidReasons map[string]string, reason string) bool {
+	for _, got := range invalidReasons {
+		if got == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func atomScopeMissingPathLooksLikeBareShorthand(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || filepath.IsAbs(path) {
+		return false
+	}
+	normalized := filepath.ToSlash(path)
+	if strings.Contains(normalized, "/") {
+		return false
+	}
+	return !refineKnownFileBasenames[normalized]
 }
 
 func dirtyAtomScopePaths(projectRoot string, paths []string) []string {

@@ -181,6 +181,84 @@ func TestAtomIntakeBlocksScopeOutsideProjectRoot(t *testing.T) {
 	if len(report.Invalid) != 1 || report.Invalid[0] != "../outside.go" {
 		t.Fatalf("invalid=%v, want [../outside.go]", report.Invalid)
 	}
+	if got := report.InvalidReasons["../outside.go"]; got != atomInvalidScopeOutsideProjectRoot {
+		t.Fatalf("invalid reason=%q, want %q; report=%+v", got, atomInvalidScopeOutsideProjectRoot, report)
+	}
+	if !reportReasonContains(report, "outside the project root") {
+		t.Fatalf("expected outside-root reason, got %+v", report.Reasons)
+	}
+}
+
+func TestAtomIntakeRejectsMissingBareFileShorthand(t *testing.T) {
+	root := t.TempDir()
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `test_codex_generation.cpp` | Shorthand basename from prose should not authorize a root write. |\n| `native/tests/test_codex_generation.cpp` | Concrete repo-relative new file. |\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code == 0 {
+		t.Fatalf("expected invalid scope exit, got 0 stderr=%s report=%+v", stderr, report)
+	}
+	if report.State != atomStateInvalidScope {
+		t.Fatalf("state=%q, want %q report=%+v", report.State, atomStateInvalidScope, report)
+	}
+	if len(report.Invalid) != 1 || report.Invalid[0] != "test_codex_generation.cpp" {
+		t.Fatalf("invalid=%v, want [test_codex_generation.cpp]", report.Invalid)
+	}
+	if got := report.InvalidReasons["test_codex_generation.cpp"]; got != atomInvalidScopeAmbiguousBareShorthand {
+		t.Fatalf("invalid reason=%q, want %q; report=%+v", got, atomInvalidScopeAmbiguousBareShorthand, report)
+	}
+	if reportReasonContains(report, "outside the project root") {
+		t.Fatalf("ambiguous bare shorthand reason must not imply outside-root, got %+v", report.Reasons)
+	}
+	if !reportReasonContains(report, "ambiguous bare shorthand") {
+		t.Fatalf("expected ambiguous bare shorthand reason, got %+v", report.Reasons)
+	}
+	if len(report.Missing) != 1 || report.Missing[0] != "native/tests/test_codex_generation.cpp" {
+		t.Fatalf("missing=%v, want [native/tests/test_codex_generation.cpp]", report.Missing)
+	}
+}
+
+func TestAtomIntakeReportsMixedInvalidScopeReasons(t *testing.T) {
+	root := t.TempDir()
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Scope\n\n- `missing.cpp`\n- `../outside.go`\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code == 0 {
+		t.Fatalf("expected invalid scope exit, got 0 stderr=%s report=%+v", stderr, report)
+	}
+	if report.State != atomStateInvalidScope {
+		t.Fatalf("state=%q, want %q report=%+v", report.State, atomStateInvalidScope, report)
+	}
+	if got := report.InvalidReasons["missing.cpp"]; got != atomInvalidScopeAmbiguousBareShorthand {
+		t.Fatalf("missing.cpp invalid reason=%q, want %q; report=%+v", got, atomInvalidScopeAmbiguousBareShorthand, report)
+	}
+	if got := report.InvalidReasons["../outside.go"]; got != atomInvalidScopeOutsideProjectRoot {
+		t.Fatalf("../outside.go invalid reason=%q, want %q; report=%+v", got, atomInvalidScopeOutsideProjectRoot, report)
+	}
+	if !reportReasonContains(report, "outside the project root") || !reportReasonContains(report, "ambiguous bare shorthand") {
+		t.Fatalf("expected mixed invalid-scope summary, got %+v", report.Reasons)
+	}
+}
+
+func TestAtomIntakeMissingBareFileShorthandUsesKnownBasenameAllowlist(t *testing.T) {
+	root := t.TempDir()
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `.gitignore` | Known repository-root basename remains allowed. |\n| `.unrecognized-toolrc` | Unknown bare dotfile shorthand should not authorize a root write. |\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code == 0 {
+		t.Fatalf("expected invalid scope exit, got 0 stderr=%s report=%+v", stderr, report)
+	}
+	if report.State != atomStateInvalidScope {
+		t.Fatalf("state=%q, want %q report=%+v", report.State, atomStateInvalidScope, report)
+	}
+	if len(report.Invalid) != 1 || report.Invalid[0] != ".unrecognized-toolrc" {
+		t.Fatalf("invalid=%v, want [.unrecognized-toolrc]", report.Invalid)
+	}
+	if got := report.InvalidReasons[".unrecognized-toolrc"]; got != atomInvalidScopeAmbiguousBareShorthand {
+		t.Fatalf("invalid reason=%q, want %q; report=%+v", got, atomInvalidScopeAmbiguousBareShorthand, report)
+	}
+	if len(report.Missing) != 1 || report.Missing[0] != ".gitignore" {
+		t.Fatalf("missing=%v, want [.gitignore]", report.Missing)
+	}
 }
 
 func TestAtomIntakeBlocksSymlinkEscapeFromProjectRoot(t *testing.T) {
@@ -203,6 +281,9 @@ func TestAtomIntakeBlocksSymlinkEscapeFromProjectRoot(t *testing.T) {
 	}
 	if len(report.Invalid) != 1 || report.Invalid[0] != "link/secret.go" {
 		t.Fatalf("invalid=%v, want [link/secret.go]", report.Invalid)
+	}
+	if got := report.InvalidReasons["link/secret.go"]; got != atomInvalidScopeOutsideProjectRoot {
+		t.Fatalf("invalid reason=%q, want %q; report=%+v", got, atomInvalidScopeOutsideProjectRoot, report)
 	}
 }
 
