@@ -155,6 +155,21 @@ func toolSchemaExportProfiles() map[string][]string {
 			profiles[tool] = append(profiles[tool], surface.name)
 		}
 	}
+	for _, tool := range ToolManifestTools(ToolManifestToolOptions{
+		IncludeTaskLedger: true,
+		IncludeTask:       true,
+		IncludeWriteTools: true,
+		IncludeGo:         true,
+		IncludeCpp:        true,
+		IncludePython:     true,
+		IncludeTypescript: true,
+		IncludeRust:       true,
+		IncludeJava:       true,
+	}) {
+		if ToolAllowedForProfile(tool, ToolProfileDiscovery).Allowed {
+			profiles[tool] = append(profiles[tool], ToolProfileDiscovery)
+		}
+	}
 	for tool, names := range profiles {
 		profiles[tool] = compactToolExportStrings(names)
 	}

@@ -83,6 +83,12 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 	if !slices.Contains(exported["read_file"].Policy.SideEffects, autonomy.SideEffectReadOnly) {
 		t.Fatalf("read_file should expose read-only side effect: %#v", exported["read_file"].Policy.SideEffects)
 	}
+	if !slices.Contains(exported["context_status"].Profiles, ToolProfileDiscovery) {
+		t.Fatalf("context_status should expose discovery profile: %#v", exported["context_status"].Profiles)
+	}
+	if slices.Contains(exported["write_file"].Profiles, ToolProfileDiscovery) {
+		t.Fatalf("write_file must not expose discovery profile: %#v", exported["write_file"].Profiles)
+	}
 	if !slices.Contains(exported["submit_plan"].Profiles, "plan_then_execute") {
 		t.Fatalf("submit_plan should expose plan-then-execute profile: %#v", exported["submit_plan"].Profiles)
 	}

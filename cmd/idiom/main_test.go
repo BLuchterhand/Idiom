@@ -533,6 +533,118 @@ func TestRunMainDirectToolUnknownToolIncludesStructuredSidecarError(t *testing.T
 	}
 }
 
+func TestRunMainDirectToolDiscoveryProfileAllowsReadOnlyTool(t *testing.T) {
+	configPath := writeMainConfig(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "context_status", "-config", configPath, "--profile", "discovery", "--input", `{"limit":1}`}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var payload struct {
+		Tool    string `json:"Tool"`
+		Sidecar struct {
+			Profile string `json:"profile"`
+			Error   any    `json:"error"`
+		} `json:"sidecar"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode tool output: %v\n%s", err, stdout.String())
+	}
+	if payload.Tool != "context_status" || payload.Sidecar.Profile != "discovery" || payload.Sidecar.Error != nil {
+		t.Fatalf("unexpected discovery success envelope: %#v", payload)
+	}
+}
+
+func TestRunMainDirectToolDiscoveryProfileDeniesContextStatusRefreshBeforeExecution(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeMainConfigRoot(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "context_status", "-config", configPath, "--profile", "discovery", "--input", `{"refresh":true}`}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var payload struct {
+		Tool    string `json:"Tool"`
+		Error   string `json:"Error"`
+		Sidecar struct {
+			Profile string `json:"profile"`
+			Error   struct {
+				Class   string `json:"class"`
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"sidecar"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode denial output: %v\n%s", err, stdout.String())
+	}
+	if payload.Tool != "context_status" || payload.Sidecar.Profile != "discovery" {
+		t.Fatalf("unexpected denial identity: %#v", payload)
+	}
+	if payload.Sidecar.Error.Class != "profile_denied" || payload.Sidecar.Error.Code != "profile_denied" ||
+		!strings.Contains(payload.Sidecar.Error.Message, "read_only_profile") {
+		t.Fatalf("unexpected structured denial: %#v", payload.Sidecar.Error)
+	}
+	for _, path := range []string{
+		filepath.Join(root, ".idiom", "comprehension"),
+		filepath.Join(root, ".idiom", "comprehension", "graph.sqlite"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("denied refresh should not create %s; stat err=%v", path, err)
+		}
+	}
+}
+
+func TestRunMainDirectToolDiscoveryProfileDeniesWriteBeforeExecution(t *testing.T) {
+	configPath := writeMainConfig(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "write_file", "-config", configPath, "--profile", "discovery", "--input", `{"path":"profile-denied.txt","content":"nope"}`}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var payload struct {
+		Tool    string `json:"Tool"`
+		Error   string `json:"Error"`
+		Sidecar struct {
+			Profile string `json:"profile"`
+			Error   struct {
+				Class   string `json:"class"`
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"sidecar"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode denial output: %v\n%s", err, stdout.String())
+	}
+	if payload.Tool != "write_file" || payload.Sidecar.Profile != "discovery" {
+		t.Fatalf("unexpected denial identity: %#v", payload)
+	}
+	if payload.Sidecar.Error.Class != "profile_denied" || payload.Sidecar.Error.Code != "profile_denied" ||
+		!strings.Contains(payload.Sidecar.Error.Message, "read_only_profile") {
+		t.Fatalf("unexpected structured denial: %#v", payload.Sidecar.Error)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(configPath), "profile-denied.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write_file appears to have executed; stat err=%v", err)
+	}
+}
+
+func TestRunMainDirectToolUnknownProfileIsUsageError(t *testing.T) {
+	configPath := writeMainConfig(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "pwd", "-config", configPath, "--profile", "verify"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unknown tool profile") {
+		t.Fatalf("expected unknown profile diagnostic, got %q", stderr.String())
+	}
+}
+
 func TestRunMainWritesTelemetryForRejectedDirectToolInput(t *testing.T) {
 	telemetryDir := t.TempDir()
 	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
@@ -699,6 +811,16 @@ func writeMainConfig(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+func writeMainConfigRoot(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	configJSON := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
+	if err := os.WriteFile(path, []byte(configJSON+"\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	return path

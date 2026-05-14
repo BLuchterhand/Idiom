@@ -326,8 +326,16 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		listFs := flag.NewFlagSet("idiom tool list", flag.ContinueOnError)
 		listFs.SetOutput(stderr)
 		listConfigPath := listFs.String("config", "config.json", "path to config file")
-		_ = listFs.Parse(args[1:])
-		code := runToolListWithConfig(stdout, *listConfigPath)
+		listProfile := listFs.String("profile", workspace.ToolProfileDefault, "tool permission profile: default or discovery")
+		if err := listFs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		profile, err := workspace.NormalizeToolProfile(*listProfile)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		code := runToolListWithConfig(stdout, *listConfigPath, profile)
 		logCLIPhase(rec, "tool_list", map[string]any{"exit_code": code})
 		return code
 	}
@@ -341,8 +349,14 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 	toolFs := flag.NewFlagSet("idiom tool "+toolName, flag.ContinueOnError)
 	toolFs.SetOutput(stderr)
 	configPath := toolFs.String("config", "config.json", "path to config file")
+	profileFlag := toolFs.String("profile", workspace.ToolProfileDefault, "tool permission profile: default or discovery")
 	inputJSON := toolFs.String("input", "", "JSON object with tool request parameters (reads from stdin if omitted and not a terminal)")
 	if err := toolFs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	profile, err := workspace.NormalizeToolProfile(*profileFlag)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 		return 2
 	}
 
@@ -406,14 +420,35 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 	req.Tool = toolName
 	logRequest(len(rawInput))
 
-	mgr := workspace.NewManager(cfg.Workspace)
-	mgr.SetBypassReadBeforeEdit(true)
-	if extReg, extErr := loadExternalToolsRegistry(cfg.Workspace); extErr != nil {
+	extReg, extErr := loadExternalToolsRegistry(cfg.Workspace)
+	if extErr != nil {
 		errText := fmt.Sprintf("external tools setup: %v", extErr)
 		logFailureResult("Direct tool setup failed", errText)
 		fmt.Fprintln(stderr, errText)
 		return 1
-	} else if extReg != nil {
+	}
+	if decision := toolAllowedForCLIProfile(req, profile, extReg); !decision.Allowed {
+		result := workspace.ToolProfileDeniedResult(req.Tool, profile, decision)
+		logDirectToolResult(rec, req, result, 0)
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		payload := struct {
+			workspace.ToolResult
+			Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
+		}{
+			ToolResult: result,
+			Sidecar:    workspace.BuildToolSidecarEnvelope(req, result, profile),
+		}
+		if err := enc.Encode(payload); err != nil {
+			fmt.Fprintf(stderr, "encode result: %v\n", err)
+			return 1
+		}
+		return 1
+	}
+
+	mgr := workspace.NewManager(cfg.Workspace)
+	mgr.SetBypassReadBeforeEdit(true)
+	if extReg != nil {
 		mgr.SetExternalToolsRegistry(extReg)
 	}
 
@@ -431,7 +466,7 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
 	}{
 		ToolResult: result,
-		Sidecar:    workspace.BuildToolSidecarEnvelope(req, result, "default"),
+		Sidecar:    workspace.BuildToolSidecarEnvelope(req, result, profile),
 	}
 	if err := enc.Encode(payload); err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
@@ -442,6 +477,17 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		return 1
 	}
 	return 0
+}
+
+func toolAllowedForCLIProfile(req workspace.ToolRequest, profile string, extReg *workspace.ExternalToolRegistry) workspace.ToolProfileDecision {
+	decision := workspace.ToolRequestAllowedForProfile(req, profile)
+	if decision.Allowed || profile != workspace.ToolProfileDiscovery || workspace.IsBuiltInToolName(req.Tool) {
+		return decision
+	}
+	if extReg != nil && extReg.IsReadOnlyDiscovery(req.Tool) {
+		return workspace.ToolProfileDecision{Allowed: true}
+	}
+	return decision
 }
 
 func toolHelpRequested(args []string) bool {
@@ -464,10 +510,11 @@ func toolHelpRequested(args []string) bool {
 
 func printToolHelp(stdout io.Writer, toolName string) {
 	toolName = strings.TrimSpace(toolName)
-	fmt.Fprintf(stdout, "Usage:\n  idiom tool %s --input '<json>'\n\n", toolName)
+	fmt.Fprintf(stdout, "Usage:\n  idiom tool %s [--profile default|discovery] --input '<json>'\n\n", toolName)
 	fmt.Fprintln(stdout, "Output:")
 	fmt.Fprintln(stdout, "  JSON with legacy Tool/Summary/Output/Error fields plus sidecar.schema_version=\"idiom.tool.v1\".")
 	fmt.Fprintln(stdout, "  The sidecar envelope carries profile, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
+	fmt.Fprintln(stdout, "  --profile discovery is read-only and denies mutation, shell, destructive, and unknown side-effect tools before execution.")
 	fmt.Fprintln(stdout)
 	defs := workspace.BuildToolDefinitions([]string{toolName})
 	if len(defs) > 0 {
@@ -502,10 +549,10 @@ func toolManifestExample(toolName string) (workspace.ToolManifestEntry, bool) {
 }
 
 func runToolList(stdout io.Writer) int {
-	return runToolListWithConfig(stdout, "config.json")
+	return runToolListWithConfig(stdout, "config.json", workspace.ToolProfileDefault)
 }
 
-func runToolListWithConfig(stdout io.Writer, configPath string) int {
+func runToolListWithConfig(stdout io.Writer, configPath string, profile string) int {
 	allTools := workspace.ToolManifestTools(workspace.ToolManifestToolOptions{
 		IncludeTaskLedger: true,
 		IncludeTask:       true,
@@ -518,6 +565,9 @@ func runToolListWithConfig(stdout io.Writer, configPath string) int {
 		IncludeJava:       true,
 	})
 	for _, t := range allTools {
+		if decision := workspace.ToolAllowedForProfile(t, profile); !decision.Allowed {
+			continue
+		}
 		fmt.Fprintln(stdout, t)
 	}
 	// Append project-defined external tools when a config is loadable.
@@ -529,6 +579,9 @@ func runToolListWithConfig(stdout io.Writer, configPath string) int {
 			names := reg.Names()
 			sort.Strings(names)
 			for _, name := range names {
+				if profile == workspace.ToolProfileDiscovery && !reg.IsReadOnlyDiscovery(name) {
+					continue
+				}
 				fmt.Fprintln(stdout, name)
 			}
 		}
@@ -566,14 +619,15 @@ func loadToolConfig(path string) (config.Config, error) {
 
 func printToolUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
-	fmt.Fprintln(stderr, "  idiom tool <tool-name> [--input '<json>']")
+	fmt.Fprintln(stderr, "  idiom tool <tool-name> [--profile default|discovery] [--input '<json>']")
 	fmt.Fprintln(stderr, "  idiom tool <tool-name> [flags]  # reads JSON from stdin when piped")
-	fmt.Fprintln(stderr, "  idiom tool list")
+	fmt.Fprintln(stderr, "  idiom tool list [--profile default|discovery]")
 	fmt.Fprintln(stderr, "  idiom tool schemas")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Run a single workspace tool and print its result as JSON.")
 	fmt.Fprintln(stderr, "Output preserves legacy Tool/Summary/Output/Error fields and adds sidecar.schema_version=\"idiom.tool.v1\" for structured integrations.")
 	fmt.Fprintln(stderr, "The sidecar envelope includes profile, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
+	fmt.Fprintln(stderr, "--profile discovery is read-only/default-deny for mutation, shell, destructive, and unknown side-effect tools; denied calls return a structured sidecar error without executing.")
 	fmt.Fprintln(stderr, "Does not require llama-server.")
 	fmt.Fprintln(stderr, "For persistent codebase context, use `idiom context build|status|query|zoom|pack|impact|trace`.")
 	fmt.Fprintln(stderr)

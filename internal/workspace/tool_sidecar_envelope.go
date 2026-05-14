@@ -236,6 +236,10 @@ func boundedToolSidecarErrorMessage(message string) string {
 func classifyToolSidecarError(result ToolResult) string {
 	text := strings.ToLower(strings.Join([]string{result.Summary, result.Error}, " "))
 	switch {
+	case strings.Contains(text, "profile_denied"):
+		return "profile_denied"
+	case strings.Contains(text, "read_only_profile"):
+		return "read_only_profile"
 	case strings.Contains(text, "unsupported tool") || strings.Contains(text, "unknown external tool") || strings.Contains(text, "unknown mcp tool"):
 		return "unsupported_tool"
 	case strings.Contains(text, "invalid input") || strings.Contains(text, " is required") || strings.Contains(text, "missing required"):
