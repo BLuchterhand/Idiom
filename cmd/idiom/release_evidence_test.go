@@ -76,6 +76,12 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 	if report.ProductEvidence.Status != "pass" || report.ProductEvidence.SignalCompleteness.Status != "complete" {
 		t.Fatalf("product evidence section should consume P7/P8 inputs: %#v", report.ProductEvidence)
 	}
+	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.7"); gate.Status != "evidence_present" {
+		t.Fatalf("complete P9.7 validation fixture should satisfy release readiness: %#v", gate)
+	} else if gate.Counts["complete_records"] == 0 || gate.Counts["primary_icp_records"] != 3 ||
+		gate.Counts["daily_user_activation_records"] != 3 || len(gate.EvidenceIDs) != 3 || len(gate.Blockers) != 0 {
+		t.Fatalf("complete P9.7 release readiness should expose structured gate data: %#v", gate)
+	}
 	assertReleaseEvidenceClassifications(t, report.ClientReadiness)
 	if forbidden := localOpsForbiddenEvidenceLeak(string(body)); forbidden != "" {
 		t.Fatalf("release evidence leaked forbidden class %q: %s", forbidden, string(body))
@@ -151,6 +157,13 @@ func TestP913ReleaseReadinessNeedsEvidenceWhenClientValidationMissing(t *testing
 	}
 	if gate.Status != "needs_evidence" {
 		t.Fatalf("P9.12 should need evidence when client validation records are absent, got %#v", gate)
+	}
+	p97 := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.7")
+	if p97.Status != "needs_evidence" {
+		t.Fatalf("P9.7 should need validation evidence when records are absent, got %#v", p97)
+	}
+	if !releaseEvidenceHasBlockerReason(report.Blockers, "release_readiness", "P9.7") {
+		t.Fatalf("release blockers should include P9.7 demand evidence gap: %#v", report.Blockers)
 	}
 }
 
@@ -326,6 +339,68 @@ func TestP96ReleaseActivationZeroRankedPacketFailsClosed(t *testing.T) {
 	}
 	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "first useful packet") {
 		t.Fatalf("activation section missing first-packet blocker: %#v", report.ActivationOnboarding.Blockers)
+	}
+}
+
+func TestP97ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	recordsPath := writeP711ValidationRecords(t, root)
+	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+	stageP711LearningEvidence(t, root, "p97-agreement")
+
+	product := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:       root,
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+	})
+	release := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:       root,
+		CurrentDir:        "current",
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+	})
+	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.7")
+	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.7")
+	if productGate.Status != "evidence_present" || releaseGate.Status != productGate.Status {
+		t.Fatalf("product/release P9.7 readiness should agree and pass for complete fixture: product=%#v release=%#v", productGate, releaseGate)
+	}
+	for _, key := range []string{"validation_records", "complete_records", "primary_icp_records", "primary_contexts", "daily_user_activation_records", "retained_use_records", "credible_primary_adoption_signals"} {
+		if productGate.Counts[key] != releaseGate.Counts[key] {
+			t.Fatalf("product/release P9.7 count %q should agree: product=%#v release=%#v", key, productGate, releaseGate)
+		}
+	}
+	if strings.Join(productGate.Blockers, "|") != strings.Join(releaseGate.Blockers, "|") ||
+		strings.Join(productGate.EvidenceIDs, "|") != strings.Join(releaseGate.EvidenceIDs, "|") {
+		t.Fatalf("product/release P9.7 structured gate data should agree: product=%#v release=%#v", productGate, releaseGate)
+	}
+}
+
+func TestP97ReleaseRetainedUseWithoutCredibleAdoptionSignalDoesNotPass(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+	records := p97PrimaryRecords("none", "none")
+	recordsPath := filepath.Join(root, "validation-records.json")
+	writeP711JSON(t, recordsPath, records)
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:       root,
+		CurrentDir:        "current",
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+	})
+	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.7")
+	if gate.Status == "evidence_present" {
+		t.Fatalf("P9.7 must not pass without credible paid/internal-platform adoption signal: %#v", gate)
+	}
+	if !strings.Contains(gate.Evidence, "adoption:0") {
+		t.Fatalf("P9.7 evidence should expose missing adoption count: %#v", gate)
+	}
+	if gate.Counts["credible_primary_adoption_signals"] != 0 || len(gate.Blockers) == 0 || len(gate.EvidenceIDs) != 3 {
+		t.Fatalf("P9.7 release readiness should expose structured adoption blocker data: %#v", gate)
 	}
 }
 

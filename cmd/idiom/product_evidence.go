@@ -129,10 +129,13 @@ type p711SourceReference struct {
 }
 
 type p711ReleaseGateLinkage struct {
-	Gate        string `json:"gate"`
-	Status      string `json:"status"`
-	Evidence    string `json:"evidence"`
-	ClaimImpact string `json:"claim_impact"`
+	Gate        string         `json:"gate"`
+	Status      string         `json:"status"`
+	Evidence    string         `json:"evidence"`
+	ClaimImpact string         `json:"claim_impact"`
+	Counts      map[string]int `json:"counts,omitempty"`
+	Blockers    []string       `json:"blockers,omitempty"`
+	EvidenceIDs []string       `json:"evidence_ids,omitempty"`
 }
 
 func runProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -299,7 +302,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			recordsRef,
 			learningRef,
 		},
-		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps),
+		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records),
 		Limitations:        productEvidenceExportLimitations(integration),
 		Metadata: map[string]any{
 			"generated_by": "idiom product-evidence export",
@@ -478,12 +481,26 @@ type p711DemoTranscript struct {
 }
 
 type p711ValidationRecord struct {
-	RecordID             string `json:"record_id"`
-	ClientClassification string `json:"client_classification"`
-	EvidenceStatus       string `json:"evidence_status"`
-	RetainedUseStatus    string `json:"retained_use_status"`
-	AdoptionSignalType   string `json:"adoption_signal_type"`
-	RedactionStatus      string `json:"redaction_status"`
+	RecordID                  string `json:"record_id"`
+	ClientClassification      string `json:"client_classification"`
+	EvidenceStatus            string `json:"evidence_status"`
+	RetainedUseStatus         string `json:"retained_use_status"`
+	AdoptionSignalType        string `json:"adoption_signal_type"`
+	RedactionStatus           string `json:"redaction_status"`
+	ParticipantContextID      string `json:"participant_context_id,omitempty"`
+	PrimaryICPFit             string `json:"primary_icp_fit,omitempty"`
+	ActiveAgentUse            string `json:"active_agent_use,omitempty"`
+	RepoWorkflowAvailable     string `json:"repo_workflow_available,omitempty"`
+	BlockedWorkflowStatus     string `json:"blocked_workflow_status,omitempty"`
+	DailyUserActivationStatus string `json:"daily_user_activation_status,omitempty"`
+	RetainedUseEvidence       string `json:"retained_use_evidence,omitempty"`
+	SubstrateValueStatus      string `json:"substrate_value_status,omitempty"`
+	BuyerBudgetSignal         string `json:"buyer_budget_signal,omitempty"`
+	DisqualifierStatus        string `json:"disqualifier_status,omitempty"`
+	ActivationScore           int    `json:"activation_score,omitempty"`
+	TrustSecurityScore        int    `json:"trust_security_score,omitempty"`
+	WorkflowValueScore        int    `json:"workflow_value_score,omitempty"`
+	AdoptPaySponsorScore      int    `json:"adopt_pay_sponsor_score,omitempty"`
 }
 
 func loadP711LocalOpsReport(root string, path string) (*localOpsBenchmarkReport, p711SourceReference) {
@@ -570,6 +587,16 @@ func loadP711ValidationRecords(path string) ([]p711ValidationRecord, p711SourceR
 		records[i].RetainedUseStatus = p711SafeStatus(records[i].RetainedUseStatus)
 		records[i].AdoptionSignalType = p711SafeToken(records[i].AdoptionSignalType)
 		records[i].RedactionStatus = p711SafeStatus(records[i].RedactionStatus)
+		records[i].ParticipantContextID = p711SafeID(records[i].ParticipantContextID, "context")
+		records[i].PrimaryICPFit = p711SafeToken(records[i].PrimaryICPFit)
+		records[i].ActiveAgentUse = p711SafeToken(records[i].ActiveAgentUse)
+		records[i].RepoWorkflowAvailable = p711SafeToken(records[i].RepoWorkflowAvailable)
+		records[i].BlockedWorkflowStatus = p711SafeToken(records[i].BlockedWorkflowStatus)
+		records[i].DailyUserActivationStatus = p711SafeToken(records[i].DailyUserActivationStatus)
+		records[i].RetainedUseEvidence = p711SafeToken(records[i].RetainedUseEvidence)
+		records[i].SubstrateValueStatus = p711SafeToken(records[i].SubstrateValueStatus)
+		records[i].BuyerBudgetSignal = p711SafeToken(records[i].BuyerBudgetSignal)
+		records[i].DisqualifierStatus = p711SafeToken(records[i].DisqualifierStatus)
 	}
 	return records, ref
 }
@@ -670,7 +697,7 @@ func p711RetainedUseSignal(records []p711ValidationRecord) p711SignalSummary {
 		if record.RecordID != "" {
 			s.EvidenceIDs = append(s.EvidenceIDs, record.RecordID)
 		}
-		if record.RetainedUseStatus == "observed" || record.RetainedUseStatus == "pass" {
+		if p97RecordHasRetainedSubstrateUse(record) {
 			s.Counts["retained_use_observed"]++
 		}
 		if p711HasAdoptionSignal(record.AdoptionSignalType) {
@@ -687,6 +714,229 @@ func p711RetainedUseSignal(records []p711ValidationRecord) p711SignalSummary {
 		s.Limitations = []string{"validation records supplied but none qualified for retained-use counting"}
 	}
 	return s
+}
+
+type p97ValidationGateResult struct {
+	Status      string
+	Evidence    string
+	ClaimImpact string
+	Counts      map[string]int
+	EvidenceIDs []string
+	Blockers    []string
+}
+
+func p97ValidationGate(records []p711ValidationRecord) p97ValidationGateResult {
+	out := p97ValidationGateResult{
+		Status:      "needs_evidence",
+		Evidence:    "privacy-safe P0.8 validation records missing",
+		ClaimImpact: "paid or internal-platform demand remains unclaimed until primary-ICP retained-use and adoption evidence pass",
+		Counts: map[string]int{
+			"validation_records":                len(records),
+			"complete_records":                  0,
+			"primary_icp_records":               0,
+			"primary_contexts":                  0,
+			"primary_scored_records":            0,
+			"daily_user_activation_records":     0,
+			"retained_use_records":              0,
+			"credible_primary_adoption_signals": 0,
+			"open_source_records":               0,
+			"non_qualifying_records":            0,
+		},
+	}
+	contexts := map[string]bool{}
+	for _, record := range records {
+		if record.ClientClassification == "open-source" {
+			out.Counts["open_source_records"]++
+		}
+		if !p711ValidationRecordQualifies(record) {
+			out.Counts["non_qualifying_records"]++
+			switch record.EvidenceStatus {
+			case "disqualified":
+				out.Counts["disqualified_records"]++
+			case "withdrawn":
+				out.Counts["withdrawn_records"]++
+			case "draft":
+				out.Counts["draft_records"]++
+			}
+			continue
+		}
+		out.Counts["complete_records"]++
+		if p97RecordHasRetainedSubstrateUse(record) {
+			out.Counts["retained_use_records"]++
+		}
+		if !p97PrimaryICPRecord(record) {
+			continue
+		}
+		out.Counts["primary_icp_records"]++
+		out.EvidenceIDs = append(out.EvidenceIDs, record.RecordID)
+		if record.ParticipantContextID != "" {
+			contexts[record.ParticipantContextID] = true
+		}
+		if p97PrimaryScoresPass(record) {
+			out.Counts["primary_scored_records"]++
+		}
+		if p97DailyUserActivationQualifies(record.DailyUserActivationStatus) {
+			out.Counts["daily_user_activation_records"]++
+		}
+		if p97CrediblePrimaryAdoptionSignal(record) {
+			out.Counts["credible_primary_adoption_signals"]++
+		}
+	}
+	out.Counts["primary_contexts"] = len(contexts)
+
+	var blockers []string
+	if out.Counts["complete_records"] < 5 {
+		blockers = append(blockers, "fewer than five complete privacy-safe P0.8 validation records")
+	}
+	if out.Counts["primary_icp_records"] < 3 {
+		blockers = append(blockers, "fewer than three complete primary enterprise-saas records")
+	}
+	if out.Counts["primary_contexts"] < 2 {
+		blockers = append(blockers, "primary records do not span at least two contexts")
+	}
+	if out.Counts["primary_scored_records"] < 2 {
+		blockers = append(blockers, "fewer than two primary records meet activation, trust/security, and workflow-value score thresholds")
+	}
+	if out.Counts["daily_user_activation_records"] < 2 {
+		blockers = append(blockers, "fewer than two primary records include daily-user activation attempts")
+	}
+	if out.Counts["retained_use_records"] < 1 {
+		blockers = append(blockers, "retained use is missing or not tied to substrate value")
+	}
+	if out.Counts["credible_primary_adoption_signals"] < 1 {
+		blockers = append(blockers, "credible paid, budget-owner, or internal-platform adoption signal is missing")
+	}
+	if out.Counts["open_source_records"] > 0 && out.Counts["primary_icp_records"] < 3 {
+		blockers = append(blockers, "open-source/supporting records do not replace primary enterprise-saas demand")
+	}
+
+	out.Blockers = blockers
+	if len(blockers) == 0 {
+		out.Status = "evidence_present"
+		out.Evidence = p97EvidenceSummary(out.Counts)
+		out.ClaimImpact = "P9.7 can cite primary-ICP design-partner validation, retained use, and credible paid/internal-platform adoption evidence"
+		return out
+	}
+	out.Evidence = p97EvidenceSummary(out.Counts) + "; blockers:" + strings.Join(blockers, "|")
+	return out
+}
+
+func p97EvidenceSummary(counts map[string]int) string {
+	return fmt.Sprintf(
+		"records:%d complete:%d primary:%d contexts:%d retained:%d adoption:%d",
+		counts["validation_records"],
+		counts["complete_records"],
+		counts["primary_icp_records"],
+		counts["primary_contexts"],
+		counts["retained_use_records"],
+		counts["credible_primary_adoption_signals"],
+	)
+}
+
+func p97PrimaryICPRecord(record p711ValidationRecord) bool {
+	return record.ClientClassification == "enterprise-saas" &&
+		p711ValidationRecordQualifies(record) &&
+		p97TokenIsYes(record.PrimaryICPFit) &&
+		p97TokenIsYes(record.ActiveAgentUse) &&
+		p97RepoWorkflowQualifies(record.RepoWorkflowAvailable) &&
+		p97TokenIsPresent(record.BlockedWorkflowStatus) &&
+		!p97RecordDisqualified(record)
+}
+
+func p97PrimaryScoresPass(record p711ValidationRecord) bool {
+	return record.ActivationScore >= 2 &&
+		record.TrustSecurityScore >= 2 &&
+		record.WorkflowValueScore >= 2
+}
+
+func p97RecordHasRetainedSubstrateUse(record p711ValidationRecord) bool {
+	return p711ValidationRecordQualifies(record) &&
+		(record.RetainedUseStatus == "observed" || record.RetainedUseStatus == "pass") &&
+		p97RetainedSubstrateToken(record.RetainedUseEvidence) &&
+		p97RetainedSubstrateToken(record.SubstrateValueStatus)
+}
+
+func p97RetainedSubstrateToken(value string) bool {
+	switch p711SafeToken(value) {
+	case "saved_packet", "saved_packets", "saved_packet_reused", "packet_reused", "packet_reuse",
+		"freshness", "freshness_reused", "freshness_check", "freshness_value",
+		"audit", "audit_reused", "audit_report", "audit_history",
+		"verification", "suggested_verification", "verification_reused", "verification_review_reused",
+		"integration", "integration_transcript", "integration_transcript_reused", "external_agent_handoff",
+		"evidence_export", "product_evidence_export", "release_evidence_export", "export_reused",
+		"rediscovery_value", "rediscovery_reduction", "review_value", "review_ambiguity_reduction",
+		"substrate_value", "substrate_evidence":
+		return true
+	default:
+		return false
+	}
+}
+
+func p97DailyUserActivationQualifies(value string) bool {
+	switch p711SafeToken(value) {
+	case "pass", "observed", "attempted", "completed", "succeeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func p97CrediblePrimaryAdoptionSignal(record p711ValidationRecord) bool {
+	if !p97PrimaryICPRecord(record) || record.AdoptPaySponsorScore < 2 {
+		return false
+	}
+	if p97CredibleAdoptionToken(record.AdoptionSignalType) {
+		return true
+	}
+	return p97CredibleAdoptionToken(record.BuyerBudgetSignal)
+}
+
+func p97CredibleAdoptionToken(value string) bool {
+	switch p711SafeToken(value) {
+	case "paid_pilot", "budget_owner", "budget_discussion", "procurement_path",
+		"platform_roadmap", "internal_platform_sponsor", "internal_sponsor",
+		"security_platform_approver", "platform_owner", "buyer_signal",
+		"committed_internal_platform_rollout":
+		return true
+	default:
+		return false
+	}
+}
+
+func p97TokenIsYes(value string) bool {
+	switch p711SafeToken(value) {
+	case "yes", "true", "pass", "observed":
+		return true
+	default:
+		return false
+	}
+}
+
+func p97TokenIsPresent(value string) bool {
+	switch p711SafeToken(value) {
+	case "", "none", "not_available", "not_applicable", "n_a", "na", "no_signal", "absent", "unavailable", "missing", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+func p97RepoWorkflowQualifies(value string) bool {
+	switch p711SafeToken(value) {
+	case "real", "representative":
+		return true
+	default:
+		return false
+	}
+}
+
+func p97RecordDisqualified(record p711ValidationRecord) bool {
+	switch p711SafeToken(record.DisqualifierStatus) {
+	case "", "none", "not_available", "not_applicable", "n_a", "na", "absent", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 func p711IntegrationSignal(proofs p711IntegrationProofSet) p711SignalSummary {
@@ -940,7 +1190,7 @@ func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPo
 	return rows
 }
 
-func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport) []p711ReleaseGateLinkage {
+func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord) []p711ReleaseGateLinkage {
 	classStatus := "evidence_present"
 	for _, row := range classes {
 		if row.Status != "pass" {
@@ -948,10 +1198,11 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 			break
 		}
 	}
+	p97 := p97ValidationGate(records)
 	return []p711ReleaseGateLinkage{
 		{Gate: "P9.1", Status: p711GateFromSignal(signals, "benchmark"), Evidence: "benchmark,audit,learning summaries", ClaimImpact: "release bundle input; not a release decision"},
 		{Gate: "P9.6", Status: p96ActivationReleaseGateStatus(localOps), Evidence: "standalone product export cannot close P9.6 without current release validation evidence", ClaimImpact: "release activation claims are no-go until the release bundle consumes activation plus validation evidence"},
-		{Gate: "P9.7", Status: p711GateFromSignal(signals, "retained_use"), Evidence: "retained-use validation records and adoption-signal counts", ClaimImpact: "demand remains unclaimed without record-backed signal"},
+		{Gate: "P9.7", Status: p97.Status, Evidence: p97.Evidence, ClaimImpact: p97.ClaimImpact, Counts: p97.Counts, Blockers: p97.Blockers, EvidenceIDs: p97.EvidenceIDs},
 		{Gate: "P9.8", Status: p711GateFromSignal(signals, "integration_proof"), Evidence: "shell/CI, external coding-agent, and MCP stdio integration proofs", ClaimImpact: "substrate integration claim depends on all three paths"},
 		{Gate: "P9.12", Status: classStatus, Evidence: "classification coverage rows and limitations", ClaimImpact: "packaging/support thesis must cite statuses"},
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,13 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 	}
 	if got := p711TestSignal(reparsed.Signals, "retained_use"); got.Status != "pass" || got.Counts["adoption_signals"] == 0 {
 		t.Fatalf("retained-use signal should summarize validation records: %#v", got)
+	}
+	if linkage := p711TestReleaseGate(reparsed.ReleaseGateLinkage, "P9.7"); linkage.Status != "evidence_present" {
+		t.Fatalf("P9.7 linkage should require and accept complete primary-ICP demand evidence: %#v", linkage)
+	} else if linkage.Counts["complete_records"] != 9 || linkage.Counts["primary_icp_records"] != 3 ||
+		linkage.Counts["daily_user_activation_records"] != 3 || linkage.Counts["retained_use_records"] == 0 ||
+		len(linkage.EvidenceIDs) != 3 || len(linkage.Blockers) != 0 {
+		t.Fatalf("P9.7 linkage should expose structured counts and evidence IDs: %#v", linkage)
 	}
 	if reparsed.Status != "pass" {
 		t.Fatalf("top-level status should reflect complete signal evidence, got %q", reparsed.Status)
@@ -618,6 +626,8 @@ func TestP718RetainedUseCountsOnlyQualifyingRecords(t *testing.T) {
 			RetainedUseStatus:    "observed",
 			AdoptionSignalType:   "internal_sponsor",
 			RedactionStatus:      "redacted",
+			RetainedUseEvidence:  "saved_packet_reused",
+			SubstrateValueStatus: "verification_review_reused",
 		},
 		{
 			RecordID:             "record-disqualified",
@@ -626,13 +636,17 @@ func TestP718RetainedUseCountsOnlyQualifyingRecords(t *testing.T) {
 			RetainedUseStatus:    "observed",
 			AdoptionSignalType:   "paid_pilot",
 			RedactionStatus:      "redacted",
+			RetainedUseEvidence:  "saved_packet_reused",
+			SubstrateValueStatus: "verification_review_reused",
 		},
 		{
-			RecordID:           "record-missing-class",
-			EvidenceStatus:     "complete",
-			RetainedUseStatus:  "observed",
-			AdoptionSignalType: "internal_sponsor",
-			RedactionStatus:    "redacted",
+			RecordID:             "record-missing-class",
+			EvidenceStatus:       "complete",
+			RetainedUseStatus:    "observed",
+			AdoptionSignalType:   "internal_sponsor",
+			RedactionStatus:      "redacted",
+			RetainedUseEvidence:  "saved_packet_reused",
+			SubstrateValueStatus: "verification_review_reused",
 		},
 	}
 	retained := p711RetainedUseSignal(records)
@@ -671,6 +685,8 @@ func TestP718AbsentAdoptionSignalsAreNotCounted(t *testing.T) {
 				RetainedUseStatus:    "observed",
 				AdoptionSignalType:   absent,
 				RedactionStatus:      "redacted",
+				RetainedUseEvidence:  "saved_packet_reused",
+				SubstrateValueStatus: "verification_review_reused",
 			}}
 			retained := p711RetainedUseSignal(records)
 			if retained.Counts["adoption_signals"] != 0 {
@@ -680,11 +696,184 @@ func TestP718AbsentAdoptionSignalsAreNotCounted(t *testing.T) {
 	}
 }
 
+func TestP97ProductEvidenceMissingValidationRecordsNeedsEvidence(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot: root,
+	})
+	linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.7")
+	if linkage.Status != "needs_evidence" {
+		t.Fatalf("missing validation records must keep P9.7 needs_evidence: %#v", linkage)
+	}
+	if !strings.Contains(linkage.Evidence, "complete:0") {
+		t.Fatalf("P9.7 linkage should expose missing complete-record count: %#v", linkage)
+	}
+	if linkage.Counts["complete_records"] != 0 || len(linkage.Blockers) == 0 {
+		t.Fatalf("P9.7 linkage should expose structured missing-evidence counts and blockers: %#v", linkage)
+	}
+}
+
+func TestP97ProductEvidenceRetainedUseWithoutCredibleAdoptionDoesNotPass(t *testing.T) {
+	records := p97PrimaryRecords("none", "none")
+	gate := p97ValidationGate(records)
+	if gate.Status == "evidence_present" {
+		t.Fatalf("retained use without credible paid/internal-platform signal must not satisfy P9.7: %#v", gate)
+	}
+	if gate.Counts["retained_use_records"] == 0 || gate.Counts["credible_primary_adoption_signals"] != 0 {
+		t.Fatalf("fixture should isolate missing adoption signal: %#v", gate)
+	}
+}
+
+func TestP97ProductEvidenceOpenSourceRecordsDoNotCountAsPrimaryPaidDemand(t *testing.T) {
+	var records []p711ValidationRecord
+	for i := 0; i < 5; i++ {
+		record := p97Record("open-source", fmt.Sprintf("oss-%d", i), "context-oss")
+		record.AdoptionSignalType = "paid_pilot"
+		record.BuyerBudgetSignal = "budget_owner"
+		record.AdoptPaySponsorScore = 3
+		records = append(records, record)
+	}
+	gate := p97ValidationGate(records)
+	if gate.Status == "evidence_present" || gate.Counts["primary_icp_records"] != 0 {
+		t.Fatalf("open-source records must not replace enterprise-saas paid demand: %#v", gate)
+	}
+	if !strings.Contains(strings.Join(gate.Blockers, "|"), "open-source/supporting records") {
+		t.Fatalf("expected open-source demand blocker: %#v", gate.Blockers)
+	}
+}
+
+func TestP97ProductEvidenceUnsafeDisqualifiedWithdrawnRecordsDoNotCount(t *testing.T) {
+	records := p97PrimaryRecords("paid_pilot", "budget_owner")
+	records[0].EvidenceStatus = "disqualified"
+	records[1].EvidenceStatus = "withdrawn"
+	records[2].RedactionStatus = "fail"
+	gate := p97ValidationGate(records)
+	if gate.Status == "evidence_present" {
+		t.Fatalf("unsafe/disqualified/withdrawn records must fail closed: %#v", gate)
+	}
+	if gate.Counts["non_qualifying_records"] != 3 || gate.Counts["primary_icp_records"] != 0 {
+		t.Fatalf("non-qualifying records should not count toward primary ICP: %#v", gate.Counts)
+	}
+}
+
+func TestP97ProductEvidenceRetainedUseRequiresSubstrateValue(t *testing.T) {
+	for _, value := range []string{"demo_liked", "chat_ui_interest", "failed"} {
+		t.Run(value+"_evidence", func(t *testing.T) {
+			records := p97PrimaryRecords("paid_pilot", "budget_owner")
+			records[0].RetainedUseEvidence = value
+			records[1].RetainedUseEvidence = value
+			records[2].RetainedUseEvidence = value
+			records[3].RetainedUseEvidence = value
+			records[4].RetainedUseEvidence = value
+			gate := p97ValidationGate(records)
+			if gate.Status == "evidence_present" || gate.Counts["retained_use_records"] != 0 {
+				t.Fatalf("non-substrate retained-use evidence %q must not satisfy P9.7: %#v", value, gate)
+			}
+		})
+		t.Run(value+"_status", func(t *testing.T) {
+			records := p97PrimaryRecords("paid_pilot", "budget_owner")
+			records[0].SubstrateValueStatus = value
+			records[1].SubstrateValueStatus = value
+			records[2].SubstrateValueStatus = value
+			records[3].SubstrateValueStatus = value
+			records[4].SubstrateValueStatus = value
+			gate := p97ValidationGate(records)
+			if gate.Status == "evidence_present" || gate.Counts["retained_use_records"] != 0 {
+				t.Fatalf("non-substrate value status %q must not satisfy P9.7: %#v", value, gate)
+			}
+		})
+	}
+}
+
+func TestP97ProductEvidenceDailyUserActivationRequiresValidStatus(t *testing.T) {
+	for _, status := range []string{"pass", "observed", "attempted", "completed", "succeeded"} {
+		t.Run("accepts_"+status, func(t *testing.T) {
+			records := p97PrimaryRecords("paid_pilot", "budget_owner")
+			for i := range records {
+				records[i].DailyUserActivationStatus = status
+			}
+			gate := p97ValidationGate(records)
+			if gate.Counts["daily_user_activation_records"] != 3 {
+				t.Fatalf("valid daily-user activation status %q should count for primary records: %#v", status, gate)
+			}
+		})
+	}
+	for _, status := range []string{"failed", "blocked", "interest_only"} {
+		t.Run("rejects_"+status, func(t *testing.T) {
+			records := p97PrimaryRecords("paid_pilot", "budget_owner")
+			for i := range records {
+				records[i].DailyUserActivationStatus = status
+			}
+			gate := p97ValidationGate(records)
+			if gate.Status == "evidence_present" || gate.Counts["daily_user_activation_records"] != 0 {
+				t.Fatalf("invalid daily-user activation status %q must not satisfy P9.7: %#v", status, gate)
+			}
+		})
+	}
+}
+
+func TestP97ProductEvidenceSufficientPrimaryICPRecordsCanPass(t *testing.T) {
+	records := p97PrimaryRecords("paid_pilot", "budget_owner")
+	gate := p97ValidationGate(records)
+	if gate.Status != "evidence_present" {
+		t.Fatalf("sufficient primary ICP retained-use adoption evidence should satisfy P9.7: %#v", gate)
+	}
+	if gate.Counts["complete_records"] != 5 || gate.Counts["primary_icp_records"] != 3 ||
+		gate.Counts["primary_contexts"] != 2 || gate.Counts["retained_use_records"] == 0 ||
+		gate.Counts["credible_primary_adoption_signals"] == 0 {
+		t.Fatalf("unexpected P9.7 counts: %#v", gate.Counts)
+	}
+}
+
 func TestP718TopLevelStatusReflectsMissingSignals(t *testing.T) {
 	root := t.TempDir()
 	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	if report.Status != "partial" || report.SignalCompleteness.Status != "partial" {
 		t.Fatalf("missing evidence should produce partial top-level status, got status=%q completeness=%#v", report.Status, report.SignalCompleteness)
+	}
+}
+
+func p97PrimaryRecords(adoptionSignal string, buyerBudgetSignal string) []p711ValidationRecord {
+	records := []p711ValidationRecord{
+		p97Record("enterprise-saas", "primary-a", "context-a"),
+		p97Record("enterprise-saas", "primary-b", "context-b"),
+		p97Record("enterprise-saas", "primary-c", "context-b"),
+		p97Record("open-source", "oss-support", "context-oss"),
+		p97Record("tooling-vendor", "vendor-support", "context-vendor"),
+	}
+	for i := range records {
+		records[i].AdoptionSignalType = adoptionSignal
+		records[i].BuyerBudgetSignal = buyerBudgetSignal
+		if records[i].ClientClassification == "enterprise-saas" {
+			records[i].AdoptPaySponsorScore = 2
+		}
+	}
+	return records
+}
+
+func p97Record(class string, id string, context string) p711ValidationRecord {
+	return p711ValidationRecord{
+		RecordID:                  id,
+		ClientClassification:      class,
+		EvidenceStatus:            "complete",
+		RetainedUseStatus:         "observed",
+		AdoptionSignalType:        "internal_platform_sponsor",
+		RedactionStatus:           "redacted",
+		ParticipantContextID:      context,
+		PrimaryICPFit:             "yes",
+		ActiveAgentUse:            "yes",
+		RepoWorkflowAvailable:     "representative",
+		BlockedWorkflowStatus:     "observed",
+		DailyUserActivationStatus: "observed",
+		RetainedUseEvidence:       "saved_packet_reused",
+		SubstrateValueStatus:      "verification_review_reused",
+		BuyerBudgetSignal:         "platform_owner",
+		DisqualifierStatus:        "none",
+		ActivationScore:           2,
+		TrustSecurityScore:        2,
+		WorkflowValueScore:        2,
+		AdoptPaySponsorScore:      2,
 	}
 }
 
@@ -812,20 +1001,58 @@ func writeP711LocalOpsReport(t *testing.T, root string) string {
 
 func writeP711ValidationRecords(t *testing.T, root string) string {
 	t.Helper()
-	var records []map[string]any
-	for _, class := range []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"} {
-		records = append(records, map[string]any{
-			"record_id":             "record-" + class,
-			"client_classification": class,
-			"evidence_status":       "complete",
-			"retained_use_status":   "observed",
-			"adoption_signal_type":  "internal_sponsor",
-			"redaction_status":      "redacted",
-		})
+	classes := []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"}
+	records := make([]map[string]any, 0, len(classes)+2)
+	for _, class := range classes {
+		record := p711ValidationRecordFixture("record-"+class, class)
+		if class == "enterprise-saas" {
+			record["participant_context_id"] = "context-platform-a"
+			record["adoption_signal_type"] = "internal_platform_sponsor"
+			record["buyer_budget_signal"] = "platform_owner"
+			record["adopt_pay_sponsor_score"] = 2
+		}
+		records = append(records, record)
 	}
+	extraPrimary := p711ValidationRecordFixture("record-enterprise-saas-b", "enterprise-saas")
+	extraPrimary["participant_context_id"] = "context-platform-b"
+	extraPrimary["adoption_signal_type"] = "budget_owner"
+	extraPrimary["buyer_budget_signal"] = "budget_discussion"
+	extraPrimary["adopt_pay_sponsor_score"] = 3
+	records = append(records, extraPrimary)
+	thirdPrimary := p711ValidationRecordFixture("record-enterprise-saas-c", "enterprise-saas")
+	thirdPrimary["participant_context_id"] = "context-platform-b"
+	thirdPrimary["adoption_signal_type"] = "none"
+	thirdPrimary["buyer_budget_signal"] = "none"
+	thirdPrimary["adopt_pay_sponsor_score"] = 1
+	records = append(records, thirdPrimary)
 	path := filepath.Join(root, "validation-records.json")
 	writeP711JSON(t, path, records)
 	return path
+}
+
+func p711ValidationRecordFixture(recordID string, class string) map[string]any {
+	return map[string]any{
+		"record_id":                    recordID,
+		"client_classification":        class,
+		"evidence_status":              "complete",
+		"retained_use_status":          "observed",
+		"adoption_signal_type":         "internal_sponsor",
+		"redaction_status":             "redacted",
+		"participant_context_id":       "context-" + class,
+		"primary_icp_fit":              "yes",
+		"active_agent_use":             "yes",
+		"repo_workflow_available":      "representative",
+		"blocked_workflow_status":      "observed",
+		"daily_user_activation_status": "observed",
+		"retained_use_evidence":        "saved_packet_reused",
+		"substrate_value_status":       "verification_review_reused",
+		"buyer_budget_signal":          "internal_sponsor",
+		"disqualifier_status":          "none",
+		"activation_score":             2,
+		"trust_security_score":         2,
+		"workflow_value_score":         2,
+		"adopt_pay_sponsor_score":      2,
+	}
 }
 
 func p711TestSourceRef(refs []p711SourceReference, id string) p711SourceReference {

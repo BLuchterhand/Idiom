@@ -247,10 +247,13 @@ type releaseEvidenceClientReadiness struct {
 }
 
 type releaseEvidenceGateReadiness struct {
-	Gate        string `json:"gate"`
-	Status      string `json:"status"`
-	Evidence    string `json:"evidence"`
-	ClaimImpact string `json:"claim_impact"`
+	Gate        string         `json:"gate"`
+	Status      string         `json:"status"`
+	Evidence    string         `json:"evidence"`
+	ClaimImpact string         `json:"claim_impact"`
+	Counts      map[string]int `json:"counts,omitempty"`
+	Blockers    []string       `json:"blockers,omitempty"`
+	EvidenceIDs []string       `json:"evidence_ids,omitempty"`
 }
 
 func runReleaseMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -751,6 +754,11 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "client_readiness", Reason: "classification evidence incomplete", Evidence: row.Classification})
 		}
 	}
+	for _, gate := range report.ReleaseReadiness {
+		if gate.Gate == "P9.7" && gate.Status != "evidence_present" {
+			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.7 design-partner demand evidence incomplete", Evidence: gate.Status})
+		}
+	}
 	return releaseEvidenceCompactBlockers(blockers)
 }
 
@@ -1063,6 +1071,9 @@ func releaseReadinessFromProduct(rows []p711ReleaseGateLinkage, clients []releas
 			Status:      row.Status,
 			Evidence:    row.Evidence,
 			ClaimImpact: row.ClaimImpact,
+			Counts:      row.Counts,
+			Blockers:    row.Blockers,
+			EvidenceIDs: row.EvidenceIDs,
 		})
 	}
 	return out
