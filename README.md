@@ -123,11 +123,13 @@ Other useful subcommands:
   coverage using IDs, hashes, counts, and statuses instead of prompt bodies,
   file bodies, private paths, or secrets. See
   [docs/product-evidence-export.md](docs/product-evidence-export.md).
-- `idiom mcp serve --stdio --profile discovery` — experimental P8.1 MCP stdio
-  sidecar. It serves `initialize`, `tools/list`, and `tools/call` for
-  schema-derived graph discovery tools only, using the same discovery profile
-  request filtering as `idiom tool --profile discovery`. MCP resources, roots,
-  telemetry parity, and broader protocol coverage are later P8 work.
+- `idiom mcp serve --stdio --profile discovery` — experimental MCP stdio
+  sidecar. It serves `initialize`, `tools/list`, `tools/call`, `roots/list`,
+  `resources/list`, and metadata-only `resources/read` for schema-derived graph
+  discovery tools, using the same discovery profile request filtering as
+  `idiom tool --profile discovery`. Resource file bodies are not returned yet;
+  resource paths are root-clamped and protected locations are denied. Telemetry
+  parity and full resource/freshness parity remain later P8 work.
 - `idiom brief lint <brief.md>` — pre-flight lint on an
   implementation brief.
 - `idiom lane postflight --diff <patch>` — QC pipeline against a
@@ -272,8 +274,14 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"context_status","arguments":{"limit":1}}}' \
+  '{"jsonrpc":"2.0","id":4,"method":"resources/list","params":{}}' \
+  '{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"idiom://workspace/file/.git/config"}}' \
   | go run ./cmd/idiom mcp serve --stdio --profile discovery
 ```
+
+The `resources/read` example above should return a JSON-RPC denial, not file
+contents. P8.2 resources are metadata-only; P8.3 owns MCP telemetry/caller
+attribution parity and P8.6 owns the complete replayable integration proof.
 
 ## In-app controls
 

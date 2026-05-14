@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -52,6 +53,20 @@ type mcpToolCallResult struct {
 type mcpToolCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+}
+
+type mcpResourceReadParams struct {
+	URI string `json:"uri"`
+}
+
+type mcpResourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+}
+
+type mcpResourceReadResult struct {
+	Contents []mcpResourceContent `json:"contents"`
 }
 
 func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -106,8 +121,8 @@ func printMCPUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  idiom mcp serve --stdio --profile discovery [--config config.json]")
 	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, "Serves the P8.1 MCP stdio surface: initialize, tools/list, and tools/call for schema-derived discovery tools.")
-	fmt.Fprintln(stderr, "Resources, roots, telemetry parity, and broader protocol coverage are deferred to later MCP work packages.")
+	fmt.Fprintln(stderr, "Serves the MCP stdio discovery surface: initialize, tools/list, tools/call, roots/list, resources/list, and metadata-only resources/read.")
+	fmt.Fprintln(stderr, "Resource contents, telemetry parity, and full resource/freshness parity remain deferred to later MCP work packages.")
 }
 
 type mcpDiscoveryServer struct {
@@ -171,11 +186,33 @@ func (s *mcpDiscoveryServer) handleFrame(ctx context.Context, payload []byte) (m
 	}
 	switch strings.TrimSpace(req.Method) {
 	case "initialize":
+		if err := validateMCPObjectParams(req.Params, true); err != nil {
+			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
+		}
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: s.initializeResult()}, true
 	case "tools/list":
+		if err := validateMCPObjectParams(req.Params, true); err != nil {
+			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
+		}
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": s.mcpTools()}}, true
 	case "tools/call":
 		result, err := s.callTool(ctx, req.Params)
+		if err != nil {
+			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
+		}
+		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result}, true
+	case "roots/list":
+		if err := validateMCPObjectParams(req.Params, true); err != nil {
+			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
+		}
+		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"roots": s.mcpRoots()}}, true
+	case "resources/list":
+		if err := validateMCPObjectParams(req.Params, true); err != nil {
+			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
+		}
+		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resources": s.mcpResources()}}, true
+	case "resources/read":
+		result, err := s.readResource(req.Params)
 		if err != nil {
 			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
 		}
@@ -189,13 +226,14 @@ func (s *mcpDiscoveryServer) initializeResult() map[string]any {
 	return map[string]any{
 		"protocolVersion": mcppkg.ProtocolVersion,
 		"capabilities": map[string]any{
-			"tools": map[string]any{"listChanged": false},
+			"tools":     map[string]any{"listChanged": false},
+			"resources": map[string]any{"listChanged": false},
 		},
 		"serverInfo": map[string]any{
 			"name":    "idiom",
 			"version": version,
 		},
-		"instructions": "P8.1 stdio server exposes schema-derived discovery tools only. Resources, roots, and telemetry parity are deferred.",
+		"instructions": "Stdio discovery server exposes schema-derived discovery tools plus metadata-only, root-clamped resources. Resource contents, telemetry parity, and full parity are deferred.",
 	}
 }
 
@@ -214,6 +252,285 @@ func (s *mcpDiscoveryServer) mcpTools() []map[string]any {
 		})
 	}
 	return out
+}
+
+func (s *mcpDiscoveryServer) mcpRoots() []map[string]any {
+	return []map[string]any{{
+		"uri":  "idiom://workspace/root",
+		"name": "project",
+		"_meta": map[string]any{
+			"idiom_root_scope":    "project",
+			"idiom_metadata_only": true,
+			"absolute_path":       "<redacted_path>",
+		},
+	}}
+}
+
+func (s *mcpDiscoveryServer) mcpResources() []map[string]any {
+	return []map[string]any{
+		{
+			"uri":         "idiom://workspace/root",
+			"name":        "workspace_root",
+			"description": "Metadata-only project root identity; absolute path is redacted.",
+			"mimeType":    "application/json",
+			"_meta": map[string]any{
+				"idiom_metadata_only": true,
+				"idiom_root_clamped":  true,
+			},
+		},
+		{
+			"uri":         "idiom://workspace/discovery-tools",
+			"name":        "discovery_tools",
+			"description": "Metadata-only view of the schema-derived discovery tool surface.",
+			"mimeType":    "application/json",
+			"_meta": map[string]any{
+				"idiom_metadata_only": true,
+				"idiom_profile":       s.profile,
+			},
+		},
+		{
+			"uri":         "idiom://workspace/resource-policy",
+			"name":        "resource_policy",
+			"description": "Metadata-only resource safety policy and current limitations.",
+			"mimeType":    "application/json",
+			"_meta": map[string]any{
+				"idiom_metadata_only": true,
+				"p8_4_deferred":       true,
+				"p8_6_deferred":       true,
+			},
+		},
+	}
+}
+
+func (s *mcpDiscoveryServer) readResource(params json.RawMessage) (mcpResourceReadResult, error) {
+	var req mcpResourceReadParams
+	if len(params) == 0 {
+		return mcpResourceReadResult{}, fmt.Errorf("resources/read params are required")
+	}
+	if err := json.Unmarshal(params, &req); err != nil {
+		return mcpResourceReadResult{}, fmt.Errorf("invalid resources/read params")
+	}
+	uri := strings.TrimSpace(req.URI)
+	if uri == "" {
+		return mcpResourceReadResult{}, fmt.Errorf("resources/read uri is required")
+	}
+	payload, err := s.resourcePayload(uri)
+	if err != nil {
+		return mcpResourceReadResult{}, err
+	}
+	text, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return mcpResourceReadResult{}, fmt.Errorf("encode resource metadata")
+	}
+	return mcpResourceReadResult{Contents: []mcpResourceContent{{
+		URI:      canonicalMCPResourceURI(uri),
+		MimeType: "application/json",
+		Text:     s.redactText(string(text)),
+	}}}, nil
+}
+
+func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error) {
+	switch strings.TrimSpace(uri) {
+	case "idiom://workspace/root":
+		return map[string]any{
+			"schema_version":    "idiom.mcp_resource.v1",
+			"kind":              "workspace_root",
+			"root_scope":        "project",
+			"absolute_path":     "<redacted_path>",
+			"metadata_only":     true,
+			"content_available": false,
+		}, nil
+	case "idiom://workspace/discovery-tools":
+		names := make([]string, 0, len(s.tools))
+		for _, tool := range s.tools {
+			names = append(names, tool.Name)
+		}
+		return map[string]any{
+			"schema_version": "idiom.mcp_resource.v1",
+			"kind":           "discovery_tools",
+			"profile":        s.profile,
+			"tool_count":     len(names),
+			"tools":          names,
+			"metadata_only":  true,
+		}, nil
+	case "idiom://workspace/resource-policy":
+		return map[string]any{
+			"schema_version": "idiom.mcp_resource.v1",
+			"kind":           "resource_policy",
+			"metadata_only":  true,
+			"root_clamped":   true,
+			"protected_locations": []string{
+				".git/**",
+				".idiom/**",
+				".codex/**",
+				".agents/**",
+				"logs/telemetry/**",
+				"logs/conversations/**",
+				"secrets/**",
+				"secret/credential/token/password path segments",
+			},
+			"limitations": []string{
+				"file bodies are not returned by P8.2 resources/read",
+				"P8.4 owns full resource redaction and freshness parity",
+				"P8.6 owns complete MCP integration proof parity",
+			},
+		}, nil
+	default:
+		resourcePath, rel, err := s.resolveResourceFileURI(uri)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Lstat(resourcePath)
+		switch {
+		case err == nil:
+			return map[string]any{
+				"schema_version":    "idiom.mcp_resource.v1",
+				"kind":              "workspace_path",
+				"relative_path":     filepath.ToSlash(rel),
+				"exists":            true,
+				"type":              mcpResourceFileType(info),
+				"size_bytes":        info.Size(),
+				"metadata_only":     true,
+				"content_available": false,
+			}, nil
+		case os.IsNotExist(err):
+			return nil, fmt.Errorf("resource not found or unavailable")
+		default:
+			return nil, fmt.Errorf("resource not available")
+		}
+	}
+}
+
+func (s *mcpDiscoveryServer) resolveResourceFileURI(rawURI string) (string, string, error) {
+	root := filepath.Clean(config.CanonicalizeExistingPath(s.cfg.Workspace.Root))
+	if root == "" || root == "." {
+		return "", "", fmt.Errorf("workspace root is not configured")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURI))
+	if err != nil {
+		return "", "", fmt.Errorf("invalid resource uri")
+	}
+	var candidate string
+	switch parsed.Scheme {
+	case "idiom":
+		if parsed.Host != "workspace" || !strings.HasPrefix(parsed.Path, "/file/") {
+			return "", "", fmt.Errorf("unsupported resource uri")
+		}
+		rel := strings.TrimPrefix(parsed.EscapedPath(), "/file/")
+		unescaped, err := url.PathUnescape(rel)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid resource uri")
+		}
+		candidate = filepath.Join(root, filepath.FromSlash(unescaped))
+	case "file":
+		if parsed.Path == "" {
+			return "", "", fmt.Errorf("invalid resource uri")
+		}
+		candidate = filepath.Clean(parsed.Path)
+	default:
+		return "", "", fmt.Errorf("unsupported resource uri")
+	}
+	rel, err := mcpResourceRel(root, candidate)
+	if err != nil {
+		return "", "", err
+	}
+	if denied, reason := mcpResourcePathDenied(rel); denied {
+		return "", "", fmt.Errorf("resource denied: %s", reason)
+	}
+	if evaluated, err := filepath.EvalSymlinks(candidate); err == nil {
+		evaluatedRel, err := mcpResourceRel(root, evaluated)
+		if err != nil {
+			return "", "", err
+		}
+		if denied, reason := mcpResourcePathDenied(evaluatedRel); denied {
+			return "", "", fmt.Errorf("resource denied: %s", reason)
+		}
+		candidate = evaluated
+		rel = evaluatedRel
+	}
+	return candidate, rel, nil
+}
+
+func mcpResourceRel(root string, candidate string) (string, error) {
+	rel, err := filepath.Rel(root, filepath.Clean(candidate))
+	if err != nil {
+		return "", fmt.Errorf("resource path error")
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("resource is outside workspace root")
+	}
+	if rel == "." {
+		return ".", nil
+	}
+	return rel, nil
+}
+
+func mcpResourcePathDenied(rel string) (bool, string) {
+	slash := strings.Trim(filepath.ToSlash(filepath.Clean(rel)), "/")
+	if slash == "" || slash == "." {
+		return false, ""
+	}
+	segments := strings.Split(slash, "/")
+	switch segments[0] {
+	case ".git", ".idiom", ".codex", ".agents":
+		return true, "protected path"
+	case "logs":
+		if len(segments) > 1 && (segments[1] == "telemetry" || segments[1] == "conversations") {
+			return true, "protected log path"
+		}
+	}
+	for _, segment := range segments {
+		lower := strings.ToLower(segment)
+		if lower == "secrets" ||
+			lower == ".env" ||
+			strings.HasPrefix(lower, ".env.") ||
+			strings.Contains(lower, "secret") ||
+			strings.Contains(lower, "credential") ||
+			strings.Contains(lower, "token") ||
+			strings.Contains(lower, "password") ||
+			strings.Contains(lower, "private-key") ||
+			strings.Contains(lower, "private_key") {
+			return true, "protected path"
+		}
+	}
+	return false, ""
+}
+
+func mcpResourceFileType(info os.FileInfo) string {
+	switch {
+	case info.IsDir():
+		return "directory"
+	case info.Mode()&os.ModeSymlink != 0:
+		return "symlink"
+	default:
+		return "file"
+	}
+}
+
+func canonicalMCPResourceURI(uri string) string {
+	trimmed := strings.TrimSpace(uri)
+	if strings.HasPrefix(trimmed, "file://") {
+		return "idiom://workspace/file/<redacted_path>"
+	}
+	return trimmed
+}
+
+func validateMCPObjectParams(params json.RawMessage, allowEmpty bool) error {
+	trimmed := strings.TrimSpace(string(params))
+	if trimmed == "" || trimmed == "null" {
+		if allowEmpty {
+			return nil
+		}
+		return fmt.Errorf("params are required")
+	}
+	var value any
+	if err := json.Unmarshal(params, &value); err != nil {
+		return fmt.Errorf("invalid params")
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return fmt.Errorf("params must be an object")
+	}
+	return nil
 }
 
 func (s *mcpDiscoveryServer) callTool(ctx context.Context, params json.RawMessage) (mcpToolCallResult, error) {
