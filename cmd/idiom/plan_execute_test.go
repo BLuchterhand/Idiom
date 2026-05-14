@@ -1238,6 +1238,64 @@ func TestRunReviewRepairPhaseRejectsPassWithoutChecklist(t *testing.T) {
 	}
 }
 
+func TestRunReviewRepairPhaseRejectsContradictoryPass(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("partial\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "old", NewText: "partial", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{JSONEvents: true},
+		&stdout,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return strings.Join([]string{
+				"Verification Checklist",
+				"- Required behavior: the implementation appears to be missing the actual application logic.",
+				"",
+				"Decision: pass",
+			}, "\n"), nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected contradictory pass rejection")
+	}
+	if !strings.Contains(err.Error(), "contradictory") || !strings.Contains(err.Error(), "unresolved_failure_claim") {
+		t.Fatalf("expected contradiction reason, got %v", err)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_pass_rejected"); !ok {
+		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
+	}
+}
+
+func TestReviewAnswerPassContradictionAllowsNegatedMissingCoverage(t *testing.T) {
+	answer := strings.Join([]string{
+		"Verification Checklist",
+		"- Required behavior: implemented.",
+		"- Scope safety: no missing test coverage and no unresolved blockers.",
+		"- Non-regression: no issues found.",
+		"",
+		"Decision: pass",
+	}, "\n")
+	if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
+		t.Fatalf("clean negated checklist should not be contradictory, got %q", reason)
+	}
+}
+
 func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {

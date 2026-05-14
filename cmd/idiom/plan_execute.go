@@ -1181,6 +1181,12 @@ func runReviewRepairPhase(
 	}
 	if !found {
 		if reviewAnswerDeclaresPass(answer) && reviewTextHasVerificationChecklist(answer) {
+			if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
+				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_pass_rejected", map[string]any{
+					"reason": reason,
+				})
+				return reviewRepairPhaseReport{Status: "failed", ChecklistFound: true}, fmt.Errorf("review-repair phase rejected contradictory `Decision: pass`: %s", reason)
+			}
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
 				"status":  "pass",
 				"repairs": 0,
@@ -1695,6 +1701,74 @@ func reviewAnswerDeclaresBlocker(answer string) bool {
 
 func reviewTextHasVerificationChecklist(text string) bool {
 	return strings.Contains(strings.ToLower(text), "verification checklist")
+}
+
+func reviewAnswerPassContradictionReason(answer string) string {
+	for _, rawLine := range strings.Split(answer, "\n") {
+		line := normalizeReviewAnswerLine(rawLine)
+		if line == "" || strings.Contains(line, "decision: pass") {
+			continue
+		}
+		if reviewLineHasPassNegation(line) {
+			continue
+		}
+		switch {
+		case strings.Contains(line, "❌"), strings.Contains(line, "[ ]"):
+			return "failed_checklist_item"
+		case reviewLineContainsAny(line,
+			"appears to be missing",
+			"is missing",
+			"are missing",
+			"missing from",
+			"missing the",
+			"not present",
+			"not implemented",
+			"does not implement",
+			"doesn't implement",
+			"does not satisfy",
+			"doesn't satisfy",
+			"fails the checklist",
+			"checklist item fails",
+			"required behavior fails",
+		):
+			return "unresolved_failure_claim"
+		}
+	}
+	return ""
+}
+
+func normalizeReviewAnswerLine(line string) string {
+	line = strings.ToLower(strings.TrimSpace(line))
+	line = strings.TrimLeft(line, "-*0123456789. )\t")
+	return strings.Join(strings.Fields(line), " ")
+}
+
+func reviewLineHasPassNegation(line string) bool {
+	return reviewLineContainsAny(line,
+		"no missing",
+		"not missing",
+		"nothing missing",
+		"without missing",
+		"no issues",
+		"no issue",
+		"no failures",
+		"no failure",
+		"not failed",
+		"not a failure",
+		"no failed",
+		"no unresolved",
+		"no blocker",
+		"no blockers",
+	)
+}
+
+func reviewLineContainsAny(line string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(line, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func truncatePlanExecuteText(text string, maxBytes int) string {

@@ -55,6 +55,10 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Review that cannot act**: a review pass should verify behavior, contracts,
   scope, evidence, and test coverage, then either repair within its authority or
   produce a typed blocker. A pure "looks good" review is weak for local models.
+- **Contradictory review passes**: do not accept `Decision: pass` when the same
+  answer says required implementation, behavior, evidence, or checklist items
+  are missing or failed. That contradiction is a contract failure; the review
+  must repair in scope or return a blocker.
 
 ## Evidence And Context Traps
 
