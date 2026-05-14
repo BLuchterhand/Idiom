@@ -1,0 +1,705 @@
+{
+  "schema_version": "idiom.client_demo_transcripts.v1",
+  "name": "p7.10-client-demo-transcripts",
+  "description": "Runnable, privacy-safe client demo transcripts for every generic client classification.",
+  "shared_contract": {
+    "sidecar_schema_version": "idiom.tool.v1",
+    "decision_boundary": "The model owns strategy; the harness owns permissions, freshness, audit, verification, privacy, and side-effect contracts.",
+    "generic_primitives": [
+      "tool_sidecar_envelope",
+      "default_client_classification_metadata",
+      "discovery_profile_policy",
+      "request_aware_side_effect_denial",
+      "path_role_resolver",
+      "context_pack",
+      "source_sanity",
+      "tool_schema_export",
+      "local_ops_benchmark"
+    ],
+    "shared_security_contracts": [
+      "sidecar.schema_version",
+      "sidecar.profile",
+      "sidecar.contract.id",
+      "sidecar.contract.transport",
+      "sidecar.contract.metadata.client_classifications",
+      "sidecar.contract.metadata.product_signals",
+      "sidecar.audit_event_ids",
+      "sidecar.error"
+    ],
+    "forbidden_evidence_fields": [
+      "raw_prompt",
+      "raw_file_body",
+      "secret_value",
+      "credential_value",
+      "private_repo_url",
+      "unredacted_log_excerpt",
+      "customer_identifier",
+      "patient_name",
+      "account_number",
+      "private_absolute_path"
+    ]
+  },
+  "transcripts": [
+    {
+      "id": "p7.10-finance-discovery-denial",
+      "classification": "finance",
+      "classification_label": "finance",
+      "stance": "regulated proof-only",
+      "p7_6_command_id": "finance-discovery-policy",
+      "value_claim": "A finance reviewer can see that discovery-profile sidecar calls deny mutation before execution and still return a typed, auditable contract result.",
+      "selling_point": "Idiom sells local permission and audit evidence, not a finance compliance product.",
+      "generic_primitives": [
+        "tool_sidecar_envelope",
+        "discovery_profile_policy",
+        "request_aware_side_effect_denial"
+      ],
+      "shared_security_contracts": [
+        "protected_path_denial",
+        "redaction_no_raw_prompt_or_file_body",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "evidence_fields": [
+        "Tool",
+        "Error",
+        "sidecar.schema_version",
+        "sidecar.profile",
+        "sidecar.contract.id",
+        "sidecar.contract.transport",
+        "sidecar.contract.metadata.client_classifications",
+        "sidecar.audit_event_ids",
+        "sidecar.error.class",
+        "sidecar.error.code"
+      ],
+      "mvp_limitation": "Proof-only: no regulated finance, FINRA, retention, or formal compliance claim is made in the MVP demo.",
+      "final_state_expansion": "A later regulated package can add reviewed control mapping, retention export, procurement artifacts, and support posture after P7.9/P9.9 review.",
+      "pass_no_go_criteria": {
+        "pass": [
+          "The command exits non-zero with profile_denied before writing.",
+          "The output contains stable sidecar contract and audit fields.",
+          "No raw prompt, file body, credential, private repo, account, or customer identifier appears."
+        ],
+        "no_go": [
+          "The call writes a file, leaks command content, or returns unstructured prose only.",
+          "The demo is used as a finance compliance claim."
+        ]
+      },
+      "commands": [
+        {
+          "id": "finance-discovery-policy",
+          "command": "idiom tool write_file -config $IDIOM_CONFIG --profile discovery --caller-id fin-audit --request-id p710-fin --input '{\"path\":\"regulated/ledger.txt\",\"content\":\"redacted-demo-marker\"}'",
+          "argv": [
+            "tool",
+            "write_file",
+            "-config",
+            "$IDIOM_CONFIG",
+            "--profile",
+            "discovery",
+            "--caller-id",
+            "fin-audit",
+            "--request-id",
+            "p710-fin",
+            "--input",
+            "{\"path\":\"regulated/ledger.txt\",\"content\":\"redacted-demo-marker\"}"
+          ],
+          "exit_code": 1,
+          "json": true,
+          "expected_output_shape": {
+            "stable_fields": [
+              "Tool",
+              "Error",
+              "sidecar.schema_version",
+              "sidecar.tool",
+              "sidecar.profile",
+              "sidecar.contract.id",
+              "sidecar.contract.transport",
+              "sidecar.contract.metadata.client_classifications",
+              "sidecar.contract.metadata.product_signals",
+              "sidecar.audit_event_ids",
+              "sidecar.error.class",
+              "sidecar.error.code"
+            ],
+            "json_string": {
+              "Tool": "write_file",
+              "sidecar.schema_version": "idiom.tool.v1",
+              "sidecar.tool": "write_file",
+              "sidecar.profile": "discovery",
+              "sidecar.contract.id": "idiom.tool.v1:write_file",
+              "sidecar.contract.transport": "cli",
+              "sidecar.error.class": "profile_denied",
+              "sidecar.error.code": "profile_denied"
+            },
+            "json_present": [
+              "sidecar.audit_event_ids"
+            ],
+            "json_non_empty": [
+              "Error",
+              "sidecar.error.message",
+              "sidecar.contract.schema_version"
+            ],
+            "json_null": [
+              "sidecar.freshness"
+            ],
+            "stdout_excludes": [
+              "redacted-demo-marker"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "p7.10-healthcare-refresh-denial",
+      "classification": "healthcare",
+      "classification_label": "healthcare",
+      "stance": "regulated proof-only",
+      "p7_6_command_id": "healthcare-redaction-denial",
+      "value_claim": "A healthcare reviewer can see that additive context-packet generation is denied under the read-only discovery profile without exposing sensitive task content.",
+      "selling_point": "Idiom demonstrates privacy and side-effect contracts for local evidence; it does not claim HIPAA compliance.",
+      "generic_primitives": [
+        "context_pack",
+        "discovery_profile_policy",
+        "tool_sidecar_envelope"
+      ],
+      "shared_security_contracts": [
+        "redaction_no_raw_prompt_or_file_body",
+        "side_effect_policy_read_only_discovery",
+        "telemetry_minimization_no_hosted_default"
+      ],
+      "evidence_fields": [
+        "Tool",
+        "Error",
+        "sidecar.schema_version",
+        "sidecar.tool",
+        "sidecar.profile",
+        "sidecar.contract.id",
+        "sidecar.audit_event_ids",
+        "sidecar.error.class"
+      ],
+      "mvp_limitation": "Proof-only: the demo uses a non-sensitive fixture task and makes no HIPAA, PHI-processing, or healthcare compliance claim.",
+      "final_state_expansion": "A later regulated package can add reviewed PHI avoidance guidance, retention controls, redaction review, and MCP resource parity.",
+      "pass_no_go_criteria": {
+        "pass": [
+          "The discovery-profile context_pack request exits non-zero with profile_denied.",
+          "No local context artifacts are created by the denied request.",
+          "The result carries stable sidecar error and audit fields."
+        ],
+        "no_go": [
+          "The demo requires e-PHI, raw file bodies, hosted telemetry, or compliance-claim wording.",
+          "The denied output leaks task content or private paths."
+        ]
+      },
+      "commands": [
+        {
+          "id": "healthcare-redaction-denial",
+          "command": "idiom tool context_pack -config $IDIOM_CONFIG --profile discovery --caller-id hc-review --request-id p710-hc --input '{\"task\":\"assess release checklist shape\",\"mode\":\"plan\",\"limit\":1}'",
+          "argv": [
+            "tool",
+            "context_pack",
+            "-config",
+            "$IDIOM_CONFIG",
+            "--profile",
+            "discovery",
+            "--caller-id",
+            "hc-review",
+            "--request-id",
+            "p710-hc",
+            "--input",
+            "{\"task\":\"assess release checklist shape\",\"mode\":\"plan\",\"limit\":1}"
+          ],
+          "exit_code": 1,
+          "json": true,
+          "expected_output_shape": {
+            "stable_fields": [
+              "Tool",
+              "Error",
+              "sidecar.schema_version",
+              "sidecar.tool",
+              "sidecar.profile",
+              "sidecar.contract.id",
+              "sidecar.audit_event_ids",
+              "sidecar.error.class",
+              "sidecar.error.code"
+            ],
+            "json_string": {
+              "Tool": "context_pack",
+              "sidecar.schema_version": "idiom.tool.v1",
+              "sidecar.tool": "context_pack",
+              "sidecar.profile": "discovery",
+              "sidecar.contract.id": "idiom.tool.v1:context_pack",
+              "sidecar.error.class": "profile_denied",
+              "sidecar.error.code": "profile_denied"
+            },
+            "json_present": [
+              "sidecar.audit_event_ids"
+            ],
+            "json_non_empty": [
+              "Error",
+              "sidecar.error.message"
+            ],
+            "json_null": [
+              "sidecar.freshness"
+            ],
+            "stdout_excludes": [
+              "assess release checklist shape"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "p7.10-public-sector-side-effect-denial",
+      "classification": "public-sector",
+      "classification_label": "public-sector",
+      "stance": "regulated proof-only",
+      "p7_6_command_id": "public-sector-offline-side-effect-denial",
+      "value_claim": "A public-sector reviewer can see that discovery-profile sidecar calls deny shell side effects before execution while preserving structured audit evidence.",
+      "selling_point": "Idiom provides local, reproducible side-effect control evidence without claiming certification or air-gapped procurement readiness.",
+      "generic_primitives": [
+        "discovery_profile_policy",
+        "request_aware_side_effect_denial",
+        "tool_sidecar_envelope"
+      ],
+      "shared_security_contracts": [
+        "side_effect_policy_read_only_discovery",
+        "telemetry_minimization_no_hosted_default",
+        "protected_path_denial"
+      ],
+      "evidence_fields": [
+        "Tool",
+        "Error",
+        "sidecar.schema_version",
+        "sidecar.profile",
+        "sidecar.contract.transport",
+        "sidecar.audit_event_ids",
+        "sidecar.error.class"
+      ],
+      "mvp_limitation": "Proof-only: the MVP demo makes no FedRAMP, DoD, NIST certification, offline procurement, or fleet-admin claim.",
+      "final_state_expansion": "A later public-sector package can add reproducible release bundles, checksums, offline install paths, policy retention, and reviewed support boundaries.",
+      "pass_no_go_criteria": {
+        "pass": [
+          "The shell request exits non-zero with profile_denied before execution.",
+          "No side-effect marker is created.",
+          "The output is parseable and includes audit IDs and typed error class."
+        ],
+        "no_go": [
+          "The demo performs shell execution under discovery profile.",
+          "The demo claims certification, procurement readiness, or managed support before review."
+        ]
+      },
+      "commands": [
+        {
+          "id": "public-sector-offline-side-effect-denial",
+          "command": "idiom tool shell -config $IDIOM_CONFIG --profile discovery --caller-id pubsec-ci --request-id p710-pub --input '{\"command\":\"printf touched > network-side-effect.txt\"}'",
+          "argv": [
+            "tool",
+            "shell",
+            "-config",
+            "$IDIOM_CONFIG",
+            "--profile",
+            "discovery",
+            "--caller-id",
+            "pubsec-ci",
+            "--request-id",
+            "p710-pub",
+            "--input",
+            "{\"command\":\"printf touched > network-side-effect.txt\"}"
+          ],
+          "exit_code": 1,
+          "json": true,
+          "expected_output_shape": {
+            "stable_fields": [
+              "Tool",
+              "Error",
+              "sidecar.schema_version",
+              "sidecar.tool",
+              "sidecar.profile",
+              "sidecar.contract.id",
+              "sidecar.contract.transport",
+              "sidecar.audit_event_ids",
+              "sidecar.error.class",
+              "sidecar.error.code"
+            ],
+            "json_string": {
+              "Tool": "shell",
+              "sidecar.schema_version": "idiom.tool.v1",
+              "sidecar.tool": "shell",
+              "sidecar.profile": "discovery",
+              "sidecar.contract.id": "idiom.tool.v1:shell",
+              "sidecar.contract.transport": "cli",
+              "sidecar.error.class": "profile_denied",
+              "sidecar.error.code": "profile_denied"
+            },
+            "json_present": [
+              "sidecar.audit_event_ids"
+            ],
+            "json_non_empty": [
+              "Error",
+              "sidecar.error.message"
+            ],
+            "json_null": [
+              "sidecar.freshness"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "p7.10-enterprise-saas-source-sanity",
+      "classification": "enterprise-saas",
+      "classification_label": "enterprise SaaS",
+      "stance": "primary MVP buyer demo",
+      "p7_6_command_id": "enterprise-source-sanity-contract",
+      "value_claim": "A platform, DevEx, DevSecOps, or AI-enablement reviewer can use local source-sanity evidence and sidecar metadata to inform an agent-assisted merge or pilot decision.",
+      "selling_point": "Idiom is the enterprise SaaS trust layer for repo memory, verification evidence, and audit fields across coding agents.",
+      "generic_primitives": [
+        "source_sanity",
+        "tool_sidecar_envelope",
+        "default_client_classification_metadata"
+      ],
+      "shared_security_contracts": [
+        "redaction_no_raw_prompt_or_file_body",
+        "telemetry_minimization_no_hosted_default",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "evidence_fields": [
+        "Tool",
+        "sidecar.schema_version",
+        "sidecar.tool",
+        "sidecar.profile",
+        "sidecar.caller.trace_id",
+        "sidecar.contract.metadata.product_signals",
+        "sidecar.structured_output.format",
+        "sidecar.error"
+      ],
+      "mvp_limitation": "Primary buyer proof remains local and CLI-first; retained use, product-evidence export, paid signal, SSO, fleet policy, and hosted dashboard claims remain P7.11/P9.7/P9.12 scope.",
+      "final_state_expansion": "A final enterprise package can add product-evidence export, support tiers, procurement artifacts, policy management, and release-gate reporting while preserving local evidence defaults.",
+      "pass_no_go_criteria": {
+        "pass": [
+          "The source_sanity command exits zero on the fixture file.",
+          "The output includes stable sidecar schema, caller trace, contract metadata, and structured output format.",
+          "The demo supports a merge-facing review decision without prescribing the model's next action."
+        ],
+        "no_go": [
+          "The output lacks machine-readable contract fields or requires raw source export.",
+          "The demo is used as paid-demand proof without a complete P0.8/P9.7 design-partner record."
+        ]
+      },
+      "commands": [
+        {
+          "id": "enterprise-source-sanity-contract",
+          "command": "idiom tool source_sanity -config $IDIOM_CONFIG --caller-id ci-agent --request-id p710-saas --trace-id trace:p710-saas --input '{\"path\":\"pkg/payments/retry.go\"}'",
+          "argv": [
+            "tool",
+            "source_sanity",
+            "-config",
+            "$IDIOM_CONFIG",
+            "--caller-id",
+            "ci-agent",
+            "--request-id",
+            "p710-saas",
+            "--trace-id",
+            "trace:p710-saas",
+            "--input",
+            "{\"path\":\"pkg/payments/retry.go\"}"
+          ],
+          "exit_code": 0,
+          "json": true,
+          "expected_output_shape": {
+            "stable_fields": [
+              "Tool",
+              "Summary",
+              "sidecar.schema_version",
+              "sidecar.tool",
+              "sidecar.profile",
+              "sidecar.caller.trace_id",
+              "sidecar.contract.id",
+              "sidecar.contract.metadata.client_classifications",
+              "sidecar.contract.metadata.product_signals",
+              "sidecar.structured_output.format",
+              "sidecar.error"
+            ],
+            "json_string": {
+              "Tool": "source_sanity",
+              "sidecar.schema_version": "idiom.tool.v1",
+              "sidecar.tool": "source_sanity",
+              "sidecar.profile": "default",
+              "sidecar.caller.trace_id": "trace:p710-saas",
+              "sidecar.contract.id": "idiom.tool.v1:source_sanity",
+              "sidecar.structured_output.format": "text"
+            },
+            "json_present": [
+              "sidecar.audit_event_ids"
+            ],
+            "json_non_empty": [
+              "Summary",
+              "sidecar.contract.schema_version"
+            ],
+            "json_null": [
+              "sidecar.error",
+              "sidecar.freshness"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "p7.10-tooling-vendor-schema-contract",
+      "classification": "tooling-vendor",
+      "classification_label": "tooling-vendor",
+      "stance": "secondary integration demo",
+      "p7_6_command_id": "tooling-vendor-schema-metadata",
+      "value_claim": "A tooling vendor can inspect stable schema/profile/error metadata and generic client classifications before embedding Idiom as a local sidecar.",
+      "selling_point": "Idiom provides versioned sidecar contracts and classification metadata for integration partners without leaking model strategy.",
+      "generic_primitives": [
+        "tool_schema_export",
+        "default_client_classification_metadata",
+        "tool_policy_metadata"
+      ],
+      "shared_security_contracts": [
+        "redaction_no_raw_prompt_or_file_body",
+        "telemetry_minimization_no_hosted_default",
+        "side_effect_policy_read_only_discovery"
+      ],
+      "evidence_fields": [
+        "schema_version",
+        "metadata.client_classifications",
+        "metadata.product_signals",
+        "tools"
+      ],
+      "mvp_limitation": "MVP support is limited to CLI schema and integration-question triage; MCP resource parity, SDKs, and partner conformance remain Phase 8 and later scope.",
+      "final_state_expansion": "A partner package can add MCP parity, compatibility reports, conformance tests, embedded-sidecar terms, SDKs, and support tiers.",
+      "pass_no_go_criteria": {
+        "pass": [
+          "The schema command exits zero and emits generic client classification metadata.",
+          "The output includes product-signal and tool policy metadata.",
+          "No strategy-prescriptive instruction is exposed as the integration contract."
+        ],
+        "no_go": [
+          "The schema omits a default classification or requires vertical-specific branches.",
+          "The demo claims MCP implementation before Phase 8 parity exists."
+        ]
+      },
+      "commands": [
+        {
+          "id": "tooling-vendor-schema-metadata",
+          "command": "idiom tool schemas",
+          "argv": [
+            "tool",
+            "schemas"
+          ],
+          "exit_code": 0,
+          "json": true,
+          "expected_output_shape": {
+            "stable_fields": [
+              "schema_version",
+              "metadata.client_classifications",
+              "metadata.product_signals",
+              "tools"
+            ],
+            "json_present": [
+              "metadata.client_classifications",
+              "metadata.product_signals"
+            ],
+            "json_non_empty": [
+              "schema_version",
+              "tools"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "p7.10-local-model-private-code-readiness",
+      "classification": "local-model",
+      "classification_label": "local-model/private-code",
+      "stance": "secondary local/private-code demo",
+      "p7_6_command_id": "local-model-readiness-evidence",
+      "value_claim": "A local/private-code operator can get metadata-only readiness, queue, backend, and context-budget evidence before relying on a local model run.",
+      "selling_point": "Idiom is a local sidecar trust layer for private-code workflows; it records readiness and blockers without hosted telemetry by default.",
+      "generic_primitives": [
+        "local_ops_benchmark",
+        "readiness_profile",
+        "metadata_only_privacy_report"
+      ],
+      "shared_security_contracts": [
+        "telemetry_minimization_no_hosted_default",
+        "retention_local_artifact_scope",
+        "redaction_no_raw_prompt_or_file_body"
+      ],
+      "evidence_fields": [
+        "schema_version",
+        "profiles",
+        "profiles.readiness.contract",
+        "profiles.readiness.queue_state",
+        "profiles.readiness.context_budget_state",
+        "privacy.metadata_only",
+        "privacy.raw_prompt_captured",
+        "privacy.raw_file_body_captured",
+        "privacy.secret_capture_allowed"
+      ],
+      "mvp_limitation": "The demo proves readiness and privacy shape only; model quality, live capacity, backend reliability, and tuning support remain P6/P9.9 scope.",
+      "final_state_expansion": "A local-operations package can add capacity history, queue controls, offline evidence management, cleanup review, and backend support policy.",
+      "pass_no_go_criteria": {
+        "pass": [
+          "The local-ops benchmark exits zero with schema-versioned readiness output.",
+          "The profile includes contract, queue, and context-budget state.",
+          "Privacy flags remain metadata-only with raw prompt, file body, and secret capture disabled."
+        ],
+        "no_go": [
+          "The demo starts unsafe execution despite readiness blockers.",
+          "The output captures raw prompts, raw file bodies, credentials, or private repo identifiers."
+        ]
+      },
+      "commands": [
+        {
+          "id": "local-model-readiness-evidence",
+          "command": "idiom local-ops benchmark --json --config $IDIOM_CONFIG --profile implement",
+          "argv": [
+            "local-ops",
+            "benchmark",
+            "--json",
+            "--config",
+            "$IDIOM_CONFIG",
+            "--profile",
+            "implement"
+          ],
+          "exit_code": 0,
+          "json": true,
+          "expected_output_shape": {
+            "stable_fields": [
+              "schema_version",
+              "profiles",
+              "privacy.metadata_only",
+              "privacy.raw_prompt_captured",
+              "privacy.raw_file_body_captured",
+              "privacy.secret_capture_allowed"
+            ],
+            "json_string": {
+              "schema_version": "idiom.local_ops_benchmark.v1",
+              "privacy.metadata_only": "true",
+              "privacy.raw_prompt_captured": "false",
+              "privacy.raw_file_body_captured": "false",
+              "privacy.secret_capture_allowed": "false"
+            },
+            "json_non_empty": [
+              "profiles",
+              "summary"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "p7.10-open-source-context-pack",
+      "classification": "open-source",
+      "classification_label": "open-source",
+      "stance": "activation and adoption wedge demo",
+      "p7_6_command_id": "open-source-context-pack",
+      "value_claim": "An open-source maintainer can run a local quickstart evidence export and receive packet, freshness, candidate-count, suggested-verification, and privacy status fields that another agent can consume.",
+      "selling_point": "Idiom gives maintainers a low-friction local trust layer for repo context and audit evidence without turning open-source activation into paid enterprise demand proof.",
+      "generic_primitives": [
+        "context_pack",
+        "tool_sidecar_envelope",
+        "freshness_contract"
+      ],
+      "shared_security_contracts": [
+        "retention_local_artifact_scope",
+        "redaction_no_raw_prompt_or_file_body",
+        "telemetry_minimization_no_hosted_default"
+      ],
+      "evidence_fields": [
+        "schema_version",
+        "privacy.metadata_only",
+        "quickstart_smoke.first_useful_packet.packet_id",
+        "quickstart_smoke.first_useful_packet.index_id",
+        "quickstart_smoke.first_useful_packet.freshness_state",
+        "quickstart_smoke.first_useful_packet.candidate_file_count",
+        "quickstart_smoke.first_useful_packet.candidate_symbol_count",
+        "quickstart_smoke.first_useful_packet.candidate_test_count",
+        "quickstart_smoke.freshness_check.state",
+        "quickstart_smoke.suggested_verification.suggested_commands",
+        "quickstart_smoke.privacy_redaction_status.forbidden_field_check"
+      ],
+      "mvp_limitation": "Open-source activation supports adoption, docs, demo, and retained-use confidence only; it does not count as paid enterprise-SaaS demand without a separate primary-ICP record.",
+      "final_state_expansion": "A community package can add polished quickstart fixtures, cleanup reporting, retained-use examples, and privacy-safe product-evidence exports.",
+      "pass_no_go_criteria": {
+        "pass": [
+          "The quickstart export command exits zero on the fixture workspace.",
+          "The output includes packet ID, index ID, freshness, candidate/test counts, suggested verification, and privacy fields.",
+          "The output remains local, omits private workspace roots, and does not require hosted telemetry."
+        ],
+        "no_go": [
+          "The demo produces only prose, omits packet/freshness evidence, or exposes unredacted workspace roots.",
+          "The demo is represented as paid enterprise-SaaS demand without P0.8/P9.7 evidence."
+        ]
+      },
+      "commands": [
+        {
+          "id": "open-source-context-pack",
+          "command": "idiom local-ops benchmark --json --config $IDIOM_CONFIG --profile sidecar --quickstart-smoke --quickstart-task 'localize RetryPayment helper' --quickstart-cleanup remove-smoke-artifacts",
+          "argv": [
+            "local-ops",
+            "benchmark",
+            "--json",
+            "--config",
+            "$IDIOM_CONFIG",
+            "--profile",
+            "sidecar",
+            "--quickstart-smoke",
+            "--quickstart-task",
+            "localize RetryPayment helper",
+            "--quickstart-cleanup",
+            "remove-smoke-artifacts"
+          ],
+          "exit_code": 0,
+          "json": true,
+          "expected_output_shape": {
+            "stable_fields": [
+              "schema_version",
+              "privacy.metadata_only",
+              "privacy.raw_prompt_captured",
+              "privacy.raw_file_body_captured",
+              "privacy.secret_capture_allowed",
+              "quickstart_smoke.status",
+              "quickstart_smoke.client_classification",
+              "quickstart_smoke.first_useful_packet.packet_id",
+              "quickstart_smoke.first_useful_packet.index_id",
+              "quickstart_smoke.first_useful_packet.freshness_state",
+              "quickstart_smoke.first_useful_packet.candidate_file_count",
+              "quickstart_smoke.first_useful_packet.candidate_symbol_count",
+              "quickstart_smoke.first_useful_packet.candidate_test_count",
+              "quickstart_smoke.first_useful_packet.task.raw_task_captured",
+              "quickstart_smoke.freshness_check.state",
+              "quickstart_smoke.suggested_verification.suggested_commands",
+              "quickstart_smoke.product_evidence_safe_output.forbidden_field_check",
+              "quickstart_smoke.privacy_redaction_status.private_path_captured"
+            ],
+            "json_string": {
+              "schema_version": "idiom.local_ops_benchmark.v1",
+              "privacy.metadata_only": "true",
+              "privacy.raw_prompt_captured": "false",
+              "privacy.raw_file_body_captured": "false",
+              "privacy.secret_capture_allowed": "false",
+              "quickstart_smoke.status": "pass",
+              "quickstart_smoke.client_classification": "open-source",
+              "quickstart_smoke.first_useful_packet.tool": "context_pack",
+              "quickstart_smoke.first_useful_packet.task.raw_task_captured": "false",
+              "quickstart_smoke.product_evidence_safe_output.forbidden_field_check": "pass",
+              "quickstart_smoke.privacy_redaction_status.private_path_captured": "false"
+            },
+            "json_non_empty": [
+              "quickstart_smoke.first_useful_packet.packet_id",
+              "quickstart_smoke.first_useful_packet.index_id",
+              "quickstart_smoke.first_useful_packet.freshness_state",
+              "quickstart_smoke.suggested_verification.suggested_commands",
+              "quickstart_smoke.product_evidence_safe_output.artifact_hash"
+            ],
+            "stdout_excludes": [
+              "localize RetryPayment helper",
+              "\"root\""
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
