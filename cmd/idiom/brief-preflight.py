@@ -76,8 +76,8 @@ EDIT_SHAPE_RE = re.compile(
     re.IGNORECASE,
 )
 COMMAND_MUTATION_RE = re.compile(
-    r"\b(?:run|execute|call)\s+`?(?:python3?|bash|sh|go|node|npm|pnpm|make|scons|idiom|"
-    r"\./scripts/|scripts/)[^`\n]{0,160}?`?.{0,160}?\b"
+    r"\b(?:run|execute|call)\s+`?(?:(?:python3?|bash|sh|go|node|npm|pnpm|make|scons|idiom)"
+    r"(?=\s|`|$)|\./scripts/|scripts/)[^`\n]{0,160}?`?.{0,160}?\b"
     r"(?:regenerate|generate|write|update|refresh|modify|append|create)\b",
     re.IGNORECASE,
 )

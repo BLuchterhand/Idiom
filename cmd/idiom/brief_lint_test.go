@@ -628,6 +628,28 @@ func TestBriefLintBlocksCommandBackedMutationWithoutEditShape(t *testing.T) {
 	}
 }
 
+func TestBriefLintAllowsDomainFunctionCallWithRefreshWording(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"tests/e2e/suites/stockpile_flow_suite.gd": "func _run_case() -> void:\n\tpass\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files To Modify\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `tests/e2e/suites/stockpile_flow_suite.gd` | MODIFY test case at line 1 |\n\n"+
+		"## Verified Current State\n\n"+
+		"- `tests/e2e/suites/stockpile_flow_suite.gd:1`: `func _run_case() -> void:`\n\n"+
+		"## Required Behavior\n\n"+
+		"1. Obtain the real stockpile panel, call `show_stockpile(stockpile_id)`, refresh panel data, and assert panel-visible fields reflect the mutated native state.\n\n"+
+		"## Acceptance\n\n"+
+		"- `git diff --check`\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("domain function calls with refresh wording should not be classified as shell-backed mutation, got exit=%d output=%s", exit, out)
+	}
+}
+
 func TestBriefLintBlocksProseAppendWithoutEditShape(t *testing.T) {
 	script := briefPreflightTestDeps(t)
 	ws := makeWorkspace(t, map[string]string{
