@@ -1015,6 +1015,86 @@ func TestCollectReviewRepairEvidenceChecksCurrentRunWhitespace(t *testing.T) {
 	}
 }
 
+func TestAutoRepairReviewPatchHygieneTrimsOnlyCurrentRunLines(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("preexisting   \nclean-before\n"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	baseline := captureReviewRepairBaseline(root, []string{"a.txt"})
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("preexisting   \nclean-before\nbad   \n"), 0o644); err != nil {
+		t.Fatalf("seed executor result: %v", err)
+	}
+	evidence := collectReviewRepairEvidence(root, []string{"a.txt"}, &baseline)
+	report, err := autoRepairReviewPatchHygiene(root, []string{"a.txt"}, evidence)
+	if err != nil {
+		t.Fatalf("auto repair patch hygiene: %v", err)
+	}
+	if !report.Repaired || report.Lines != 1 {
+		t.Fatalf("expected one repaired line, got %#v", report)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read repaired file: %v", err)
+	}
+	if string(got) != "preexisting   \nclean-before\nbad\n" {
+		t.Fatalf("auto repair should trim only current-run trailing whitespace, got %q", string(got))
+	}
+}
+
+func TestRunReviewRepairPhaseAutoRepairsPatchHygieneBeforePrompt(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	baseline := captureReviewRepairBaseline(root, []string{"a.txt"})
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("clean-before\nbad   \n"), 0o644); err != nil {
+		t.Fatalf("seed executor result: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "clean-before\n", NewText: "clean-before\nbad   \n", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	var gotPrompt string
+	report, err := runReviewRepairPhase(
+		cfg,
+		"Add bad line.",
+		plan,
+		nil,
+		&baseline,
+		executorPhaseReport{},
+		planExecuteOptions{},
+		&stdout,
+		func(_ config.Config, prompt string, _ runOptions, _ io.Writer) (string, error) {
+			gotPrompt = prompt
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: bad line is present.\n- Patch hygiene: clean after mechanical repair.", nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("review-repair should accept auto-repaired hygiene: %v", err)
+	}
+	if report.AutoRepairs != 1 {
+		t.Fatalf("expected one mechanical repair, got %#v", report)
+	}
+	if !strings.Contains(gotPrompt, "patch_hygiene: status=passed") {
+		t.Fatalf("review prompt should receive repaired patch hygiene evidence, got:\n%s", gotPrompt)
+	}
+	if strings.Contains(gotPrompt, "submitted_edit_pending") || strings.Contains(gotPrompt, "submitted_edit_unknown") {
+		t.Fatalf("mechanical whitespace repair should not make submitted edit look pending:\n%s", gotPrompt)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read repaired file: %v", err)
+	}
+	if string(got) != "clean-before\nbad\n" {
+		t.Fatalf("expected repaired file, got %q", string(got))
+	}
+}
+
 func TestRunReviewRepairPhaseRejectsPassWithoutChecklist(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {

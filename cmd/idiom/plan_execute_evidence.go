@@ -196,6 +196,9 @@ func submittedPlanEditStatus(current string, edit workspace.PlanEdit) (string, s
 		if current == edit.NewText {
 			return "applied", "whole-file content matches submitted new_text"
 		}
+		if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && current == repaired {
+			return "applied", "whole-file content matches submitted new_text after mechanical trailing-whitespace repair"
+		}
 		return "pending", "whole-file content does not match submitted new_text"
 	}
 	if strings.TrimSpace(edit.OldText) != "" {
@@ -207,6 +210,9 @@ func submittedPlanEditStatus(current string, edit workspace.PlanEdit) (string, s
 		}
 		if strings.Contains(current, edit.NewText) {
 			return "applied", "submitted new_text is present"
+		}
+		if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.Contains(current, repaired) {
+			return "applied", "submitted new_text is present after mechanical trailing-whitespace repair"
 		}
 		if strings.Contains(current, edit.OldText) {
 			return "pending", "submitted old_text is still present and new_text is absent"
@@ -221,6 +227,9 @@ func submittedPlanEditStatus(current string, edit workspace.PlanEdit) (string, s
 	}
 	if strings.TrimSpace(edit.NewText) != "" && strings.Contains(current, edit.NewText) {
 		return "applied", "submitted new_text is present"
+	}
+	if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.TrimSpace(repaired) != "" && strings.Contains(current, repaired) {
+		return "applied", "submitted new_text is present after mechanical trailing-whitespace repair"
 	}
 	return "unknown", "submitted edit shape has no deterministic postcondition"
 }

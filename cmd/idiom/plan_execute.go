@@ -862,6 +862,7 @@ type reviewRepairPhaseReport struct {
 	Skipped        bool
 	Status         string
 	Repairs        int
+	AutoRepairs    int
 	ReviewPlan     string
 	ChecklistFound bool
 }
@@ -875,9 +876,21 @@ func (r reviewRepairPhaseReport) String() string {
 		status = "not run"
 	}
 	if r.Repairs == 0 {
-		return fmt.Sprintf("review-repair: %s", status)
+		if r.AutoRepairs == 0 {
+			return fmt.Sprintf("review-repair: %s", status)
+		}
+		return fmt.Sprintf("review-repair: %s, %d mechanical repair(s)", status, r.AutoRepairs)
 	}
-	return fmt.Sprintf("review-repair: %s, %d corrective edit(s)", status, r.Repairs)
+	if r.AutoRepairs == 0 {
+		return fmt.Sprintf("review-repair: %s, %d corrective edit(s)", status, r.Repairs)
+	}
+	return fmt.Sprintf("review-repair: %s, %d corrective edit(s), %d mechanical repair(s)", status, r.Repairs, r.AutoRepairs)
+}
+
+type patchHygieneAutoRepairReport struct {
+	Repaired bool
+	Paths    []string
+	Lines    int
 }
 
 type reviewRepairEvidence struct {
@@ -914,6 +927,20 @@ func runReviewRepairPhase(
 	}
 	allowedRepairPaths := mergePlanExecutePaths(changedPaths, requiredEditPaths)
 	evidence := collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
+	autoRepair, autoRepairErr := autoRepairReviewPatchHygiene(cfg.Workspace.Root, changedPaths, evidence)
+	if autoRepairErr != nil {
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_auto_patch_hygiene_failed", map[string]any{
+			"reason": autoRepairErr.Error(),
+		})
+		return reviewRepairPhaseReport{Status: "failed"}, fmt.Errorf("review-repair auto patch hygiene failed: %w", autoRepairErr)
+	}
+	if autoRepair.Repaired {
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_auto_patch_hygiene", map[string]any{
+			"paths": autoRepair.Paths,
+			"lines": autoRepair.Lines,
+		})
+		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
+	}
 	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
 	reviewSessionID := newPlanExecuteSessionID()
 	reviewCfg := cfg
@@ -957,7 +984,7 @@ func runReviewRepairPhase(
 				"status":  "pass",
 				"repairs": 0,
 			})
-			return reviewRepairPhaseReport{Status: "pass (no corrective edits)", ChecklistFound: true}, nil
+			return reviewRepairPhaseReport{Status: "pass (no corrective edits)", AutoRepairs: autoRepair.Lines, ChecklistFound: true}, nil
 		}
 		if reviewAnswerDeclaresBlocker(answer) {
 			return reviewRepairPhaseReport{Status: "blocked"}, fmt.Errorf("review-repair phase reported a blocker without a corrective plan")
@@ -976,6 +1003,7 @@ func runReviewRepairPhase(
 		return reviewRepairPhaseReport{
 			Status:         "failed",
 			Repairs:        repairReport.Succeeded,
+			AutoRepairs:    autoRepair.Lines,
 			ReviewPlan:     planPath,
 			ChecklistFound: true,
 		}, fmt.Errorf("review-repair executor failed: %w", err)
@@ -989,6 +1017,7 @@ func runReviewRepairPhase(
 	return reviewRepairPhaseReport{
 		Status:         "repaired",
 		Repairs:        repairReport.Succeeded,
+		AutoRepairs:    autoRepair.Lines,
 		ReviewPlan:     planPath,
 		ChecklistFound: true,
 	}, nil
@@ -1096,6 +1125,50 @@ func collectReviewRepairEvidence(root string, paths []string, baseline *reviewRe
 	}
 }
 
+func autoRepairReviewPatchHygiene(root string, changedPaths []string, evidence reviewRepairEvidence) (patchHygieneAutoRepairReport, error) {
+	if evidence.DiffCheckExit != 1 {
+		return patchHygieneAutoRepairReport{}, nil
+	}
+	trailingWhitespace := reviewRepairTrailingWhitespaceLines(evidence.Diff)
+	if len(trailingWhitespace) == 0 {
+		return patchHygieneAutoRepairReport{}, nil
+	}
+	changedSet := planExecutePathSet(changedPaths)
+	paths := make([]string, 0, len(trailingWhitespace))
+	for path := range trailingWhitespace {
+		normalized := normalizePlanExecutePath(path)
+		if _, ok := changedSet[normalized]; !ok {
+			return patchHygieneAutoRepairReport{}, nil
+		}
+		paths = append(paths, normalized)
+	}
+	sort.Strings(paths)
+
+	report := patchHygieneAutoRepairReport{Repaired: true, Paths: paths}
+	for _, path := range paths {
+		fullPath, err := planExecuteWorkspaceFile(root, path)
+		if err != nil {
+			return patchHygieneAutoRepairReport{}, err
+		}
+		body, err := os.ReadFile(fullPath)
+		if err != nil {
+			return patchHygieneAutoRepairReport{}, fmt.Errorf("read %s for patch hygiene repair: %w", path, err)
+		}
+		repaired, lines := trimTrailingWhitespaceOnLines(string(body), trailingWhitespace[path])
+		if lines == 0 {
+			continue
+		}
+		if err := os.WriteFile(fullPath, []byte(repaired), 0o644); err != nil {
+			return patchHygieneAutoRepairReport{}, fmt.Errorf("write %s for patch hygiene repair: %w", path, err)
+		}
+		report.Lines += lines
+	}
+	if report.Lines == 0 {
+		return patchHygieneAutoRepairReport{}, nil
+	}
+	return report, nil
+}
+
 func captureReviewRepairBaseline(root string, paths []string) reviewRepairBaseline {
 	baseline := reviewRepairBaseline{Files: map[string]reviewRepairFileSnapshot{}}
 	for _, path := range mergePlanExecutePaths(paths) {
@@ -1153,6 +1226,14 @@ func collectReviewRepairDiffFromBaseline(root string, paths []string, baseline r
 }
 
 func reviewRepairWhitespaceCheck(diff string) (string, int) {
+	findings := reviewRepairTrailingWhitespaceFindings(diff)
+	if len(findings) == 0 {
+		return "", 0
+	}
+	return strings.Join(findings, "\n"), 1
+}
+
+func reviewRepairTrailingWhitespaceFindings(diff string) []string {
 	var findings []string
 	path := ""
 	newLine := 0
@@ -1201,10 +1282,136 @@ func reviewRepairWhitespaceCheck(diff string) (string, int) {
 			// Removal lines do not advance the new-file cursor.
 		}
 	}
-	if len(findings) == 0 {
-		return "", 0
+	return findings
+}
+
+func reviewRepairTrailingWhitespaceLines(diff string) map[string]map[int]struct{} {
+	out := make(map[string]map[int]struct{})
+	path := ""
+	newLine := 0
+	inHunk := false
+	for _, raw := range strings.Split(diff, "\n") {
+		line := strings.TrimSuffix(raw, "\r")
+		switch {
+		case strings.HasPrefix(line, "+++ b/"):
+			path = normalizePlanExecutePath(strings.TrimSpace(strings.TrimPrefix(line, "+++ b/")))
+			inHunk = false
+			newLine = 0
+			continue
+		case strings.HasPrefix(line, "@@ "):
+			newLine = parseReviewRepairHunkNewStart(line)
+			inHunk = true
+			continue
+		case strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "--- "):
+			inHunk = false
+			newLine = 0
+			continue
+		}
+		if !inHunk || line == "" || strings.HasPrefix(line, "\\ ") {
+			continue
+		}
+		switch line[0] {
+		case '+':
+			if strings.HasPrefix(line, "+++") {
+				continue
+			}
+			content := line[1:]
+			if path != "" && newLine > 0 && strings.TrimRight(content, " \t") != content {
+				if _, ok := out[path]; !ok {
+					out[path] = make(map[int]struct{})
+				}
+				out[path][newLine] = struct{}{}
+			}
+			if newLine > 0 {
+				newLine++
+			}
+		case ' ':
+			if newLine > 0 {
+				newLine++
+			}
+		case '-':
+			// Removal lines do not advance the new-file cursor.
+		}
 	}
-	return strings.Join(findings, "\n"), 1
+	return out
+}
+
+func trimTrailingWhitespaceOnLines(text string, targetLines map[int]struct{}) (string, int) {
+	if len(targetLines) == 0 {
+		return text, 0
+	}
+	var b strings.Builder
+	b.Grow(len(text))
+	changed := 0
+	lineNo := 1
+	for start := 0; start < len(text); lineNo++ {
+		end := start
+		for end < len(text) && text[end] != '\n' {
+			end++
+		}
+		line := text[start:end]
+		newline := ""
+		if end < len(text) && text[end] == '\n' {
+			newline = "\n"
+			end++
+		}
+		if _, ok := targetLines[lineNo]; ok {
+			repaired := trimTrailingWhitespaceBeforeLineEnding(line)
+			if repaired != line {
+				changed++
+				line = repaired
+			}
+		}
+		b.WriteString(line)
+		b.WriteString(newline)
+		start = end
+	}
+	return b.String(), changed
+}
+
+func trimTrailingWhitespaceEveryLine(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	for start := 0; start < len(text); {
+		end := start
+		for end < len(text) && text[end] != '\n' {
+			end++
+		}
+		line := text[start:end]
+		newline := ""
+		if end < len(text) && text[end] == '\n' {
+			newline = "\n"
+			end++
+		}
+		b.WriteString(trimTrailingWhitespaceBeforeLineEnding(line))
+		b.WriteString(newline)
+		start = end
+	}
+	return b.String()
+}
+
+func trimTrailingWhitespaceBeforeLineEnding(line string) string {
+	if strings.HasSuffix(line, "\r") {
+		return strings.TrimRight(line[:len(line)-1], " \t") + "\r"
+	}
+	return strings.TrimRight(line, " \t")
+}
+
+func planExecuteWorkspaceFile(root string, path string) (string, error) {
+	normalized := normalizePlanExecutePath(path)
+	if normalized == "" {
+		return "", fmt.Errorf("empty workspace path")
+	}
+	if filepath.IsAbs(normalized) {
+		return "", fmt.Errorf("workspace path must be relative: %s", normalized)
+	}
+	cleanRoot := filepath.Clean(strings.TrimSpace(root))
+	fullPath := filepath.Clean(filepath.Join(cleanRoot, filepath.FromSlash(normalized)))
+	rel, err := filepath.Rel(cleanRoot, fullPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, `..\`) {
+		return "", fmt.Errorf("workspace path escapes root: %s", normalized)
+	}
+	return fullPath, nil
 }
 
 func parseReviewRepairHunkNewStart(line string) int {
