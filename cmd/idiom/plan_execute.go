@@ -403,7 +403,7 @@ func planExecutePlannerSystemAddendum() string {
 		"2. Each edit: `path` + ONE of: (`old_text`+`new_text`; empty `new_text` deletes `old_text` | `start_line`+`end_line`+non-empty `content` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. Prefer substring/range edits; large bodies are spilled to artifact refs after submit_plan.",
 		"3. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
-		"5. At most one bounded source-read capability per path, only when the brief's anchor needs verification. Never re-read the same file at a different range — if the brief is wrong, stop with `<<QUESTION>>:`.",
+		"5. Use source-read capability only for a new named edit-safety fact on a required path. Do not re-read for confidence; if the brief/evidence is contradicted and no safe plan can be assembled, stop with `<<QUESTION>>:`.",
 		"6. Submit as soon as you have anchors for every required path. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every required path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
 	}, "\n")
 }
@@ -566,6 +566,9 @@ type executorHandoffPacket struct {
 	PlanID                  string
 	HandoffID               string
 	HandoffStatus           string
+	ApprovalScopeID         string
+	ApprovalStatus          string
+	ApprovalPermission      string
 	PackID                  string
 	DeclaredPackID          string
 	ArtifactPacketStatus    string
@@ -575,6 +578,8 @@ type executorHandoffPacket struct {
 	CandidateFiles          int
 	CandidateSymbols        int
 	Tests                   int
+	ApprovedPathCount       int
+	PendingPathCount        int
 }
 
 func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) executorHandoffPacket {
@@ -584,9 +589,14 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) exe
 		PlanID:                  sanitizePlanExecuteEventID(plan.PlanID),
 		HandoffID:               sanitizePlanExecuteEventID(plan.Handoff.ID),
 		HandoffStatus:           sanitizePlanExecuteEventToken(plan.Handoff.Status),
+		ApprovalScopeID:         sanitizePlanExecuteEventID(plan.Approval.ScopeID),
+		ApprovalStatus:          sanitizePlanExecuteEventToken(plan.Approval.Status),
+		ApprovalPermission:      sanitizePlanExecuteEventToken(plan.Approval.ExecutionPermission),
 		ArtifactPacketStatus:    sanitizePlanExecuteEventToken(plan.Packet.Status),
 		ArtifactPacketFreshness: sanitizePlanExecuteEventToken(plan.Packet.Freshness),
 		IndexID:                 sanitizePlanExecuteEventToken(plan.Packet.IndexID),
+		ApprovedPathCount:       len(plan.Approval.ApprovedPaths),
+		PendingPathCount:        len(plan.Approval.PendingPaths),
 	}
 	topLevelPackID, topLevelValid := normalizePlanExecuteEventPackID(plan.PackID)
 	declaredPackID, declaredValid := normalizePlanExecuteEventPackID(plan.Packet.PackID)
@@ -711,11 +721,20 @@ func executorHandoffPacketEventFields(handoff executorHandoffPacket) map[string]
 	addPlanExecuteEventString(fields, "plan_id", handoff.PlanID)
 	addPlanExecuteEventString(fields, "handoff_id", handoff.HandoffID)
 	addPlanExecuteEventString(fields, "handoff_status", handoff.HandoffStatus)
+	addPlanExecuteEventString(fields, "approval_scope_id", handoff.ApprovalScopeID)
+	addPlanExecuteEventString(fields, "approval_status", handoff.ApprovalStatus)
+	addPlanExecuteEventString(fields, "approval_execution_permission", handoff.ApprovalPermission)
 	addPlanExecuteEventString(fields, "pack_id", handoff.PackID)
 	addPlanExecuteEventString(fields, "declared_pack_id", handoff.DeclaredPackID)
 	addPlanExecuteEventString(fields, "artifact_packet_status", handoff.ArtifactPacketStatus)
 	addPlanExecuteEventString(fields, "artifact_packet_freshness", handoff.ArtifactPacketFreshness)
 	addPlanExecuteEventString(fields, "index_id", handoff.IndexID)
+	if handoff.ApprovedPathCount > 0 {
+		fields["approved_path_count"] = handoff.ApprovedPathCount
+	}
+	if handoff.PendingPathCount > 0 {
+		fields["pending_path_count"] = handoff.PendingPathCount
+	}
 	if handoff.CandidateFiles > 0 {
 		fields["candidate_files"] = handoff.CandidateFiles
 	}
@@ -786,6 +805,22 @@ func sanitizePlanExecuteEventToken(value string) string {
 		}
 	}
 	return strings.Trim(b.String(), "_")
+}
+
+func sanitizePlanExecuteEventPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if planExecuteEventTextLooksSensitive(value) {
+		return "redacted:" + planExecuteEventHash(value)
+	}
+	value = filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
+	value = strings.TrimPrefix(value, "./")
+	if value == "." {
+		return ""
+	}
+	return value
 }
 
 func planExecuteEventTextLooksSensitive(value string) bool {
@@ -1277,6 +1312,7 @@ func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, requiredEd
 }
 
 func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, jsonEvents bool, stdout io.Writer) (executorPhaseReport, error) {
+	plan = workspace.NormalizeLoadedPlanArtifact(plan)
 	report := executorPhaseReport{Total: len(plan.Edits)}
 	if len(plan.Edits) == 0 {
 		return report, fmt.Errorf("plan has no edits")
@@ -1288,6 +1324,20 @@ func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 	report.Handoff = handoff
 	emitExecutorHandoffPacketEvents(stdout, jsonEvents, handoff)
 
+	if mismatch := preflightPlanApprovalAndScope(plan); mismatch != nil {
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "plan_scope_drift", planScopeDriftEventFields(handoff, mismatch))
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
+			"edit_index":        mismatch.Index,
+			"path":              sanitizePlanExecuteEventPath(mismatch.Path),
+			"reason":            mismatch.Reason,
+			"handoff_id":        handoff.HandoffID,
+			"approval_scope_id": handoff.ApprovalScopeID,
+		})
+		if !jsonEvents {
+			fmt.Fprintf(stdout, "  preflight FAILED on approval/scope %s: %s\n", mismatch.Path, mismatch.Reason)
+		}
+		return report, fmt.Errorf("plan approval/scope preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
+	}
 	if mismatch := preflightPlanRequiredEditPaths(requiredEditPaths, plan); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
 			"edit_index": mismatch.Index,
@@ -1485,6 +1535,146 @@ type planEditPreflightMismatch struct {
 	Index  int
 	Path   string
 	Reason string
+}
+
+func preflightPlanApprovalAndScope(plan workspace.PlanArtifact) *planEditPreflightMismatch {
+	if strings.TrimSpace(plan.Handoff.ID) == "" {
+		return &planEditPreflightMismatch{Index: -1, Reason: "handoff id is missing"}
+	}
+	if !plan.Handoff.Ready {
+		return &planEditPreflightMismatch{Index: -1, Reason: "handoff is not ready"}
+	}
+	if len(plan.Handoff.Blockers) > 0 {
+		return &planEditPreflightMismatch{Index: -1, Reason: "handoff has unresolved blockers"}
+	}
+	if plan.Approval.Required {
+		if planExecuteApprovalPartial(plan.Approval.Status) {
+			if mismatch := preflightPlanPartialApprovalScope(plan); mismatch != nil {
+				return mismatch
+			}
+		} else if !planExecuteApprovalSatisfied(plan.Approval.Status) {
+			return &planEditPreflightMismatch{Index: -1, Reason: "required approval is not satisfied"}
+		}
+	}
+	if plan.Approval.ExecutionPermission == "blocked" {
+		return &planEditPreflightMismatch{Index: -1, Reason: "approval execution permission is blocked"}
+	}
+	return preflightPlanDeclaredScope(plan)
+}
+
+func preflightPlanPartialApprovalScope(plan workspace.PlanArtifact) *planEditPreflightMismatch {
+	if strings.TrimSpace(plan.Approval.ScopeID) == "" {
+		return &planEditPreflightMismatch{Index: -1, Reason: "partial approval scope id is missing"}
+	}
+	if len(plan.Approval.ApprovedPaths) == 0 {
+		return &planEditPreflightMismatch{Index: -1, Reason: "partial approval has no approved scope paths"}
+	}
+	if len(plan.Approval.PendingPaths) == 0 {
+		return &planEditPreflightMismatch{Index: -1, Reason: "partial approval has no pending scope paths"}
+	}
+	if plan.Approval.ExecutionPermission != "execute_approved_scope" {
+		return &planEditPreflightMismatch{Index: -1, Reason: "partial approval must execute only approved scope"}
+	}
+	approved := planExecutePathSet(plan.Approval.ApprovedPaths)
+	pending := planExecutePathSet(plan.Approval.PendingPaths)
+	for i, edit := range plan.Edits {
+		path := normalizePlanExecutePath(edit.Path)
+		if path == "" {
+			return &planEditPreflightMismatch{Index: i, Reason: "edit has no path"}
+		}
+		if _, ok := pending[path]; ok {
+			return &planEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is still pending approval"}
+		}
+		if _, ok := approved[path]; !ok {
+			return &planEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is outside approved scope"}
+		}
+	}
+	return nil
+}
+
+func preflightPlanDeclaredScope(plan workspace.PlanArtifact) *planEditPreflightMismatch {
+	forbidden := planExecutePathSet(append(append([]string(nil), plan.Paths.Forbidden...), plan.Contract.ForbiddenPaths...))
+	required := planExecutePathSet(append(append([]string(nil), plan.Paths.Required...), plan.Contract.RequiredEditPaths...))
+	planned := planExecutePathSet(append(append([]string(nil), plan.Paths.Editable...), plan.Paths.Changed...))
+	approved := planExecutePathSet(plan.Approval.ApprovedPaths)
+	pending := planExecutePathSet(plan.Approval.PendingPaths)
+	seen := map[string]struct{}{}
+	for i, edit := range plan.Edits {
+		path := normalizePlanExecutePath(edit.Path)
+		if path == "" {
+			return &planEditPreflightMismatch{Index: i, Reason: "edit has no path"}
+		}
+		seen[path] = struct{}{}
+		if _, ok := forbidden[path]; ok {
+			return &planEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is forbidden"}
+		}
+		if _, ok := pending[path]; ok {
+			return &planEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is still pending approval"}
+		}
+		if len(approved) > 0 {
+			if _, ok := approved[path]; !ok {
+				return &planEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is outside approved scope"}
+			}
+		}
+		if len(required) > 0 {
+			if _, ok := required[path]; !ok {
+				return &planEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is outside required plan scope"}
+			}
+		}
+		if len(planned) > 0 {
+			if _, ok := planned[path]; !ok {
+				return &planEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is outside declared editable scope"}
+			}
+		}
+	}
+	for path := range required {
+		if _, ok := seen[path]; !ok {
+			return &planEditPreflightMismatch{Index: -1, Path: path, Reason: "required plan scope path has no submitted edit"}
+		}
+	}
+	return nil
+}
+
+func planExecutePathSet(paths []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		if normalized := normalizePlanExecutePath(path); normalized != "" {
+			out[normalized] = struct{}{}
+		}
+	}
+	return out
+}
+
+func planExecuteApprovalSatisfied(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "approved", "implicit", "not_required", "n_a":
+		return true
+	default:
+		return false
+	}
+}
+
+func planExecuteApprovalPartial(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "partial", "partially_approved":
+		return true
+	default:
+		return false
+	}
+}
+
+func planScopeDriftEventFields(handoff executorHandoffPacket, mismatch *planEditPreflightMismatch) map[string]any {
+	fields := map[string]any{
+		"edit_index":        mismatch.Index,
+		"reason":            mismatch.Reason,
+		"packet_state":      handoff.State,
+		"handoff_id":        handoff.HandoffID,
+		"approval_scope_id": handoff.ApprovalScopeID,
+	}
+	if path := sanitizePlanExecuteEventPath(mismatch.Path); path != "" {
+		fields["path"] = path
+	}
+	return fields
 }
 
 // preflightPlanRequiredEditPaths validates the executor's plan

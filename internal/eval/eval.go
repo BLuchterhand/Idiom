@@ -240,6 +240,7 @@ type Scenario struct {
 	RequireEvidencePaths         []string                          `json:"require_evidence_paths,omitempty"`
 	RequireLanguageCapabilities  []LanguageCapabilityExpectation   `json:"require_language_capabilities,omitempty"`
 	RequireApproval              *bool                             `json:"require_approval,omitempty"`
+	RequirePlanExecution         *PlanExecutionExpectation         `json:"require_plan_execution,omitempty"`
 	// RequireRunEvents asserts each named event appears at least once,
 	// matched against either a type:"message" role (runner-emitted
 	// RunEvents like plan_then_execute_write_guard) or a top-level
@@ -248,6 +249,34 @@ type Scenario struct {
 	// sources — generic seam for gate coverage without per-event typed
 	// expectations.
 	RequireRunEvents []string `json:"require_run_events,omitempty"`
+}
+
+type PlanExecutionExpectation struct {
+	RequireHandoffID            bool     `json:"require_handoff_id,omitempty"`
+	RequireApprovalScopeID      bool     `json:"require_approval_scope_id,omitempty"`
+	RequireNoDrift              bool     `json:"require_no_drift,omitempty"`
+	RequireDrift                bool     `json:"require_drift,omitempty"`
+	RequireDriftReasons         []string `json:"require_drift_reasons,omitempty"`
+	RequirePacketStates         []string `json:"require_packet_states,omitempty"`
+	RequireExecutionPermissions []string `json:"require_execution_permissions,omitempty"`
+}
+
+type PlanExecutionHandoffSnapshot struct {
+	PlanID              string `json:"plan_id,omitempty"`
+	HandoffID           string `json:"handoff_id,omitempty"`
+	ApprovalScopeID     string `json:"approval_scope_id,omitempty"`
+	ApprovalStatus      string `json:"approval_status,omitempty"`
+	ExecutionPermission string `json:"approval_execution_permission,omitempty"`
+	PacketState         string `json:"packet_state,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+}
+
+type PlanExecutionDriftSnapshot struct {
+	Path            string `json:"path,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	HandoffID       string `json:"handoff_id,omitempty"`
+	ApprovalScopeID string `json:"approval_scope_id,omitempty"`
+	PacketState     string `json:"packet_state,omitempty"`
 }
 
 type PhaseSnapshot struct {
@@ -525,6 +554,8 @@ type Metrics struct {
 	VerificationPassed        bool                            `json:"verification_passed"`
 	VerificationFailed        bool                            `json:"verification_failed"`
 	ApprovalRequired          bool                            `json:"approval_required"`
+	PlanExecutionHandoffs     []PlanExecutionHandoffSnapshot  `json:"plan_execution_handoffs,omitempty"`
+	PlanExecutionDrift        []PlanExecutionDriftSnapshot    `json:"plan_execution_drift,omitempty"`
 	ChangedFiles              []string                        `json:"changed_files,omitempty"`
 	EvidencePaths             []string                        `json:"evidence_paths,omitempty"`
 	LanguageCapabilities      []LanguageCapabilitySnapshot    `json:"language_capabilities,omitempty"`
@@ -1217,6 +1248,24 @@ func Analyze(records []Record) Metrics {
 				State:  stringField(record.Data, "state"),
 				Detail: stringField(record.Data, "detail"),
 			})
+		case "idiom.plan_execute.executor_handoff_packet":
+			metrics.PlanExecutionHandoffs = append(metrics.PlanExecutionHandoffs, PlanExecutionHandoffSnapshot{
+				PlanID:              stringField(record.Data, "plan_id"),
+				HandoffID:           stringField(record.Data, "handoff_id"),
+				ApprovalScopeID:     stringField(record.Data, "approval_scope_id"),
+				ApprovalStatus:      stringField(record.Data, "approval_status"),
+				ExecutionPermission: stringField(record.Data, "approval_execution_permission"),
+				PacketState:         stringField(record.Data, "packet_state"),
+				Reason:              stringField(record.Data, "reason"),
+			})
+		case "idiom.plan_execute.plan_scope_drift":
+			metrics.PlanExecutionDrift = append(metrics.PlanExecutionDrift, PlanExecutionDriftSnapshot{
+				Path:            stringField(record.Data, "path"),
+				Reason:          stringField(record.Data, "reason"),
+				HandoffID:       stringField(record.Data, "handoff_id"),
+				ApprovalScopeID: stringField(record.Data, "approval_scope_id"),
+				PacketState:     stringField(record.Data, "packet_state"),
+			})
 		case "error":
 			if message := strings.TrimSpace(stringField(record.Data, "message")); message != "" {
 				metrics.Errors = append(metrics.Errors, message)
@@ -1594,7 +1643,101 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 	if scenario.RequireApproval != nil && metrics.ApprovalRequired != *scenario.RequireApproval {
 		addFinding("approval requirement mismatch: got %t want %t", metrics.ApprovalRequired, *scenario.RequireApproval)
 	}
+	if scenario.RequirePlanExecution != nil {
+		for _, finding := range evaluatePlanExecutionExpectation(metrics, *scenario.RequirePlanExecution) {
+			addFinding("%s", finding)
+		}
+	}
 	return report
+}
+
+func evaluatePlanExecutionExpectation(metrics Metrics, expected PlanExecutionExpectation) []string {
+	var findings []string
+	if expected.RequireHandoffID && !planExecutionHasHandoffID(metrics.PlanExecutionHandoffs) {
+		findings = append(findings, "plan execution handoff id was required but not observed")
+	}
+	if expected.RequireApprovalScopeID && !planExecutionHasApprovalScopeID(metrics.PlanExecutionHandoffs) {
+		findings = append(findings, "plan execution approval scope id was required but not observed")
+	}
+	if expected.RequireNoDrift && len(metrics.PlanExecutionDrift) > 0 {
+		findings = append(findings, fmt.Sprintf("plan execution drift was forbidden but observed %d drift event(s)", len(metrics.PlanExecutionDrift)))
+	}
+	if expected.RequireDrift && len(metrics.PlanExecutionDrift) == 0 {
+		findings = append(findings, "plan execution drift was required but not observed")
+	}
+	for _, reason := range expected.RequireDriftReasons {
+		reason = normalizedCoverageKey(reason)
+		if reason == "" {
+			continue
+		}
+		if !planExecutionHasDriftReason(metrics.PlanExecutionDrift, reason) {
+			findings = append(findings, fmt.Sprintf("plan execution drift reason %q was not observed", reason))
+		}
+	}
+	for _, state := range expected.RequirePacketStates {
+		state = normalizedCoverageKey(state)
+		if state == "" {
+			continue
+		}
+		if !planExecutionHasPacketState(metrics.PlanExecutionHandoffs, state) {
+			findings = append(findings, fmt.Sprintf("plan execution packet state %q was not observed", state))
+		}
+	}
+	for _, permission := range expected.RequireExecutionPermissions {
+		permission = normalizedCoverageKey(permission)
+		if permission == "" {
+			continue
+		}
+		if !planExecutionHasPermission(metrics.PlanExecutionHandoffs, permission) {
+			findings = append(findings, fmt.Sprintf("plan execution permission %q was not observed", permission))
+		}
+	}
+	return findings
+}
+
+func planExecutionHasHandoffID(handoffs []PlanExecutionHandoffSnapshot) bool {
+	for _, handoff := range handoffs {
+		if strings.TrimSpace(handoff.HandoffID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionHasApprovalScopeID(handoffs []PlanExecutionHandoffSnapshot) bool {
+	for _, handoff := range handoffs {
+		if strings.TrimSpace(handoff.ApprovalScopeID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionHasDriftReason(drifts []PlanExecutionDriftSnapshot, reason string) bool {
+	for _, drift := range drifts {
+		if normalizedCoverageKey(drift.Reason) == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionHasPacketState(handoffs []PlanExecutionHandoffSnapshot, state string) bool {
+	for _, handoff := range handoffs {
+		if normalizedCoverageKey(handoff.PacketState) == state {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionHasPermission(handoffs []PlanExecutionHandoffSnapshot, permission string) bool {
+	for _, handoff := range handoffs {
+		if normalizedCoverageKey(handoff.ExecutionPermission) == permission {
+			return true
+		}
+	}
+	return false
 }
 
 func containsPhase(phases []PhaseSnapshot, expected PhaseExpectation) bool {

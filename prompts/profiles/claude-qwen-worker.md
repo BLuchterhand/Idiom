@@ -21,9 +21,10 @@ discipline on top.
 - If the requested edit cannot be attempted safely, stop with
   `<<QUESTION>>:` and name the exact missing fact or tooling
   blocker.
-- A final report with findings but no edit / no-op / typed blocker
-  is a failed dispatch — the lane wrapper's post-analyzer will
-  surface it as `idiom.lane.degraded` with kind `no_edit_attempt`.
+- A final report with findings but no successful edit, accepted
+  source-satisfied closeout, or typed blocker is a failed dispatch —
+  the lane wrapper's post-analyzer will surface it as
+  `idiom.lane.degraded` with kind `no_edit_attempt`.
 
 ## Anchor Discipline
 
@@ -68,15 +69,18 @@ for edits to existing files.
   Broad file-range exploration is only for the exact anchor,
   indentation, or blocker fact named by the edit-safety gap.
 - Each discovery/read step must close one named edit-safety fact. Once
-  resolved, the next action is an edit, `submit_plan`, or
-  `<<QUESTION>>:` — not another orientation read.
+  resolved, the next action is an edit, `submit_plan`,
+  `Decision: source-satisfied` when the runtime brief accepts that
+  terminal state, or `<<QUESTION>>:` — not another orientation read.
 
 ## Closeout
 
 - After edits, summarize changed paths and validation status in
   one paragraph. Do not loop into post-plan verification reads;
   the executor phase (or a `--postflight` invocation) handles
-  per-edit verification.
+  per-edit verification. If the source already satisfies the task and
+  the runtime brief accepts source-satisfied closeout, report that
+  terminal state instead of submitting or making placeholder edits.
 - If a brief's `Acceptance` section lists build / test commands,
   those are planner-owned (the lane wrapper enforces this via
   `--planner-owned-verification`). Do not run them.

@@ -23,6 +23,10 @@ three lane shapes:
   when the brief is multi-file (3+ files) or when atomic
   preflight/per-edit telemetry matters more than per-edit
   decision-making. Driven by `idiom plan-execute`.
+  The planner phase has a dedicated plan-submission tool profile:
+  bounded read/discovery tools plus `submit_plan`. It does not
+  advertise shell, git, task/task_ledger, source_sanity, or per-edit
+  write tools; those are executor/orchestrator concerns.
 - **`atom-spec`** — drafting lane: model produces a brief artifact
   (a planner target packet) without touching the workspace, then
   exits. Used when the orchestrator needs a clean spec to feed into
@@ -523,6 +527,15 @@ selection, JSON event capture, and post-run telemetry — what
 | Pure-add (new file, write_file shape) | `implement` | model holds the whole content in one turn |
 | Mirror-site updates (enum reference, name table, ordinal check) | `plan-execute` | preflight catches anchor mismatches before partial-apply |
 | Drafting a planner target packet | `atom-spec` | model writes the brief, no workspace touched |
+
+Plan-execute briefs must be executable edit packets, not instructions
+to rediscover or regenerate the patch at run time. `idiom brief lint`
+blocks required-edit contracts that ask the planner to run a mutating
+command or append/insert from prose without explicit
+`old_text`/`new_text`, `start_line`/`end_line`+`content`, or whole-file
+replacement content. This is the pre-dispatch stale-anchor boundary:
+if a command must generate the file, run it before dispatch and inline
+the exact resulting edit shape.
 
 ## Lane telemetry reference
 

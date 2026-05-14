@@ -94,8 +94,22 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
 	}
+	if planRationaleClaimsNoEditsNeeded(artifact.Rationale) {
+		return ToolResult{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied rationale",
+			Error:   "submit_plan rationale says the requested final state is already present or that edits are placeholders. Do not submit verification/placeholder edits; answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact blocker.",
+		}
+	}
 	if len(artifact.Edits) == 0 {
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
+	}
+	if planEditsAreVerificationOnly(artifact.Edits) {
+		return ToolResult{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: verification-only edits",
+			Error:   "submit_plan edits describe verification/checking work rather than state mutation. If the files already satisfy the task, answer `Decision: source-satisfied`; otherwise submit only real corrective edits or answer <<QUESTION>> with the exact blocker.",
+		}
 	}
 	for i, edit := range artifact.Edits {
 		if err := validatePlanEdit(edit); err != nil {
@@ -166,6 +180,129 @@ func validatePlanEdit(edit PlanEdit) error {
 		return fmt.Errorf("requires one edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref")
 	}
 	return nil
+}
+
+func planRationaleClaimsNoEditsNeeded(rationale string) bool {
+	text := strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(rationale))), " ")
+	if text == "" {
+		return false
+	}
+	for _, needle := range []string{
+		"placeholder edit",
+		"placeholder edits",
+		"satisfy the requirement that edits be submitted",
+		"content is identical",
+	} {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	for _, needle := range []string{
+		"no edits are needed",
+		"no edit is needed",
+		"no changes are needed",
+		"no change is needed",
+		"no work to do",
+	} {
+		if containsUnscopedPlanNoWorkPhrase(text, needle) {
+			return true
+		}
+	}
+	sourceSatisfiedNeedles := []string{
+		"source-satisfied",
+		"source satisfied",
+		"already in the expected state",
+		"already in its expected state",
+		"already matches the requested final state",
+		"already match the requested final state",
+		"already contains the requested final state",
+		"already contain the requested final state",
+	}
+	for _, needle := range sourceSatisfiedNeedles {
+		if containsUnnegatedPlanRationalePhrase(text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsUnscopedPlanNoWorkPhrase(text, phrase string) bool {
+	start := 0
+	for {
+		idx := strings.Index(text[start:], phrase)
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		after := strings.TrimSpace(text[idx+len(phrase):])
+		scopedException := strings.HasPrefix(after, "outside ") ||
+			strings.HasPrefix(after, "beyond ") ||
+			strings.HasPrefix(after, "for unrelated ")
+		if !scopedException {
+			return true
+		}
+		start = idx + len(phrase)
+	}
+}
+
+func containsUnnegatedPlanRationalePhrase(text, phrase string) bool {
+	start := 0
+	for {
+		idx := strings.Index(text[start:], phrase)
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		prefixStart := idx - 32
+		if prefixStart < 0 {
+			prefixStart = 0
+		}
+		prefix := text[prefixStart:idx]
+		negated := strings.Contains(prefix, "not ") ||
+			strings.Contains(prefix, "not yet ") ||
+			strings.Contains(prefix, "is not ") ||
+			strings.Contains(prefix, "isn't ") ||
+			strings.Contains(prefix, "cannot ") ||
+			strings.Contains(prefix, "can't ")
+		if !negated {
+			return true
+		}
+		start = idx + len(phrase)
+	}
+}
+
+func planEditsAreVerificationOnly(edits []PlanEdit) bool {
+	if len(edits) == 0 {
+		return false
+	}
+	for _, edit := range edits {
+		if !planEditPurposeIsVerificationOnly(edit.Purpose) {
+			return false
+		}
+	}
+	return true
+}
+
+func planEditPurposeIsVerificationOnly(purpose string) bool {
+	text := strings.ToLower(strings.TrimSpace(purpose))
+	if text == "" {
+		return false
+	}
+	for _, prefix := range []string{
+		"verify ",
+		"verify that ",
+		"check ",
+		"check that ",
+		"confirm ",
+		"confirm that ",
+		"validate ",
+		"validate that ",
+	} {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {

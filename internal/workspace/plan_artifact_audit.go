@@ -29,6 +29,7 @@ type PlanArtifactAuditMetrics struct {
 	UnresolvedQuestionMismatches  int    `json:"unresolved_question_mismatches,omitempty"`
 	VerificationObligationSignals int    `json:"verification_obligation_signals,omitempty"`
 	ApprovalHandoffMismatches     int    `json:"approval_handoff_mismatches,omitempty"`
+	ApprovalScopeMismatches       int    `json:"approval_scope_mismatches,omitempty"`
 	PacketAvailable               bool   `json:"packet_available"`
 	PacketFresh                   bool   `json:"packet_fresh"`
 	SubmittedEditPaths            int    `json:"submitted_edit_paths"`
@@ -38,6 +39,8 @@ type PlanArtifactAuditMetrics struct {
 	PacketReason                  string `json:"packet_reason,omitempty"`
 	PackID                        string `json:"pack_id,omitempty"`
 	PacketIndexID                 string `json:"packet_index_id,omitempty"`
+	ApprovalScopeID               string `json:"approval_scope_id,omitempty"`
+	HandoffID                     string `json:"handoff_id,omitempty"`
 }
 
 type PlanArtifactAuditFinding struct {
@@ -78,7 +81,7 @@ func (r PlanArtifactAuditResult) ErrorSummary() string {
 
 func (r PlanArtifactAuditResult) SummaryLine() string {
 	return fmt.Sprintf(
-		"audit_ok=%t findings=%d packet_state=%s packet_reason=%s packet_identity_mismatches=%d packet_freshness_mismatches=%d scope_path_mismatches=%d evidence_mismatches=%d unresolved_question_mismatches=%d verification_obligation_signals=%d approval_handoff_mismatches=%d",
+		"audit_ok=%t findings=%d packet_state=%s packet_reason=%s packet_identity_mismatches=%d packet_freshness_mismatches=%d scope_path_mismatches=%d evidence_mismatches=%d unresolved_question_mismatches=%d verification_obligation_signals=%d approval_handoff_mismatches=%d approval_scope_mismatches=%d",
 		r.OK,
 		len(r.Findings),
 		firstNonEmptyString(r.Metrics.PacketState, "unknown"),
@@ -90,6 +93,7 @@ func (r PlanArtifactAuditResult) SummaryLine() string {
 		r.Metrics.UnresolvedQuestionMismatches,
 		r.Metrics.VerificationObligationSignals,
 		r.Metrics.ApprovalHandoffMismatches,
+		r.Metrics.ApprovalScopeMismatches,
 	)
 }
 
@@ -284,7 +288,23 @@ func (a *planArtifactAuditor) checkVerificationObligations() {
 }
 
 func (a *planArtifactAuditor) checkApprovalAndHandoff() {
-	if a.artifact.Approval.Required && !planArtifactApprovalSatisfied(a.artifact.Approval.Status) {
+	a.metrics.ApprovalScopeID = sanitizePlanArtifactID(a.artifact.Approval.ScopeID)
+	a.metrics.HandoffID = sanitizePlanArtifactID(a.artifact.Handoff.ID)
+	scopeSeverity := "warning"
+	if a.artifact.Handoff.Ready {
+		scopeSeverity = enforcedSeverity(a.opts)
+	}
+	if a.artifact.Approval.ScopeID == "" {
+		a.add(scopeSeverity, "approval_scope_mismatch", "approval scope id is missing", []string{"missing_approval_scope_id"})
+		a.metrics.ApprovalScopeMismatches++
+	}
+	if a.artifact.Handoff.ID == "" {
+		a.add(scopeSeverity, "approval_handoff_mismatch", "handoff id is missing", []string{"missing_handoff_id"})
+		a.metrics.ApprovalHandoffMismatches++
+	}
+	if a.artifact.Approval.Required && planArtifactApprovalPartial(a.artifact.Approval.Status) {
+		a.checkPartialApprovalScope()
+	} else if a.artifact.Approval.Required && !planArtifactApprovalSatisfied(a.artifact.Approval.Status) {
 		severity := "warning"
 		message := "approval is required but not satisfied"
 		if a.artifact.Handoff.Ready {
@@ -294,6 +314,10 @@ func (a *planArtifactAuditor) checkApprovalAndHandoff() {
 		a.add(severity, "approval_handoff_mismatch", message, []string{firstNonEmptyString(a.artifact.Approval.Status, "missing_approval_status")})
 		a.metrics.ApprovalHandoffMismatches++
 	}
+	if a.artifact.Handoff.Ready && a.artifact.Approval.ExecutionPermission == "blocked" {
+		a.add(enforcedSeverity(a.opts), "approval_scope_mismatch", "handoff is marked ready while approval execution permission is blocked", []string{firstNonEmptyString(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+		a.metrics.ApprovalScopeMismatches++
+	}
 	if a.artifact.Handoff.Ready && len(a.artifact.Handoff.Blockers) > 0 {
 		a.add(enforcedSeverity(a.opts), "approval_handoff_mismatch", "handoff is marked ready while blockers remain", a.artifact.Handoff.Blockers)
 		a.metrics.ApprovalHandoffMismatches++
@@ -301,6 +325,52 @@ func (a *planArtifactAuditor) checkApprovalAndHandoff() {
 	if strings.TrimSpace(a.artifact.Handoff.Status) == "ready" && !a.artifact.Handoff.Ready {
 		a.add("warning", "approval_handoff_mismatch", "handoff status is ready but ready flag is false", []string{a.artifact.Handoff.ID})
 		a.metrics.ApprovalHandoffMismatches++
+	}
+}
+
+func (a *planArtifactAuditor) checkPartialApprovalScope() {
+	severity := "warning"
+	if a.artifact.Handoff.Ready {
+		severity = "error"
+	}
+	if len(a.artifact.Approval.ApprovedPaths) == 0 {
+		a.add(severity, "approval_scope_mismatch", "partial approval is missing approved scope paths", []string{firstNonEmptyString(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+		a.metrics.ApprovalScopeMismatches++
+	}
+	if len(a.artifact.Approval.PendingPaths) == 0 {
+		a.add(severity, "approval_scope_mismatch", "partial approval is missing pending scope paths", []string{firstNonEmptyString(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+		a.metrics.ApprovalScopeMismatches++
+	}
+	switch a.artifact.Approval.ExecutionPermission {
+	case "execute_approved_scope":
+	case "blocked":
+		if a.artifact.Handoff.Ready {
+			a.add("error", "approval_scope_mismatch", "partial approval cannot execute while execution permission is blocked", []string{firstNonEmptyString(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+			a.metrics.ApprovalScopeMismatches++
+		}
+	default:
+		a.add(severity, "approval_scope_mismatch", "partial approval has ambiguous execution permission", []string{firstNonEmptyString(a.artifact.Approval.ExecutionPermission, "missing_execution_permission")})
+		a.metrics.ApprovalScopeMismatches++
+	}
+	if !a.artifact.Handoff.Ready {
+		a.add("warning", "approval_handoff_mismatch", "partial approval is not executable until handoff is ready", []string{firstNonEmptyString(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+		a.metrics.ApprovalHandoffMismatches++
+		return
+	}
+	approved := planArtifactAuditStringSet(a.artifact.Approval.ApprovedPaths)
+	pending := planArtifactAuditStringSet(a.artifact.Approval.PendingPaths)
+	for _, path := range planArtifactEditPaths(a.artifact.Edits) {
+		if _, ok := pending[path]; ok {
+			a.add("error", "approval_scope_mismatch", "plan edit path is still pending approval", []string{path})
+			a.metrics.ApprovalScopeMismatches++
+			continue
+		}
+		if len(approved) > 0 {
+			if _, ok := approved[path]; !ok {
+				a.add("error", "approval_scope_mismatch", "plan edit path is outside approved scope", []string{path})
+				a.metrics.ApprovalScopeMismatches++
+			}
+		}
 	}
 }
 

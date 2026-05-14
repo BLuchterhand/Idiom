@@ -1316,6 +1316,9 @@ func taskScenarioAssertions(task SWETask) []string {
 	if scenario.RequireApproval != nil {
 		assertions = append(assertions, "approval_expected")
 	}
+	if scenario.RequirePlanExecution != nil {
+		assertions = append(assertions, "plan_execution")
+	}
 	if len(scenario.RequireRunEvents) > 0 {
 		assertions = append(assertions, "run_events")
 	}

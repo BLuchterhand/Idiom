@@ -259,7 +259,15 @@ func TestBriefLintDoesNotWarnOnMultipleReadFirstAnchors(t *testing.T) {
 		"## Verified Current State\n\n"+
 		"`internal/foo/bar.go` line 1 is `package foo` and line 8 is `func Other() {}`.\n\n"+
 		"## Required Edits\n\n"+
-		"Append `func Added() {}` after the existing helper block.\n\n"+
+		"old_text:\n"+
+		"```text\n"+
+		"func Other() {}\n"+
+		"```\n\n"+
+		"new_text:\n"+
+		"```text\n"+
+		"func Other() {}\n\n"+
+		"func Added() {}\n"+
+		"```\n\n"+
 		"## Acceptance\n\n"+
 		"- `go build ./...` succeeds.\n")
 	exit, out := runPreflight(t, script, brief, ws)
@@ -470,6 +478,57 @@ func TestBriefLintAnchorVerificationOldTextStale(t *testing.T) {
 	}
 	if !strings.Contains(out, "does not match") {
 		t.Fatalf("stderr should name the stale-anchor failure: %s", out)
+	}
+}
+
+func TestBriefLintBlocksCommandBackedMutationWithoutEditShape(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"docs/map.md":             "# old map\n",
+		"scripts/generate_map.py": "print('new map')\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `docs/map.md` | MODIFY generated map at line 1 |\n\n"+
+		"## Verified Current State\n\n"+
+		"- `docs/map.md:1`: `# old map`\n\n"+
+		"## Required Behavior\n\n"+
+		"1. Run `python3 scripts/generate_map.py` to regenerate `docs/map.md`.\n\n"+
+		"## Acceptance\n\n"+
+		"- `git diff --check`\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected FAIL for command-backed mutation without edit shape, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "mutating command") || !strings.Contains(out, "explicit edit shape") {
+		t.Fatalf("stderr should explain command-backed mutation contract, got: %s", out)
+	}
+}
+
+func TestBriefLintBlocksProseAppendWithoutEditShape(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{
+		"docs/tracker.md": "- [x] Atom 1 shipped.\n",
+	})
+	brief := writeLintBrief(t, ws, "# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `docs/tracker.md` | MODIFY tracker at line 1 |\n\n"+
+		"## Verified Current State\n\n"+
+		"- `docs/tracker.md:1`: `- [x] Atom 1 shipped.`\n\n"+
+		"## Required Behavior\n\n"+
+		"1. Append the Atom 2 entry after line 1 in `docs/tracker.md`.\n\n"+
+		"## Acceptance\n\n"+
+		"- `git diff --check`\n")
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 1 {
+		t.Fatalf("expected FAIL for prose append without edit shape, got exit=%d output=%s", exit, out)
+	}
+	if !strings.Contains(out, "prose-only mutation site") || !strings.Contains(out, "old_text/new_text") {
+		t.Fatalf("stderr should explain prose-anchor mutation contract, got: %s", out)
 	}
 }
 

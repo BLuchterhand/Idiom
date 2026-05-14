@@ -39,6 +39,13 @@ The durable rules to preserve are:
 
 If a proposed prompt, policy, or recovery string feels like it is choosing the model's next move rather than protecting an invariant, it is probably misaligned.
 
+Before changing prompts, runner policies, lane orchestration, queueing, atom
+intake, audit, or context behavior, also read
+[common-traps.md](common-traps.md). It captures recurring failure patterns such
+as conflicting prompt layers, placeholder edits for source-satisfied work, stale
+anchors, hard budgets used as band-aids, missing audit evidence, and binary
+drift.
+
 ## Repo-Specific Engineering Expectations
 
 - Do not guess file paths.
@@ -88,6 +95,7 @@ make swe-live-subset
 - `docs/idiom-design-roadmap.md`: coordinated pillar docs and sequencing
 - `docs/agent-autonomy-tracker.md`: completion and workflow-state design
 - `docs/north-star-remediation.md`: examples of instructions that should be softened or generalized
+- `.codex/common-traps.md`: Codex-facing checklist of recurring Idiom maintenance traps
 
 ## Change Patterns
 

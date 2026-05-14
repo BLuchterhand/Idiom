@@ -212,6 +212,26 @@ func TestTaskScenarioAssertionsIncludeDiscoveryBalance(t *testing.T) {
 	}
 }
 
+func TestTaskScenarioAssertionsIncludePlanExecution(t *testing.T) {
+	task := SWETask{
+		ID:     "plan-execution",
+		Family: "plan_execute",
+		Prompt: "Run a plan-execute drift fixture.",
+		Scenario: Scenario{
+			Name: "plan-execution",
+			RequirePlanExecution: &PlanExecutionExpectation{
+				RequireHandoffID:       true,
+				RequireApprovalScopeID: true,
+				RequireNoDrift:         true,
+			},
+		},
+	}
+	assertions := taskScenarioAssertions(task)
+	if !containsStringFold(assertions, "plan_execution") {
+		t.Fatalf("expected plan_execution assertion, got %#v", assertions)
+	}
+}
+
 func TestComprehensionMemorySuiteCoversContextTooling(t *testing.T) {
 	suite := ComprehensionMemorySuite()
 	report := EvaluateSWESuiteDefinition(suite)

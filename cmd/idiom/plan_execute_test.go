@@ -68,6 +68,27 @@ func TestRunPlanExecuteMainUsesDefaultPlannerTokenBudget(t *testing.T) {
 	}
 }
 
+func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
+	addendum := planExecutePlannerSystemAddendum()
+	for _, forbidden := range []string{
+		"At most one bounded source-read",
+		"Never re-read the same file",
+	} {
+		if strings.Contains(addendum, forbidden) {
+			t.Fatalf("planner addendum still contains hard read-cap wording %q:\n%s", forbidden, addendum)
+		}
+	}
+	for _, want := range []string{
+		"new named edit-safety fact",
+		"Do not re-read for confidence",
+		"`Decision: source-satisfied`",
+	} {
+		if !strings.Contains(addendum, want) {
+			t.Fatalf("planner addendum missing readiness-oriented wording %q:\n%s", want, addendum)
+		}
+	}
+}
+
 func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"
@@ -368,6 +389,70 @@ func TestRunExecutorPhaseEmitsMissingPacketHandoffWithoutPlanPacket(t *testing.T
 	}
 	if handoff["packet_state"] != executorHandoffStateMissing || handoff["reason"] != "missing_packet_id" {
 		t.Fatalf("expected missing packet state, got %#v", handoff)
+	}
+}
+
+func TestRunExecutorPhaseBlocksPartialApprovalScopeDrift(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("beta\n"), 0o644); err != nil {
+		t.Fatalf("seed b.txt: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PlanID:        "plan raw_prompt customer-acme token=/Users/ben/private/client",
+		Task: workspace.PlanArtifactTask{
+			Summary:               "Block pending partial approval scope",
+			ClientClassifications: []string{"finance"},
+		},
+		Paths: workspace.PlanArtifactPaths{Editable: []string{"a.txt", "b.txt"}, Changed: []string{"b.txt"}},
+		Approval: workspace.PlanArtifactApproval{
+			Required:            true,
+			Status:              "partial",
+			ScopeID:             "scope raw_prompt customer-acme token=/Users/ben/private/client",
+			ApprovedPaths:       []string{"a.txt"},
+			PendingPaths:        []string{"b.txt"},
+			ExecutionPermission: "execute_approved_scope",
+		},
+		Handoff: workspace.PlanArtifactHandoff{ID: "handoff raw_prompt customer-acme", Status: "ready", Ready: true},
+		Edits:   []workspace.PlanEdit{{Path: "b.txt", OldText: "beta", NewText: "BETA"}},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, nil, true, &stdout); err == nil {
+		t.Fatalf("executor should block pending partial approval scope")
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	drift, ok := planExecuteEventByType(events, "idiom.plan_execute.plan_scope_drift")
+	if !ok {
+		t.Fatalf("expected plan_scope_drift event, got %s", stdout.String())
+	}
+	if drift["reason"] != "plan edit path is still pending approval" || drift["path"] != "b.txt" {
+		t.Fatalf("unexpected drift event: %#v", drift)
+	}
+	if drift["handoff_id"] == "" || drift["approval_scope_id"] == "" {
+		t.Fatalf("drift event should carry stable governance ids: %#v", drift)
+	}
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
+	}
+	if handoff["approval_execution_permission"] != "execute_approved_scope" || handoff["approved_path_count"] != float64(1) || handoff["pending_path_count"] != float64(1) {
+		t.Fatalf("handoff event should carry partial approval counters, got %#v", handoff)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "b.txt"))
+	if err != nil {
+		t.Fatalf("read b.txt: %v", err)
+	}
+	if string(body) != "beta\n" {
+		t.Fatalf("blocked drift should not mutate pending file, got %q", body)
+	}
+	for _, leaked := range []string{"raw_prompt", "customer-acme", "customer_acme", "token=", "/Users/ben/private"} {
+		if strings.Contains(stdout.String(), leaked) {
+			t.Fatalf("drift event leaked sensitive marker %q: %s", leaked, stdout.String())
+		}
 	}
 }
 

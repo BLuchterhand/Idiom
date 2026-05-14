@@ -179,7 +179,10 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	if artifact.Approval.Status == "" {
 		t.Fatalf("durable artifact should include approval metadata")
 	}
-	if artifact.Handoff.Status == "" || !artifact.Handoff.Ready {
+	if artifact.Approval.ScopeID == "" || artifact.Approval.ExecutionPermission == "" {
+		t.Fatalf("durable artifact should include approval scope and execution metadata: %#v", artifact.Approval)
+	}
+	if artifact.Handoff.ID == "" || artifact.Handoff.Status == "" || !artifact.Handoff.Ready {
 		t.Fatalf("durable artifact should include ready handoff fields: %#v", artifact.Handoff)
 	}
 	pointer, err := os.ReadFile(filepath.Join(planDir, "last.plan.json"))
@@ -446,6 +449,118 @@ func TestPlanArtifactAuditKeepsPendingApprovalNonBlockingWhenHandoffNotReady(t *
 	for _, finding := range result.Findings {
 		if finding.Kind == "approval_handoff_mismatch" && finding.Severity == "error" {
 			t.Fatalf("non-ready handoff should not promote approval mismatch to error: %#v", result.Findings)
+		}
+	}
+}
+
+func TestPlanArtifactSynthesizesStableApprovalScopeAndHandoffIDs(t *testing.T) {
+	base := PlanArtifact{
+		SchemaVersion: PlanArtifactSchemaVersion,
+		PlanID:        "plan-stable-ids",
+		Task:          PlanArtifactTask{Summary: "derive stable governance ids"},
+		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
+		Paths:         PlanArtifactPaths{Editable: []string{"b.txt", "a.txt"}},
+		Evidence:      []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded evidence"}},
+		VerificationObligations: []PlanArtifactVerificationObligation{{
+			Kind:     "focused_tests",
+			Status:   "open",
+			Required: true,
+		}},
+		Approval: PlanArtifactApproval{Required: true, Status: "approved", Mode: "local"},
+		Handoff:  PlanArtifactHandoff{Status: "ready", Ready: true, To: "executor"},
+		Edits:    []PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
+	}
+	first := normalizePlanArtifactForSubmit(base, "session-1", "2026-05-13T00:00:00Z", "plan-stable-ids", false)
+	second := normalizePlanArtifactForSubmit(base, "session-2", "2026-05-13T00:00:01Z", "plan-stable-ids", false)
+	if first.Approval.ScopeID == "" || second.Approval.ScopeID == "" || first.Approval.ScopeID != second.Approval.ScopeID {
+		t.Fatalf("approval scope id should be deterministic, first=%q second=%q", first.Approval.ScopeID, second.Approval.ScopeID)
+	}
+	if first.Handoff.ID == "" || second.Handoff.ID == "" || first.Handoff.ID != second.Handoff.ID {
+		t.Fatalf("handoff id should be deterministic, first=%q second=%q", first.Handoff.ID, second.Handoff.ID)
+	}
+	if first.Approval.ExecutionPermission != "execute_all" {
+		t.Fatalf("approved scope should default to execute_all, got %#v", first.Approval)
+	}
+	if len(first.Approval.ApprovedPaths) != 1 || first.Approval.ApprovedPaths[0] != "a.txt" {
+		t.Fatalf("approved required scope should be explicit, got %#v", first.Approval.ApprovedPaths)
+	}
+}
+
+func TestPlanArtifactPartialApprovalSemanticsAreClientClassAgnostic(t *testing.T) {
+	for _, class := range approvedPlanArtifactClientClasses() {
+		result := AuditPlanArtifact(t.TempDir(), PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			PlanID:        "plan-partial-" + class,
+			Task: PlanArtifactTask{
+				Summary:               "Execute only approved partial scope",
+				ClientClassifications: []string{class},
+			},
+			Contract: PlanArtifactContract{Kind: "plan_then_execute"},
+			Paths:    PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
+			Evidence: []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded partial approval evidence"}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				Kind:     "focused_tests",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{
+				Required:            true,
+				Status:              "partial",
+				ScopeID:             "scope-" + class,
+				Mode:                "local",
+				ApprovedPaths:       []string{"a.txt"},
+				PendingPaths:        []string{"b.txt"},
+				ExecutionPermission: "execute_approved_scope",
+			},
+			Handoff: PlanArtifactHandoff{ID: "handoff-" + class, Status: "ready", Ready: true},
+			Edits:   []PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
+		}, PlanArtifactAuditOptions{})
+		if !result.OK {
+			t.Fatalf("partial approval should allow approved scope for class %q: %#v", class, result)
+		}
+		if result.Metrics.ApprovalScopeMismatches != 0 {
+			t.Fatalf("partial approval should not report scope drift for class %q: %#v", class, result.Metrics)
+		}
+	}
+}
+
+func TestPlanArtifactPartialApprovalBlocksPendingScopePrivately(t *testing.T) {
+	result := AuditPlanArtifact(t.TempDir(), PlanArtifact{
+		SchemaVersion: PlanArtifactSchemaVersion,
+		PlanID:        "plan-partial-private",
+		Task:          PlanArtifactTask{Summary: "Block pending partial approval scope"},
+		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
+		Paths:         PlanArtifactPaths{Editable: []string{"a.txt", "b.txt"}, Changed: []string{"b.txt"}},
+		Evidence:      []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded partial approval evidence"}},
+		VerificationObligations: []PlanArtifactVerificationObligation{{
+			Kind:     "focused_tests",
+			Status:   "open",
+			Required: true,
+		}},
+		Approval: PlanArtifactApproval{
+			Required:            true,
+			Status:              "partial",
+			ScopeID:             "scope raw_prompt customer-acme token=/Users/ben/private/client",
+			ApprovedPaths:       []string{"a.txt"},
+			PendingPaths:        []string{"b.txt"},
+			ExecutionPermission: "execute_approved_scope",
+		},
+		Handoff: PlanArtifactHandoff{ID: "handoff raw_prompt customer-acme", Status: "ready", Ready: true},
+		Edits:   []PlanEdit{{Path: "b.txt", OldText: "a", NewText: "b"}},
+	}, PlanArtifactAuditOptions{})
+	if result.OK {
+		t.Fatalf("partial approval should block pending edit scope")
+	}
+	if result.Metrics.ApprovalScopeMismatches == 0 {
+		t.Fatalf("expected approval scope mismatch, got %#v", result.Metrics)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal audit result: %v", err)
+	}
+	for _, leaked := range []string{"raw_prompt", "customer-acme", "token=", "/Users/ben/private"} {
+		if strings.Contains(string(encoded), leaked) {
+			t.Fatalf("partial approval audit leaked sensitive marker %q: %s", leaked, encoded)
 		}
 	}
 }
@@ -822,6 +937,89 @@ func TestSubmitPlanRejectsEmptyEditList(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, "at least one edit") {
 		t.Fatalf("rejection should call out missing edits, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanRejectsSourceSatisfiedPlaceholderRationale(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Rationale: "The source files are already in the expected state. " +
+			"I will make minimal placeholder edits to satisfy the requirement that edits be submitted.",
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "Replace text.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("source-satisfied placeholder rationale should be rejected")
+	}
+	for _, want := range []string{"source-satisfied", "placeholder"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("rejection should point to %q, got %q", want, result.Error)
+		}
+	}
+}
+
+func TestSubmitPlanAllowsNegatedSourceSatisfiedRationale(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "The current source is not source-satisfied because it still contains the old value.",
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "Replace the old value with the requested value.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("negated source-satisfied rationale should be allowed, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanAllowsScopedNoChangesRationale(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "No changes are needed outside the approved scope; update a.txt.",
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "Replace the old value with the requested value.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("scoped no-changes rationale should be allowed, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanRejectsVerificationOnlyEditPurposes(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Check current source evidence.",
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "Verify that the expected text is present.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("verification-only edit purpose should be rejected")
+	}
+	for _, want := range []string{"verification", "source-satisfied"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("rejection should point to %q, got %q", want, result.Error)
+		}
 	}
 }
 

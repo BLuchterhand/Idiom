@@ -71,6 +71,21 @@ DISCOVERY_MANDATE_PATTERNS = [
 ]
 
 COMMAND_FENCE_TAGS = {"", "text", "bash", "sh", "shell", "console"}
+EDIT_SHAPE_RE = re.compile(
+    r"\b(old_text|new_text|start_line|end_line|replace_all|content_ref|new_text_ref)\b",
+    re.IGNORECASE,
+)
+COMMAND_MUTATION_RE = re.compile(
+    r"\b(?:run|execute|call)\s+`?(?:python3?|bash|sh|go|node|npm|pnpm|make|scons|idiom|"
+    r"\./scripts/|scripts/)[^`\n]{0,160}?`?.{0,160}?\b"
+    r"(?:regenerate|generate|write|update|refresh|modify|append|create)\b",
+    re.IGNORECASE,
+)
+PROSE_MUTATION_ANCHOR_RE = re.compile(
+    r"\b(?:append|insert|add|replace|update|refresh|regenerate)\b.{0,120}?"
+    r"\b(?:after|before|around|near|at line|line \d+|entry|section)\b",
+    re.IGNORECASE,
+)
 ALLOWLIST_HEADINGS = {
     "files to modify",
     "files to edit",
@@ -379,6 +394,12 @@ def main() -> int:
                 "and the lane's job becomes a single Write."
             )
             break
+
+    action_failures, action_warnings = validate_actionable_edit_contract(
+        text, rows
+    )
+    failures.extend(action_failures)
+    warnings.extend(action_warnings)
 
     for pattern in MAGIC_PROMPT_PATTERNS:
         if pattern in text:
@@ -840,6 +861,88 @@ def required_edit_blocks(text: str) -> list[tuple[str, str]]:
     if current_heading is not None:
         blocks.append((current_heading, "\n".join(current_lines)))
     return blocks
+
+
+def required_action_sections(text: str) -> list[str]:
+    bodies: list[str] = []
+    seen: set[str] = set()
+    for heading in ("## Required Edits", "## Required Behavior"):
+        body = find_section_body(text, heading)
+        if body is None:
+            continue
+        key = body.strip()
+        if key and key not in seen:
+            bodies.append(body)
+            seen.add(key)
+    bodies.extend(body for _heading, body in required_edit_blocks(text))
+    return bodies
+
+
+def validate_actionable_edit_contract(
+    text: str,
+    rows: list[tuple[str, str]],
+) -> tuple[list[str], list[str]]:
+    """Reject required-edit prose that cannot become a deterministic plan.
+
+    Plan-execute can only dispatch structured edits. If the brief asks the
+    planner to run a mutating command or to append/insert from prose, the
+    model has to invent anchors at run time; that is exactly the stale-anchor
+    loop this lint exists to prevent.
+    """
+    failures: list[str] = []
+    warnings: list[str] = []
+    if not rows:
+        return failures, warnings
+    existing_rows = [(fp, action) for fp, action in rows if not is_newfile_action(action)]
+    if not existing_rows:
+        return failures, warnings
+    sections = required_action_sections(text)
+    if not sections:
+        return failures, warnings
+    action_text = "\n\n".join(sections)
+    scannable = strip_fenced_blocks(action_text)
+    has_shape = bool(EDIT_SHAPE_RE.search(scannable))
+    if COMMAND_MUTATION_RE.search(scannable) and not has_shape:
+        failures.append(
+            "required edit contract asks the lane to run a mutating command "
+            "without an explicit edit shape. Plan-execute cannot execute shell "
+            "commands in the planner phase; run the command before dispatch and "
+            "inline exact old_text/new_text, start_line/end_line+content, or a "
+            "whole-file replacement."
+        )
+    if PROSE_MUTATION_ANCHOR_RE.search(scannable) and not has_shape:
+        failures.append(
+            "required edit contract describes a prose-only mutation site "
+            "(append/insert/update near another entry) without old_text/new_text "
+            "or start_line/end_line+content. Provide an executable edit shape "
+            "before dispatch so the planner does not invent stale anchors."
+        )
+    truncated = truncated_anchor_paths_without_edit_shape(text, [fp for fp, _ in existing_rows], has_shape)
+    if truncated:
+        failures.append(
+            "truncated line evidence cannot serve as an edit anchor for required "
+            "path(s): "
+            + ", ".join(truncated)
+            + ". Replace `...` summaries with exact source text or provide "
+            "explicit old_text/new_text or line-range content."
+        )
+    return failures, warnings
+
+
+def truncated_anchor_paths_without_edit_shape(
+    text: str,
+    files: list[str],
+    has_shape: bool,
+) -> list[str]:
+    if has_shape:
+        return []
+    flagged: list[str] = []
+    for file_path in files:
+        basename = file_path.rsplit("/", 1)[-1]
+        path_pattern = rf"(?:`?{re.escape(file_path)}`?|`?{re.escape(basename)}`?)\s*:\s*\d+"
+        if re.search(path_pattern + r"[^`\n]*\.\.\.", text):
+            flagged.append(file_path)
+    return flagged
 
 
 def strip_fenced_blocks(text: str) -> str:

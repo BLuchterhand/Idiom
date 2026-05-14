@@ -1,9 +1,11 @@
 # META — Patch brief (refine loop)
 
-Your only job: call `write_file` to create `{{NEW_DRAFT_PATH}}` with
-the previous draft modified to fix every bug AND every lint BLOCK.
-Read the two required inputs, apply the fixes, write the result. Do
-not analyze or summarize — write the file.
+Expected path: call `write_file` to create `{{NEW_DRAFT_PATH}}` with
+the previous draft modified to fix every bug AND every lint BLOCK,
+unless the two required inputs make a corrected draft impossible. Read
+the two required inputs, apply the fixes, write the result. If the
+corrected draft is impossible, stop with the specific `<<QUESTION>>:`
+blocker instead of writing guesswork.
 
 ## Pre-loaded lint findings (from previous draft)
 

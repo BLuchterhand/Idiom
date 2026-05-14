@@ -157,7 +157,7 @@ func (r *Runner) preflightPlanThenExecutePlannerToolGuard(req workspace.ToolRequ
 		Result: workspace.ToolResult{
 			Tool:    tool,
 			Summary: "plan-then-execute planner phase rejected verification tool",
-			Error: "plan-then-execute planner phase does not run shell, git, build, test, or source-sanity commands. " +
+			Error: "plan-then-execute planner phase does not run shell, git, build, test, source-sanity, delegation, or task-ledger commands. " +
 				"Use submit_plan, answer `Decision: source-satisfied` with per-path evidence when the requested final state is already present, or answer <<QUESTION>> with the exact blocker.",
 		},
 		Reason: "plan-then-execute planner phase: verification/shell tool " + tool + " is outside the planner contract",
@@ -177,7 +177,7 @@ func planThenExecuteForbiddenWriteTool(tool string) bool {
 
 func planThenExecutePlannerForbiddenTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case "shell", "git_diff", "git_status", "source_sanity", "affected_suites", "context_trace_pack":
+	case "shell", "git_diff", "git_status", "source_sanity", "affected_suites", "context_trace_pack", "task", "task_ledger", "pwd":
 		return true
 	default:
 		return false

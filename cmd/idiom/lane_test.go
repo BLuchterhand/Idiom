@@ -802,6 +802,102 @@ func TestRunLaneMainEmbedsCanonicalPostamble(t *testing.T) {
 	}
 }
 
+func TestCanonicalPlanExecutePostambleAllowsSourceSatisfiedCloseout(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("lanes", "plan-execute", "postamble.md"))
+	if err != nil {
+		t.Fatalf("read plan-execute postamble: %v", err)
+	}
+	postamble := string(body)
+	for _, want := range []string{
+		"`submit_plan` has been called successfully",
+		"`Decision: source-satisfied`",
+		"every required edit path",
+		"`<<QUESTION>>:` blocker",
+		"Do not submit verification",
+		"placeholder edits",
+	} {
+		if !strings.Contains(postamble, want) {
+			t.Fatalf("plan-execute postamble missing terminal contract language %q:\n%s", want, postamble)
+		}
+	}
+	if strings.Contains(postamble, "complete only after `submit_plan`") {
+		t.Fatalf("plan-execute postamble must not exclude source-satisfied as a terminal outcome:\n%s", postamble)
+	}
+}
+
+func TestCanonicalImplementPromptDoesNotMakeWriteTheLiteralFinalAction(t *testing.T) {
+	preambleBody, err := os.ReadFile(filepath.Join("lanes", "implement", "preamble.md"))
+	if err != nil {
+		t.Fatalf("read implement preamble: %v", err)
+	}
+	postambleBody, err := os.ReadFile(filepath.Join("lanes", "implement", "postamble.md"))
+	if err != nil {
+		t.Fatalf("read implement postamble: %v", err)
+	}
+	prompt := string(preambleBody) + "\n" + string(postambleBody)
+	forbidden := []string{
+		"Your final action MUST be a successful write",
+		"This dispatch is complete only after an allowed file edit has been attempted",
+	}
+	for _, phrase := range forbidden {
+		if strings.Contains(prompt, phrase) {
+			t.Fatalf("implement prompt retains conflicting closeout phrase %q:\n%s", phrase, prompt)
+		}
+	}
+	for _, want := range []string{
+		"before closeout",
+		"lane-owned sanity",
+		"do not make placeholder edits",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("implement prompt missing clarified closeout language %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestCanonicalPromptFilesDoNotEncourageNoopWrites(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "prompts", "base.md"),
+		filepath.Join("..", "..", "prompts", "profiles", "coding.md"),
+		filepath.Join("..", "..", "prompts", "profiles", "claude-qwen-worker.md"),
+		filepath.Join("lanes", "implement", "preamble.md"),
+		filepath.Join("lanes", "plan-execute", "postamble.md"),
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(body), "no-op write attempt") {
+			t.Fatalf("%s still encourages no-op write attempts:\n%s", path, string(body))
+		}
+	}
+}
+
+func TestCanonicalRefinePromptsUseConditionalExpectedPathLanguage(t *testing.T) {
+	paths := []string{
+		filepath.Join("lanes", "refine", "draft.md"),
+		filepath.Join("lanes", "refine", "draft-markdown.md"),
+		filepath.Join("lanes", "refine", "review.md"),
+		filepath.Join("lanes", "refine", "patch.md"),
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		prompt := string(body)
+		if strings.Contains(prompt, "Your only job") {
+			t.Fatalf("%s uses unconditional job wording that conflicts with blocker closeout:\n%s", path, prompt)
+		}
+		for _, want := range []string{"Expected path", "`<<QUESTION>>:`"} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("%s missing conditional refine contract language %q:\n%s", path, want, prompt)
+			}
+		}
+	}
+}
+
 // TestRunLaneMainProjectOverlayWrappedByCanonical verifies the
 // concatenation order specified in lane-architecture.md §"Prompt
 // composition layers": idiom canonical preamble → project preamble

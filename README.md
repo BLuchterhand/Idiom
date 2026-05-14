@@ -483,7 +483,8 @@ The first long-running invocation creates a baseline by default; pass
 implementation brief before handing it to `idiom implement`. The lint covers
 single-purpose decomposition, prompt-magic contract triggers, content fence
 safety, blockquoted code, test-anchor preload presence, verified-current-state
-presence, and exact-anchor specificity for every required edit path.
+presence, exact-anchor specificity for every required edit path, and
+plan-execute edit-shape readiness.
 
 ```bash
 ./idiom brief lint path/to/brief.md
@@ -499,6 +500,13 @@ must carry at least one `<path>:<line>` reference, an explicit `line N` /
 anchors ("near other small predicates", "find the closing brace") force the
 lane to spend reads locating the insertion site and frequently exhaust the
 pre-write read budget.
+
+For plan-execute briefs, a line reference is not enough when the Required
+Edits/Behavior section asks the planner to run a mutating command or append /
+insert from prose. Inline an executable shape instead:
+`old_text`/`new_text`, `start_line`/`end_line`+`content`, or whole-file
+replacement content. Command-generated files should be generated before
+dispatch and handed to the lane as exact edits.
 
 This was originally Colony's `scripts/qwen_brief_preflight.py`; the canonical
 implementation now lives with idiom so any project dispatching multi-file

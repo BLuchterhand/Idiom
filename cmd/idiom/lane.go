@@ -348,7 +348,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		BriefProvenance: detectBriefProvenance(opts.BriefPath),
 		Title:           opts.Title,
 		ExitCode:        subcode,
-		FinalState:      laneRunFinalState(subcode, degraded),
+		FinalState:      laneRunFinalState(subcode, degraded, tee.Bytes()),
 		QueuePool:       parseLaneQueuePool(tee.Bytes()),
 		Degradations:    laneDegradationKinds(degraded),
 	}

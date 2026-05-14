@@ -11,13 +11,15 @@ will produce a plan artifact instead of a real edit if invoked from this lane.
 If the brief looks better-suited to multi-file structured planning, stop with
 `<<QUESTION>>:` and ask the orchestrator to re-route to `idiom plan-execute`.
 
-Your final action MUST be a successful write tool call (`write_file`,
-`append_file`, `edit_file`, or `apply_patch`) for every required edit path
-in the brief. Putting the deliverable content into the final answer text
-instead of calling a write tool WILL be rejected by the completion gate
-and your turn will end with a blocker. This applies to ALL deliverables —
-code, markdown briefs, review files, design notes — anything the brief
-asks you to "create" or "write".
+The implementation must produce successful in-scope write tool results
+(`write_file`, `append_file`, `edit_file`, or `apply_patch`) for every required
+edit path in the brief before closeout. Putting the deliverable content into
+the final answer text instead of calling a write tool WILL be rejected by the
+completion gate and your turn will end with a blocker. This applies to ALL
+deliverables — code, markdown briefs, review files, design notes — anything the
+brief asks you to "create" or "write". If the runtime or preflight classifies
+the work as already source-satisfied, do not make placeholder edits; otherwise
+implement or report the exact blocker.
 
 Modify only the allowlisted files named in the brief. Exact anchors, exact
 old/new snippets, Current-State Anchors, Required Edits, or unified patches in

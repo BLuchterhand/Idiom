@@ -1,10 +1,10 @@
 # META — Draft brief (refine loop, iter 1, markdown-deliverable mode)
 
 The spec asks for a NEW markdown/text file deliverable (no source
-code edits, no anchors). Your only job: call `write_file` to create
+code edits, no anchors). Expected path: call `write_file` to create
 `{{DRAFT_PATH}}` with a brief that bundles the deliverable's content
-ready for direct writing. Do not analyze, summarize, or comment —
-write the file.
+ready for direct writing. If the spec is too vague to draft from, stop
+with the specific `<<QUESTION>>:` blocker instead of writing guesswork.
 
 ## Files To Modify
 
@@ -89,7 +89,9 @@ the Deliverable Path — that's harness territory.
 
 ## STOP AND WRITE NOW
 
-Your VERY NEXT TOOL CALL MUST be `write_file` with:
+If the spec is too vague to write a brief from, surface `<<QUESTION>>:`
+with the specific gap now. Otherwise, your VERY NEXT TOOL CALL MUST be
+`write_file` with:
 
 - `path`: `{{DRAFT_PATH}}`
 - `content`: the filled-in template from "Write `{{DRAFT_PATH}}` with
@@ -103,9 +105,6 @@ The file content goes inside the `write_file` call's `content`
 argument, not in a chat message. After `write_file` returns success,
 give a single-sentence final answer ("Done. Brief at
 `{{DRAFT_PATH}}`.") and stop.
-
-If the spec is too vague to write a brief from, surface `<<QUESTION>>:`
-with the specific gap — do NOT just stop or summarize without writing.
 
 ## Completion
 

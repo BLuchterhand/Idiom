@@ -15,8 +15,8 @@ func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing
 	if spec.PermissionProfile != "guarded_workspace_write" {
 		t.Fatalf("planner phase needs guarded_workspace_write so the runner doesn't block reads/submit_plan, got %q", spec.PermissionProfile)
 	}
-	if spec.ToolProfile != CapabilityGuardedWrite {
-		t.Fatalf("planner phase should expose write-capable tool profile (so submit_plan flows through), got %q", spec.ToolProfile)
+	if spec.ToolProfile != CapabilityPlanSubmissionPlanner {
+		t.Fatalf("planner phase should expose the plan-submission profile, got %q", spec.ToolProfile)
 	}
 	if !planThenExecuteToolListContains(spec.RequiredTools, "submit_plan") {
 		t.Fatalf("planner phase must require submit_plan in RequiredTools, got %v", spec.RequiredTools)
@@ -25,7 +25,7 @@ func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing
 
 func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *testing.T) {
 	available := []string{
-		"read_file", "search_content", "code_navigate",
+		"read_file", "search_content", "code_navigate", "shell", "git_diff",
 		"submit_plan", "edit_file", "apply_patch",
 		"task", "task_ledger",
 	}
@@ -35,6 +35,11 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 	}
 	if !planThenExecuteToolListContains(brief.AllowedTools, "read_file") {
 		t.Fatalf("planner brief must surface read_file for evidence gathering, got %v", brief.AllowedTools)
+	}
+	for _, forbidden := range []string{"edit_file", "apply_patch", "shell", "git_diff", "task", "task_ledger"} {
+		if planThenExecuteToolListContains(brief.AllowedTools, forbidden) {
+			t.Fatalf("planner brief must not advertise %s; got %v", forbidden, brief.AllowedTools)
+		}
 	}
 }
 

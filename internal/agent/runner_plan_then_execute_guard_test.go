@@ -170,7 +170,7 @@ func TestPlanThenExecutePlannerToolGuardRejectsShellAndVerification(t *testing.T
 			TaskFamily: PlanThenExecutePlannerTaskFamily,
 		},
 	}
-	for _, tool := range []string{"shell", "git_diff", "git_status", "source_sanity", "affected_suites", "context_trace_pack"} {
+	for _, tool := range []string{"shell", "git_diff", "git_status", "source_sanity", "affected_suites", "context_trace_pack", "task", "task_ledger", "pwd"} {
 		got := runner.preflightPlanThenExecutePlannerToolGuard(workspace.ToolRequest{Tool: tool})
 		if !got.Intercepted {
 			t.Fatalf("planner phase must reject %q, got %#v", tool, got)

@@ -85,13 +85,16 @@ type PlanArtifactVerificationObligation struct {
 }
 
 type PlanArtifactApproval struct {
-	Required         bool   `json:"required"`
-	Status           string `json:"status,omitempty"`
-	ScopeID          string `json:"scope_id,omitempty"`
-	Mode             string `json:"mode,omitempty"`
-	ApprovedBy       string `json:"approved_by,omitempty"`
-	ApprovedAt       string `json:"approved_at,omitempty"`
-	ExpirationPolicy string `json:"expiration_policy,omitempty"`
+	Required            bool     `json:"required"`
+	Status              string   `json:"status,omitempty"`
+	ScopeID             string   `json:"scope_id,omitempty"`
+	Mode                string   `json:"mode,omitempty"`
+	ApprovedBy          string   `json:"approved_by,omitempty"`
+	ApprovedAt          string   `json:"approved_at,omitempty"`
+	ExpirationPolicy    string   `json:"expiration_policy,omitempty"`
+	ApprovedPaths       []string `json:"approved_paths,omitempty"`
+	PendingPaths        []string `json:"pending_paths,omitempty"`
+	ExecutionPermission string   `json:"execution_permission,omitempty"`
 }
 
 type PlanArtifactHandoff struct {
@@ -289,10 +292,26 @@ func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, cre
 	artifact.Approval.ApprovedBy = sanitizePlanArtifactID(artifact.Approval.ApprovedBy)
 	artifact.Approval.ApprovedAt = sanitizePlanArtifactToken(artifact.Approval.ApprovedAt)
 	artifact.Approval.ExpirationPolicy = sanitizePlanArtifactToken(artifact.Approval.ExpirationPolicy)
-	artifact.Handoff.ID = sanitizePlanArtifactID(firstNonEmptyString(artifact.Handoff.ID, artifact.PlanID+":handoff"))
+	artifact.Approval.ApprovedPaths = normalizePlanArtifactPaths(artifact.Approval.ApprovedPaths)
+	artifact.Approval.PendingPaths = normalizePlanArtifactPaths(artifact.Approval.PendingPaths)
+	artifact.Approval.ExecutionPermission = sanitizePlanArtifactToken(artifact.Approval.ExecutionPermission)
+	if artifact.Approval.Required && planArtifactApprovalSatisfied(artifact.Approval.Status) && len(artifact.Approval.ApprovedPaths) == 0 {
+		artifact.Approval.ApprovedPaths = normalizePlanArtifactPaths(firstNonEmptyStrings(artifact.Paths.Required, editPaths))
+	}
+	if artifact.Approval.ScopeID == "" {
+		artifact.Approval.ScopeID = planArtifactStableApprovalScopeID(artifact, editPaths)
+	}
+	if artifact.Approval.ExecutionPermission == "" && !planArtifactApprovalPartial(artifact.Approval.Status) {
+		artifact.Approval.ExecutionPermission = defaultPlanArtifactExecutionPermission(artifact)
+	}
+	artifact.Handoff.ID = sanitizePlanArtifactID(artifact.Handoff.ID)
+	if artifact.Handoff.ID == "" {
+		artifact.Handoff.ID = planArtifactStableHandoffID(artifact, editPaths)
+	}
 	artifact.Handoff.From = sanitizePlanArtifactToken(artifact.Handoff.From)
 	artifact.Handoff.To = sanitizePlanArtifactToken(artifact.Handoff.To)
 	artifact.Handoff.Status = sanitizePlanArtifactToken(firstNonEmptyString(artifact.Handoff.Status, "ready"))
+	artifact.Handoff.Blockers = normalizePlanArtifactTokens(artifact.Handoff.Blockers)
 	if legacyRequest {
 		artifact.Handoff.From = firstNonEmptyString(artifact.Handoff.From, "planner")
 		artifact.Handoff.To = firstNonEmptyString(artifact.Handoff.To, "plan_execute_executor")
@@ -300,7 +319,9 @@ func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, cre
 			artifact.Handoff.Ready = true
 		}
 	}
-	artifact.Handoff.Blockers = normalizePlanArtifactTokens(artifact.Handoff.Blockers)
+	if !artifact.Handoff.Ready && planArtifactHandoffExecutable(artifact) {
+		artifact.Handoff.Ready = true
+	}
 	artifact.LegacyProse = sanitizePlanArtifactText(artifact.LegacyProse, 2000)
 	return artifact
 }
@@ -344,6 +365,29 @@ func ValidatePlanArtifact(artifact PlanArtifact) error {
 		if strings.TrimSpace(artifact.Approval.Status) == "" {
 			errs = appendPlanArtifactSchemaError(errs, "approval.status", "required", "approval status is required")
 		}
+		if strings.TrimSpace(artifact.Approval.ScopeID) == "" {
+			errs = appendPlanArtifactSchemaError(errs, "approval.scope_id", "required", "approval scope id is required")
+		}
+		if strings.TrimSpace(artifact.Approval.ExecutionPermission) == "" {
+			errs = appendPlanArtifactSchemaError(errs, "approval.execution_permission", "required", "approval execution permission is required")
+		}
+		if !planArtifactExecutionPermissionKnown(artifact.Approval.ExecutionPermission) {
+			errs = appendPlanArtifactSchemaError(errs, "approval.execution_permission", "unsupported", "approval execution permission must be execute_all, execute_approved_scope, or blocked")
+		}
+		if planArtifactApprovalPartial(artifact.Approval.Status) {
+			if len(artifact.Approval.ApprovedPaths) == 0 {
+				errs = appendPlanArtifactSchemaError(errs, "approval.approved_paths", "required", "partial approval requires explicit approved scope paths")
+			}
+			if len(artifact.Approval.PendingPaths) == 0 {
+				errs = appendPlanArtifactSchemaError(errs, "approval.pending_paths", "required", "partial approval requires explicit pending scope paths")
+			}
+			if artifact.Approval.ExecutionPermission != "execute_approved_scope" && artifact.Approval.ExecutionPermission != "blocked" {
+				errs = appendPlanArtifactSchemaError(errs, "approval.execution_permission", "invalid_partial_permission", "partial approval must execute only approved scope or remain blocked")
+			}
+		}
+		if strings.TrimSpace(artifact.Handoff.ID) == "" {
+			errs = appendPlanArtifactSchemaError(errs, "handoff.id", "required", "handoff id is required")
+		}
 		if strings.TrimSpace(artifact.Handoff.Status) == "" {
 			errs = appendPlanArtifactSchemaError(errs, "handoff.status", "required", "handoff status is required")
 		}
@@ -366,6 +410,8 @@ func ValidatePlanArtifact(artifact PlanArtifact) error {
 	validatePlanArtifactPathList(&errs, "paths.changed", artifact.Paths.Changed)
 	validatePlanArtifactPathList(&errs, "contract.required_edit_paths", artifact.Contract.RequiredEditPaths)
 	validatePlanArtifactPathList(&errs, "contract.forbidden_paths", artifact.Contract.ForbiddenPaths)
+	validatePlanArtifactPathList(&errs, "approval.approved_paths", artifact.Approval.ApprovedPaths)
+	validatePlanArtifactPathList(&errs, "approval.pending_paths", artifact.Approval.PendingPaths)
 	for i, classification := range artifact.Task.ClientClassifications {
 		if !isApprovedPlanArtifactClientClassification(classification) {
 			errs = appendPlanArtifactSchemaError(errs, fmt.Sprintf("task.client_classifications[%d]", i), "unsupported_client_classification", "client classification must be one of the approved values")
@@ -407,6 +453,95 @@ func defaultPlanArtifactEvidence(artifact PlanArtifact) []PlanArtifactEvidence {
 		Kind:    "planner_submission",
 		Summary: "legacy submit_plan payload normalized into durable artifact",
 	}}
+}
+
+func defaultPlanArtifactExecutionPermission(artifact PlanArtifact) string {
+	status := strings.TrimSpace(artifact.Approval.Status)
+	switch {
+	case planArtifactApprovalPartial(status):
+		return ""
+	case planArtifactApprovalSatisfied(status), !artifact.Approval.Required:
+		return "execute_all"
+	default:
+		return "blocked"
+	}
+}
+
+func planArtifactExecutionPermissionKnown(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "execute_all", "execute_approved_scope", "blocked":
+		return true
+	default:
+		return false
+	}
+}
+
+func planArtifactHandoffExecutable(artifact PlanArtifact) bool {
+	if strings.TrimSpace(artifact.Handoff.Status) != "ready" || len(artifact.Handoff.Blockers) > 0 {
+		return false
+	}
+	switch strings.TrimSpace(artifact.Approval.ExecutionPermission) {
+	case "execute_all", "execute_approved_scope":
+		return true
+	default:
+		return false
+	}
+}
+
+func planArtifactApprovalPartial(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "partial", "partially_approved":
+		return true
+	default:
+		return false
+	}
+}
+
+func planArtifactStableApprovalScopeID(artifact PlanArtifact, editPaths []string) string {
+	approved := artifact.Approval.ApprovedPaths
+	if len(approved) == 0 {
+		approved = firstNonEmptyStrings(artifact.Paths.Required, editPaths)
+	}
+	parts := []string{
+		"plan:" + artifact.PlanID,
+		"packet:" + artifact.Packet.PackID,
+		"approval:" + artifact.Approval.Status,
+	}
+	for _, path := range normalizePlanArtifactPaths(approved) {
+		parts = append(parts, "approved:"+path)
+	}
+	for _, path := range normalizePlanArtifactPaths(artifact.Approval.PendingPaths) {
+		parts = append(parts, "pending:"+path)
+	}
+	return planArtifactStableID("scope", parts...)
+}
+
+func planArtifactStableHandoffID(artifact PlanArtifact, editPaths []string) string {
+	parts := []string{
+		"plan:" + artifact.PlanID,
+		"scope:" + artifact.Approval.ScopeID,
+		"packet:" + artifact.Packet.PackID,
+		"from:" + artifact.Handoff.From,
+		"to:" + artifact.Handoff.To,
+	}
+	for _, path := range normalizePlanArtifactPaths(editPaths) {
+		parts = append(parts, "edit:"+path)
+	}
+	return planArtifactStableID("handoff", parts...)
+}
+
+func planArtifactStableID(prefix string, values ...string) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			parts = append(parts, value)
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "empty")
+	}
+	return sanitizePlanArtifactID(prefix + "-" + planArtifactHash(strings.Join(parts, "\x00")))
 }
 
 func planArtifactEditPaths(edits []PlanEdit) []string {

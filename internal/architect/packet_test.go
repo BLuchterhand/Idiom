@@ -597,7 +597,7 @@ func TestAuditPlanArtifactComparesSubmittedFieldsPrivately(t *testing.T) {
 			Status:   "open",
 			Required: true,
 		}},
-		Approval: PlanArtifactApprovalAuditSubject{Required: true, Status: "pending"},
+		Approval: PlanArtifactApprovalAuditSubject{Required: true, Status: "pending", ScopeID: "scope-1", ExecutionPermission: "blocked"},
 		Handoff:  PlanArtifactHandoffAuditSubject{ID: "handoff-1", Status: "ready", Ready: true},
 		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/architect/outside.go"}},
 	})
@@ -642,7 +642,7 @@ func TestAuditPlanArtifactReportsPacketStateMetrics(t *testing.T) {
 			Editable: []string{"internal/architect/packet.go"},
 			Required: []string{"internal/architect/packet.go"},
 		},
-		Approval: PlanArtifactApprovalAuditSubject{Status: "implicit"},
+		Approval: PlanArtifactApprovalAuditSubject{Status: "implicit", ScopeID: "scope-1", ExecutionPermission: "execute_all"},
 		Handoff:  PlanArtifactHandoffAuditSubject{ID: "handoff-1", Status: "ready", Ready: true},
 		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/architect/packet.go"}},
 	}
@@ -691,8 +691,10 @@ func TestAuditPlanArtifactBlocksReadyHandoffWithoutRequiredApproval(t *testing.T
 			Required: []string{"internal/architect/packet.go"},
 		},
 		Approval: PlanArtifactApprovalAuditSubject{
-			Required: true,
-			Status:   "pending raw_prompt customer-acme transcript",
+			Required:            true,
+			Status:              "pending raw_prompt customer-acme transcript",
+			ScopeID:             "scope-1",
+			ExecutionPermission: "blocked",
 		},
 		Handoff: PlanArtifactHandoffAuditSubject{
 			ID:     "handoff-1",
@@ -737,7 +739,7 @@ func TestAuditPlanArtifactAllowsPendingApprovalWhenHandoffNotReady(t *testing.T)
 			Editable: []string{"internal/architect/packet.go"},
 			Required: []string{"internal/architect/packet.go"},
 		},
-		Approval: PlanArtifactApprovalAuditSubject{Required: true, Status: "pending"},
+		Approval: PlanArtifactApprovalAuditSubject{Required: true, Status: "pending", ScopeID: "scope-1", ExecutionPermission: "blocked"},
 		Handoff:  PlanArtifactHandoffAuditSubject{ID: "handoff-1", Status: "blocked", Ready: false},
 		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/architect/packet.go"}},
 	})
@@ -752,6 +754,43 @@ func TestAuditPlanArtifactAllowsPendingApprovalWhenHandoffNotReady(t *testing.T)
 	}
 	if !hasAuditFinding(result, "approval_handoff_mismatch", "warning") {
 		t.Fatalf("non-ready handoff should keep warning signal visible: %#v", result.Findings)
+	}
+}
+
+func TestAuditPlanArtifactBlocksPartialApprovalDrift(t *testing.T) {
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Audit partial approval drift",
+		CandidateScope: []RankedScopeItem{{
+			Handle: "file://internal/architect/packet.go",
+			Path:   "internal/architect/packet.go",
+			Kind:   "file",
+			Rank:   0.9,
+		}},
+	}
+	result := AuditPlanArtifact(packet, PlanArtifactAuditSubject{
+		Paths: PlanArtifactPathsAuditSubject{
+			Editable: []string{"internal/architect/packet.go", "internal/architect/pending.go"},
+		},
+		Approval: PlanArtifactApprovalAuditSubject{
+			Required:            true,
+			Status:              "partial",
+			ScopeID:             "scope-partial",
+			ApprovedPaths:       []string{"internal/architect/packet.go"},
+			PendingPaths:        []string{"internal/architect/pending.go"},
+			ExecutionPermission: "execute_approved_scope",
+		},
+		Handoff: PlanArtifactHandoffAuditSubject{ID: "handoff-partial", Status: "ready", Ready: true},
+		Edits:   []PlanArtifactEditAuditSubject{{Path: "internal/architect/pending.go"}},
+	})
+	if result.OK {
+		t.Fatalf("partial approval should block edits outside approved scope")
+	}
+	if !hasAuditFinding(result, "approval_scope_mismatch", "error") {
+		t.Fatalf("expected approval scope mismatch, got %#v", result.Findings)
+	}
+	if result.MismatchMetrics.ApprovalScopeMismatches == 0 {
+		t.Fatalf("expected approval scope mismatch metric, got %#v", result.MismatchMetrics)
 	}
 }
 

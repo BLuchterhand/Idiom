@@ -235,6 +235,17 @@ func TestAnalyzeLaneOutputAcceptsQuestionBlocker(t *testing.T) {
 	}
 }
 
+func TestAnalyzeLaneOutputAcceptsSourceSatisfiedEvent(t *testing.T) {
+	out := []byte(`{"type":"final","content":"Decision: source-satisfied"}` + "\n" + `{"type":"idiom.plan_execute.source_satisfied","required_edit_paths":["a.go"]}`)
+	deg := analyzeLaneOutput(out, 0)
+	if len(deg) != 0 {
+		t.Fatalf("source-satisfied event must satisfy the check; got %+v", deg)
+	}
+	if got := laneRunFinalState(0, deg, out); got != "source-satisfied" {
+		t.Fatalf("source-satisfied event should be recorded in lane history, got %q", got)
+	}
+}
+
 // TestAnalyzeLaneOutputSkipsNoEditWhenSubcommandFailed verifies the
 // noise-suppression rule: when the subcommand exits non-zero, the
 // "no edit attempt" check is skipped because the non-zero exit

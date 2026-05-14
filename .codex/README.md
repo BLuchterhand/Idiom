@@ -6,6 +6,7 @@ This directory holds repo-local Codex guidance for `idiom`.
 
 - `../AGENTS.md`: the primary instruction file Codex auto-loads for this repository
 - `project-context.md`: distilled repo context, north-star guidance, commands, and doc map for Codex sessions
+- `common-traps.md`: recurring prompt, contract, evidence, audit, and process traps to check before changing Idiom behavior
 
 ## Notes
 

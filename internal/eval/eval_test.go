@@ -133,6 +133,55 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 }
 
+func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
+	records := []Record{
+		{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
+			"plan_id":                       "plan-1",
+			"handoff_id":                    "handoff-1",
+			"approval_scope_id":             "scope-1",
+			"approval_status":               "partial",
+			"approval_execution_permission": "execute_approved_scope",
+			"packet_state":                  "missing",
+			"reason":                        "missing_packet_id",
+		}},
+		{Type: "idiom.plan_execute.plan_scope_drift", Data: map[string]any{
+			"path":              "b.txt",
+			"reason":            "plan edit path is still pending approval",
+			"handoff_id":        "handoff-1",
+			"approval_scope_id": "scope-1",
+			"packet_state":      "missing",
+		}},
+	}
+	report := Evaluate("", records, Scenario{
+		Name: "plan-execution-drift",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:            true,
+			RequireApprovalScopeID:      true,
+			RequireDrift:                true,
+			RequireDriftReasons:         []string{"plan edit path is still pending approval"},
+			RequirePacketStates:         []string{"missing"},
+			RequireExecutionPermissions: []string{"execute_approved_scope"},
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected plan execution drift assertions to pass, got %#v", report.Findings)
+	}
+	noDrift := Evaluate("", records, Scenario{
+		Name: "plan-execution-no-drift",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:       true,
+			RequireApprovalScopeID: true,
+			RequireNoDrift:         true,
+		},
+	})
+	if noDrift.Passed {
+		t.Fatalf("expected no-drift assertion to fail when drift event is present")
+	}
+	if !strings.Contains(strings.Join(noDrift.Findings, "\n"), "plan execution drift was forbidden") {
+		t.Fatalf("expected no-drift finding, got %#v", noDrift.Findings)
+	}
+}
+
 func TestAnalyzeUsesLaneSummaryAsAssistantFallback(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "prepare a plan"}},

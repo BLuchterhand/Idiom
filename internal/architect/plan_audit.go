@@ -33,6 +33,7 @@ type PlanAuditMismatchMetrics struct {
 	UnresolvedQuestionMismatches  int    `json:"unresolved_question_mismatches,omitempty"`
 	VerificationObligationSignals int    `json:"verification_obligation_signals,omitempty"`
 	ApprovalHandoffMismatches     int    `json:"approval_handoff_mismatches,omitempty"`
+	ApprovalScopeMismatches       int    `json:"approval_scope_mismatches,omitempty"`
 	PacketState                   string `json:"packet_state,omitempty"`
 	PacketReason                  string `json:"packet_reason,omitempty"`
 }
@@ -91,10 +92,13 @@ type PlanArtifactVerifyAuditSubject struct {
 }
 
 type PlanArtifactApprovalAuditSubject struct {
-	Required bool   `json:"required"`
-	Status   string `json:"status,omitempty"`
-	ScopeID  string `json:"scope_id,omitempty"`
-	Mode     string `json:"mode,omitempty"`
+	Required            bool     `json:"required"`
+	Status              string   `json:"status,omitempty"`
+	ScopeID             string   `json:"scope_id,omitempty"`
+	Mode                string   `json:"mode,omitempty"`
+	ApprovedPaths       []string `json:"approved_paths,omitempty"`
+	PendingPaths        []string `json:"pending_paths,omitempty"`
+	ExecutionPermission string   `json:"execution_permission,omitempty"`
 }
 
 type PlanArtifactHandoffAuditSubject struct {
@@ -626,7 +630,31 @@ func auditArtifactVerificationObligations(packet Packet, artifact PlanArtifactAu
 
 func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAuditFinding {
 	var findings []PlanAuditFinding
-	if artifact.Approval.Required && !artifactApprovalSatisfied(artifact.Approval.Status) {
+	scopeSeverity := "warning"
+	if artifact.Handoff.Ready {
+		scopeSeverity = "error"
+	}
+	if strings.TrimSpace(artifact.Approval.ScopeID) == "" {
+		findings = append(findings, PlanAuditFinding{
+			Severity:            scopeSeverity,
+			Kind:                "approval_scope_mismatch",
+			Message:             "submitted plan artifact is missing approval scope id",
+			Evidence:            []string{"missing_approval_scope_id"},
+			SuggestedResolution: "Carry a stable approval scope id on the submitted plan artifact.",
+		})
+	}
+	if strings.TrimSpace(artifact.Handoff.ID) == "" {
+		findings = append(findings, PlanAuditFinding{
+			Severity:            scopeSeverity,
+			Kind:                "approval_handoff_mismatch",
+			Message:             "submitted plan artifact is missing handoff id",
+			Evidence:            []string{"missing_handoff_id"},
+			SuggestedResolution: "Carry a stable handoff id before executor dispatch.",
+		})
+	}
+	if artifact.Approval.Required && artifactApprovalPartial(artifact.Approval.Status) {
+		findings = append(findings, auditArtifactPartialApproval(artifact)...)
+	} else if artifact.Approval.Required && !artifactApprovalSatisfied(artifact.Approval.Status) {
 		severity := "warning"
 		message := "submitted plan approval is required but not satisfied"
 		if artifact.Handoff.Ready {
@@ -641,6 +669,15 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "Approve the bounded scope or mark the handoff blocked.",
 		})
 	}
+	if artifact.Handoff.Ready && strings.TrimSpace(artifact.Approval.ExecutionPermission) == "blocked" {
+		findings = append(findings, PlanAuditFinding{
+			Severity:            "error",
+			Kind:                "approval_scope_mismatch",
+			Message:             "submitted plan handoff is ready while approval execution permission is blocked",
+			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+			SuggestedResolution: "Mark handoff blocked or change execution permission only after approval evidence exists.",
+		})
+	}
 	if artifact.Handoff.Ready && len(artifact.Handoff.Blockers) > 0 {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
@@ -649,6 +686,89 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 			Evidence:            artifact.Handoff.Blockers,
 			SuggestedResolution: "Clear blockers with evidence or mark handoff not ready.",
 		})
+	}
+	return findings
+}
+
+func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAuditFinding {
+	var findings []PlanAuditFinding
+	severity := "warning"
+	if artifact.Handoff.Ready {
+		severity = "error"
+	}
+	if len(artifact.Approval.ApprovedPaths) == 0 {
+		findings = append(findings, PlanAuditFinding{
+			Severity:            severity,
+			Kind:                "approval_scope_mismatch",
+			Message:             "partial approval is missing approved scope paths",
+			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+			SuggestedResolution: "List the workspace-relative paths approved for execution.",
+		})
+	}
+	if len(artifact.Approval.PendingPaths) == 0 {
+		findings = append(findings, PlanAuditFinding{
+			Severity:            severity,
+			Kind:                "approval_scope_mismatch",
+			Message:             "partial approval is missing pending scope paths",
+			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+			SuggestedResolution: "List the workspace-relative paths that still require approval.",
+		})
+	}
+	switch strings.TrimSpace(artifact.Approval.ExecutionPermission) {
+	case "execute_approved_scope":
+	case "blocked":
+		if artifact.Handoff.Ready {
+			findings = append(findings, PlanAuditFinding{
+				Severity:            "error",
+				Kind:                "approval_scope_mismatch",
+				Message:             "partial approval cannot execute while execution permission is blocked",
+				Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+				SuggestedResolution: "Mark the handoff blocked or restrict execution to approved scope.",
+			})
+		}
+	default:
+		findings = append(findings, PlanAuditFinding{
+			Severity:            severity,
+			Kind:                "approval_scope_mismatch",
+			Message:             "partial approval has ambiguous execution permission",
+			Evidence:            []string{firstNonEmpty(artifact.Approval.ExecutionPermission, "missing_execution_permission")},
+			SuggestedResolution: "Use execute_approved_scope for executable partial approvals or blocked for non-executable approvals.",
+		})
+	}
+	if !artifact.Handoff.Ready {
+		findings = append(findings, PlanAuditFinding{
+			Severity:            "warning",
+			Kind:                "approval_handoff_mismatch",
+			Message:             "partial approval is not executable until handoff is ready",
+			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+			SuggestedResolution: "Keep the handoff blocked until approved scope can execute.",
+		})
+		return findings
+	}
+	approved := stringSetFromStrings(artifact.Approval.ApprovedPaths)
+	pending := stringSetFromStrings(artifact.Approval.PendingPaths)
+	for _, path := range planArtifactAuditEditPaths(artifact.Edits) {
+		if _, ok := pending[path]; ok {
+			findings = append(findings, PlanAuditFinding{
+				Severity:            "error",
+				Kind:                "approval_scope_mismatch",
+				Message:             "submitted plan edit path is still pending approval",
+				Evidence:            []string{path},
+				SuggestedResolution: "Remove pending paths from executable edits or obtain approval for them.",
+			})
+			continue
+		}
+		if len(approved) > 0 {
+			if _, ok := approved[path]; !ok {
+				findings = append(findings, PlanAuditFinding{
+					Severity:            "error",
+					Kind:                "approval_scope_mismatch",
+					Message:             "submitted plan edit path is outside approved scope",
+					Evidence:            []string{path},
+					SuggestedResolution: "Keep executable edits inside approval.approved_paths.",
+				})
+			}
+		}
 	}
 	return findings
 }
@@ -918,6 +1038,8 @@ func planAuditMismatchMetrics(findings []PlanAuditFinding) PlanAuditMismatchMetr
 			metrics.VerificationObligationSignals++
 		case "approval_handoff_mismatch":
 			metrics.ApprovalHandoffMismatches++
+		case "approval_scope_mismatch":
+			metrics.ApprovalScopeMismatches++
 		}
 	}
 	return metrics
@@ -1074,6 +1196,15 @@ func artifactVerificationClosed(status string) bool {
 func artifactApprovalSatisfied(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "approved", "implicit", "not_required", "n_a":
+		return true
+	default:
+		return false
+	}
+}
+
+func artifactApprovalPartial(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "partial", "partially_approved":
 		return true
 	default:
 		return false

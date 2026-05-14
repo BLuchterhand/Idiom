@@ -75,8 +75,9 @@ var editToolNames = []string{
 //     contract (an idiom routing regression).
 //  2. No edit attempt: run completed without any write-class tool
 //     call AND without a `<<QUESTION>>:` blocker AND without a
-//     typed `completion_status: blocked` event (an idiom
-//     completion-contract regression).
+//     typed `completion_status: blocked` event, and without a typed
+//     plan-execute source-satisfied closeout (an idiom completion-
+//     contract regression).
 //  3. Non-zero subcommand exit: handled by the caller; we only
 //     surface (1) and (2) here.
 //
@@ -99,7 +100,7 @@ func analyzeLaneOutput(out []byte, subcommandExit int) []laneDegradation {
 	if subcommandExit == 0 && !sawEditAttempt(out) {
 		degraded = append(degraded, laneDegradation{
 			kind:    "no_edit_attempt",
-			details: "no edit_file/write_file/append_file/apply_patch/submit_plan call AND no <<QUESTION>>: blocker AND no typed completion_status=blocked event",
+			details: "no edit_file/write_file/append_file/apply_patch/submit_plan call AND no <<QUESTION>>: blocker AND no typed completion_status=blocked/source_satisfied event",
 		})
 	}
 
@@ -120,8 +121,9 @@ func containsAnyReadOnlyMarker(out []byte) (string, bool) {
 
 // sawEditAttempt returns true when the captured output proves the
 // lane reached an edit-capable conclusion: either it called a
-// write-class tool, or it emitted a `<<QUESTION>>:` blocker, or it
-// terminated with a typed `completion_status: blocked` event.
+// write-class tool, emitted a `<<QUESTION>>:` blocker, terminated
+// with a typed `completion_status: blocked` event, or emitted a typed
+// plan-execute source-satisfied event.
 //
 // "Edit attempt" is broader than "edit succeeded" — a tool call
 // that the runner rejected still counts because it proves the lane
@@ -133,6 +135,9 @@ func sawEditAttempt(out []byte) bool {
 	if hasBlockedCompletionEvent(out) {
 		return true
 	}
+	if hasSourceSatisfiedEvent(out) {
+		return true
+	}
 	for _, tool := range editToolNames {
 		// Match the JSON shape `"tool":"<name>"` to avoid false
 		// positives on prose mentions. The actual emission point
@@ -140,6 +145,29 @@ func sawEditAttempt(out []byte) bool {
 		// uses this exact field name.
 		needle := fmt.Sprintf(`"tool":"%s"`, tool)
 		if bytes.Contains(out, []byte(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSourceSatisfiedEvent walks the JSONL stream looking for the
+// typed plan-execute event emitted after the planner's
+// `Decision: source-satisfied` answer has been checked against every
+// required edit path. This is a legitimate terminal outcome, not a
+// no-op implementation run.
+func hasSourceSatisfiedEvent(out []byte) bool {
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal(line, &ev); err != nil {
+			continue
+		}
+		eventType := jsonString(ev["type"])
+		if eventType == "idiom.plan_execute.source_satisfied" || eventType == "source_satisfied" {
 			return true
 		}
 	}

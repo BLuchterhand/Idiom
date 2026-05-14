@@ -1,8 +1,9 @@
 # META — Draft brief (refine loop, iter 1)
 
-Your only job: call `write_file` to create `{{DRAFT_PATH}}` with the
+Expected path: call `write_file` to create `{{DRAFT_PATH}}` with the
 content described below. Read the spec, fill in the brackets, write
-the file. Do not analyze, summarize, or comment — write the file.
+the file. If the spec is too vague to draft from, stop with the
+specific `<<QUESTION>>:` blocker instead of writing guesswork.
 
 ## Files To Modify
 
@@ -84,7 +85,9 @@ consumers, both harness-owned.
 
 ## STOP AND WRITE NOW
 
-Your VERY NEXT TOOL CALL MUST be `write_file` with:
+If the spec is too vague to write a brief from, surface `<<QUESTION>>:`
+with the specific gap now. Otherwise, your VERY NEXT TOOL CALL MUST be
+`write_file` with:
 
 - `path`: `{{DRAFT_PATH}}`
 - `content`: the filled-in template from "Write `{{DRAFT_PATH}}` with
@@ -98,9 +101,6 @@ The file content goes inside the `write_file` call's `content`
 argument, not in a chat message. After `write_file` returns success,
 give a single-sentence final answer ("Done. Brief at
 `{{DRAFT_PATH}}`.") and stop.
-
-If the spec is too vague to write a brief from, surface `<<QUESTION>>:`
-with the specific gap — do NOT just stop or summarize without writing.
 
 ## Completion
 

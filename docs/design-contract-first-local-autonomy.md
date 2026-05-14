@@ -565,7 +565,7 @@ The resolver should be used by workspace writes, reads when forbidden paths exis
 
 Existing runner checks should get stable invariant IDs. Examples:
 
-- `planner.submit_plan_only`: planner phases cannot call edit/write/apply_patch/delegate_edit/mkdir/go_move_declarations.
+- `planner.submit_plan_only`: planner phases cannot call edit/write/apply_patch/delegate_edit/mkdir/go_move_declarations, shell/git/source-sanity commands, or task/task_ledger delegation.
 - `planner.required_path_coverage`: submitted plans must cover all required edit paths and no outside paths.
 - `write.required_path_scope`: writes must be within required edit paths when that scope is active.
 - `write.protected_path`: protected paths are read-only.

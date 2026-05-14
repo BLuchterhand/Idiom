@@ -107,12 +107,15 @@ func appendLaneHistory(projectRoot string, evt laneHistoryEvent) error {
 	return nil
 }
 
-func laneRunFinalState(exitCode int, degradations []laneDegradation) string {
+func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte) string {
 	if exitCode != 0 {
 		return "failed"
 	}
 	if len(degradations) > 0 {
 		return "degraded"
+	}
+	if hasSourceSatisfiedEvent(out) {
+		return "source-satisfied"
 	}
 	return "success"
 }

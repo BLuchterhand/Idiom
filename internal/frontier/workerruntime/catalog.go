@@ -9,14 +9,15 @@ import (
 type ToolCapabilityProfile string
 
 const (
-	CapabilityConversationReadOnly ToolCapabilityProfile = "conversation_read_only"
-	CapabilityReadOnlyDiscovery    ToolCapabilityProfile = "read_only_discovery"
-	CapabilityDebugLogInvestigator ToolCapabilityProfile = "debug_log_investigator"
-	CapabilityVerificationOnly     ToolCapabilityProfile = "verification_only"
-	CapabilityLocateOnly           ToolCapabilityProfile = "locate_only"
-	CapabilityPlanSubmissionReview ToolCapabilityProfile = "plan_submission_review"
-	CapabilityGuardedWrite         ToolCapabilityProfile = "guarded_write"
-	CapabilityIsolatedWrite        ToolCapabilityProfile = "isolated_write"
+	CapabilityConversationReadOnly  ToolCapabilityProfile = "conversation_read_only"
+	CapabilityReadOnlyDiscovery     ToolCapabilityProfile = "read_only_discovery"
+	CapabilityDebugLogInvestigator  ToolCapabilityProfile = "debug_log_investigator"
+	CapabilityVerificationOnly      ToolCapabilityProfile = "verification_only"
+	CapabilityLocateOnly            ToolCapabilityProfile = "locate_only"
+	CapabilityPlanSubmissionPlanner ToolCapabilityProfile = "plan_submission_planner"
+	CapabilityPlanSubmissionReview  ToolCapabilityProfile = "plan_submission_review"
+	CapabilityGuardedWrite          ToolCapabilityProfile = "guarded_write"
+	CapabilityIsolatedWrite         ToolCapabilityProfile = "isolated_write"
 )
 
 type RuntimeContractSpec struct {
@@ -149,7 +150,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           "plan_then_execute_planner",
 			Contract:             "implementation_result",
 			PermissionProfile:    "guarded_workspace_write",
-			ToolProfile:          CapabilityGuardedWrite,
+			ToolProfile:          CapabilityPlanSubmissionPlanner,
 			RequiredEvidence:     []string{"plan_submitted_or_source_satisfied_or_blocker"},
 			RequiredTools:        []string{"submit_plan"},
 			ReadinessGate:        []string{"submit_plan_or_source_satisfied_or_blocker_reported"},
@@ -272,6 +273,8 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 		return filterAllowedTools(available, "pwd", "search_files", "search_content", "read_file", "code_navigate", "context_query", "context_zoom")
 	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
 		return filterAllowedTools(available, guardedWriteToolNames()...)
+	case CapabilityPlanSubmissionPlanner:
+		return filterAllowedTools(available, planSubmissionPlannerToolNames()...)
 	case CapabilityPlanSubmissionReview:
 		return filterAllowedTools(available, planSubmissionReviewToolNames()...)
 	case CapabilityReadOnlyDiscovery:
@@ -297,6 +300,8 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 		opts.IncludeTaskLedger = true
 		opts.IncludeTask = true
 		opts.IncludeWriteTools = true
+	case CapabilityPlanSubmissionPlanner:
+		opts.IncludePlanThenExecute = true
 	case CapabilityPlanSubmissionReview:
 		opts.IncludePlanThenExecute = true
 	case CapabilityReadOnlyDiscovery, CapabilityConversationReadOnly:
@@ -334,6 +339,25 @@ func planSubmissionReviewToolNames() []string {
 		"code_navigate",
 		"source_sanity",
 		"harness_audit",
+		"harness_feedback",
+		"context_status",
+		"context_query",
+		"context_zoom",
+		"context_pack",
+		"context_impact",
+		"discovery_query",
+		"structural_search",
+		"submit_plan",
+	}
+}
+
+func planSubmissionPlannerToolNames() []string {
+	return []string{
+		"search_files",
+		"search_content",
+		"read_file",
+		"file_stats",
+		"code_navigate",
 		"harness_feedback",
 		"context_status",
 		"context_query",

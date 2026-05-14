@@ -1,9 +1,11 @@
 # META — Review brief (refine loop)
 
-Your only job: call `write_file` to create `{{REVIEW_PATH}}` with a
+Expected path: call `write_file` to create `{{REVIEW_PATH}}` with a
 review of the drafted brief. **Read the brief ONCE, then write the
-review.** The file IS the deliverable — a final-answer text
-containing the review WILL be rejected.
+review.** If the drafted brief is unreadable or too incomplete to
+review, stop with the specific `<<QUESTION>>:` blocker. The file IS
+the deliverable — a final-answer text containing the review WILL be
+rejected.
 
 ## Pre-loaded lint findings
 

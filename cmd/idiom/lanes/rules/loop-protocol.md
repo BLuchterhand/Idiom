@@ -13,7 +13,9 @@ A lane turn has three phases:
    needed to close a named edit-safety fact, the next allowed write, or
    stop with a concrete blocker. If the next action is unclear, prefer stopping with
    `<<QUESTION>>:` over speculative reads.
-3. Take that action via exactly one tool call.
+3. If continuing, take that action via exactly one tool call. If the
+   contract is already satisfied or blocked, stop with the final answer
+   or `<<QUESTION>>:` instead of forcing a tool call.
 
 The lane preamble owns per-mode stop conditions (when `submit_plan` is
 the close, when an attempted edit + sanity check is the close, what
