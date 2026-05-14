@@ -22,6 +22,7 @@ type phaseEvidenceBundle struct {
 	RequiredPaths    []string               `json:"required_paths,omitempty"`
 	AllowedPaths     []string               `json:"allowed_paths,omitempty"`
 	Packet           phaseEvidencePacket    `json:"packet"`
+	ExecutorHandoff  phaseEvidenceHandoff   `json:"executor_handoff"`
 	SubmittedPlan    []phaseEvidenceCheck   `json:"submitted_plan_state,omitempty"`
 	SourceSanity     []phaseEvidenceCheck   `json:"source_sanity,omitempty"`
 	PatchHygiene     phaseEvidenceCheck     `json:"patch_hygiene"`
@@ -43,6 +44,21 @@ type phaseEvidencePacket struct {
 	CandidateSymbols []phaseEvidenceSymbol `json:"candidate_symbols,omitempty"`
 	SuggestedTests   []phaseEvidenceTest   `json:"suggested_tests,omitempty"`
 	UnresolvedGaps   []string              `json:"unresolved_gaps,omitempty"`
+}
+
+type phaseEvidenceHandoff struct {
+	PacketState      string `json:"packet_state"`
+	Reason           string `json:"reason,omitempty"`
+	PlanID           string `json:"plan_id,omitempty"`
+	HandoffID        string `json:"handoff_id,omitempty"`
+	HandoffStatus    string `json:"handoff_status,omitempty"`
+	PackID           string `json:"pack_id,omitempty"`
+	DeclaredPackID   string `json:"declared_pack_id,omitempty"`
+	IndexID          string `json:"index_id,omitempty"`
+	Fresh            bool   `json:"fresh,omitempty"`
+	CandidateFiles   int    `json:"candidate_files,omitempty"`
+	CandidateSymbols int    `json:"candidate_symbols,omitempty"`
+	Tests            int    `json:"tests,omitempty"`
 }
 
 type phaseEvidenceFile struct {
@@ -86,7 +102,11 @@ type phaseEvidenceSummary struct {
 }
 
 func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.PlanArtifact, changedPaths []string, requiredPaths []string, allowedPaths []string, reviewEvidence reviewRepairEvidence, executorReport executorPhaseReport) phaseEvidenceBundle {
-	packet := loadPlanExecutePacketEvidence(root, plan.PackID)
+	handoff := executorReport.Handoff
+	if strings.TrimSpace(handoff.State) == "" {
+		handoff = classifyExecutorHandoffPacket(root, plan)
+	}
+	packet := loadPlanExecutePacketEvidence(root, handoff.PackID)
 	submittedPlan := collectSubmittedPlanState(root, plan)
 	sourceSanity := append([]phaseEvidenceCheck(nil), executorReport.SourceSanity...)
 	patchHygiene := phaseEvidenceCheck{
@@ -108,6 +128,7 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 		RequiredPaths:    mergePlanExecutePaths(requiredPaths),
 		AllowedPaths:     mergePlanExecutePaths(allowedPaths),
 		Packet:           packet,
+		ExecutorHandoff:  phaseEvidenceHandoffFromExecutor(handoff),
 		SubmittedPlan:    submittedPlan,
 		SourceSanity:     sourceSanity,
 		PatchHygiene:     patchHygiene,
@@ -117,6 +138,23 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, patchHygiene),
 	}
 	return bundle
+}
+
+func phaseEvidenceHandoffFromExecutor(handoff executorHandoffPacket) phaseEvidenceHandoff {
+	return phaseEvidenceHandoff{
+		PacketState:      firstNonEmptyString(strings.TrimSpace(handoff.State), executorHandoffStateMissing),
+		Reason:           strings.TrimSpace(handoff.Reason),
+		PlanID:           strings.TrimSpace(handoff.PlanID),
+		HandoffID:        strings.TrimSpace(handoff.HandoffID),
+		HandoffStatus:    strings.TrimSpace(handoff.HandoffStatus),
+		PackID:           strings.TrimSpace(handoff.PackID),
+		DeclaredPackID:   strings.TrimSpace(handoff.DeclaredPackID),
+		IndexID:          strings.TrimSpace(handoff.IndexID),
+		Fresh:            handoff.Fresh,
+		CandidateFiles:   handoff.CandidateFiles,
+		CandidateSymbols: handoff.CandidateSymbols,
+		Tests:            handoff.Tests,
+	}
 }
 
 func collectSubmittedPlanState(root string, plan workspace.PlanArtifact) []phaseEvidenceCheck {
@@ -195,12 +233,25 @@ func loadPlanExecutePacketEvidence(root string, packID string) phaseEvidencePack
 	if !isPlanExecutePackID(packID) {
 		return phaseEvidencePacket{PackID: packID, Status: "invalid_pack_id", Error: "pack_id must be a 16-character lowercase hex context view id"}
 	}
-	view, hit, err := comprehension.LoadViewByID(root, packID)
+	view, viewStatus, err := comprehension.LoadViewByIDStatus(root, packID)
 	if err != nil {
 		return phaseEvidencePacket{PackID: packID, Status: "error", Error: err.Error()}
 	}
-	if hit {
-		return phaseEvidencePacketFromView(view)
+	switch viewStatus.State {
+	case comprehension.ViewLoadStateFresh:
+		packet := phaseEvidencePacketFromView(view)
+		if !view.Fresh {
+			packet.Status = "available_stale"
+			packet.Fresh = false
+			packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
+		}
+		return packet
+	case comprehension.ViewLoadStateStale:
+		packet := phaseEvidencePacketFromView(view)
+		packet.Status = "available_stale"
+		packet.Fresh = false
+		packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
+		return packet
 	}
 	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, packID)
 	if artifactErr != nil {
@@ -404,6 +455,14 @@ func renderPlanExecutePhaseEvidence(bundle phaseEvidenceBundle) string {
 		fmt.Fprintf(&b, " summary=%s", summary)
 	}
 	b.WriteString("\n")
+	fmt.Fprintf(&b, "executor_handoff_packet: state=%s reason=%s", bundle.ExecutorHandoff.PacketState, bundle.ExecutorHandoff.Reason)
+	if bundle.ExecutorHandoff.PackID != "" {
+		fmt.Fprintf(&b, " pack_id=%s", bundle.ExecutorHandoff.PackID)
+	}
+	if bundle.ExecutorHandoff.IndexID != "" {
+		fmt.Fprintf(&b, " index_id=%s fresh=%t", bundle.ExecutorHandoff.IndexID, bundle.ExecutorHandoff.Fresh)
+	}
+	b.WriteString("\n")
 	if len(bundle.Packet.CandidateFiles) > 0 {
 		b.WriteString("candidate_files:\n")
 		for _, file := range bundle.Packet.CandidateFiles {
@@ -456,16 +515,19 @@ func renderPlanExecutePhaseEvidence(bundle phaseEvidenceBundle) string {
 
 func phaseEvidenceTelemetry(bundle phaseEvidenceBundle) map[string]any {
 	return map[string]any{
-		"schema_version":       bundle.SchemaVersion,
-		"phase":                bundle.Phase,
-		"changed_paths":        cappedStrings(bundle.ChangedPaths, 16),
-		"required_paths":       cappedStrings(bundle.RequiredPaths, 16),
-		"allowed_paths":        cappedStrings(bundle.AllowedPaths, 16),
-		"packet_status":        bundle.Packet.Status,
-		"pack_id":              bundle.Packet.PackID,
-		"candidate_files":      len(bundle.Packet.CandidateFiles),
-		"candidate_file_paths": phaseEvidenceTelemetryFilePaths(bundle.Packet.CandidateFiles, 8),
-		"candidate_symbols":    len(bundle.Packet.CandidateSymbols),
+		"schema_version":         bundle.SchemaVersion,
+		"phase":                  bundle.Phase,
+		"changed_paths":          cappedStrings(bundle.ChangedPaths, 16),
+		"required_paths":         cappedStrings(bundle.RequiredPaths, 16),
+		"allowed_paths":          cappedStrings(bundle.AllowedPaths, 16),
+		"packet_status":          bundle.Packet.Status,
+		"pack_id":                bundle.Packet.PackID,
+		"executor_packet_state":  bundle.ExecutorHandoff.PacketState,
+		"executor_packet_reason": bundle.ExecutorHandoff.Reason,
+		"executor_handoff_id":    bundle.ExecutorHandoff.HandoffID,
+		"candidate_files":        len(bundle.Packet.CandidateFiles),
+		"candidate_file_paths":   phaseEvidenceTelemetryFilePaths(bundle.Packet.CandidateFiles, 8),
+		"candidate_symbols":      len(bundle.Packet.CandidateSymbols),
 		"candidate_symbol_names": phaseEvidenceTelemetrySymbolNames(
 			bundle.Packet.CandidateSymbols,
 			8,

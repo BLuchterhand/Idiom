@@ -111,6 +111,24 @@ type cachedViewRow struct {
 	WorkspaceStateFingerprint string
 	ReferencedPathsJSON       string
 	SourceFingerprintsJSON    string
+	Stale                     int
+}
+
+const (
+	ViewLoadStateMissing = "missing"
+	ViewLoadStateFresh   = "fresh"
+	ViewLoadStateStale   = "stale"
+)
+
+// ViewLoadStatus is the bounded state of a graph_views lookup by pack_id.
+// It lets callers distinguish true misses from stale or non-current rows
+// without reaching through the cache abstraction.
+type ViewLoadStatus struct {
+	State          string
+	Reason         string
+	PackID         string
+	RowIndexID     string
+	CurrentIndexID string
 }
 
 // ViewCacheCounters returns the current process-local hit/miss/write
@@ -188,47 +206,79 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 // PlanArtifact.PackID field. Returns (PackResult{}, false, nil) on
 // cache miss; non-nil error only on genuine I/O / decode failure.
 func LoadViewByID(root string, packID string) (PackResult, bool, error) {
-	packID = strings.TrimSpace(packID)
-	if packID == "" {
+	result, status, err := LoadViewByIDStatus(root, packID)
+	if err != nil {
+		return PackResult{}, false, err
+	}
+	if status.State != ViewLoadStateFresh {
 		return PackResult{}, false, nil
+	}
+	return result, true, nil
+}
+
+// LoadViewByIDStatus fetches a cached PackResult by pack_id and reports
+// whether the graph_views row is fresh, stale, or absent. Stale rows are
+// returned with Fresh=false so audit/phase handoff surfaces can report
+// stale evidence without relying on legacy JSON view files.
+func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus, error) {
+	packID = strings.TrimSpace(packID)
+	status := ViewLoadStatus{
+		State:  ViewLoadStateMissing,
+		Reason: "cache_miss",
+		PackID: packID,
+	}
+	if packID == "" {
+		status.Reason = "missing_packet_id"
+		return PackResult{}, status, nil
 	}
 	sqlitePath := sqliteGraphPath(root)
 	if _, err := os.Stat(sqlitePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			viewCacheMisses.Add(1)
-			return PackResult{}, false, nil
+			return PackResult{}, status, nil
 		}
-		return PackResult{}, false, err
+		return PackResult{}, status, err
 	}
 	db, err := openSQLite(sqlitePath)
 	if err != nil {
-		return PackResult{}, false, err
+		return PackResult{}, status, err
 	}
 	defer db.Close()
 	if err := ensureGraphViewsTable(db); err != nil {
-		return PackResult{}, false, err
+		return PackResult{}, status, err
 	}
-	row, err := loadCachedViewRow(db, packID)
+	row, err := loadCachedViewRowAnyState(db, packID)
 	if errors.Is(err, sql.ErrNoRows) {
-		recordStaleRowMiss(db, packID)
 		viewCacheMisses.Add(1)
-		return PackResult{}, false, nil
+		return PackResult{}, status, nil
 	}
 	if err != nil {
-		return PackResult{}, false, err
+		return PackResult{}, status, err
 	}
 	var result PackResult
 	if err := json.Unmarshal([]byte(row.OutputJSON), &result); err != nil {
-		return PackResult{}, false, fmt.Errorf("decode cached view %s: %w", packID, err)
+		return PackResult{}, status, fmt.Errorf("decode cached view %s: %w", packID, err)
 	}
-	result, fresh, err := validateCachedViewFreshness(root, row, result, "load_view_by_id")
+	status.RowIndexID = firstNonEmpty(row.IndexID, result.IndexID)
+	status.CurrentIndexID = cachedViewCurrentIndexID(root)
+	if row.Stale != 0 {
+		viewCacheStaleRowMisses.Add(1)
+		viewCacheStalePreventions.Add(1)
+		viewCacheMisses.Add(1)
+		status.State = ViewLoadStateStale
+		status.Reason = "stale_row"
+		return staleCachedViewResult(result, status), status, nil
+	}
+	result, fresh, reason, err := validateCachedViewFreshnessStatus(root, row, result, "load_view_by_id")
 	if err != nil {
-		return PackResult{}, false, err
+		return PackResult{}, status, err
 	}
 	if !fresh {
 		viewCacheStalePreventions.Add(1)
 		viewCacheMisses.Add(1)
-		return PackResult{}, false, nil
+		status.State = ViewLoadStateStale
+		status.Reason = cachedViewStaleReason(reason)
+		return staleCachedViewResult(result, status), status, nil
 	}
 	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
@@ -237,7 +287,9 @@ func LoadViewByID(root string, packID string) (PackResult, bool, error) {
 	result.Cache.CacheKey = packID
 	result.Cache.PackID = packID
 	AttachPackResultContract(&result)
-	return result, true, nil
+	status.State = ViewLoadStateFresh
+	status.Reason = "fresh_cached_row"
+	return result, status, nil
 }
 
 // SaveView inserts or replaces the graph_views row for the given key.
@@ -418,7 +470,8 @@ func loadCachedViewRow(db *sql.DB, id string) (cachedViewRow, error) {
 			COALESCE(query_json, ''),
 			COALESCE(workspace_state_fingerprint, ''),
 			COALESCE(referenced_paths_json, ''),
-			COALESCE(source_fingerprints_json, '')
+			COALESCE(source_fingerprints_json, ''),
+			COALESCE(stale, 0)
 		FROM graph_views WHERE id = ? AND stale = 0`,
 		id,
 	).Scan(
@@ -430,6 +483,35 @@ func loadCachedViewRow(db *sql.DB, id string) (cachedViewRow, error) {
 		&row.WorkspaceStateFingerprint,
 		&row.ReferencedPathsJSON,
 		&row.SourceFingerprintsJSON,
+		&row.Stale,
+	)
+	return row, err
+}
+
+func loadCachedViewRowAnyState(db *sql.DB, id string) (cachedViewRow, error) {
+	var row cachedViewRow
+	err := db.QueryRow(
+		`SELECT output_json,
+			COALESCE(index_id, ''),
+			COALESCE(task, ''),
+			COALESCE(mode, ''),
+			COALESCE(query_json, ''),
+			COALESCE(workspace_state_fingerprint, ''),
+			COALESCE(referenced_paths_json, ''),
+			COALESCE(source_fingerprints_json, ''),
+			COALESCE(stale, 0)
+		FROM graph_views WHERE id = ?`,
+		id,
+	).Scan(
+		&row.OutputJSON,
+		&row.IndexID,
+		&row.Task,
+		&row.Mode,
+		&row.QueryJSON,
+		&row.WorkspaceStateFingerprint,
+		&row.ReferencedPathsJSON,
+		&row.SourceFingerprintsJSON,
+		&row.Stale,
 	)
 	return row, err
 }
@@ -462,6 +544,11 @@ func recordStaleRowMiss(db *sql.DB, id string) {
 }
 
 func validateCachedViewFreshness(root string, row cachedViewRow, result PackResult, operation string) (PackResult, bool, error) {
+	result, fresh, _, err := validateCachedViewFreshnessStatus(root, row, result, operation)
+	return result, fresh, err
+}
+
+func validateCachedViewFreshnessStatus(root string, row cachedViewRow, result PackResult, operation string) (PackResult, bool, string, error) {
 	references := cachedViewReferencedPaths(row, result)
 	decision, err := EnsureFresh(context.Background(), FreshnessRequest{
 		Root:              root,
@@ -473,25 +560,25 @@ func validateCachedViewFreshness(root string, row cachedViewRow, result PackResu
 		ExactScopeRefresh: true,
 	})
 	if err != nil {
-		return PackResult{}, false, err
+		return PackResult{}, false, "", err
 	}
 	if !decision.FreshForScope {
-		return PackResult{}, false, nil
+		return result, false, firstNonEmpty(decision.Reason, decision.Blocker, FreshnessReasonStaleGraph), nil
 	}
 	if decision.Refresh != nil && decision.Refresh.Attempted {
-		return PackResult{}, false, nil
+		return result, false, "refreshed_referenced_paths", nil
 	}
 	if !cachedViewIndexMatchesCurrent(root, row, result) {
-		return PackResult{}, false, nil
+		return result, false, "non_current_index", nil
 	}
 	if !cachedViewFingerprintsMatch(root, row) {
-		return PackResult{}, false, nil
+		return result, false, "source_fingerprint_mismatch", nil
 	}
 	result.Freshness = &decision
 	result.AutoRefresh = decision.Refresh
 	result.Confidence = GraphResultConfidenceForFreshness(result.Fresh, &decision)
 	result.Provenance = graphResultProvenanceFromFreshness(operation, decision, result.ArtifactPath)
-	return result, true, nil
+	return result, true, "", nil
 }
 
 func cachedViewReferencedPaths(row cachedViewRow, result PackResult) []string {
@@ -525,11 +612,15 @@ func cachedViewIndexMatchesCurrent(root string, row cachedViewRow, result PackRe
 	if rowIndexID == "" {
 		return false
 	}
+	return rowIndexID == cachedViewCurrentIndexID(root)
+}
+
+func cachedViewCurrentIndexID(root string) string {
 	status, err := Status(root)
-	if err != nil || status.IndexID == "" {
-		return false
+	if err != nil {
+		return ""
 	}
-	return rowIndexID == status.IndexID
+	return strings.TrimSpace(status.IndexID)
 }
 
 func cachedViewFingerprintsMatch(root string, row cachedViewRow) bool {
@@ -544,6 +635,58 @@ func cachedViewFingerprintsMatch(root string, row cachedViewRow) bool {
 		}
 	}
 	return true
+}
+
+func staleCachedViewResult(result PackResult, status ViewLoadStatus) PackResult {
+	reason := cachedViewStaleReason(status.Reason)
+	result.PackID = firstNonEmpty(strings.TrimSpace(result.PackID), strings.TrimSpace(status.PackID))
+	result.IndexID = firstNonEmpty(strings.TrimSpace(result.IndexID), strings.TrimSpace(status.RowIndexID))
+	result.Fresh = false
+	result.Confidence = GraphResultConfidence{Level: "low", Source: "graph_view_cache", Reason: reason}
+	result.StaleEvidence = StaleEvidenceSafety{
+		State:         "blocked",
+		Policy:        FreshnessRequire,
+		Reason:        reason,
+		FreshForScope: false,
+		GlobalFresh:   false,
+	}
+	result.Cache = GraphViewCacheState{
+		State:     "stale",
+		Source:    "graph_views",
+		Reason:    reason,
+		CacheKey:  strings.TrimSpace(status.PackID),
+		PackID:    strings.TrimSpace(status.PackID),
+		StoreKind: firstNonEmpty(strings.TrimSpace(result.StoreKind), strings.TrimSpace(result.Provenance.StoreKind)),
+		Invalidation: GraphViewInvalidationSemantics{
+			Policy:          "content_addressed_read_through",
+			State:           "stale",
+			ValidatesOnLoad: []string{"current_index_id", "referenced_source_fingerprints", "scoped_freshness"},
+			StaleResult:     "cache_miss_recompute",
+		},
+	}
+	AttachPackResultContract(&result)
+	return result
+}
+
+func cachedViewStaleReason(reason string) string {
+	switch strings.TrimSpace(reason) {
+	case "stale_row",
+		"non_current_index",
+		"source_fingerprint_mismatch",
+		"refreshed_referenced_paths",
+		FreshnessReasonBudgetExceeded,
+		FreshnessReasonCollectorVersionMismatch,
+		FreshnessReasonMissingIndex,
+		FreshnessReasonMissingScope,
+		FreshnessReasonReferencedPathsUnverified,
+		FreshnessReasonScopeNotIndexed,
+		FreshnessReasonStaleGraph,
+		FreshnessReasonStaleScopeFiles,
+		FreshnessReasonStaleUnboundedGraph:
+		return strings.TrimSpace(reason)
+	default:
+		return "stale_graph_view"
+	}
 }
 
 func cachedViewSourceFingerprints(row cachedViewRow) map[string]string {

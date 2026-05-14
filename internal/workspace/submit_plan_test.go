@@ -450,6 +450,56 @@ func TestPlanArtifactAuditKeepsPendingApprovalNonBlockingWhenHandoffNotReady(t *
 	}
 }
 
+func TestPlanArtifactAuditReportsPacketStates(t *testing.T) {
+	root := t.TempDir()
+	writeSubmitPlanFixture(t, root, "a.txt", "alpha\n")
+	writeSubmitPlanContextView(t, root, "feedfacecafebeef", "a.txt")
+	writeSubmitPlanFixture(t, root, filepath.Join(".idiom", "comprehension", "views", "deadc0decafef00d.json"), `{
+  "pack_id": "deadc0decafef00d",
+  "index_id": "idx-stale",
+  "fresh": false,
+  "candidate_files": [{"path":"a.txt","role":"editable"}]
+}`)
+	base := PlanArtifact{
+		SchemaVersion: PlanArtifactSchemaVersion,
+		PlanID:        "plan-packet-state",
+		Task:          PlanArtifactTask{Summary: "audit packet state"},
+		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
+		Paths:         PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
+		Evidence:      []PlanArtifactEvidence{{Kind: "planner_submission", Summary: "bounded evidence"}},
+		VerificationObligations: []PlanArtifactVerificationObligation{{
+			Kind:     "focused_tests",
+			Status:   "open",
+			Required: true,
+		}},
+		Approval: PlanArtifactApproval{Status: "implicit"},
+		Handoff:  PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:    []PlanEdit{{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"}},
+	}
+	inherited := base
+	inherited.PackID = "feedfacecafebeef"
+	inherited.Packet = PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"}
+	if result := AuditPlanArtifact(root, inherited, PlanArtifactAuditOptions{}); result.Metrics.PacketState != "inherited" || !result.Metrics.PacketFresh {
+		t.Fatalf("expected inherited packet state, got %#v", result.Metrics)
+	}
+	stale := base
+	stale.PackID = "deadc0decafef00d"
+	stale.Packet = PlanArtifactPacket{PackID: "deadc0decafef00d", Status: "available", Freshness: "fresh"}
+	if result := AuditPlanArtifact(root, stale, PlanArtifactAuditOptions{}); result.Metrics.PacketState != "stale" || result.Metrics.PacketFresh {
+		t.Fatalf("expected stale packet state, got %#v", result.Metrics)
+	}
+	missing := base
+	missing.Packet = PlanArtifactPacket{Status: "not_provided"}
+	if result := AuditPlanArtifact(root, missing, PlanArtifactAuditOptions{}); result.Metrics.PacketState != "missing" || result.Metrics.PacketReason != "not_provided" {
+		t.Fatalf("expected missing packet state, got %#v", result.Metrics)
+	}
+	overridden := inherited
+	overridden.Packet.PackID = "deadc0decafef00d"
+	if result := AuditPlanArtifact(root, overridden, PlanArtifactAuditOptions{}); result.Metrics.PacketState != "overridden" || result.Metrics.PacketReason != "packet_id_mirror" {
+		t.Fatalf("expected overridden packet state, got %#v", result.Metrics)
+	}
+}
+
 func TestSubmitPlanSanitizesStructuredEditPurposeMetadata(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")

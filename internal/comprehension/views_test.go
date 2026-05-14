@@ -482,6 +482,78 @@ func TestLoadViewByIDRefusesStaleReferencedPath(t *testing.T) {
 	}
 }
 
+func TestLoadViewByIDStatusReportsExplicitStaleRows(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/stalerow\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := ViewKey{IndexID: build.IndexID, Task: "change X", Mode: "plan", Query: ViewQueryInputs{Path: "pkg/x.go"}}
+	if err := SaveView(root, key, PackResult{
+		PackID:         key.ID(),
+		IndexID:        build.IndexID,
+		Root:           root,
+		Task:           "change X",
+		Mode:           "plan",
+		Fresh:          true,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go", Role: "editable"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	if n, err := MarkAllViewsStale(root); err != nil || n != 1 {
+		t.Fatalf("MarkAllViewsStale n=%d err=%v", n, err)
+	}
+	got, status, err := LoadViewByIDStatus(root, key.ID())
+	if err != nil {
+		t.Fatalf("LoadViewByIDStatus: %v", err)
+	}
+	if status.State != ViewLoadStateStale || status.Reason != "stale_row" {
+		t.Fatalf("expected explicit stale-row status, got status=%#v result=%#v", status, got)
+	}
+	if got.Fresh || got.PackID != key.ID() || len(got.CandidateFiles) != 1 {
+		t.Fatalf("expected stale result with packet contents preserved, got %#v", got)
+	}
+	if _, hit, err := LoadViewByID(root, key.ID()); err != nil || hit {
+		t.Fatalf("LoadViewByID should still expose stale row as a cache miss, hit=%v err=%v", hit, err)
+	}
+}
+
+func TestLoadViewByIDStatusReportsNonCurrentRows(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/noncurrentrow\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := ViewKey{IndexID: "old-index", Task: "change X", Mode: "plan", Query: ViewQueryInputs{Path: "pkg/x.go"}}
+	if err := SaveView(root, key, PackResult{
+		PackID:         key.ID(),
+		IndexID:        "old-index",
+		Root:           root,
+		Task:           "change X",
+		Mode:           "plan",
+		Fresh:          true,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go", Role: "editable"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	got, status, err := LoadViewByIDStatus(root, key.ID())
+	if err != nil {
+		t.Fatalf("LoadViewByIDStatus: %v", err)
+	}
+	if status.State != ViewLoadStateStale || status.Reason != "non_current_index" || status.CurrentIndexID != build.IndexID {
+		t.Fatalf("expected non-current stale status against %s, got status=%#v result=%#v", build.IndexID, status, got)
+	}
+	if got.Fresh || got.IndexID != "old-index" || len(got.CandidateFiles) != 1 {
+		t.Fatalf("expected stale result with old packet contents preserved, got %#v", got)
+	}
+}
+
 func TestLoadViewByIDAllowsUnrelatedStalePath(t *testing.T) {
 	ResetViewCacheCounters()
 	root := t.TempDir()

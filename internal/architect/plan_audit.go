@@ -26,13 +26,15 @@ type PlanAuditFinding struct {
 }
 
 type PlanAuditMismatchMetrics struct {
-	PacketIdentityMismatches      int `json:"packet_identity_mismatches,omitempty"`
-	PacketFreshnessMismatches     int `json:"packet_freshness_mismatches,omitempty"`
-	ScopePathMismatches           int `json:"scope_path_mismatches,omitempty"`
-	EvidenceMismatches            int `json:"evidence_mismatches,omitempty"`
-	UnresolvedQuestionMismatches  int `json:"unresolved_question_mismatches,omitempty"`
-	VerificationObligationSignals int `json:"verification_obligation_signals,omitempty"`
-	ApprovalHandoffMismatches     int `json:"approval_handoff_mismatches,omitempty"`
+	PacketIdentityMismatches      int    `json:"packet_identity_mismatches,omitempty"`
+	PacketFreshnessMismatches     int    `json:"packet_freshness_mismatches,omitempty"`
+	ScopePathMismatches           int    `json:"scope_path_mismatches,omitempty"`
+	EvidenceMismatches            int    `json:"evidence_mismatches,omitempty"`
+	UnresolvedQuestionMismatches  int    `json:"unresolved_question_mismatches,omitempty"`
+	VerificationObligationSignals int    `json:"verification_obligation_signals,omitempty"`
+	ApprovalHandoffMismatches     int    `json:"approval_handoff_mismatches,omitempty"`
+	PacketState                   string `json:"packet_state,omitempty"`
+	PacketReason                  string `json:"packet_reason,omitempty"`
 }
 
 type PlanArtifactAuditSubject struct {
@@ -146,7 +148,9 @@ func AuditPlanArtifact(packet Packet, artifact PlanArtifactAuditSubject) PlanAud
 	findings = append(findings, auditArtifactUnresolvedQuestions(artifact)...)
 	findings = append(findings, auditArtifactVerificationObligations(packet, artifact)...)
 	findings = append(findings, auditArtifactApprovalHandoff(artifact)...)
-	return finalizePlanAuditResult(findings)
+	result := finalizePlanAuditResult(findings)
+	result.MismatchMetrics.PacketState, result.MismatchMetrics.PacketReason = auditArtifactPacketState(packet, artifact, result.Findings)
+	return result
 }
 
 func auditPlanCommandReferences(packet Packet, plan string) []PlanAuditFinding {
@@ -987,6 +991,37 @@ func artifactClaimsFresh(packet PlanArtifactPacketAuditSubject) bool {
 	status := strings.ToLower(strings.TrimSpace(packet.Status))
 	freshness := strings.ToLower(strings.TrimSpace(packet.Freshness))
 	return status == "fresh" || freshness == "fresh"
+}
+
+func auditArtifactPacketState(packet Packet, artifact PlanArtifactAuditSubject, findings []PlanAuditFinding) (string, string) {
+	packID := firstNonEmpty(artifact.Packet.PackID, artifact.PackID)
+	if artifact.Packet.PackID != "" && artifact.PackID != "" && artifact.Packet.PackID != artifact.PackID {
+		return "overridden", "packet_id_mirror"
+	}
+	for _, finding := range findings {
+		if finding.Kind == "packet_identity_mismatch" || finding.Kind == "evidence_packet_mismatch" {
+			if packID == "" {
+				return "missing", "missing_packet_id"
+			}
+			return "missing", "packet_identity_mismatch"
+		}
+		if finding.Kind == "packet_freshness_mismatch" || finding.Kind == "stale_fact" {
+			return "stale", "packet_freshness_mismatch"
+		}
+	}
+	if packID == "" {
+		if len(packetPackIDs(packet)) > 0 {
+			return "missing", "missing_packet_id"
+		}
+		return "missing", "not_provided"
+	}
+	if artifactClaimsFresh(artifact.Packet) {
+		return "inherited", "fresh_claim"
+	}
+	if strings.TrimSpace(artifact.Packet.Freshness) != "" || strings.TrimSpace(artifact.Packet.Status) != "" {
+		return "stale", "freshness_not_claimed"
+	}
+	return "inherited", "packet_id_present"
 }
 
 func planArtifactAuditEditPaths(edits []PlanArtifactEditAuditSubject) []string {

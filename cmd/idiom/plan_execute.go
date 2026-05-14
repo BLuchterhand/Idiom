@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -296,6 +297,12 @@ func inheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string)
 		return ""
 	}
 	plan.PackID = packID
+	if strings.TrimSpace(plan.Packet.PackID) == "" {
+		plan.Packet.PackID = packID
+	}
+	if status := strings.TrimSpace(plan.Packet.Status); status == "" || status == "not_provided" {
+		plan.Packet.Status = "provided"
+	}
 	return packID
 }
 
@@ -350,6 +357,28 @@ func patchPlanArtifactPackID(path string, packID string) error {
 		return err
 	}
 	raw["pack_id"] = encodedPackID
+	var packet map[string]json.RawMessage
+	if body, ok := raw["packet"]; ok {
+		_ = json.Unmarshal(body, &packet)
+	}
+	if packet == nil {
+		packet = map[string]json.RawMessage{}
+	}
+	if current, ok := packet["pack_id"]; !ok || strings.Trim(strings.TrimSpace(string(current)), `"`) == "" {
+		packet["pack_id"] = encodedPackID
+	}
+	if current, ok := packet["status"]; !ok || strings.Trim(strings.TrimSpace(string(current)), `"`) == "" || strings.Trim(strings.TrimSpace(string(current)), `"`) == "not_provided" {
+		encodedStatus, err := json.Marshal("provided")
+		if err != nil {
+			return err
+		}
+		packet["status"] = encodedStatus
+	}
+	encodedPacket, err := json.Marshal(packet)
+	if err != nil {
+		return err
+	}
+	raw["packet"] = encodedPacket
 	updated, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
@@ -513,6 +542,7 @@ type executorPhaseReport struct {
 	Failed       int
 	Failures     []string
 	SourceSanity []phaseEvidenceCheck
+	Handoff      executorHandoffPacket
 }
 
 func (r executorPhaseReport) String() string {
@@ -521,6 +551,276 @@ func (r executorPhaseReport) String() string {
 		return header
 	}
 	return header + "\n  " + strings.Join(r.Failures, "\n  ")
+}
+
+const (
+	executorHandoffStateInherited  = "inherited"
+	executorHandoffStateMissing    = "missing"
+	executorHandoffStateStale      = "stale"
+	executorHandoffStateOverridden = "overridden"
+)
+
+type executorHandoffPacket struct {
+	State                   string
+	Reason                  string
+	PlanID                  string
+	HandoffID               string
+	HandoffStatus           string
+	PackID                  string
+	DeclaredPackID          string
+	ArtifactPacketStatus    string
+	ArtifactPacketFreshness string
+	IndexID                 string
+	Fresh                   bool
+	CandidateFiles          int
+	CandidateSymbols        int
+	Tests                   int
+}
+
+func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) executorHandoffPacket {
+	handoff := executorHandoffPacket{
+		State:                   executorHandoffStateMissing,
+		Reason:                  "missing_packet_id",
+		PlanID:                  sanitizePlanExecuteEventID(plan.PlanID),
+		HandoffID:               sanitizePlanExecuteEventID(plan.Handoff.ID),
+		HandoffStatus:           sanitizePlanExecuteEventToken(plan.Handoff.Status),
+		ArtifactPacketStatus:    sanitizePlanExecuteEventToken(plan.Packet.Status),
+		ArtifactPacketFreshness: sanitizePlanExecuteEventToken(plan.Packet.Freshness),
+		IndexID:                 sanitizePlanExecuteEventToken(plan.Packet.IndexID),
+	}
+	topLevelPackID, topLevelValid := normalizePlanExecuteEventPackID(plan.PackID)
+	declaredPackID, declaredValid := normalizePlanExecuteEventPackID(plan.Packet.PackID)
+	rawTopLevelPackID := strings.TrimSpace(plan.PackID)
+	rawDeclaredPackID := strings.TrimSpace(plan.Packet.PackID)
+	if rawTopLevelPackID != "" && !topLevelValid {
+		handoff.Reason = "invalid_pack_id"
+		return handoff
+	}
+	if rawDeclaredPackID != "" && !declaredValid {
+		handoff.Reason = "invalid_declared_packet_id"
+		if topLevelPackID == "" {
+			return handoff
+		}
+	}
+	effectivePackID := firstNonEmptyString(topLevelPackID, declaredPackID)
+	handoff.PackID = effectivePackID
+	handoff.DeclaredPackID = declaredPackID
+	if effectivePackID == "" {
+		return handoff
+	}
+	overridden := topLevelPackID != "" && declaredPackID != "" && topLevelPackID != declaredPackID
+	if overridden || (topLevelPackID != "" && rawDeclaredPackID != "" && !declaredValid) {
+		handoff.State = executorHandoffStateOverridden
+		handoff.Reason = "packet_id_override"
+	}
+	view, viewStatus, err := comprehension.LoadViewByIDStatus(root, effectivePackID)
+	if err != nil {
+		if handoff.State != executorHandoffStateOverridden {
+			handoff.State = executorHandoffStateMissing
+			handoff.Reason = "cache_load_error"
+		}
+		return handoff
+	}
+	switch viewStatus.State {
+	case comprehension.ViewLoadStateFresh:
+		handoff = applyExecutorHandoffView(handoff, view)
+		if overridden {
+			handoff.State = executorHandoffStateOverridden
+			handoff.Reason = "packet_id_override"
+		} else if view.Fresh {
+			handoff.State = executorHandoffStateInherited
+			handoff.Reason = "fresh_graph_view"
+		} else {
+			handoff.State = executorHandoffStateStale
+			handoff.Reason = "stale_graph_view"
+		}
+		return handoff
+	case comprehension.ViewLoadStateStale:
+		handoff = applyExecutorHandoffView(handoff, view)
+		if overridden {
+			handoff.State = executorHandoffStateOverridden
+			handoff.Reason = "packet_id_override"
+		} else {
+			handoff.State = executorHandoffStateStale
+			handoff.Reason = "stale_graph_view"
+		}
+		return handoff
+	}
+	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, effectivePackID)
+	if artifactErr != nil {
+		if handoff.State != executorHandoffStateOverridden {
+			handoff.State = executorHandoffStateMissing
+			handoff.Reason = "artifact_load_error"
+		}
+		return handoff
+	}
+	if artifactHit {
+		handoff = applyExecutorHandoffView(handoff, view)
+		if overridden {
+			handoff.State = executorHandoffStateOverridden
+			handoff.Reason = "packet_id_override"
+			return handoff
+		}
+		handoff.State = executorHandoffStateStale
+		handoff.Reason = "legacy_artifact_fallback"
+		handoff.Fresh = false
+		return handoff
+	}
+	if handoff.State != executorHandoffStateOverridden {
+		handoff.State = executorHandoffStateMissing
+		handoff.Reason = "cache_miss"
+	}
+	return handoff
+}
+
+func applyExecutorHandoffView(handoff executorHandoffPacket, view comprehension.PackResult) executorHandoffPacket {
+	handoff.PackID = firstNonEmptyString(normalizePlanExecutePackID(view.PackID), handoff.PackID)
+	handoff.IndexID = sanitizePlanExecuteEventToken(firstNonEmptyString(view.IndexID, handoff.IndexID))
+	handoff.Fresh = view.Fresh
+	handoff.CandidateFiles = len(view.CandidateFiles)
+	handoff.CandidateSymbols = len(view.CandidateSymbols)
+	handoff.Tests = len(view.Tests)
+	return handoff
+}
+
+func emitExecutorHandoffPacketEvents(stdout io.Writer, jsonEvents bool, handoff executorHandoffPacket) {
+	fields := executorHandoffPacketEventFields(handoff)
+	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_handoff_packet", fields)
+	switch handoff.State {
+	case executorHandoffStateInherited:
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_inherits_pack", fields)
+		if !jsonEvents && handoff.PackID != "" {
+			fmt.Fprintf(stdout, "  executor inherits planner pack %s (%d files, %d symbols, %d tests)\n",
+				handoff.PackID, handoff.CandidateFiles, handoff.CandidateSymbols, handoff.Tests)
+		}
+	case executorHandoffStateMissing:
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_pack_miss", fields)
+	case executorHandoffStateStale:
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_packet_stale", fields)
+	case executorHandoffStateOverridden:
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_packet_overridden", fields)
+	}
+}
+
+func executorHandoffPacketEventFields(handoff executorHandoffPacket) map[string]any {
+	fields := map[string]any{
+		"packet_state": handoff.State,
+		"reason":       handoff.Reason,
+		"fresh":        handoff.Fresh,
+	}
+	addPlanExecuteEventString(fields, "plan_id", handoff.PlanID)
+	addPlanExecuteEventString(fields, "handoff_id", handoff.HandoffID)
+	addPlanExecuteEventString(fields, "handoff_status", handoff.HandoffStatus)
+	addPlanExecuteEventString(fields, "pack_id", handoff.PackID)
+	addPlanExecuteEventString(fields, "declared_pack_id", handoff.DeclaredPackID)
+	addPlanExecuteEventString(fields, "artifact_packet_status", handoff.ArtifactPacketStatus)
+	addPlanExecuteEventString(fields, "artifact_packet_freshness", handoff.ArtifactPacketFreshness)
+	addPlanExecuteEventString(fields, "index_id", handoff.IndexID)
+	if handoff.CandidateFiles > 0 {
+		fields["candidate_files"] = handoff.CandidateFiles
+	}
+	if handoff.CandidateSymbols > 0 {
+		fields["candidate_symbols"] = handoff.CandidateSymbols
+	}
+	if handoff.Tests > 0 {
+		fields["tests"] = handoff.Tests
+	}
+	return fields
+}
+
+func addPlanExecuteEventString(fields map[string]any, key string, value string) {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		fields[key] = value
+	}
+}
+
+func normalizePlanExecuteEventPackID(value string) (string, bool) {
+	raw := strings.TrimSpace(value)
+	normalized := normalizePlanExecutePackID(raw)
+	if normalized == "" {
+		return "", raw == ""
+	}
+	return normalized, true
+}
+
+func normalizePlanExecutePackID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if isPlanExecutePackID(value) {
+		return value
+	}
+	return ""
+}
+
+func sanitizePlanExecuteEventID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if planExecuteEventTextLooksSensitive(value) {
+		return "redacted:" + planExecuteEventHash(value)
+	}
+	return sanitizePlanExecuteEventToken(value)
+}
+
+func sanitizePlanExecuteEventToken(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || planExecuteEventTextLooksSensitive(value) {
+		return ""
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastUnderscore = false
+		case r == '-' || r == '_' || r == '.' || r == ':':
+			if !lastUnderscore {
+				b.WriteRune('_')
+				lastUnderscore = true
+			}
+		}
+		if b.Len() >= 120 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func planExecuteEventTextLooksSensitive(value string) bool {
+	lower := strings.ToLower(value)
+	markers := []string{
+		"raw_prompt", "raw prompt", "raw_body", "raw body", "raw_content", "raw content",
+		"prompt_body", "prompt body", "transcript", "file_body", "file body", "file-body",
+		"private key", "secret", "token=", "token:", "access_token", "api token",
+		"secret=", "api_key", "api-key", "password=", "bearer ", "customer-",
+		"customer_", "secrets/", "/secrets/", "\\secrets\\",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	for _, token := range strings.FieldsFunc(lower, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if token == "token" || token == "tokens" || token == "customer" || token == "customers" {
+			return true
+		}
+	}
+	normalized := strings.ReplaceAll(lower, "\\", "/")
+	for _, marker := range []string{"/users/", "/home/", "/volumes/", "/private/", "c:/users/"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecuteEventHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 type reviewRepairPhaseReport struct {
@@ -984,6 +1284,9 @@ func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
 	ctx := context.Background()
+	handoff := classifyExecutorHandoffPacket(cfg.Workspace.Root, plan)
+	report.Handoff = handoff
+	emitExecutorHandoffPacketEvents(stdout, jsonEvents, handoff)
 
 	if mismatch := preflightPlanRequiredEditPaths(requiredEditPaths, plan); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
@@ -1041,43 +1344,10 @@ func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 		"edits": len(plan.Edits),
 	})
 
-	// If the planner stamped a pack_id, surface that the executor
-	// inherited the planner's context view. The cached pack carries the
-	// planner's ranked candidate files / symbols / tests; downstream
-	// consumers (UIs, debug tooling, future smart-skipping) can read
-	// it via comprehension.LoadViewByID. The executor itself doesn't
-	// shortcut discovery yet — this hook proves the wire is connected
-	// and gives debug telemetry a hook to attach to.
-	if strings.TrimSpace(plan.PackID) != "" {
-		if view, hit, err := comprehension.LoadViewByID(cfg.Workspace.Root, plan.PackID); err == nil && hit {
-			emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_inherits_pack", map[string]any{
-				"pack_id":           plan.PackID,
-				"index_id":          view.IndexID,
-				"candidate_files":   len(view.CandidateFiles),
-				"candidate_symbols": len(view.CandidateSymbols),
-				"tests":             len(view.Tests),
-				"fresh":             view.Fresh,
-			})
-			if !jsonEvents {
-				fmt.Fprintf(stdout, "  executor inherits planner pack %s (%d files, %d symbols, %d tests)\n",
-					plan.PackID, len(view.CandidateFiles), len(view.CandidateSymbols), len(view.Tests))
-			}
-		} else {
-			emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_pack_miss", map[string]any{
-				"pack_id": plan.PackID,
-				"reason": func() string {
-					if err != nil {
-						return err.Error()
-					}
-					return "cache miss (row stale or absent)"
-				}(),
-			})
-		}
-	}
-
 	executorStartedAt := time.Now()
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_start", map[string]any{
-		"edits": len(plan.Edits),
+		"edits":        len(plan.Edits),
+		"packet_state": handoff.State,
 	})
 	for i, edit := range plan.Edits {
 		// Whole-file / new-file shape: replace_all=true with empty

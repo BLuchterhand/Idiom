@@ -620,6 +620,60 @@ func TestAuditPlanArtifactComparesSubmittedFieldsPrivately(t *testing.T) {
 	}
 }
 
+func TestAuditPlanArtifactReportsPacketStateMetrics(t *testing.T) {
+	fresh := true
+	packet := Packet{
+		SchemaVersion: PlanningPacketV2Version,
+		Task:          "Audit packet state metrics",
+		CandidateScope: []RankedScopeItem{{
+			Handle: "file://internal/architect/packet.go",
+			Path:   "internal/architect/packet.go",
+			Kind:   "file",
+			Rank:   0.9,
+		}},
+		Freshness: &FreshnessReport{
+			IndexID:      "idx-current",
+			Fresh:        &fresh,
+			ContextViews: []ContextFreshnessSource{{PackID: "feedfacecafebeef", IndexID: "idx-current", Fresh: &fresh}},
+		},
+	}
+	base := PlanArtifactAuditSubject{
+		Paths: PlanArtifactPathsAuditSubject{
+			Editable: []string{"internal/architect/packet.go"},
+			Required: []string{"internal/architect/packet.go"},
+		},
+		Approval: PlanArtifactApprovalAuditSubject{Status: "implicit"},
+		Handoff:  PlanArtifactHandoffAuditSubject{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/architect/packet.go"}},
+	}
+	inherited := base
+	inherited.PackID = "feedfacecafebeef"
+	inherited.Packet = PlanArtifactPacketAuditSubject{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh", IndexID: "idx-current"}
+	if result := AuditPlanArtifact(packet, inherited); result.MismatchMetrics.PacketState != "inherited" {
+		t.Fatalf("expected inherited packet state, got %#v", result.MismatchMetrics)
+	}
+	missing := base
+	if result := AuditPlanArtifact(packet, missing); result.MismatchMetrics.PacketState != "missing" {
+		t.Fatalf("expected missing packet state, got %#v", result.MismatchMetrics)
+	}
+	overridden := inherited
+	overridden.Packet.PackID = "deadc0decafef00d"
+	if result := AuditPlanArtifact(packet, overridden); result.MismatchMetrics.PacketState != "overridden" || result.MismatchMetrics.PacketReason != "packet_id_mirror" {
+		t.Fatalf("expected overridden packet state, got %#v", result.MismatchMetrics)
+	}
+	staleFresh := false
+	stalePacket := packet
+	stalePacket.Freshness = &FreshnessReport{
+		IndexID:      "idx-current",
+		Fresh:        &staleFresh,
+		StaleNodes:   []string{"internal/architect/packet.go"},
+		ContextViews: []ContextFreshnessSource{{PackID: "feedfacecafebeef", IndexID: "idx-current", Fresh: &staleFresh}},
+	}
+	if result := AuditPlanArtifact(stalePacket, inherited); result.MismatchMetrics.PacketState != "stale" {
+		t.Fatalf("expected stale packet state, got %#v", result.MismatchMetrics)
+	}
+}
+
 func TestAuditPlanArtifactBlocksReadyHandoffWithoutRequiredApproval(t *testing.T) {
 	packet := Packet{
 		SchemaVersion: PlanningPacketV2Version,

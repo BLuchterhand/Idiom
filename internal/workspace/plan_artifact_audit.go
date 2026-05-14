@@ -22,18 +22,22 @@ type PlanArtifactAuditResult struct {
 }
 
 type PlanArtifactAuditMetrics struct {
-	PacketIdentityMismatches      int  `json:"packet_identity_mismatches,omitempty"`
-	PacketFreshnessMismatches     int  `json:"packet_freshness_mismatches,omitempty"`
-	ScopePathMismatches           int  `json:"scope_path_mismatches,omitempty"`
-	EvidenceMismatches            int  `json:"evidence_mismatches,omitempty"`
-	UnresolvedQuestionMismatches  int  `json:"unresolved_question_mismatches,omitempty"`
-	VerificationObligationSignals int  `json:"verification_obligation_signals,omitempty"`
-	ApprovalHandoffMismatches     int  `json:"approval_handoff_mismatches,omitempty"`
-	PacketAvailable               bool `json:"packet_available"`
-	PacketFresh                   bool `json:"packet_fresh"`
-	SubmittedEditPaths            int  `json:"submitted_edit_paths"`
-	PacketScopePaths              int  `json:"packet_scope_paths,omitempty"`
-	RequiredVerificationOpenCount int  `json:"required_verification_open_count,omitempty"`
+	PacketIdentityMismatches      int    `json:"packet_identity_mismatches,omitempty"`
+	PacketFreshnessMismatches     int    `json:"packet_freshness_mismatches,omitempty"`
+	ScopePathMismatches           int    `json:"scope_path_mismatches,omitempty"`
+	EvidenceMismatches            int    `json:"evidence_mismatches,omitempty"`
+	UnresolvedQuestionMismatches  int    `json:"unresolved_question_mismatches,omitempty"`
+	VerificationObligationSignals int    `json:"verification_obligation_signals,omitempty"`
+	ApprovalHandoffMismatches     int    `json:"approval_handoff_mismatches,omitempty"`
+	PacketAvailable               bool   `json:"packet_available"`
+	PacketFresh                   bool   `json:"packet_fresh"`
+	SubmittedEditPaths            int    `json:"submitted_edit_paths"`
+	PacketScopePaths              int    `json:"packet_scope_paths,omitempty"`
+	RequiredVerificationOpenCount int    `json:"required_verification_open_count,omitempty"`
+	PacketState                   string `json:"packet_state,omitempty"`
+	PacketReason                  string `json:"packet_reason,omitempty"`
+	PackID                        string `json:"pack_id,omitempty"`
+	PacketIndexID                 string `json:"packet_index_id,omitempty"`
 }
 
 type PlanArtifactAuditFinding struct {
@@ -74,9 +78,11 @@ func (r PlanArtifactAuditResult) ErrorSummary() string {
 
 func (r PlanArtifactAuditResult) SummaryLine() string {
 	return fmt.Sprintf(
-		"audit_ok=%t findings=%d packet_identity_mismatches=%d packet_freshness_mismatches=%d scope_path_mismatches=%d evidence_mismatches=%d unresolved_question_mismatches=%d verification_obligation_signals=%d approval_handoff_mismatches=%d",
+		"audit_ok=%t findings=%d packet_state=%s packet_reason=%s packet_identity_mismatches=%d packet_freshness_mismatches=%d scope_path_mismatches=%d evidence_mismatches=%d unresolved_question_mismatches=%d verification_obligation_signals=%d approval_handoff_mismatches=%d",
 		r.OK,
 		len(r.Findings),
+		firstNonEmptyString(r.Metrics.PacketState, "unknown"),
+		firstNonEmptyString(r.Metrics.PacketReason, "unknown"),
 		r.Metrics.PacketIdentityMismatches,
 		r.Metrics.PacketFreshnessMismatches,
 		r.Metrics.ScopePathMismatches,
@@ -99,9 +105,13 @@ type planArtifactAuditor struct {
 
 func (a *planArtifactAuditor) checkPacketEvidence() {
 	packID := firstNonEmptyString(a.artifact.Packet.PackID, a.artifact.PackID)
+	a.markPacketState("missing", "not_provided", false)
+	a.metrics.PackID = sanitizePlanArtifactPackID(packID)
+	a.metrics.PacketIndexID = sanitizePlanArtifactToken(a.artifact.Packet.IndexID)
 	if a.artifact.Packet.PackID != "" && a.artifact.PackID != "" && a.artifact.Packet.PackID != a.artifact.PackID {
 		a.add("error", "packet_identity_mismatch", "plan artifact top-level and nested packet ids differ", []string{"pack_id_mirror"})
 		a.metrics.PacketIdentityMismatches++
+		a.markPacketState("overridden", "packet_id_mirror", true)
 	}
 	for _, evidence := range a.artifact.Evidence {
 		if strings.HasPrefix(evidence.Handle, "context_pack://") {
@@ -116,6 +126,7 @@ func (a *planArtifactAuditor) checkPacketEvidence() {
 		if packetStatusClaimsAvailable(a.artifact.Packet) {
 			a.add(enforcedSeverity(a.opts), "packet_identity_mismatch", "plan artifact claims packet availability without a packet id", []string{"packet_status=" + a.artifact.Packet.Status})
 			a.metrics.PacketIdentityMismatches++
+			a.markPacketState("missing", "availability_claim_without_packet_id", true)
 		}
 		return
 	}
@@ -123,17 +134,25 @@ func (a *planArtifactAuditor) checkPacketEvidence() {
 	if err != nil {
 		a.add(enforcedSeverity(a.opts), "packet_identity_mismatch", "submitted packet id could not be loaded", []string{packID, "load_error"})
 		a.metrics.PacketIdentityMismatches++
+		a.markPacketState("missing", "load_error", a.metrics.PacketState != "overridden")
 		return
 	}
 	if !found {
 		a.add(enforcedSeverity(a.opts), "packet_identity_mismatch", "submitted packet id is not available in graph view evidence", []string{packID})
 		a.metrics.PacketIdentityMismatches++
+		a.markPacketState("missing", "cache_miss", a.metrics.PacketState != "overridden")
 		return
 	}
 	a.packet = packet
 	a.packetFound = true
 	a.metrics.PacketAvailable = true
 	a.metrics.PacketFresh = packet.Fresh
+	a.metrics.PacketIndexID = sanitizePlanArtifactToken(firstNonEmptyString(packet.IndexID, a.artifact.Packet.IndexID))
+	if packet.Fresh {
+		a.markPacketState("inherited", "fresh_graph_view", a.metrics.PacketState != "overridden")
+	} else {
+		a.markPacketState("stale", "stale_graph_view", a.metrics.PacketState != "overridden")
+	}
 	if a.artifact.Packet.IndexID != "" && packet.IndexID != "" && a.artifact.Packet.IndexID != packet.IndexID {
 		a.add(enforcedSeverity(a.opts), "packet_identity_mismatch", "submitted packet index id differs from loaded graph view", []string{a.artifact.Packet.IndexID, packet.IndexID})
 		a.metrics.PacketIdentityMismatches++
@@ -152,6 +171,19 @@ func (a *planArtifactAuditor) checkPacketEvidence() {
 			a.metrics.PacketFreshnessMismatches++
 		}
 	}
+}
+
+func (a *planArtifactAuditor) markPacketState(state string, reason string, overwrite bool) {
+	state = sanitizePlanArtifactToken(state)
+	reason = sanitizePlanArtifactToken(reason)
+	if state == "" {
+		return
+	}
+	if !overwrite && strings.TrimSpace(a.metrics.PacketState) != "" {
+		return
+	}
+	a.metrics.PacketState = state
+	a.metrics.PacketReason = reason
 }
 
 func (a *planArtifactAuditor) checkScopeEvidence() {
@@ -294,11 +326,11 @@ func (a *planArtifactAuditor) add(severity string, kind string, message string, 
 }
 
 func loadPlanArtifactAuditPacket(root string, packID string) (comprehension.PackResult, bool, error) {
-	view, hit, err := comprehension.LoadViewByID(root, packID)
+	view, status, err := comprehension.LoadViewByIDStatus(root, packID)
 	if err != nil {
 		return comprehension.PackResult{}, false, err
 	}
-	if hit {
+	if status.State == comprehension.ViewLoadStateFresh || status.State == comprehension.ViewLoadStateStale {
 		return view, true, nil
 	}
 	path := filepath.Join(strings.TrimSpace(root), ".idiom", "comprehension", "views", packID+".json")

@@ -225,6 +225,32 @@ func slicesContainString(values []string, want string) bool {
 	return false
 }
 
+func planExecuteJSONEvents(t *testing.T, stdout string) []map[string]any {
+	t.Helper()
+	var events []map[string]any
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode JSON event %q: %v", line, err)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func planExecuteEventByType(events []map[string]any, eventType string) (map[string]any, bool) {
+	for _, event := range events {
+		if event["type"] == eventType {
+			return event, true
+		}
+	}
+	return nil, false
+}
+
 func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
 	// When the planner stamps a pack_id and the cache row exists, the
 	// executor phase emits an executor_inherits_pack JSON event so
@@ -273,6 +299,14 @@ func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
 	if !strings.Contains(stdout.String(), `idiom.plan_execute.executor_inherits_pack`) {
 		t.Fatalf("expected executor_inherits_pack JSON event in stdout, got: %s", stdout.String())
 	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got: %s", stdout.String())
+	}
+	if handoff["packet_state"] != executorHandoffStateInherited || handoff["reason"] != "fresh_graph_view" {
+		t.Fatalf("expected inherited handoff packet, got %#v", handoff)
+	}
 	if !strings.Contains(stdout.String(), `"pack_id":"`+key.ID()+`"`) {
 		t.Fatalf("expected pack_id %s in event, got: %s", key.ID(), stdout.String())
 	}
@@ -303,6 +337,249 @@ func TestRunExecutorPhaseEmitsExecutorPackMissOnUnknownPackID(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `idiom.plan_execute.executor_pack_miss`) {
 		t.Fatalf("expected executor_pack_miss JSON event when pack_id is unknown, got: %s", stdout.String())
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok || handoff["packet_state"] != executorHandoffStateMissing || handoff["reason"] != "cache_miss" {
+		t.Fatalf("expected missing handoff packet, got %#v in %s", handoff, stdout.String())
+	}
+}
+
+func TestRunExecutorPhaseEmitsMissingPacketHandoffWithoutPlanPacket(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PlanID:        "plan-missing-packet",
+		Handoff:       workspace.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:         []workspace.PlanEdit{{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"}},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, nil, true, &stdout); err != nil {
+		t.Fatalf("executor phase failed: %v", err)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
+	}
+	if handoff["packet_state"] != executorHandoffStateMissing || handoff["reason"] != "missing_packet_id" {
+		t.Fatalf("expected missing packet state, got %#v", handoff)
+	}
+}
+
+func TestRunExecutorPhaseEmitsStalePacketHandoff(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	packID := "deadc0decafef00d"
+	writePlanExecutePackArtifact(t, root, comprehension.PackResult{
+		PackID:         packID,
+		IndexID:        "idx-old",
+		Root:           root,
+		Task:           "stale packet",
+		Mode:           "plan",
+		Fresh:          false,
+		CandidateFiles: []comprehension.PackFile{{Path: "a.txt", Role: "editable"}},
+	})
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PlanID:        "plan-stale-packet",
+		PackID:        packID,
+		Packet:        workspace.PlanArtifactPacket{PackID: packID, Status: "available", Freshness: "fresh"},
+		Handoff:       workspace.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:         []workspace.PlanEdit{{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"}},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, nil, true, &stdout); err != nil {
+		t.Fatalf("executor phase failed: %v", err)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
+	}
+	if handoff["packet_state"] != executorHandoffStateStale || handoff["reason"] != "legacy_artifact_fallback" || handoff["fresh"] != false {
+		t.Fatalf("expected stale packet state, got %#v", handoff)
+	}
+	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_packet_stale"); !ok {
+		t.Fatalf("expected executor_packet_stale compatibility event, got %s", stdout.String())
+	}
+}
+
+func TestRunExecutorPhaseEmitsStaleGraphViewPacketWithoutLegacyArtifact(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/stalehandoff\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package stalehandoff\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
+		t.Fatalf("seed a.go: %v", err)
+	}
+	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "stale graph packet", Mode: "plan", Query: comprehension.ViewQueryInputs{Path: "a.go"}}
+	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+		PackID:         key.ID(),
+		IndexID:        build.IndexID,
+		Root:           root,
+		Task:           "stale graph packet",
+		Mode:           "plan",
+		Fresh:          true,
+		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	if n, err := comprehension.MarkAllViewsStale(root); err != nil || n != 1 {
+		t.Fatalf("MarkAllViewsStale n=%d err=%v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "comprehension", "views", key.ID()+".json")); err == nil {
+		t.Fatalf("legacy view artifact should not exist for graph-row stale test")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat legacy view artifact: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PlanID:        "plan-stale-graph-row",
+		PackID:        key.ID(),
+		Packet:        workspace.PlanArtifactPacket{PackID: key.ID(), Status: "available", Freshness: "fresh"},
+		Handoff:       workspace.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:         []workspace.PlanEdit{{Path: "a.go", OldText: "alpha", NewText: "ALPHA"}},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, nil, true, &stdout); err != nil {
+		t.Fatalf("executor phase failed: %v", err)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
+	}
+	if handoff["packet_state"] != executorHandoffStateStale || handoff["reason"] != "stale_graph_view" || handoff["fresh"] != false {
+		t.Fatalf("expected stale graph-view packet state, got %#v", handoff)
+	}
+	if handoff["candidate_files"] != float64(1) {
+		t.Fatalf("expected stale graph row to preserve candidate count, got %#v", handoff)
+	}
+	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_packet_stale"); !ok {
+		t.Fatalf("expected executor_packet_stale compatibility event, got %s", stdout.String())
+	}
+}
+
+func TestRunExecutorPhaseEmitsStaleForNonCurrentGraphViewPacketWithoutLegacyArtifact(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/noncurrenthandoff\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package noncurrenthandoff\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
+		t.Fatalf("seed a.go: %v", err)
+	}
+	if _, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := comprehension.ViewKey{IndexID: "old-index", Task: "non-current graph packet", Mode: "plan", Query: comprehension.ViewQueryInputs{Path: "a.go"}}
+	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+		PackID:         key.ID(),
+		IndexID:        "old-index",
+		Root:           root,
+		Task:           "non-current graph packet",
+		Mode:           "plan",
+		Fresh:          true,
+		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "comprehension", "views", key.ID()+".json")); err == nil {
+		t.Fatalf("legacy view artifact should not exist for non-current graph-row test")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat legacy view artifact: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PlanID:        "plan-non-current-graph-row",
+		PackID:        key.ID(),
+		Packet:        workspace.PlanArtifactPacket{PackID: key.ID(), Status: "available", Freshness: "fresh"},
+		Handoff:       workspace.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:         []workspace.PlanEdit{{Path: "a.go", OldText: "alpha", NewText: "ALPHA"}},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, nil, true, &stdout); err != nil {
+		t.Fatalf("executor phase failed: %v", err)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
+	}
+	if handoff["packet_state"] != executorHandoffStateStale || handoff["reason"] != "stale_graph_view" || handoff["fresh"] != false {
+		t.Fatalf("expected stale non-current graph-view packet state, got %#v", handoff)
+	}
+	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_pack_miss"); ok {
+		t.Fatalf("non-current graph row should not collapse to executor_pack_miss, got %s", stdout.String())
+	}
+}
+
+func TestRunExecutorPhaseEmitsOverriddenPacketHandoffAndRedactsSensitiveIDs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/override\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package override\n"), 0o644); err != nil {
+		t.Fatalf("seed pkg.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "override packet", Mode: "plan"}
+	packID := key.ID()
+	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+		PackID:         packID,
+		IndexID:        build.IndexID,
+		Root:           root,
+		Task:           "override packet",
+		Mode:           "plan",
+		Fresh:          true,
+		CandidateFiles: []comprehension.PackFile{{Path: "a.txt", Role: "editable"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PlanID:        "plan raw_prompt customer-acme token=/Users/ben/private/client",
+		PackID:        packID,
+		Packet:        workspace.PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+		Handoff:       workspace.PlanArtifactHandoff{ID: "handoff raw_prompt customer-acme token", Status: "ready", Ready: true},
+		Edits:         []workspace.PlanEdit{{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"}},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, nil, true, &stdout); err != nil {
+		t.Fatalf("executor phase failed: %v", err)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
+	}
+	if handoff["packet_state"] != executorHandoffStateOverridden || handoff["reason"] != "packet_id_override" {
+		t.Fatalf("expected overridden packet state, got %#v", handoff)
+	}
+	for _, leaked := range []string{"raw_prompt", "customer-acme", "customer_acme", "token=", "/Users/ben/private"} {
+		if strings.Contains(stdout.String(), leaked) {
+			t.Fatalf("handoff event leaked sensitive marker %q: %s", leaked, stdout.String())
+		}
 	}
 }
 
@@ -364,6 +641,9 @@ func TestCollectPlanExecutePhaseEvidenceLoadsPacketAndExecutorChecks(t *testing.
 	}
 	if evidence.Packet.Status != "available_stale" || evidence.Packet.PackID != key.ID() {
 		t.Fatalf("expected stale packet artifact %s, got %#v", key.ID(), evidence.Packet)
+	}
+	if evidence.ExecutorHandoff.PacketState != executorHandoffStateStale || evidence.ExecutorHandoff.Reason == "" {
+		t.Fatalf("expected stale executor handoff evidence, got %#v", evidence.ExecutorHandoff)
 	}
 	if len(evidence.Packet.CandidateFiles) != 1 || evidence.Packet.CandidateFiles[0].Path != "a.go" {
 		t.Fatalf("candidate files missing from phase evidence: %#v", evidence.Packet.CandidateFiles)
@@ -471,6 +751,7 @@ func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) 
 		"Allowed Repair Paths",
 		"Phase Evidence Bundle",
 		"context_packet: status=available pack_id=abc123",
+		"executor_handoff_packet",
 		"submitted_plan_state",
 		"do not re-submit",
 		"`go test ./...`",
