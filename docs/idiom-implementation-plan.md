@@ -1774,7 +1774,7 @@ Review signoff:
 | P7.10 | Add runnable client demo transcripts for every client classification with commands, expected output, value claim, evidence, and limitations | P7.3, P7.6, P0.8 | Einstein the 3rd | - [x] | Curie the 3rd + P7.17/Maxwell the 3rd follow-up | - [x] |
 | P7.17 | Make client-demo transcript execution privacy-safe and schema-strict | P7.10 | Faraday the 3rd | - [x] | Maxwell the 3rd | - [x] |
 | P7.11 | Add local product-evidence export for activation, retained use, integration, benchmark, audit, and learning signals without raw prompt or file bodies | P7.1-P7.6, P0.8, P0.10 | Confucius the 3rd | - [x] | Carver the 3rd + P7.18 follow-up | - [ ] |
-| P7.18 | Harden product-evidence validation-record ingestion and status semantics | P7.11 | Turing the 3rd | - [ ] | unassigned review subagent | - [ ] |
+| P7.18 | Harden product-evidence validation-record ingestion and status semantics | P7.11 | Turing the 3rd | - [x] | Dalton the 3rd | - [ ] |
 | P8.1 | Implement `idiom mcp serve --stdio --profile discovery` from the same schemas | P7 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P8.2 | Add MCP resources, root clamping, and protocol/error tests | P8.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P8.3 | Add MCP client smoke tests and telemetry/caller attribution parity with CLI | P8.1, P8.2 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
