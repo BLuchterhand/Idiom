@@ -125,23 +125,26 @@ The external harness may pass the returned findings, paths, symbols, counts,
 and freshness to its model. It should not treat Idiom output as a prescribed
 next step.
 
-## MCP Stdio Placeholder Handoff
+## MCP Stdio
 
-P7.8 does not claim that MCP stdio is implemented. The placeholder handoff
-records the contract shape P8 must preserve:
+Use this when an MCP client needs the same discovery-profile evidence contract
+over stdio. The P8.6 replay fixture records the contract shape:
 
 - transport: `mcp_stdio`
 - sidecar schema: `idiom.tool.v1`
 - profile: `discovery`
-- readiness fields: protocol implemented or deferred, shared contract shape,
-  profile, schema, freshness, audit, and privacy review
-- limitation: no MCP handshake, roots, resources, or protocol transcript is
-  claimed until Phase 8
+- readiness fields: protocol implemented, shared contract shape, profile,
+  schema, caller metadata, roots/resources, redaction denial, freshness, audit,
+  privacy review, and product-evidence export parity
+- limitation: `resources/read` is metadata-only; file bodies are not returned
+  until resource body redaction is implemented safely
 
-The reviewed placeholder lives in
+The executable proof lives in
+[`testdata/sidecar/mcp-stdio-integration-proof.json`](../testdata/sidecar/mcp-stdio-integration-proof.json)
+and is linked from
 [`testdata/sidecar/integration-proofs.json`](../testdata/sidecar/integration-proofs.json).
-P8.6 must replace the placeholder with a replayable MCP proof that keeps CLI
-and MCP on the same evidence model.
+It is replayed by
+`go test ./cmd/idiom -run TestP86MCPStdioIntegrationProofReplay -count=1`.
 
 ## Local Or Private-Code User
 
@@ -193,3 +196,5 @@ The v1 compatibility golden tests are replayed by
 `go test ./cmd/idiom -run TestSidecarV1CompatibilityGoldenCases`.
 The P7.8 integration proof records are validated by
 `go test ./cmd/idiom -run TestP78IntegrationProofRecords`.
+The P8.6 MCP stdio proof is replayed by
+`go test ./cmd/idiom -run TestP86MCPStdioIntegrationProofReplay`.

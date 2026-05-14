@@ -281,11 +281,11 @@ printf '%s\n' \
 ```
 
 The `resources/read` example above should return a JSON-RPC denial, not file
-contents. P8.2 resources are metadata-only. P8.3 stamps MCP `tools/call`
-responses and local telemetry with the shared sidecar caller vocabulary while
-using `transport:"mcp_stdio"` instead of CLI transport. P8.4 still owns full
-resource redaction/freshness parity, and P8.6 owns the complete replayable
-integration proof.
+contents. MCP resources are metadata-only. MCP `tools/call` responses and local
+telemetry use the shared sidecar caller vocabulary with
+`transport:"mcp_stdio"` instead of CLI transport. The complete replayable MCP
+integration proof lives in
+`testdata/sidecar/mcp-stdio-integration-proof.json`.
 
 ## In-app controls
 

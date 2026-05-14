@@ -116,14 +116,28 @@
       }
     },
     {
-      "id": "p7.8-mcp-stdio-placeholder",
-      "path": "mcp_stdio_placeholder",
-      "status": "phase8_deferred_reviewed_placeholder",
-      "recipe_doc": "docs/sidecar-recipes.md#mcp-stdio-placeholder-handoff",
+      "id": "p7.8-mcp-stdio",
+      "path": "mcp_stdio",
+      "status": "test_validated",
+      "recipe_doc": "docs/sidecar-recipes.md#mcp-stdio",
       "script_path": "",
       "setup_step_ids": [],
-      "transcript_step_ids": [],
+      "transcript_step_ids": [
+        "p8.6-mcp-stdio"
+      ],
       "phase8_work_package": "P8.6",
+      "replay_fixture": "testdata/sidecar/mcp-stdio-integration-proof.json",
+      "replay_test": "go test ./cmd/idiom -run TestP86MCPStdioIntegrationProofReplay -count=1",
+      "product_evidence_export_parity": true,
+      "client_classifications": [
+        "finance",
+        "healthcare",
+        "public-sector",
+        "enterprise-saas",
+        "tooling-vendor",
+        "local-model",
+        "open-source"
+      ],
       "consumes": {
         "profile": true,
         "schema": true,
@@ -131,13 +145,12 @@
         "audit": true,
         "contract": true
       },
-      "placeholder_contract": {
+      "mcp_contract": {
         "transport": "mcp_stdio",
         "profile": "discovery",
         "sidecar_schema_version": "idiom.tool.v1",
         "readiness_fields": [
           "protocol_implemented",
-          "phase8_deferred",
           "shared_contract_shape",
           "profile_bound",
           "schema_version_present",
@@ -145,7 +158,7 @@
           "audit_fields_present",
           "privacy_reviewed"
         ],
-        "limitation": "No MCP stdio server, handshake, resources, roots, or protocol transcript is claimed in P7.8; P8.1-P8.6 own protocol implementation and replayable parity."
+        "limitation": "MCP resources are metadata-only; resource file bodies remain unavailable until safe body redaction is implemented."
       },
       "readiness": {
         "shared_contract_shape": true,
@@ -154,14 +167,18 @@
         "freshness_fields_present": true,
         "audit_fields_present": true,
         "privacy_reviewed": true,
-        "executable_evidence": false,
-        "reviewed_placeholder": true,
-        "protocol_implemented": false,
-        "phase8_deferred": true
+        "executable_evidence": true,
+        "reviewed_placeholder": false,
+        "protocol_implemented": true,
+        "phase8_deferred": false,
+        "caller_metadata_present": true,
+        "roots_resources_present": true,
+        "redaction_denial_present": true,
+        "product_evidence_export_parity": true
       },
       "limitations": [
-        "This is a reviewed handoff contract only, not a fake MCP implementation.",
-        "P8.6 must replace this placeholder with a replayable MCP stdio proof covering protocol, caller metadata, roots, resources, redaction, freshness, and evidence export parity."
+        "resources/read is metadata-only; file bodies are not returned until resource body redaction is implemented safely.",
+        "The MCP proof reports contracts, metadata, freshness, and denials; it does not prescribe caller strategy."
       ],
       "privacy": {
         "raw_prompts": false,

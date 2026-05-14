@@ -1,0 +1,178 @@
+{
+  "schema_version": "idiom.mcp_stdio_integration_proof.v1",
+  "proof_id": "p8.6-mcp-stdio",
+  "linked_p7_8_proof_id": "p7.8-mcp-stdio",
+  "product_evidence_signal": "integration_proof",
+  "release_gates": [
+    "P7.8",
+    "P8.6",
+    "P9.8"
+  ],
+  "default_caller": {
+    "caller_id": "mcp-proof",
+    "request_id": "p86-proof",
+    "trace_id": "trace:p86-proof"
+  },
+  "client_classification_coverage": [
+    {
+      "classification": "finance",
+      "coverage": "generic regulated proof: root clamping, protected-resource denial, redaction, caller attribution, and local evidence export linkage"
+    },
+    {
+      "classification": "healthcare",
+      "coverage": "generic regulated proof: root clamping, protected-resource denial, redaction, caller attribution, and local evidence export linkage"
+    },
+    {
+      "classification": "public-sector",
+      "coverage": "generic regulated proof: structured denial, caller attribution, transport attribution, and no content exposure"
+    },
+    {
+      "classification": "enterprise-saas",
+      "coverage": "primary platform proof: schema-derived tools, profile-bound calls, freshness, and product-evidence export linkage"
+    },
+    {
+      "classification": "tooling-vendor",
+      "coverage": "MCP embedding proof: protocol initialize, tools, roots, resources, and transport attribution"
+    },
+    {
+      "classification": "local-model",
+      "coverage": "local sidecar proof: stdio transport and metadata-only resources without hosted telemetry dependency"
+    },
+    {
+      "classification": "open-source",
+      "coverage": "replayable fixture proof: local JSON transcript and test validation without repository content"
+    }
+  ],
+  "privacy": {
+    "raw_prompts": false,
+    "file_bodies": false,
+    "private_paths": false,
+    "credentials": false,
+    "private_repo_or_customer_ids": false,
+    "unredacted_telemetry_paths": false
+  },
+  "limitations": [
+    "resources/read is metadata-only; file bodies are not returned until resource body redaction is implemented safely",
+    "the proof reports contracts and evidence only; callers keep strategy ownership"
+  ],
+  "requests": [
+    {
+      "step_id": "initialize",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2024-11-05",
+          "clientInfo": {
+            "name": "p8.6-replay",
+            "version": "test"
+          }
+        }
+      }
+    },
+    {
+      "step_id": "tools-list",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {}
+      }
+    },
+    {
+      "step_id": "allowed-tools-call",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+          "name": "context_status",
+          "arguments": {
+            "limit": 1,
+            "freshness_policy": "report_only"
+          },
+          "_meta": {
+            "idiom": {
+              "caller_id": "mcp-proof",
+              "request_id": "p86-allowed",
+              "trace_id": "trace:p86-proof"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step_id": "structured-denial",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+          "name": "context_status",
+          "arguments": {
+            "refresh": true
+          },
+          "_meta": {
+            "idiom": {
+              "caller_id": "mcp-proof",
+              "request_id": "p86-denied",
+              "trace_id": "trace:p86-proof"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step_id": "roots-list",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "roots/list",
+        "params": {}
+      }
+    },
+    {
+      "step_id": "resources-list",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "resources/list",
+        "params": {}
+      }
+    },
+    {
+      "step_id": "resource-root-read",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "resources/read",
+        "params": {
+          "uri": "idiom://workspace/root"
+        }
+      }
+    },
+    {
+      "step_id": "resource-file-read",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "resources/read",
+        "params": {
+          "uri": "idiom://workspace/file/README.md"
+        }
+      }
+    },
+    {
+      "step_id": "protected-resource-denial",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "resources/read",
+        "params": {
+          "uri": "idiom://workspace/file/.git/config"
+        }
+      }
+    }
+  ]
+}

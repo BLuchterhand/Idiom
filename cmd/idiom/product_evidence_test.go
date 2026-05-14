@@ -42,8 +42,8 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 	if err := json.Unmarshal(body, &reparsed); err != nil {
 		t.Fatalf("product evidence JSON should parse: %v", err)
 	}
-	if reparsed.SignalCompleteness.Status != "partial" || reparsed.SignalCompleteness.CompleteCount < 5 {
-		t.Fatalf("expected mostly complete P7.11 signal matrix with explicit partials, got %#v", reparsed.SignalCompleteness)
+	if reparsed.SignalCompleteness.Status != "complete" || reparsed.SignalCompleteness.CompleteCount != reparsed.SignalCompleteness.RequiredCount {
+		t.Fatalf("expected complete P7.11 signal matrix, got %#v", reparsed.SignalCompleteness)
 	}
 	for _, id := range []string{"activation", "retained_use", "integration_proof", "benchmark", "audit", "learning"} {
 		if !p711TestHasSignal(reparsed.Signals, id) {
@@ -56,8 +56,17 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 	if got := p711TestSignal(reparsed.Signals, "retained_use"); got.Status != "pass" || got.Counts["adoption_signals"] == 0 {
 		t.Fatalf("retained-use signal should summarize validation records: %#v", got)
 	}
-	if reparsed.Status != "partial" {
-		t.Fatalf("top-level status should reflect partial signal completeness, got %q", reparsed.Status)
+	if reparsed.Status != "pass" {
+		t.Fatalf("top-level status should reflect complete signal evidence, got %q", reparsed.Status)
+	}
+	integration := p711TestSignal(reparsed.Signals, "integration_proof")
+	if integration.Status != "pass" ||
+		integration.Counts["mcp_stdio_parity_paths"] != 1 ||
+		!stringSliceContains(integration.EvidenceIDs, "p7.8-mcp-stdio") {
+		t.Fatalf("integration signal should include executable MCP stdio parity: %#v", integration)
+	}
+	if linkage := p711TestReleaseGate(reparsed.ReleaseGateLinkage, "P9.8"); linkage.Status != "evidence_present" {
+		t.Fatalf("P9.8 linkage should consume integration proof parity: %#v", reparsed.ReleaseGateLinkage)
 	}
 	if got := p711TestSignal(reparsed.Signals, "learning"); got.Status != "pass" || got.Counts["accepted"] == 0 {
 		t.Fatalf("learning signal should summarize sanitized ranker learning: %#v", got)
@@ -118,6 +127,215 @@ func TestRunProductEvidenceExportWritesParseableJSONOutput(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), outputPath) || strings.Contains(stderr.String(), outputPath) {
 		t.Fatalf("CLI output should not echo raw output path stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestP810IntegrationProofRequiresDistinctExecutablePaths(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		proofs []map[string]any
+	}{
+		{
+			name: "missing_shell_ci_path",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+		},
+		{
+			name: "missing_external_agent_path",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+		},
+		{
+			name: "duplicate_and_unrelated_executables_do_not_fill_missing_path",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
+				p711IntegrationProofFixture("p7.8-shell-ci-duplicate", "shell_ci_script", true, false),
+				p711IntegrationProofFixture("p7.8-unrelated-workflow", "editor_plugin_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+		},
+		{
+			name: "mcp_stdio_missing_parity_fields",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofWithoutMCPParityFixture("p7.8-mcp-stdio"),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			writeP711IntegrationProofs(t, root, tc.proofs)
+
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			integration := p711TestSignal(report.Signals, "integration_proof")
+			if integration.Status != "partial" || integration.Completeness != "partial" {
+				t.Fatalf("incomplete integration proof should stay partial: %#v", integration)
+			}
+			if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.8"); linkage.Status != "needs_evidence" {
+				t.Fatalf("P9.8 should need evidence for incomplete integration paths: %#v", report.ReleaseGateLinkage)
+			}
+			if report.ProductSuccessGates.IntegrationProof != "needs_evidence" {
+				t.Fatalf("product integration gate should need evidence, got %q", report.ProductSuccessGates.IntegrationProof)
+			}
+		})
+	}
+}
+
+func TestP811IntegrationProofRejectsMalformedRows(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		proofs                     []map[string]any
+		wantMCPParityPaths         int
+		wantShellRequiredPathCount int
+	}{
+		{
+			name: "duplicate_ids_do_not_satisfy_required_paths_or_mcp_parity",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("p7.8-duplicated-proof", "shell_ci_script", true, false),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-duplicated-proof", "mcp_stdio", true, false),
+			},
+			wantMCPParityPaths: 0,
+		},
+		{
+			name: "missing_id_does_not_satisfy_required_path",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("", "shell_ci_script", true, false),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+			wantMCPParityPaths: 1,
+		},
+		{
+			name: "blocked_status_does_not_satisfy_required_path",
+			proofs: []map[string]any{
+				p711IntegrationProofWithStatus("p7.8-shell-ci", "shell_ci_script", "blocked"),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+			wantMCPParityPaths: 1,
+		},
+		{
+			name: "deferred_status_does_not_satisfy_required_path",
+			proofs: []map[string]any{
+				p711IntegrationProofWithStatus("p7.8-shell-ci", "shell_ci_script", "deferred"),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+			wantMCPParityPaths: 1,
+		},
+		{
+			name: "unknown_status_does_not_satisfy_required_path",
+			proofs: []map[string]any{
+				p711IntegrationProofWithStatus("p7.8-shell-ci", "shell_ci_script", "unknown"),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+			wantMCPParityPaths: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			writeP711IntegrationProofs(t, root, tc.proofs)
+
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			assertP811IntegrationNeedsEvidence(t, report)
+			integration := p711TestSignal(report.Signals, "integration_proof")
+			if integration.Counts["mcp_stdio_parity_paths"] != tc.wantMCPParityPaths {
+				t.Fatalf("unexpected MCP parity count for malformed proof rows: %#v", integration)
+			}
+			if integration.Counts["executable_required_path_shell_ci_script"] != tc.wantShellRequiredPathCount {
+				t.Fatalf("malformed shell/CI row must not satisfy required-path count: %#v", integration)
+			}
+		})
+	}
+}
+
+func TestP812IntegrationProofRequiresExplicitSafePrivacySemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		proofs                []map[string]any
+		wantP98Status         string
+		wantSignalStatus      string
+		wantMCPParityPaths    int
+		wantMissingPrivacy    int
+		wantIncompletePrivacy int
+		wantPrivacyBlockers   int
+	}{
+		{
+			name: "missing_privacy_object_does_not_satisfy_mcp_required_path_or_parity",
+			proofs: []map[string]any{
+				p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofWithoutPrivacy("p7.8-mcp-stdio", "mcp_stdio"),
+			},
+			wantP98Status:         "needs_evidence",
+			wantSignalStatus:      "partial",
+			wantMCPParityPaths:    0,
+			wantMissingPrivacy:    1,
+			wantIncompletePrivacy: 1,
+		},
+		{
+			name: "omitted_privacy_boolean_does_not_satisfy_required_path",
+			proofs: []map[string]any{
+				p711IntegrationProofWithOmittedPrivacyField("p7.8-shell-ci", "shell_ci_script", "private_paths"),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+			wantP98Status:         "needs_evidence",
+			wantSignalStatus:      "partial",
+			wantMCPParityPaths:    1,
+			wantIncompletePrivacy: 1,
+		},
+		{
+			name: "unsafe_privacy_value_blocks_integration_evidence",
+			proofs: []map[string]any{
+				p711IntegrationProofWithPrivacyValue("p7.8-shell-ci", "shell_ci_script", "raw_prompts", true),
+				p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+				p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
+			},
+			wantP98Status:       "blocked",
+			wantSignalStatus:    "blocked",
+			wantMCPParityPaths:  1,
+			wantPrivacyBlockers: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			writeP711IntegrationProofs(t, root, tc.proofs)
+
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			integration := p711TestSignal(report.Signals, "integration_proof")
+			if integration.Status != tc.wantSignalStatus {
+				t.Fatalf("unexpected integration signal status: got %q want %q: %#v", integration.Status, tc.wantSignalStatus, integration)
+			}
+			if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.8"); linkage.Status != tc.wantP98Status {
+				t.Fatalf("unexpected P9.8 status: got %q want %q: %#v", linkage.Status, tc.wantP98Status, report.ReleaseGateLinkage)
+			}
+			if report.ProductSuccessGates.IntegrationProof == "evidence_present" {
+				t.Fatalf("privacy-invalid integration proof must not produce evidence_present gate")
+			}
+			if integration.Counts["mcp_stdio_parity_paths"] != tc.wantMCPParityPaths {
+				t.Fatalf("unexpected MCP parity count for privacy-invalid rows: %#v", integration)
+			}
+			if integration.Counts["missing_privacy"] != tc.wantMissingPrivacy {
+				t.Fatalf("unexpected missing privacy count: %#v", integration)
+			}
+			if integration.Counts["incomplete_privacy"] != tc.wantIncompletePrivacy {
+				t.Fatalf("unexpected incomplete privacy count: %#v", integration)
+			}
+			if integration.Counts["privacy_blockers"] != tc.wantPrivacyBlockers {
+				t.Fatalf("unexpected privacy blocker count: %#v", integration)
+			}
+		})
 	}
 }
 
@@ -497,16 +715,35 @@ func p711TestSourceRef(refs []p711SourceReference, id string) p711SourceReferenc
 	return p711SourceReference{}
 }
 
+func p711TestReleaseGate(rows []p711ReleaseGateLinkage, gate string) p711ReleaseGateLinkage {
+	for _, row := range rows {
+		if row.Gate == gate {
+			return row
+		}
+	}
+	return p711ReleaseGateLinkage{}
+}
+
+func assertP811IntegrationNeedsEvidence(t *testing.T, report productEvidenceExportReport) {
+	t.Helper()
+	integration := p711TestSignal(report.Signals, "integration_proof")
+	if integration.Completeness == "complete" || integration.Status == "pass" {
+		t.Fatalf("malformed integration proofs must not complete the signal: %#v", integration)
+	}
+	if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.8"); linkage.Status == "evidence_present" {
+		t.Fatalf("P9.8 should not be evidence_present for malformed proof rows: %#v", report.ReleaseGateLinkage)
+	}
+	if report.ProductSuccessGates.IntegrationProof == "evidence_present" {
+		t.Fatalf("product integration gate should need evidence for malformed proof rows")
+	}
+}
+
 func stageP711ProductEvidenceFixtures(t *testing.T, root string) {
 	t.Helper()
-	writeP711JSON(t, filepath.Join(root, "testdata", "sidecar", "integration-proofs.json"), map[string]any{
-		"schema_version": "idiom.sidecar_integration_proofs.v1",
-		"name":           "p7.8-sidecar-integration-proofs",
-		"proofs": []map[string]any{
-			p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
-			p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
-			p711IntegrationProofFixture("p7.8-mcp-stdio-placeholder", "mcp_stdio_placeholder", false, true),
-		},
+	writeP711IntegrationProofs(t, root, []map[string]any{
+		p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
+		p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
+		p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
 	})
 	var controls []map[string]any
 	controls = append(controls, map[string]any{"id": "redaction_no_body_capture"})
@@ -541,8 +778,17 @@ func stageP711ProductEvidenceFixtures(t *testing.T, root string) {
 	})
 }
 
+func writeP711IntegrationProofs(t *testing.T, root string, proofs []map[string]any) {
+	t.Helper()
+	writeP711JSON(t, filepath.Join(root, "testdata", "sidecar", "integration-proofs.json"), map[string]any{
+		"schema_version": "idiom.sidecar_integration_proofs.v1",
+		"name":           "p7.8-sidecar-integration-proofs",
+		"proofs":         proofs,
+	})
+}
+
 func p711IntegrationProofFixture(id string, path string, executable bool, placeholder bool) map[string]any {
-	return map[string]any{
+	fixture := map[string]any{
 		"id":     id,
 		"path":   path,
 		"status": "test_validated",
@@ -558,6 +804,57 @@ func p711IntegrationProofFixture(id string, path string, executable bool, placeh
 			"private_repo_or_customer_ids": false,
 		},
 	}
+	if path == "mcp_stdio" {
+		fixture["replay_fixture"] = "testdata/sidecar/mcp-stdio-integration-proof.json"
+		fixture["product_evidence_export_parity"] = true
+		fixture["readiness"].(map[string]bool)["protocol_implemented"] = true
+		fixture["readiness"].(map[string]bool)["caller_metadata_present"] = true
+		fixture["readiness"].(map[string]bool)["roots_resources_present"] = true
+		fixture["readiness"].(map[string]bool)["redaction_denial_present"] = true
+		fixture["readiness"].(map[string]bool)["product_evidence_export_parity"] = true
+	}
+	return fixture
+}
+
+func p711IntegrationProofWithoutMCPParityFixture(id string) map[string]any {
+	fixture := p711IntegrationProofFixture(id, "mcp_stdio", true, false)
+	delete(fixture, "replay_fixture")
+	fixture["product_evidence_export_parity"] = false
+	readiness := fixture["readiness"].(map[string]bool)
+	for _, field := range []string{
+		"protocol_implemented",
+		"caller_metadata_present",
+		"roots_resources_present",
+		"redaction_denial_present",
+		"product_evidence_export_parity",
+	} {
+		delete(readiness, field)
+	}
+	return fixture
+}
+
+func p711IntegrationProofWithStatus(id string, path string, status string) map[string]any {
+	fixture := p711IntegrationProofFixture(id, path, true, false)
+	fixture["status"] = status
+	return fixture
+}
+
+func p711IntegrationProofWithoutPrivacy(id string, path string) map[string]any {
+	fixture := p711IntegrationProofFixture(id, path, true, false)
+	delete(fixture, "privacy")
+	return fixture
+}
+
+func p711IntegrationProofWithOmittedPrivacyField(id string, path string, field string) map[string]any {
+	fixture := p711IntegrationProofFixture(id, path, true, false)
+	delete(fixture["privacy"].(map[string]bool), field)
+	return fixture
+}
+
+func p711IntegrationProofWithPrivacyValue(id string, path string, field string, value bool) map[string]any {
+	fixture := p711IntegrationProofFixture(id, path, true, false)
+	fixture["privacy"].(map[string]bool)[field] = value
+	return fixture
 }
 
 func writeP711JSON(t *testing.T, path string, value any) {

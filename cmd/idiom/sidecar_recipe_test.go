@@ -45,19 +45,23 @@ type p78SharedContract struct {
 }
 
 type p78IntegrationProof struct {
-	ID                  string          `json:"id"`
-	Path                string          `json:"path"`
-	Status              string          `json:"status"`
-	RecipeDoc           string          `json:"recipe_doc"`
-	ScriptPath          string          `json:"script_path"`
-	SetupStepIDs        []string        `json:"setup_step_ids"`
-	TranscriptStepIDs   []string        `json:"transcript_step_ids"`
-	Phase8WorkPackage   string          `json:"phase8_work_package"`
-	Consumes            p78Consumes     `json:"consumes"`
-	PlaceholderContract map[string]any  `json:"placeholder_contract"`
-	Readiness           map[string]bool `json:"readiness"`
-	Limitations         []string        `json:"limitations"`
-	Privacy             map[string]bool `json:"privacy"`
+	ID                          string          `json:"id"`
+	Path                        string          `json:"path"`
+	Status                      string          `json:"status"`
+	RecipeDoc                   string          `json:"recipe_doc"`
+	ScriptPath                  string          `json:"script_path"`
+	SetupStepIDs                []string        `json:"setup_step_ids"`
+	TranscriptStepIDs           []string        `json:"transcript_step_ids"`
+	Phase8WorkPackage           string          `json:"phase8_work_package"`
+	ReplayFixture               string          `json:"replay_fixture"`
+	ReplayTest                  string          `json:"replay_test"`
+	ProductEvidenceExportParity bool            `json:"product_evidence_export_parity"`
+	ClientClassifications       []string        `json:"client_classifications"`
+	Consumes                    p78Consumes     `json:"consumes"`
+	MCPContract                 map[string]any  `json:"mcp_contract"`
+	Readiness                   map[string]bool `json:"readiness"`
+	Limitations                 []string        `json:"limitations"`
+	Privacy                     map[string]bool `json:"privacy"`
 }
 
 type p78Consumes struct {
@@ -267,30 +271,52 @@ func TestP78IntegrationProofRecords(t *testing.T) {
 			if proof.ScriptPath != "" {
 				t.Fatalf("external coding-agent proof should be a generic workflow recipe, not a script-specific path")
 			}
-		case "mcp_stdio_placeholder":
-			if proof.Status != "phase8_deferred_reviewed_placeholder" {
-				t.Fatalf("MCP proof must be an explicit reviewed placeholder, got %q", proof.Status)
+		case "mcp_stdio":
+			if proof.Status != "test_validated" {
+				t.Fatalf("MCP proof must be test validated, got %q", proof.Status)
 			}
-			if proof.Readiness["protocol_implemented"] || !proof.Readiness["phase8_deferred"] || !proof.Readiness["reviewed_placeholder"] || proof.Readiness["executable_evidence"] {
-				t.Fatalf("MCP placeholder readiness is claiming the wrong implementation state: %#v", proof.Readiness)
+			if !proof.Readiness["protocol_implemented"] || proof.Readiness["phase8_deferred"] || proof.Readiness["reviewed_placeholder"] || !proof.Readiness["executable_evidence"] {
+				t.Fatalf("MCP proof readiness is not executable: %#v", proof.Readiness)
 			}
 			if proof.Phase8WorkPackage != "P8.6" {
-				t.Fatalf("MCP placeholder must hand off to P8.6, got %q", proof.Phase8WorkPackage)
+				t.Fatalf("MCP proof must tie back to P8.6, got %q", proof.Phase8WorkPackage)
 			}
-			if len(proof.TranscriptStepIDs) != 0 {
-				t.Fatalf("MCP placeholder must not claim executable transcript steps: %#v", proof.TranscriptStepIDs)
+			if proof.ReplayFixture != "testdata/sidecar/mcp-stdio-integration-proof.json" ||
+				!strings.Contains(proof.ReplayTest, "TestP86MCPStdioIntegrationProofReplay") ||
+				!proof.ProductEvidenceExportParity {
+				t.Fatalf("MCP proof missing replay/product-evidence linkage: %#v", proof)
 			}
-			if proof.PlaceholderContract["transport"] != "mcp_stdio" || proof.PlaceholderContract["sidecar_schema_version"] != "idiom.tool.v1" || proof.PlaceholderContract["profile"] != "discovery" {
-				t.Fatalf("MCP placeholder contract does not preserve sidecar shape: %#v", proof.PlaceholderContract)
+			if !proof.Readiness["caller_metadata_present"] || !proof.Readiness["roots_resources_present"] ||
+				!proof.Readiness["redaction_denial_present"] || !proof.Readiness["product_evidence_export_parity"] {
+				t.Fatalf("MCP proof missing required P8.6 readiness fields: %#v", proof.Readiness)
 			}
-			if !strings.Contains(strings.Join(proof.Limitations, " "), "not a fake MCP implementation") {
-				t.Fatalf("MCP placeholder must state that it is not a fake implementation: %#v", proof.Limitations)
+			if proof.MCPContract["transport"] != "mcp_stdio" || proof.MCPContract["sidecar_schema_version"] != "idiom.tool.v1" || proof.MCPContract["profile"] != "discovery" {
+				t.Fatalf("MCP contract does not preserve sidecar shape: %#v", proof.MCPContract)
+			}
+			for _, class := range []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"} {
+				if !stringSliceContains(proof.ClientClassifications, class) {
+					t.Fatalf("MCP proof missing classification %q: %#v", class, proof.ClientClassifications)
+				}
+			}
+			replayData, err := os.ReadFile(filepath.Join(repoRoot, proof.ReplayFixture))
+			if err != nil {
+				t.Fatalf("read MCP replay fixture: %v", err)
+			}
+			var replay p86MCPIntegrationProof
+			if err := json.Unmarshal(replayData, &replay); err != nil {
+				t.Fatalf("decode MCP replay fixture: %v", err)
+			}
+			if replay.LinkedP78ProofID != proof.ID {
+				t.Fatalf("MCP replay fixture links to %q, want %q", replay.LinkedP78ProofID, proof.ID)
+			}
+			if !strings.Contains(strings.Join(proof.Limitations, " "), "metadata-only") {
+				t.Fatalf("MCP proof must preserve resource-body limitation: %#v", proof.Limitations)
 			}
 		default:
 			t.Fatalf("unexpected proof path %q", proof.Path)
 		}
 	}
-	for _, requiredPath := range []string{"shell_ci_script", "external_coding_agent_workflow", "mcp_stdio_placeholder"} {
+	for _, requiredPath := range []string{"shell_ci_script", "external_coding_agent_workflow", "mcp_stdio"} {
 		if !seenPaths[requiredPath] {
 			t.Fatalf("missing P7.8 proof path %q", requiredPath)
 		}
@@ -315,7 +341,7 @@ func TestSidecarRecipesCoverCallerClassesAndCompatibility(t *testing.T) {
 	for _, required := range []string{
 		"Shell Or CI Script",
 		"External Coding-Agent Harness",
-		"MCP Stdio Placeholder Handoff",
+		"MCP Stdio",
 		"Local Or Private-Code User",
 		"sidecar.schema_version",
 		"sidecar.profile",

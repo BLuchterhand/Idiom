@@ -324,7 +324,7 @@ func (s *mcpDiscoveryServer) mcpResources() []map[string]any {
 			"mimeType":    "application/json",
 			"_meta": map[string]any{
 				"idiom_metadata_only": true,
-				"p8_6_deferred":       true,
+				"p8_6_replay_fixture": "testdata/sidecar/mcp-stdio-integration-proof.json",
 			},
 		},
 	}
@@ -385,10 +385,11 @@ func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error)
 		}, nil
 	case "idiom://workspace/resource-policy":
 		return map[string]any{
-			"schema_version": "idiom.mcp_resource.v1",
-			"kind":           "resource_policy",
-			"metadata_only":  true,
-			"root_clamped":   true,
+			"schema_version":      "idiom.mcp_resource.v1",
+			"kind":                "resource_policy",
+			"metadata_only":       true,
+			"root_clamped":        true,
+			"p8_6_replay_fixture": "testdata/sidecar/mcp-stdio-integration-proof.json",
 			"freshness": map[string]any{
 				"policy":             "report_only",
 				"source_operation":   "context_status",
@@ -407,7 +408,7 @@ func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error)
 			},
 			"limitations": []string{
 				"file bodies are not returned by P8.2 resources/read",
-				"P8.6 owns complete MCP integration proof parity",
+				"MCP integration parity is covered by the P8.6 replay fixture",
 			},
 		}, nil
 	default:

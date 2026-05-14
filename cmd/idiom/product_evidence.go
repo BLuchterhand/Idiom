@@ -299,12 +299,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			learningRef,
 		},
 		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage),
-		Limitations: []string{
-			"export summarizes bounded local metadata only",
-			"prompt bodies, file bodies, and transcript bodies are not loaded",
-			"retained-use and adoption signals are not claimed unless validation records are supplied",
-			"MCP stdio parity remains P8.6 scope when only the P7.8 placeholder is present",
-		},
+		Limitations:        productEvidenceExportLimitations(integration),
 		Metadata: map[string]any{
 			"generated_by": "idiom product-evidence export",
 		},
@@ -321,24 +316,139 @@ func productEvidenceAvailabilityGate(available bool) string {
 	return "not_available"
 }
 
+func productEvidenceExportLimitations(integration p711IntegrationProofSet) []string {
+	limitations := []string{
+		"export summarizes bounded local metadata only",
+		"prompt bodies, file bodies, and transcript bodies are not loaded",
+		"retained-use and adoption signals are not claimed unless validation records are supplied",
+	}
+	if p711MCPStdioParityPresent(integration) {
+		return append(limitations, "MCP resources are metadata-only; resource file bodies are not exported")
+	}
+	return append(limitations, "MCP stdio parity remains P8.6 scope when only the P7.8 placeholder is present")
+}
+
+func p711MCPStdioParityPresent(integration p711IntegrationProofSet) bool {
+	validity := p711ProofValidityFor(integration)
+	for _, proof := range integration.Proofs {
+		if p711MCPStdioProofHasParity(proof, validity) {
+			return true
+		}
+	}
+	return false
+}
+
+const p711ValidatedIntegrationProofStatus = "test_validated"
+
+var p711RequiredIntegrationPathTypes = []string{
+	"shell_ci_script",
+	"external_coding_agent_workflow",
+	"mcp_stdio",
+}
+
+var p711RequiredIntegrationPrivacyFields = []string{
+	"raw_prompts",
+	"file_bodies",
+	"private_paths",
+	"credentials",
+	"private_repo_or_customer_ids",
+}
+
 type p711IntegrationProofSet struct {
 	SchemaVersion string                 `json:"schema_version"`
 	Name          string                 `json:"name"`
 	Proofs        []p711IntegrationProof `json:"proofs"`
 }
 
+type p711IntegrationProofPrivacy struct {
+	RawPrompts               bool `json:"raw_prompts"`
+	FileBodies               bool `json:"file_bodies"`
+	PrivatePaths             bool `json:"private_paths"`
+	Credentials              bool `json:"credentials"`
+	PrivateRepoOrCustomerIDs bool `json:"private_repo_or_customer_ids"`
+}
+
+type p711IntegrationProofPrivacySemantics struct {
+	objectPresent bool
+	malformed     bool
+	fieldsPresent map[string]bool
+}
+
 type p711IntegrationProof struct {
-	ID        string          `json:"id"`
-	Path      string          `json:"path"`
-	Status    string          `json:"status"`
-	Readiness map[string]bool `json:"readiness"`
-	Privacy   struct {
-		RawPrompts               bool `json:"raw_prompts"`
-		FileBodies               bool `json:"file_bodies"`
-		PrivatePaths             bool `json:"private_paths"`
-		Credentials              bool `json:"credentials"`
-		PrivateRepoOrCustomerIDs bool `json:"private_repo_or_customer_ids"`
-	} `json:"privacy"`
+	ID                          string                      `json:"id"`
+	Path                        string                      `json:"path"`
+	Status                      string                      `json:"status"`
+	ReplayFixture               string                      `json:"replay_fixture,omitempty"`
+	ProductEvidenceExportParity bool                        `json:"product_evidence_export_parity,omitempty"`
+	Readiness                   map[string]bool             `json:"readiness"`
+	Privacy                     p711IntegrationProofPrivacy `json:"privacy"`
+	privacySemantics            p711IntegrationProofPrivacySemantics
+}
+
+func (proof *p711IntegrationProof) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID                          string          `json:"id"`
+		Path                        string          `json:"path"`
+		Status                      string          `json:"status"`
+		ReplayFixture               string          `json:"replay_fixture,omitempty"`
+		ProductEvidenceExportParity bool            `json:"product_evidence_export_parity,omitempty"`
+		Readiness                   map[string]bool `json:"readiness"`
+		Privacy                     json.RawMessage `json:"privacy"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	proof.ID = raw.ID
+	proof.Path = raw.Path
+	proof.Status = raw.Status
+	proof.ReplayFixture = raw.ReplayFixture
+	proof.ProductEvidenceExportParity = raw.ProductEvidenceExportParity
+	proof.Readiness = raw.Readiness
+	proof.Privacy, proof.privacySemantics = p711IntegrationProofPrivacyFromRaw(raw.Privacy)
+	return nil
+}
+
+func p711IntegrationProofPrivacyFromRaw(raw json.RawMessage) (p711IntegrationProofPrivacy, p711IntegrationProofPrivacySemantics) {
+	semantics := p711IntegrationProofPrivacySemantics{fieldsPresent: map[string]bool{}}
+	var privacy p711IntegrationProofPrivacy
+	if len(raw) == 0 {
+		return privacy, semantics
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		semantics.malformed = true
+		return privacy, semantics
+	}
+	semantics.objectPresent = true
+	for _, field := range p711RequiredIntegrationPrivacyFields {
+		value, ok := fields[field]
+		if !ok {
+			continue
+		}
+		semantics.fieldsPresent[field] = true
+		var decoded bool
+		if err := json.Unmarshal(value, &decoded); err != nil {
+			semantics.malformed = true
+			continue
+		}
+		p711SetIntegrationProofPrivacyField(&privacy, field, decoded)
+	}
+	return privacy, semantics
+}
+
+func p711SetIntegrationProofPrivacyField(privacy *p711IntegrationProofPrivacy, field string, value bool) {
+	switch field {
+	case "raw_prompts":
+		privacy.RawPrompts = value
+	case "file_bodies":
+		privacy.FileBodies = value
+	case "private_paths":
+		privacy.PrivatePaths = value
+	case "credentials":
+		privacy.Credentials = value
+	case "private_repo_or_customer_ids":
+		privacy.PrivateRepoOrCustomerIDs = value
+	}
 }
 
 type p711SecurityPosture struct {
@@ -538,28 +648,167 @@ func p711RetainedUseSignal(records []p711ValidationRecord) p711SignalSummary {
 }
 
 func p711IntegrationSignal(proofs p711IntegrationProofSet) p711SignalSummary {
-	s := p711SignalSummary{ID: "integration_proof", Status: "not_available", Completeness: "missing", SourceRefs: []string{"p7.8_integration_proofs"}, RedactionStatus: "redacted", ReleaseGates: []string{"P7.8", "P8.6", "P9.8"}, Counts: map[string]int{}, Limitations: []string{"MCP stdio remains a reviewed placeholder until P8.6 supplies replayable parity evidence"}}
+	s := p711SignalSummary{ID: "integration_proof", Status: "not_available", Completeness: "missing", SourceRefs: []string{"p7.8_integration_proofs"}, RedactionStatus: "redacted", ReleaseGates: []string{"P7.8", "P8.6", "P9.8"}, Counts: map[string]int{}}
+	validity := p711ProofValidityFor(proofs)
+	requiredExecutable := map[string]bool{}
 	for _, proof := range proofs.Proofs {
-		s.EvidenceIDs = append(s.EvidenceIDs, proof.ID)
-		s.Counts["proof_paths"]++
-		if proof.Readiness["executable_evidence"] {
-			s.Counts["executable_paths"]++
-		}
+		s.Counts["proof_rows"]++
 		if proof.Readiness["reviewed_placeholder"] {
 			s.Counts["reviewed_placeholders"]++
 		}
-		if proof.Privacy.RawPrompts || proof.Privacy.FileBodies || proof.Privacy.PrivatePaths || proof.Privacy.Credentials || proof.Privacy.PrivateRepoOrCustomerIDs {
+		if p711IntegrationProofHasPrivacyBlocker(proof) {
 			s.Counts["privacy_blockers"]++
+		}
+		if !p711IntegrationProofPrivacyObjectPresent(proof) {
+			s.Counts["missing_privacy"]++
+		}
+		if !p711IntegrationProofPrivacyFieldsPresent(proof) {
+			s.Counts["incomplete_privacy"]++
+		}
+		if proof.privacySemantics.malformed {
+			s.Counts["malformed_privacy"]++
+		}
+		if strings.TrimSpace(proof.ID) == "" {
+			s.Counts["missing_ids"]++
+		}
+		if validity.duplicateID(proof.ID) {
+			s.Counts["duplicate_ids"]++
+		}
+		if !p711IntegrationProofHasValidatedStatus(proof) {
+			s.Counts["non_validated_statuses"]++
+		}
+		if !validity.validProof(proof) {
+			continue
+		}
+		s.EvidenceIDs = append(s.EvidenceIDs, proof.ID)
+		s.Counts["proof_paths"]++
+		if proof.Path != "" {
+			s.Counts["path_"+p711SafeToken(proof.Path)]++
+		}
+		s.Counts["executable_paths"]++
+		if p711IsRequiredIntegrationPath(proof.Path) {
+			requiredExecutable[proof.Path] = true
+			s.Counts["executable_required_paths"] = len(requiredExecutable)
+			s.Counts["executable_required_path_"+p711SafeToken(proof.Path)] = 1
+		}
+		if p711MCPStdioProofHasParity(proof, validity) {
+			s.Counts["mcp_stdio_parity_paths"]++
 		}
 	}
 	if s.Counts["privacy_blockers"] > 0 {
 		s.Status = "blocked"
 		s.Completeness = "blocked"
+	} else if p711AllRequiredIntegrationPathsExecutable(requiredExecutable) &&
+		s.Counts["mcp_stdio_parity_paths"] > 0 {
+		s.Status = "pass"
+		s.Completeness = "complete"
+		s.Limitations = []string{"MCP resources are metadata-only; resource file bodies are not exported."}
 	} else if s.Counts["proof_paths"] > 0 {
 		s.Status = "partial"
 		s.Completeness = "partial"
+		s.Limitations = []string{"MCP stdio remains incomplete until P8.6 supplies replayable parity evidence"}
+	}
+	if s.Counts["reviewed_placeholders"] > 0 {
+		s.Limitations = p711Compact(append(s.Limitations, "one or more integration paths are reviewed placeholders")...)
 	}
 	return s
+}
+
+type p711ProofValidityIndex struct {
+	duplicateIDs map[string]bool
+}
+
+func p711ProofValidityFor(proofs p711IntegrationProofSet) p711ProofValidityIndex {
+	counts := map[string]int{}
+	for _, proof := range proofs.Proofs {
+		id := strings.TrimSpace(proof.ID)
+		if id == "" {
+			continue
+		}
+		counts[id]++
+	}
+	duplicates := map[string]bool{}
+	for id, count := range counts {
+		if count > 1 {
+			duplicates[id] = true
+		}
+	}
+	return p711ProofValidityIndex{duplicateIDs: duplicates}
+}
+
+func (idx p711ProofValidityIndex) validProof(proof p711IntegrationProof) bool {
+	id := strings.TrimSpace(proof.ID)
+	return id != "" &&
+		!idx.duplicateIDs[id] &&
+		p711IntegrationProofHasValidatedStatus(proof) &&
+		proof.Readiness["executable_evidence"] &&
+		p711IntegrationProofHasSafePrivacySemantics(proof)
+}
+
+func (idx p711ProofValidityIndex) duplicateID(id string) bool {
+	return idx.duplicateIDs[strings.TrimSpace(id)]
+}
+
+func p711IntegrationProofHasValidatedStatus(proof p711IntegrationProof) bool {
+	return strings.TrimSpace(proof.Status) == p711ValidatedIntegrationProofStatus
+}
+
+func p711IntegrationProofHasPrivacyBlocker(proof p711IntegrationProof) bool {
+	return proof.Privacy.RawPrompts ||
+		proof.Privacy.FileBodies ||
+		proof.Privacy.PrivatePaths ||
+		proof.Privacy.Credentials ||
+		proof.Privacy.PrivateRepoOrCustomerIDs
+}
+
+func p711IntegrationProofHasSafePrivacySemantics(proof p711IntegrationProof) bool {
+	return p711IntegrationProofPrivacyObjectPresent(proof) &&
+		p711IntegrationProofPrivacyFieldsPresent(proof) &&
+		!proof.privacySemantics.malformed &&
+		!p711IntegrationProofHasPrivacyBlocker(proof)
+}
+
+func p711IntegrationProofPrivacyObjectPresent(proof p711IntegrationProof) bool {
+	return proof.privacySemantics.objectPresent
+}
+
+func p711IntegrationProofPrivacyFieldsPresent(proof p711IntegrationProof) bool {
+	for _, field := range p711RequiredIntegrationPrivacyFields {
+		if !proof.privacySemantics.fieldsPresent[field] {
+			return false
+		}
+	}
+	return true
+}
+
+func p711MCPStdioProofHasParity(proof p711IntegrationProof, validity p711ProofValidityIndex) bool {
+	return validity.validProof(proof) &&
+		proof.Path == "mcp_stdio" &&
+		proof.Readiness["protocol_implemented"] &&
+		proof.Readiness["caller_metadata_present"] &&
+		proof.Readiness["roots_resources_present"] &&
+		proof.Readiness["redaction_denial_present"] &&
+		proof.Readiness["product_evidence_export_parity"] &&
+		proof.ProductEvidenceExportParity &&
+		proof.ReplayFixture != ""
+}
+
+func p711IsRequiredIntegrationPath(path string) bool {
+	for _, required := range p711RequiredIntegrationPathTypes {
+		if path == required {
+			return true
+		}
+	}
+	return false
+}
+
+func p711AllRequiredIntegrationPathsExecutable(paths map[string]bool) bool {
+	for _, required := range p711RequiredIntegrationPathTypes {
+		if !paths[required] {
+			return false
+		}
+	}
+	return true
 }
 
 func p711BenchmarkSignal(localOps *localOpsBenchmarkReport) p711SignalSummary {
@@ -661,6 +910,7 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 		{Gate: "P9.1", Status: p711GateFromSignal(signals, "benchmark"), Evidence: "benchmark,audit,learning summaries", ClaimImpact: "release bundle input; not a release decision"},
 		{Gate: "P9.6", Status: p711GateFromSignal(signals, "activation"), Evidence: "activation quickstart smoke or blocker summary", ClaimImpact: "activation claims depend on pass status"},
 		{Gate: "P9.7", Status: p711GateFromSignal(signals, "retained_use"), Evidence: "retained-use validation records and adoption-signal counts", ClaimImpact: "demand remains unclaimed without record-backed signal"},
+		{Gate: "P9.8", Status: p711GateFromSignal(signals, "integration_proof"), Evidence: "shell/CI, external coding-agent, and MCP stdio integration proofs", ClaimImpact: "substrate integration claim depends on all three paths"},
 		{Gate: "P9.12", Status: classStatus, Evidence: "classification coverage rows and limitations", ClaimImpact: "packaging/support thesis must cite statuses"},
 	}
 }
@@ -964,9 +1214,10 @@ func p711GateFromSignal(signals []p711SignalSummary, id string) string {
 }
 
 func p711IntegrationProofIDs(proofs p711IntegrationProofSet) []string {
+	validity := p711ProofValidityFor(proofs)
 	var ids []string
 	for _, proof := range proofs.Proofs {
-		if proof.ID != "" {
+		if validity.validProof(proof) {
 			ids = append(ids, proof.ID)
 		}
 	}

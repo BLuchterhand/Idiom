@@ -43,5 +43,7 @@ Privacy defaults:
   unredacted log or telemetry paths, forbidden capture flags, or absolute paths
   embedded after separators such as `repo=/...` or `path:/...` is blocked before
   records are counted.
-- MCP stdio integration remains a P8.6 parity item when the export sees only
-  the P7.8 placeholder proof.
+- MCP stdio integration is represented through the P7.8 integration proof
+  records when the P8.6 replay fixture is present and executable. The export
+  includes proof IDs, counts, statuses, release-gate linkage, and metadata-only
+  limitations, not raw protocol output or file bodies.

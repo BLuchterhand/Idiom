@@ -17,10 +17,15 @@ and are validated by `go test ./cmd/idiom -run TestP78IntegrationProofRecords`.
   OpenCode, Aider-style, or custom caller can consume graph evidence through
   explicit CLI JSON input without prompt interpolation. Idiom reports findings;
   the caller decides what to do with them.
-- `mcp_stdio_placeholder`: the reviewed placeholder declares the MCP stdio
-  contract shape and readiness fields, but it intentionally claims no protocol
-  implementation. P8.1-P8.6 own the MCP server, handshake, roots, resources,
-  redaction, caller metadata, and replayable parity proof.
+- `mcp_stdio`: the
+  [`mcp-stdio-integration-proof.json`](../testdata/sidecar/mcp-stdio-integration-proof.json)
+  replay fixture proves protocol initialize, `tools/list`, allowed
+  `tools/call`, structured denial, `roots/list`, `resources/list/read`, caller
+  metadata, `transport:"mcp_stdio"`, protected-resource denial, report-only
+  freshness, and P7.11 product-evidence export linkage.
+
+MCP resources remain metadata-only. File bodies are not returned until resource
+body redaction is implemented safely.
 
 The records are generic by design: they expose local evidence contracts for
 platform, tooling, open-source, and public-sector review without adding

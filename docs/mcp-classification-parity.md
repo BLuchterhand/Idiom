@@ -14,6 +14,6 @@ protected-path denial, redaction, discovery-profile policy, and report-only
 freshness. The local-model row is explicitly not applicable for P8.5 because
 the current MCP discovery surface does not expose local-ops readiness checks.
 
-P8.5 is not the full replayable MCP integration proof. P8.6 owns protocol,
-caller metadata, roots, resources, redaction, freshness, and product-evidence
-export parity in one replayable integration artifact.
+P8.5 is classification parity coverage. The P8.6 replay fixture covers the full
+MCP integration proof: protocol, caller metadata, roots, resources, redaction,
+freshness, and product-evidence export parity in one replayable artifact.
