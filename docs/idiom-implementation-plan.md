@@ -1812,7 +1812,7 @@ Review signoff:
 | P9.25 | Extend P9.9 certification overclaim checks to posture matrix output | P9.24 | Nietzsche the 4th | - [x] | Carson the 4th | - [x] |
 | P9.10 | Gate release on competitive benchmark coverage or documented infeasibility for each external baseline | P4.6, P9.1 | Hume the 4th | - [x] | Lagrange the 4th + P9.26 follow-up | - [x] |
 | P9.26 | Make P9.10 zero counts explicit and cover missing competitive evidence cases | P9.10 | Noether the 4th | - [x] | Descartes the 4th | - [x] |
-| P9.11 | Gate release on runnable client demo transcripts and honest MVP/final-state limitations for every client classification | P7.10, P8.5, P9.1 | Mill the 4th | - [x] | unassigned review subagent | - [ ] |
+| P9.11 | Gate release on runnable client demo transcripts and honest MVP/final-state limitations for every client classification | P7.10, P8.5, P9.1 | Mill the 4th | - [x] | Socrates the 4th | - [ ] |
 | P9.12 | Gate release on packaging, pricing, support, admin, and ICP thesis with explicit continue/pivot decision | P0.7, P0.11, P9.1-P9.11 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 
 ## Work Packages
