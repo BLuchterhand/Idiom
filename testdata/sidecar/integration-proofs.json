@@ -1,0 +1,175 @@
+{
+  "schema_version": "idiom.sidecar_integration_proofs.v1",
+  "name": "p7.8-sidecar-integration-proofs",
+  "description": "Privacy-safe proof records for three P7.8 integration paths using the shared sidecar contract.",
+  "shared_contract": {
+    "sidecar_schema_version": "idiom.tool.v1",
+    "profile": "discovery",
+    "required_envelope_fields": [
+      "sidecar.schema_version",
+      "sidecar.profile",
+      "sidecar.contract",
+      "sidecar.freshness",
+      "sidecar.audit_event_ids",
+      "sidecar.structured_output",
+      "sidecar.error"
+    ],
+    "required_readiness_fields": [
+      "shared_contract_shape",
+      "profile_bound",
+      "schema_version_present",
+      "freshness_fields_present",
+      "audit_fields_present",
+      "privacy_reviewed"
+    ],
+    "privacy_forbidden_classes": [
+      "absolute_paths",
+      "private_repository_or_customer_identifiers",
+      "fixture_file_bodies",
+      "credential_prefixes"
+    ]
+  },
+  "proofs": [
+    {
+      "id": "p7.8-shell-ci",
+      "path": "shell_ci_script",
+      "status": "test_validated",
+      "recipe_doc": "docs/sidecar-recipes.md#shell-or-ci-script",
+      "script_path": "scripts/sidecar-ci-proof.sh",
+      "setup_step_ids": [],
+      "transcript_step_ids": [
+        "context-status-report-only",
+        "context-status-refresh-denied"
+      ],
+      "consumes": {
+        "profile": true,
+        "schema": true,
+        "freshness": true,
+        "audit": true,
+        "contract": true
+      },
+      "readiness": {
+        "shared_contract_shape": true,
+        "profile_bound": true,
+        "schema_version_present": true,
+        "freshness_fields_present": true,
+        "audit_fields_present": true,
+        "privacy_reviewed": true,
+        "executable_evidence": true,
+        "reviewed_placeholder": false,
+        "protocol_implemented": true,
+        "phase8_deferred": false
+      },
+      "limitations": [
+        "The script depends on jq and the local idiom binary being available on PATH or IDIOM_BIN.",
+        "The proof reports freshness and denial evidence; it does not choose the caller's next action."
+      ],
+      "privacy": {
+        "raw_prompts": false,
+        "file_bodies": false,
+        "private_paths": false,
+        "credentials": false,
+        "private_repo_or_customer_ids": false
+      }
+    },
+    {
+      "id": "p7.8-external-coding-agent",
+      "path": "external_coding_agent_workflow",
+      "status": "test_validated",
+      "recipe_doc": "docs/sidecar-recipes.md#external-coding-agent-harness",
+      "script_path": "",
+      "setup_step_ids": [
+        "context-index-setup"
+      ],
+      "transcript_step_ids": [
+        "external-harness-context-query"
+      ],
+      "consumes": {
+        "profile": true,
+        "schema": true,
+        "freshness": true,
+        "audit": true,
+        "contract": true
+      },
+      "readiness": {
+        "shared_contract_shape": true,
+        "profile_bound": true,
+        "schema_version_present": true,
+        "freshness_fields_present": true,
+        "audit_fields_present": true,
+        "privacy_reviewed": true,
+        "executable_evidence": true,
+        "reviewed_placeholder": false,
+        "protocol_implemented": true,
+        "phase8_deferred": false
+      },
+      "limitations": [
+        "The external agent receives findings, paths, symbols, counts, and freshness only.",
+        "The workflow does not interpolate prompt text or prescribe the external agent's next tool call."
+      ],
+      "privacy": {
+        "raw_prompts": false,
+        "file_bodies": false,
+        "private_paths": false,
+        "credentials": false,
+        "private_repo_or_customer_ids": false
+      }
+    },
+    {
+      "id": "p7.8-mcp-stdio-placeholder",
+      "path": "mcp_stdio_placeholder",
+      "status": "phase8_deferred_reviewed_placeholder",
+      "recipe_doc": "docs/sidecar-recipes.md#mcp-stdio-placeholder-handoff",
+      "script_path": "",
+      "setup_step_ids": [],
+      "transcript_step_ids": [],
+      "phase8_work_package": "P8.6",
+      "consumes": {
+        "profile": true,
+        "schema": true,
+        "freshness": true,
+        "audit": true,
+        "contract": true
+      },
+      "placeholder_contract": {
+        "transport": "mcp_stdio",
+        "profile": "discovery",
+        "sidecar_schema_version": "idiom.tool.v1",
+        "readiness_fields": [
+          "protocol_implemented",
+          "phase8_deferred",
+          "shared_contract_shape",
+          "profile_bound",
+          "schema_version_present",
+          "freshness_fields_present",
+          "audit_fields_present",
+          "privacy_reviewed"
+        ],
+        "limitation": "No MCP stdio server, handshake, resources, roots, or protocol transcript is claimed in P7.8; P8.1-P8.6 own protocol implementation and replayable parity."
+      },
+      "readiness": {
+        "shared_contract_shape": true,
+        "profile_bound": true,
+        "schema_version_present": true,
+        "freshness_fields_present": true,
+        "audit_fields_present": true,
+        "privacy_reviewed": true,
+        "executable_evidence": false,
+        "reviewed_placeholder": true,
+        "protocol_implemented": false,
+        "phase8_deferred": true
+      },
+      "limitations": [
+        "This is a reviewed handoff contract only, not a fake MCP implementation.",
+        "P8.6 must replace this placeholder with a replayable MCP stdio proof covering protocol, caller metadata, roots, resources, redaction, freshness, and evidence export parity."
+      ],
+      "privacy": {
+        "raw_prompts": false,
+        "file_bodies": false,
+        "private_paths": false,
+        "credentials": false,
+        "private_repo_or_customer_ids": false
+      }
+    }
+  ]
+}

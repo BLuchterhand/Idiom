@@ -23,10 +23,49 @@ type sidecarSmokeStep struct {
 	ExitCode           int               `json:"exit_code"`
 	JSON               bool              `json:"json"`
 	ExpectJSONString   map[string]string `json:"expect_json_string"`
+	ExpectJSONPresent  []string          `json:"expect_json_present"`
 	ExpectJSONNull     []string          `json:"expect_json_null"`
 	ExpectJSONNonEmpty []string          `json:"expect_json_non_empty"`
 	StdoutIncludes     []string          `json:"stdout_includes"`
 	StdoutExcludes     []string          `json:"stdout_excludes"`
+}
+
+type p78IntegrationProofSet struct {
+	SchemaVersion  string                `json:"schema_version"`
+	SharedContract p78SharedContract     `json:"shared_contract"`
+	Proofs         []p78IntegrationProof `json:"proofs"`
+}
+
+type p78SharedContract struct {
+	SidecarSchemaVersion    string   `json:"sidecar_schema_version"`
+	Profile                 string   `json:"profile"`
+	RequiredEnvelopeFields  []string `json:"required_envelope_fields"`
+	RequiredReadinessFields []string `json:"required_readiness_fields"`
+	PrivacyForbiddenClasses []string `json:"privacy_forbidden_classes"`
+}
+
+type p78IntegrationProof struct {
+	ID                  string          `json:"id"`
+	Path                string          `json:"path"`
+	Status              string          `json:"status"`
+	RecipeDoc           string          `json:"recipe_doc"`
+	ScriptPath          string          `json:"script_path"`
+	SetupStepIDs        []string        `json:"setup_step_ids"`
+	TranscriptStepIDs   []string        `json:"transcript_step_ids"`
+	Phase8WorkPackage   string          `json:"phase8_work_package"`
+	Consumes            p78Consumes     `json:"consumes"`
+	PlaceholderContract map[string]any  `json:"placeholder_contract"`
+	Readiness           map[string]bool `json:"readiness"`
+	Limitations         []string        `json:"limitations"`
+	Privacy             map[string]bool `json:"privacy"`
+}
+
+type p78Consumes struct {
+	Profile   bool `json:"profile"`
+	Schema    bool `json:"schema"`
+	Freshness bool `json:"freshness"`
+	Audit     bool `json:"audit"`
+	Contract  bool `json:"contract"`
 }
 
 func TestSidecarSmokeTranscript(t *testing.T) {
@@ -93,6 +132,11 @@ func TestSidecarSmokeTranscript(t *testing.T) {
 					t.Fatalf("JSON path %s = %#v, want null", path, got)
 				}
 			}
+			for _, path := range step.ExpectJSONPresent {
+				if _, ok := jsonValueAtDottedPath(payload, path); !ok {
+					t.Fatalf("missing JSON path %s in %s", path, stdout.String())
+				}
+			}
 			for _, path := range step.ExpectJSONNonEmpty {
 				got, ok := jsonValueAtDottedPath(payload, path)
 				if !ok {
@@ -103,6 +147,153 @@ func TestSidecarSmokeTranscript(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestP78IntegrationProofRecords(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	repoRoot := filepath.Clean(filepath.Join(cwd, "../.."))
+	proofsPath := filepath.Join(repoRoot, "testdata", "sidecar", "integration-proofs.json")
+	data, err := os.ReadFile(proofsPath)
+	if err != nil {
+		t.Fatalf("read integration proofs: %v", err)
+	}
+	var proofs p78IntegrationProofSet
+	if err := json.Unmarshal(data, &proofs); err != nil {
+		t.Fatalf("decode integration proofs: %v", err)
+	}
+	if proofs.SchemaVersion != "idiom.sidecar_integration_proofs.v1" {
+		t.Fatalf("unexpected proof schema version %q", proofs.SchemaVersion)
+	}
+	if proofs.SharedContract.SidecarSchemaVersion != "idiom.tool.v1" || proofs.SharedContract.Profile != "discovery" {
+		t.Fatalf("proofs are not tied to the shared discovery sidecar contract: %#v", proofs.SharedContract)
+	}
+	for _, required := range []string{
+		"sidecar.schema_version",
+		"sidecar.profile",
+		"sidecar.contract",
+		"sidecar.freshness",
+		"sidecar.audit_event_ids",
+		"sidecar.structured_output",
+		"sidecar.error",
+	} {
+		if !stringSliceContains(proofs.SharedContract.RequiredEnvelopeFields, required) {
+			t.Fatalf("shared contract missing required envelope field %q", required)
+		}
+	}
+	for _, required := range proofs.SharedContract.RequiredReadinessFields {
+		if strings.TrimSpace(required) == "" {
+			t.Fatalf("blank readiness field in shared contract: %#v", proofs.SharedContract.RequiredReadinessFields)
+		}
+	}
+
+	transcript, err := readSidecarSmokeTranscript(repoRoot)
+	if err != nil {
+		t.Fatalf("read smoke transcript: %v", err)
+	}
+	transcriptSteps := map[string]sidecarSmokeStep{}
+	for _, step := range transcript.Steps {
+		transcriptSteps[step.ID] = step
+	}
+
+	docData, err := os.ReadFile(filepath.Join(repoRoot, "docs", "sidecar-integration-proofs.md"))
+	if err != nil {
+		t.Fatalf("read integration proof docs: %v", err)
+	}
+	doc := string(docData)
+
+	seenPaths := map[string]bool{}
+	for _, proof := range proofs.Proofs {
+		if proof.ID == "" || proof.Path == "" {
+			t.Fatalf("proof missing id/path: %#v", proof)
+		}
+		seenPaths[proof.Path] = true
+		if !strings.Contains(doc, proof.Path) {
+			t.Fatalf("integration proof docs do not mention path %q", proof.Path)
+		}
+		if !proof.Consumes.Profile || !proof.Consumes.Schema || !proof.Consumes.Freshness || !proof.Consumes.Audit || !proof.Consumes.Contract {
+			t.Fatalf("proof %s does not consume the complete shared sidecar contract: %#v", proof.ID, proof.Consumes)
+		}
+		for _, required := range proofs.SharedContract.RequiredReadinessFields {
+			if !proof.Readiness[required] {
+				t.Fatalf("proof %s readiness %q is not true: %#v", proof.ID, required, proof.Readiness)
+			}
+		}
+		for field, leaked := range proof.Privacy {
+			if leaked {
+				t.Fatalf("proof %s privacy field %s reports leaked content", proof.ID, field)
+			}
+		}
+		proofPayload, err := json.Marshal(proof)
+		if err != nil {
+			t.Fatalf("marshal proof %s for privacy scan: %v", proof.ID, err)
+		}
+		for _, pattern := range []string{
+			"/Users/",
+			"CustomerX",
+			"private-repo",
+			"sidecar-private-body-sentinel",
+			"sidecar-auth-retry-sentinel",
+			"sk-",
+			"ghp_",
+			"github_pat_",
+			"xoxb-",
+		} {
+			if strings.Contains(string(proofPayload), pattern) {
+				t.Fatalf("integration proof fixture contains forbidden privacy pattern %q", pattern)
+			}
+		}
+		switch proof.Path {
+		case "shell_ci_script":
+			assertP78ExecutableProof(t, proof, transcriptSteps)
+			if proof.ScriptPath == "" {
+				t.Fatalf("shell/CI proof must reference a script path")
+			}
+			scriptData, err := os.ReadFile(filepath.Join(repoRoot, proof.ScriptPath))
+			if err != nil {
+				t.Fatalf("read shell/CI proof script: %v", err)
+			}
+			script := string(scriptData)
+			for _, required := range []string{"idiom.tool.v1", "--profile discovery", "sidecar.audit_event_ids", "sidecar.freshness.policy"} {
+				if !strings.Contains(script, required) {
+					t.Fatalf("shell/CI proof script missing %q", required)
+				}
+			}
+		case "external_coding_agent_workflow":
+			assertP78ExecutableProof(t, proof, transcriptSteps)
+			if proof.ScriptPath != "" {
+				t.Fatalf("external coding-agent proof should be a generic workflow recipe, not a script-specific path")
+			}
+		case "mcp_stdio_placeholder":
+			if proof.Status != "phase8_deferred_reviewed_placeholder" {
+				t.Fatalf("MCP proof must be an explicit reviewed placeholder, got %q", proof.Status)
+			}
+			if proof.Readiness["protocol_implemented"] || !proof.Readiness["phase8_deferred"] || !proof.Readiness["reviewed_placeholder"] || proof.Readiness["executable_evidence"] {
+				t.Fatalf("MCP placeholder readiness is claiming the wrong implementation state: %#v", proof.Readiness)
+			}
+			if proof.Phase8WorkPackage != "P8.6" {
+				t.Fatalf("MCP placeholder must hand off to P8.6, got %q", proof.Phase8WorkPackage)
+			}
+			if len(proof.TranscriptStepIDs) != 0 {
+				t.Fatalf("MCP placeholder must not claim executable transcript steps: %#v", proof.TranscriptStepIDs)
+			}
+			if proof.PlaceholderContract["transport"] != "mcp_stdio" || proof.PlaceholderContract["sidecar_schema_version"] != "idiom.tool.v1" || proof.PlaceholderContract["profile"] != "discovery" {
+				t.Fatalf("MCP placeholder contract does not preserve sidecar shape: %#v", proof.PlaceholderContract)
+			}
+			if !strings.Contains(strings.Join(proof.Limitations, " "), "not a fake MCP implementation") {
+				t.Fatalf("MCP placeholder must state that it is not a fake implementation: %#v", proof.Limitations)
+			}
+		default:
+			t.Fatalf("unexpected proof path %q", proof.Path)
+		}
+	}
+	for _, requiredPath := range []string{"shell_ci_script", "external_coding_agent_workflow", "mcp_stdio_placeholder"} {
+		if !seenPaths[requiredPath] {
+			t.Fatalf("missing P7.8 proof path %q", requiredPath)
+		}
 	}
 }
 
@@ -124,6 +315,7 @@ func TestSidecarRecipesCoverCallerClassesAndCompatibility(t *testing.T) {
 	for _, required := range []string{
 		"Shell Or CI Script",
 		"External Coding-Agent Harness",
+		"MCP Stdio Placeholder Handoff",
 		"Local Or Private-Code User",
 		"sidecar.schema_version",
 		"sidecar.profile",
@@ -132,6 +324,7 @@ func TestSidecarRecipesCoverCallerClassesAndCompatibility(t *testing.T) {
 		"sidecar.contract",
 		"`Tool`, `Summary`, `Output`, and `Error`",
 		"testdata/sidecar/discovery-smoke.transcript.json",
+		"testdata/sidecar/integration-proofs.json",
 		"The caller owns strategy",
 		"Idiom owns the contract",
 	} {
@@ -156,6 +349,44 @@ func TestSidecarRecipesCoverCallerClassesAndCompatibility(t *testing.T) {
 	} {
 		if !documentedSteps[requiredStep] {
 			t.Fatalf("smoke transcript missing documented executable recipe step %q", requiredStep)
+		}
+	}
+}
+
+func assertP78ExecutableProof(t *testing.T, proof p78IntegrationProof, transcriptSteps map[string]sidecarSmokeStep) {
+	t.Helper()
+	if proof.Status != "test_validated" {
+		t.Fatalf("proof %s should be test-validated, got %q", proof.ID, proof.Status)
+	}
+	if !proof.Readiness["executable_evidence"] || proof.Readiness["reviewed_placeholder"] || !proof.Readiness["protocol_implemented"] || proof.Readiness["phase8_deferred"] {
+		t.Fatalf("proof %s readiness is not executable: %#v", proof.ID, proof.Readiness)
+	}
+	if len(proof.TranscriptStepIDs) == 0 {
+		t.Fatalf("proof %s must reference at least one transcript step", proof.ID)
+	}
+	for _, stepID := range proof.SetupStepIDs {
+		if _, ok := transcriptSteps[stepID]; !ok {
+			t.Fatalf("proof %s references missing setup transcript step %q", proof.ID, stepID)
+		}
+	}
+	for _, stepID := range proof.TranscriptStepIDs {
+		step, ok := transcriptSteps[stepID]
+		if !ok {
+			t.Fatalf("proof %s references missing proof transcript step %q", proof.ID, stepID)
+		}
+		if !step.JSON {
+			continue
+		}
+		for _, required := range []string{"sidecar.schema_version", "sidecar.profile", "sidecar.contract.id"} {
+			if _, ok := step.ExpectJSONString[required]; !ok {
+				t.Fatalf("transcript step %s does not assert %s", stepID, required)
+			}
+		}
+		if _, ok := step.ExpectJSONString["sidecar.freshness.policy"]; !ok && !stringSliceContains(step.ExpectJSONNull, "sidecar.freshness") {
+			t.Fatalf("transcript step %s does not assert freshness presence or explicit null", stepID)
+		}
+		if !stringSliceContains(step.ExpectJSONPresent, "sidecar.audit_event_ids") {
+			t.Fatalf("transcript step %s does not assert sidecar audit field presence", stepID)
 		}
 	}
 }
@@ -216,6 +447,15 @@ func normalizedShellSnippet(value string) string {
 	value = strings.ReplaceAll(value, "\\\r\n", " ")
 	value = strings.ReplaceAll(value, "\\\n", " ")
 	return strings.Join(strings.Fields(value), " ")
+}
+
+func stringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func sidecarSmokeArgsWithConfig(args []string, configPath string) []string {

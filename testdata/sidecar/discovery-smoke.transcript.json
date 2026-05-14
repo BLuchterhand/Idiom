@@ -25,6 +25,7 @@
         "sidecar.freshness.operation": "context_status",
         "sidecar.structured_output.indexed": "false"
       },
+      "expect_json_present": ["sidecar.audit_event_ids"],
       "expect_json_null": ["sidecar.error"],
       "expect_json_non_empty": ["Summary", "sidecar.contract.schema_version"]
     },
@@ -52,6 +53,7 @@
         "sidecar.profile": "default",
         "sidecar.contract.id": "idiom.tool.v1:context_index"
       },
+      "expect_json_present": ["sidecar.audit_event_ids"],
       "expect_json_null": ["sidecar.error"],
       "expect_json_non_empty": [
         "Summary",
@@ -79,6 +81,7 @@
         "sidecar.freshness.operation": "context_query",
         "sidecar.structured_output.resolution": "symbol"
       },
+      "expect_json_present": ["sidecar.audit_event_ids"],
       "expect_json_null": ["sidecar.error"],
       "expect_json_non_empty": [
         "Summary",
@@ -109,6 +112,7 @@
         "sidecar.structured_output.task": "localize auth retry handling",
         "sidecar.structured_output.mode": "plan"
       },
+      "expect_json_present": ["sidecar.audit_event_ids"],
       "expect_json_null": ["sidecar.error"],
       "expect_json_non_empty": [
         "Summary",
@@ -138,6 +142,7 @@
         "sidecar.error.class": "profile_denied",
         "sidecar.error.code": "profile_denied"
       },
+      "expect_json_present": ["sidecar.audit_event_ids"],
       "expect_json_null": ["sidecar.freshness"],
       "expect_json_non_empty": ["Error", "sidecar.error.message"],
       "stdout_includes": ["read_only_profile"]

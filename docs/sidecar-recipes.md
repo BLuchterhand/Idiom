@@ -42,6 +42,11 @@ contract. Choose the CLI mode, profile, tool name, and JSON input explicitly.
 Use this when a script needs a preflight freshness check before it consumes
 repository evidence.
 
+The checked script form is
+[`scripts/sidecar-ci-proof.sh`](../scripts/sidecar-ci-proof.sh). It accepts
+`IDIOM_BIN`, `IDIOM_CALLER_ID`, and `IDIOM_REQUEST_ID` overrides and validates
+the same fields shown below.
+
 ```bash
 set -euo pipefail
 
@@ -120,6 +125,24 @@ The external harness may pass the returned findings, paths, symbols, counts,
 and freshness to its model. It should not treat Idiom output as a prescribed
 next step.
 
+## MCP Stdio Placeholder Handoff
+
+P7.8 does not claim that MCP stdio is implemented. The placeholder handoff
+records the contract shape P8 must preserve:
+
+- transport: `mcp_stdio`
+- sidecar schema: `idiom.tool.v1`
+- profile: `discovery`
+- readiness fields: protocol implemented or deferred, shared contract shape,
+  profile, schema, freshness, audit, and privacy review
+- limitation: no MCP handshake, roots, resources, or protocol transcript is
+  claimed until Phase 8
+
+The reviewed placeholder lives in
+[`testdata/sidecar/integration-proofs.json`](../testdata/sidecar/integration-proofs.json).
+P8.6 must replace the placeholder with a replayable MCP proof that keeps CLI
+and MCP on the same evidence model.
+
 ## Local Or Private-Code User
 
 Use this when the repository cannot leave the machine and the user wants a
@@ -168,3 +191,5 @@ It covers:
 The fixture is replayed by `go test ./cmd/idiom -run TestSidecarSmokeTranscript`.
 The v1 compatibility golden tests are replayed by
 `go test ./cmd/idiom -run TestSidecarV1CompatibilityGoldenCases`.
+The P7.8 integration proof records are validated by
+`go test ./cmd/idiom -run TestP78IntegrationProofRecords`.
