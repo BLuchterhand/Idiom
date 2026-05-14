@@ -1747,7 +1747,7 @@ Review signoff:
 | P5.16 | Reject atom/refine shorthand paths that could authorize unintended root writes | P5.15 | Boyle the 2nd | - [x] | Kuhn the 2nd + P5.17 follow-up | - [x] |
 | P5.17 | Report ambiguous atom shorthand paths with coherent invalid-scope reasons | P5.16 | Confucius the 2nd | - [x] | Lovelace the 2nd | - [x] |
 | P5.18 | Reject no-op `submit_plan` edits before artifact persistence | P5.13, P5.15 | Linnaeus the 3rd | - [x] | Parfit the 3rd | - [x] |
-| P5.19 | Resolve `context_status` default refresh-budget drift | P5.10, P5.12 | Poincare the 3rd | - [x] | Mendel the 3rd + P5.20 follow-up | - [ ] |
+| P5.19 | Resolve `context_status` default refresh-budget drift | P5.10, P5.12 | Poincare the 3rd | - [x] | Mendel the 3rd + P5.20 follow-up | - [x] |
 | P5.20 | Restore default `context_status` stale-file budget after P5.19 review | P5.19 | Leibniz the 3rd | - [x] | Erdos the 3rd | - [x] |
 | P6.1 | Extend `idiom doctor` with readiness profiles | P1, P5.12 | Herschel the 2nd | - [x] | Volta the 2nd | - [x] |
 | P6.2 | Add backend, queue, context budget, route classifier, implement-session closeout, and degraded-mode telemetry | P6.1, P5.13 | Carver the 2nd | - [x] | James the 2nd + P6.6 follow-up | - [x] |
