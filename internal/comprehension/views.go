@@ -297,6 +297,22 @@ func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus,
 // referenced paths) so scoped refresh can mark stale by referenced-path
 // comparison.
 func SaveView(root string, key ViewKey, result PackResult) error {
+	if err := saveViewOnce(root, key, result); err != nil {
+		if !isSQLiteCorruptionError(err) {
+			return err
+		}
+		if recoverErr := recoverSQLiteGraphStore(root); recoverErr != nil {
+			return fmt.Errorf("recover SQLite graph store after graph_views write failure: %w (original error: %v)", recoverErr, err)
+		}
+		if retryErr := saveViewOnce(root, key, result); retryErr != nil {
+			return fmt.Errorf("retry graph_views write after SQLite graph recovery: %w (original error: %v)", retryErr, err)
+		}
+	}
+	viewCacheWrites.Add(1)
+	return nil
+}
+
+func saveViewOnce(root string, key ViewKey, result PackResult) error {
 	sqlitePath := sqliteGraphPath(root)
 	if err := os.MkdirAll(filepath.Dir(sqlitePath), 0o755); err != nil {
 		return err
@@ -306,6 +322,9 @@ func SaveView(root string, key ViewKey, result PackResult) error {
 		return err
 	}
 	defer db.Close()
+	if err := validateSQLiteIntegrity(db); err != nil {
+		return err
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -379,7 +398,6 @@ func SaveView(root string, key ViewKey, result PackResult) error {
 		return err
 	}
 	committed = true
-	viewCacheWrites.Add(1)
 	return nil
 }
 

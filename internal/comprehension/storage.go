@@ -195,6 +195,9 @@ func validateSQLiteGraphFile(path string) error {
 		return err
 	}
 	defer db.Close()
+	if err := validateSQLiteIntegrity(db); err != nil {
+		return err
+	}
 	requiredTables := []string{"graph_metadata", "graph_nodes", "graph_edges", "graph_views"}
 	for _, table := range requiredTables {
 		var count int
@@ -214,6 +217,44 @@ func validateSQLiteGraphFile(path string) error {
 		return err
 	}
 	return nil
+}
+
+func validateSQLiteIntegrity(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA quick_check(1)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	checked := false
+	for rows.Next() {
+		checked = true
+		var message string
+		if err := rows.Scan(&message); err != nil {
+			return err
+		}
+		if strings.ToLower(strings.TrimSpace(message)) != "ok" {
+			return fmt.Errorf("graph.sqlite quick_check: %s", message)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !checked {
+		return fmt.Errorf("graph.sqlite quick_check returned no rows")
+	}
+	return nil
+}
+
+func isSQLiteCorruptionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database disk image is malformed") ||
+		strings.Contains(message, "sqlite_corrupt") ||
+		strings.Contains(message, "malformed database schema") ||
+		strings.Contains(message, "file is not a database") ||
+		strings.Contains(message, "quick_check")
 }
 
 func saveSQLiteGraph(root string, graph Graph) error {
@@ -768,6 +809,25 @@ func prepareSQLiteGraphForWrite(root string) error {
 	return nil
 }
 
+func recoverSQLiteGraphStore(root string) error {
+	graph, err := loadJSONGraph(root)
+	if err == nil {
+		graph.StoreKind = sqliteStoreKind
+		if strings.TrimSpace(graph.ID) == "" {
+			graph.ID = graphID(graph)
+		}
+		return saveSQLiteGraph(root, graph)
+	}
+	report, buildErr := Build(context.Background(), BuildOptions{Root: root, Language: "auto"})
+	if buildErr != nil {
+		return fmt.Errorf("rebuild SQLite graph from JSON export failed: %v; full rebuild failed: %w", err, buildErr)
+	}
+	if report.StoreKind != sqliteStoreKind {
+		return fmt.Errorf("full rebuild did not produce SQLite graph store: %s", report.StoreKind)
+	}
+	return nil
+}
+
 func loadSQLiteGraph(root string) (Graph, error) {
 	report := sqliteStorageBackend(root, sqliteStoreKind)
 	if report.Status == "absent" {
@@ -831,6 +891,9 @@ func statusFromSQLite(root string, activeKind string, scope string) (StatusRepor
 		return StatusReport{}, false, err
 	}
 	defer db.Close()
+	if err := validateSQLiteIntegrity(db); err != nil {
+		return StatusReport{}, false, err
+	}
 
 	values, err := readSQLiteGraphMetadata(db)
 	if err != nil {

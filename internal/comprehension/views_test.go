@@ -102,6 +102,38 @@ func TestSaveAndLoadViewRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveViewRecoversFreelistCorruptSQLiteStore(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/viewrecover\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "a.go"), "package viewrecover\n\nfunc A() string { return \"a\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := ViewKey{IndexID: build.IndexID, Task: "recover view write", Mode: "plan"}
+	result := PackResult{
+		PackID:         key.ID(),
+		IndexID:        build.IndexID,
+		Root:           root,
+		Task:           "recover view write",
+		Mode:           "plan",
+		CandidateFiles: []PackFile{{Path: "a.go", Role: "editable"}},
+	}
+	corruptSQLiteFreelistCount(t, root)
+
+	if err := SaveView(root, key, result); err != nil {
+		t.Fatalf("SaveView should recover corrupt SQLite store and retry: %v", err)
+	}
+	got, hit, err := LoadView(root, key)
+	if err != nil {
+		t.Fatalf("LoadView after recovery: %v", err)
+	}
+	if !hit || got.Task != result.Task {
+		_, status, statusErr := LoadViewByIDStatus(root, key.ID())
+		t.Fatalf("expected recovered cache hit for task %q, got hit=%v task=%q status=%#v status_err=%v", result.Task, hit, got.Task, status, statusErr)
+	}
+}
+
 func TestLoadViewMissOnEmpty(t *testing.T) {
 	root := t.TempDir()
 	key := ViewKey{IndexID: "absent", Task: "nothing", Mode: "plan"}

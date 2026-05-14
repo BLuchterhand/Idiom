@@ -2,6 +2,7 @@ package comprehension
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
@@ -799,6 +800,74 @@ func TestStatusRejectsMalformedCurrentSQLiteStore(t *testing.T) {
 	}
 	if !hasStorageBackend(report.StorageBackends, sqliteStoreKind, "active", true) {
 		t.Fatalf("expected rebuilt active SQLite backend, got %#v", report.StorageBackends)
+	}
+}
+
+func TestStatusDetectsFreelistCorruptionAndBuildRecovers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/freelist\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Run() string { return \"ok\" }\n")
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	corruptSQLiteFreelistCount(t, root)
+
+	status, err := Status(root)
+	if err != nil {
+		t.Fatalf("Status should report freelist corruption through backend status: %v", err)
+	}
+	if status.Indexed {
+		t.Fatalf("corrupt SQLite status should not be indexed, got %#v", status)
+	}
+	if !hasStorageBackend(status.StorageBackends, sqliteStoreKind, "invalid", false) {
+		t.Fatalf("expected corrupt SQLite backend to be invalid, got %#v", status.StorageBackends)
+	}
+
+	report, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build should replace freelist-corrupt SQLite: %v", err)
+	}
+	if !hasStorageBackend(report.StorageBackends, sqliteStoreKind, "active", true) {
+		t.Fatalf("expected rebuilt active SQLite backend, got %#v", report.StorageBackends)
+	}
+}
+
+func corruptSQLiteFreelistCount(t *testing.T, root string) {
+	t.Helper()
+	db, err := openSQLite(sqliteGraphPath(root))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE graph_corruption_junk(x BLOB)`); err != nil {
+		_ = db.Close()
+		t.Fatalf("create corruption junk table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO graph_corruption_junk VALUES(zeroblob(100000))`); err != nil {
+		_ = db.Close()
+		t.Fatalf("fill corruption junk table: %v", err)
+	}
+	if _, err := db.Exec(`DROP TABLE graph_corruption_junk`); err != nil {
+		_ = db.Close()
+		t.Fatalf("drop corruption junk table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+	path := sqliteGraphPath(root)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read sqlite: %v", err)
+	}
+	if len(data) < 40 {
+		t.Fatalf("sqlite file too small to corrupt freelist count: %d", len(data))
+	}
+	if binary.BigEndian.Uint32(data[36:40]) == 0 {
+		t.Fatalf("expected dropped junk table to create freelist pages")
+	}
+	binary.BigEndian.PutUint32(data[36:40], 0)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write corrupted sqlite: %v", err)
 	}
 }
 
