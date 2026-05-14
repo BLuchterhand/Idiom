@@ -91,7 +91,7 @@ serve.
 | `idiom local-ops benchmark` | Local readiness, activation, smoke, capacity, and privacy-safe benchmark evidence |
 | `idiom product-evidence export` | Metadata-only go/no-go evidence export for product decisions |
 | `idiom release evidence` | Release evidence bundle comparing baseline/current command artifacts |
-| `idiom ranker` | Manual ranker learning inspection and boost/penalize controls |
+| `idiom ranker` | Manual ranker learning inspection, boost/penalize controls, and rollback |
 
 ## Prompt And Docs Areas
 
