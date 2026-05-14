@@ -8,9 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"idiom/internal/autodetect"
+	"idiom/internal/backends"
+	"idiom/internal/frontier/workerruntime"
 )
 
 // checkResult is one diagnostic outcome. Status is "pass" | "warn" |
@@ -21,6 +24,52 @@ type checkResult struct {
 	status string
 	detail string
 	remedy string
+}
+
+type readinessCheck struct {
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	Detail   string `json:"detail,omitempty"`
+	Remedy   string `json:"remedy,omitempty"`
+	Optional bool   `json:"optional,omitempty"`
+}
+
+type readinessUnavailable struct {
+	Check  string `json:"check"`
+	Reason string `json:"reason"`
+	Remedy string `json:"remedy,omitempty"`
+}
+
+type readinessProfileReport struct {
+	Name                 string                 `json:"name"`
+	State                string                 `json:"state"`
+	Detail               string                 `json:"detail,omitempty"`
+	TaskFamily           string                 `json:"task_family"`
+	Contract             string                 `json:"contract"`
+	PermissionProfile    string                 `json:"permission_profile,omitempty"`
+	ToolProfile          string                 `json:"tool_profile,omitempty"`
+	RequiredEvidence     []string               `json:"required_evidence,omitempty"`
+	ReadinessGate        []string               `json:"readiness_gate,omitempty"`
+	VerificationContract string                 `json:"verification_contract,omitempty"`
+	RequiredRoles        []string               `json:"required_roles,omitempty"`
+	RoleAliases          map[string]string      `json:"role_aliases,omitempty"`
+	Checks               []readinessCheck       `json:"checks,omitempty"`
+	Unavailable          []readinessUnavailable `json:"unavailable,omitempty"`
+}
+
+type readinessProfileSpec struct {
+	name          string
+	taskFamily    string
+	requiredRoles []string
+	needsContext  bool
+}
+
+var doctorReadinessProfileSpecs = []readinessProfileSpec{
+	{name: "discovery", taskFamily: "architecture", needsContext: true},
+	{name: "plan", taskFamily: "plan_then_execute_planner", requiredRoles: []string{backends.RolePlanner, backends.RoleExecutor}, needsContext: true},
+	{name: "implement", taskFamily: "implementation", requiredRoles: []string{backends.RoleExecutor}, needsContext: true},
+	{name: "eval", taskFamily: "verification_only", requiredRoles: []string{backends.RoleExecutor}},
+	{name: "sidecar", taskFamily: "debug_logs", requiredRoles: []string{backends.RoleClassifier}},
 }
 
 // runDoctorMain implements `idiom doctor` — a preflight diagnostic that
@@ -38,6 +87,7 @@ func runDoctorMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", ".idiom/config.json", "path to project config (relative or absolute)")
 	asJSON := fs.Bool("json", false, "emit results as one JSON object instead of human-readable text")
+	readinessProfile := fs.String("profile", "all", "readiness profile to report: all, discovery, plan, implement, eval, or sidecar")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -50,11 +100,16 @@ func runDoctorMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		checkPython3(),
 		checkGit(),
 	}
+	profiles, err := buildDoctorReadinessProfiles(*configPath, *readinessProfile, results)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 
 	if *asJSON {
-		emitDoctorJSON(stdout, results)
+		emitDoctorJSON(stdout, results, profiles)
 	} else {
-		emitDoctorText(stdout, results)
+		emitDoctorText(stdout, results, profiles)
 	}
 
 	for _, r := range results {
@@ -252,7 +307,7 @@ func checkGit() checkResult {
 // emitDoctorText writes a human-readable report. Format is intentionally
 // simple — one line per check with status icon, name, and detail; a
 // trailing block of remedy lines for anything non-passing.
-func emitDoctorText(w io.Writer, results []checkResult) {
+func emitDoctorText(w io.Writer, results []checkResult, profiles []readinessProfileReport) {
 	icon := map[string]string{
 		"pass": "ok  ",
 		"warn": "warn",
@@ -272,6 +327,7 @@ func emitDoctorText(w io.Writer, results []checkResult) {
 	}
 	fmt.Fprintf(w, "\nsummary: %d pass, %d warn, %d fail\n", passes, warns, fails)
 	if warns+fails == 0 {
+		emitDoctorReadinessText(w, profiles)
 		return
 	}
 	fmt.Fprintln(w, "\nnext steps:")
@@ -281,12 +337,13 @@ func emitDoctorText(w io.Writer, results []checkResult) {
 		}
 		fmt.Fprintf(w, "  - %s: %s\n", r.name, r.remedy)
 	}
+	emitDoctorReadinessText(w, profiles)
 }
 
 // emitDoctorJSON writes a single JSON object: { "checks": [...],
 // "summary": {pass, warn, fail} }. CI / wrappers consume this without
 // parsing the human-readable form.
-func emitDoctorJSON(w io.Writer, results []checkResult) {
+func emitDoctorJSON(w io.Writer, results []checkResult, profiles []readinessProfileReport) {
 	type entry struct {
 		Name   string `json:"name"`
 		Status string `json:"status"`
@@ -299,10 +356,12 @@ func emitDoctorJSON(w io.Writer, results []checkResult) {
 		Fail int `json:"fail"`
 	}
 	out := struct {
-		Checks  []entry `json:"checks"`
-		Summary summary `json:"summary"`
+		Checks            []entry                  `json:"checks"`
+		Summary           summary                  `json:"summary"`
+		ReadinessProfiles []readinessProfileReport `json:"readiness_profiles"`
 	}{
-		Checks: make([]entry, 0, len(results)),
+		Checks:            make([]entry, 0, len(results)),
+		ReadinessProfiles: profiles,
 	}
 	for _, r := range results {
 		out.Checks = append(out.Checks, entry{r.name, r.status, r.detail, r.remedy})
@@ -318,4 +377,272 @@ func emitDoctorJSON(w io.Writer, results []checkResult) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(out)
+}
+
+func emitDoctorReadinessText(w io.Writer, profiles []readinessProfileReport) {
+	if len(profiles) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "\nreadiness profiles:")
+	for _, profile := range profiles {
+		fmt.Fprintf(w, "  - %s: %s", profile.Name, profile.State)
+		if profile.Detail != "" {
+			fmt.Fprintf(w, " (%s)", profile.Detail)
+		}
+		if len(profile.RequiredRoles) > 0 {
+			fmt.Fprintf(w, " roles=%s", strings.Join(profile.RequiredRoles, ","))
+		}
+		if len(profile.Unavailable) > 0 {
+			fmt.Fprintf(w, " unavailable=%d", len(profile.Unavailable))
+		}
+		fmt.Fprintln(w)
+		for _, unavailable := range profile.Unavailable {
+			fmt.Fprintf(w, "      unavailable %s: %s\n", unavailable.Check, unavailable.Reason)
+			if unavailable.Remedy != "" {
+				fmt.Fprintf(w, "        remedy: %s\n", unavailable.Remedy)
+			}
+		}
+		for _, check := range profile.Checks {
+			if check.State == "pass" || check.Remedy == "" {
+				continue
+			}
+			fmt.Fprintf(w, "      %s %s: %s\n", check.State, check.Name, check.Remedy)
+		}
+	}
+}
+
+func buildDoctorReadinessProfiles(configPath, selected string, hostChecks []checkResult) ([]readinessProfileReport, error) {
+	selected = strings.ToLower(strings.TrimSpace(selected))
+	if selected == "" {
+		selected = "all"
+	}
+	specs := make([]readinessProfileSpec, 0, len(doctorReadinessProfileSpecs))
+	for _, spec := range doctorReadinessProfileSpecs {
+		if selected == "all" || selected == spec.name {
+			specs = append(specs, spec)
+		}
+	}
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("doctor: unknown readiness profile %q (expected all, discovery, plan, implement, eval, or sidecar)", selected)
+	}
+
+	root := workspaceRootFromConfig(configPath)
+	if strings.TrimSpace(root) == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			root = cwd
+		}
+	}
+	backendFile, backendFound, backendErr := backends.LoadFromProjectRoot(root)
+	contextReady, contextDetail := doctorContextIndexReadiness(root)
+
+	reports := make([]readinessProfileReport, 0, len(specs))
+	for _, spec := range specs {
+		reports = append(reports, buildDoctorReadinessProfile(spec, hostChecks, backendFile, backendFound, backendErr, contextReady, contextDetail))
+	}
+	return reports, nil
+}
+
+func buildDoctorReadinessProfile(spec readinessProfileSpec, hostChecks []checkResult, backendFile backends.File, backendFound bool, backendErr error, contextReady bool, contextDetail string) readinessProfileReport {
+	contract := workerruntime.RuntimeContractForTaskFamily(spec.taskFamily)
+	report := readinessProfileReport{
+		Name:                 spec.name,
+		TaskFamily:           contract.TaskFamily,
+		Contract:             contract.Contract,
+		PermissionProfile:    contract.PermissionProfile,
+		ToolProfile:          string(contract.ToolProfile),
+		RequiredEvidence:     append([]string(nil), contract.RequiredEvidence...),
+		ReadinessGate:        append([]string(nil), contract.ReadinessGate...),
+		VerificationContract: contract.VerificationContract,
+		RequiredRoles:        append([]string(nil), spec.requiredRoles...),
+		RoleAliases:          map[string]string{},
+	}
+	report.Checks = append(report.Checks, readinessCheck{
+		Name:   "runtime contract",
+		State:  "pass",
+		Detail: fmt.Sprintf("%s / %s", contract.Contract, contract.PermissionProfile),
+	})
+	report.Checks = append(report.Checks, readinessChecksFromHost(hostChecks)...)
+	if spec.needsContext {
+		if contextReady {
+			report.Checks = append(report.Checks, readinessCheck{Name: "context index", State: "pass", Detail: contextDetail, Optional: true})
+		} else {
+			report.Checks = append(report.Checks, readinessCheck{
+				Name:     "context index",
+				State:    "degraded",
+				Detail:   contextDetail,
+				Remedy:   "run `idiom context status --refresh` or `idiom context build` before relying on cached discovery evidence",
+				Optional: true,
+			})
+		}
+	}
+	report.Checks = append(report.Checks, readinessCheck{
+		Name:     "queue admission",
+		State:    "unavailable",
+		Detail:   "doctor does not probe the queue daemon in this P6.1 profile report",
+		Remedy:   "use `idiom queue status` for live queue state until P6.2/P6.3 wire queue readiness into doctor",
+		Optional: true,
+	})
+	report.Unavailable = append(report.Unavailable, readinessUnavailable{
+		Check:  "queue admission",
+		Reason: "live queue probe is not part of the P6.1 doctor contract",
+		Remedy: "use `idiom queue status` for live queue state",
+	})
+	report = applyBackendRoleReadiness(report, backendFile, backendFound, backendErr)
+	report.State = readinessProfileState(report.Checks)
+	report.Detail = readinessProfileDetail(report.State)
+	if len(report.RoleAliases) == 0 {
+		report.RoleAliases = nil
+	}
+	return report
+}
+
+func readinessChecksFromHost(hostChecks []checkResult) []readinessCheck {
+	out := make([]readinessCheck, 0, len(hostChecks))
+	for _, check := range hostChecks {
+		state := "pass"
+		switch check.status {
+		case "fail":
+			state = "blocked"
+		case "warn":
+			state = "degraded"
+		}
+		out = append(out, readinessCheck{
+			Name:   check.name,
+			State:  state,
+			Detail: check.detail,
+			Remedy: check.remedy,
+		})
+	}
+	return out
+}
+
+func applyBackendRoleReadiness(report readinessProfileReport, backendFile backends.File, backendFound bool, backendErr error) readinessProfileReport {
+	if len(report.RequiredRoles) == 0 {
+		report.Checks = append(report.Checks, readinessCheck{
+			Name:     "backend role config",
+			State:    "pass",
+			Detail:   "profile does not require a dedicated backend role",
+			Optional: true,
+		})
+		return report
+	}
+	if backendErr != nil {
+		report.Checks = append(report.Checks, readinessCheck{
+			Name:   "backend role config",
+			State:  "blocked",
+			Detail: backendErr.Error(),
+			Remedy: "fix .idiom/backends.json so roles can be resolved before launch",
+		})
+		return report
+	}
+	if !backendFound {
+		report.Checks = append(report.Checks, readinessCheck{
+			Name:   "backend role config",
+			State:  "unavailable",
+			Detail: ".idiom/backends.json not found",
+			Remedy: "create .idiom/backends.json or run with legacy config while treating role-specific readiness as unavailable",
+		})
+		report.Unavailable = append(report.Unavailable, readinessUnavailable{
+			Check:  "backend role config",
+			Reason: ".idiom/backends.json not found",
+			Remedy: "create .idiom/backends.json to make role readiness machine-readable",
+		})
+		return report
+	}
+	profile, ok := backendFile.Profile("")
+	if !ok {
+		report.Checks = append(report.Checks, readinessCheck{
+			Name:   "backend role config",
+			State:  "blocked",
+			Detail: "no default or unambiguous backend profile selected",
+			Remedy: "set default_profile in .idiom/backends.json or keep only one backend profile",
+		})
+		return report
+	}
+	var missing []string
+	for _, role := range report.RequiredRoles {
+		alias, ok := profile.AliasForRole(role)
+		if !ok {
+			missing = append(missing, role)
+			continue
+		}
+		report.RoleAliases[role] = alias
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		report.Checks = append(report.Checks, readinessCheck{
+			Name:   "backend role config",
+			State:  "blocked",
+			Detail: "missing role aliases: " + strings.Join(missing, ", "),
+			Remedy: "add role tags or proxy.default_<role> aliases in .idiom/backends.json",
+		})
+		return report
+	}
+	report.Checks = append(report.Checks, readinessCheck{
+		Name:   "backend role config",
+		State:  "pass",
+		Detail: "resolved roles: " + strings.Join(sortedRoleAliases(report.RoleAliases), ", "),
+	})
+	return report
+}
+
+func sortedRoleAliases(aliases map[string]string) []string {
+	keys := make([]string, 0, len(aliases))
+	for key := range aliases {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+aliases[key])
+	}
+	return out
+}
+
+func doctorContextIndexReadiness(root string) (bool, string) {
+	if strings.TrimSpace(root) == "" {
+		return false, "workspace root unavailable"
+	}
+	for _, rel := range []string{
+		filepath.Join(".idiom", "comprehension", "graph.sqlite"),
+		filepath.Join(".idiom", "comprehension", "graph.json"),
+	} {
+		path := filepath.Join(root, rel)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return true, rel + " present"
+		}
+	}
+	return false, "no local context graph found under .idiom/comprehension"
+}
+
+func readinessProfileState(checks []readinessCheck) string {
+	state := "pass"
+	for _, check := range checks {
+		switch check.State {
+		case "blocked":
+			return "blocked"
+		case "unavailable":
+			if state == "pass" {
+				state = "degraded"
+			}
+		case "degraded":
+			if state == "pass" {
+				state = "degraded"
+			}
+		}
+	}
+	return state
+}
+
+func readinessProfileDetail(state string) string {
+	switch state {
+	case "pass":
+		return "all required static checks passed"
+	case "blocked":
+		return "one or more required checks block launch"
+	case "degraded":
+		return "required contract is visible but one or more checks are degraded or unavailable"
+	default:
+		return "readiness state unavailable"
+	}
 }

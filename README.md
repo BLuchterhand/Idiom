@@ -50,8 +50,12 @@ idiom doctor
 `idiom doctor` checks for a backend runner (`mlx_lm.server`,
 `llama-server`, or `ollama` on `$PATH`), local model files in
 `~/.cache/huggingface`/`~/models`/`~/.ollama/models`, project config,
-and supporting tools (`python3`, `git`). Each non-pass result carries
-an exact remedy line; `--json` emits structured output for CI.
+and supporting tools (`python3`, `git`). It also reports generic
+readiness profiles for `discovery`, `plan`, `implement`, `eval`, and
+`sidecar` workflows. Each non-pass result carries an exact remedy line;
+`--json` emits structured checks plus machine-readable profile readiness
+for CI. Use `--profile <name>` to limit the readiness section while
+keeping the legacy host checks.
 
 Run a lane against a brief:
 

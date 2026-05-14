@@ -64,6 +64,16 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 			Warn int `json:"warn"`
 			Fail int `json:"fail"`
 		} `json:"summary"`
+		ReadinessProfiles []struct {
+			Name        string `json:"name"`
+			State       string `json:"state"`
+			TaskFamily  string `json:"task_family"`
+			Contract    string `json:"contract"`
+			Unavailable []struct {
+				Check  string `json:"check"`
+				Reason string `json:"reason"`
+			} `json:"unavailable"`
+		} `json:"readiness_profiles"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("doctor --json output not parseable: %v\noutput: %s", err, stdout.String())
@@ -74,6 +84,98 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 	total := got.Summary.Pass + got.Summary.Warn + got.Summary.Fail
 	if total != len(got.Checks) {
 		t.Fatalf("summary counts (%d) don't match check count (%d)", total, len(got.Checks))
+	}
+	if len(got.ReadinessProfiles) != len(doctorReadinessProfileSpecs) {
+		t.Fatalf("expected all readiness profiles in JSON output, got %#v", got.ReadinessProfiles)
+	}
+	for _, profile := range got.ReadinessProfiles {
+		if profile.Name == "" || profile.State == "" || profile.TaskFamily == "" || profile.Contract == "" {
+			t.Fatalf("profile readiness missing machine-readable fields: %#v", profile)
+		}
+		if !validReadinessState(profile.State) {
+			t.Fatalf("profile %q has invalid state %q", profile.Name, profile.State)
+		}
+		if len(profile.Unavailable) == 0 {
+			t.Fatalf("profile %q should carry explicit unavailable markers for deferred live probes", profile.Name)
+		}
+	}
+}
+
+func TestRunDoctorMainProfileFlagFiltersReadinessProfiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	stageDoctorConfig(t, dir)
+	stageDoctorBackends(t, dir)
+
+	var stdout, stderr bytes.Buffer
+	_ = runDoctorMain([]string{"--json", "--profile", "implement"}, &stdout, &stderr)
+
+	var got struct {
+		ReadinessProfiles []struct {
+			Name          string            `json:"name"`
+			RequiredRoles []string          `json:"required_roles"`
+			RoleAliases   map[string]string `json:"role_aliases"`
+		} `json:"readiness_profiles"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("doctor --json --profile implement not parseable: %v\noutput: %s", err, stdout.String())
+	}
+	if len(got.ReadinessProfiles) != 1 || got.ReadinessProfiles[0].Name != "implement" {
+		t.Fatalf("expected only implement profile, got %#v", got.ReadinessProfiles)
+	}
+	if got.ReadinessProfiles[0].RoleAliases["executor"] != "coder" {
+		t.Fatalf("implement readiness should resolve executor role, got %#v", got.ReadinessProfiles[0])
+	}
+}
+
+func TestRunDoctorMainUnknownProfileExitsTwo(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runDoctorMain([]string{"--profile", "finance"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("unknown readiness profile must exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "unknown readiness profile") {
+		t.Fatalf("expected profile error, got stderr=%q", stderr.String())
+	}
+}
+
+func TestDoctorReadinessProfilesAreGenericAcrossClientClasses(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	stageDoctorConfig(t, dir)
+	stageDoctorBackends(t, dir)
+
+	var stdout, stderr bytes.Buffer
+	_ = runDoctorMain([]string{"--json"}, &stdout, &stderr)
+
+	var got struct {
+		ReadinessProfiles []map[string]any `json:"readiness_profiles"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("doctor --json output not parseable: %v\noutput: %s", err, stdout.String())
+	}
+	names := map[string]bool{}
+	for _, profile := range got.ReadinessProfiles {
+		name, _ := profile["name"].(string)
+		names[name] = true
+		if _, ok := profile["client_class"]; ok {
+			t.Fatalf("readiness profile must not hardcode client classes: %#v", profile)
+		}
+		if _, ok := profile["client_classes"]; ok {
+			t.Fatalf("readiness profile must not hardcode client classes: %#v", profile)
+		}
+	}
+	for _, want := range []string{"discovery", "plan", "implement", "eval", "sidecar"} {
+		if !names[want] {
+			t.Fatalf("missing generic readiness profile %q in %#v", want, got.ReadinessProfiles)
+		}
+	}
+	classes := []string{"finance", "healthcare/life sciences", "public-sector", "enterprise SaaS", "tooling-vendor", "local-model/private-code", "open-source"}
+	output := stdout.String()
+	for _, class := range classes {
+		if strings.Contains(output, class) {
+			t.Fatalf("doctor readiness output should stay generic; leaked client class %q in %s", class, output)
+		}
 	}
 }
 
@@ -171,5 +273,49 @@ func TestCheckWorkspaceWritableFailsOnReadOnly(t *testing.T) {
 	}
 	if r.remedy == "" {
 		t.Fatalf("remedy should be set on fail")
+	}
+}
+
+func validReadinessState(state string) bool {
+	switch state {
+	case "pass", "degraded", "blocked", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func stageDoctorConfig(t *testing.T, root string) {
+	t.Helper()
+	cfg := filepath.Join(root, ".idiom", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(cfg, []byte(`{"workspace": {"root": "`+root+`"}}`), 0o644); err != nil {
+		t.Fatalf("stage config: %v", err)
+	}
+}
+
+func stageDoctorBackends(t *testing.T, root string) {
+	t.Helper()
+	path := filepath.Join(root, ".idiom", "backends.json")
+	body := `{
+  "default_profile": "local",
+  "profiles": {
+    "local": {
+      "models": [
+        {"alias": "planner", "binary": "mlx_lm.server", "model_path": "/models/planner", "port": 47780, "roles": ["planner", "classifier"]},
+        {"alias": "coder", "binary": "mlx_lm.server", "model_path": "/models/coder", "port": 47781, "roles": ["executor"]}
+      ],
+      "proxy": {
+        "default_planner": "planner",
+        "default_executor": "coder",
+        "default_classifier": "planner"
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("stage backends: %v", err)
 	}
 }

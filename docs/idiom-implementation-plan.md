@@ -1741,7 +1741,7 @@ Review signoff:
 | P5.4 | Add approval scope IDs, handoff IDs, partial approval semantics, and eval assertions for plan-to-execution drift | P5.2, P5.10 | Gauss the 2nd | - [x] | Tesla the 2nd + P5.11/P5.12 follow-ups | - [x] |
 | P5.11 | Refresh terminal graph-view cache after P5.4 drift assertions | P5.4 | Pasteur the 2nd | - [x] | Faraday the 2nd + P5.12 follow-up | - [x] |
 | P5.12 | Final post-validation context refresh for P5.4 plan-execute edits | P5.11 | Newton the 2nd | - [x] | Meitner the 2nd | - [x] |
-| P6.1 | Extend `idiom doctor` with readiness profiles | P1, P5.12 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
+| P6.1 | Extend `idiom doctor` with readiness profiles | P1, P5.12 | Herschel the 2nd | - [x] | Volta the 2nd | - [x] |
 | P6.2 | Add backend, queue, context budget, route classifier, implement-session closeout, and degraded-mode telemetry | P6.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P6.3 | Define soft and hard readiness gates by profile | P6.2 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P6.4 | Add lane-start role, backend, queue, classifier, and context telemetry parity tests | P6.2, P6.3 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
