@@ -77,6 +77,34 @@ func TestToolAllowedForDiscoveryProfileDeniesMutationShellAndUnknownEffects(t *t
 	}
 }
 
+func TestToolProfileDeniedResultIsStableAndDoesNotEchoRequestValues(t *testing.T) {
+	privatePath := "/Users/example/.ssh/id_ed25519"
+	secretSentinel := "P75_POLICY_SECRET_SENTINEL_DO_NOT_LEAK"
+	decision := ToolRequestAllowedForProfile(ToolRequest{
+		Tool:    "write_file",
+		Path:    privatePath,
+		Content: secretSentinel,
+	}, ToolProfileDiscovery)
+	if decision.Allowed {
+		t.Fatal("write_file should be denied for discovery profile")
+	}
+
+	result := ToolProfileDeniedResult("write_file", ToolProfileDiscovery, decision)
+	if result.Tool != "write_file" || result.Summary != "Tool request denied by discovery profile" {
+		t.Fatalf("unexpected denial result identity: %#v", result)
+	}
+	for _, want := range []string{"profile_denied", "read_only_profile"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("denial result should contain stable %q marker: %#v", want, result)
+		}
+	}
+	for _, forbidden := range []string{privatePath, secretSentinel} {
+		if strings.Contains(result.Summary, forbidden) || strings.Contains(result.Error, forbidden) || strings.Contains(result.Output, forbidden) {
+			t.Fatalf("denial result leaked request value %q: %#v", forbidden, result)
+		}
+	}
+}
+
 func TestNormalizeToolProfileRejectsUnknownProfile(t *testing.T) {
 	if _, err := NormalizeToolProfile("verify"); err == nil {
 		t.Fatal("expected unknown profile to be rejected")
