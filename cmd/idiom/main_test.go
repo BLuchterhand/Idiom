@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"idiom/internal/config"
+	"idiom/internal/workspace"
 )
 
 func nopList(config.Config, io.Writer) error { return nil }
@@ -418,7 +419,7 @@ func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
 	configPath := writeMainConfig(t)
 
 	var stdout, stderr bytes.Buffer
-	code := runMain([]string{"tool", "pwd", "-config", configPath}, &stdout, &stderr)
+	code := runMain([]string{"tool", "pwd", "-config", configPath, "--caller-id", "cli-smoke", "--request-id", "req-cli", "--trace-id", "trace:cli"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
 	}
@@ -440,6 +441,16 @@ func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
 	var sawDirectToolResult bool
 	for _, record := range records {
 		if record["type"] == "tool_result" && record["tool"] == "pwd" && record["agent"] == "direct" {
+			if record["transport"] != "cli" ||
+				record["profile"] != "default" ||
+				record["caller_id"] != "cli-smoke" ||
+				record["request_id"] != "req-cli" ||
+				record["trace_id"] != "trace:cli" ||
+				record["sidecar_schema_version"] != workspace.ToolSidecarEnvelopeVersion ||
+				record["contract_schema_version"] != workspace.ToolSchemaExportVersion ||
+				record["contract_id"] != "idiom.tool.v1:pwd" {
+				t.Fatalf("direct tool telemetry attribution mismatch: %#v", record)
+			}
 			sawDirectToolResult = true
 		}
 	}

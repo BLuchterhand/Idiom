@@ -119,6 +119,41 @@ func respondInitializeThenTools(t *testing.T, transport *fakeTransport, tools []
 	}()
 }
 
+func respondInitializeToolsAndResources(t *testing.T, transport *fakeTransport) {
+	t.Helper()
+	go func() {
+		for payload := range transport.outgoing {
+			var req rawRequest
+			if err := json.Unmarshal(payload, &req); err != nil {
+				t.Errorf("fake server: bad JSON-RPC frame: %v", err)
+				return
+			}
+			if req.Method == "notifications/initialized" {
+				continue
+			}
+			var result json.RawMessage
+			switch req.Method {
+			case "initialize":
+				result = json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{"resources":{}},"serverInfo":{"name":"fake","version":"0.0.1"}}`)
+			case "tools/list":
+				result = json.RawMessage(`{"tools":[{"name":"context_status"}]}`)
+			case "resources/list":
+				result = json.RawMessage(`{"resources":[{"uri":"idiom://workspace/root","name":"workspace_root","mimeType":"application/json"}]}`)
+			case "resources/read":
+				result = json.RawMessage(`{"contents":[{"uri":"idiom://workspace/root","mimeType":"application/json","text":"{\"metadata_only\":true}"}]}`)
+			default:
+				transport.incoming <- mustMarshal(rawResponse{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Error:   &rawError{Code: -32601, Message: "unknown method"},
+				})
+				continue
+			}
+			transport.incoming <- mustMarshal(rawResponse{JSONRPC: "2.0", ID: req.ID, Result: result})
+		}
+	}()
+}
+
 func mustMarshal(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -163,6 +198,35 @@ func TestClientInitializeListCallRoundTrip(t *testing.T) {
 	}
 	if len(result.Content) != 1 || !containsBytes(result.Content[0], "hello") {
 		t.Fatalf("unexpected CallTool result: %+v", result)
+	}
+}
+
+func TestClientResourcesListAndReadRoundTrip(t *testing.T) {
+	transport := newFakeTransport()
+	respondInitializeToolsAndResources(t, transport)
+
+	client := NewClient(transport)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := client.Initialize(ctx, "idiom-test"); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	resources, err := client.ListResources(ctx)
+	if err != nil {
+		t.Fatalf("ListResources: %v", err)
+	}
+	if len(resources) != 1 || resources[0].URI != "idiom://workspace/root" || resources[0].Name != "workspace_root" {
+		t.Fatalf("unexpected resources: %+v", resources)
+	}
+	read, err := client.ReadResource(ctx, "idiom://workspace/root")
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if len(read.Contents) != 1 || read.Contents[0].URI != "idiom://workspace/root" || !containsBytes(json.RawMessage(read.Contents[0].Text), "metadata_only") {
+		t.Fatalf("unexpected resource read: %+v", read)
 	}
 }
 

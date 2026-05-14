@@ -50,6 +50,28 @@ func TestBuildToolSidecarEnvelopeIncludesAllowlistedCallerMetadata(t *testing.T)
 	if envelope.Caller.CallerID != "codex-cli" || envelope.Caller.RequestID != "req-123" || envelope.Caller.TraceID != "trace:abc" {
 		t.Fatalf("caller metadata not carried through: %#v", envelope.Caller)
 	}
+	if envelope.Contract.Transport != "cli" {
+		t.Fatalf("default sidecar transport should remain cli, got %#v", envelope.Contract)
+	}
+}
+
+func TestBuildToolSidecarEnvelopeCanAttributeMCPStdioTransport(t *testing.T) {
+	caller, err := NewToolSidecarCaller("mcp-client", "req-456", "trace:mcp")
+	if err != nil {
+		t.Fatalf("caller metadata should validate: %v", err)
+	}
+	envelope := BuildToolSidecarEnvelopeWithOptions(
+		ToolRequest{Tool: "context_status"},
+		ToolResult{Tool: "context_status", Summary: "Context status", Output: `{"freshness":{"policy":"report_only"}}`},
+		"discovery",
+		ToolSidecarOptions{Caller: caller, Transport: "mcp_stdio"},
+	)
+	if envelope.Caller.CallerID != "mcp-client" || envelope.Caller.RequestID != "req-456" || envelope.Caller.TraceID != "trace:mcp" {
+		t.Fatalf("MCP caller metadata not carried through: %#v", envelope.Caller)
+	}
+	if envelope.Contract.Transport != "mcp_stdio" {
+		t.Fatalf("MCP sidecar transport should be mcp_stdio, got %#v", envelope.Contract)
+	}
 }
 
 func TestNewToolSidecarCallerRejectsLeakyValues(t *testing.T) {

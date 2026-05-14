@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +16,8 @@ import (
 	"time"
 
 	"idiom/internal/config"
+	mcppkg "idiom/internal/mcp"
+	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
 
@@ -92,6 +96,129 @@ func TestMCPDiscoveryStdioInitializeListAndCallUsesSharedSchemas(t *testing.T) {
 	}
 	assertMCPPublicPayloadSafe(t, stdout.String(), root)
 	assertNoMCPStrategyLeakage(t, stdout.String())
+}
+
+func TestMCPClientStdioSmokeTelemetryAndCallerParity(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("P83_RAW_FILE_BODY_SENTINEL_DO_NOT_LEAK\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	caller, err := workspace.NewToolSidecarCaller("mcp-smoke", "req-p83", "trace:p83")
+	if err != nil {
+		t.Fatalf("caller metadata: %v", err)
+	}
+	telemetryDir := t.TempDir()
+	rec, err := telemetry.Open(telemetry.Options{
+		Dir:           telemetryDir,
+		Command:       "mcp:serve",
+		Args:          []string{"mcp", "serve", "--stdio", "--profile", "discovery", "--caller-id", "mcp-smoke", "--request-id", "req-p83", "--trace-id", "trace:p83"},
+		WorkspaceRoot: "<redacted_path>",
+	})
+	if err != nil {
+		t.Fatalf("open telemetry: %v", err)
+	}
+	server, err := newMCPDiscoveryServerWithOptions(cfg, workspace.ToolProfileDiscovery, mcpDiscoveryServerOptions{
+		Caller:    caller,
+		Telemetry: rec,
+	})
+	if err != nil {
+		t.Fatalf("new MCP discovery server: %v", err)
+	}
+	transport := startTestMCPStdioTransport(t, server)
+	client := mcppkg.NewClient(transport)
+	ctx := testContext(t)
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("client start: %v", err)
+	}
+	if err := client.Initialize(ctx, "p83-smoke-client"); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	tools, err := client.ListTools(ctx)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	if !mcpClientToolsContain(tools, "context_status") {
+		t.Fatalf("tools/list missing context_status: %#v", tools)
+	}
+	allowed, err := client.CallTool(ctx, "context_status", json.RawMessage(`{"limit":1}`))
+	if err != nil {
+		t.Fatalf("allowed tools/call: %v", err)
+	}
+	if allowed.IsError {
+		t.Fatalf("context_status should be allowed: %#v", allowed)
+	}
+	allowedPayload := decodeMCPClientToolPayload(t, allowed)
+	if allowedPayload.Sidecar.SchemaVersion != workspace.ToolSidecarEnvelopeVersion ||
+		allowedPayload.Sidecar.Caller.CallerID != "mcp-smoke" ||
+		allowedPayload.Sidecar.Caller.RequestID != "req-p83" ||
+		allowedPayload.Sidecar.Caller.TraceID != "trace:p83" ||
+		allowedPayload.Sidecar.Contract.Transport != mcpStdioTransport ||
+		allowedPayload.Sidecar.Contract.SchemaVersion != workspace.ToolSchemaExportVersion {
+		t.Fatalf("allowed MCP sidecar attribution mismatch: %#v", allowedPayload.Sidecar)
+	}
+	if allowedPayload.Sidecar.Contract.Transport == "cli" {
+		t.Fatalf("MCP response must not identify as CLI transport: %#v", allowedPayload.Sidecar.Contract)
+	}
+	resources, err := client.ListResources(ctx)
+	if err != nil {
+		t.Fatalf("resources/list: %v", err)
+	}
+	if len(resources) == 0 {
+		t.Fatalf("resources/list returned no resources")
+	}
+	readme, err := client.ReadResource(ctx, "idiom://workspace/file/README.md")
+	if err != nil {
+		t.Fatalf("metadata resources/read: %v", err)
+	}
+	if len(readme.Contents) != 1 || !strings.Contains(readme.Contents[0].Text, `"metadata_only": true`) {
+		t.Fatalf("README resource should be metadata-only: %#v", readme)
+	}
+	denied, err := client.CallTool(ctx, "context_status", json.RawMessage(`{"refresh":true}`))
+	if err != nil {
+		t.Fatalf("structured denial tools/call: %v", err)
+	}
+	if !denied.IsError {
+		t.Fatalf("refresh request should be a structured tool denial: %#v", denied)
+	}
+	deniedPayload := decodeMCPClientToolPayload(t, denied)
+	if deniedPayload.Sidecar.Error == nil ||
+		deniedPayload.Sidecar.Error.Class != "profile_denied" ||
+		deniedPayload.Sidecar.Contract.Transport != mcpStdioTransport {
+		t.Fatalf("unexpected MCP structured denial: %#v", deniedPayload.Sidecar)
+	}
+	if _, err := client.ReadResource(ctx, "idiom://workspace/file/.git/config"); err == nil {
+		t.Fatalf("protected resource read should return JSON-RPC denial")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("client close: %v", err)
+	}
+	if err := rec.Close(0); err != nil {
+		t.Fatalf("close telemetry: %v", err)
+	}
+	entries, err := os.ReadDir(telemetryDir)
+	if err != nil {
+		t.Fatalf("read telemetry dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one telemetry file, got %d", len(entries))
+	}
+	records := readMainTelemetryRecords(t, filepath.Join(telemetryDir, entries[0].Name()))
+	assertP83MCPTelemetryParity(t, records, root)
+	publicOutput := strings.Join([]string{
+		mcpClientContentText(t, allowed),
+		readme.Contents[0].Text,
+		mcpClientContentText(t, denied),
+	}, "\n")
+	for _, forbidden := range []string{root, os.TempDir(), "P83_RAW_FILE_BODY_SENTINEL_DO_NOT_LEAK", `"transport": "cli"`, `"transport":"cli"`} {
+		if strings.Contains(publicOutput, forbidden) {
+			t.Fatalf("MCP smoke output leaked forbidden value %q:\n%s", forbidden, publicOutput)
+		}
+	}
+	assertMCPPublicPayloadSafe(t, publicOutput, root)
+	assertNoMCPStrategyLeakage(t, publicOutput)
 }
 
 func TestMCPDiscoveryDeniesRefreshShapeBeforeExecution(t *testing.T) {
@@ -462,13 +589,89 @@ type decodedMCPToolPayload struct {
 	Tool    string `json:"Tool"`
 	Error   string `json:"Error"`
 	Sidecar struct {
-		Profile string `json:"profile"`
-		Error   *struct {
+		SchemaVersion string `json:"schema_version"`
+		Profile       string `json:"profile"`
+		Caller        struct {
+			CallerID  string `json:"caller_id"`
+			RequestID string `json:"request_id"`
+			TraceID   string `json:"trace_id"`
+		} `json:"caller"`
+		Contract struct {
+			ID            string `json:"id"`
+			SchemaVersion string `json:"schema_version"`
+			Transport     string `json:"transport"`
+		} `json:"contract"`
+		Error *struct {
 			Class   string `json:"class"`
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	} `json:"sidecar"`
+}
+
+type testMCPStdioTransport struct {
+	stdin  *io.PipeWriter
+	stdout *bufio.Reader
+	close  func() error
+}
+
+func startTestMCPStdioTransport(t *testing.T, server *mcpDiscoveryServer) *testMCPStdioTransport {
+	t.Helper()
+	serverIn, clientOut := io.Pipe()
+	clientIn, serverOut := io.Pipe()
+	done := make(chan error, 1)
+	ctx := testContext(t)
+	go func() {
+		err := server.serve(ctx, serverIn, serverOut)
+		_ = serverOut.Close()
+		done <- err
+	}()
+	transport := &testMCPStdioTransport{
+		stdin:  clientOut,
+		stdout: bufio.NewReaderSize(clientIn, 1<<16),
+	}
+	transport.close = func() error {
+		_ = clientOut.Close()
+		_ = clientIn.Close()
+		select {
+		case err := <-done:
+			if err != nil && !strings.Contains(err.Error(), "closed pipe") {
+				return err
+			}
+		case <-time.After(2 * time.Second):
+			return fmt.Errorf("test MCP stdio server did not close")
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		_ = transport.Close()
+	})
+	return transport
+}
+
+func (t *testMCPStdioTransport) Send(ctx context.Context, payload []byte) error {
+	_ = ctx
+	if _, err := t.stdin.Write(payload); err != nil {
+		return err
+	}
+	if _, err := t.stdin.Write([]byte("\n")); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *testMCPStdioTransport) Receive(ctx context.Context) ([]byte, error) {
+	_ = ctx
+	return t.stdout.ReadBytes('\n')
+}
+
+func (t *testMCPStdioTransport) Close() error {
+	if t == nil || t.close == nil {
+		return nil
+	}
+	closeFn := t.close
+	t.close = nil
+	return closeFn()
 }
 
 func newTestMCPDiscoveryServer(t *testing.T, cfg config.Config) *mcpDiscoveryServer {
@@ -602,6 +805,104 @@ func decodeMCPToolTextPayload(t *testing.T, result decodedMCPToolResult) decoded
 		t.Fatalf("decode MCP tool text payload: %v\n%s", err, result.Content[0].Text)
 	}
 	return payload
+}
+
+func decodeMCPClientToolPayload(t *testing.T, result mcppkg.ToolCallResult) decodedMCPToolPayload {
+	t.Helper()
+	if len(result.Content) != 1 {
+		t.Fatalf("expected one MCP client content item, got %#v", result.Content)
+	}
+	var content struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(result.Content[0], &content); err != nil {
+		t.Fatalf("decode MCP client content: %v\n%s", err, string(result.Content[0]))
+	}
+	if content.Type != "text" || strings.TrimSpace(content.Text) == "" {
+		t.Fatalf("unexpected MCP client content: %#v", content)
+	}
+	var payload decodedMCPToolPayload
+	if err := json.Unmarshal([]byte(content.Text), &payload); err != nil {
+		t.Fatalf("decode MCP client tool text payload: %v\n%s", err, content.Text)
+	}
+	return payload
+}
+
+func mcpClientToolsContain(tools []mcppkg.Tool, name string) bool {
+	for _, tool := range tools {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func assertP83MCPTelemetryParity(t *testing.T, records []map[string]any, root string) {
+	t.Helper()
+	var sawRequest, sawResult bool
+	for _, record := range records {
+		rendered := mcpJSONForTest(t, record)
+		for _, forbidden := range []string{root, os.TempDir(), "P83_RAW_FILE_BODY_SENTINEL_DO_NOT_LEAK", `"transport":"cli"`, `"transport": "cli"`} {
+			if strings.Contains(rendered, forbidden) {
+				t.Fatalf("MCP telemetry leaked forbidden value %q in %s", forbidden, rendered)
+			}
+		}
+		if record["type"] != "tool_request" && record["type"] != "tool_result" {
+			continue
+		}
+		if record["agent"] != "mcp" || record["transport"] != mcpStdioTransport ||
+			record["profile"] != workspace.ToolProfileDiscovery ||
+			record["caller_id"] != "mcp-smoke" ||
+			record["request_id"] != "req-p83" ||
+			record["trace_id"] != "trace:p83" ||
+			record["sidecar_schema_version"] != workspace.ToolSidecarEnvelopeVersion ||
+			record["contract_schema_version"] != workspace.ToolSchemaExportVersion {
+			t.Fatalf("MCP telemetry attribution mismatch: %#v", record)
+		}
+		if !strings.HasPrefix(stringFieldForTest(record, "contract_id"), "idiom.tool.v1:") {
+			t.Fatalf("MCP telemetry missing contract id: %#v", record)
+		}
+		if strings.TrimSpace(stringFieldForTest(record, "telemetry_event_id")) == "" {
+			t.Fatalf("MCP telemetry missing telemetry_event_id: %#v", record)
+		}
+		if record["type"] == "tool_request" && record["tool"] == "context_status" {
+			sawRequest = true
+		}
+		if record["type"] == "tool_result" && record["tool"] == "context_status" {
+			sawResult = true
+		}
+	}
+	if !sawRequest || !sawResult {
+		t.Fatalf("missing MCP tool request/result telemetry in %#v", records)
+	}
+}
+
+func mcpClientContentText(t *testing.T, result mcppkg.ToolCallResult) string {
+	t.Helper()
+	if len(result.Content) != 1 {
+		t.Fatalf("expected one MCP client content item, got %#v", result.Content)
+	}
+	var content struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(result.Content[0], &content); err != nil {
+		t.Fatalf("decode MCP client content text: %v\n%s", err, string(result.Content[0]))
+	}
+	if content.Type != "text" {
+		t.Fatalf("unexpected MCP client content type: %#v", content)
+	}
+	return content.Text
+}
+
+func mcpJSONForTest(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal test JSON: %v", err)
+	}
+	return string(data)
 }
 
 func sharedMCPDiscoverySchema(t *testing.T, name string) workspace.ExportedToolSchema {

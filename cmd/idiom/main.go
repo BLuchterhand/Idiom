@@ -64,7 +64,7 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 		return runToolMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
 	if len(args) > 0 && args[0] == "mcp" {
-		return runMCPMainWithTelemetry(args[1:], stdout, stderr)
+		return runMCPMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
 	if len(args) > 0 && args[0] == "context" {
 		return runContextMainWithTelemetry(args[1:], stdout, stderr, rec)
@@ -381,7 +381,7 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		if requestLogged {
 			return
 		}
-		logDirectToolRequest(rec, req, rawInputBytes)
+		logDirectToolRequest(rec, req, rawInputBytes, profile, caller)
 		requestLogged = true
 	}
 	logFailureResult := func(summary string, errText string) {
@@ -389,7 +389,7 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 			Tool:    toolName,
 			Summary: summary,
 			Error:   errText,
-		}, 0)
+		}, 0, profile, caller)
 	}
 
 	cfg, err := loadToolConfig(*configPath)
@@ -444,7 +444,7 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 	}
 	if decision := toolAllowedForCLIProfile(req, profile, extReg); !decision.Allowed {
 		result := workspace.ToolProfileDeniedResult(req.Tool, profile, decision)
-		logDirectToolResult(rec, req, result, 0)
+		logDirectToolResult(rec, req, result, 0, profile, caller)
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		payload := struct {
@@ -472,7 +472,7 @@ func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 
 	startedAt := time.Now()
 	result := mgr.Execute(ctx, req)
-	logDirectToolResult(rec, req, result, time.Since(startedAt).Milliseconds())
+	logDirectToolResult(rec, req, result, time.Since(startedAt).Milliseconds(), profile, caller)
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
@@ -880,6 +880,11 @@ func commandTelemetryName(args []string) string {
 			return "tool:" + args[1]
 		}
 		return "tool"
+	case "mcp":
+		if len(args) > 1 {
+			return "mcp:" + args[1]
+		}
+		return "mcp"
 	case "context":
 		if len(args) > 1 {
 			return "context:" + args[1]
@@ -966,11 +971,10 @@ func logModelSessionLink(rec *telemetry.Recorder, mode string, debugLogPath stri
 	})
 }
 
-func logDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, rawInputBytes int) {
+func logDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, rawInputBytes int, profile string, caller workspace.ToolSidecarCaller) {
 	if rec == nil {
 		return
 	}
-	profile := workspace.DiscoveryProfileForRequest(req)
 	fields := map[string]any{
 		"step":            1,
 		"agent":           "direct",
@@ -989,15 +993,17 @@ func logDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, ra
 		"limit":           req.Limit,
 		"recursive":       req.Recursive,
 	}
-	if profile.Discovery {
-		fields["discovery_class"] = profile.Class
-		fields["discovery_scope"] = profile.Scope
-		fields["discovery_cost"] = profile.Cost
+	addToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, strings.TrimSpace(req.Tool))
+	discoveryProfile := workspace.DiscoveryProfileForRequest(req)
+	if discoveryProfile.Discovery {
+		fields["discovery_class"] = discoveryProfile.Class
+		fields["discovery_scope"] = discoveryProfile.Scope
+		fields["discovery_cost"] = discoveryProfile.Cost
 	}
 	_ = rec.Log("tool_request", fields)
 }
 
-func logDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64) {
+func logDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64, profile string, caller workspace.ToolSidecarCaller) {
 	if rec == nil {
 		return
 	}
@@ -1011,6 +1017,7 @@ func logDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, res
 		"error":       result.Error,
 		"duration_ms": durationMillis,
 	}
+	addToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, tool)
 	if outputChars > 0 {
 		fields["output_chars"] = outputChars
 		fields["output_lines"] = outputLineCount(result.Output)
@@ -1018,16 +1025,34 @@ func logDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, res
 	if result.PrecisionTier != "" {
 		fields["precision_tier"] = result.PrecisionTier
 	}
-	profile := workspace.DiscoveryProfileForRequest(req)
-	if profile.Discovery {
-		fields["discovery_class"] = profile.Class
-		fields["discovery_scope"] = profile.Scope
-		fields["discovery_cost"] = profile.Cost
+	discoveryProfile := workspace.DiscoveryProfileForRequest(req)
+	if discoveryProfile.Discovery {
+		fields["discovery_class"] = discoveryProfile.Class
+		fields["discovery_scope"] = discoveryProfile.Scope
+		fields["discovery_cost"] = discoveryProfile.Cost
 	}
 	for key, value := range workspace.ToolTelemetryFields(tool, result.Output) {
 		fields[key] = value
 	}
 	_ = rec.Log("tool_result", fields)
+}
+
+func addToolAttributionTelemetry(fields map[string]any, sidecarSchemaVersion string, transport string, profile string, caller workspace.ToolSidecarCaller, tool string) {
+	fields["transport"] = transport
+	fields["profile"] = profile
+	fields["sidecar_schema_version"] = sidecarSchemaVersion
+	fields["contract_id"] = "idiom.tool.v1:" + strings.TrimSpace(tool)
+	fields["contract_kind"] = "workspace_tool_result"
+	fields["contract_schema_version"] = workspace.ToolSchemaExportVersion
+	if caller.CallerID != "" {
+		fields["caller_id"] = caller.CallerID
+	}
+	if caller.RequestID != "" {
+		fields["request_id"] = caller.RequestID
+	}
+	if caller.TraceID != "" {
+		fields["trace_id"] = caller.TraceID
+	}
 }
 
 func outputLineCount(output string) int {

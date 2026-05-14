@@ -142,7 +142,7 @@ func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 		RequiredEditPaths: []string(opts.RequiredEditPaths),
 		ForbiddenPaths:    []string(opts.ForbiddenPaths),
 	}
-	logDirectToolRequest(rec, req, 0)
+	logDirectToolRequest(rec, req, 0, workspace.ToolProfileDefault, workspace.ToolSidecarCaller{})
 	mgr := workspace.NewManager(cfg.Workspace)
 	ctx := context.Background()
 	cancel := func() {}
@@ -153,7 +153,7 @@ func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	defer cancel()
 	startedAt := time.Now()
 	result := executeContextToolWithTimeout(ctx, mgr, req, timeout)
-	logDirectToolResult(rec, req, result, time.Since(startedAt).Milliseconds())
+	logDirectToolResult(rec, req, result, time.Since(startedAt).Milliseconds(), workspace.ToolProfileDefault, workspace.ToolSidecarCaller{})
 	if result.Error != "" {
 		fmt.Fprintln(stderr, result.Error)
 		return 1

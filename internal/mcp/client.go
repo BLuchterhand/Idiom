@@ -38,6 +38,27 @@ type ToolCallResult struct {
 	IsError bool              `json:"isError,omitempty"`
 }
 
+// Resource describes a metadata entry exposed by resources/list.
+type Resource struct {
+	URI         string          `json:"uri"`
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	MimeType    string          `json:"mimeType,omitempty"`
+	Meta        json.RawMessage `json:"_meta,omitempty"`
+}
+
+// ResourceContent is one metadata/content item returned by resources/read.
+type ResourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+}
+
+// ResourceReadResult is the decoded resources/read response.
+type ResourceReadResult struct {
+	Contents []ResourceContent `json:"contents"`
+}
+
 // rawRequest and rawResponse are the JSON-RPC 2.0 envelopes used by MCP.
 type rawRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -229,6 +250,35 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMe
 	var reply ToolCallResult
 	if err := json.Unmarshal(raw, &reply); err != nil {
 		return ToolCallResult{}, fmt.Errorf("decode tools/call: %w", err)
+	}
+	return reply, nil
+}
+
+// ListResources returns the resources/list catalog currently advertised.
+func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
+	raw, err := c.call(ctx, "resources/list", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	var reply struct {
+		Resources []Resource `json:"resources"`
+	}
+	if err := json.Unmarshal(raw, &reply); err != nil {
+		return nil, fmt.Errorf("decode resources/list: %w", err)
+	}
+	return reply.Resources, nil
+}
+
+// ReadResource fetches a resource by URI. Servers may return metadata-only
+// payloads; this client preserves the protocol shape without interpreting it.
+func (c *Client) ReadResource(ctx context.Context, uri string) (ResourceReadResult, error) {
+	raw, err := c.call(ctx, "resources/read", map[string]any{"uri": uri})
+	if err != nil {
+		return ResourceReadResult{}, err
+	}
+	var reply ResourceReadResult
+	if err := json.Unmarshal(raw, &reply); err != nil {
+		return ResourceReadResult{}, fmt.Errorf("decode resources/read: %w", err)
 	}
 	return reply, nil
 }

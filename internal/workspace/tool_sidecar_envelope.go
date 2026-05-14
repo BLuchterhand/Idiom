@@ -28,7 +28,8 @@ type ToolSidecarEnvelope struct {
 }
 
 type ToolSidecarOptions struct {
-	Caller ToolSidecarCaller
+	Caller    ToolSidecarCaller
+	Transport string
 }
 
 type ToolSidecarCaller struct {
@@ -70,12 +71,13 @@ func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, pro
 	structuredOutput := toolSidecarStructuredOutput(result.Output)
 	outputObject := toolSidecarOutputObject(structuredOutput)
 	metadata := autonomy.DefaultContractMetadata("p7.1", "tool_sidecar_envelope")
+	transport := normalizeToolSidecarTransport(opts.Transport)
 	return ToolSidecarEnvelope{
 		SchemaVersion:    ToolSidecarEnvelopeVersion,
 		Tool:             tool,
 		Profile:          profile,
 		Caller:           opts.Caller,
-		Contract:         toolSidecarContract(tool, profile, metadata),
+		Contract:         toolSidecarContract(tool, profile, metadata, transport),
 		Freshness:        toolSidecarFreshness(outputObject),
 		Warnings:         toolSidecarWarnings(outputObject),
 		AuditEventIDs:    toolSidecarAuditEventIDs(outputObject),
@@ -196,7 +198,15 @@ func isBase64LikeRune(r rune) bool {
 	return isBase64URLRune(r) || r == '+' || r == '/' || r == '='
 }
 
-func toolSidecarContract(tool string, profile string, metadata autonomy.ContractMetadata) ToolSidecarContract {
+func normalizeToolSidecarTransport(transport string) string {
+	transport = strings.TrimSpace(transport)
+	if transport == "" {
+		return "cli"
+	}
+	return transport
+}
+
+func toolSidecarContract(tool string, profile string, metadata autonomy.ContractMetadata, transport string) ToolSidecarContract {
 	policy := toolSchemaPolicyForTool(tool)
 	return ToolSidecarContract{
 		ID:                "idiom.tool.v1:" + tool,
@@ -204,7 +214,7 @@ func toolSidecarContract(tool string, profile string, metadata autonomy.Contract
 		Tool:              tool,
 		Profile:           profile,
 		SchemaVersion:     ToolSchemaExportVersion,
-		Transport:         "cli",
+		Transport:         transport,
 		DecisionAuthority: policy.DecisionAuthority,
 		Policy:            policy,
 		Metadata:          metadata,

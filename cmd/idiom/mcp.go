@@ -12,14 +12,17 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"idiom/internal/config"
 	mcppkg "idiom/internal/mcp"
+	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
 
 const mcpDiscoveryProfile = workspace.ToolProfileDiscovery
+const mcpStdioTransport = "mcp_stdio"
 
 type mcpRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -53,6 +56,7 @@ type mcpToolCallResult struct {
 type mcpToolCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	Meta      json.RawMessage `json:"_meta,omitempty"`
 }
 
 type mcpResourceReadParams struct {
@@ -69,7 +73,7 @@ type mcpResourceReadResult struct {
 	Contents []mcpResourceContent `json:"contents"`
 }
 
-func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer) int {
+func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printMCPUsage(stderr)
 		return 0
@@ -84,6 +88,9 @@ func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer) 
 	configPath := fs.String("config", "config.json", "path to config file")
 	stdio := fs.Bool("stdio", false, "serve MCP over newline-delimited stdio")
 	profileFlag := fs.String("profile", mcpDiscoveryProfile, "tool permission profile: discovery")
+	callerID := fs.String("caller-id", "", "opaque caller identifier for sidecar.caller metadata")
+	requestID := fs.String("request-id", "", "opaque request identifier for sidecar.caller metadata")
+	traceID := fs.String("trace-id", "", "opaque trace identifier for sidecar.caller metadata")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -100,12 +107,20 @@ func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer) 
 		fmt.Fprintln(stderr, "idiom mcp serve currently supports only --profile discovery")
 		return 2
 	}
+	caller, err := workspace.NewToolSidecarCaller(*callerID, *requestID, *traceID)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 	cfg, err := loadToolConfig(*configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	server, err := newMCPDiscoveryServer(cfg, profile)
+	server, err := newMCPDiscoveryServerWithOptions(cfg, profile, mcpDiscoveryServerOptions{
+		Caller:    caller,
+		Telemetry: rec,
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "initialize mcp server: %v\n", err)
 		return 1
@@ -119,10 +134,15 @@ func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer) 
 
 func printMCPUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
-	fmt.Fprintln(stderr, "  idiom mcp serve --stdio --profile discovery [--config config.json]")
+	fmt.Fprintln(stderr, "  idiom mcp serve --stdio --profile discovery [--config config.json] [--caller-id id] [--request-id id] [--trace-id id]")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Serves the MCP stdio discovery surface: initialize, tools/list, tools/call, roots/list, resources/list, and metadata-only resources/read.")
-	fmt.Fprintln(stderr, "Resource contents, telemetry parity, and full resource/freshness parity remain deferred to later MCP work packages.")
+	fmt.Fprintln(stderr, "Tool responses use the shared sidecar envelope with transport=mcp_stdio and optional caller metadata. Resource redaction/freshness parity and full integration proof remain deferred.")
+}
+
+type mcpDiscoveryServerOptions struct {
+	Caller    workspace.ToolSidecarCaller
+	Telemetry *telemetry.Recorder
 }
 
 type mcpDiscoveryServer struct {
@@ -131,9 +151,16 @@ type mcpDiscoveryServer struct {
 	manager    *workspace.Manager
 	tools      []workspace.ExportedToolSchema
 	toolByName map[string]workspace.ExportedToolSchema
+	caller     workspace.ToolSidecarCaller
+	rec        *telemetry.Recorder
+	requestSeq atomic.Int64
 }
 
 func newMCPDiscoveryServer(cfg config.Config, profile string) (*mcpDiscoveryServer, error) {
+	return newMCPDiscoveryServerWithOptions(cfg, profile, mcpDiscoveryServerOptions{})
+}
+
+func newMCPDiscoveryServerWithOptions(cfg config.Config, profile string, opts mcpDiscoveryServerOptions) (*mcpDiscoveryServer, error) {
 	tools, err := workspace.BuildMCPDiscoveryToolSchemas()
 	if err != nil {
 		return nil, err
@@ -150,6 +177,8 @@ func newMCPDiscoveryServer(cfg config.Config, profile string) (*mcpDiscoveryServ
 		manager:    mgr,
 		tools:      tools,
 		toolByName: toolByName,
+		caller:     opts.Caller,
+		rec:        opts.Telemetry,
 	}, nil
 }
 
@@ -233,7 +262,7 @@ func (s *mcpDiscoveryServer) initializeResult() map[string]any {
 			"name":    "idiom",
 			"version": version,
 		},
-		"instructions": "Stdio discovery server exposes schema-derived discovery tools plus metadata-only, root-clamped resources. Resource contents, telemetry parity, and full parity are deferred.",
+		"instructions": "Stdio discovery server exposes schema-derived discovery tools plus metadata-only, root-clamped resources. Tool calls use shared sidecar caller attribution with transport=mcp_stdio. Resource redaction/freshness parity and full integration proof are deferred.",
 	}
 }
 
@@ -541,6 +570,10 @@ func (s *mcpDiscoveryServer) callTool(ctx context.Context, params json.RawMessag
 	if err := json.Unmarshal(params, &call); err != nil {
 		return mcpToolCallResult{}, fmt.Errorf("invalid tools/call params")
 	}
+	caller, err := s.callerForToolCall(call.Meta)
+	if err != nil {
+		return mcpToolCallResult{}, err
+	}
 	toolName := strings.TrimSpace(call.Name)
 	if toolName == "" {
 		return mcpToolCallResult{}, fmt.Errorf("tools/call name is required")
@@ -548,40 +581,166 @@ func (s *mcpDiscoveryServer) callTool(ctx context.Context, params json.RawMessag
 	args := bytesForMCPArguments(call.Arguments)
 	if mcpArgumentsContainPrivatePath(args) {
 		req := workspace.ToolRequest{Tool: toolName, Args: json.RawMessage(args)}
+		s.logMCPToolRequest(req, len(args), caller)
 		result := workspace.ToolProfileDeniedResult(toolName, s.profile, workspace.ToolProfileDecision{
 			Allowed: false,
 			Code:    "profile_denied",
 			Reason:  "private or temp absolute path request shapes are deferred until MCP root/resource containment",
 		})
-		return s.mcpToolResult(req, result), nil
+		result = s.redactToolResult(result)
+		s.logMCPToolResult(req, result, 0, caller)
+		return s.mcpToolResult(req, result, caller), nil
 	}
 	req, err := workspace.DecodeToolRequestJSON(args)
 	if err != nil {
+		req = workspace.ToolRequest{Tool: toolName, Args: json.RawMessage(args)}
+		s.logMCPToolRequest(req, len(args), caller)
 		result := workspace.ToolResult{
 			Tool:    toolName,
 			Summary: "MCP tool input rejected",
 			Error:   "invalid_input: tool arguments must be a JSON object matching the exported schema",
 		}
-		return s.mcpToolResult(req, result), nil
+		result = s.redactToolResult(result)
+		s.logMCPToolResult(req, result, 0, caller)
+		return s.mcpToolResult(req, result, caller), nil
 	}
 	req.Tool = toolName
 	req.Args = json.RawMessage(args)
+	s.logMCPToolRequest(req, len(args), caller)
 	if _, ok := s.toolByName[toolName]; !ok {
 		result := workspace.ToolProfileDeniedResult(toolName, s.profile, workspace.ToolProfileDecision{
 			Allowed: false,
 			Code:    "profile_denied",
 			Reason:  "tool is not exposed by the schema-derived MCP discovery profile",
 		})
-		return s.mcpToolResult(req, result), nil
+		result = s.redactToolResult(result)
+		s.logMCPToolResult(req, result, 0, caller)
+		return s.mcpToolResult(req, result, caller), nil
 	}
 	if decision := workspace.ToolRequestAllowedForProfile(req, s.profile); !decision.Allowed {
 		result := workspace.ToolProfileDeniedResult(req.Tool, s.profile, decision)
-		return s.mcpToolResult(req, result), nil
+		result = s.redactToolResult(result)
+		s.logMCPToolResult(req, result, 0, caller)
+		return s.mcpToolResult(req, result, caller), nil
 	}
 	toolCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	startedAt := time.Now()
 	result := s.manager.Execute(toolCtx, req)
-	return s.mcpToolResult(req, result), nil
+	result = s.redactToolResult(result)
+	s.logMCPToolResult(req, result, time.Since(startedAt).Milliseconds(), caller)
+	return s.mcpToolResult(req, result, caller), nil
+}
+
+type mcpCallerMeta struct {
+	CallerID  string         `json:"caller_id,omitempty"`
+	RequestID string         `json:"request_id,omitempty"`
+	TraceID   string         `json:"trace_id,omitempty"`
+	Idiom     *mcpCallerMeta `json:"idiom,omitempty"`
+}
+
+func (s *mcpDiscoveryServer) callerForToolCall(meta json.RawMessage) (workspace.ToolSidecarCaller, error) {
+	callerID := s.caller.CallerID
+	requestID := s.caller.RequestID
+	traceID := s.caller.TraceID
+	if strings.TrimSpace(requestID) == "" {
+		requestID = fmt.Sprintf("mcp:req-%d", s.requestSeq.Add(1))
+	}
+	if len(meta) > 0 && strings.TrimSpace(string(meta)) != "" && strings.TrimSpace(string(meta)) != "null" {
+		var decoded mcpCallerMeta
+		if err := json.Unmarshal(meta, &decoded); err != nil {
+			return workspace.ToolSidecarCaller{}, fmt.Errorf("invalid tools/call _meta")
+		}
+		if decoded.Idiom != nil {
+			decoded = *decoded.Idiom
+		}
+		callerID = firstNonEmptyCLIString(decoded.CallerID, callerID)
+		requestID = firstNonEmptyCLIString(decoded.RequestID, requestID)
+		traceID = firstNonEmptyCLIString(decoded.TraceID, traceID)
+	}
+	caller, err := workspace.NewToolSidecarCaller(callerID, requestID, traceID)
+	if err != nil {
+		return workspace.ToolSidecarCaller{}, err
+	}
+	return caller, nil
+}
+
+func (s *mcpDiscoveryServer) logMCPToolRequest(req workspace.ToolRequest, rawInputBytes int, caller workspace.ToolSidecarCaller) {
+	if s.rec == nil {
+		return
+	}
+	fields := map[string]any{
+		"step":            1,
+		"agent":           "mcp",
+		"tool":            strings.TrimSpace(req.Tool),
+		"raw_input_bytes": rawInputBytes,
+		"has_path":        strings.TrimSpace(req.Path) != "",
+		"has_workdir":     strings.TrimSpace(req.Workdir) != "",
+		"has_purpose":     strings.TrimSpace(req.Purpose) != "",
+		"language":        strings.TrimSpace(req.Language),
+		"has_pattern":     strings.TrimSpace(req.Pattern) != "",
+		"has_query":       strings.TrimSpace(req.Query) != "",
+		"has_command":     strings.TrimSpace(req.Command) != "",
+		"has_content":     strings.TrimSpace(req.Content) != "",
+		"start_line":      req.StartLine,
+		"end_line":        req.EndLine,
+		"limit":           req.Limit,
+		"recursive":       req.Recursive,
+	}
+	addToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, mcpStdioTransport, s.profile, caller, strings.TrimSpace(req.Tool))
+	if caller.RequestID != "" {
+		fields["telemetry_event_id"] = caller.RequestID + ":request"
+	}
+	profile := workspace.DiscoveryProfileForRequest(req)
+	if profile.Discovery {
+		fields["discovery_class"] = profile.Class
+		fields["discovery_scope"] = profile.Scope
+		fields["discovery_cost"] = profile.Cost
+	}
+	_ = s.rec.Log("tool_request", fields)
+}
+
+func (s *mcpDiscoveryServer) logMCPToolResult(req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64, caller workspace.ToolSidecarCaller) {
+	if s.rec == nil {
+		return
+	}
+	tool := firstNonEmptyCLIString(result.Tool, req.Tool)
+	fields := map[string]any{
+		"step":        1,
+		"agent":       "mcp",
+		"tool":        tool,
+		"summary":     s.redactText(result.Summary),
+		"error":       s.redactText(result.Error),
+		"duration_ms": durationMillis,
+	}
+	addToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, mcpStdioTransport, s.profile, caller, tool)
+	if caller.RequestID != "" {
+		fields["telemetry_event_id"] = caller.RequestID + ":result"
+	}
+	if result.Output != "" {
+		fields["output_chars"] = len(result.Output)
+		fields["output_lines"] = outputLineCount(result.Output)
+	}
+	if result.PrecisionTier != "" {
+		fields["precision_tier"] = result.PrecisionTier
+	}
+	envelope := workspace.BuildToolSidecarEnvelopeWithOptions(req, result, s.profile, workspace.ToolSidecarOptions{
+		Caller:    caller,
+		Transport: mcpStdioTransport,
+	})
+	if len(envelope.AuditEventIDs) > 0 {
+		fields["audit_event_ids"] = append([]string(nil), envelope.AuditEventIDs...)
+	}
+	profile := workspace.DiscoveryProfileForRequest(req)
+	if profile.Discovery {
+		fields["discovery_class"] = profile.Class
+		fields["discovery_scope"] = profile.Scope
+		fields["discovery_cost"] = profile.Cost
+	}
+	for key, value := range workspace.ToolTelemetryFields(tool, result.Output) {
+		fields[key] = value
+	}
+	_ = s.rec.Log("tool_result", fields)
 }
 
 func bytesForMCPArguments(args json.RawMessage) []byte {
@@ -602,14 +761,16 @@ func mcpArgumentsContainPrivatePath(args []byte) bool {
 	return false
 }
 
-func (s *mcpDiscoveryServer) mcpToolResult(req workspace.ToolRequest, result workspace.ToolResult) mcpToolCallResult {
-	result = s.redactToolResult(result)
+func (s *mcpDiscoveryServer) mcpToolResult(req workspace.ToolRequest, result workspace.ToolResult, caller workspace.ToolSidecarCaller) mcpToolCallResult {
 	payload := struct {
 		workspace.ToolResult
 		Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
 	}{
 		ToolResult: result,
-		Sidecar:    workspace.BuildToolSidecarEnvelope(req, result, s.profile),
+		Sidecar: workspace.BuildToolSidecarEnvelopeWithOptions(req, result, s.profile, workspace.ToolSidecarOptions{
+			Caller:    caller,
+			Transport: mcpStdioTransport,
+		}),
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

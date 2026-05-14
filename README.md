@@ -276,12 +276,16 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"context_status","arguments":{"limit":1}}}' \
   '{"jsonrpc":"2.0","id":4,"method":"resources/list","params":{}}' \
   '{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"idiom://workspace/file/.git/config"}}' \
-  | go run ./cmd/idiom mcp serve --stdio --profile discovery
+  | go run ./cmd/idiom mcp serve --stdio --profile discovery \
+      --caller-id mcp-smoke --request-id req-smoke --trace-id trace:mcp-smoke
 ```
 
 The `resources/read` example above should return a JSON-RPC denial, not file
-contents. P8.2 resources are metadata-only; P8.3 owns MCP telemetry/caller
-attribution parity and P8.6 owns the complete replayable integration proof.
+contents. P8.2 resources are metadata-only. P8.3 stamps MCP `tools/call`
+responses and local telemetry with the shared sidecar caller vocabulary while
+using `transport:"mcp_stdio"` instead of CLI transport. P8.4 still owns full
+resource redaction/freshness parity, and P8.6 owns the complete replayable
+integration proof.
 
 ## In-app controls
 
