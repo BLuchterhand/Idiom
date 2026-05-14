@@ -92,6 +92,9 @@ Other useful subcommands:
   stable `sidecar` envelope (`schema_version:"idiom.tool.v1"`) carrying
   profile, contract metadata, freshness, warnings, audit IDs, structured
   output, and typed errors for integrations.
+  See [docs/sidecar-recipes.md](docs/sidecar-recipes.md) for external caller
+  recipes covering shell/CI scripts, coding-agent harnesses, local/private-code
+  users, and the replayed discovery-profile smoke transcript.
 - `idiom atom intake --spec <atom.md> [--project-root <root>] [--json]` —
   classify an atom/spec before dispatch. Intake fails closed for complete,
   source-satisfied, stale accepted-result, failed-refine best drafts, dirty
