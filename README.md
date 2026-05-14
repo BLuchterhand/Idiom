@@ -14,6 +14,32 @@ implement / atom-spec lanes.
 - gives Qwen scoped workspace access for reads, search, writes, and shell commands
 - keeps model weights, caches, and harness logs out of the target repository
 
+## Architecture at a glance
+
+Idiom's core split is simple: the model owns strategy; the harness owns
+contracts, evidence, and verification. The runtime surfaces that split through
+typed lanes, repository memory, capability-oriented tools, and audit output.
+
+```mermaid
+flowchart LR
+    User["User or external agent"] --> Entrypoints["CLI, TUI, sidecar, MCP"]
+    Entrypoints --> Contracts["Typed contracts<br/>permissions, paths, readiness, verification"]
+    Contracts --> Lanes["Lanes<br/>plan-execute, implement, atom intake"]
+    Contracts --> Memory["Repository memory<br/>context_pack, context_query, graph views"]
+    Lanes --> Router["Role routing<br/>planner, executor, classifier"]
+    Router --> Model["Local model backend<br/>llama.cpp, MLX, Ollama"]
+    Lanes --> Tools["Workspace capabilities<br/>semantic tools, shell, writes"]
+    Memory --> Tools
+    Tools --> Evidence["Telemetry, audit, eval evidence"]
+    Evidence --> Contracts
+    Evidence --> Memory
+```
+
+For a connected architecture and operations knowledge base, open
+[`docs/obsidian`](docs/obsidian/README.md) as an Obsidian vault. It explains the
+deterministic evidence-based development pattern, runtime lanes, repository
+memory, tool contracts, verification, audit, evals, and package ownership.
+
 ## Quick install (binary)
 
 > Requires a published GitHub release. Phase 9 of the

@@ -36,14 +36,17 @@ The executable implementation plan is
 
 The pillars are not independent feature tracks. They form one architecture:
 
-```text
-local model operations
-  -> contract-first autonomy
-     -> persistent repository memory
-     -> capability-oriented tooling
-     -> auditable planning and handoff
-        -> eval, audit, feedback, and ranker learning
-           -> sidecar and substrate APIs for other agents
+```mermaid
+flowchart TD
+    Ops["Local-model operations<br/>backend, role, queue, budget, degraded mode"] --> Contracts["Contract-first autonomy<br/>permissions, paths, effects, readiness"]
+    Contracts --> Memory["Persistent repository memory<br/>files, symbols, tests, traces, freshness"]
+    Contracts --> Tools["Capability-oriented tooling<br/>task intent to concrete adapters"]
+    Memory --> Planning["Auditable planning and handoff<br/>packets, scopes, approvals, verification obligations"]
+    Tools --> Planning
+    Planning --> Flywheel["Eval, audit, feedback, and ranker learning<br/>regressions, telemetry, evidence"]
+    Flywheel --> Sidecar["Sidecar and substrate APIs<br/>Codex, Claude Code, OpenCode, Aider, scripts, MCP"]
+    Flywheel -. improves .-> Memory
+    Flywheel -. tightens .-> Contracts
 ```
 
 Local-model operations defines the runtime capacity: which backend, role, queue,

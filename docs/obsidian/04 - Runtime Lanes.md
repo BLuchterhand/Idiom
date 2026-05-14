@@ -1,0 +1,161 @@
+---
+tags:
+  - idiom
+  - lanes
+  - workflow
+---
+
+# Runtime Lanes
+
+A lane is one structured path from a task brief to completed work, verification,
+or a typed blocker. Lanes provide deterministic workflow shape around a model
+that still owns strategy.
+
+The canonical design is in [docs/lane-architecture.md](../lane-architecture.md).
+
+## Lane Types
+
+| Lane | Purpose | Mutation | Primary contract |
+| --- | --- | --- | --- |
+| `implement` | Direct write-capable task execution | Yes | The model may interleave reads, edits, verification, and final response under runtime gates |
+| `plan-execute` | Planner emits structured plan, executor applies deterministic phases | Yes | Planner cannot write; executor dispatches scoped edit operations and verification |
+| `atom-spec` | Draft an atom/spec artifact | No workspace mutation | Produces structured artifact for later workflow |
+
+## Lane Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CLI as cmd/idiom
+    participant Lane as Lane orchestrator
+    participant Prompt as Prompt/profile assembly
+    participant Runner
+    participant Workspace
+    participant Verify as Source sanity/tests
+    participant Telemetry
+
+    User->>CLI: idiom lane <name> --brief
+    CLI->>Lane: parse flags and project config
+    Lane->>Prompt: attach lane profile, contracts, context
+    Prompt->>Runner: runtime brief and tool profile
+    Runner->>Workspace: validated tool calls
+    Workspace-->>Runner: evidence or mutation result
+    Runner->>Verify: requested or required verification
+    Verify-->>Runner: proof or blocker
+    Runner->>Telemetry: lane events and phase evidence
+    Runner-->>Lane: final, blocker, or artifact
+    Lane-->>User: result
+```
+
+## `implement`
+
+`implement` is the direct execution lane. It is useful for bounded changes where
+the model can gather evidence, edit files, run tests, and close readiness inside
+one loop.
+
+Typical flow:
+
+1. Attach runtime brief and tool manifest.
+2. Attach a compact `context_pack` by default.
+3. Let the model choose evidence probes.
+4. Validate tool calls through the workspace manager.
+5. Apply edits when permitted.
+6. Require verification according to risk.
+7. Close readiness before final response.
+
+Use `--no-context-pack` only when the caller already supplied equivalent
+context. Keep the same task string across related context calls so packet cache
+reuse remains possible.
+
+## `plan-execute`
+
+`plan-execute` splits strategy from mutation.
+
+The planner phase is intentionally read-only. It can use discovery and read
+tools, then emits a structured `submit_plan` artifact. It should not call shell,
+git, task ledger, source sanity, or write tools.
+
+Like `implement`, `plan-execute` preloads a compact `context_pack` by default
+unless `--no-context-pack` is supplied. Refine scratchpad meta-prompts are the
+notable exclusion because refine already preloads phase-specific source and
+lint evidence.
+
+The executor phase receives the structured plan and dispatches edits through
+controlled workspace execution. The lane then performs post-write source sanity,
+phase evidence capture, and review-repair gates.
+
+```mermaid
+flowchart TD
+    Brief["Task brief"]
+    Context["Default context_pack"]
+    Planner["Planner: read/discover only"]
+    Submit["submit_plan artifact"]
+    Scope["Scope, anchors, proof checks"]
+    Executor["Executor applies edit steps"]
+    Sanity["post-write source_sanity"]
+    Review["review-repair gate"]
+    Telemetry["phase evidence JSON"]
+    Final["final result"]
+    Blocker["typed blocker"]
+
+    Brief --> Context --> Planner --> Submit --> Scope --> Executor
+    Executor --> Sanity --> Review --> Telemetry --> Final
+    Scope -- invalid, stale, or dirty --> Blocker
+    Sanity -- unrecoverable missing proof --> Blocker
+    Sanity -- fail --> Review
+    Review -- repair needed --> Executor
+```
+
+## `atom-spec`
+
+`atom-spec` drafts structured work artifacts without mutating the workspace.
+It is useful when the user needs task decomposition, acceptance criteria, or
+handoff-ready specification before source edits.
+
+## Deterministic Lane Guarantees
+
+Lanes should make these properties observable:
+
+- Which phase the session is in.
+- Which tools are available in that phase.
+- Which artifact is required to advance.
+- Which paths are in scope.
+- Which obligations are still open.
+- Which verification command or source sanity check was run.
+- Which result is terminal.
+
+## Auxiliary Lane Commands And Status
+
+Other lane-adjacent surfaces appear in the CLI and docs:
+
+- `idiom lane postflight` reviews returned diffs.
+- `history` and `explain` style surfaces are operator aids rather than primary
+  write lanes.
+- `refine` workflows preload phase-specific lint/source evidence instead of
+  receiving an additional broad repo map.
+- Lane JSON events and `.idiom/lane-history.jsonl` are diagnostic surfaces for
+  routing, phase, and degradation state.
+
+Treat these as workflow surfaces around the main lane contracts unless the code
+promotes one to a first-class lane with its own phase/tool contract.
+
+## Common Lane Failure Modes
+
+The maintenance docs call out common traps:
+
+- Planner emits vague or stale anchors.
+- Executor treats evidence paths as write scope.
+- Review pass finds issues but neither repairs nor blocks.
+- Terminal states conflict.
+- Prompt profile grants tools that the lane phase should not expose.
+- Phase evidence exists but cannot be correlated with tool events.
+
+The fix should usually be a stronger typed artifact, gate, or test, not a
+longer reminder in the prompt.
+
+## Related Notes
+
+- [[08 - Planning Packets and Handoff]]
+- [[09 - Verification Readiness and Completion]]
+- [[10 - Telemetry Audit Eval and Learning]]
+- [[19 - CLI TUI and Operator Surface]]
