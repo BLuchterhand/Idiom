@@ -5,6 +5,8 @@ CANONICAL_BIN ?= $(HOME)/.idiom/bin
 CANONICAL_APP := $(CANONICAL_BIN)/$(APP_NAME)
 REPO_APP := $(CURDIR)/bin/$(APP_NAME)
 ROOT_APP := $(CURDIR)/$(APP_NAME)
+QUEUE_LABEL ?= com.idiom.queue
+QUEUE_SOCKET ?= $(HOME)/.idiom/runner.sock
 SUITE ?= testdata/swe/representative-suite.json
 LIVE_SUBSET_SUITE ?= testdata/swe/live-subset.json
 LIVE_LOGS ?= testdata/swe/generated-logs
@@ -18,7 +20,7 @@ CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
 
-.PHONY: run server opencode classifier-server route-classifier build install-path fmt tidy test test-install-docker coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset
+.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset
 
 run:
 	go run ./cmd/idiom -config $(CONFIG)
@@ -42,6 +44,7 @@ build:
 		codesign -s - "$(CANONICAL_APP)" 2>/dev/null || true; \
 	fi
 	$(MAKE) install-path
+	$(MAKE) refresh-queue-daemon
 
 install-path:
 	mkdir -p "$(CANONICAL_BIN)" "$(LOCAL_BIN)" "$(CURDIR)/bin"
@@ -65,6 +68,38 @@ install-path:
 	@case ":$$PATH:" in \
 		*:"$(LOCAL_BIN)":*) echo "$(LOCAL_BIN)/$(APP_NAME) -> $(CANONICAL_APP)" ;; \
 		*) echo "warning: $(LOCAL_BIN) is not on PATH for this shell" ;; \
+	esac
+
+refresh-queue-daemon:
+	@if [ "$$(uname -s)" != "Darwin" ] || ! command -v launchctl >/dev/null 2>&1; then \
+		exit 0; \
+	fi; \
+	domain="gui/$$(id -u)"; \
+	if ! launchctl print "$$domain/$(QUEUE_LABEL)" >/dev/null 2>&1; then \
+		exit 0; \
+	fi; \
+	state="$$( \
+		"$(CANONICAL_APP)" queue status --socket "$(QUEUE_SOCKET)" --json 2>/dev/null \
+		| python3 -c 'import json,sys; data=json.load(sys.stdin); busy=sum(p.get("in_flight",0)+p.get("waiting",0) for p in data.get("pools",[])); print("busy" if busy else "idle")' 2>/dev/null \
+		|| echo unreachable \
+	)"; \
+	case "$$state" in \
+		busy) \
+			echo "warning: $(QUEUE_LABEL) has active or waiting jobs; not restarting queue daemon" ;; \
+		*) \
+			if launchctl kickstart -k "$$domain/$(QUEUE_LABEL)" >/dev/null 2>&1; then \
+				for i in 1 2 3 4 5; do \
+					"$(CANONICAL_APP)" queue ping --socket "$(QUEUE_SOCKET)" >/dev/null 2>&1 && break; \
+					sleep 1; \
+				done; \
+				if "$(CANONICAL_APP)" queue ping --socket "$(QUEUE_SOCKET)" >/dev/null 2>&1; then \
+					echo "restarted $(QUEUE_LABEL) to use $(CANONICAL_APP)"; \
+				else \
+					echo "warning: restarted $(QUEUE_LABEL), but queue daemon is not reachable yet" >&2; \
+				fi; \
+			else \
+				echo "warning: unable to restart $(QUEUE_LABEL); run: launchctl kickstart -k $$domain/$(QUEUE_LABEL)" >&2; \
+			fi ;; \
 	esac
 
 fmt:
