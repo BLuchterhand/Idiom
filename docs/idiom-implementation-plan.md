@@ -1760,7 +1760,7 @@ Review signoff:
 | P7.1 | Ship the stable structured CLI envelope for `idiom tool` results | P2, P3, P4, P6.7 | Bernoulli the 3rd + Singer the 3rd + Darwin the 3rd | - [x] | Lagrange the 3rd | - [x] |
 | P7.2 | Implement read-only `--profile discovery` filtering | P7.1 | Kierkegaard the 3rd | - [x] | Russell the 3rd + P7.12/Ptolemy the 3rd follow-up | - [x] |
 | P7.12 | Block refresh-capable discovery-profile requests before execution | P7.2 | Cicero the 3rd | - [x] | Ptolemy the 3rd | - [x] |
-| P7.3 | Add external caller recipes and at least one sidecar smoke transcript | P7.2 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
+| P7.3 | Add external caller recipes and at least one sidecar smoke transcript | P7.2 | Tesla the 3rd | - [ ] | unassigned review subagent | - [ ] |
 | P7.4 | Add sidecar v1 API compatibility, caller metadata, error-class, stale-freshness, backend-fallback, and no-strategy-leakage golden tests | P7.1, P7.2 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P7.5 | Add discovery-profile containment, protected-path, redaction, permission-denial, and external side-effect tests | P7.2, P1.6 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P7.6 | Add CLI-side example tests for finance, healthcare, public-sector, enterprise SaaS, tooling-vendor, local-model, and open-source classification scenarios | P7.1-P7.5, P6.5 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
