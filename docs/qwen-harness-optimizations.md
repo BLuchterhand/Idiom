@@ -119,6 +119,7 @@ identified to date. Items marked **Shipped** are done; items marked
 | `--35b-6bit` auto-routing for large atoms | Already in `start_local_qwen.sh`; not auto-selected | Pre-dispatch heuristic: if expected output > 800 lines, suggest 6-bit |
 | Forward `chat_template_kwargs` on MLX requests | **Shipped 2026-05-12** — installed `mlx_lm.server` 0.31.3 accepts request-level `chat_template_kwargs`; idiom now forwards Qwen thinking/preserve knobs only when a caller intentionally overrides server defaults | Enables one 35B server to serve thinking, direct/read-only, and refine no-thinking routes on current MLX |
 | Drop duplicate 35B no-think backend | **Shipped 2026-05-12** — `idiom lane refine` now targets `qwen3.6-35b` with request-level `--no-thinking`, so qwen-pair no longer needs a separate `qwen3.6-35b-nothink` MLX process | Reclaims the duplicate 35B process RSS after restarting the backend profile |
+| Disable MLX native tool parser | **Shipped 2026-05-14** — MLX Qwen3 Coder tool parsing threw Python exceptions on malformed multi-line generated tool arguments, causing client-side `EOF`; idiom now omits native `tools` arrays for MLX and keeps tool parsing/validation in the harness JSON protocol | Converts parser crashes into normal harness parse/recovery behavior instead of dropped sockets |
 | Add Qwen3.6-27B planner profile | **Shipped 2026-05-12** — Idiom and Colony now both declare `qwen-27b-pair`: 27B-6bit planner/classifier on `:47783` plus the existing coder executor | Eval target for atom-spec / local orchestrator work without replacing the stable 35B profile |
 | Multiple MLX instances per pool with different sampling configs | Heavy infrastructure | Speculative |
 | KV-cache reuse across lanes for shared context | MLX supports prompt cache; we don't optimize for it | Investigate |
@@ -137,7 +138,7 @@ identified to date. Items marked **Shipped** are done; items marked
 | Item | Status | Notes |
 |---|---|---|
 | Reduce optional fields on `submit_plan` edits | Qwen3 has documented loops on multi-optional-param tool calls (llama.cpp #20164) — our `PlanEdit` struct has many optional fields | Make `purpose` required, etc. |
-| Verify Hermes parser is actually selected | Worth confirming with a request-body inspection | Check |
+| Verify native parser is actually selected | Llama-compatible backends still use native OpenAI tool calls where reliable; MLX intentionally does not, because its current Qwen parser failure mode is an unstructured socket close | Check only for non-MLX backends |
 
 ## 11. Brief-drafter knowledge
 

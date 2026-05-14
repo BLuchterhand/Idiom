@@ -171,6 +171,68 @@ func TestMLXBackendSendsExplicitChatTemplateKwargs(t *testing.T) {
 	}
 }
 
+func TestMLXBackendOmitsNativeToolDefinitions(t *testing.T) {
+	var got chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"read_file\",\"path\":\"README.md\"}"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(BackendMLX)
+	_, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
+		Model:      "mlx-model",
+		MaxTokens:  32,
+		ToolChoice: "auto",
+		Tools: []Tool{{
+			Type: "function",
+			Function: ToolFunction{
+				Name:       "read_file",
+				Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+	if len(got.Tools) != 0 || got.ToolChoice != "" {
+		t.Fatalf("MLX requests should use idiom JSON tool protocol, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
+	}
+}
+
+func TestLlamaBackendKeepsNativeToolDefinitions(t *testing.T) {
+	var got chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(BackendLlama)
+	_, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
+		Model:      "llama-model",
+		MaxTokens:  32,
+		ToolChoice: "auto",
+		Tools: []Tool{{
+			Type: "function",
+			Function: ToolFunction{
+				Name:       "read_file",
+				Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+	if len(got.Tools) != 1 || got.ToolChoice != "auto" {
+		t.Fatalf("llama requests should preserve native tools, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
+	}
+}
+
 func TestWithBackendNormalizesValue(t *testing.T) {
 	c := NewClient("http://example.invalid", time.Second)
 	if c.Backend() != BackendLlama {

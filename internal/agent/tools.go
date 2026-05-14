@@ -9,10 +9,14 @@ import (
 )
 
 // buildLlamaTools converts workspace tool definitions into the shape the
-// llama client sends to the server — i.e. OpenAI function-calling specs.
-// Called once per turn when the runner sets up ChatOptions, so the server
-// (llama.cpp with --jinja + a Qwen tool-call template) can route the
-// model's tool_calls through the native channel.
+// llama client may send to the server — i.e. OpenAI function-calling specs.
+// Some backends intentionally downgrade to idiom's JSON tool protocol at the
+// llama client boundary when their native parser cannot be trusted to return
+// structured errors.
+// Called once per turn when the runner sets up ChatOptions. Native-capable
+// backends such as llama.cpp can route the model's tool_calls through the
+// OpenAI channel; downgraded backends still receive the same tool manifest in
+// the runtime brief for idiom-side JSON parsing.
 func buildLlamaTools(defs []workspace.ToolDefinition) []llama.Tool {
 	if len(defs) == 0 {
 		return nil

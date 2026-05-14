@@ -1,6 +1,8 @@
 # OpenCode protocol alignment — verification contract
 
-Target: idiom drives Qwen via the same wire protocol OpenCode uses — OpenAI function-calling over `/v1/chat/completions`, with native `tool_calls` and `role:"tool"` responses. Small models' native tool-call channel is the one their instruction tuning was primed on; wrapping tools in a text-based fenced-block protocol degrades state tracking and produces the list_files loop we saw in `logs/conversations/20260421-092107.335.jsonl`.
+Target: idiom drives Qwen via the same wire protocol OpenCode uses when the backend can return structured tool-call failures safely — OpenAI function-calling over `/v1/chat/completions`, with native `tool_calls` and `role:"tool"` responses. Small models' native tool-call channel is the one their instruction tuning was primed on; wrapping tools in a text-based fenced-block protocol can degrade state tracking and produced the list_files loop we saw in `logs/conversations/20260421-092107.335.jsonl`.
+
+Current MLX exception: `mlx_lm.server` Qwen tool parsers can terminate the HTTP request on malformed generated tool XML instead of returning a structured model response. For `kind:"mlx"`, idiom therefore omits native `tools` arrays and uses its JSON tool protocol with harness-side parsing, validation, and recovery. Llama-compatible backends remain the native tool-call target.
 
 This document is the contract. When the implementation is complete, every row in the "Expected" column should be observable in a fresh session log.
 

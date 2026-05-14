@@ -222,6 +222,21 @@ func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwar
 	}
 }
 
+func normalizeChatRequestForBackend(req *chatRequest, backend string) {
+	if req == nil {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(backend), BackendMLX) {
+		// mlx_lm.server owns its own Qwen XML tool parser when a native
+		// OpenAI `tools` array is present. Current MLX parser failures can
+		// close the HTTP connection before idiom receives a structured model
+		// response, so keep tool-call parsing in idiom's JSON protocol for
+		// MLX and let the backend generate plain assistant content.
+		req.Tools = nil
+		req.ToolChoice = ""
+	}
+}
+
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -301,6 +316,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		Tools:              opts.Tools,
 		ToolChoice:         opts.ToolChoice,
 	}
+	normalizeChatRequestForBackend(&payload, c.backend)
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -315,7 +331,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("chat request transport failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -401,6 +417,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		Tools:              opts.Tools,
 		ToolChoice:         opts.ToolChoice,
 	}
+	normalizeChatRequestForBackend(&payload, c.backend)
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -416,7 +433,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return ChatMessage{}, err
+			return ChatMessage{}, fmt.Errorf("chat request transport failed: %w", err)
 		}
 
 		if resp.StatusCode >= http.StatusBadRequest {
