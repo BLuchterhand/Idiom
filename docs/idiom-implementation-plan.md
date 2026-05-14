@@ -1776,7 +1776,7 @@ Review signoff:
 | P7.11 | Add local product-evidence export for activation, retained use, integration, benchmark, audit, and learning signals without raw prompt or file bodies | P7.1-P7.6, P0.8, P0.10 | Confucius the 3rd | - [x] | Carver the 3rd + P7.18/Chandrasekhar the 3rd follow-up | - [x] |
 | P7.18 | Harden product-evidence validation-record ingestion and status semantics | P7.11 | Turing the 3rd | - [x] | Dalton the 3rd + P7.19/Chandrasekhar the 3rd follow-up | - [x] |
 | P7.19 | Detect embedded absolute paths in product-evidence validation records | P7.18 | Hypatia the 3rd | - [x] | Chandrasekhar the 3rd | - [x] |
-| P8.1 | Implement `idiom mcp serve --stdio --profile discovery` from the same schemas | P7 | Ramanujan the 3rd | - [ ] | unassigned review subagent | - [ ] |
+| P8.1 | Implement `idiom mcp serve --stdio --profile discovery` from the same schemas | P7 | Ramanujan the 3rd | - [x] | Anscombe the 3rd | - [ ] |
 | P8.2 | Add MCP resources, root clamping, and protocol/error tests | P8.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P8.3 | Add MCP client smoke tests and telemetry/caller attribution parity with CLI | P8.1, P8.2 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P8.4 | Add MCP resource redaction, protected-path containment, and stale-freshness parity tests | P8.2, P7.5 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
