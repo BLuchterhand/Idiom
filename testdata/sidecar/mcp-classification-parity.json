@@ -1,0 +1,197 @@
+{
+  "schema_version": "idiom.mcp_classification_parity.v1",
+  "name": "p8.5-mcp-classification-parity",
+  "description": "Parseable MCP parity coverage decisions for client classification examples whose claims depend on resources, caller metadata, redaction, or freshness semantics.",
+  "shared_contract": {
+    "transport": "mcp_stdio",
+    "decision_boundary": "The model owns strategy; the harness owns MCP protocol, caller attribution, resource containment, redaction, freshness, and privacy contracts.",
+    "generic_primitives": [
+      "mcp_stdio_transport",
+      "tool_sidecar_envelope",
+      "caller_metadata_attribution",
+      "metadata_only_resources",
+      "root_clamped_resources",
+      "protected_path_denial",
+      "redaction_no_raw_prompt_or_file_body",
+      "freshness_report_only",
+      "schema_derived_tool_surface",
+      "discovery_profile_policy"
+    ],
+    "forbidden_evidence_fields": [
+      "raw_prompt",
+      "raw_file_body",
+      "secret_value",
+      "credential_value",
+      "private_repo_url",
+      "private_absolute_path",
+      "unredacted_telemetry_path",
+      "customer_identifier",
+      "patient_name",
+      "account_number"
+    ]
+  },
+  "classifications": [
+    {
+      "classification": "finance",
+      "p7_6_command_id": "finance-discovery-policy",
+      "status": "covered",
+      "claim_dependencies": [
+        "redaction_semantics",
+        "protected_path_denial",
+        "discovery_profile_policy"
+      ],
+      "evidence_case_id": "denied_write_without_input_leakage",
+      "generic_primitives": [
+        "tool_sidecar_envelope",
+        "discovery_profile_policy",
+        "redaction_no_raw_prompt_or_file_body"
+      ],
+      "required_evidence_fields": [
+        "sidecar.contract.transport",
+        "sidecar.error.class",
+        "sidecar.error.code"
+      ],
+      "transport_limitation": "MCP evidence proves generic denial and redaction shape only; it is not a finance compliance, retention, or regulated write-automation claim.",
+      "not_applicable_rationale": ""
+    },
+    {
+      "classification": "healthcare",
+      "p7_6_command_id": "healthcare-redaction-denial",
+      "status": "covered",
+      "claim_dependencies": [
+        "resource_semantics",
+        "redaction_semantics",
+        "protected_path_denial"
+      ],
+      "evidence_case_id": "protected_resource_denial_before_metadata",
+      "generic_primitives": [
+        "metadata_only_resources",
+        "root_clamped_resources",
+        "protected_path_denial",
+        "redaction_no_raw_prompt_or_file_body"
+      ],
+      "required_evidence_fields": [
+        "jsonrpc.error.code",
+        "no_relative_path",
+        "no_size_bytes",
+        "no_file_body"
+      ],
+      "transport_limitation": "MCP resource denial proves privacy shape only; it is not a HIPAA, PHI-processing, or compliance attestation.",
+      "not_applicable_rationale": ""
+    },
+    {
+      "classification": "public-sector",
+      "p7_6_command_id": "public-sector-offline-side-effect-denial",
+      "status": "covered",
+      "claim_dependencies": [
+        "redaction_semantics",
+        "discovery_profile_policy",
+        "caller_metadata_attribution"
+      ],
+      "evidence_case_id": "denied_shell_without_side_effect",
+      "generic_primitives": [
+        "tool_sidecar_envelope",
+        "caller_metadata_attribution",
+        "discovery_profile_policy",
+        "redaction_no_raw_prompt_or_file_body"
+      ],
+      "required_evidence_fields": [
+        "sidecar.caller.caller_id",
+        "sidecar.caller.request_id",
+        "sidecar.caller.trace_id",
+        "sidecar.contract.transport",
+        "sidecar.error.class"
+      ],
+      "transport_limitation": "MCP evidence proves local side-effect denial and attribution only; it is not certification, procurement readiness, or offline fleet-support evidence.",
+      "not_applicable_rationale": ""
+    },
+    {
+      "classification": "enterprise-saas",
+      "p7_6_command_id": "enterprise-source-sanity-contract",
+      "status": "covered",
+      "claim_dependencies": [
+        "caller_metadata_attribution",
+        "schema_derived_tool_surface"
+      ],
+      "evidence_case_id": "caller_metadata_context_status",
+      "generic_primitives": [
+        "mcp_stdio_transport",
+        "tool_sidecar_envelope",
+        "caller_metadata_attribution",
+        "schema_derived_tool_surface"
+      ],
+      "required_evidence_fields": [
+        "sidecar.caller.caller_id",
+        "sidecar.caller.request_id",
+        "sidecar.caller.trace_id",
+        "sidecar.contract.transport"
+      ],
+      "transport_limitation": "P8.5 MCP discovery does not expose source_sanity; this row proves caller attribution and schema-derived MCP integration while P8.6 owns full replayable integration parity.",
+      "not_applicable_rationale": ""
+    },
+    {
+      "classification": "tooling-vendor",
+      "p7_6_command_id": "tooling-vendor-schema-metadata",
+      "status": "covered",
+      "claim_dependencies": [
+        "caller_metadata_attribution",
+        "resource_semantics",
+        "schema_derived_tool_surface"
+      ],
+      "evidence_case_id": "tool_catalog_and_nested_caller_metadata",
+      "generic_primitives": [
+        "mcp_stdio_transport",
+        "caller_metadata_attribution",
+        "metadata_only_resources",
+        "schema_derived_tool_surface"
+      ],
+      "required_evidence_fields": [
+        "tools.list.context_status",
+        "resources.discovery_tools.metadata_only",
+        "sidecar.caller.caller_id",
+        "sidecar.contract.transport"
+      ],
+      "transport_limitation": "P8.5 proves schema/resource/caller metadata parity for the discovery MCP surface; partner conformance and SDK behavior remain later work.",
+      "not_applicable_rationale": ""
+    },
+    {
+      "classification": "local-model",
+      "p7_6_command_id": "local-model-readiness-evidence",
+      "status": "not_applicable",
+      "claim_dependencies": [],
+      "evidence_case_id": "local_model_not_exposed_by_mcp_discovery",
+      "generic_primitives": [
+        "metadata_only_resources",
+        "discovery_profile_policy"
+      ],
+      "required_evidence_fields": [],
+      "transport_limitation": "P8.5 MCP discovery does not expose local_ops_benchmark, backend launch, queue capacity, or local-model readiness checks.",
+      "not_applicable_rationale": "The P7.6 and P7.10 local-model examples depend on CLI local-ops readiness and privacy reports, not MCP resources, caller metadata, or resource redaction semantics."
+    },
+    {
+      "classification": "open-source",
+      "p7_6_command_id": "open-source-context-pack",
+      "status": "covered",
+      "claim_dependencies": [
+        "resource_semantics",
+        "freshness_report_only",
+        "redaction_semantics"
+      ],
+      "evidence_case_id": "metadata_only_resource_with_freshness",
+      "generic_primitives": [
+        "metadata_only_resources",
+        "root_clamped_resources",
+        "freshness_report_only",
+        "redaction_no_raw_prompt_or_file_body"
+      ],
+      "required_evidence_fields": [
+        "resource.metadata_only",
+        "resource.content_available",
+        "resource.freshness.policy",
+        "resource.freshness.refresh_allowed"
+      ],
+      "transport_limitation": "P8.5 MCP discovery does not expose context_pack; this row proves the MCP-visible metadata-only freshness story and leaves full replayable context-packet parity to P8.6.",
+      "not_applicable_rationale": ""
+    }
+  ]
+}

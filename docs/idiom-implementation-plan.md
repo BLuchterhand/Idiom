@@ -1782,8 +1782,8 @@ Review signoff:
 | P8.8 | Deny hyphenated private-key MCP resource path segments | P8.7 | Franklin the 3rd | - [x] | Rawls the 3rd | - [x] |
 | P8.3 | Add MCP client smoke tests and telemetry/caller attribution parity with CLI | P8.1, P8.2 | Hubble the 3rd | - [x] | Heisenberg the 3rd | - [x] |
 | P8.4 | Add MCP resource redaction, protected-path containment, and stale-freshness parity tests | P8.2, P7.5 | Laplace the 3rd | - [x] | Meitner the 3rd | - [x] |
-| P8.5 | Add MCP parity coverage for any classification example that depends on resources, caller metadata, or redaction semantics | P8.1-P8.4, P7.6 | Dirac the 3rd | - [x] | Hegel the 3rd + P8.9 follow-up | - [ ] |
-| P8.9 | Assert public-sector MCP denied-call caller metadata parity | P8.5 | Mill the 3rd | - [x] | Avicenna the 3rd | - [ ] |
+| P8.5 | Add MCP parity coverage for any classification example that depends on resources, caller metadata, or redaction semantics | P8.1-P8.4, P7.6 | Dirac the 3rd | - [x] | Hegel the 3rd + P8.9/Avicenna the 3rd follow-up | - [x] |
+| P8.9 | Assert public-sector MCP denied-call caller metadata parity | P8.5 | Mill the 3rd | - [x] | Avicenna the 3rd | - [x] |
 | P8.6 | Complete MCP stdio integration proof with protocol, caller metadata, roots, resources, redaction, and product-evidence export parity | P8.1-P8.5, P7.8, P7.11 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.1 | Produce release evidence bundle from baseline/current metrics, tests, audit, benchmark, and sidecar smoke | P0-P8 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.2 | Record project go/no-go/pivot decision against measured criteria | P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
