@@ -1786,7 +1786,7 @@ Review signoff:
 | P8.9 | Assert public-sector MCP denied-call caller metadata parity | P8.5 | Mill the 3rd | - [x] | Avicenna the 3rd | - [x] |
 | P8.6 | Complete MCP stdio integration proof with protocol, caller metadata, roots, resources, redaction, and product-evidence export parity | P8.1-P8.5, P7.8, P7.11 | Herschel the 3rd | - [x] | Halley the 3rd + P8.10 follow-up | - [ ] |
 | P8.10 | Tighten MCP integration proof gate and remove deferred metadata | P8.6 | Averroes the 3rd | - [x] | Harvey the 3rd + P8.11 follow-up | - [ ] |
-| P8.11 | Reject malformed product-evidence integration proof rows | P8.10 | Fermat the 3rd | - [ ] | unassigned review subagent | - [ ] |
+| P8.11 | Reject malformed product-evidence integration proof rows | P8.10 | Fermat the 3rd | - [x] | unassigned review subagent | - [ ] |
 | P9.1 | Produce release evidence bundle from baseline/current metrics, tests, audit, benchmark, and sidecar smoke | P0-P8 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.2 | Record project go/no-go/pivot decision against measured criteria | P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.3 | Gate release on no unresolved high contract/security regressions and owned high/medium audit findings with evidence and reproduce commands | P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
