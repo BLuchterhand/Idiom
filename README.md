@@ -110,6 +110,13 @@ Other useful subcommands:
   prerequisites, bounded capacity assumptions, replay-log signals when supplied,
   and metadata-only privacy guarantees without requiring a live model in the
   default smoke.
+- `idiom local-ops benchmark --json --quickstart-smoke` — CLI-only
+  quickstart activation smoke. It records setup/source-build readiness, first
+  useful `context_pack`, freshness, `harness_audit`, suggested verification,
+  privacy-safe product-evidence fields, docs gap/failure reason, deterministic
+  time-to-first-value fields, and cleanup evidence without requiring a live
+  model or network. Use `--quickstart-cleanup remove-local-state` only on a
+  clean fixture when you want the smoke to remove generated local context state.
 - `idiom brief lint <brief.md>` — pre-flight lint on an
   implementation brief.
 - `idiom lane postflight --diff <patch>` — QC pipeline against a

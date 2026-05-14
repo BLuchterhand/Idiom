@@ -48,6 +48,184 @@ func TestLocalOpsBenchmarkReportsSmokeCapacityReplayBlockers(t *testing.T) {
 	}
 }
 
+func TestLocalOpsBenchmarkQuickstartSmokeRecordsP010ActivationEvidence(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "AcmeCustomer-private-workspace")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("stage root: %v", err)
+	}
+	t.Chdir(root)
+	stageDoctorConfigWithBudget(t, root, 16384, 1024)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/quickstart\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "quickstart.go"), []byte("package pkg\n\nfunc QuickstartValue() string { return \"ok\" }\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	report, err := buildLocalOpsBenchmarkReport(localOpsBenchmarkOptions{
+		ConfigPath:        filepath.Join(root, ".idiom", "config.json"),
+		Profile:           "sidecar",
+		QuickstartSmoke:   true,
+		QuickstartTask:    "localize quickstart smoke value",
+		QuickstartCleanup: "remove-local-state",
+	}, nil)
+	if err != nil {
+		t.Fatalf("build local-ops report: %v", err)
+	}
+	if report.Quickstart == nil {
+		t.Fatalf("expected quickstart smoke evidence")
+	}
+	smoke := report.Quickstart
+	if smoke.Status != "pass" {
+		t.Fatalf("quickstart smoke should pass in clean fixture, got %#v", smoke)
+	}
+	if smoke.SetupInstallReadiness.Status != "pass" ||
+		smoke.FirstUsefulPacket.PacketID == "" ||
+		smoke.FirstUsefulPacket.IndexID == "" ||
+		smoke.FirstUsefulPacket.Task.TaskID == "" ||
+		smoke.FirstUsefulPacket.Task.RawTaskCaptured ||
+		smoke.FreshnessCheck.State == "" ||
+		smoke.AuditReport.AuditReportID == "" ||
+		len(smoke.SuggestedVerification.SuggestedCommands) == 0 ||
+		smoke.ProductEvidenceSafeOutput.ForbiddenFieldCheck != "pass" ||
+		smoke.FailureReason.Status != "none" ||
+		smoke.DocsGap.Status != "none" ||
+		smoke.PrivacyRedactionStatus.Status != "pass" ||
+		smoke.Cleanup.Status != "pass" {
+		t.Fatalf("quickstart smoke missing P0.10 evidence fields: %#v", smoke)
+	}
+	if smoke.TimeToFirstPacketSeconds <= 0 || smoke.TimeToTrustEvidenceSeconds < smoke.TimeToFirstPacketSeconds {
+		t.Fatalf("quickstart smoke should expose deterministic duration fields, got first=%v trust=%v", smoke.TimeToFirstPacketSeconds, smoke.TimeToTrustEvidenceSeconds)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "comprehension")); !os.IsNotExist(err) {
+		t.Fatalf("remove-local-state cleanup should remove comprehension state, stat err=%v", err)
+	}
+	rendered := mustMarshalLocalOpsReport(t, report)
+	for _, forbidden := range []string{
+		root,
+		parent,
+		"AcmeCustomer",
+		"private-workspace",
+		"SECRET raw prompt body",
+		"func QuickstartValue",
+	} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("quickstart smoke leaked forbidden content %q in %s", forbidden, rendered)
+		}
+	}
+}
+
+func TestLocalOpsBenchmarkQuickstartSmokeRedactsSensitiveTaskEvidence(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	stageDoctorConfigWithBudget(t, root, 16384, 1024)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/sensitivetask\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc QuickstartSensitiveTaskFixture() string { return \"ok\" }\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	report, err := buildLocalOpsBenchmarkReport(localOpsBenchmarkOptions{
+		ConfigPath:        filepath.Join(root, ".idiom", "config.json"),
+		Profile:           "sidecar",
+		QuickstartSmoke:   true,
+		QuickstartTask:    "QuickstartSensitiveTaskFixture /Users/ben/Documents/GitHub/CustomerX-private-repo secret abc123",
+		QuickstartCleanup: "remove-local-state",
+	}, nil)
+	if err != nil {
+		t.Fatalf("build local-ops report: %v", err)
+	}
+	if report.Quickstart == nil {
+		t.Fatalf("expected quickstart smoke evidence")
+	}
+	smoke := report.Quickstart
+	if smoke.Status != "pass" {
+		t.Fatalf("redacted quickstart smoke should pass, got %#v", smoke)
+	}
+	if smoke.FirstUsefulPacket.Task.RawTaskCaptured ||
+		smoke.FirstUsefulPacket.Task.TaskID == "" ||
+		smoke.FirstUsefulPacket.Task.EvidenceType != "hash_and_classification" ||
+		smoke.FirstUsefulPacket.Task.RedactionStatus != "redacted" {
+		t.Fatalf("quickstart task evidence should be hash/classification only, got %#v", smoke.FirstUsefulPacket.Task)
+	}
+	for _, class := range []string{"absolute_path", "secret_marker", "sensitive_identifier"} {
+		if !localOpsStringSliceContains(smoke.FirstUsefulPacket.Task.ContentClasses, class) {
+			t.Fatalf("task evidence missing content class %q: %#v", class, smoke.FirstUsefulPacket.Task)
+		}
+	}
+	if smoke.ProductEvidenceSafeOutput.ForbiddenFieldCheck != "pass" ||
+		smoke.ProductEvidenceSafeOutput.RedactionStatus != "redacted" ||
+		smoke.PrivacyRedactionStatus.Status != "pass" ||
+		smoke.PrivacyRedactionStatus.ForbiddenFieldCheck != "pass" ||
+		smoke.PrivacyRedactionStatus.SecretCaptured ||
+		smoke.PrivacyRedactionStatus.PrivatePathCaptured {
+		t.Fatalf("privacy/product evidence status should reconcile with redacted task evidence: %#v", smoke)
+	}
+	rendered := mustMarshalLocalOpsReport(t, report)
+	for _, forbidden := range []string{"/Users/", "CustomerX", "secret abc123"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("quickstart product evidence leaked %q in %s", forbidden, rendered)
+		}
+	}
+	if finding := localOpsForbiddenEvidenceLeak(rendered); finding != "" {
+		t.Fatalf("redacted quickstart evidence should pass forbidden-field scan, got %q in %s", finding, rendered)
+	}
+}
+
+func TestLocalOpsForbiddenEvidenceLeakScansValuesWithoutFailingAllowedFieldNames(t *testing.T) {
+	allowed := `{"privacy_redaction_status":{"secret_captured":false,"private_path_captured":false},"redacted_fields":["secret_value"]}`
+	if finding := localOpsForbiddenEvidenceLeak(allowed); finding != "" {
+		t.Fatalf("allowed privacy field names should not fail forbidden scan: %s", finding)
+	}
+	for name, body := range map[string]string{
+		"absolute_path":       `{"task":"/Users/ben/Documents/GitHub/repo"}`,
+		"customer_identifier": `{"task":"CustomerX-private-repo"}`,
+		"secret_value":        `{"task":"secret abc123"}`,
+		"true_secret_flag":    `{"privacy_redaction_status":{"secret_captured":true}}`,
+	} {
+		if finding := localOpsForbiddenEvidenceLeak(body); finding == "" {
+			t.Fatalf("expected forbidden scan to catch %s in %s", name, body)
+		}
+	}
+}
+
+func TestRunLocalOpsBenchmarkQuickstartSmokeJSON(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	stageDoctorConfigWithBudget(t, root, 4096, 512)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/cliquickstart\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runLocalOpsMainWithTelemetry([]string{
+		"benchmark",
+		"--json",
+		"--config", filepath.Join(root, ".idiom", "config.json"),
+		"--profile", "sidecar",
+		"--quickstart-smoke",
+		"--quickstart-cleanup", "remove-smoke-artifacts",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("local-ops quickstart smoke failed code=%d stderr=%s", code, stderr.String())
+	}
+	var report localOpsBenchmarkReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("stdout JSON not parseable: %v\n%s", err, stdout.String())
+	}
+	if report.Quickstart == nil || report.Quickstart.FirstUsefulPacket.PacketID == "" {
+		t.Fatalf("quickstart smoke JSON missing packet evidence: %#v", report.Quickstart)
+	}
+	if report.Quickstart.Cleanup.Status != "pass" || report.Quickstart.Cleanup.RemovedArtifactCount != 1 {
+		t.Fatalf("quickstart smoke should record cleanup evidence: %#v", report.Quickstart.Cleanup)
+	}
+}
+
 func TestLocalOpsBenchmarkSummarizesReplayFixtureWithoutRawPrompt(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
@@ -191,4 +369,13 @@ func mustMarshalLocalOpsReport(t *testing.T, report localOpsBenchmarkReport) str
 		t.Fatalf("marshal report: %v", err)
 	}
 	return string(body)
+}
+
+func localOpsStringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
