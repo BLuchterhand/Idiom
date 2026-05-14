@@ -380,11 +380,13 @@ func atomSpecHasAcceptedResult(specBody string) bool {
 type atomRequiredEditSnippet struct {
 	Path    string
 	Content string
+	Anchor  string
 }
 
 type atomRequiredEditBlock struct {
 	Paths   []string
 	Content string
+	Anchor  string
 }
 
 type atomRequiredEditEvaluation struct {
@@ -455,7 +457,7 @@ func atomEvaluateRequiredEditSnippets(specBody, projectRoot string, existingPath
 				body = string(data)
 				contentCache[candidate] = body
 			}
-			best = best.Better(atomRequiredEditSnippetMatch(body, content, candidate))
+			best = best.Better(atomRequiredEditSnippetMatch(body, content, snippet.Anchor, candidate))
 		}
 		switch best.Kind {
 		case atomSnippetMatchExact:
@@ -496,7 +498,7 @@ func (m atomRequiredEditMatch) Better(other atomRequiredEditMatch) atomRequiredE
 	return m
 }
 
-func atomRequiredEditSnippetMatch(content, snippet, path string) atomRequiredEditMatch {
+func atomRequiredEditSnippetMatch(content, snippet, anchor, path string) atomRequiredEditMatch {
 	if atomEditSnippetMatchesContent(content, snippet) {
 		lines := atomNonEmptyTrimmedLines(snippet)
 		return atomRequiredEditMatch{
@@ -510,6 +512,14 @@ func atomRequiredEditSnippetMatch(content, snippet, path string) atomRequiredEdi
 	snippetLines := atomNonEmptyTrimmedLines(snippet)
 	matchedLines := atomLineMultisetMatchCount(contentLines, snippetLines)
 	if atomIsNearRequiredEditMatch(matchedLines, len(snippetLines)) {
+		if strings.TrimSpace(anchor) != "" && atomEditSnippetMatchesContent(content, anchor) {
+			return atomRequiredEditMatch{
+				Kind:         atomSnippetMatchMissing,
+				Path:         path,
+				MatchedLines: matchedLines,
+				TotalLines:   len(snippetLines),
+			}
+		}
 		return atomRequiredEditMatch{
 			Kind:         atomSnippetMatchNear,
 			Path:         path,
@@ -600,6 +610,7 @@ func atomRequiredEditCodeBlocks(section string, scopePaths []string) []atomRequi
 	var currentPaths []string
 	var blockPaths []string
 	skipCurrent := false
+	pendingAnchor := atomRequiredEditBlock{}
 	for _, rawLine := range strings.Split(section, "\n") {
 		trimmed := strings.TrimSpace(rawLine)
 		if fence == "" {
@@ -619,9 +630,16 @@ func atomRequiredEditCodeBlocks(section string, scopePaths []string) []atomRequi
 			continue
 		}
 		if strings.HasPrefix(trimmed, fence) {
-			if !skipCurrent {
-				if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
-					blocks = append(blocks, atomRequiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block})
+			if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
+				if skipCurrent {
+					pendingAnchor = atomRequiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block}
+				} else {
+					anchor := ""
+					if pendingAnchor.Content != "" && atomRequiredEditPathsCompatible(pendingAnchor.Paths, blockPaths) {
+						anchor = pendingAnchor.Content
+					}
+					blocks = append(blocks, atomRequiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block, Anchor: anchor})
+					pendingAnchor = atomRequiredEditBlock{}
 				}
 			}
 			fence = ""
@@ -646,6 +664,7 @@ func atomRequiredEditCodeBlocks(section string, scopePaths []string) []atomRequi
 			snippets = append(snippets, atomRequiredEditSnippet{
 				Path:    strings.TrimSpace(path),
 				Content: block.Content,
+				Anchor:  block.Anchor,
 			})
 		}
 	}
@@ -657,6 +676,21 @@ func atomRequiredEditCodeBlocks(section string, scopePaths []string) []atomRequi
 		}
 	}
 	return snippets
+}
+
+func atomRequiredEditPathsCompatible(anchorPaths, blockPaths []string) bool {
+	if len(anchorPaths) == 0 || len(blockPaths) == 0 {
+		return true
+	}
+	if len(anchorPaths) != len(blockPaths) {
+		return false
+	}
+	for i := range anchorPaths {
+		if strings.TrimSpace(anchorPaths[i]) != strings.TrimSpace(blockPaths[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func atomRequiredEditPathFromLabel(label string, scopePaths []string) string {

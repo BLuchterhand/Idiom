@@ -156,6 +156,62 @@ func buildCandidate() Candidate {
 	}
 }
 
+func TestAtomIntakeAllowsAnchoredInsertionWhenOldTextStillMatches(t *testing.T) {
+	root := t.TempDir()
+	current := `package main
+
+import (
+	"a"
+	"c"
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte(current), 0o644); err != nil {
+		t.Fatalf("write foo: %v", err)
+	}
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `foo.go` | Add the missing import. |\n\n## Required Edits\n\nIn `foo.go`, replace the import block.\n\nold_text:\n\n```go\nimport (\n    \"a\"\n    \"c\"\n)\n```\n\nnew_text:\n\n```go\nimport (\n    \"a\"\n    \"b\"\n    \"c\"\n)\n```\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code != 0 {
+		t.Fatalf("expected dispatchable exit 0, got %d stderr=%s report=%+v", code, stderr, report)
+	}
+	if report.State != atomStateDispatchable || !report.Dispatchable {
+		t.Fatalf("anchored insertion should remain dispatchable, got %+v", report)
+	}
+	if reportReasonContains(report, "near-matches required_edit_1") {
+		t.Fatalf("anchored insertion should not be reported stale, got %+v", report.Reasons)
+	}
+}
+
+func TestAtomIntakeBlocksAnchoredNearMatchWhenOldTextNoLongerMatches(t *testing.T) {
+	root := t.TempDir()
+	current := `package main
+
+func buildCandidate() Candidate {
+	return Candidate{
+		Owner: owner,
+		Slot: slot,
+		Quality: quality,
+		Ground: ownerIsGround,
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte(current), 0o644); err != nil {
+		t.Fatalf("write foo: %v", err)
+	}
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `foo.go` | Build candidate through the bounded helper. |\n\n## Required Edits\n\nIn `foo.go`, replace the candidate block.\n\nold_text:\n\n```go\nfunc buildCandidate() Candidate {\n    return Candidate{\n        Owner: owner,\n        Slot: slot,\n        Quality: quality,\n        Ground: true,\n    }\n}\n```\n\nnew_text:\n\n```go\nfunc buildCandidate() Candidate {\n    return Candidate{\n        Owner: owner,\n        Slot: slot,\n        Quality: quality,\n        Ground: false,\n    }\n}\n```\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code == 0 {
+		t.Fatalf("expected stale-needs-rebase exit, got 0 stderr=%s report=%+v", stderr, report)
+	}
+	if report.State != atomStateStaleNeedsRebase || report.Dispatchable {
+		t.Fatalf("unexpected report: %+v", report)
+	}
+	if !reportReasonContains(report, "near-matches required_edit_1") {
+		t.Fatalf("expected near-match evidence, got %+v", report.Reasons)
+	}
+}
+
 func TestAtomIntakeIgnoresCurrentStateFencesForSourceSatisfied(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n\nfunc existing() {}\n"), 0o644); err != nil {

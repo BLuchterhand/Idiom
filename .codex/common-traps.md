@@ -40,6 +40,12 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Stale anchors**: an `old_text` miss means the file is the authority. Refresh
   the exact anchor with semantic/context evidence or one narrow required-path
   read, then retry or block. Do not invent a near match.
+- **Anchored replacement false-stale**: a `new_text` block can legitimately
+  share most lines with current source when its paired `old_text` still matches
+  exactly, especially for insertions. Treat that as dispatchable work, not as a
+  partially applied stale artifact. Only classify the `new_text` near-match as
+  stale when the paired old/current anchor no longer matches or no anchor was
+  provided.
 - **Non-unique anchors**: repeated `old_text` usually indicates duplicate or
   underspecified logic. Extend the anchor or use a line-range/whole-file shape;
   do not rely on first-match replacement when semantics require a specific site.
