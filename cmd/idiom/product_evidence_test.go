@@ -56,6 +56,9 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 	if got := p711TestSignal(reparsed.Signals, "retained_use"); got.Status != "pass" || got.Counts["adoption_signals"] == 0 {
 		t.Fatalf("retained-use signal should summarize validation records: %#v", got)
 	}
+	if reparsed.Status != "partial" {
+		t.Fatalf("top-level status should reflect partial signal completeness, got %q", reparsed.Status)
+	}
 	if got := p711TestSignal(reparsed.Signals, "learning"); got.Status != "pass" || got.Counts["accepted"] == 0 {
 		t.Fatalf("learning signal should summarize sanitized ranker learning: %#v", got)
 	}
@@ -115,6 +118,255 @@ func TestRunProductEvidenceExportWritesParseableJSONOutput(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), outputPath) || strings.Contains(stderr.String(), outputPath) {
 		t.Fatalf("CLI output should not echo raw output path stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestP718ValidationRecordsRejectUnknownAndForbiddenEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		records []map[string]any
+	}{
+		{
+			name: "unsafe_unknown_fields",
+			records: []map[string]any{{
+				"record_id":             "record-enterprise-saas",
+				"client_classification": "enterprise-saas",
+				"evidence_status":       "complete",
+				"retained_use_status":   "observed",
+				"adoption_signal_type":  "internal_sponsor",
+				"redaction_status":      "redacted",
+				"raw_prompt":            "RAW_PROMPT_BODY",
+			}},
+		},
+		{
+			name: "forbidden_values",
+			records: []map[string]any{{
+				"record_id":             "record-enterprise-saas",
+				"client_classification": "enterprise-saas",
+				"evidence_status":       "complete",
+				"retained_use_status":   "observed",
+				"adoption_signal_type":  "internal_sponsor",
+				"redaction_status":      "redacted",
+				"raw_file_body":         "func LeakedBody() {}",
+				"note":                  "/Users/ben/Documents/GitHub/CustomerX-private-repo secret token=abc123 logs/telemetry/session.jsonl",
+			}},
+		},
+		{
+			name: "benign_unknown_fields",
+			records: []map[string]any{{
+				"record_id":             "record-enterprise-saas",
+				"client_classification": "enterprise-saas",
+				"evidence_status":       "complete",
+				"retained_use_status":   "observed",
+				"adoption_signal_type":  "internal_sponsor",
+				"redaction_status":      "redacted",
+				"reviewer_note":         "approved summary",
+			}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			path := filepath.Join(root, "validation-records.json")
+			writeP711JSON(t, path, tc.records)
+
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{
+				ProjectRoot:       root,
+				ValidationRecords: path,
+			})
+			if report.Status != "blocked" || report.Privacy.ForbiddenFieldCheck != "failed:validation_records" {
+				t.Fatalf("unsafe validation records should block export evidence, got status=%q privacy=%#v", report.Status, report.Privacy)
+			}
+			if p711TestSourceRef(report.SourceReferences, "p0.8_validation_records").Status != "blocked" {
+				t.Fatalf("validation record source should be blocked: %#v", report.SourceReferences)
+			}
+			if got := p711TestSignal(report.Signals, "retained_use"); got.Counts["validation_records"] != 0 || got.Status == "pass" {
+				t.Fatalf("blocked validation records must not be counted: %#v", got)
+			}
+			body, err := json.Marshal(report)
+			if err != nil {
+				t.Fatalf("marshal report: %v", err)
+			}
+			for _, forbidden := range []string{"RAW_PROMPT_BODY", "func LeakedBody", "/Users/", "CustomerX", "token=abc123", "logs/telemetry"} {
+				if strings.Contains(string(body), forbidden) {
+					t.Fatalf("blocked export leaked %q: %s", forbidden, string(body))
+				}
+			}
+		})
+	}
+}
+
+func TestP719ValidationRecordsRejectEmbeddedAbsolutePathsInAllowedFields(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		retainedUseStatus   string
+		adoptionSignalType  string
+		forbiddenSubstrings []string
+	}{
+		{
+			name:                "repo_equals_users_path",
+			retainedUseStatus:   "observed",
+			adoptionSignalType:  "repo=/Users/ben/Documents/GitHub/acme",
+			forbiddenSubstrings: []string{"/Users/ben/Documents/GitHub/acme"},
+		},
+		{
+			name:                "path_colon_tmp_path",
+			retainedUseStatus:   "path:/tmp/idiom-private",
+			adoptionSignalType:  "internal_sponsor",
+			forbiddenSubstrings: []string{"/tmp/idiom-private"},
+		},
+		{
+			name:                "private_var_path",
+			retainedUseStatus:   "observed",
+			adoptionSignalType:  "/private/var/tmp/idiom-private",
+			forbiddenSubstrings: []string{"/private/var/tmp/idiom-private"},
+		},
+		{
+			name:                "var_folders_path",
+			retainedUseStatus:   "/var/folders/zz/idiom-private",
+			adoptionSignalType:  "internal_sponsor",
+			forbiddenSubstrings: []string{"/var/folders/zz/idiom-private"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			path := filepath.Join(root, "validation-records.json")
+			writeP711JSON(t, path, []map[string]any{{
+				"record_id":             "record-enterprise-saas",
+				"client_classification": "enterprise-saas",
+				"evidence_status":       "complete",
+				"retained_use_status":   tc.retainedUseStatus,
+				"adoption_signal_type":  tc.adoptionSignalType,
+				"redaction_status":      "redacted",
+			}})
+
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{
+				ProjectRoot:       root,
+				ValidationRecords: path,
+			})
+			if report.Status != "blocked" || report.Privacy.RedactionStatus != "blocked" || report.Privacy.ForbiddenFieldCheck != "failed:validation_records" {
+				t.Fatalf("embedded absolute path should machine-block validation records, status=%q privacy=%#v", report.Status, report.Privacy)
+			}
+			if p711TestSourceRef(report.SourceReferences, "p0.8_validation_records").Status != "blocked" {
+				t.Fatalf("validation record source should be blocked: %#v", report.SourceReferences)
+			}
+			retained := p711TestSignal(report.Signals, "retained_use")
+			for _, key := range []string{"validation_records", "qualifying_records", "retained_use_observed", "adoption_signals"} {
+				if retained.Counts[key] != 0 {
+					t.Fatalf("blocked validation records must not contribute %q counts: %#v", key, retained)
+				}
+			}
+			for _, row := range report.ClassCoverage {
+				if row.ValidationRecordCount != 0 {
+					t.Fatalf("blocked validation records must not contribute class counts: %#v", row)
+				}
+			}
+			body, err := json.Marshal(report)
+			if err != nil {
+				t.Fatalf("marshal report: %v", err)
+			}
+			for _, forbidden := range tc.forbiddenSubstrings {
+				if strings.Contains(string(body), forbidden) {
+					t.Fatalf("blocked export leaked embedded path %q: %s", forbidden, string(body))
+				}
+			}
+		})
+	}
+}
+
+func TestP719AbsolutePathScannerDetectsEmbeddedSeparators(t *testing.T) {
+	for _, value := range []string{
+		"repo=/Users/ben/Documents/GitHub/acme",
+		"path:/tmp/idiom-private",
+		"/private/var/tmp/idiom-private",
+		"/var/folders/zz/idiom-private",
+	} {
+		if !localOpsContainsAbsolutePath(value) {
+			t.Fatalf("expected embedded absolute path to be detected in %q", value)
+		}
+	}
+	if localOpsContainsAbsolutePath("docs=https://example.com/idiom/path") {
+		t.Fatalf("http URLs should not be treated as local absolute paths")
+	}
+}
+
+func TestP718RetainedUseCountsOnlyQualifyingRecords(t *testing.T) {
+	records := []p711ValidationRecord{
+		{
+			RecordID:             "record-good",
+			ClientClassification: "enterprise-saas",
+			EvidenceStatus:       "complete",
+			RetainedUseStatus:    "observed",
+			AdoptionSignalType:   "internal_sponsor",
+			RedactionStatus:      "redacted",
+		},
+		{
+			RecordID:             "record-disqualified",
+			ClientClassification: "open-source",
+			EvidenceStatus:       "disqualified",
+			RetainedUseStatus:    "observed",
+			AdoptionSignalType:   "paid_pilot",
+			RedactionStatus:      "redacted",
+		},
+		{
+			RecordID:           "record-missing-class",
+			EvidenceStatus:     "complete",
+			RetainedUseStatus:  "observed",
+			AdoptionSignalType: "internal_sponsor",
+			RedactionStatus:    "redacted",
+		},
+	}
+	retained := p711RetainedUseSignal(records)
+	if retained.Status != "pass" || retained.Counts["retained_use_observed"] != 1 || retained.Counts["adoption_signals"] != 1 {
+		t.Fatalf("retained-use signal should count only qualifying records: %#v", retained)
+	}
+	if retained.Counts["qualifying_records"] != 1 || retained.Counts["non_qualifying_records"] != 2 {
+		t.Fatalf("unexpected qualifying counts: %#v", retained.Counts)
+	}
+	if strings.Join(retained.EvidenceIDs, ",") != "record-good" {
+		t.Fatalf("non-qualifying record IDs should not be exported as evidence: %#v", retained.EvidenceIDs)
+	}
+
+	rows := buildP711ClassCoverage(p711DemoTranscriptSet{}, p711SecurityPosture{}, p711IntegrationProofSet{}, records)
+	for _, row := range rows {
+		switch row.Classification {
+		case "enterprise-saas":
+			if row.ValidationRecordCount != 1 {
+				t.Fatalf("qualifying class should be counted: %#v", row)
+			}
+		case "open-source":
+			if row.ValidationRecordCount != 0 {
+				t.Fatalf("disqualified class should not be counted: %#v", row)
+			}
+		}
+	}
+}
+
+func TestP718AbsentAdoptionSignalsAreNotCounted(t *testing.T) {
+	for _, absent := range []string{"", "none", "not_available", "not-applicable", "n/a", "N/A"} {
+		t.Run(absent, func(t *testing.T) {
+			records := []p711ValidationRecord{{
+				RecordID:             "record-good",
+				ClientClassification: "enterprise-saas",
+				EvidenceStatus:       "complete",
+				RetainedUseStatus:    "observed",
+				AdoptionSignalType:   absent,
+				RedactionStatus:      "redacted",
+			}}
+			retained := p711RetainedUseSignal(records)
+			if retained.Counts["adoption_signals"] != 0 {
+				t.Fatalf("absent adoption signal %q should not be counted: %#v", absent, retained)
+			}
+		})
+	}
+}
+
+func TestP718TopLevelStatusReflectsMissingSignals(t *testing.T) {
+	root := t.TempDir()
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	if report.Status != "partial" || report.SignalCompleteness.Status != "partial" {
+		t.Fatalf("missing evidence should produce partial top-level status, got status=%q completeness=%#v", report.Status, report.SignalCompleteness)
 	}
 }
 
@@ -229,13 +481,20 @@ func writeP711ValidationRecords(t *testing.T, root string) string {
 			"retained_use_status":   "observed",
 			"adoption_signal_type":  "internal_sponsor",
 			"redaction_status":      "redacted",
-			"raw_prompt":            "RAW_PROMPT_BODY /Users/ben/CustomerX sk_live_demo",
-			"raw_file_body":         "func LeakedBody() {}",
 		})
 	}
 	path := filepath.Join(root, "validation-records.json")
 	writeP711JSON(t, path, records)
 	return path
+}
+
+func p711TestSourceRef(refs []p711SourceReference, id string) p711SourceReference {
+	for _, ref := range refs {
+		if ref.ID == id {
+			return ref
+		}
+	}
+	return p711SourceReference{}
 }
 
 func stageP711ProductEvidenceFixtures(t *testing.T, root string) {

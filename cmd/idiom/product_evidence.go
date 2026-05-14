@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -236,10 +237,28 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 	learning, learningRef := loadP711LearningSummary(root)
 	signals := buildP711Signals(localOps, records, integration, security, learning)
 	classCoverage := buildP711ClassCoverage(demos, security, integration, records)
+	completeness := summarizeP711Signals(signals)
+	status := p711ExportStatus(completeness)
+	privacy := productEvidencePrivacy{
+		RedactionStatus:        "redacted",
+		ForbiddenFieldCheck:    "pass",
+		MetadataOnly:           true,
+		RawPromptCaptured:      false,
+		RawFileBodyCaptured:    false,
+		SecretCaptured:         false,
+		PrivatePathCaptured:    false,
+		HostedTelemetryDefault: false,
+		RedactedFields:         []string{"project_root", "lane_history_path", "output_path"},
+	}
+	if recordsRef.Status == "blocked" {
+		status = "blocked"
+		privacy.RedactionStatus = "blocked"
+		privacy.ForbiddenFieldCheck = "failed:validation_records"
+	}
 	report := productEvidenceExportReport{
 		SchemaVersion: "idiom.product_evidence_export.v1",
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339Nano),
-		Status:        "pass",
+		Status:        status,
 		ProjectRootID: "root_id:" + localOpsStableID(root),
 		SourceIDs:     map[string]string{"lane_history": "artifact_id:" + localOpsStableID(filepath.Join(root, laneHistoryRelPath))},
 		LaneHistory: productEvidenceLaneHistory{
@@ -257,17 +276,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			PromptBodiesIncluded:   false,
 			TranscriptBodiesLoaded: false,
 		},
-		Privacy: productEvidencePrivacy{
-			RedactionStatus:        "redacted",
-			ForbiddenFieldCheck:    "pass",
-			MetadataOnly:           true,
-			RawPromptCaptured:      false,
-			RawFileBodyCaptured:    false,
-			SecretCaptured:         false,
-			PrivatePathCaptured:    false,
-			HostedTelemetryDefault: false,
-			RedactedFields:         []string{"project_root", "lane_history_path", "output_path"},
-		},
+		Privacy: privacy,
 		ProductSuccessGates: productEvidenceGateSummary{
 			Activation:                 p711GateFromSignal(signals, "activation"),
 			RetainedUse:                p711GateFromSignal(signals, "retained_use"),
@@ -278,7 +287,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			SecurityPrivacy:            p711GateFromSignal(signals, "audit"),
 			LocalProductEvidenceExport: "pass",
 		},
-		SignalCompleteness: summarizeP711Signals(signals),
+		SignalCompleteness: completeness,
 		Signals:            signals,
 		ClassCoverage:      classCoverage,
 		SourceReferences: []p711SourceReference{
@@ -433,6 +442,10 @@ func loadP711ValidationRecords(path string) ([]p711ValidationRecord, p711SourceR
 		return nil, ref
 	}
 	ref.ArtifactHash = p711Hash(data)
+	if forbidden := p711ForbiddenValidationEvidence(data); forbidden != "" {
+		ref.Status = "blocked"
+		return nil, ref
+	}
 	records, err := decodeP711ValidationRecords(data)
 	if err != nil {
 		ref.Status = "blocked"
@@ -495,24 +508,31 @@ func p711ActivationSignal(localOps *localOpsBenchmarkReport) p711SignalSummary {
 }
 
 func p711RetainedUseSignal(records []p711ValidationRecord) p711SignalSummary {
-	s := p711SignalSummary{ID: "retained_use", Status: "not_available", Completeness: "missing", SourceRefs: []string{"p0.8_validation_records"}, RedactionStatus: "redacted", ReleaseGates: []string{"P0.8", "P7.11", "P9.7"}, Counts: map[string]int{"validation_records": len(records)}}
+	s := p711SignalSummary{ID: "retained_use", Status: "not_available", Completeness: "missing", SourceRefs: []string{"p0.8_validation_records"}, RedactionStatus: "redacted", ReleaseGates: []string{"P0.8", "P7.11", "P9.7"}, Counts: map[string]int{"validation_records": len(records), "qualifying_records": 0}}
 	for _, record := range records {
+		if !p711ValidationRecordQualifies(record) {
+			s.Counts["non_qualifying_records"]++
+			continue
+		}
+		s.Counts["qualifying_records"]++
 		if record.RecordID != "" {
 			s.EvidenceIDs = append(s.EvidenceIDs, record.RecordID)
 		}
 		if record.RetainedUseStatus == "observed" || record.RetainedUseStatus == "pass" {
 			s.Counts["retained_use_observed"]++
 		}
-		if record.AdoptionSignalType != "" {
+		if p711HasAdoptionSignal(record.AdoptionSignalType) {
 			s.Counts["adoption_signals"]++
 		}
 	}
 	if s.Counts["retained_use_observed"] > 0 {
 		s.Status = "pass"
 		s.Completeness = "complete"
-	} else if len(records) > 0 {
+	} else if s.Counts["qualifying_records"] > 0 {
 		s.Status = "partial"
 		s.Completeness = "partial"
+	} else if len(records) > 0 {
+		s.Limitations = []string{"validation records supplied but none qualified for retained-use counting"}
 	}
 	return s
 }
@@ -600,6 +620,9 @@ func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPo
 	}
 	recordCounts := map[string]int{}
 	for _, record := range records {
+		if !p711ValidationRecordQualifies(record) {
+			continue
+		}
 		recordCounts[record.ClientClassification]++
 	}
 	proofIDs := p711IntegrationProofIDs(integration)
@@ -667,6 +690,17 @@ func summarizeP711Signals(signals []p711SignalSummary) p711SignalCompleteness {
 	return out
 }
 
+func p711ExportStatus(completeness p711SignalCompleteness) string {
+	switch completeness.Status {
+	case "complete":
+		return "pass"
+	case "blocked":
+		return "blocked"
+	default:
+		return "partial"
+	}
+}
+
 func p711ReadJSON(path string, target any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -690,7 +724,16 @@ func decodeP711ValidationRecords(data []byte) ([]p711ValidationRecord, error) {
 		return nil, nil
 	}
 	if strings.HasPrefix(trimmed, "[") {
-		if err := json.Unmarshal([]byte(trimmed), &records); err != nil {
+		dec := json.NewDecoder(strings.NewReader(trimmed))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&records); err != nil {
+			return nil, err
+		}
+		var trailing any
+		if err := dec.Decode(&trailing); err != io.EOF {
+			if err == nil {
+				return nil, fmt.Errorf("validation records contain trailing JSON values")
+			}
 			return nil, err
 		}
 		return records, nil
@@ -701,19 +744,141 @@ func decodeP711ValidationRecords(data []byte) ([]p711ValidationRecord, error) {
 			continue
 		}
 		var record p711ValidationRecord
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
+		dec := json.NewDecoder(strings.NewReader(line))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&record); err != nil {
 			return nil, err
 		}
-		records = append(records, record)
-	}
-	if len(records) == 0 {
-		var record p711ValidationRecord
-		if err := json.Unmarshal([]byte(trimmed), &record); err != nil {
+		var trailing any
+		if err := dec.Decode(&trailing); err != io.EOF {
+			if err == nil {
+				return nil, fmt.Errorf("validation record contains trailing JSON values")
+			}
 			return nil, err
 		}
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+func p711ForbiddenValidationEvidence(data []byte) string {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "\n") {
+		for _, line := range strings.Split(trimmed, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if forbidden := p711ForbiddenValidationJSONValue([]byte(line)); forbidden != "" {
+				return forbidden
+			}
+		}
+		return localOpsForbiddenStringEvidence(trimmed)
+	}
+	return p711ForbiddenValidationJSONValue([]byte(trimmed))
+}
+
+func p711ForbiddenValidationJSONValue(data []byte) string {
+	var value any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&value); err == nil {
+		return p711ForbiddenValidationValue(value)
+	}
+	return localOpsForbiddenStringEvidence(string(data))
+}
+
+func p711ForbiddenValidationValue(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if forbidden := p711ForbiddenValidationKey(key); forbidden != "" {
+				return forbidden
+			}
+			if boolValue, ok := typed[key].(bool); ok && boolValue && localOpsForbiddenBooleanEvidenceKey(key) {
+				return key
+			}
+			if forbidden := p711ForbiddenValidationValue(typed[key]); forbidden != "" {
+				return forbidden
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if forbidden := p711ForbiddenValidationValue(item); forbidden != "" {
+				return forbidden
+			}
+		}
+	case string:
+		return p711ForbiddenValidationString(typed)
+	}
+	return ""
+}
+
+func p711ForbiddenValidationKey(key string) string {
+	normalized := p711SafeToken(key)
+	switch normalized {
+	case "raw_prompt", "raw_prompts", "raw_prompt_body", "prompt_body",
+		"raw_file_body", "raw_file_bodies", "file_body", "source_body",
+		"raw_transcript", "raw_chat_transcript", "chat_transcript",
+		"secret", "secrets", "credential", "credentials", "api_key", "token",
+		"private_path", "private_paths", "private_repo_url", "customer", "customer_name",
+		"customer_identifier", "private_identifier", "unredacted_log", "unredacted_logs",
+		"telemetry_path", "log_path", "raw_capture", "capture_raw_prompt", "capture_file_body":
+		return normalized
+	default:
+		return ""
+	}
+}
+
+func p711ForbiddenValidationString(value string) string {
+	if forbidden := localOpsForbiddenStringEvidence(value); forbidden != "" {
+		return forbidden
+	}
+	lower := strings.ToLower(value)
+	switch {
+	case strings.Contains(lower, "raw_prompt"), strings.Contains(lower, "raw prompt"):
+		return "raw_prompt"
+	case strings.Contains(lower, "raw_file_body"), strings.Contains(lower, "raw file body"):
+		return "raw_file_body"
+	case strings.Contains(lower, "logs/telemetry/"),
+		strings.Contains(lower, "logs/conversations/"),
+		strings.Contains(lower, ".idiom/logs/"),
+		strings.Contains(lower, ".idiom/telemetry/"):
+		return "unredacted_log_path"
+	default:
+		return ""
+	}
+}
+
+func p711ValidationRecordQualifies(record p711ValidationRecord) bool {
+	if record.RecordID == "" || record.ClientClassification == "" || record.ClientClassification == "unclassified" {
+		return false
+	}
+	if record.EvidenceStatus != "complete" {
+		return false
+	}
+	switch record.RedactionStatus {
+	case "pass", "redacted":
+		return true
+	default:
+		return false
+	}
+}
+
+func p711HasAdoptionSignal(value string) bool {
+	switch p711SafeToken(value) {
+	case "", "none", "not_available", "not_applicable", "n_a", "na", "no_signal", "absent", "unavailable", "missing":
+		return false
+	default:
+		return true
+	}
 }
 
 func p711ApprovedClassification(value string) string {

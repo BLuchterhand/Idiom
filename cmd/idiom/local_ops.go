@@ -1255,13 +1255,59 @@ func localOpsForbiddenStringEvidence(value string) string {
 }
 
 func localOpsContainsAbsolutePath(value string) bool {
-	for _, field := range strings.Fields(value) {
-		token := strings.Trim(field, ".,:;()[]{}\"'")
+	for i := 0; i < len(value); i++ {
+		if value[i] != '/' || !localOpsAbsolutePathStart(value, i) {
+			continue
+		}
+		token := localOpsAbsolutePathToken(value[i:])
 		if len(token) > 1 && filepath.IsAbs(token) {
 			return true
 		}
 	}
 	return false
+}
+
+func localOpsAbsolutePathStart(value string, index int) bool {
+	if index == 0 {
+		return true
+	}
+	prev := value[index-1]
+	if prev == ':' && index+1 < len(value) && value[index+1] == '/' && localOpsLooksLikeURLScheme(value[:index-1]) {
+		return false
+	}
+	return strings.ContainsRune(" \t\r\n=:'\"`([{<,;|", rune(prev))
+}
+
+func localOpsLooksLikeURLScheme(prefix string) bool {
+	start := strings.LastIndexAny(prefix, " \t\r\n=\"'`([{<,;|")
+	scheme := prefix[start+1:]
+	if scheme == "" {
+		return false
+	}
+	for i, r := range scheme {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			continue
+		}
+		if i > 0 && ((r >= '0' && r <= '9') || r == '+' || r == '-' || r == '.') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func localOpsAbsolutePathToken(value string) string {
+	end := len(value)
+	for i, r := range value {
+		if i == 0 {
+			continue
+		}
+		if strings.ContainsRune(" \t\r\n\"'`<>", r) {
+			end = i
+			break
+		}
+	}
+	return strings.Trim(value[:end], ".,:;()[]{}")
 }
 
 func buildLocalOpsReplayReport(logPath string, logsGlob string) (localOpsReplayReport, error) {

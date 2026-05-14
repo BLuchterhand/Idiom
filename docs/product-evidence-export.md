@@ -36,6 +36,12 @@ Privacy defaults:
 - Local paths are reduced to path IDs. Source artifacts are referenced by IDs
   and hashes.
 - Retained-use and adoption signals are not inferred. They appear only when
-  privacy-safe validation records are supplied.
+  privacy-safe validation records use the strict allowlisted schema and qualify
+  with `evidence_status:"complete"` plus redacted/pass privacy status.
+- Validation-record input that includes unknown fields, raw prompt/file-body
+  fields, private paths, secrets, credentials, customer/private identifiers,
+  unredacted log or telemetry paths, forbidden capture flags, or absolute paths
+  embedded after separators such as `repo=/...` or `path:/...` is blocked before
+  records are counted.
 - MCP stdio integration remains a P8.6 parity item when the export sees only
   the P7.8 placeholder proof.
