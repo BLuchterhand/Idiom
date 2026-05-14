@@ -1800,7 +1800,7 @@ Review signoff:
 | P9.5 | Gate release on review-protocol compliance for every implemented ledger task | P0.6, P9.1-P9.4 | Locke the 3rd | - [x] | Plato the 3rd + P9.18 follow-up | - [x] |
 | P9.18 | Refresh P9.5 self-referential ledger metrics after implementation checkbox | P9.5 | Beauvoir the 3rd | - [x] | Huygens the 3rd | - [x] |
 | P9.6 | Gate release on activation/onboarding evidence, including measured install-to-first-value and cleanup path | P7.7, P7.11, P9.1 | Boole the 3rd | - [x] | Bohr the 3rd + P9.19 follow-up | - [ ] |
-| P9.19 | Align P9.6 activation readiness across product and release evidence | P9.6 | Helmholtz the 3rd | - [ ] | unassigned review subagent | - [ ] |
+| P9.19 | Align P9.6 activation readiness across product and release evidence | P9.6 | Helmholtz the 3rd | - [x] | unassigned review subagent | - [ ] |
 | P9.7 | Gate release on design-partner validation, retained-use evidence, and at least one credible paid or internal-platform adoption signal | P0.8, P7.10, P7.11, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.8 | Gate release on three integration proof paths: shell/CI, external coding-agent workflow, and MCP stdio | P7.8, P8.6, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.9 | Gate release on reviewed security/privacy posture, threat model, data-flow map, and control mapping | P0.9, P7.9, P8.4, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
