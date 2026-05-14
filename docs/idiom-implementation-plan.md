@@ -1802,9 +1802,9 @@ Review signoff:
 | P9.6 | Gate release on activation/onboarding evidence, including measured install-to-first-value and cleanup path | P7.7, P7.11, P9.1 | Boole the 3rd | - [x] | Bohr the 3rd + P9.19/P9.20 follow-ups | - [x] |
 | P9.19 | Align P9.6 activation readiness across product and release evidence | P9.6 | Helmholtz the 3rd | - [x] | Copernicus the 3rd + P9.20 follow-up | - [x] |
 | P9.20 | Fail-close P9.6 activation readiness on validation evidence, reviewed cleanup policy, and useful packet evidence | P9.19 | Mencius the 3rd | - [x] | Noether the 3rd | - [x] |
-| P9.7 | Gate release on design-partner validation, retained-use evidence, and at least one credible paid or internal-platform adoption signal | P0.8, P7.10, P7.11, P9.1 | Euclid the 3rd | - [x] | Jason the 4th + P9.21 follow-up | - [ ] |
-| P9.21 | Harden P9.7 retained-use, activation, and machine-readable demand blockers | P9.7 | Avicenna the 4th | - [x] | Ramanujan the 4th + P9.22 follow-up | - [ ] |
-| P9.22 | Stabilize P9.7 release-gate report evidence references | P9.21 | Hooke the 4th | - [x] | Mencius the 4th | - [ ] |
+| P9.7 | Gate release on design-partner validation, retained-use evidence, and at least one credible paid or internal-platform adoption signal | P0.8, P7.10, P7.11, P9.1 | Euclid the 3rd | - [x] | Jason the 4th + P9.21/P9.22 follow-ups | - [x] |
+| P9.21 | Harden P9.7 retained-use, activation, and machine-readable demand blockers | P9.7 | Avicenna the 4th | - [x] | Ramanujan the 4th + P9.22 follow-up | - [x] |
+| P9.22 | Stabilize P9.7 release-gate report evidence references | P9.21 | Hooke the 4th | - [x] | Mencius the 4th | - [x] |
 | P9.8 | Gate release on three integration proof paths: shell/CI, external coding-agent workflow, and MCP stdio | P7.8, P8.6, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.9 | Gate release on reviewed security/privacy posture, threat model, data-flow map, and control mapping | P0.9, P7.9, P8.4, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.10 | Gate release on competitive benchmark coverage or documented infeasibility for each external baseline | P4.6, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
