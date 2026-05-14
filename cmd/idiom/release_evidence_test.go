@@ -154,6 +154,181 @@ func TestP913ReleaseReadinessNeedsEvidenceWhenClientValidationMissing(t *testing
 	}
 }
 
+func TestP96ReleaseReadinessNeedsMeasuredCleanInstallAndCleanupEvidence(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	var localOps localOpsBenchmarkReport
+	data, err := os.ReadFile(localOpsPath)
+	if err != nil {
+		t.Fatalf("read local ops report: %v", err)
+	}
+	if err := json.Unmarshal(data, &localOps); err != nil {
+		t.Fatalf("parse local ops report: %v", err)
+	}
+	localOps.Quickstart.EnvironmentClass = "source-build"
+	localOps.Quickstart.DurationSource = "deterministic_command_step_seconds"
+	localOps.Quickstart.SetupInstallReadiness.InstallSetupPath = "source-build-or-local-binary"
+	localOps.Quickstart.SetupInstallReadiness.ReleaseInstallProof = "not_claimed"
+	writeP711JSON(t, localOpsPath, localOps)
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:    root,
+		LocalOpsReport: localOpsPath,
+	})
+	if report.ActivationOnboarding.Status != "needs_evidence" || report.ActivationOnboarding.Classification != "no-go" {
+		t.Fatalf("source-build deterministic activation evidence must fail closed for P9.6: %#v", report.ActivationOnboarding)
+	}
+	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
+	if gate.Status != "needs_evidence" {
+		t.Fatalf("P9.6 must not be evidence_present without measured clean-install proof: %#v", gate)
+	}
+	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "release binary clean-install proof") {
+		t.Fatalf("activation section missing clean-install blocker: %#v", report.ActivationOnboarding.Blockers)
+	}
+	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "measured wall-clock") {
+		t.Fatalf("activation section missing measured timing blocker: %#v", report.ActivationOnboarding.Blockers)
+	}
+}
+
+func TestP96ReleaseActivationMalformedMandatoryFieldsFailClosed(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	var localOps localOpsBenchmarkReport
+	data, err := os.ReadFile(localOpsPath)
+	if err != nil {
+		t.Fatalf("read local ops report: %v", err)
+	}
+	if err := json.Unmarshal(data, &localOps); err != nil {
+		t.Fatalf("parse local ops report: %v", err)
+	}
+	localOps.Quickstart.EnvironmentClass = ""
+	localOps.Quickstart.SetupInstallReadiness.InstallSetupPath = ""
+	localOps.Quickstart.SetupInstallReadiness.ReleaseInstallProof = ""
+	localOps.Quickstart.FailureReason = localOpsActivationFailureReason{}
+	localOps.Quickstart.DocsGap = localOpsActivationDocsGap{}
+	localOps.Quickstart.Cleanup = localOpsActivationCleanupEvidence{Status: "pass", ExitStatus: "pass"}
+	writeP711JSON(t, localOpsPath, localOps)
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:    root,
+		LocalOpsReport: localOpsPath,
+	})
+	if report.ActivationOnboarding.Status == "pass" || report.ActivationOnboarding.Classification == "pass" {
+		t.Fatalf("malformed activation evidence must fail closed: %#v", report.ActivationOnboarding)
+	}
+	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
+	if gate.Status == "evidence_present" {
+		t.Fatalf("malformed activation evidence must not satisfy P9.6: %#v", gate)
+	}
+	for _, fragment := range []string{
+		"environment class",
+		"clean-install proof or scoped clean-setup proof",
+		"failure reason semantics",
+		"docs gap semantics",
+		"cleanup evidence missing",
+	} {
+		if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", fragment) {
+			t.Fatalf("activation blockers missing %q: %#v", fragment, report.ActivationOnboarding.Blockers)
+		}
+	}
+}
+
+func TestP96ReleaseReadinessNeedsValidationRecordsForStrictActivation(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:    root,
+		CurrentDir:     "current",
+		LocalOpsReport: localOpsPath,
+	})
+	if report.ActivationOnboarding.Status != "needs_evidence" || report.ActivationOnboarding.Classification != "no-go" {
+		t.Fatalf("activation readiness must fail closed without validation records: %#v", report.ActivationOnboarding)
+	}
+	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
+	if gate.Status != "needs_evidence" {
+		t.Fatalf("strict activation without validation records must not close P9.6: %#v", gate)
+	}
+	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "current validation records") {
+		t.Fatalf("activation section missing validation-record blocker: %#v", report.ActivationOnboarding.Blockers)
+	}
+}
+
+func TestP96ReleaseActivationRetainedStatePolicyMustBeReviewed(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	recordsPath := writeP711ValidationRecords(t, root)
+	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+	stageP711LearningEvidence(t, root, "p96-retained-state")
+	var localOps localOpsBenchmarkReport
+	data, err := os.ReadFile(localOpsPath)
+	if err != nil {
+		t.Fatalf("read local ops report: %v", err)
+	}
+	if err := json.Unmarshal(data, &localOps); err != nil {
+		t.Fatalf("parse local ops report: %v", err)
+	}
+	localOps.Quickstart.Cleanup.Mode = "remove-smoke-artifacts"
+	localOps.Quickstart.Cleanup.RemainingState = "context_graph_retained_by_policy"
+	localOps.Quickstart.Cleanup.RetainedStatePolicy = "quickstart smoke retains local context graph by policy"
+	writeP711JSON(t, localOpsPath, localOps)
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:       root,
+		CurrentDir:        "current",
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+	})
+	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
+	if gate.Status == "evidence_present" || report.ActivationOnboarding.Status == "pass" {
+		t.Fatalf("unreviewed retained-state policy must not close P9.6: gate=%#v activation=%#v", gate, report.ActivationOnboarding)
+	}
+	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "reviewed retained-state semantics") {
+		t.Fatalf("activation section missing retained-state policy blocker: %#v", report.ActivationOnboarding.Blockers)
+	}
+}
+
+func TestP96ReleaseActivationZeroRankedPacketFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	recordsPath := writeP711ValidationRecords(t, root)
+	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+	stageP711LearningEvidence(t, root, "p96-zero-packet")
+	var localOps localOpsBenchmarkReport
+	data, err := os.ReadFile(localOpsPath)
+	if err != nil {
+		t.Fatalf("read local ops report: %v", err)
+	}
+	if err := json.Unmarshal(data, &localOps); err != nil {
+		t.Fatalf("parse local ops report: %v", err)
+	}
+	localOps.Quickstart.FirstUsefulPacket.CandidateFileCount = 0
+	localOps.Quickstart.FirstUsefulPacket.CandidateSymbolCount = 0
+	localOps.Quickstart.FirstUsefulPacket.CandidateTestCount = 0
+	localOps.Quickstart.FirstUsefulPacket.UsefulEvidence = []string{"candidate_files:0", "candidate_symbols:0", "candidate_tests:0"}
+	writeP711JSON(t, localOpsPath, localOps)
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:       root,
+		CurrentDir:        "current",
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+	})
+	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
+	if gate.Status == "evidence_present" || report.ActivationOnboarding.Status == "pass" {
+		t.Fatalf("zero-ranked first packet must not close P9.6: gate=%#v activation=%#v", gate, report.ActivationOnboarding)
+	}
+	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "first useful packet") {
+		t.Fatalf("activation section missing first-packet blocker: %#v", report.ActivationOnboarding.Blockers)
+	}
+}
+
 func TestP914ReleaseBundleDowngradesEveryP912ObjectWhenClientValidationMissing(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
@@ -318,6 +493,20 @@ func stageReleaseEvidenceCommandBundle(t *testing.T, root string, dir string, co
 		if err := os.WriteFile(filepath.Join(fullDir, stderrName), []byte("(no stderr)\n"), 0o644); err != nil {
 			t.Fatalf("write stderr: %v", err)
 		}
+	}
+}
+
+func stageP711LearningEvidence(t *testing.T, root string, resultID string) {
+	t.Helper()
+	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Source:    "test",
+		Action:    "boost",
+		State:     "accepted",
+		Reason:    "grounded",
+		Evidence:  &comprehension.LearningEvidenceRef{Kind: "eval_result", Verified: true, ResultID: "result:" + resultID},
+	}); err != nil {
+		t.Fatalf("append learning log: %v", err)
 	}
 }
 

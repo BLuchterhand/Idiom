@@ -43,24 +43,25 @@ type releaseEvidenceOptions struct {
 }
 
 type releaseEvidenceBundle struct {
-	SchemaVersion      string                              `json:"schema_version"`
-	GeneratedAt        string                              `json:"generated_at"`
-	Status             string                              `json:"status"`
-	BundleID           string                              `json:"bundle_id"`
-	ArtifactHash       string                              `json:"artifact_hash"`
-	Build              releaseEvidenceBuildMetadata        `json:"build"`
-	Privacy            releaseEvidencePrivacy              `json:"privacy"`
-	BaselineCurrent    releaseEvidenceBaselineCurrent      `json:"baseline_current"`
-	Validation         releaseEvidenceValidationSection    `json:"validation"`
-	AuditSecurity      releaseEvidenceAuditSecuritySection `json:"audit_security"`
-	BenchmarkLocalOps  releaseEvidenceBenchmarkSection     `json:"benchmark_local_ops"`
-	SidecarIntegration releaseEvidenceSidecarSection       `json:"sidecar_integration"`
-	ProductEvidence    releaseEvidenceProductSection       `json:"product_evidence"`
-	ClientReadiness    []releaseEvidenceClientReadiness    `json:"client_readiness"`
-	ReleaseReadiness   []releaseEvidenceGateReadiness      `json:"release_readiness"`
-	Blockers           []releaseEvidenceBlocker            `json:"blockers,omitempty"`
-	Limitations        []string                            `json:"limitations,omitempty"`
-	Metadata           map[string]any                      `json:"metadata,omitempty"`
+	SchemaVersion        string                              `json:"schema_version"`
+	GeneratedAt          string                              `json:"generated_at"`
+	Status               string                              `json:"status"`
+	BundleID             string                              `json:"bundle_id"`
+	ArtifactHash         string                              `json:"artifact_hash"`
+	Build                releaseEvidenceBuildMetadata        `json:"build"`
+	Privacy              releaseEvidencePrivacy              `json:"privacy"`
+	BaselineCurrent      releaseEvidenceBaselineCurrent      `json:"baseline_current"`
+	Validation           releaseEvidenceValidationSection    `json:"validation"`
+	AuditSecurity        releaseEvidenceAuditSecuritySection `json:"audit_security"`
+	BenchmarkLocalOps    releaseEvidenceBenchmarkSection     `json:"benchmark_local_ops"`
+	ActivationOnboarding releaseEvidenceActivationSection    `json:"activation_onboarding"`
+	SidecarIntegration   releaseEvidenceSidecarSection       `json:"sidecar_integration"`
+	ProductEvidence      releaseEvidenceProductSection       `json:"product_evidence"`
+	ClientReadiness      []releaseEvidenceClientReadiness    `json:"client_readiness"`
+	ReleaseReadiness     []releaseEvidenceGateReadiness      `json:"release_readiness"`
+	Blockers             []releaseEvidenceBlocker            `json:"blockers,omitempty"`
+	Limitations          []string                            `json:"limitations,omitempty"`
+	Metadata             map[string]any                      `json:"metadata,omitempty"`
 }
 
 type releaseEvidenceBuildMetadata struct {
@@ -165,6 +166,36 @@ type releaseEvidenceBenchmarkSection struct {
 	LocalOps           releaseEvidenceLocalOps   `json:"local_ops"`
 	CompetitiveSignals []releaseEvidenceArtifact `json:"competitive_signals,omitempty"`
 	Blockers           []releaseEvidenceBlocker  `json:"blockers,omitempty"`
+}
+
+type releaseEvidenceActivationSection struct {
+	Status                      string                   `json:"status"`
+	Classification              string                   `json:"classification"`
+	ReportSource                p711SourceReference      `json:"report_source"`
+	SmokeID                     string                   `json:"smoke_id,omitempty"`
+	QuickstartStatus            string                   `json:"quickstart_status,omitempty"`
+	ClientClassification        string                   `json:"client_classification,omitempty"`
+	EnvironmentClass            string                   `json:"environment_class,omitempty"`
+	InstallSetupPath            string                   `json:"install_setup_path,omitempty"`
+	ReleaseInstallProof         string                   `json:"release_install_proof,omitempty"`
+	AssistanceClass             string                   `json:"assistance_class,omitempty"`
+	DurationSource              string                   `json:"duration_source,omitempty"`
+	TimeToFirstPacketSeconds    float64                  `json:"time_to_first_packet_seconds,omitempty"`
+	TimeToTrustEvidenceSeconds  float64                  `json:"time_to_trust_evidence_seconds,omitempty"`
+	FirstUsefulPacketStatus     string                   `json:"first_useful_packet_status,omitempty"`
+	FreshnessStatus             string                   `json:"freshness_status,omitempty"`
+	AuditStatus                 string                   `json:"audit_status,omitempty"`
+	SuggestedVerificationStatus string                   `json:"suggested_verification_status,omitempty"`
+	ProductEvidenceSafeStatus   string                   `json:"product_evidence_safe_status,omitempty"`
+	FailureReasonStatus         string                   `json:"failure_reason_status,omitempty"`
+	DocsGapStatus               string                   `json:"docs_gap_status,omitempty"`
+	CleanupStatus               string                   `json:"cleanup_status,omitempty"`
+	CleanupMode                 string                   `json:"cleanup_mode,omitempty"`
+	PrivacyStatus               string                   `json:"privacy_status,omitempty"`
+	ForbiddenFieldCheck         string                   `json:"forbidden_field_check,omitempty"`
+	ValidationStatus            string                   `json:"validation_status,omitempty"`
+	EvidenceIDs                 []string                 `json:"evidence_ids,omitempty"`
+	Blockers                    []releaseEvidenceBlocker `json:"blockers,omitempty"`
 }
 
 type releaseEvidenceLocalOps struct {
@@ -323,7 +354,9 @@ func buildReleaseEvidenceBundle(root string, laneSummary laneHistorySummary, opt
 		ValidationRecords: opts.ValidationRecords,
 	})
 	clientReadiness := buildReleaseClientReadiness(product.ClassCoverage)
-	releaseGateLinkage := releaseGateLinkageFromProduct(product.ReleaseGateLinkage, clientReadiness)
+	validation := buildReleaseValidationSection(current, product)
+	activation := buildReleaseActivationSection(localOps, localOpsRef, validation, clientReadiness)
+	releaseGateLinkage := releaseGateLinkageFromProduct(product.ReleaseGateLinkage, clientReadiness, activation)
 	report := releaseEvidenceBundle{
 		SchemaVersion: releaseEvidenceSchemaVersion,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339Nano),
@@ -344,10 +377,11 @@ func buildReleaseEvidenceBundle(root string, laneSummary laneHistorySummary, opt
 			Current:  current,
 			Deltas:   releaseEvidenceDeltas(baseline, current),
 		},
-		Validation:         buildReleaseValidationSection(current, product),
-		AuditSecurity:      buildReleaseAuditSecuritySection(current, product, securityRef),
-		BenchmarkLocalOps:  buildReleaseBenchmarkSection(root, opts, localOps, localOpsRef),
-		SidecarIntegration: buildReleaseSidecarSection(root, opts, integration, integrationRef),
+		Validation:           validation,
+		AuditSecurity:        buildReleaseAuditSecuritySection(current, product, securityRef),
+		BenchmarkLocalOps:    buildReleaseBenchmarkSection(root, opts, localOps, localOpsRef),
+		ActivationOnboarding: activation,
+		SidecarIntegration:   buildReleaseSidecarSection(root, opts, integration, integrationRef),
 		ProductEvidence: releaseEvidenceProductSection{
 			Status:             product.Status,
 			ExportID:           product.ExportID,
@@ -358,7 +392,7 @@ func buildReleaseEvidenceBundle(root string, laneSummary laneHistorySummary, opt
 			ReleaseGateLinkage: releaseGateLinkage,
 		},
 		ClientReadiness:  clientReadiness,
-		ReleaseReadiness: releaseReadinessFromProduct(releaseGateLinkage, clientReadiness),
+		ReleaseReadiness: releaseReadinessFromProduct(releaseGateLinkage, clientReadiness, activation),
 		Limitations: []string{
 			"P9.1 produces release evidence only; P9.2-P9.12 own go/no-go decisions and gate pass/fail signoff.",
 			"External competitive baselines are summarized only when a benchmark artifact is supplied.",
@@ -703,6 +737,7 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 	blockers = append(blockers, report.Validation.Blockers...)
 	blockers = append(blockers, report.AuditSecurity.Blockers...)
 	blockers = append(blockers, report.BenchmarkLocalOps.Blockers...)
+	blockers = append(blockers, report.ActivationOnboarding.Blockers...)
 	blockers = append(blockers, report.SidecarIntegration.Blockers...)
 	if report.ProductEvidence.Status != "pass" {
 		blockers = append(blockers, releaseEvidenceBlocker{Section: "product_evidence", Reason: "product-evidence export is not complete", Evidence: report.ProductEvidence.Status})
@@ -756,8 +791,271 @@ func releaseBenchmarkSectionStatus(localOpsPresent bool, localOpsStatus string, 
 	return "partial"
 }
 
-func releaseReadinessFromProduct(rows []p711ReleaseGateLinkage, clients []releaseEvidenceClientReadiness) []releaseEvidenceGateReadiness {
-	rows = releaseGateLinkageFromProduct(rows, clients)
+func buildReleaseActivationSection(localOps *localOpsBenchmarkReport, ref p711SourceReference, validation releaseEvidenceValidationSection, clients []releaseEvidenceClientReadiness) releaseEvidenceActivationSection {
+	out := releaseEvidenceActivationSection{
+		Status:           "needs_evidence",
+		Classification:   "no-go",
+		ReportSource:     ref,
+		ValidationStatus: validation.Status,
+	}
+	if localOps == nil || localOps.Quickstart == nil {
+		out.Blockers = append(out.Blockers, releaseEvidenceBlocker{Section: "activation_onboarding", Reason: "quickstart activation smoke not supplied", Evidence: ref.ID})
+		out.Blockers = append(out.Blockers, releaseActivationValidationBlockers(validation, clients)...)
+		return out
+	}
+	q := localOps.Quickstart
+	out.SmokeID = q.SmokeID
+	out.QuickstartStatus = q.Status
+	out.ClientClassification = q.ClientClassification
+	out.EnvironmentClass = q.EnvironmentClass
+	out.InstallSetupPath = q.SetupInstallReadiness.InstallSetupPath
+	out.ReleaseInstallProof = q.SetupInstallReadiness.ReleaseInstallProof
+	out.AssistanceClass = q.AssistanceClass
+	out.DurationSource = q.DurationSource
+	out.TimeToFirstPacketSeconds = q.TimeToFirstPacketSeconds
+	out.TimeToTrustEvidenceSeconds = q.TimeToTrustEvidenceSeconds
+	out.FirstUsefulPacketStatus = q.FirstUsefulPacket.Status
+	out.FreshnessStatus = q.FreshnessCheck.Status
+	out.AuditStatus = q.AuditReport.Status
+	out.SuggestedVerificationStatus = q.SuggestedVerification.Status
+	out.ProductEvidenceSafeStatus = q.ProductEvidenceSafeOutput.Status
+	out.FailureReasonStatus = q.FailureReason.Status
+	out.DocsGapStatus = q.DocsGap.Status
+	out.CleanupStatus = q.Cleanup.Status
+	out.CleanupMode = q.Cleanup.Mode
+	out.PrivacyStatus = q.PrivacyRedactionStatus.Status
+	out.ForbiddenFieldCheck = q.PrivacyRedactionStatus.ForbiddenFieldCheck
+	out.EvidenceIDs = p711Compact(q.SmokeID, q.ProductEvidenceSafeOutput.ExportID, q.FirstUsefulPacket.PacketID, q.FirstUsefulPacket.IndexID, q.AuditReport.AuditReportID)
+
+	out.Blockers = append(releaseActivationBlockers(q), releaseActivationValidationBlockers(validation, clients)...)
+	out.Blockers = releaseEvidenceCompactBlockers(out.Blockers)
+	if len(out.Blockers) == 0 {
+		out.Status = "pass"
+		out.Classification = "pass"
+		return out
+	}
+	out.Status = p96ActivationStatusFromBlockers(out.Blockers)
+	return out
+}
+
+func p96ActivationReleaseGateStatus(localOps *localOpsBenchmarkReport) string {
+	if localOps == nil || localOps.Quickstart == nil {
+		return "needs_evidence"
+	}
+	status := p96ActivationStatusFromBlockers(releaseActivationBlockers(localOps.Quickstart))
+	if status == "blocked" {
+		return "blocked"
+	}
+	return "needs_evidence"
+}
+
+func p96ActivationStatusFromBlockers(blockers []releaseEvidenceBlocker) string {
+	if len(blockers) == 0 {
+		return "pass"
+	}
+	for _, blocker := range blockers {
+		switch blocker.Reason {
+		case "privacy-safe activation evidence failed",
+			"privacy/redaction status is not release-safe",
+			"quickstart activation smoke did not pass":
+			return "blocked"
+		}
+	}
+	return "needs_evidence"
+}
+
+func releaseActivationBlockers(q *localOpsQuickstartSmoke) []releaseEvidenceBlocker {
+	var blockers []releaseEvidenceBlocker
+	add := func(reason string, evidence string) {
+		blockers = append(blockers, releaseEvidenceBlocker{Section: "activation_onboarding", Reason: reason, Evidence: evidence})
+	}
+	if q == nil {
+		add("quickstart activation smoke not supplied", "missing")
+		return blockers
+	}
+	if q.Status != "pass" {
+		add("quickstart activation smoke did not pass", firstNonEmptyCLIString(q.Status, "missing"))
+	}
+	if !releaseActivationApprovedEnvironmentClass(q.EnvironmentClass) {
+		add("activation environment class missing or not approved", firstNonEmptyCLIString(q.EnvironmentClass, "missing"))
+	}
+	if q.SetupInstallReadiness.Status != "pass" {
+		add("setup/source-build readiness did not pass", firstNonEmptyCLIString(q.SetupInstallReadiness.Status, "missing"))
+	}
+	if !releaseActivationApprovedSetupProof(q) {
+		add("release binary clean-install proof or scoped clean-setup proof not supplied", firstNonEmptyCLIString(q.SetupInstallReadiness.ReleaseInstallProof, q.SetupInstallReadiness.InstallSetupPath, "missing"))
+	}
+	if q.DurationSource != "measured_wall_clock" {
+		add("install-to-first-value timing is not measured wall-clock evidence", firstNonEmptyCLIString(q.DurationSource, "missing"))
+	}
+	if q.TimeToFirstPacketSeconds <= 0 || q.TimeToTrustEvidenceSeconds <= 0 || q.TimeToTrustEvidenceSeconds < q.TimeToFirstPacketSeconds {
+		add("install-to-first-value timings missing or inconsistent", fmt.Sprintf("first:%g trust:%g", q.TimeToFirstPacketSeconds, q.TimeToTrustEvidenceSeconds))
+	}
+	if q.FirstUsefulPacket.Status != "pass" || q.FirstUsefulPacket.PacketID == "" || q.FirstUsefulPacket.IndexID == "" || q.FirstUsefulPacket.FreshnessState == "" ||
+		!localOpsActivationPacketHasUsefulEvidence(q.FirstUsefulPacket) {
+		add("first useful packet evidence incomplete", firstNonEmptyCLIString(q.FirstUsefulPacket.Status, "missing"))
+	}
+	if q.FreshnessCheck.Status != "pass" || q.FreshnessCheck.State == "" {
+		add("freshness evidence incomplete", firstNonEmptyCLIString(q.FreshnessCheck.Status, "missing"))
+	}
+	if q.AuditReport.Status != "pass" || q.AuditReport.AuditReportID == "" {
+		add("audit evidence incomplete", firstNonEmptyCLIString(q.AuditReport.Status, "missing"))
+	}
+	if q.SuggestedVerification.Status != "pass" || len(q.SuggestedVerification.SuggestedCommands) == 0 {
+		add("suggested verification evidence incomplete", firstNonEmptyCLIString(q.SuggestedVerification.Status, "missing"))
+	}
+	if q.ProductEvidenceSafeOutput.Status != "pass" || q.ProductEvidenceSafeOutput.ForbiddenFieldCheck != "pass" {
+		add("privacy-safe activation evidence failed", firstNonEmptyCLIString(q.ProductEvidenceSafeOutput.ForbiddenFieldCheck, q.ProductEvidenceSafeOutput.Status))
+	}
+	if q.PrivacyRedactionStatus.Status != "pass" || q.PrivacyRedactionStatus.ForbiddenFieldCheck != "pass" ||
+		q.PrivacyRedactionStatus.RawPromptCaptured || q.PrivacyRedactionStatus.RawFileBodyCaptured ||
+		q.PrivacyRedactionStatus.SecretCaptured || q.PrivacyRedactionStatus.PrivatePathCaptured ||
+		q.PrivacyRedactionStatus.PrivateRepoURLCaptured || q.PrivacyRedactionStatus.UnredactedLogCaptured ||
+		q.PrivacyRedactionStatus.HostedTelemetryRequired {
+		add("privacy/redaction status is not release-safe", firstNonEmptyCLIString(q.PrivacyRedactionStatus.ForbiddenFieldCheck, q.PrivacyRedactionStatus.Status))
+	}
+	if !releaseActivationFailureReasonExplicit(q.FailureReason) {
+		add("failure reason semantics missing or unresolved", firstNonEmptyCLIString(q.FailureReason.Status, q.FailureReason.PrimaryClass, "missing"))
+	}
+	if !releaseActivationDocsGapExplicit(q.DocsGap) {
+		add("docs gap semantics missing or unresolved", firstNonEmptyCLIString(q.DocsGap.Status, "missing"))
+	}
+	if !releaseActivationCleanupSemanticsPass(q.Cleanup) {
+		add("cleanup evidence missing full cleanup or reviewed retained-state semantics", firstNonEmptyCLIString(q.Cleanup.Status, q.Cleanup.ExitStatus, q.Cleanup.Mode, "missing"))
+	}
+	switch q.AssistanceClass {
+	case "none", "docs-only", "operator typo correction":
+	default:
+		add("assistance class missing or exceeds release activation threshold", firstNonEmptyCLIString(q.AssistanceClass, "missing"))
+	}
+	return releaseEvidenceCompactBlockers(blockers)
+}
+
+func releaseActivationValidationBlockers(validation releaseEvidenceValidationSection, clients []releaseEvidenceClientReadiness) []releaseEvidenceBlocker {
+	var blockers []releaseEvidenceBlocker
+	if validation.Status != "pass" {
+		blockers = append(blockers, releaseEvidenceBlocker{
+			Section:  "activation_onboarding",
+			Reason:   "current release validation evidence missing or incomplete",
+			Evidence: firstNonEmptyCLIString(validation.Status, "missing"),
+		})
+	}
+	missingValidationRecords := 0
+	for _, row := range clients {
+		if releaseEvidenceSliceContains(row.MissingEvidence, "validation record") {
+			missingValidationRecords++
+		}
+	}
+	if missingValidationRecords > 0 || len(clients) == 0 {
+		evidence := "missing"
+		if missingValidationRecords > 0 {
+			evidence = fmt.Sprintf("missing_classification_records:%d", missingValidationRecords)
+		}
+		blockers = append(blockers, releaseEvidenceBlocker{
+			Section:  "activation_onboarding",
+			Reason:   "current validation records missing for activation readiness",
+			Evidence: evidence,
+		})
+	}
+	return releaseEvidenceCompactBlockers(blockers)
+}
+
+func releaseEvidenceSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func releaseActivationApprovedEnvironmentClass(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "clean-install", "clean-setup":
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseActivationApprovedSetupProof(q *localOpsQuickstartSmoke) bool {
+	installPath := strings.TrimSpace(q.SetupInstallReadiness.InstallSetupPath)
+	proof := strings.TrimSpace(q.SetupInstallReadiness.ReleaseInstallProof)
+	switch installPath {
+	case "release-binary":
+		return proof == "pass"
+	case "clean-setup", "documented-clean-setup", "source-build":
+		return q.EnvironmentClass == "clean-setup" && proof == "scoped_clean_setup"
+	default:
+		return false
+	}
+}
+
+func releaseActivationFailureReasonExplicit(reason localOpsActivationFailureReason) bool {
+	return strings.TrimSpace(reason.Status) == "none" &&
+		strings.TrimSpace(reason.PrimaryClass) == "none" &&
+		strings.TrimSpace(reason.Reason) == "" &&
+		!reason.RetryAllowed
+}
+
+func releaseActivationDocsGapExplicit(gap localOpsActivationDocsGap) bool {
+	switch strings.TrimSpace(gap.Status) {
+	case "none":
+		return !gap.GapRecorded && !gap.BlockedActivation
+	case "recorded":
+		return gap.GapRecorded &&
+			strings.TrimSpace(gap.DocPath) != "" &&
+			strings.TrimSpace(gap.CommandLabel) != "" &&
+			strings.TrimSpace(gap.ExpectedOutput) != "" &&
+			strings.TrimSpace(gap.ActualOutput) != "" &&
+			strings.TrimSpace(gap.Severity) != "" &&
+			!gap.BlockedActivation
+	default:
+		return false
+	}
+}
+
+func releaseActivationCleanupSemanticsPass(cleanup localOpsActivationCleanupEvidence) bool {
+	if cleanup.Status != "pass" || cleanup.ExitStatus != "pass" || strings.TrimSpace(cleanup.Mode) == "" || strings.TrimSpace(cleanup.RemainingState) == "" {
+		return false
+	}
+	if cleanup.RemovedArtifactCount <= 0 && len(cleanup.EvidenceIDs) == 0 {
+		return false
+	}
+	remaining := strings.TrimSpace(cleanup.RemainingState)
+	if releaseActivationAbsentLocalState(cleanup.Mode, remaining) {
+		return true
+	}
+	return strings.Contains(remaining, "retained") && releaseActivationReviewedRetainedStatePolicy(cleanup.RetainedStatePolicy)
+}
+
+func releaseActivationAbsentLocalState(mode string, remaining string) bool {
+	switch strings.TrimSpace(mode) {
+	case "remove-local-state", "uninstall", "clean-uninstall":
+	default:
+		return false
+	}
+	switch strings.TrimSpace(remaining) {
+	case "comprehension_state_absent", "local_state_absent", "state_absent":
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseActivationReviewedRetainedStatePolicy(policy string) bool {
+	switch strings.TrimSpace(policy) {
+	case "reviewed_retained_state_policy",
+		"reviewed_context_graph_retention_policy",
+		"reviewed_local_state_retention_policy":
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseReadinessFromProduct(rows []p711ReleaseGateLinkage, clients []releaseEvidenceClientReadiness, activation releaseEvidenceActivationSection) []releaseEvidenceGateReadiness {
+	rows = releaseGateLinkageFromProduct(rows, clients, activation)
 	out := make([]releaseEvidenceGateReadiness, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, releaseEvidenceGateReadiness{
@@ -770,11 +1068,16 @@ func releaseReadinessFromProduct(rows []p711ReleaseGateLinkage, clients []releas
 	return out
 }
 
-func releaseGateLinkageFromProduct(rows []p711ReleaseGateLinkage, clients []releaseEvidenceClientReadiness) []p711ReleaseGateLinkage {
+func releaseGateLinkageFromProduct(rows []p711ReleaseGateLinkage, clients []releaseEvidenceClientReadiness, activation releaseEvidenceActivationSection) []p711ReleaseGateLinkage {
 	p912Status := releaseP912ReadinessStatus(clients)
 	out := make([]p711ReleaseGateLinkage, 0, len(rows)+1)
 	foundP912 := false
+	foundP96 := false
 	for _, row := range rows {
+		if row.Gate == "P9.6" {
+			row = releaseP96GateLinkage(row, activation)
+			foundP96 = true
+		}
 		if row.Gate == "P9.12" {
 			row.Status = p912Status
 			row.Evidence = "downgraded client readiness rows and limitations"
@@ -791,7 +1094,32 @@ func releaseGateLinkageFromProduct(rows []p711ReleaseGateLinkage, clients []rele
 			ClaimImpact: "packaging/support thesis must cite downgraded classification statuses",
 		})
 	}
+	if !foundP96 {
+		out = append(out, releaseP96GateLinkage(p711ReleaseGateLinkage{
+			Gate:        "P9.6",
+			Status:      "needs_evidence",
+			Evidence:    "activation quickstart smoke or blocker summary",
+			ClaimImpact: "activation claims depend on pass status",
+		}, activation))
+	}
 	return out
+}
+
+func releaseP96GateLinkage(row p711ReleaseGateLinkage, activation releaseEvidenceActivationSection) p711ReleaseGateLinkage {
+	if activation.Status == "pass" {
+		row.Status = "evidence_present"
+		row.Evidence = "measured activation/onboarding evidence with cleanup"
+		row.ClaimImpact = "activation claims may cite measured clean-install evidence"
+		return row
+	}
+	if activation.Status == "blocked" {
+		row.Status = "blocked"
+	} else {
+		row.Status = "needs_evidence"
+	}
+	row.Evidence = "activation/onboarding evidence incomplete or downgraded"
+	row.ClaimImpact = "release activation claims are no-go until measured install-to-first-value and cleanup evidence pass"
+	return row
 }
 
 func releaseP912ReadinessStatus(clients []releaseEvidenceClientReadiness) string {

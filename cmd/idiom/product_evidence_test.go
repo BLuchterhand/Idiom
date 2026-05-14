@@ -96,6 +96,106 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 	assertP711CoverageForEveryClassification(t, reparsed.ClassCoverage, 1)
 }
 
+func TestP711ProductEvidenceKeepsActivationUsefulWithoutOverclaimingP96(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	var localOps localOpsBenchmarkReport
+	data, err := os.ReadFile(localOpsPath)
+	if err != nil {
+		t.Fatalf("read local ops report: %v", err)
+	}
+	if err := json.Unmarshal(data, &localOps); err != nil {
+		t.Fatalf("parse local ops report: %v", err)
+	}
+	localOps.Quickstart.EnvironmentClass = "source-build"
+	localOps.Quickstart.DurationSource = "deterministic_command_step_seconds"
+	localOps.Quickstart.SetupInstallReadiness.InstallSetupPath = "source-build-or-local-binary"
+	localOps.Quickstart.SetupInstallReadiness.ReleaseInstallProof = "not_claimed"
+	localOps.Quickstart.Cleanup.Mode = "remove-smoke-artifacts"
+	localOps.Quickstart.Cleanup.RemainingState = "context_graph_retained_by_policy"
+	localOps.Quickstart.Cleanup.RetainedStatePolicy = "quickstart smoke retains local context graph by policy"
+	writeP711JSON(t, localOpsPath, localOps)
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:    root,
+		LocalOpsReport: localOpsPath,
+	})
+	activation := p711TestSignal(report.Signals, "activation")
+	if activation.Status != "pass" || activation.Completeness != "complete" || activation.Counts["candidate_files"] == 0 {
+		t.Fatalf("source-build quickstart activation should remain useful product evidence: %#v", activation)
+	}
+	if report.ProductSuccessGates.Activation != "evidence_present" {
+		t.Fatalf("product activation signal should remain present without being release-ready: %#v", report.ProductSuccessGates)
+	}
+	if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.6"); linkage.Status != "needs_evidence" {
+		t.Fatalf("P9.6 linkage must not overclaim source-build deterministic smoke: %#v", report.ReleaseGateLinkage)
+	}
+	body, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal product evidence: %v", err)
+	}
+	if forbidden := localOpsForbiddenEvidenceLeak(string(body)); forbidden != "" {
+		t.Fatalf("product evidence export leaked forbidden evidence class %q: %s", forbidden, string(body))
+	}
+}
+
+func TestP96ProductEvidenceStrictActivationWithoutValidationRecordsNeedsEvidence(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:    root,
+		LocalOpsReport: localOpsPath,
+	})
+	activation := p711TestSignal(report.Signals, "activation")
+	if activation.Status != "pass" || activation.Completeness != "complete" {
+		t.Fatalf("fixture should keep activation useful while validation records are absent: %#v", activation)
+	}
+	linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.6")
+	if linkage.Status != "needs_evidence" {
+		t.Fatalf("standalone product export must not close P9.6 without current validation proof: %#v", linkage)
+	}
+	if !strings.Contains(linkage.Evidence, "cannot close P9.6") {
+		t.Fatalf("P9.6 linkage should explain standalone product limitation: %#v", linkage)
+	}
+}
+
+func TestP96ProductEvidenceZeroRankedPacketDoesNotPassActivationOrP96(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	var localOps localOpsBenchmarkReport
+	data, err := os.ReadFile(localOpsPath)
+	if err != nil {
+		t.Fatalf("read local ops report: %v", err)
+	}
+	if err := json.Unmarshal(data, &localOps); err != nil {
+		t.Fatalf("parse local ops report: %v", err)
+	}
+	localOps.Quickstart.FirstUsefulPacket.CandidateFileCount = 0
+	localOps.Quickstart.FirstUsefulPacket.CandidateSymbolCount = 0
+	localOps.Quickstart.FirstUsefulPacket.CandidateTestCount = 0
+	localOps.Quickstart.FirstUsefulPacket.UsefulEvidence = []string{"candidate_files:0", "candidate_symbols:0", "candidate_tests:0"}
+	writeP711JSON(t, localOpsPath, localOps)
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:    root,
+		LocalOpsReport: localOpsPath,
+	})
+	activation := p711TestSignal(report.Signals, "activation")
+	if activation.Status == "pass" || activation.Completeness == "complete" {
+		t.Fatalf("zero-ranked packet evidence must not pass activation signal: %#v", activation)
+	}
+	if activation.Counts["useful_evidence_count"] != 0 {
+		t.Fatalf("zero-ranked packet should not report useful evidence counts: %#v", activation.Counts)
+	}
+	if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.6"); linkage.Status == "evidence_present" {
+		t.Fatalf("zero-ranked packet evidence must not close P9.6: %#v", linkage)
+	}
+}
+
 func TestRunProductEvidenceExportWritesParseableJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
@@ -648,8 +748,16 @@ func writeP711LocalOpsReport(t *testing.T, root string) string {
 			SmokeID:                    "p711-quickstart-smoke",
 			Status:                     "pass",
 			ClientClassification:       "open-source",
+			EnvironmentClass:           "clean-install",
+			AssistanceClass:            "none",
+			DurationSource:             "measured_wall_clock",
 			TimeToFirstPacketSeconds:   2,
 			TimeToTrustEvidenceSeconds: 6,
+			SetupInstallReadiness: localOpsActivationSetupEvidence{
+				Status:              "pass",
+				InstallSetupPath:    "release-binary",
+				ReleaseInstallProof: "pass",
+			},
 			FirstUsefulPacket: localOpsActivationPacketEvidence{
 				Status:               "pass",
 				CommandID:            "p77-context-pack",
@@ -670,17 +778,31 @@ func writeP711LocalOpsReport(t *testing.T, root string) string {
 				MediumFindingCount: 0,
 				FindingCount:       0,
 			},
+			SuggestedVerification: localOpsActivationVerification{
+				Status:            "pass",
+				SuggestedCommands: []string{"go test ./..."},
+			},
 			ProductEvidenceSafeOutput: localOpsActivationProductEvidence{
 				Status:              "pass",
 				ExportID:            "p77-activation-p711",
 				ForbiddenFieldCheck: "pass",
 				RedactionStatus:     "redacted",
 			},
+			FailureReason: localOpsActivationFailureReason{Status: "none", PrimaryClass: "none", RetryAllowed: false},
+			DocsGap:       localOpsActivationDocsGap{Status: "none", GapRecorded: false},
 			PrivacyRedactionStatus: localOpsActivationPrivacyEvidence{
 				Status:              "pass",
 				ForbiddenFieldCheck: "pass",
 			},
-			Cleanup: localOpsActivationCleanupEvidence{Status: "pass", CommandID: "p77-cleanup", ExitStatus: "pass"},
+			Cleanup: localOpsActivationCleanupEvidence{
+				Status:               "pass",
+				CommandID:            "p77-cleanup",
+				Mode:                 "remove-local-state",
+				ExitStatus:           "pass",
+				RemovedArtifactCount: 1,
+				RemainingState:       "comprehension_state_absent",
+				EvidenceIDs:          []string{"cleanup:p711"},
+			},
 		},
 	}
 	path := filepath.Join(root, ".idiom", "local-ops", "report.json")

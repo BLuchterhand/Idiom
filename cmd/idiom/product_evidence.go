@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -298,7 +299,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			recordsRef,
 			learningRef,
 		},
-		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage),
+		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps),
 		Limitations:        productEvidenceExportLimitations(integration),
 		Metadata: map[string]any{
 			"generated_by": "idiom product-evidence export",
@@ -610,11 +611,52 @@ func p711ActivationSignal(localOps *localOpsBenchmarkReport) p711SignalSummary {
 	s.Counts["candidate_files"] = q.FirstUsefulPacket.CandidateFileCount
 	s.Counts["candidate_symbols"] = q.FirstUsefulPacket.CandidateSymbolCount
 	s.Counts["candidate_tests"] = q.FirstUsefulPacket.CandidateTestCount
+	s.Counts["useful_evidence_count"] = localOpsActivationPacketUsefulEvidenceCount(q.FirstUsefulPacket)
+	if !localOpsActivationPacketHasUsefulEvidence(q.FirstUsefulPacket) {
+		s.Status = "partial"
+		s.Completeness = "partial"
+		s.Limitations = []string{"first useful packet evidence has no ranked files, symbols, tests, or equivalent useful-evidence counts"}
+	}
 	if q.ProductEvidenceSafeOutput.ForbiddenFieldCheck != "pass" {
 		s.Status = "blocked"
 		s.Completeness = "blocked"
 	}
 	return s
+}
+
+func localOpsActivationPacketHasUsefulEvidence(packet localOpsActivationPacketEvidence) bool {
+	return localOpsActivationPacketUsefulEvidenceCount(packet) > 0
+}
+
+func localOpsActivationPacketUsefulEvidenceCount(packet localOpsActivationPacketEvidence) int {
+	total := 0
+	for _, count := range []int{packet.CandidateFileCount, packet.CandidateSymbolCount, packet.CandidateTestCount} {
+		if count > 0 {
+			total += count
+		}
+	}
+	for _, evidence := range packet.UsefulEvidence {
+		if count, ok := localOpsUsefulEvidencePositiveCount(evidence); ok {
+			total += count
+		}
+	}
+	return total
+}
+
+func localOpsUsefulEvidencePositiveCount(evidence string) (int, bool) {
+	evidence = strings.TrimSpace(evidence)
+	if evidence == "" {
+		return 0, false
+	}
+	for _, separator := range []string{":", "="} {
+		_, rawCount, ok := strings.Cut(evidence, separator)
+		if !ok {
+			continue
+		}
+		count, err := strconv.Atoi(strings.TrimSpace(rawCount))
+		return count, err == nil && count > 0
+	}
+	return 0, false
 }
 
 func p711RetainedUseSignal(records []p711ValidationRecord) p711SignalSummary {
@@ -898,7 +940,7 @@ func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPo
 	return rows
 }
 
-func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage) []p711ReleaseGateLinkage {
+func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport) []p711ReleaseGateLinkage {
 	classStatus := "evidence_present"
 	for _, row := range classes {
 		if row.Status != "pass" {
@@ -908,7 +950,7 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 	}
 	return []p711ReleaseGateLinkage{
 		{Gate: "P9.1", Status: p711GateFromSignal(signals, "benchmark"), Evidence: "benchmark,audit,learning summaries", ClaimImpact: "release bundle input; not a release decision"},
-		{Gate: "P9.6", Status: p711GateFromSignal(signals, "activation"), Evidence: "activation quickstart smoke or blocker summary", ClaimImpact: "activation claims depend on pass status"},
+		{Gate: "P9.6", Status: p96ActivationReleaseGateStatus(localOps), Evidence: "standalone product export cannot close P9.6 without current release validation evidence", ClaimImpact: "release activation claims are no-go until the release bundle consumes activation plus validation evidence"},
 		{Gate: "P9.7", Status: p711GateFromSignal(signals, "retained_use"), Evidence: "retained-use validation records and adoption-signal counts", ClaimImpact: "demand remains unclaimed without record-backed signal"},
 		{Gate: "P9.8", Status: p711GateFromSignal(signals, "integration_proof"), Evidence: "shell/CI, external coding-agent, and MCP stdio integration proofs", ClaimImpact: "substrate integration claim depends on all three paths"},
 		{Gate: "P9.12", Status: classStatus, Evidence: "classification coverage rows and limitations", ClaimImpact: "packaging/support thesis must cite statuses"},
