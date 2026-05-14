@@ -136,6 +136,59 @@ func TestRunLaneMainPlanExecuteForwards(t *testing.T) {
 	}
 }
 
+func TestRunLaneMainPlanExecuteForwardsRequiredEditPathsFromBrief(t *testing.T) {
+	briefPath := writeBrief(t, "# Generic brief\n\n"+
+		"## Files to Modify\n\n"+
+		"Exhaustive allowlist for this run:\n\n"+
+		"| Path | Reason |\n"+
+		"|---|---|\n"+
+		"| `src/foo.go` | Update behavior. |\n"+
+		"| `.planning/tracker.md` | Record accepted evidence. |\n")
+	root := filepath.Dir(briefPath)
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+
+	code := runLaneMainTest(t, []string{"plan-execute", "--project-root", root, briefPath}, &stdout, &stderr, fake)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	got := flagValues(fake.calledArgs, "--required-edit-path")
+	want := []string{"src/foo.go", ".planning/tracker.md"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("forwarded required edit paths = %#v, want %#v; args=%v", got, want, fake.calledArgs)
+	}
+}
+
+func TestRunLaneMainPlanExecuteForwardsAtomIntakeScopePaths(t *testing.T) {
+	root := t.TempDir()
+	briefPath := filepath.Join(root, "atom.md")
+	brief := "# Atom\n\n" +
+		"Status: pending\n\n" +
+		"## Scope\n\n" +
+		"- `src/foo.go`\n" +
+		"- `.planning/tracker.md`\n\n" +
+		"## Acceptance\n\n" +
+		"- The lane reaches the fake runner.\n"
+	if err := os.WriteFile(briefPath, []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+
+	code := runLaneMainTest(t, []string{"plan-execute", "--json", "--project-root", root, briefPath}, &stdout, &stderr, fake)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	got := flagValues(fake.calledArgs, "--required-edit-path")
+	want := []string{"src/foo.go", ".planning/tracker.md"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("forwarded required edit paths = %#v, want %#v; args=%v", got, want, fake.calledArgs)
+	}
+	if !strings.Contains(stdout.String(), `"state":"dispatchable"`) {
+		t.Fatalf("atom intake should report dispatchable scope, stdout=%s", stdout.String())
+	}
+}
+
 func TestRunLaneMainAtomIntakeBlocksNonDispatchableBeforeRunner(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n\nfunc done() {}\n"), 0o644); err != nil {
@@ -1572,6 +1625,16 @@ func argsContainFlag(args []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+func flagValues(args []string, flag string) []string {
+	var values []string
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			values = append(values, args[i+1])
+		}
+	}
+	return values
 }
 
 // runLaneMainTest is the test-friendly entry to the lane wrapper. It

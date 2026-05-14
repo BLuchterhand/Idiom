@@ -248,6 +248,9 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 			continue
 		}
 		if looksLikePromptSectionBoundary(line) {
+			if !sawPath && looksLikeRequiredPathPrelude(line) {
+				continue
+			}
 			active = false
 			continue
 		}
@@ -477,6 +480,24 @@ func looksLikePromptSectionBoundary(line string) bool {
 	return strings.HasSuffix(trimmed, ":")
 }
 
+func looksLikeMarkdownPromptSectionBoundary(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "#") ||
+		(strings.HasPrefix(trimmed, "**") && strings.Contains(strings.TrimPrefix(trimmed, "**"), "**"))
+}
+
+func looksLikeRequiredPathPrelude(line string) bool {
+	if !looksLikePromptSectionBoundary(line) || looksLikeMarkdownPromptSectionBoundary(line) {
+		return false
+	}
+	normalized := normalizePromptSectionHeading(line)
+	return strings.Contains(normalized, "allowlist") ||
+		strings.Contains(normalized, "scope") ||
+		strings.Contains(normalized, "files") ||
+		strings.Contains(normalized, "paths") ||
+		strings.Contains(normalized, "table")
+}
+
 func promptHeadingSet(headings []string) map[string]struct{} {
 	headingSet := make(map[string]struct{}, len(headings))
 	for _, heading := range headings {
@@ -516,6 +537,9 @@ func workspacePathsUnderPromptHeadings(prompt string, headings []string) []strin
 			continue
 		}
 		if looksLikePromptSectionBoundary(line) {
+			if !sawPath && looksLikeRequiredPathPrelude(line) {
+				continue
+			}
 			active = false
 			continue
 		}

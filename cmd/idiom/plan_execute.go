@@ -29,14 +29,15 @@ import (
 
 // planExecuteOptions configures `idiom plan-execute`.
 type planExecuteOptions struct {
-	ConfigPath      string
-	Prompt          string
-	PromptFile      string
-	Model           string
-	Resume          string
-	JSONEvents      bool
-	DisableThinking bool
-	MaxTokens       int
+	ConfigPath        string
+	Prompt            string
+	PromptFile        string
+	Model             string
+	Resume            string
+	JSONEvents        bool
+	DisableThinking   bool
+	MaxTokens         int
+	RequiredEditPaths multiFlag
 	// PlannerOwnedVerification is accepted for compatibility with
 	// `idiom implement` invocations that pass the flag. Plan-execute
 	// always treats verification as planner-owned (the executor phase
@@ -116,7 +117,20 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	requiredEditPaths := app.RequiredEditPathsFromPrompt(prompt)
+	requiredEditPaths := planExecuteRequiredEditPaths(opts, prompt)
+	promptRequiredEditPaths := app.RequiredEditPathsFromPrompt(prompt)
+	explicitRequiredEditPaths := planExecuteUniqueRequiredPaths([]string(opts.RequiredEditPaths))
+	logCLIPhase(rec, "plan_execute_required_edit_paths", map[string]any{
+		"count":          len(requiredEditPaths),
+		"explicit_count": len(explicitRequiredEditPaths),
+		"prompt_count":   len(promptRequiredEditPaths),
+	})
+	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "required_edit_paths_resolved", map[string]any{
+		"count":               len(requiredEditPaths),
+		"explicit_count":      len(explicitRequiredEditPaths),
+		"prompt_count":        len(promptRequiredEditPaths),
+		"required_edit_paths": requiredEditPaths,
+	})
 
 	// Phase 1: planner. The planner runs as an implementation lane
 	// with the plan-then-execute system addendum that swaps per-edit
@@ -268,6 +282,7 @@ func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOption
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", false, "compatibility flag: plan-execute always treats verification as planner-owned; this is a no-op")
 	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: plan-execute does not run builds or tests; this is a no-op")
 	fs.BoolVar(&opts.SkipReviewRepair, "skip-review-repair", false, "skip the post-execute review-repair planner pass")
+	fs.Var(&opts.RequiredEditPaths, "required-edit-path", "workspace-relative required edit path for this plan-execute run; repeatable and augments prompt extraction")
 	if err := fs.Parse(args); err != nil {
 		return planExecuteOptions{}, err
 	}
@@ -301,6 +316,13 @@ func planExecutePrompt(opts planExecuteOptions) (string, error) {
 		return "", fmt.Errorf("prompt file %q is empty", opts.PromptFile)
 	}
 	return prompt, nil
+}
+
+func planExecuteRequiredEditPaths(opts planExecuteOptions, prompt string) []string {
+	paths := make([]string, 0, len(opts.RequiredEditPaths))
+	paths = append(paths, []string(opts.RequiredEditPaths)...)
+	paths = append(paths, app.RequiredEditPathsFromPrompt(prompt)...)
+	return planExecuteUniqueRequiredPaths(paths)
 }
 
 func inheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string) string {
@@ -428,19 +450,7 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string) string {
 }
 
 func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
-	var paths []string
-	seen := make(map[string]struct{}, len(requiredEditPaths))
-	for _, path := range requiredEditPaths {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		paths = append(paths, path)
-	}
+	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	if len(paths) == 0 {
 		return ""
 	}
@@ -582,7 +592,7 @@ func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
 	var out []string
 	seen := make(map[string]struct{}, len(requiredEditPaths))
 	for _, path := range requiredEditPaths {
-		path = strings.TrimSpace(path)
+		path = normalizePlanExecutePath(path)
 		if path == "" {
 			continue
 		}

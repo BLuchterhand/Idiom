@@ -924,6 +924,45 @@ func TestRequiredEditPathsIgnoreStructuredKeysInsideEvidenceCommands(t *testing.
 	}
 }
 
+func TestRequiredEditPathsCapturesAllowlistTableAfterDescriptorLine(t *testing.T) {
+	prompt := `
+# Atom
+
+## Files to Modify
+
+Exhaustive allowlist for this atom:
+
+| Path | Reason |
+|---|---|
+| ` + "`tests/e2e/suites/binding_surface_suite.gd`" + ` | Add consumer-contract case. |
+| ` + "`.planning/campaigns/testing-coverage-expansion.md`" + ` | Update tracker. |
+| ` + "`.planning/campaigns/testing-coverage-expansion-atom-6.3b-spec.md`" + ` | Update atom status. |
+
+## Files to Read First
+
+| Path | Why |
+|---|---|
+| ` + "`scripts/ui/shaft_panel.gd`" + ` | Evidence only. |
+`
+	got := requiredEditPathsFromPrompt(prompt)
+	want := []string{
+		"tests/e2e/suites/binding_surface_suite.gd",
+		".planning/campaigns/testing-coverage-expansion.md",
+		".planning/campaigns/testing-coverage-expansion-atom-6.3b-spec.md",
+	}
+	for _, path := range want {
+		if !slices.Contains(got, path) {
+			t.Fatalf("missing required edit path %q, got %#v", path, got)
+		}
+	}
+	if slices.Contains(got, "scripts/ui/shaft_panel.gd") {
+		t.Fatalf("following evidence table must not become required edit paths, got %#v", got)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected only allowlist paths %#v, got %#v", want, got)
+	}
+}
+
 func TestRequiredEditPathsDoNotBleedFromFollowingEvidenceSection(t *testing.T) {
 	prompt := `
 Files To Modify:

@@ -222,6 +222,52 @@ func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainRequiredEditPathFlagEnablesAutoExactPlan(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old a\n"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	prompt := "## Required Edits\n\n" +
+		"old_text:\n\n```text\nold a\n```\n\n" +
+		"new_text:\n\n```text\nnew a\n```\n"
+	var stdout, stderr bytes.Buffer
+	modelCalled := false
+
+	code := runPlanExecuteMain(
+		[]string{
+			"-config", configPath,
+			"-prompt", prompt,
+			"-json",
+			"-skip-review-repair",
+			"--required-edit-path", "./a.txt",
+		},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			modelCalled = true
+			return "", fmt.Errorf("planner model should not be called when required-edit-path enables exact-anchor plan")
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("auto exact plan should execute cleanly with explicit required path, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if modelCalled {
+		t.Fatal("planner model was called despite explicit required path and complete exact-anchor packet")
+	}
+	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new a\n" {
+		t.Fatalf("a.txt = %q", got)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "required_edit_paths_resolved") || !strings.Contains(out, "auto_exact_plan_submitted") {
+		t.Fatalf("expected required-path resolution and auto-plan events, got stdout=%s", out)
+	}
+	if strings.Contains(out, "no required_edit_paths") {
+		t.Fatalf("explicit required path should avoid no-required-path skip, stdout=%s", out)
+	}
+}
+
 func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"

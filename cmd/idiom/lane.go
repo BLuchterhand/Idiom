@@ -262,7 +262,8 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		}
 		return runLaneRefine(refineOpts, defaultRefineDispatch, stdout, stderr)
 	}
-	if handled, code := runLaneAtomIntakePreflight(opts, stdout, stderr); handled {
+	handled, code, atomReport := runLaneAtomIntakePreflight(opts, stdout, stderr)
+	if handled {
 		return code
 	}
 	// Brief lint preflight: default-on. The wrapper that used to
@@ -318,7 +319,8 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		emitLaneJSONEvent(stdout, "start", fields)
 	}
 
-	forwardArgs := buildForwardedArgs(opts, composedPath)
+	requiredEditPaths := laneForwardedRequiredEditPaths(opts, atomReport, stderr)
+	forwardArgs := buildForwardedArgs(opts, composedPath, requiredEditPaths)
 	// Tee stdout so the post-analysis can scan the JSON event stream
 	// the subcommand emits. Without --json the subcommand still prints
 	// human-readable output that contains the same markers, so the
@@ -410,20 +412,20 @@ func isKnownLaneMode(mode string) bool {
 	return false
 }
 
-func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Writer) (bool, int) {
+func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Writer) (bool, int, *atomIntakeReport) {
 	body, err := os.ReadFile(opts.BriefPath)
 	if err != nil {
-		return false, 0
+		return false, 0, nil
 	}
 	if !laneBriefNeedsAtomIntake(string(body)) {
-		return false, 0
+		return false, 0, nil
 	}
 	report := evaluateAtomIntake(string(body), opts.BriefPath, opts.ProjectRoot, opts.AllowDirtyAtomScope)
 	if opts.JSONEvents {
 		emitLaneJSONEvent(stdout, "atom_intake", laneAtomIntakeReportFields(report))
 	}
 	if report.Dispatchable {
-		return false, 0
+		return false, 0, &report
 	}
 	historyEvt := laneHistoryEvent{
 		Mode:            opts.Mode,
@@ -442,7 +444,7 @@ func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Wr
 	}
 	fmt.Fprintln(stderr, "lane: atom intake blocked dispatch")
 	printAtomIntakeReport(report, stderr)
-	return true, 1
+	return true, 1, &report
 }
 
 func laneBriefMtime(path string) string {
@@ -1215,14 +1217,37 @@ func projectRulesExtras(projectRoot string, canonical map[string]struct{}) []str
 	return extras
 }
 
+func laneForwardedRequiredEditPaths(opts laneOptions, atomReport *atomIntakeReport, stderr io.Writer) []string {
+	if opts.Mode != "plan-execute" {
+		return nil
+	}
+	var paths []string
+	body, err := os.ReadFile(opts.BriefPath)
+	if err == nil {
+		paths = append(paths, app.RequiredEditPathsFromPrompt(string(body))...)
+	} else if stderr != nil {
+		fmt.Fprintf(stderr, "lane: required_edit_paths forwarding skipped: read brief: %v\n", err)
+	}
+	if atomReport != nil && atomReport.Dispatchable {
+		paths = append(paths, atomReport.ScopePaths...)
+	}
+	return planExecuteUniqueRequiredPaths(paths)
+}
+
 // buildForwardedArgs constructs the args the lane wrapper hands to
 // the underlying idiom subcommand. The composed prompt is passed via
-// --prompt-file; other relevant flags (model, json, resume, planner-
-// owned-verification, allow-build-tests) are forwarded if set.
-func buildForwardedArgs(opts laneOptions, composedPath string) []string {
+// --prompt-file; required edit paths and other relevant flags (model,
+// json, resume, planner-owned-verification, allow-build-tests) are
+// forwarded if set.
+func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths []string) []string {
 	out := []string{
 		"--config", opts.ConfigPath,
 		"--prompt-file", composedPath,
+	}
+	if opts.Mode == "plan-execute" {
+		for _, path := range planExecuteUniqueRequiredPaths(requiredEditPaths) {
+			out = append(out, "--required-edit-path", path)
+		}
 	}
 	if model := strings.TrimSpace(opts.Model); model != "" {
 		out = append(out, "--model", model)
