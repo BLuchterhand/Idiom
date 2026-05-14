@@ -187,10 +187,10 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "context_status",
-			Description: "Report whether the persistent SQLite-backed codebase comprehension graph exists, whether indexed files/symbols or collector versions are stale, and whether storage backends are compatible. With refresh=true, repair bounded stale scopes, small stale file sets, missing indexes, and collector-version mismatches before reporting.",
+			Description: "Report whether the persistent SQLite-backed codebase comprehension graph exists, whether indexed files/symbols or collector versions are stale, and whether storage backends are compatible. Stale/missing path lists are sample-capped by default while count fields preserve the full size. With refresh=true, repair bounded stale scopes, small stale file sets, missing indexes, and collector-version mismatches before reporting; unscoped stale-file refreshes are capped and report budget_exceeded instead of attempting unbounded work.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"refresh":`+boolProp("optional: attempt stale graph repair before reporting; uses path when provided, otherwise refreshes a small capped stale/missing file set or rebuilds the root for missing indexes/collector-version mismatches")+`,"path":`+strProp("optional bounded file or directory refresh scope; omit for workspace-level status/repair")+`,"language":`+strProp("optional language hint for refresh; auto remains language-agnostic")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"refresh indexing depth; default standard"},`+freshnessPolicyProps(),
+				`"refresh":`+boolProp("optional: attempt stale graph repair before reporting; uses path when provided, otherwise refreshes a small capped stale/missing file set or rebuilds the root for missing indexes/collector-version mismatches")+`,"path":`+strProp("optional bounded file or directory refresh scope; omit for workspace-level status/repair")+`,"language":`+strProp("optional language hint for refresh; auto remains language-agnostic")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"refresh indexing depth; default standard"},"limit":`+intProp("optional max stale/missing path samples to display; also caps unscoped stale-file refresh attempts when refresh=true")+`,`+freshnessPolicyProps(),
 			),
 		},
 		{

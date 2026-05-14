@@ -815,12 +815,14 @@ func TestContextStatusRefreshesBoundedStaleScope(t *testing.T) {
 		Fresh       bool     `json:"fresh"`
 		StaleFiles  []string `json:"stale_files"`
 		AutoRefresh struct {
-			Attempted      bool     `json:"attempted"`
-			Scope          string   `json:"scope"`
-			Reason         string   `json:"reason"`
-			FilesIndexed   int      `json:"files_indexed"`
-			FreshAfter     bool     `json:"fresh_after"`
-			RefreshedFiles []string `json:"refreshed_files"`
+			Attempted            bool     `json:"attempted"`
+			Scope                string   `json:"scope"`
+			Reason               string   `json:"reason"`
+			FilesIndexed         int      `json:"files_indexed"`
+			PartialRefreshReason string   `json:"partial_refresh_reason"`
+			FullRebuildReason    string   `json:"full_rebuild_reason"`
+			FreshAfter           bool     `json:"fresh_after"`
+			RefreshedFiles       []string `json:"refreshed_files"`
 		} `json:"auto_refresh"`
 	}
 	if err := json.Unmarshal([]byte(result.Output), &statusReport); err != nil {
@@ -907,12 +909,14 @@ func TestContextStatusRefreshesSmallStaleFileSetWithoutScope(t *testing.T) {
 		Fresh       bool     `json:"fresh"`
 		StaleFiles  []string `json:"stale_files"`
 		AutoRefresh struct {
-			Attempted      bool     `json:"attempted"`
-			Scope          string   `json:"scope"`
-			Reason         string   `json:"reason"`
-			FilesIndexed   int      `json:"files_indexed"`
-			FreshAfter     bool     `json:"fresh_after"`
-			RefreshedFiles []string `json:"refreshed_files"`
+			Attempted            bool     `json:"attempted"`
+			Scope                string   `json:"scope"`
+			Reason               string   `json:"reason"`
+			FilesIndexed         int      `json:"files_indexed"`
+			PartialRefreshReason string   `json:"partial_refresh_reason"`
+			FullRebuildReason    string   `json:"full_rebuild_reason"`
+			FreshAfter           bool     `json:"fresh_after"`
+			RefreshedFiles       []string `json:"refreshed_files"`
 		} `json:"auto_refresh"`
 	}
 	if err := json.Unmarshal([]byte(result.Output), &statusReport); err != nil {
@@ -921,8 +925,133 @@ func TestContextStatusRefreshesSmallStaleFileSetWithoutScope(t *testing.T) {
 	if !statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Reason != "small_stale_file_set" || statusReport.AutoRefresh.FilesIndexed != 1 || !statusReport.AutoRefresh.FreshAfter {
 		t.Fatalf("expected capped small-stale-set status refresh, got %#v", statusReport.AutoRefresh)
 	}
+	if statusReport.AutoRefresh.PartialRefreshReason != "exact_scope_refresh" || statusReport.AutoRefresh.FullRebuildReason != "" {
+		t.Fatalf("expected unscoped small stale-set repair to stay exact and bounded, got %#v", statusReport.AutoRefresh)
+	}
 	if !statusReport.Fresh || len(statusReport.StaleFiles) != 0 || !slices.Contains(statusReport.AutoRefresh.RefreshedFiles, "pkg/pkg.go") {
 		t.Fatalf("expected fresh status after small stale-file refresh, got %#v", statusReport)
+	}
+}
+
+func TestContextStatusRefreshLimitCapsUnboundedStaleSet(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statuslimit\n\ngo 1.22\n")
+	for i := 0; i < 3; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("file_%02d.go", i)), fmt.Sprintf("package pkg\n\nfunc File%02d() string { return \"old\" }\n", i))
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	for i := 0; i < 3; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("file_%02d.go", i)), fmt.Sprintf("package pkg\n\nfunc File%02d() string { return \"new\" }\n", i))
+	}
+
+	result = mgr.Execute(context.Background(), ToolRequest{Tool: "context_status", Refresh: true, Language: "go", Limit: 2})
+	if result.Error != "" {
+		t.Fatalf("context_status should return a freshness report, not a tool error: %v\n%s", result.Error, result.Output)
+	}
+	var statusReport struct {
+		Fresh          bool     `json:"fresh"`
+		StalePathCount int      `json:"stale_path_count"`
+		StaleFileCount int      `json:"stale_file_count"`
+		StaleFiles     []string `json:"stale_files"`
+		AutoRefresh    struct {
+			Attempted      bool   `json:"attempted"`
+			Reason         string `json:"reason"`
+			SkippedReason  string `json:"skipped_reason"`
+			StalePathCount int    `json:"stale_path_count"`
+			MaxFiles       int    `json:"max_files"`
+		} `json:"auto_refresh"`
+		Freshness struct {
+			FreshForScope  bool     `json:"fresh_for_scope"`
+			Reason         string   `json:"reason"`
+			Blocker        string   `json:"blocker"`
+			BudgetExceeded bool     `json:"budget_exceeded"`
+			StalePathCount int      `json:"stale_path_count"`
+			StalePaths     []string `json:"stale_paths"`
+		} `json:"freshness"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &statusReport); err != nil {
+		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
+	}
+	if statusReport.Fresh || statusReport.StalePathCount != 3 {
+		t.Fatalf("expected stale unbounded status to remain reported, got %#v", statusReport)
+	}
+	if statusReport.StaleFileCount != 3 || len(statusReport.StaleFiles) != 2 {
+		t.Fatalf("expected --limit to cap stale file display while preserving counts, got %#v", statusReport)
+	}
+	if statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Reason != "budget_exceeded" || statusReport.AutoRefresh.SkippedReason != "budget_exceeded" || statusReport.AutoRefresh.StalePathCount != 3 || statusReport.AutoRefresh.MaxFiles != 2 {
+		t.Fatalf("expected limit-driven budget blocker, got %#v", statusReport.AutoRefresh)
+	}
+	if statusReport.Freshness.FreshForScope || !statusReport.Freshness.BudgetExceeded || statusReport.Freshness.Blocker != "budget_exceeded" {
+		t.Fatalf("expected freshness budget blocker, got %#v", statusReport.Freshness)
+	}
+	if statusReport.Freshness.StalePathCount != 3 || len(statusReport.Freshness.StalePaths) != 2 {
+		t.Fatalf("expected --limit to cap freshness stale path display while preserving counts, got %#v", statusReport.Freshness)
+	}
+}
+
+func TestContextStatusDefaultCapsStaleAndMissingDisplayWithoutLosingCounts(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statusdisplay\n\ngo 1.22\n")
+	for i := 0; i < defaultContextStatusOutputLimit+3; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("stale_%02d.go", i)), fmt.Sprintf("package pkg\n\nfunc Stale%02d() string { return \"old\" }\n", i))
+	}
+	for i := 0; i < defaultContextStatusOutputLimit+2; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("missing_%02d.go", i)), fmt.Sprintf("package pkg\n\nfunc Missing%02d() string { return \"old\" }\n", i))
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	for i := 0; i < defaultContextStatusOutputLimit+3; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("stale_%02d.go", i)), fmt.Sprintf("package pkg\n\nfunc Stale%02d() string { return \"new\" }\n", i))
+	}
+	for i := 0; i < defaultContextStatusOutputLimit+2; i++ {
+		if err := os.Remove(filepath.Join(root, "pkg", fmt.Sprintf("missing_%02d.go", i))); err != nil {
+			t.Fatalf("remove missing fixture: %v", err)
+		}
+	}
+
+	result = mgr.Execute(context.Background(), ToolRequest{Tool: "context_status", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_status returned error: %v\n%s", result.Error, result.Output)
+	}
+	var statusReport struct {
+		StaleFileCount   int      `json:"stale_file_count"`
+		MissingFileCount int      `json:"missing_file_count"`
+		StalePathCount   int      `json:"stale_path_count"`
+		StaleFiles       []string `json:"stale_files"`
+		MissingFiles     []string `json:"missing_files"`
+		Freshness        struct {
+			StalePathCount   int      `json:"stale_path_count"`
+			MissingPathCount int      `json:"missing_path_count"`
+			StalePaths       []string `json:"stale_paths"`
+			MissingPaths     []string `json:"missing_paths"`
+		} `json:"freshness"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &statusReport); err != nil {
+		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
+	}
+	if statusReport.StaleFileCount != defaultContextStatusOutputLimit+3 || statusReport.MissingFileCount != defaultContextStatusOutputLimit+2 || statusReport.StalePathCount != (defaultContextStatusOutputLimit*2)+5 {
+		t.Fatalf("expected full stale counts to survive display cap, got %#v", statusReport)
+	}
+	if len(statusReport.StaleFiles) != defaultContextStatusOutputLimit {
+		t.Fatalf("expected default stale file display cap, got %d file(s)", len(statusReport.StaleFiles))
+	}
+	if len(statusReport.MissingFiles) != defaultContextStatusOutputLimit {
+		t.Fatalf("expected default missing file display cap, got %d file(s)", len(statusReport.MissingFiles))
+	}
+	if statusReport.Freshness.StalePathCount != defaultContextStatusOutputLimit+3 || len(statusReport.Freshness.StalePaths) != defaultContextStatusOutputLimit {
+		t.Fatalf("expected default freshness stale path display cap with full count, got %#v", statusReport.Freshness)
+	}
+	if statusReport.Freshness.MissingPathCount != defaultContextStatusOutputLimit+2 || len(statusReport.Freshness.MissingPaths) != defaultContextStatusOutputLimit {
+		t.Fatalf("expected default freshness missing path display cap with full count, got %#v", statusReport.Freshness)
 	}
 }
 

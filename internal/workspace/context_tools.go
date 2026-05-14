@@ -13,6 +13,11 @@ import (
 	"idiom/internal/comprehension"
 )
 
+const (
+	defaultContextStatusUnboundedRefreshMaxFiles = 200
+	defaultContextStatusOutputLimit              = 50
+)
+
 func (m *Manager) contextIndex(ctx context.Context, req ToolRequest) ToolResult {
 	report, err := comprehension.Build(ctx, comprehension.BuildOptions{
 		Root:      m.cfg.Root,
@@ -80,6 +85,7 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 		report.Freshness = &decision
 		report = comprehension.StatusReportWithMetadata(report, "context_status", &decision)
 	}
+	report = limitContextStatusReport(report, contextStatusOutputLimit(req))
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return ToolResult{Tool: "context_status", Summary: "Context status report encode failed", Error: err.Error()}
@@ -87,7 +93,7 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 	if !report.Indexed {
 		return ToolResult{Tool: "context_status", Summary: "No context index is present" + contextRefreshSummary(refresh), Output: string(output)}
 	}
-	summary := fmt.Sprintf("Context index has %d file(s), %d symbol(s), and %d stale file(s)", report.FilesIndexed, report.SymbolsIndexed, len(report.StaleFiles)+len(report.MissingFiles))
+	summary := fmt.Sprintf("Context index has %d file(s), %d symbol(s), and %d stale file(s)", report.FilesIndexed, report.SymbolsIndexed, contextStatusStaleSummaryCount(report))
 	if report.CollectorVersionMismatch {
 		summary = fmt.Sprintf("Context index collector versions are stale with %d file(s) and %d symbol(s)", report.FilesIndexed, report.SymbolsIndexed)
 	}
@@ -539,18 +545,19 @@ func (m *Manager) contextAutoRefresh(ctx context.Context, req ToolRequest, purpo
 func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, status comprehension.StatusReport) comprehension.FreshnessDecision {
 	freshnessStatus := status
 	decision, err := comprehension.EnsureFresh(ctx, comprehension.FreshnessRequest{
-		Root:             m.cfg.Root,
-		Operation:        "context_status",
-		Policy:           contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
-		Path:             firstNonEmptyString(req.Path, req.Workdir),
-		Query:            firstNonEmptyString(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
-		ReferencedPaths:  req.RequiredEditPaths,
-		Language:         contextRefreshLanguage(req),
-		Mode:             req.Mode,
-		MaxFiles:         req.FreshnessMaxFiles,
-		PatchActiveStore: true,
-		Enrichers:        m.contextGraphEnrichers(contextRefreshIndexMode(req.Mode)),
-		Status:           &freshnessStatus,
+		Root:              m.cfg.Root,
+		Operation:         "context_status",
+		Policy:            contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
+		Path:              firstNonEmptyString(req.Path, req.Workdir),
+		Query:             firstNonEmptyString(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
+		ReferencedPaths:   req.RequiredEditPaths,
+		Language:          contextRefreshLanguage(req),
+		Mode:              req.Mode,
+		MaxFiles:          contextStatusRefreshMaxFiles(req, status),
+		ExactScopeRefresh: contextStatusExactScopeRefresh(req, status),
+		PatchActiveStore:  true,
+		Enrichers:         m.contextGraphEnrichers(contextRefreshIndexMode(req.Mode)),
+		Status:            &freshnessStatus,
 	})
 	if err != nil {
 		refresh := &comprehension.RefreshReport{
@@ -581,6 +588,81 @@ func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, s
 func (m *Manager) contextStatusAutoRefresh(ctx context.Context, req ToolRequest, status comprehension.StatusReport) *comprehension.RefreshReport {
 	decision := m.contextStatusFreshness(ctx, req, status)
 	return decision.Refresh
+}
+
+func contextStatusRefreshMaxFiles(req ToolRequest, status comprehension.StatusReport) int {
+	if req.FreshnessMaxFiles > 0 {
+		return req.FreshnessMaxFiles
+	}
+	if req.Limit > 0 {
+		return req.Limit
+	}
+	if boundedContextRefreshScope(req) != "" || len(req.RequiredEditPaths) > 0 {
+		return 0
+	}
+	if status.Indexed && !status.CollectorVersionMismatch {
+		return defaultContextStatusUnboundedRefreshMaxFiles
+	}
+	return 0
+}
+
+func contextStatusExactScopeRefresh(req ToolRequest, status comprehension.StatusReport) bool {
+	return boundedContextRefreshScope(req) == "" && len(req.RequiredEditPaths) == 0 && status.Indexed && !status.CollectorVersionMismatch
+}
+
+func contextStatusStaleSummaryCount(report comprehension.StatusReport) int {
+	if report.StaleFileCount > 0 || report.MissingFileCount > 0 {
+		return report.StaleFileCount + report.MissingFileCount
+	}
+	return len(report.StaleFiles) + len(report.MissingFiles)
+}
+
+func contextStatusOutputLimit(req ToolRequest) int {
+	if req.Limit > 0 {
+		return req.Limit
+	}
+	return defaultContextStatusOutputLimit
+}
+
+func limitContextStatusReport(report comprehension.StatusReport, limit int) comprehension.StatusReport {
+	if limit <= 0 {
+		return report
+	}
+	report.StaleFiles = limitStringSlice(report.StaleFiles, limit)
+	report.MissingFiles = limitStringSlice(report.MissingFiles, limit)
+	report.StaleSymbolSamples = limitNodeSummarySlice(report.StaleSymbolSamples, limit)
+	if report.AutoRefresh != nil {
+		refresh := *report.AutoRefresh
+		refresh.RefreshedFiles = limitStringSlice(refresh.RefreshedFiles, limit)
+		report.AutoRefresh = &refresh
+	}
+	if report.Freshness != nil {
+		freshness := *report.Freshness
+		freshness.CheckedPaths = limitStringSlice(freshness.CheckedPaths, limit)
+		freshness.StalePaths = limitStringSlice(freshness.StalePaths, limit)
+		freshness.MissingPaths = limitStringSlice(freshness.MissingPaths, limit)
+		if freshness.Refresh != nil {
+			refresh := *freshness.Refresh
+			refresh.RefreshedFiles = limitStringSlice(refresh.RefreshedFiles, limit)
+			freshness.Refresh = &refresh
+		}
+		report.Freshness = &freshness
+	}
+	return report
+}
+
+func limitStringSlice(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	return append([]string(nil), values[:limit]...)
+}
+
+func limitNodeSummarySlice(values []comprehension.NodeSummary, limit int) []comprehension.NodeSummary {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	return append([]comprehension.NodeSummary(nil), values[:limit]...)
 }
 
 func contextFreshnessBlockerResult(tool string, freshness comprehension.FreshnessDecision) ToolResult {

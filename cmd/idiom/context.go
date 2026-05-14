@@ -93,7 +93,7 @@ func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	fs.StringVar(&opts.ID, "id", "", "context graph handle")
 	fs.StringVar(&opts.Command, "command", "", "runtime command for context trace packs")
 	fs.StringVar(&opts.Resolution, "resolution", "", "view resolution: repository, package, file, symbol, or any")
-	fs.IntVar(&opts.Limit, "limit", 0, "result limit")
+	fs.IntVar(&opts.Limit, "limit", 0, "result limit; for context status, caps displayed stale/missing path samples and unscoped stale refresh attempts")
 	fs.IntVar(&opts.BudgetTokens, "budget-tokens", 0, "optional intended downstream context budget")
 	fs.IntVar(&opts.TimeoutSeconds, "timeout-seconds", 60, "tool timeout in seconds; set to 0 to disable")
 	fs.BoolVar(&opts.IncludeEvidence, "include-evidence", false, "include relationship evidence")
@@ -186,7 +186,7 @@ func runContextTool(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 func printContextUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  idiom context build [--path .] [--language auto]")
-	fmt.Fprintln(stderr, "  idiom context status [--refresh] [--path <bounded-root>]")
+	fmt.Fprintln(stderr, "  idiom context status [--refresh] [--path <bounded-root>] [--limit <path-sample-cap>]")
 	fmt.Fprintln(stderr, "  idiom context query --query 'what calls X' [--resolution symbol]")
 	fmt.Fprintln(stderr, "  idiom context zoom --id 'symbol://path.go#Name'")
 	fmt.Fprintln(stderr, "  idiom context pack --task 'plan a bounded change' [--path .] [--output view.json]")
