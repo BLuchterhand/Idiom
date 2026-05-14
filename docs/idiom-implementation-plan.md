@@ -1806,7 +1806,7 @@ Review signoff:
 | P9.21 | Harden P9.7 retained-use, activation, and machine-readable demand blockers | P9.7 | Avicenna the 4th | - [x] | Ramanujan the 4th + P9.22 follow-up | - [x] |
 | P9.22 | Stabilize P9.7 release-gate report evidence references | P9.21 | Hooke the 4th | - [x] | Mencius the 4th | - [x] |
 | P9.8 | Gate release on three integration proof paths: shell/CI, external coding-agent workflow, and MCP stdio | P7.8, P8.6, P9.1 | Herschel the 4th | - [x] | Feynman the 4th | - [x] |
-| P9.9 | Gate release on reviewed security/privacy posture, threat model, data-flow map, and control mapping | P0.9, P7.9, P8.4, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
+| P9.9 | Gate release on reviewed security/privacy posture, threat model, data-flow map, and control mapping | P0.9, P7.9, P8.4, P9.1 | Lovelace the 4th | - [ ] | unassigned review subagent | - [ ] |
 | P9.10 | Gate release on competitive benchmark coverage or documented infeasibility for each external baseline | P4.6, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.11 | Gate release on runnable client demo transcripts and honest MVP/final-state limitations for every client classification | P7.10, P8.5, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.12 | Gate release on packaging, pricing, support, admin, and ICP thesis with explicit continue/pivot decision | P0.7, P0.11, P9.1-P9.11 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
