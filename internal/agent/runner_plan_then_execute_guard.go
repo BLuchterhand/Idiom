@@ -269,16 +269,19 @@ func PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer string, requiredPath
 }
 
 func planThenExecuteSourceSatisfiedAnswerIntent(answer string) bool {
-	lower := strings.ToLower(strings.TrimSpace(answer))
-	if lower == "" {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
 		return false
 	}
-	if strings.Contains(lower, "source-satisfied") || strings.Contains(lower, "source satisfied") {
-		return true
+	firstLine := trimmed
+	if idx := strings.IndexAny(firstLine, "\r\n"); idx >= 0 {
+		firstLine = firstLine[:idx]
 	}
-	if !containsAny(lower, "already present", "already implemented", "already satisfied", "already up to date", "already contains") {
+	firstLine = strings.ToLower(strings.TrimSpace(firstLine))
+	if firstLine != "decision: source-satisfied" && firstLine != "decision: source satisfied" {
 		return false
 	}
+	lower := strings.ToLower(trimmed)
 	return containsAny(lower, "no change", "no changes", "nothing to change", "no-op", "no op", "stale spec", "stale anchor", "stale old_text")
 }
 

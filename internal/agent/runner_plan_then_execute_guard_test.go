@@ -249,6 +249,53 @@ func TestMutationCompletionGateAcceptsPlannerSourceSatisfiedWithReadEvidence(t *
 	}
 }
 
+func TestPlanThenExecuteSourceSatisfiedAnswerCoversPathsRequiresExplicitDecision(t *testing.T) {
+	tests := []struct {
+		name   string
+		answer string
+		want   bool
+	}{
+		{
+			name:   "hyphenated explicit decision",
+			answer: "Decision: source-satisfied\n- a.txt: already implemented; no changes needed.\n- b.txt: already implemented; no changes needed.",
+			want:   true,
+		},
+		{
+			name:   "spaced explicit decision",
+			answer: "Decision: source satisfied\n- a.txt: already implemented; no changes needed.\n- b.txt: already implemented; no changes needed.",
+			want:   true,
+		},
+		{
+			name:   "question mentioning accepted remedy",
+			answer: "<<QUESTION>>: Completion gate rejected before submit_plan.\n- a.txt: no successful edit was recorded; provide submit_plan, Decision: source-satisfied evidence, or a path-specific blocker.\n- b.txt: same blocker.",
+			want:   false,
+		},
+		{
+			name:   "blocker mentioning accepted remedy",
+			answer: "Blocked: a.txt and b.txt need submit_plan or Decision: source-satisfied evidence before closeout.",
+			want:   false,
+		},
+		{
+			name:   "punctuated decision is not exact",
+			answer: "Decision: source-satisfied:\n- a.txt: already implemented; no changes needed.\n- b.txt: already implemented; no changes needed.",
+			want:   false,
+		},
+		{
+			name:   "legacy implicit already-present wording",
+			answer: "- a.txt: already implemented; no changes needed.\n- b.txt: already implemented; no changes needed.",
+			want:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := PlanThenExecuteSourceSatisfiedAnswerCoversPaths(tt.answer, []string{"a.txt", "b.txt"})
+			if got != tt.want {
+				t.Fatalf("PlanThenExecuteSourceSatisfiedAnswerCoversPaths() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMutationCompletionGateRejectsPlannerSourceSatisfiedWithoutPathEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

@@ -136,6 +136,31 @@ func TestRunPlanExecuteMainStillFailsMissingArtifactWithoutSourceSatisfiedEviden
 	}
 }
 
+func TestRunPlanExecuteMainDoesNotTreatQuestionBlockerMentioningSourceSatisfiedAsCleanNoop(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n"
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "<<QUESTION>>: Completion gate rejected before submit_plan.\n- a.go: no successful edit was recorded; provide submit_plan, Decision: source-satisfied evidence, or a path-specific blocker.", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("blocker that merely mentions source-satisfied must fail missing artifact, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
+		t.Fatalf("expected missing-artifact failure for blocker, stderr=%s", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "source-satisfied: executor skipped") {
+		t.Fatalf("blocker must not be reported as source-satisfied, stdout=%s", stdout.String())
+	}
+}
+
 func TestPlanExecuteInheritsPromptContextPackID(t *testing.T) {
 	prompt := "## Context Pack\n\n- Summary: context view artifact\n- Pack: `feedfacecafebeef`\n"
 	plan := workspace.PlanArtifact{SchemaVersion: workspace.PlanArtifactSchemaVersion}
