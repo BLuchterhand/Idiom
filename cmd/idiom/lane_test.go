@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"idiom/internal/config"
+	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
 
@@ -314,6 +316,105 @@ func TestRunLaneMainInjectsAutomaticContextPackBeforeBrief(t *testing.T) {
 	}
 	if !strings.Contains(prompt, briefBodyStartMarker+"\n"+briefBody) {
 		t.Fatalf("brief body should remain marker-scoped after context pack injection")
+	}
+}
+
+func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("IDIOM_RUNNER_SOCKET", filepath.Join(root, "missing-runner.sock"))
+	configPath := filepath.Join(root, ".idiom", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	configBody := `{
+  "workspace": {"root": "` + root + `", "enable_writes": true},
+  "llama_server": {"model": "coder", "kind": "mlx", "port": 47781, "ctx_size": 8192},
+  "chat": {"max_tokens": 2048},
+  "route_classifier": {"enabled": false}
+}`
+	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	stageDoctorBackends(t, root)
+	briefPath := filepath.Join(root, "brief.md")
+	if err := os.WriteFile(briefPath, []byte("# Implement brief\n\nNo prompt secret should appear in telemetry.\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+
+	rec, err := telemetry.Open(telemetry.Options{
+		Dir:           filepath.Join(root, "telemetry"),
+		Command:       commandTelemetryName([]string{"lane", "implement", "--config", configPath, "--prompt", "SECRET raw prompt body"}),
+		Args:          []string{"lane", "implement", "--config", configPath, "--prompt", "SECRET raw prompt body"},
+		WorkspaceRoot: root,
+	})
+	if err != nil {
+		t.Fatalf("telemetry.Open: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+	deps := laneDeps{
+		loadConfig:     config.Load,
+		runPlanExecute: fake.plan,
+		runImplement:   fake.implement,
+		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) {
+			return "", nil
+		},
+		buildContextPack: func(laneOptions, config.Config, io.Writer) string { return "" },
+		telemetry:        rec,
+	}
+	code := runLaneMainWithDeps([]string{"implement", "--json", "--no-context-pack", "--config", configPath, "--project-root", root, briefPath}, &stdout, &stderr, deps)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if err := rec.Close(0); err != nil {
+		t.Fatalf("rec.Close: %v", err)
+	}
+
+	doctorProfiles, err := buildDoctorReadinessProfiles(configPath, "implement", nil)
+	if err != nil {
+		t.Fatalf("build doctor readiness: %v", err)
+	}
+	doctor := doctorProfiles[0]
+	records := readMainTelemetryRecords(t, rec.Path())
+	session := findTelemetryRecord(records, "session_start")
+	if session == nil || session["command"] != "lane:implement" {
+		t.Fatalf("session_start should identify lane implement command, got %#v", session)
+	}
+	start := findTelemetryRecord(records, "lane_start")
+	if start == nil {
+		t.Fatalf("missing lane_start telemetry in %#v", records)
+	}
+	if start["readiness_profile"] != doctor.Name ||
+		start["readiness_state"] != doctor.State ||
+		start["backend_state"] != doctor.Metrics.BackendState ||
+		start["queue_state"] != doctor.Metrics.QueueState ||
+		start["context_budget_state"] != doctor.Metrics.ContextBudgetState ||
+		start["route_classifier_state"] != doctor.Metrics.ClassifierState ||
+		intFromTelemetry(start["hard_failures"]) != doctor.Metrics.HardFailures ||
+		intFromTelemetry(start["soft_degradations"]) != doctor.Metrics.SoftDegradations {
+		t.Fatalf("lane_start telemetry should match doctor readiness metrics\nlane=%#v\ndoctor=%#v", start, doctor)
+	}
+	if start["enforcement"] != "report_only" {
+		t.Fatalf("P6.4 must not escalate readiness enforcement, got %#v", start)
+	}
+	aliases, ok := start["role_aliases"].(map[string]any)
+	if !ok || aliases["executor"] != doctor.RoleAliases["executor"] {
+		t.Fatalf("lane_start should carry doctor-compatible role aliases, got %#v doctor=%#v", start["role_aliases"], doctor.RoleAliases)
+	}
+	localOps, ok := start["local_ops"].(map[string]any)
+	if !ok ||
+		localOps["context_budget_state"] != doctor.Metrics.ContextBudgetState ||
+		localOps["route_classifier_state"] != doctor.Metrics.ClassifierState ||
+		localOps["backend_state"] != doctor.Metrics.BackendState {
+		t.Fatalf("local_ops should expose doctor-compatible state names where practical, got %#v doctor=%#v", localOps, doctor.Metrics)
+	}
+	rendered, _ := json.Marshal(records)
+	for _, forbidden := range []string{"SECRET raw prompt body", "finance", "healthcare/life sciences", "public-sector", "enterprise SaaS", "tooling-vendor", "local-model/private-code", "open-source"} {
+		if strings.Contains(string(rendered), forbidden) {
+			t.Fatalf("lane telemetry should remain metadata-only and client-neutral; found %q in %s", forbidden, rendered)
+		}
 	}
 }
 
@@ -1508,4 +1609,15 @@ func stubLanePostflightRunner(t *testing.T, stub func(args []string, stdout, std
 	orig := lanePostflightRunner
 	lanePostflightRunner = stub
 	t.Cleanup(func() { lanePostflightRunner = orig })
+}
+
+func intFromTelemetry(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case float64:
+		return int(typed)
+	default:
+		return 0
+	}
 }

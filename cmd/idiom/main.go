@@ -757,6 +757,11 @@ func commandTelemetryName(args []string) string {
 		return "context"
 	case "artifact", "implement", "doctor":
 		return args[0]
+	case "lane":
+		if len(args) > 1 {
+			return "lane:" + args[1]
+		}
+		return "lane"
 	case "architect":
 		if len(args) > 1 {
 			return "architect:" + args[1]

@@ -79,6 +79,7 @@ type laneDeps struct {
 	runImplement     laneSubcommandRunner
 	defaultPromptRun promptRunner
 	buildContextPack laneContextPackBuilder
+	telemetry        *telemetry.Recorder
 }
 
 type laneContextPackBuilder func(opts laneOptions, cfg config.Config, stderr io.Writer) string
@@ -175,6 +176,7 @@ func runLaneMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		},
 		defaultPromptRun: runPromptOnce,
 		buildContextPack: buildLaneContextPackSection,
+		telemetry:        rec,
 	}
 	return runLaneMainWithDeps(args, stdout, stderr, deps)
 }
@@ -293,6 +295,8 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	if deps.buildContextPack != nil && shouldAutoPreloadLaneContextPack(opts) {
 		contextPackSection = deps.buildContextPack(opts, cfg, stderr)
 	}
+	laneStartFields := laneStartTelemetryFields(opts, cfg)
+	logCLIPhase(deps.telemetry, "lane_start", laneStartFields)
 	composedPath, err := composeLanePromptToFile(opts, contextPackSection)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -305,11 +309,13 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	defer os.Remove(composedPath)
 
 	if opts.JSONEvents {
-		emitLaneJSONEvent(stdout, "start", map[string]any{
+		fields := map[string]any{
 			"mode":  opts.Mode,
 			"brief": opts.BriefPath,
 			"title": opts.Title,
-		})
+		}
+		maps.Copy(fields, laneStartFields)
+		emitLaneJSONEvent(stdout, "start", fields)
 	}
 
 	forwardArgs := buildForwardedArgs(opts, composedPath)
