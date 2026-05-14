@@ -227,6 +227,28 @@ func hasSourceSatisfiedEvent(out []byte) bool {
 	return false
 }
 
+// hasReviewRepairDegradedEvent walks the JSONL stream for a post-execute
+// review-repair availability degradation. The executor already reached an edit
+// outcome; this should be recorded as a degraded closeout, not as a failed
+// implementation or a lane-level no-edit regression.
+func hasReviewRepairDegradedEvent(out []byte) bool {
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal(line, &ev); err != nil {
+			continue
+		}
+		eventType := jsonString(ev["type"])
+		if eventType == "idiom.plan_execute.review_repair_degraded" || eventType == "review_repair_degraded" {
+			return true
+		}
+	}
+	return false
+}
+
 // hasBlockedCompletionEvent walks the JSONL stream looking for a
 // `completion_status` event whose `status` is `blocked`. This is
 // the typed-blocker shape idiom emits when the runner stops the

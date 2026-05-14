@@ -260,6 +260,20 @@ func TestAnalyzeLaneOutputAcceptsSourceSatisfiedEvent(t *testing.T) {
 	}
 }
 
+func TestLaneHistoryRecordsReviewRepairDegradedAfterExecutorEdit(t *testing.T) {
+	out := []byte(strings.Join([]string{
+		`{"type":"idiom.plan_execute.executor_edit","path":"a.go","status":"applied"}`,
+		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"backend_eof"}`,
+	}, "\n"))
+	deg := analyzeLaneOutput(out, 0)
+	if len(deg) != 0 {
+		t.Fatalf("review-repair availability degradation after an edit must not become a lane regression: %+v", deg)
+	}
+	if got := laneRunFinalState(0, deg, out); got != "degraded" {
+		t.Fatalf("review-repair degraded event should be recorded in lane history, got %q", got)
+	}
+}
+
 // TestAnalyzeLaneOutputSkipsNoEditWhenSubcommandFailed verifies the
 // noise-suppression rule: when the subcommand exits non-zero, the
 // "no edit attempt" check is skipped because the non-zero exit

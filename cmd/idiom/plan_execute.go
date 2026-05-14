@@ -1066,6 +1066,7 @@ type reviewRepairPhaseReport struct {
 	AutoRepairs    int
 	ReviewPlan     string
 	ChecklistFound bool
+	ReasonClass    string
 }
 
 func (r reviewRepairPhaseReport) String() string {
@@ -1167,10 +1168,18 @@ func runReviewRepairPhase(
 		Telemetry:                rec,
 	}, stdout)
 	if err != nil {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_failed", map[string]any{
-			"reason": err.Error(),
+		reasonClass := reviewRepairDegradedReasonClass(err)
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_degraded", map[string]any{
+			"status":        "review_unavailable",
+			"reason_class":  reasonClass,
+			"changed_paths": changedPaths,
+			"allowed_paths": allowedRepairPaths,
 		})
-		return reviewRepairPhaseReport{Status: "failed"}, fmt.Errorf("review-repair phase failed: %w", err)
+		return reviewRepairPhaseReport{
+			Status:      "degraded (review unavailable)",
+			AutoRepairs: autoRepair.Lines,
+			ReasonClass: reasonClass,
+		}, nil
 	}
 	planPath, found, err := findOptionalReviewPlanArtifact(cfg.Workspace.Root, reviewStart, reviewSessionID)
 	if err != nil {
@@ -1228,6 +1237,27 @@ func runReviewRepairPhase(
 		ReviewPlan:     planPath,
 		ChecklistFound: true,
 	}, nil
+}
+
+func reviewRepairDegradedReasonClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	reason := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case reason == "":
+		return "review_model_error"
+	case strings.Contains(reason, "eof"):
+		return "backend_eof"
+	case strings.Contains(reason, "connection refused"), strings.Contains(reason, "connect: connection"):
+		return "backend_unreachable"
+	case strings.Contains(reason, "context deadline"), strings.Contains(reason, "timeout"), strings.Contains(reason, "deadline exceeded"):
+		return "backend_timeout"
+	case strings.Contains(reason, "context canceled"), strings.Contains(reason, "cancelled"):
+		return "backend_canceled"
+	default:
+		return "review_model_error"
+	}
 }
 
 func findOptionalReviewPlanArtifact(root string, notBefore time.Time, sessionID string) (string, bool, error) {

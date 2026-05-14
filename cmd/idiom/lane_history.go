@@ -114,6 +114,9 @@ func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte)
 	if len(degradations) > 0 {
 		return "degraded"
 	}
+	if hasReviewRepairDegradedEvent(out) {
+		return "degraded"
+	}
 	if hasSourceSatisfiedEvent(out) {
 		return "source-satisfied"
 	}

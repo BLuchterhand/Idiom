@@ -1341,6 +1341,52 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 	}
 }
 
+func TestRunReviewRepairPhaseDegradesWhenReviewModelUnavailable(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "bad", NewText: "good", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	report, err := runReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{Succeeded: 1, Total: 1},
+		planExecuteOptions{JSONEvents: true},
+		&stdout,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "", fmt.Errorf("Post \"http://127.0.0.1:47781/v1/chat/completions\": EOF")
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("review model transport failure should degrade after executor success, got %v", err)
+	}
+	if report.Status != "degraded (review unavailable)" || report.ReasonClass != "backend_eof" {
+		t.Fatalf("unexpected degraded review report: %#v", report)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	ev, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_degraded")
+	if !ok {
+		t.Fatalf("expected review_repair_degraded event, got %s", stdout.String())
+	}
+	if ev["reason_class"] != "backend_eof" || ev["status"] != "review_unavailable" {
+		t.Fatalf("event should carry bounded unavailable reason, got %#v", ev)
+	}
+	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_failed"); ok {
+		t.Fatalf("transport degradation must not be emitted as failed after executor success: %s", stdout.String())
+	}
+}
+
 func TestRunReviewRepairPhaseAppliesChecklistRepairPlanWithinScope(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {

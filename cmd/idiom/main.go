@@ -105,6 +105,9 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "local-ops" {
 		return runLocalOpsMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
+	if len(args) > 0 && args[0] == "product-evidence" {
+		return runProductEvidenceMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
 	if len(args) > 0 && args[0] == "init" {
 		return runInitMain(args[1:], stdout, stderr)
 	}
@@ -828,6 +831,9 @@ func commandTelemetryArgs(args []string) []string {
 	if len(args) >= 2 && args[0] == "local-ops" && args[1] == "benchmark" {
 		return sanitizeLocalOpsBenchmarkTelemetryArgs(args)
 	}
+	if len(args) >= 2 && args[0] == "product-evidence" && args[1] == "export" {
+		return sanitizeProductEvidenceTelemetryArgs(args)
+	}
 	return args
 }
 
@@ -883,6 +889,11 @@ func commandTelemetryName(args []string) string {
 			return "local-ops:" + args[1]
 		}
 		return "local-ops"
+	case "product-evidence":
+		if len(args) > 1 {
+			return "product-evidence:" + args[1]
+		}
+		return "product-evidence"
 	case "lane":
 		if len(args) > 1 {
 			return "lane:" + args[1]
