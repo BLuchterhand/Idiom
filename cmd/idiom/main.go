@@ -63,6 +63,9 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "tool" {
 		return runToolMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
+	if len(args) > 0 && args[0] == "mcp" {
+		return runMCPMainWithTelemetry(args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "context" {
 		return runContextMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}

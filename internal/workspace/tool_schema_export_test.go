@@ -105,6 +105,42 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 	}
 }
 
+func TestBuildMCPDiscoveryToolSchemasDerivesFromDiscoveryProfileAndSemanticCapability(t *testing.T) {
+	tools, err := BuildMCPDiscoveryToolSchemas()
+	if err != nil {
+		t.Fatalf("BuildMCPDiscoveryToolSchemas returned error: %v", err)
+	}
+	if len(tools) == 0 {
+		t.Fatal("expected MCP discovery schema surface to contain tools")
+	}
+	var sawContextStatus bool
+	for _, tool := range tools {
+		if !slices.Contains(tool.Profiles, ToolProfileDiscovery) {
+			t.Fatalf("MCP discovery tool %s missing discovery profile: %#v", tool.Name, tool.Profiles)
+		}
+		if !slices.Contains(tool.Policy.Capabilities, autonomy.CapabilitySemanticDiscovery) {
+			t.Fatalf("MCP discovery tool %s is not schema-classified as semantic discovery: %#v", tool.Name, tool.Policy.Capabilities)
+		}
+		if !ToolAllowedForProfile(tool.Name, ToolProfileDiscovery).Allowed {
+			t.Fatalf("MCP discovery tool %s is not allowed by discovery profile", tool.Name)
+		}
+		if tool.Name == "context_status" {
+			sawContextStatus = true
+		}
+		if !strings.HasPrefix(tool.Name, "context_") {
+			t.Fatalf("P8.1 MCP discovery tool %s should be graph-backed context surface only", tool.Name)
+		}
+		for _, forbidden := range []string{"read_file", "write_file", "shell", "context_pack", "go_read_symbol", "history_range", "blame_range"} {
+			if tool.Name == forbidden {
+				t.Fatalf("MCP discovery schema surface should not expose %s in P8.1", forbidden)
+			}
+		}
+	}
+	if !sawContextStatus {
+		t.Fatalf("MCP discovery schema surface should expose context_status: %#v", tools)
+	}
+}
+
 func TestBuildToolSchemaExportFailsOnManifestSchemaDrift(t *testing.T) {
 	manifest := BuildToolManifest(nil)
 	defs := BuildToolDefinitions(nil)

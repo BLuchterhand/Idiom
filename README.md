@@ -123,6 +123,11 @@ Other useful subcommands:
   coverage using IDs, hashes, counts, and statuses instead of prompt bodies,
   file bodies, private paths, or secrets. See
   [docs/product-evidence-export.md](docs/product-evidence-export.md).
+- `idiom mcp serve --stdio --profile discovery` — experimental P8.1 MCP stdio
+  sidecar. It serves `initialize`, `tools/list`, and `tools/call` for
+  schema-derived graph discovery tools only, using the same discovery profile
+  request filtering as `idiom tool --profile discovery`. MCP resources, roots,
+  telemetry parity, and broader protocol coverage are later P8 work.
 - `idiom brief lint <brief.md>` — pre-flight lint on an
   implementation brief.
 - `idiom lane postflight --diff <patch>` — QC pipeline against a
@@ -259,6 +264,16 @@ repo invocations, and the queue daemon therefore use the same rebuilt binary.
 
 For source-current runs, prefer `go run ./cmd/idiom <subcommand> <flags>` or
 run `make build` first and then use any of those symlinked entrypoints.
+
+MCP stdio discovery smoke:
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"context_status","arguments":{"limit":1}}}' \
+  | go run ./cmd/idiom mcp serve --stdio --profile discovery
+```
 
 ## In-app controls
 

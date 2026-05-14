@@ -51,6 +51,34 @@ func BuildToolSchemaExport(allowedTools []string) (ToolSchemaExport, error) {
 	)
 }
 
+// BuildMCPDiscoveryToolSchemas returns the schema-derived tool surface exposed
+// by the P8.1 MCP stdio server. The selection is intentionally derived from
+// the same exported schema/profile/policy metadata as `idiom tool schemas`:
+// tools must be allowed by the discovery profile, must be semantic discovery
+// tools, and in P8.1 must be graph-backed context tools. Raw file, language
+// source, history/blame, scan, and resource surfaces are deferred to later MCP
+// containment/parity work.
+func BuildMCPDiscoveryToolSchemas() ([]ExportedToolSchema, error) {
+	export, err := BuildToolSchemaExport(nil)
+	if err != nil {
+		return nil, err
+	}
+	var tools []ExportedToolSchema
+	for _, tool := range export.Tools {
+		if !exportedToolSchemaHasProfile(tool, ToolProfileDiscovery) {
+			continue
+		}
+		if !exportedToolSchemaHasCapability(tool, autonomy.CapabilitySemanticDiscovery) {
+			continue
+		}
+		if !strings.HasPrefix(tool.Name, "context_") {
+			continue
+		}
+		tools = append(tools, tool)
+	}
+	return tools, nil
+}
+
 func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolDefinition, profiles map[string][]string) (ToolSchemaExport, error) {
 	purposesByTool := make(map[string][]string)
 	for _, entry := range manifest {
@@ -300,6 +328,24 @@ func isToolSchemaDiagnosticTool(tool string) bool {
 func hasToolSchemaSideEffect(values []autonomy.SideEffectClass, want autonomy.SideEffectClass) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func exportedToolSchemaHasProfile(tool ExportedToolSchema, want string) bool {
+	for _, profile := range tool.Profiles {
+		if profile == want {
+			return true
+		}
+	}
+	return false
+}
+
+func exportedToolSchemaHasCapability(tool ExportedToolSchema, want autonomy.Capability) bool {
+	for _, capability := range tool.Policy.Capabilities {
+		if capability == want {
 			return true
 		}
 	}
