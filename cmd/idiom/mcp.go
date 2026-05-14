@@ -137,7 +137,7 @@ func printMCPUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  idiom mcp serve --stdio --profile discovery [--config config.json] [--caller-id id] [--request-id id] [--trace-id id]")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Serves the MCP stdio discovery surface: initialize, tools/list, tools/call, roots/list, resources/list, and metadata-only resources/read.")
-	fmt.Fprintln(stderr, "Tool responses use the shared sidecar envelope with transport=mcp_stdio and optional caller metadata. Resource redaction/freshness parity and full integration proof remain deferred.")
+	fmt.Fprintln(stderr, "Tool responses use the shared sidecar envelope with transport=mcp_stdio and optional caller metadata. Resource responses are metadata-only, protected-path aware, and report freshness without refreshing.")
 }
 
 type mcpDiscoveryServerOptions struct {
@@ -262,7 +262,7 @@ func (s *mcpDiscoveryServer) initializeResult() map[string]any {
 			"name":    "idiom",
 			"version": version,
 		},
-		"instructions": "Stdio discovery server exposes schema-derived discovery tools plus metadata-only, root-clamped resources. Tool calls use shared sidecar caller attribution with transport=mcp_stdio. Resource redaction/freshness parity and full integration proof are deferred.",
+		"instructions": "Stdio discovery server exposes schema-derived discovery tools plus metadata-only, root-clamped resources. Tool calls use shared sidecar caller attribution with transport=mcp_stdio. Resource responses report freshness without refreshing.",
 	}
 }
 
@@ -324,7 +324,6 @@ func (s *mcpDiscoveryServer) mcpResources() []map[string]any {
 			"mimeType":    "application/json",
 			"_meta": map[string]any{
 				"idiom_metadata_only": true,
-				"p8_4_deferred":       true,
 				"p8_6_deferred":       true,
 			},
 		},
@@ -368,6 +367,7 @@ func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error)
 			"absolute_path":     "<redacted_path>",
 			"metadata_only":     true,
 			"content_available": false,
+			"freshness":         s.resourceFreshness("."),
 		}, nil
 	case "idiom://workspace/discovery-tools":
 		names := make([]string, 0, len(s.tools))
@@ -381,6 +381,7 @@ func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error)
 			"tool_count":     len(names),
 			"tools":          names,
 			"metadata_only":  true,
+			"freshness":      s.resourceFreshness("."),
 		}, nil
 	case "idiom://workspace/resource-policy":
 		return map[string]any{
@@ -388,6 +389,12 @@ func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error)
 			"kind":           "resource_policy",
 			"metadata_only":  true,
 			"root_clamped":   true,
+			"freshness": map[string]any{
+				"policy":             "report_only",
+				"source_operation":   "context_status",
+				"refresh_allowed":    false,
+				"resource_semantics": "metadata_only",
+			},
 			"protected_locations": []string{
 				".git/**",
 				".idiom/**",
@@ -400,7 +407,6 @@ func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error)
 			},
 			"limitations": []string{
 				"file bodies are not returned by P8.2 resources/read",
-				"P8.4 owns full resource redaction and freshness parity",
 				"P8.6 owns complete MCP integration proof parity",
 			},
 		}, nil
@@ -421,6 +427,7 @@ func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error)
 				"size_bytes":        info.Size(),
 				"metadata_only":     true,
 				"content_available": false,
+				"freshness":         s.resourceFreshness(rel),
 			}, nil
 		case os.IsNotExist(err):
 			return nil, fmt.Errorf("resource not found or unavailable")
@@ -428,6 +435,50 @@ func (s *mcpDiscoveryServer) resourcePayload(uri string) (map[string]any, error)
 			return nil, fmt.Errorf("resource not available")
 		}
 	}
+}
+
+func (s *mcpDiscoveryServer) resourceFreshness(rel string) map[string]any {
+	req := workspace.ToolRequest{
+		Tool:            "context_status",
+		Path:            filepath.ToSlash(rel),
+		FreshnessPolicy: "report_only",
+		Limit:           1,
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		req.Path = "."
+	}
+	result := s.manager.Execute(context.Background(), req)
+	evidence := map[string]any{
+		"policy":            "report_only",
+		"source_operation":  "context_status",
+		"refresh_allowed":   false,
+		"refresh_attempted": false,
+	}
+	if result.Error != "" {
+		evidence["state"] = "unavailable"
+		evidence["error_class"] = "context_status_unavailable"
+		return evidence
+	}
+	var status map[string]any
+	if err := json.Unmarshal([]byte(result.Output), &status); err != nil {
+		evidence["state"] = "unavailable"
+		evidence["error_class"] = "context_status_decode_failed"
+		return evidence
+	}
+	if freshness, ok := status["freshness"].(map[string]any); ok {
+		for key, value := range freshness {
+			evidence[key] = value
+		}
+	}
+	if stale, ok := status["stale_evidence"].(map[string]any); ok {
+		evidence["stale_evidence"] = stale
+	}
+	for _, key := range []string{"indexed", "fresh", "index_id", "store_kind"} {
+		if value, ok := status[key]; ok {
+			evidence[key] = value
+		}
+	}
+	return evidence
 }
 
 func (s *mcpDiscoveryServer) resolveResourceFileURI(rawURI string) (string, string, error) {
@@ -508,8 +559,19 @@ func mcpResourcePathDenied(rel string) (bool, string) {
 			return true, "protected log path"
 		}
 	}
-	for _, segment := range segments {
+	for i, segment := range segments {
 		lower := strings.ToLower(segment)
+		switch lower {
+		case ".git", ".idiom", ".codex", ".agents":
+			return true, "protected path"
+		case "logs":
+			if i+1 < len(segments) {
+				next := strings.ToLower(segments[i+1])
+				if next == "telemetry" || next == "conversations" {
+					return true, "protected log path"
+				}
+			}
+		}
 		if lower == "secrets" ||
 			lower == ".env" ||
 			strings.HasPrefix(lower, ".env.") ||

@@ -347,6 +347,87 @@ func TestMCPDiscoveryResourcesAndRootsAreMetadataOnly(t *testing.T) {
 	assertNoMCPStrategyLeakage(t, stdout.String())
 }
 
+func TestMCPDiscoveryResourceFreshnessMatchesCLISidecarReportOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/p84\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	sourcePath := filepath.Join(root, "pkg", "pkg.go")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.WriteFile(sourcePath, []byte("package pkg\n\nfunc Run() string { return \"old\" }\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	mgr := workspace.NewManager(cfg.Workspace)
+	indexResult := mgr.Execute(testContext(t), workspace.ToolRequest{Tool: "context_index", Language: "go"})
+	if indexResult.Error != "" {
+		t.Fatalf("context_index fixture failed: %s\n%s", indexResult.Error, indexResult.Output)
+	}
+	graphPath := filepath.Join(root, ".idiom", "comprehension", "graph.sqlite")
+	graphBefore := mustStatForTest(t, graphPath)
+	if err := os.WriteFile(sourcePath, []byte("package pkg\n\nfunc Run() string { return \"new\" }\n"), 0o644); err != nil {
+		t.Fatalf("stale source: %v", err)
+	}
+	configPath := writeMainConfigRoot(t, root)
+
+	var cliStdout, cliStderr bytes.Buffer
+	code := runMain([]string{
+		"tool", "context_status",
+		"-config", configPath,
+		"--profile", "discovery",
+		"--input", `{"path":"pkg/pkg.go","freshness_policy":"report_only","limit":1}`,
+	}, &cliStdout, &cliStderr)
+	if code != 0 {
+		t.Fatalf("CLI context_status failed with %d stdout=%s stderr=%s", code, cliStdout.String(), cliStderr.String())
+	}
+	cliPayload := decodeP84CLISidecarPayload(t, cliStdout.Bytes())
+	if cliPayload.Sidecar.Freshness["policy"] != "report_only" ||
+		cliPayload.Sidecar.Freshness["operation"] != "context_status" ||
+		cliPayload.Sidecar.Freshness["fresh_for_scope"] != false {
+		t.Fatalf("expected stale report-only CLI freshness, got %#v", cliPayload.Sidecar.Freshness)
+	}
+
+	server := newTestMCPDiscoveryServer(t, cfg)
+	input := `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"idiom://workspace/file/pkg/pkg.go"}}` + "\n"
+	var mcpStdout bytes.Buffer
+	if err := server.serve(testContext(t), strings.NewReader(input), &mcpStdout); err != nil {
+		t.Fatalf("serve MCP resource freshness frame: %v", err)
+	}
+	frames := decodeMCPFrames(t, mcpStdout.String())
+	resourcePayload := decodeMCPResourcePayload(t, frames[0])
+	freshness, ok := resourcePayload["freshness"].(map[string]any)
+	if !ok {
+		t.Fatalf("resource payload missing freshness: %#v", resourcePayload)
+	}
+	for _, key := range []string{"policy", "operation", "fresh_for_scope", "stale_path_count", "missing_path_count", "scope"} {
+		if !reflect.DeepEqual(freshness[key], cliPayload.Sidecar.Freshness[key]) {
+			t.Fatalf("MCP freshness %s = %#v, want CLI sidecar %#v\nmcp=%#v\ncli=%#v", key, freshness[key], cliPayload.Sidecar.Freshness[key], freshness, cliPayload.Sidecar.Freshness)
+		}
+	}
+	if freshness["refresh_allowed"] != false || freshness["refresh_attempted"] != false {
+		t.Fatalf("MCP resource freshness must remain report-only/no-refresh: %#v", freshness)
+	}
+	staleEvidence, ok := freshness["stale_evidence"].(map[string]any)
+	if !ok || staleEvidence["state"] == "fresh" {
+		t.Fatalf("MCP resource should make stale state explicit, got %#v", freshness)
+	}
+	graphAfter := mustStatForTest(t, graphPath)
+	if !graphAfter.ModTime().Equal(graphBefore.ModTime()) {
+		t.Fatalf("MCP report-only resource read changed graph mtime: before=%s after=%s", graphBefore.ModTime(), graphAfter.ModTime())
+	}
+	for _, forbidden := range []string{root, os.TempDir(), "package pkg", "return \"new\"", sourcePath} {
+		if strings.Contains(mcpStdout.String(), forbidden) {
+			t.Fatalf("freshness parity payload leaked forbidden value %q\nmcp=%s", forbidden, mcpStdout.String())
+		}
+	}
+	assertMCPPublicPayloadSafe(t, mcpStdout.String(), root)
+	assertNoMCPStrategyLeakage(t, mcpStdout.String())
+}
+
 func TestMCPDiscoveryResourceReadDeniesOutOfRootProtectedAndSymlinkEscapes(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -498,6 +579,12 @@ func TestMCPDiscoveryResourceReadDeniesHyphenatedPrivateKeySegmentBeforeMetadata
 
 func TestMCPResourcePathDeniedChecksSensitiveMarkersInAnySegment(t *testing.T) {
 	for _, rel := range []string{
+		"safe/.git/config",
+		"safe/.idiom/comprehension/graph.sqlite",
+		"safe/.codex/project-context.md",
+		"safe/.agents/config.json",
+		"safe/logs/telemetry/session.jsonl",
+		"safe/logs/conversations/session.jsonl",
 		"safe/secret-cache/config.json",
 		"safe/credentials/config.json",
 		"safe/token-cache/config.json",
@@ -513,6 +600,55 @@ func TestMCPResourcePathDeniedChecksSensitiveMarkersInAnySegment(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMCPDiscoveryResourceReadDeniesProtectedSegmentsBeforeMetadata(t *testing.T) {
+	root := t.TempDir()
+	fixtures := map[string]string{
+		"safe/.git/config":                       "P84_GIT_SENTINEL_DO_NOT_LEAK",
+		"safe/.idiom/comprehension/graph.sqlite": "P84_IDIOM_SENTINEL_DO_NOT_LEAK",
+		"safe/.codex/project-context.md":         "P84_CODEX_SENTINEL_DO_NOT_LEAK",
+		"safe/.agents/config.json":               "P84_AGENTS_SENTINEL_DO_NOT_LEAK",
+		"safe/logs/telemetry/session.jsonl":      "P84_TELEMETRY_SENTINEL_DO_NOT_LEAK",
+		"safe/logs/conversations/session.jsonl":  "P84_CONVERSATION_SENTINEL_DO_NOT_LEAK",
+	}
+	var input []string
+	for rel, body := range fixtures {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+		input = append(input, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"resources/read","params":{"uri":"idiom://workspace/file/%s"}}`, len(input)+1, rel))
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	server := newTestMCPDiscoveryServer(t, cfg)
+
+	var stdout bytes.Buffer
+	if err := server.serve(testContext(t), strings.NewReader(strings.Join(input, "\n")+"\n"), &stdout); err != nil {
+		t.Fatalf("serve protected-segment denial frames: %v", err)
+	}
+	frames := decodeMCPFramesAllowErrors(t, stdout.String())
+	if len(frames) != len(fixtures) {
+		t.Fatalf("expected %d denial responses, got %d:\n%s", len(fixtures), len(frames), stdout.String())
+	}
+	for _, frame := range frames {
+		if errFrame := mcpErrorFromFrame(t, frame); errFrame.Code != -32602 {
+			t.Fatalf("protected resource denial should be invalid params, got %#v", errFrame)
+		}
+	}
+	for rel, body := range fixtures {
+		for _, forbidden := range []string{rel, filepath.Join(root, filepath.FromSlash(rel)), body, "relative_path", "size_bytes", "contents"} {
+			if strings.Contains(stdout.String(), forbidden) {
+				t.Fatalf("protected resource denial leaked forbidden value %q:\n%s", forbidden, stdout.String())
+			}
+		}
+	}
+	assertMCPPublicPayloadSafe(t, stdout.String(), root)
 }
 
 func TestMCPDiscoveryProtocolAndErrorFrames(t *testing.T) {
@@ -606,6 +742,16 @@ type decodedMCPToolPayload struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
+	} `json:"sidecar"`
+}
+
+type decodedP84CLISidecarPayload struct {
+	Tool    string `json:"Tool"`
+	Output  string `json:"Output"`
+	Sidecar struct {
+		Profile   string         `json:"profile"`
+		Freshness map[string]any `json:"freshness"`
+		Error     any            `json:"error"`
 	} `json:"sidecar"`
 }
 
@@ -807,6 +953,21 @@ func decodeMCPToolTextPayload(t *testing.T, result decodedMCPToolResult) decoded
 	return payload
 }
 
+func decodeP84CLISidecarPayload(t *testing.T, data []byte) decodedP84CLISidecarPayload {
+	t.Helper()
+	var payload decodedP84CLISidecarPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode CLI sidecar payload: %v\n%s", err, string(data))
+	}
+	if payload.Tool != "context_status" || payload.Sidecar.Profile != workspace.ToolProfileDiscovery || payload.Sidecar.Error != nil {
+		t.Fatalf("unexpected CLI sidecar payload: %#v", payload)
+	}
+	if len(payload.Sidecar.Freshness) == 0 {
+		t.Fatalf("CLI payload missing sidecar freshness: %#v", payload)
+	}
+	return payload
+}
+
 func decodeMCPClientToolPayload(t *testing.T, result mcppkg.ToolCallResult) decodedMCPToolPayload {
 	t.Helper()
 	if len(result.Content) != 1 {
@@ -894,6 +1055,15 @@ func mcpClientContentText(t *testing.T, result mcppkg.ToolCallResult) string {
 		t.Fatalf("unexpected MCP client content type: %#v", content)
 	}
 	return content.Text
+}
+
+func mustStatForTest(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info
 }
 
 func mcpJSONForTest(t *testing.T, value any) string {
