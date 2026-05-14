@@ -4096,6 +4096,90 @@ func TestImplementationPreWriteNonWriteRecoveryAllowsSubmitPlanInPlannerPhase(t 
 	}
 }
 
+func TestPlanExecuteExactAnchorPlannerDoesNotPreHideReadTools(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "actual\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"target.txt","named_gap":"confirm exact anchor before submit_plan","why_not_answering":"need current target.txt contents to assemble the plan entry"}`,
+		`{"tool":"submit_plan","rationale":"Update target.txt using the confirmed exact anchor.","edits":[{"path":"target.txt","old_text":"actual\n","new_text":"updated\n","purpose":"replace the confirmed target text"}]}`,
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var readSucceeded bool
+	var hiddenRead bool
+	var readErrors []string
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Constraints:       []string{"exact_anchor_implementation"},
+			RequiredEditPaths: []string{"target.txt"},
+			TargetRefs:        []string{"target.txt"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+				{Path: "target.txt", Content: "actual\n"},
+			},
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "plan exact-anchor target edit"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool != "read_file" {
+				return
+			}
+			if strings.Contains(event.Result.Error, "hidden for the rest of this turn") {
+				hiddenRead = true
+			}
+			if strings.TrimSpace(event.Result.Error) != "" {
+				readErrors = append(readErrors, event.Result.Error)
+				return
+			}
+			if strings.Contains(event.Result.Output, "actual") {
+				readSucceeded = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if hiddenRead {
+		t.Fatalf("plan-execute exact-anchor planner read_file was hidden before submit_plan; read errors=%v answer=%q", readErrors, answer)
+	}
+	if !readSucceeded {
+		t.Fatalf("expected plan-execute exact-anchor planner to read target.txt before submit_plan; read errors=%v answer=%q", readErrors, answer)
+	}
+	if strings.Contains(answer, "Exact-anchor implementation did not complete because") {
+		t.Fatalf("plan-execute planner should not return exact-anchor hidden-tool blocker, got %q", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected read then submit_plan, got %d request(s)", requests)
+	}
+}
+
 func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 	replies := []string{"Done.", "Done.", "Done."}
 	requests := 0

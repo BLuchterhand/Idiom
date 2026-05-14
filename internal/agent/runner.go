@@ -127,9 +127,9 @@ func (r *Runner) Run(
 	turnHiddenTools := make(map[string]bool)
 	exactAnchorHiddenTools := make(map[string]bool)
 	implementationScopedHiddenTools := make(map[string]bool)
-	exactAnchorWriteOnlyActive := exactAnchorImplementationActive(r.RuntimeBrief)
-	exactAnchorWriteFailures := 0
 	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
+	exactAnchorWriteOnlyActive := exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, collectedResults)
+	exactAnchorWriteFailures := 0
 	rebuildTools := func() {
 		if r.Workspace == nil {
 			return
