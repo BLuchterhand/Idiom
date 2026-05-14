@@ -923,13 +923,94 @@ func TestContextStatusRefreshesSmallStaleFileSetWithoutScope(t *testing.T) {
 		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
 	}
 	if !statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Reason != "small_stale_file_set" || statusReport.AutoRefresh.FilesIndexed != 1 || !statusReport.AutoRefresh.FreshAfter {
-		t.Fatalf("expected capped small-stale-set status refresh, got %#v", statusReport.AutoRefresh)
+		t.Fatalf("expected small-stale-set status refresh, got %#v", statusReport.AutoRefresh)
 	}
 	if statusReport.AutoRefresh.PartialRefreshReason != "exact_scope_refresh" || statusReport.AutoRefresh.FullRebuildReason != "" {
 		t.Fatalf("expected unscoped small stale-set repair to stay exact and bounded, got %#v", statusReport.AutoRefresh)
 	}
 	if !statusReport.Fresh || len(statusReport.StaleFiles) != 0 || !slices.Contains(statusReport.AutoRefresh.RefreshedFiles, "pkg/pkg.go") {
 		t.Fatalf("expected fresh status after small stale-file refresh, got %#v", statusReport)
+	}
+}
+
+func TestContextStatusRefreshMaxFilesUsesExplicitCapsOnlyForUnscopedStatus(t *testing.T) {
+	staleStatus := comprehension.StatusReport{Indexed: true, Fresh: false}
+
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status"}, staleStatus); got != 0 {
+		t.Fatalf("expected default unscoped refresh to be uncapped, got %d", got)
+	}
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status", Limit: 12}, staleStatus); got != 12 {
+		t.Fatalf("expected limit to cap unscoped refresh when freshness_max_files is absent, got %d", got)
+	}
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status", FreshnessMaxFiles: 7, Limit: 12}, staleStatus); got != 7 {
+		t.Fatalf("expected freshness_max_files to win over limit, got %d", got)
+	}
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status", Path: "pkg"}, staleStatus); got != 0 {
+		t.Fatalf("expected bounded path refresh to remain uncapped by default, got %d", got)
+	}
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status", RequiredEditPaths: []string{"pkg/a.go"}}, staleStatus); got != 0 {
+		t.Fatalf("expected required edit path refresh to remain uncapped by default, got %d", got)
+	}
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status"}, comprehension.StatusReport{Indexed: true, Fresh: false, CollectorVersionMismatch: true}); got != 0 {
+		t.Fatalf("expected collector-version rebuild path to remain uncapped by stale-file default, got %d", got)
+	}
+	if got := contextStatusRefreshMaxFiles(ToolRequest{Tool: "context_status"}, comprehension.StatusReport{Indexed: true, Fresh: true}); got != 0 {
+		t.Fatalf("expected fresh status to need no refresh budget, got %d", got)
+	}
+}
+
+func TestContextStatusRefreshDoesNotDefaultCapLargeUnboundedStaleSet(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/statusuncappedlarge\n\ngo 1.22\n")
+	const staleFileCount = 205
+	for i := 0; i < staleFileCount; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("file_%03d.go", i)), fmt.Sprintf("package pkg\n\nfunc File%03d() string { return \"old\" }\n", i))
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+	for i := 0; i < staleFileCount; i++ {
+		writeWorkspaceFile(t, filepath.Join(root, "pkg", fmt.Sprintf("file_%03d.go", i)), fmt.Sprintf("package pkg\n\nfunc File%03d() string { return \"new\" }\n", i))
+	}
+
+	result = mgr.Execute(context.Background(), ToolRequest{Tool: "context_status", Refresh: true, Language: "go"})
+	if result.Error != "" {
+		t.Fatalf("context_status returned error: %v\n%s", result.Error, result.Output)
+	}
+	var statusReport struct {
+		Fresh       bool `json:"fresh"`
+		AutoRefresh struct {
+			Attempted      bool     `json:"attempted"`
+			Reason         string   `json:"reason"`
+			SkippedReason  string   `json:"skipped_reason"`
+			FilesIndexed   int      `json:"files_indexed"`
+			FreshAfter     bool     `json:"fresh_after"`
+			StalePathCount int      `json:"stale_path_count"`
+			MaxFiles       int      `json:"max_files"`
+			RefreshScopes  []string `json:"refresh_scopes"`
+		} `json:"auto_refresh"`
+		Freshness struct {
+			FreshForScope  bool `json:"fresh_for_scope"`
+			BudgetExceeded bool `json:"budget_exceeded"`
+		} `json:"freshness"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &statusReport); err != nil {
+		t.Fatalf("decode context_status output: %v\n%s", err, result.Output)
+	}
+	if !statusReport.AutoRefresh.Attempted || statusReport.AutoRefresh.Reason != "small_stale_file_set" || statusReport.AutoRefresh.SkippedReason != "" || statusReport.AutoRefresh.FilesIndexed != staleFileCount || !statusReport.AutoRefresh.FreshAfter {
+		t.Fatalf("expected uncapped stale-set refresh, got %#v", statusReport.AutoRefresh)
+	}
+	if statusReport.AutoRefresh.MaxFiles != 0 || statusReport.AutoRefresh.StalePathCount != 0 {
+		t.Fatalf("default refresh should not report budget fields, got %#v", statusReport.AutoRefresh)
+	}
+	if len(statusReport.AutoRefresh.RefreshScopes) != 1 || statusReport.AutoRefresh.RefreshScopes[0] != "pkg" {
+		t.Fatalf("expected large stale set to refresh the shared directory once, got %#v", statusReport.AutoRefresh.RefreshScopes)
+	}
+	if !statusReport.Fresh || !statusReport.Freshness.FreshForScope || statusReport.Freshness.BudgetExceeded {
+		t.Fatalf("expected fresh read-through decision without budget blocker, got %#v", statusReport)
 	}
 }
 

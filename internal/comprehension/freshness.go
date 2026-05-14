@@ -496,14 +496,16 @@ func recordFreshnessOutcome(decision FreshnessDecision) {
 }
 
 func refreshFreshnessFileSet(ctx context.Context, root string, req FreshnessRequest, paths []string, reason string, language string, mode string) *RefreshReport {
+	refreshScopes := freshnessRefreshScopes(paths, req.MaxFiles)
 	report := &RefreshReport{
 		Attempted:      true,
-		Scope:          fmt.Sprintf("%d stale/missing file(s)", len(paths)),
+		Scope:          fmt.Sprintf("%d stale/missing file(s) across %d refresh scope(s)", len(paths), len(refreshScopes)),
 		Language:       language,
 		Reason:         reason,
 		RefreshedFiles: append([]string(nil), paths...),
+		RefreshScopes:  refreshScopes,
 	}
-	for _, path := range paths {
+	for _, path := range refreshScopes {
 		pathLanguage := language
 		if pathLanguage != "auto" && freshnessPathMissing(root, path) {
 			pathLanguage = "auto"
@@ -537,6 +539,81 @@ func refreshFreshnessFileSet(ctx context.Context, root string, req FreshnessRequ
 		report.FreshAfter = after.Fresh
 	}
 	return report
+}
+
+func freshnessRefreshScopes(paths []string, maxFiles int) []string {
+	paths = cleanFreshnessPaths(paths)
+	if len(paths) <= 1 || maxFiles > 0 {
+		return paths
+	}
+	byDir := make(map[string][]string)
+	for _, path := range paths {
+		dir := pathDirForRefresh(path)
+		byDir[dir] = append(byDir[dir], path)
+	}
+	scopes := make([]string, 0, len(byDir))
+	dirs := make([]string, 0, len(byDir))
+	for dir, members := range byDir {
+		if dir != "." {
+			dirs = append(dirs, dir)
+		}
+		if dir != "." && len(members) > 1 {
+			scopes = append(scopes, dir)
+			continue
+		}
+		scopes = append(scopes, members...)
+	}
+	scopes = append(scopes, collapseHighFanoutFreshnessScopes(dirs)...)
+	return removeCoveredFreshnessScopes(scopes)
+}
+
+func collapseHighFanoutFreshnessScopes(scopes []string) []string {
+	const siblingCollapseThreshold = 8
+	scopes = cleanFreshnessPaths(scopes)
+	byParent := make(map[string][]string)
+	for _, scope := range scopes {
+		parent := pathDirForRefresh(scope)
+		if parent == "." || parent == "" {
+			continue
+		}
+		byParent[parent] = append(byParent[parent], scope)
+	}
+	collapsedParents := make(map[string]struct{})
+	for parent, members := range byParent {
+		if len(members) >= siblingCollapseThreshold {
+			collapsedParents[parent] = struct{}{}
+		}
+	}
+	if len(collapsedParents) == 0 {
+		return nil
+	}
+	next := make([]string, 0, len(collapsedParents))
+	for parent := range collapsedParents {
+		next = append(next, parent)
+	}
+	return cleanFreshnessPaths(next)
+}
+
+func removeCoveredFreshnessScopes(scopes []string) []string {
+	scopes = cleanFreshnessPaths(scopes)
+	out := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		covered := false
+		for _, other := range scopes {
+			if other == scope {
+				continue
+			}
+			if pathInScope(scope, other) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			out = append(out, scope)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func statusAfterFreshnessRefresh(root string, scope string, operation string, before StatusReport) (StatusReport, error) {

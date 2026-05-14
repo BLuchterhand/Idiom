@@ -210,6 +210,7 @@ type RefreshReport struct {
 	FullRebuildReason    string   `json:"full_rebuild_reason,omitempty"`
 	FreshAfter           bool     `json:"fresh_after,omitempty"`
 	RefreshedFiles       []string `json:"refreshed_files,omitempty"`
+	RefreshScopes        []string `json:"refresh_scopes,omitempty"`
 }
 
 type ZoomOptions struct {

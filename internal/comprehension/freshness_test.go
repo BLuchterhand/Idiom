@@ -2,7 +2,9 @@ package comprehension
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -66,6 +68,83 @@ func TestEnsureFreshRefreshesBoundedStalePath(t *testing.T) {
 	}
 	if !hasNode(graph.Nodes, "symbol://pkg/pkg.go#NewName") || hasNode(graph.Nodes, "symbol://pkg/pkg.go#OldName") {
 		t.Fatalf("expected refreshed source fingerprints and symbols, got nodes=%#v", graph.Nodes)
+	}
+}
+
+func TestEnsureFreshCoalescesStaleFilesInSameDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/freshcoalesce\n\ngo 1.22\n")
+	for i := 0; i < 5; i++ {
+		writeFile(t, filepath.Join(root, "pkg", string(rune('a'+i))+".go"), fmt.Sprintf("package pkg\n\nfunc OldName%d() string { return \"old\" }\n", i))
+	}
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		writeFile(t, filepath.Join(root, "pkg", string(rune('a'+i))+".go"), fmt.Sprintf("package pkg\n\nfunc NewName%d() string { return \"new\" }\n", i))
+	}
+
+	decision, err := EnsureFresh(context.Background(), FreshnessRequest{
+		Root:      root,
+		Operation: "context_status",
+		Policy:    FreshnessReadThrough,
+		Language:  "go",
+	})
+	if err != nil {
+		t.Fatalf("EnsureFresh: %v", err)
+	}
+	if decision.Refresh == nil || !decision.Refresh.Attempted || !reflect.DeepEqual(decision.Refresh.RefreshScopes, []string{"pkg"}) {
+		t.Fatalf("expected same-directory stale set to refresh one directory scope, got %#v", decision.Refresh)
+	}
+	if len(decision.Refresh.RefreshedFiles) != 5 || decision.Refresh.FilesIndexed != 5 {
+		t.Fatalf("expected all stale files to remain accounted for, got %#v", decision.Refresh)
+	}
+	if !decision.FreshForScope || !decision.Refresh.FreshAfter {
+		t.Fatalf("expected fresh decision after coalesced refresh, got %#v", decision)
+	}
+}
+
+func TestFreshnessRefreshScopesPreserveExplicitMaxFileShape(t *testing.T) {
+	paths := []string{"pkg/a.go", "pkg/b.go"}
+	if got := freshnessRefreshScopes(paths, 2); !reflect.DeepEqual(got, paths) {
+		t.Fatalf("explicit max-files refresh should preserve per-path scopes, got %#v", got)
+	}
+}
+
+func TestFreshnessRefreshScopesCollapseHighFanoutDirectories(t *testing.T) {
+	paths := []string{
+		"generated/a/file.go",
+		"generated/b/file.go",
+		"generated/c/file.go",
+		"generated/d/file.go",
+		"generated/e/file.go",
+		"generated/f/file.go",
+		"generated/g/file.go",
+		"generated/h/file.go",
+	}
+	if got := freshnessRefreshScopes(paths, 0); !reflect.DeepEqual(got, []string{"generated"}) {
+		t.Fatalf("expected high-fanout stale set to collapse to parent scope, got %#v", got)
+	}
+}
+
+func TestFreshnessRefreshScopesDoesNotOverCollapseNestedFanout(t *testing.T) {
+	paths := []string{
+		"native/godot-cpp/gen/include/godot_cpp/classes/a/file.hpp",
+		"native/godot-cpp/gen/include/godot_cpp/classes/b/file.hpp",
+		"native/godot-cpp/gen/include/godot_cpp/classes/c/file.hpp",
+		"native/godot-cpp/gen/include/godot_cpp/classes/d/file.hpp",
+		"native/godot-cpp/gen/include/godot_cpp/classes/e/file.hpp",
+		"native/godot-cpp/gen/include/godot_cpp/classes/f/file.hpp",
+		"native/godot-cpp/gen/include/godot_cpp/classes/g/file.hpp",
+		"native/godot-cpp/gen/include/godot_cpp/classes/h/file.hpp",
+		"scripts/tool.py",
+	}
+	want := []string{
+		"native/godot-cpp/gen/include/godot_cpp/classes",
+		"scripts/tool.py",
+	}
+	if got := freshnessRefreshScopes(paths, 0); !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected nested high-fanout collapse to stop at the narrow parent, got %#v", got)
 	}
 }
 
