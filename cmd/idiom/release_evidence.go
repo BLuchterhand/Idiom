@@ -775,6 +775,9 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 		if gate.Gate == "P9.10" && gate.Status != "evidence_present" {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.10 competitive benchmark evidence incomplete", Evidence: gate.Status})
 		}
+		if gate.Gate == "P9.11" && gate.Status != "evidence_present" {
+			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.11 client demo transcript evidence incomplete", Evidence: gate.Status})
+		}
 	}
 	return releaseEvidenceCompactBlockers(blockers)
 }
@@ -1112,7 +1115,14 @@ func releaseGateLinkageByGate(rows []p711ReleaseGateLinkage, gate string) p711Re
 }
 
 func releaseGateLinkageFromProduct(rows []p711ReleaseGateLinkage, clients []releaseEvidenceClientReadiness, activation releaseEvidenceActivationSection) []p711ReleaseGateLinkage {
-	p912Status := releaseP912ReadinessStatus(clients)
+	p911Status := "needs_evidence"
+	for _, row := range rows {
+		if row.Gate == "P9.11" {
+			p911Status = row.Status
+			break
+		}
+	}
+	p912Status := releaseP912ReadinessStatus(clients, p911Status)
 	out := make([]p711ReleaseGateLinkage, 0, len(rows)+1)
 	foundP912 := false
 	foundP96 := false
@@ -1165,8 +1175,8 @@ func releaseP96GateLinkage(row p711ReleaseGateLinkage, activation releaseEvidenc
 	return row
 }
 
-func releaseP912ReadinessStatus(clients []releaseEvidenceClientReadiness) string {
-	if len(clients) == 0 {
+func releaseP912ReadinessStatus(clients []releaseEvidenceClientReadiness, p911Status string) string {
+	if len(clients) == 0 || p911Status != "evidence_present" {
 		return "needs_evidence"
 	}
 	for _, row := range clients {

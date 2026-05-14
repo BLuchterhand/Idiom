@@ -72,6 +72,7 @@
       ],
       "mvp_limitation": "Proof-only: no regulated finance, FINRA, retention, or formal compliance claim is made in the MVP demo.",
       "final_state_expansion": "A later regulated package can add reviewed control mapping, retention export, procurement artifacts, and support posture after P7.9/P9.9 review.",
+      "privacy_posture": "Metadata-only demo posture: no raw prompt, no raw file body, no secrets, no private paths, no account data, and no customer identifiers are expected in fixture or generated output.",
       "pass_no_go_criteria": {
         "pass": [
           "The command exits non-zero with profile_denied before writing.",
@@ -83,6 +84,7 @@
           "The demo is used as a finance compliance claim."
         ]
       },
+      "release_claim_impact": "Allows only a proof-only finance demo claim; no regulated compliance, retention, attestation, sales, or release-readiness claim is supported.",
       "commands": [
         {
           "id": "finance-discovery-policy",
@@ -153,7 +155,7 @@
       "stance": "regulated proof-only",
       "p7_6_command_id": "healthcare-redaction-denial",
       "value_claim": "A healthcare reviewer can see that additive context-packet generation is denied under the read-only discovery profile without exposing sensitive task content.",
-      "selling_point": "Idiom demonstrates privacy and side-effect contracts for local evidence; it does not claim HIPAA compliance.",
+      "selling_point": "Idiom demonstrates privacy and side-effect contracts for local evidence; it does not make healthcare governance claims.",
       "generic_primitives": [
         "context_pack",
         "discovery_profile_policy",
@@ -176,6 +178,7 @@
       ],
       "mvp_limitation": "Proof-only: the demo uses a non-sensitive fixture task and makes no HIPAA, PHI-processing, or healthcare compliance claim.",
       "final_state_expansion": "A later regulated package can add reviewed PHI avoidance guidance, retention controls, redaction review, and MCP resource parity.",
+      "privacy_posture": "Metadata-only demo posture: no raw prompt, no raw file body, no secrets, no private paths, no PHI, and no customer identifiers are expected in fixture or generated output.",
       "pass_no_go_criteria": {
         "pass": [
           "The discovery-profile context_pack request exits non-zero with profile_denied.",
@@ -187,6 +190,7 @@
           "The denied output leaks task content or private paths."
         ]
       },
+      "release_claim_impact": "Allows only a proof-only healthcare demo claim; no HIPAA, PHI-processing, attestation, sales, or release-readiness claim is supported.",
       "commands": [
         {
           "id": "healthcare-redaction-denial",
@@ -272,8 +276,9 @@
         "sidecar.audit_event_ids",
         "sidecar.error.class"
       ],
-      "mvp_limitation": "Proof-only: the MVP demo makes no FedRAMP, DoD, NIST certification, offline procurement, or fleet-admin claim.",
+      "mvp_limitation": "Proof-only: the MVP demo makes no public-sector, FedRAMP, DoD, NIST approval, offline procurement, or fleet-admin claim.",
       "final_state_expansion": "A later public-sector package can add reproducible release bundles, checksums, offline install paths, policy retention, and reviewed support boundaries.",
+      "privacy_posture": "Metadata-only demo posture: no raw prompt, no raw file body, no secrets, no private paths, no private URLs, and no partner-identifying details are expected in fixture or generated output.",
       "pass_no_go_criteria": {
         "pass": [
           "The shell request exits non-zero with profile_denied before execution.",
@@ -285,6 +290,7 @@
           "The demo claims certification, procurement readiness, or managed support before review."
         ]
       },
+      "release_claim_impact": "Allows only a proof-only public-sector side-effect-control demo claim; no certification, procurement, managed support, or release-readiness claim is supported.",
       "commands": [
         {
           "id": "public-sector-offline-side-effect-denial",
@@ -372,6 +378,7 @@
       ],
       "mvp_limitation": "Primary buyer proof remains local and CLI-first; retained use, product-evidence export, paid signal, SSO, fleet policy, and hosted dashboard claims remain P7.11/P9.7/P9.12 scope.",
       "final_state_expansion": "A final enterprise package can add product-evidence export, support tiers, procurement artifacts, policy management, and release-gate reporting while preserving local evidence defaults.",
+      "privacy_posture": "Metadata-only demo posture: no raw prompt, no raw file body, no secrets, no private paths, no private repo URLs, and no customer identifiers are expected in fixture or generated output.",
       "pass_no_go_criteria": {
         "pass": [
           "The source_sanity command exits zero on the fixture file.",
@@ -383,6 +390,7 @@
           "The demo is used as paid-demand proof without a complete P0.8/P9.7 design-partner record."
         ]
       },
+      "release_claim_impact": "Supports the primary enterprise-SaaS buyer-facing demo story for local sidecar trust evidence only; paid buyer signal, retained use, support scope, and release approval remain gated by P9.7/P9.12.",
       "commands": [
         {
           "id": "enterprise-source-sanity-contract",
@@ -467,6 +475,7 @@
       ],
       "mvp_limitation": "MVP support is limited to CLI schema and integration-question triage; MCP resource parity, SDKs, and partner conformance remain Phase 8 and later scope.",
       "final_state_expansion": "A partner package can add MCP parity, compatibility reports, conformance tests, embedded-sidecar terms, SDKs, and support tiers.",
+      "privacy_posture": "Metadata-only demo posture: no raw prompt, no raw file body, no secrets, no private paths, no private repo URLs, and no partner-identifying details are expected in fixture or generated output.",
       "pass_no_go_criteria": {
         "pass": [
           "The schema command exits zero and emits generic client classification metadata.",
@@ -478,6 +487,7 @@
           "The demo claims MCP implementation before Phase 8 parity exists."
         ]
       },
+      "release_claim_impact": "Supports a secondary tooling-vendor integration demo only; partner packaging, SDK behavior, conformance, support scope, and release approval remain later-gate evidence.",
       "commands": [
         {
           "id": "tooling-vendor-schema-metadata",
@@ -538,6 +548,7 @@
       ],
       "mvp_limitation": "The demo proves readiness and privacy shape only; model quality, live capacity, backend reliability, and tuning support remain P6/P9.9 scope.",
       "final_state_expansion": "A local-operations package can add capacity history, queue controls, offline evidence management, cleanup review, and backend support policy.",
+      "privacy_posture": "Metadata-only demo posture: no raw prompt, no raw file body, no secrets, no private paths, no private repo URLs, and no hosted telemetry are expected in fixture or generated output.",
       "pass_no_go_criteria": {
         "pass": [
           "The local-ops benchmark exits zero with schema-versioned readiness output.",
@@ -549,6 +560,7 @@
           "The output captures raw prompts, raw file bodies, credentials, or private repo identifiers."
         ]
       },
+      "release_claim_impact": "Supports a local/private-code readiness-shape demo only; model quality, live capacity, backend reliability, tuning support, and release approval remain outside this evidence.",
       "commands": [
         {
           "id": "local-model-readiness-evidence",
@@ -621,6 +633,7 @@
       ],
       "mvp_limitation": "Open-source activation supports adoption, docs, demo, and retained-use confidence only; it does not count as paid enterprise-SaaS demand without a separate primary-ICP record.",
       "final_state_expansion": "A community package can add polished quickstart fixtures, cleanup reporting, retained-use examples, and privacy-safe product-evidence exports.",
+      "privacy_posture": "Metadata-only demo posture: no raw prompt, no raw file body, no secrets, no private paths, no private repo URLs, and no hosted telemetry are expected in fixture or generated output.",
       "pass_no_go_criteria": {
         "pass": [
           "The quickstart export command exits zero on the fixture workspace.",
@@ -632,6 +645,7 @@
           "The demo is represented as paid enterprise-SaaS demand without P0.8/P9.7 evidence."
         ]
       },
+      "release_claim_impact": "Supports the open-source adoption-wedge demo only; it does not replace primary enterprise-SaaS buyer evidence, paid rollout, support scope, or release approval evidence.",
       "commands": [
         {
           "id": "open-source-context-pack",

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"idiom/internal/comprehension"
@@ -253,6 +254,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 	integration, integrationRef := loadP711IntegrationProofs(root)
 	security, securityRef := loadP711SecurityPosture(root)
 	demos, demosRef := loadP711ClientDemoTranscripts(root)
+	p911 := p911ClientDemoGate(demos, demosRef)
 	records, recordsRef := loadP711ValidationRecords(opts.ValidationRecords)
 	learning, learningRef := loadP711LearningSummary(root)
 	competitive, competitiveRef := loadP910CompetitiveBenchmarkEvidence(root, opts.BenchmarkReport)
@@ -330,7 +332,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			learningRef,
 			competitiveRef,
 		},
-		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records, p99, p910CompetitiveBenchmarkGate(competitive, competitiveRef)),
+		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records, p99, p910CompetitiveBenchmarkGate(competitive, competitiveRef), p911),
 		Limitations:        productEvidenceExportLimitations(integration),
 		Metadata: map[string]any{
 			"generated_by": "idiom product-evidence export",
@@ -529,16 +531,76 @@ type p99PostureEvidence struct {
 }
 
 type p711DemoTranscriptSet struct {
-	Transcripts []p711DemoTranscript `json:"transcripts"`
+	SchemaVersion string                 `json:"schema_version"`
+	Name          string                 `json:"name"`
+	Description   string                 `json:"description,omitempty"`
+	Shared        p711SharedDemoContract `json:"shared_contract,omitempty"`
+	Transcripts   []p711DemoTranscript   `json:"transcripts"`
+}
+
+type p711SharedDemoContract struct {
+	SidecarSchemaVersion    string   `json:"sidecar_schema_version,omitempty"`
+	DecisionBoundary        string   `json:"decision_boundary,omitempty"`
+	GenericPrimitives       []string `json:"generic_primitives,omitempty"`
+	SharedSecurityContracts []string `json:"shared_security_contracts,omitempty"`
+	ForbiddenEvidenceFields []string `json:"forbidden_evidence_fields,omitempty"`
 }
 
 type p711DemoTranscript struct {
-	ID             string `json:"id"`
-	Classification string `json:"classification"`
-	Stance         string `json:"stance"`
-	P76CommandID   string `json:"p7_6_command_id"`
-	MVPLimitation  string `json:"mvp_limitation"`
+	ID                      string                   `json:"id"`
+	Classification          string                   `json:"classification"`
+	ClassificationLabel     string                   `json:"classification_label,omitempty"`
+	Stance                  string                   `json:"stance"`
+	P76CommandID            string                   `json:"p7_6_command_id"`
+	ValueClaim              string                   `json:"value_claim,omitempty"`
+	SellingPoint            string                   `json:"selling_point,omitempty"`
+	GenericPrimitives       []string                 `json:"generic_primitives,omitempty"`
+	SharedSecurityContracts []string                 `json:"shared_security_contracts,omitempty"`
+	EvidenceFields          []string                 `json:"evidence_fields,omitempty"`
+	MVPLimitation           string                   `json:"mvp_limitation"`
+	FinalStateExpansion     string                   `json:"final_state_expansion,omitempty"`
+	PrivacyPosture          string                   `json:"privacy_posture,omitempty"`
+	PassNoGoCriteria        p711DemoPassNoGoCriteria `json:"pass_no_go_criteria,omitempty"`
+	ReleaseClaimImpact      string                   `json:"release_claim_impact,omitempty"`
+	Commands                []p711DemoCommand        `json:"commands,omitempty"`
 }
+
+type p711DemoPassNoGoCriteria struct {
+	Pass []string `json:"pass,omitempty"`
+	NoGo []string `json:"no_go,omitempty"`
+}
+
+type p711DemoCommand struct {
+	ID                  string                  `json:"id"`
+	Command             string                  `json:"command,omitempty"`
+	Argv                []string                `json:"argv,omitempty"`
+	ExitCode            int                     `json:"exit_code"`
+	JSON                bool                    `json:"json,omitempty"`
+	ExpectedOutputShape p711ExpectedOutputShape `json:"expected_output_shape,omitempty"`
+}
+
+type p711ExpectedOutputShape struct {
+	StableFields   []string          `json:"stable_fields,omitempty"`
+	JSONString     map[string]string `json:"json_string,omitempty"`
+	JSONPresent    []string          `json:"json_present,omitempty"`
+	JSONNonEmpty   []string          `json:"json_non_empty,omitempty"`
+	JSONNull       []string          `json:"json_null,omitempty"`
+	StdoutIncludes []string          `json:"stdout_includes,omitempty"`
+	StdoutExcludes []string          `json:"stdout_excludes,omitempty"`
+}
+
+type p911RunnableCommandEvidence struct {
+	Runnable             bool
+	CommandID            string
+	DeclaredCommandCount int
+	SafeCommandCount     int
+	Blockers             []string
+}
+
+var p911DemoCommandValidationCache = struct {
+	sync.Mutex
+	rows map[string]p911RunnableCommandEvidence
+}{rows: map[string]p911RunnableCommandEvidence{}}
 
 type p711ValidationRecord struct {
 	RecordID                  string `json:"record_id"`
@@ -612,7 +674,19 @@ func loadP711ClientDemoTranscripts(root string) (p711DemoTranscriptSet, p711Sour
 	path := filepath.Join(root, "testdata", "sidecar", "client-demo-transcripts.json")
 	ref := p711FileRef("p7.10_client_demo_transcripts", "client_demo_transcripts", path)
 	var out p711DemoTranscriptSet
-	if p711ReadJSON(path, &out) != nil {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return out, ref
+	}
+	ref.ArtifactHash = p711Hash(data)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		ref.Status = "blocked"
+		return out, ref
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		ref.Status = "blocked"
 		return out, ref
 	}
 	ref.Status = "present"
@@ -1485,6 +1559,946 @@ func p910RequiredBaseline(required []string, baseline string) bool {
 	return false
 }
 
+func p911ClientDemoGate(demos p711DemoTranscriptSet, ref p711SourceReference) p711ReleaseGateLinkage {
+	required := p711Classifications()
+	counts := map[string]int{
+		"required_classifications":           len(required),
+		"transcript_rows":                    len(demos.Transcripts),
+		"covered_classifications":            0,
+		"missing_classifications":            0,
+		"duplicate_classifications":          0,
+		"unsupported_classifications":        0,
+		"malformed_transcripts":              0,
+		"runnable_command_rows":              0,
+		"expected_output_rows":               0,
+		"evidence_field_rows":                0,
+		"mvp_limitation_rows":                0,
+		"final_state_expansion_rows":         0,
+		"privacy_posture_rows":               0,
+		"go_no_go_criteria_rows":             0,
+		"release_claim_impact_rows":          0,
+		"value_claim_rows":                   0,
+		"regulated_proof_only_rows":          0,
+		"primary_enterprise_saas_rows":       0,
+		"declared_command_rows":              0,
+		"safe_replayed_command_rows":         0,
+		"command_id_mismatch_rows":           0,
+		"command_execution_blockers":         0,
+		"privacy_or_forbidden_blockers":      0,
+		"regulated_or_commercial_overclaims": 0,
+	}
+	var blockers []string
+	var evidenceIDs []string
+	addBlocker := func(reason string) {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			return
+		}
+		blockers = append(blockers, reason)
+	}
+	if ref.Status == "present" {
+		evidenceIDs = append(evidenceIDs, ref.ID)
+	} else if ref.Status == "blocked" {
+		addBlocker("client demo transcript artifact is malformed")
+		counts["malformed_transcripts"]++
+	} else {
+		addBlocker("client demo transcript artifact not available")
+	}
+	if demos.SchemaVersion != "idiom.client_demo_transcripts.v1" || demos.Name != "p7.10-client-demo-transcripts" {
+		addBlocker("client demo transcript identity is missing or unexpected")
+		counts["malformed_transcripts"]++
+	}
+	if demos.Shared.SidecarSchemaVersion != "" && demos.Shared.SidecarSchemaVersion != "idiom.tool.v1" {
+		addBlocker("client demo shared sidecar schema version is unexpected")
+		counts["malformed_transcripts"]++
+	}
+
+	requiredSet := map[string]bool{}
+	for _, class := range required {
+		requiredSet[class] = true
+	}
+	seen := map[string]int{}
+	for _, demo := range demos.Transcripts {
+		class := strings.TrimSpace(demo.Classification)
+		if !requiredSet[class] {
+			counts["unsupported_classifications"]++
+			addBlocker("unsupported client demo classification: " + firstNonEmptyCLIString(class, "missing"))
+			continue
+		}
+		seen[class]++
+		if seen[class] > 1 {
+			counts["duplicate_classifications"]++
+			addBlocker("duplicate client demo classification: " + class)
+			continue
+		}
+		evidenceIDs = append(evidenceIDs, demo.ID, demo.P76CommandID)
+		p911EvaluateDemoTranscript(demo, counts, addBlocker)
+	}
+	for _, class := range required {
+		if seen[class] == 0 {
+			counts["missing_classifications"]++
+			addBlocker("missing client demo classification: " + class)
+			continue
+		}
+		counts["covered_classifications"]++
+	}
+
+	status := "needs_evidence"
+	claimImpact := "client demo and release claims remain no-go until every classification has runnable, privacy-safe transcript evidence with MVP and final-state limits"
+	if len(blockers) == 0 && counts["covered_classifications"] == counts["required_classifications"] {
+		status = "evidence_present"
+		claimImpact = "client demo claims may cite runnable transcript evidence with explicit MVP limits and final-state expansion; regulated and commercial readiness claims remain bounded by their proof-only or primary-ICP gates"
+	}
+	counts["blockers"] = len(blockers)
+	return p711ReleaseGateLinkage{
+		Gate:        "P9.11",
+		Status:      status,
+		Evidence:    fmt.Sprintf("classes:%d/%d runnable:%d expected_output:%d blockers:%d", counts["covered_classifications"], counts["required_classifications"], counts["runnable_command_rows"], counts["expected_output_rows"], counts["blockers"]),
+		ClaimImpact: claimImpact,
+		Counts:      counts,
+		Blockers:    p711Compact(blockers...),
+		EvidenceIDs: p711Compact(evidenceIDs...),
+	}
+}
+
+func p911EvaluateDemoTranscript(demo p711DemoTranscript, counts map[string]int, addBlocker func(string)) {
+	class := strings.TrimSpace(demo.Classification)
+	malformed := false
+	require := func(ok bool, countKey string, blocker string) {
+		if ok {
+			counts[countKey]++
+			return
+		}
+		malformed = true
+		addBlocker(blocker + ": " + class)
+	}
+	require(strings.TrimSpace(demo.ValueClaim) != "", "value_claim_rows", "missing value claim")
+	require(p911NonBlankList(demo.EvidenceFields), "evidence_field_rows", "missing evidence fields")
+	require(strings.TrimSpace(demo.MVPLimitation) != "", "mvp_limitation_rows", "missing MVP limitation")
+	require(strings.TrimSpace(demo.FinalStateExpansion) != "", "final_state_expansion_rows", "missing final-state expansion")
+	require(p911PrivacyPostureExplicit(demo.PrivacyPosture), "privacy_posture_rows", "missing privacy/no-forbidden-field posture")
+	require(p911NonBlankList(demo.PassNoGoCriteria.Pass) && p911NonBlankList(demo.PassNoGoCriteria.NoGo), "go_no_go_criteria_rows", "missing go/no-go criteria")
+	require(strings.TrimSpace(demo.ReleaseClaimImpact) != "", "release_claim_impact_rows", "missing release claim impact")
+	commandEvidence := p911DemoRunnableCommandEvidence(demo)
+	counts["declared_command_rows"] += commandEvidence.DeclaredCommandCount
+	if commandEvidence.Runnable {
+		counts["runnable_command_rows"]++
+		counts["safe_replayed_command_rows"] += commandEvidence.SafeCommandCount
+		if commandEvidence.CommandID != "" {
+			counts["executable_command_evidence_rows"]++
+		}
+	} else {
+		malformed = true
+		if len(commandEvidence.Blockers) == 0 {
+			addBlocker("missing runnable command: " + class)
+		}
+		for _, blocker := range commandEvidence.Blockers {
+			lower := strings.ToLower(blocker)
+			if strings.Contains(lower, "command id parity") {
+				counts["command_id_mismatch_rows"]++
+			} else {
+				counts["command_execution_blockers"]++
+				blocker = "command executable validation failed: " + blocker
+			}
+			addBlocker("missing runnable command: " + class + ":" + blocker)
+		}
+	}
+	if p911DemoHasExpectedOutput(demo) {
+		counts["expected_output_rows"]++
+	} else {
+		malformed = true
+		addBlocker("missing expected output: " + class)
+	}
+	if blank := p911BlankRequiredListItem(demo); blank != "" {
+		malformed = true
+		addBlocker("blank client demo required list item: " + class + ":" + blank)
+	}
+	combined := p911DemoText(demo)
+	if forbidden := p911ForbiddenDemoEvidence(combined); forbidden != "" {
+		counts["privacy_or_forbidden_blockers"]++
+		malformed = true
+		addBlocker("client demo contains forbidden evidence marker: " + class + ":" + forbidden)
+	}
+	if overclaim := p911DemoOverclaim(combined); overclaim != "" {
+		counts["regulated_or_commercial_overclaims"]++
+		malformed = true
+		addBlocker("client demo implies unsupported regulated or commercial readiness: " + class + ":" + overclaim)
+	}
+	if p99RegulatedClass(class) {
+		if p911RegulatedDemoProofOnly(demo) {
+			counts["regulated_proof_only_rows"]++
+		} else {
+			malformed = true
+			addBlocker("regulated client demo is not explicitly proof-only: " + class)
+		}
+	}
+	if class == "enterprise-saas" {
+		if p911EnterpriseSaaSPrimaryStory(demo) {
+			counts["primary_enterprise_saas_rows"]++
+		} else {
+			malformed = true
+			addBlocker("enterprise-saas demo does not preserve primary buyer story")
+		}
+	}
+	if malformed {
+		counts["malformed_transcripts"]++
+	}
+}
+
+func p911DemoRunnableCommandEvidence(demo p711DemoTranscript) p911RunnableCommandEvidence {
+	key := p911DemoCommandValidationCacheKey(demo)
+	if key != "" {
+		p911DemoCommandValidationCache.Lock()
+		cached, ok := p911DemoCommandValidationCache.rows[key]
+		p911DemoCommandValidationCache.Unlock()
+		if ok {
+			return cached
+		}
+	}
+	result := p911DemoRunnableCommandEvidenceUncached(demo)
+	if key != "" {
+		p911DemoCommandValidationCache.Lock()
+		p911DemoCommandValidationCache.rows[key] = result
+		p911DemoCommandValidationCache.Unlock()
+	}
+	return result
+}
+
+func p911DemoCommandValidationCacheKey(demo p711DemoTranscript) string {
+	data, err := json.Marshal(demo)
+	if err != nil {
+		return ""
+	}
+	return p711Hash(data)
+}
+
+func p911DemoRunnableCommandEvidenceUncached(demo p711DemoTranscript) p911RunnableCommandEvidence {
+	var blockers []string
+	var safeCommandIDs []string
+	for _, command := range demo.Commands {
+		if shapeBlockers := p911DemoCommandShapeBlockers(demo, command); len(shapeBlockers) > 0 {
+			blockers = append(blockers, p911DemoCommandScopedBlockers(command, shapeBlockers)...)
+			continue
+		}
+		if runBlockers := p911ExecuteDemoCommand(demo, command); len(runBlockers) > 0 {
+			blockers = append(blockers, p911DemoCommandScopedBlockers(command, runBlockers)...)
+			continue
+		}
+		safeCommandIDs = append(safeCommandIDs, strings.TrimSpace(command.ID))
+	}
+	result := p911RunnableCommandEvidence{
+		DeclaredCommandCount: len(demo.Commands),
+		SafeCommandCount:     len(safeCommandIDs),
+		Blockers:             p711Compact(blockers...),
+	}
+	if len(blockers) == 0 && len(safeCommandIDs) > 0 {
+		result.Runnable = true
+		result.CommandID = safeCommandIDs[0]
+	}
+	return result
+}
+
+func p911DemoCommandScopedBlockers(command p711DemoCommand, blockers []string) []string {
+	commandID := firstNonEmptyCLIString(strings.TrimSpace(command.ID), "missing_command_id")
+	out := make([]string, 0, len(blockers))
+	for _, blocker := range blockers {
+		out = append(out, "command "+commandID+": "+blocker)
+	}
+	return out
+}
+
+func p911DemoCommandShapeBlockers(demo p711DemoTranscript, command p711DemoCommand) []string {
+	var blockers []string
+	commandID := strings.TrimSpace(command.ID)
+	if commandID == "" {
+		blockers = append(blockers, "command ID missing")
+	}
+	if want := strings.TrimSpace(demo.P76CommandID); want == "" {
+		blockers = append(blockers, "p7_6 command ID missing")
+	} else if commandID != "" && commandID != want {
+		blockers = append(blockers, "command ID parity mismatch: command "+commandID+" does not match p7_6_command_id "+want)
+	}
+	if text := strings.TrimSpace(command.Command); text == "" {
+		blockers = append(blockers, "command text missing")
+	} else if !strings.HasPrefix(text, "idiom ") {
+		blockers = append(blockers, "command text must start with idiom")
+	} else if parityBlocker := p911CommandArgvParityBlocker(text, command.Argv); parityBlocker != "" {
+		blockers = append(blockers, parityBlocker)
+	}
+	if !p911NonBlankList(command.Argv) {
+		blockers = append(blockers, "argv missing or contains blank item")
+	}
+	if p911ExpectedOutputHasBlankItem(command.ExpectedOutputShape) {
+		blockers = append(blockers, "expected output shape contains blank item")
+	} else if !p911ExpectedOutputHasField(command.ExpectedOutputShape) {
+		blockers = append(blockers, "expected output shape missing")
+	}
+	if allowBlockers := p911DemoCommandAllowlistBlockers(command); len(allowBlockers) > 0 {
+		blockers = append(blockers, allowBlockers...)
+	}
+	return blockers
+}
+
+func p911CommandArgvParityBlocker(command string, argv []string) string {
+	tokens, err := p911SplitDemoCommand(command)
+	if err != nil {
+		return "command/argv parity mismatch: command string is not parseable: " + err.Error()
+	}
+	if len(tokens) == 0 || tokens[0] != "idiom" {
+		return "command/argv parity mismatch: command must start with idiom executable"
+	}
+	actual := tokens[1:]
+	if len(actual) != len(argv) {
+		return fmt.Sprintf("command/argv parity mismatch: command has %d args but argv has %d", len(actual), len(argv))
+	}
+	for i := range actual {
+		if actual[i] != argv[i] {
+			return fmt.Sprintf("command/argv parity mismatch: arg %d command=%q argv=%q", i, actual[i], argv[i])
+		}
+	}
+	return ""
+}
+
+func p911SplitDemoCommand(command string) ([]string, error) {
+	var tokens []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		if current.Len() > 0 {
+			tokens = append(tokens, current.String())
+			current.Reset()
+		}
+	}
+	for _, r := range strings.TrimSpace(command) {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if quote != '\'' && r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				continue
+			}
+			current.WriteRune(r)
+			continue
+		}
+		switch {
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if escaped {
+		return nil, fmt.Errorf("trailing escape")
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quote")
+	}
+	flush()
+	return tokens, nil
+}
+
+func p911DemoCommandAllowlistBlockers(command p711DemoCommand) []string {
+	argv := append([]string(nil), command.Argv...)
+	if len(argv) == 0 {
+		return nil
+	}
+	switch argv[0] {
+	case "tool":
+		return p911ToolDemoCommandAllowlistBlockers(command, argv[1:])
+	case "local-ops":
+		return p911LocalOpsDemoCommandAllowlistBlockers(argv[1:])
+	default:
+		return []string{"command allowlist rejected unsafe top-level subcommand: " + argv[0]}
+	}
+}
+
+func p911ToolDemoCommandAllowlistBlockers(command p711DemoCommand, args []string) []string {
+	if len(args) == 0 {
+		return []string{"command allowlist rejected missing tool name"}
+	}
+	tool := args[0]
+	flags := args[1:]
+	switch tool {
+	case "schemas":
+		if len(flags) != 0 {
+			return []string{"command allowlist rejected schemas flags"}
+		}
+		return nil
+	case "context_pack":
+		return p911RequireExactToolFlags(tool, flags, map[string]string{
+			"-config":      "$IDIOM_CONFIG",
+			"--profile":    "discovery",
+			"--caller-id":  "",
+			"--request-id": "",
+			"--input":      "",
+		})
+	case "source_sanity":
+		return p911RequireExactToolFlags(tool, flags, map[string]string{
+			"-config":      "$IDIOM_CONFIG",
+			"--caller-id":  "",
+			"--request-id": "",
+			"--trace-id":   "",
+			"--input":      "",
+		})
+	case "write_file", "shell":
+		if command.ExitCode == 0 {
+			return []string{"command allowlist rejected side-effect example without denied exit"}
+		}
+		blockers := p911RequireExactToolFlags(tool, flags, map[string]string{
+			"-config":      "$IDIOM_CONFIG",
+			"--profile":    "discovery",
+			"--caller-id":  "",
+			"--request-id": "",
+			"--input":      "",
+		})
+		if p911FlagValue(flags, "--profile") != "discovery" {
+			blockers = append(blockers, "command allowlist rejected "+tool+" outside discovery-profile denial")
+		}
+		return blockers
+	default:
+		return []string{"command allowlist rejected unsafe tool: " + tool}
+	}
+}
+
+func p911RequireExactToolFlags(tool string, flags []string, allowed map[string]string) []string {
+	var blockers []string
+	seen := map[string]bool{}
+	for i := 0; i < len(flags); i++ {
+		flag := flags[i]
+		want, ok := allowed[flag]
+		if !ok {
+			blockers = append(blockers, "command allowlist rejected unsafe flag for "+tool+": "+flag)
+			continue
+		}
+		if seen[flag] {
+			blockers = append(blockers, "command allowlist rejected duplicate flag for "+tool+": "+flag)
+		}
+		seen[flag] = true
+		if i+1 >= len(flags) {
+			blockers = append(blockers, "command allowlist rejected missing value for "+tool+": "+flag)
+			continue
+		}
+		value := flags[i+1]
+		i++
+		if want != "" && value != want {
+			blockers = append(blockers, "command allowlist rejected unsafe value for "+tool+": "+flag)
+		}
+	}
+	for flag, want := range allowed {
+		if want != "" && !seen[flag] {
+			blockers = append(blockers, "command allowlist rejected missing required flag for "+tool+": "+flag)
+		}
+	}
+	return blockers
+}
+
+func p911LocalOpsDemoCommandAllowlistBlockers(args []string) []string {
+	if len(args) == 0 || args[0] != "benchmark" {
+		return []string{"command allowlist rejected unsafe local-ops subcommand"}
+	}
+	flags := args[1:]
+	profile := p911FlagValue(flags, "--profile")
+	if profile != "implement" && profile != "sidecar" {
+		return []string{"command allowlist rejected local-ops without bounded P7.10 profile"}
+	}
+	var blockers []string
+	seenBool := map[string]bool{}
+	seenValue := map[string]bool{}
+	for i := 0; i < len(flags); i++ {
+		flag := flags[i]
+		switch flag {
+		case "--json", "--quickstart-smoke":
+			if seenBool[flag] {
+				blockers = append(blockers, "command allowlist rejected duplicate flag for local-ops: "+flag)
+			}
+			seenBool[flag] = true
+		case "--config", "--profile", "--quickstart-task", "--quickstart-cleanup":
+			if seenValue[flag] {
+				blockers = append(blockers, "command allowlist rejected duplicate flag for local-ops: "+flag)
+			}
+			seenValue[flag] = true
+			if i+1 >= len(flags) {
+				blockers = append(blockers, "command allowlist rejected missing value for local-ops: "+flag)
+				continue
+			}
+			value := flags[i+1]
+			i++
+			switch flag {
+			case "--config":
+				if value != "$IDIOM_CONFIG" {
+					blockers = append(blockers, "command allowlist rejected unsafe value for local-ops: "+flag)
+				}
+			case "--quickstart-cleanup":
+				if value != "remove-smoke-artifacts" {
+					blockers = append(blockers, "command allowlist rejected unsafe local-ops cleanup")
+				}
+			}
+		default:
+			blockers = append(blockers, "command allowlist rejected unsafe flag for local-ops: "+flag)
+		}
+	}
+	if !seenBool["--json"] || !seenValue["--config"] || !seenValue["--profile"] {
+		blockers = append(blockers, "command allowlist rejected incomplete local-ops benchmark shape")
+	}
+	if profile == "sidecar" && (!seenBool["--quickstart-smoke"] || !seenValue["--quickstart-task"] || !seenValue["--quickstart-cleanup"]) {
+		blockers = append(blockers, "command allowlist rejected incomplete quickstart smoke shape")
+	}
+	return blockers
+}
+
+func p911FlagValue(args []string, flag string) string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func p911ExecuteDemoCommand(demo p711DemoTranscript, command p711DemoCommand) []string {
+	root, err := os.MkdirTemp("", "idiom-p911-demo-")
+	if err != nil {
+		return []string{"demo workspace unavailable"}
+	}
+	defer os.RemoveAll(root)
+	return p911ExecuteDemoCommandAtRoot(root, demo, command)
+}
+
+func p911ExecuteDemoCommandAtRoot(root string, demo p711DemoTranscript, command p711DemoCommand) []string {
+	if err := p911StageDemoWorkspace(root); err != nil {
+		return []string{"demo workspace setup failed"}
+	}
+	configPath, err := p911WriteDemoConfig(root, demo.Classification)
+	if err != nil {
+		return []string{"demo config setup failed"}
+	}
+	args := p911DemoArgs(command.Argv, configPath)
+	var stdout, stderr bytes.Buffer
+	code := p911RunMainNoTelemetry(args, &stdout, &stderr)
+	var blockers []string
+	if code != command.ExitCode {
+		blockers = append(blockers, fmt.Sprintf("exit code %d did not match expected %d for command %s", code, command.ExitCode, command.ID))
+	}
+	if strings.TrimSpace(stderr.String()) != "" {
+		blockers = append(blockers, "stderr was not empty for command "+command.ID)
+	}
+	for _, stream := range []struct {
+		name string
+		body string
+	}{
+		{name: "stdout", body: stdout.String()},
+		{name: "stderr", body: stderr.String()},
+	} {
+		if forbidden := localOpsForbiddenEvidenceLeak(stream.body); forbidden != "" {
+			blockers = append(blockers, "forbidden "+stream.name+" evidence "+forbidden+" for command "+command.ID)
+		}
+	}
+	blockers = append(blockers, p911CommandOutputBlockers(command, stdout.Bytes())...)
+	return blockers
+}
+
+func p911StageDemoWorkspace(root string) error {
+	if err := os.MkdirAll(filepath.Join(root, "pkg", "payments"), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		return err
+	}
+	files := map[string]string{
+		"go.mod":                "module example.com/p911\n\ngo 1.22\n",
+		"pkg/payments/retry.go": "package payments\n\nfunc RetryPayment(attempts int) bool {\n\treturn attempts < 3\n}\n",
+		"docs/CONTRIBUTING.md":  "# Contributing\n\nRun go test ./... before sending changes.\n",
+	}
+	for path, body := range files {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(body), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func p911WriteDemoConfig(root string, class string) (string, error) {
+	configPath := filepath.Join(root, ".idiom", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return "", err
+	}
+	body := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q,"enable_shell":false,"enable_writes":false,"command_timeout_seconds":10,"max_output_bytes":32768}}`, root, root)
+	if strings.TrimSpace(class) == "local-model" {
+		body = fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q,"enable_shell":false,"enable_writes":false,"command_timeout_seconds":10,"max_output_bytes":32768},"llama_server":{"ctx_size":4096},"chat":{"max_tokens":512}}`, root, root)
+	}
+	if err := os.WriteFile(configPath, []byte(body+"\n"), 0o644); err != nil {
+		return "", err
+	}
+	return configPath, nil
+}
+
+func p911DemoArgs(args []string, configPath string) []string {
+	copied := append([]string(nil), args...)
+	for index, arg := range copied {
+		if arg == "$IDIOM_CONFIG" {
+			copied[index] = configPath
+		}
+	}
+	return copied
+}
+
+func p911RunMainNoTelemetry(args []string, stdout io.Writer, stderr io.Writer) int {
+	previous, hadPrevious := os.LookupEnv("IDIOM_TELEMETRY")
+	_ = os.Setenv("IDIOM_TELEMETRY", "0")
+	defer func() {
+		if hadPrevious {
+			_ = os.Setenv("IDIOM_TELEMETRY", previous)
+		} else {
+			_ = os.Unsetenv("IDIOM_TELEMETRY")
+		}
+	}()
+	return runMain(args, stdout, stderr)
+}
+
+func p911CommandOutputBlockers(command p711DemoCommand, stdout []byte) []string {
+	var blockers []string
+	text := string(stdout)
+	for _, want := range command.ExpectedOutputShape.StdoutIncludes {
+		if !strings.Contains(text, want) {
+			blockers = append(blockers, "stdout missing expected text "+want+" for command "+command.ID)
+		}
+	}
+	for _, forbidden := range command.ExpectedOutputShape.StdoutExcludes {
+		if strings.Contains(text, forbidden) {
+			blockers = append(blockers, "stdout contained forbidden text "+forbidden+" for command "+command.ID)
+		}
+	}
+	if !command.JSON {
+		return blockers
+	}
+	var payload any
+	if err := json.Unmarshal(stdout, &payload); err != nil {
+		return append(blockers, "stdout was not valid JSON for command "+command.ID)
+	}
+	for _, path := range command.ExpectedOutputShape.StableFields {
+		if _, ok := p911JSONValueAtDottedPath(payload, path); !ok {
+			blockers = append(blockers, "stdout missing stable field "+path+" for command "+command.ID)
+		}
+	}
+	for path, want := range command.ExpectedOutputShape.JSONString {
+		got, ok := p911JSONValueAtDottedPath(payload, path)
+		if !ok {
+			blockers = append(blockers, "stdout missing string field "+path+" for command "+command.ID)
+			continue
+		}
+		if fmt.Sprint(got) != want {
+			blockers = append(blockers, "stdout field "+path+" did not match expected value for command "+command.ID)
+		}
+	}
+	for _, path := range command.ExpectedOutputShape.JSONPresent {
+		if _, ok := p911JSONValueAtDottedPath(payload, path); !ok {
+			blockers = append(blockers, "stdout missing JSON field "+path+" for command "+command.ID)
+		}
+	}
+	for _, path := range command.ExpectedOutputShape.JSONNonEmpty {
+		got, ok := p911JSONValueAtDottedPath(payload, path)
+		if !ok {
+			blockers = append(blockers, "stdout missing non-empty field "+path+" for command "+command.ID)
+			continue
+		}
+		if p911JSONValueEmpty(got) {
+			blockers = append(blockers, "stdout field "+path+" was empty for command "+command.ID)
+		}
+	}
+	for _, path := range command.ExpectedOutputShape.JSONNull {
+		got, ok := p911JSONValueAtDottedPath(payload, path)
+		if !ok {
+			blockers = append(blockers, "stdout missing null field "+path+" for command "+command.ID)
+			continue
+		}
+		if got != nil {
+			blockers = append(blockers, "stdout field "+path+" was not null for command "+command.ID)
+		}
+	}
+	return blockers
+}
+
+func p911JSONValueAtDottedPath(root any, path string) (any, bool) {
+	current := root
+	for _, part := range strings.Split(path, ".") {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = object[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func p911JSONValueEmpty(value any) bool {
+	if value == nil {
+		return true
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) == ""
+	case []any:
+		return len(typed) == 0
+	case map[string]any:
+		return len(typed) == 0
+	default:
+		return false
+	}
+}
+
+func p911DemoHasExpectedOutput(demo p711DemoTranscript) bool {
+	for _, command := range demo.Commands {
+		shape := command.ExpectedOutputShape
+		if p911ExpectedOutputHasBlankItem(shape) {
+			continue
+		}
+		if p911ExpectedOutputHasField(shape) {
+			return true
+		}
+	}
+	return false
+}
+
+func p911NonBlankList(values []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func p911BlankRequiredListItem(demo p711DemoTranscript) string {
+	for _, list := range []struct {
+		name   string
+		values []string
+	}{
+		{name: "generic_primitives", values: demo.GenericPrimitives},
+		{name: "shared_security_contracts", values: demo.SharedSecurityContracts},
+		{name: "evidence_fields", values: demo.EvidenceFields},
+		{name: "pass_no_go_criteria.pass", values: demo.PassNoGoCriteria.Pass},
+		{name: "pass_no_go_criteria.no_go", values: demo.PassNoGoCriteria.NoGo},
+	} {
+		if p911BlankListItem(list.values) {
+			return list.name
+		}
+	}
+	for _, command := range demo.Commands {
+		commandID := firstNonEmptyCLIString(strings.TrimSpace(command.ID), "missing_command_id")
+		if p911BlankListItem(command.Argv) {
+			return "commands." + commandID + ".argv"
+		}
+		if blank := p911BlankExpectedOutputItem(command.ExpectedOutputShape); blank != "" {
+			return "commands." + commandID + ".expected_output_shape." + blank
+		}
+	}
+	return ""
+}
+
+func p911BlankListItem(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func p911ExpectedOutputHasField(shape p711ExpectedOutputShape) bool {
+	return p911AnyNonBlank(shape.StableFields) ||
+		p911AnyNonBlank(shape.JSONPresent) ||
+		p911AnyNonBlank(shape.JSONNonEmpty) ||
+		p911AnyNonBlank(shape.JSONNull) ||
+		p911AnyNonBlank(shape.StdoutIncludes) ||
+		p911AnyNonBlank(shape.StdoutExcludes) ||
+		p911JSONStringHasField(shape.JSONString)
+}
+
+func p911AnyNonBlank(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func p911JSONStringHasField(values map[string]string) bool {
+	for key, value := range values {
+		if strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func p911ExpectedOutputHasBlankItem(shape p711ExpectedOutputShape) bool {
+	return p911BlankExpectedOutputItem(shape) != ""
+}
+
+func p911BlankExpectedOutputItem(shape p711ExpectedOutputShape) string {
+	for _, list := range []struct {
+		name   string
+		values []string
+	}{
+		{name: "stable_fields", values: shape.StableFields},
+		{name: "json_present", values: shape.JSONPresent},
+		{name: "json_non_empty", values: shape.JSONNonEmpty},
+		{name: "json_null", values: shape.JSONNull},
+		{name: "stdout_includes", values: shape.StdoutIncludes},
+		{name: "stdout_excludes", values: shape.StdoutExcludes},
+	} {
+		if p911BlankListItem(list.values) {
+			return list.name
+		}
+	}
+	for key, value := range shape.JSONString {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			return "json_string"
+		}
+	}
+	return ""
+}
+
+func p911PrivacyPostureExplicit(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.TrimSpace(value) != "" &&
+		strings.Contains(lower, "no raw prompt") &&
+		strings.Contains(lower, "no raw file") &&
+		strings.Contains(lower, "secret") &&
+		strings.Contains(lower, "private")
+}
+
+func p911RegulatedDemoProofOnly(demo p711DemoTranscript) bool {
+	lower := strings.ToLower(p911DemoText(demo))
+	return (strings.Contains(lower, "proof-only") || strings.Contains(lower, "proof only") || strings.Contains(lower, "deferred")) &&
+		(strings.Contains(lower, "no regulated") || strings.Contains(lower, "no formal") || strings.Contains(lower, "no public-sector") || strings.Contains(lower, "no hipaa") || strings.Contains(lower, "no finra"))
+}
+
+func p911EnterpriseSaaSPrimaryStory(demo p711DemoTranscript) bool {
+	lower := strings.ToLower(p911DemoText(demo))
+	return strings.Contains(lower, "primary") && (strings.Contains(lower, "buyer") || strings.Contains(lower, "paid beachhead") || strings.Contains(lower, "enterprise saas"))
+}
+
+func p911DemoOverclaim(text string) string {
+	if overclaim := p99ComplianceOverclaim(text); overclaim != "" {
+		return overclaim
+	}
+	for _, pattern := range []string{
+		"production ready",
+		"production-ready",
+		"paid ready",
+		"paid-ready",
+		"buyer ready",
+		"buyer-ready",
+		"procurement ready",
+		"procurement-ready",
+		"support ready",
+		"support-ready",
+		"admin support included",
+		"managed deployment included",
+	} {
+		for _, assertion := range p99ClaimAssertions(text) {
+			lower := strings.ToLower(assertion)
+			if strings.Contains(lower, pattern) && !p99NegatesPattern(lower, pattern) {
+				return pattern
+			}
+		}
+	}
+	return ""
+}
+
+func p911ForbiddenDemoEvidence(text string) string {
+	if localOpsContainsAbsolutePath(text) {
+		return "absolute_path"
+	}
+	for _, marker := range []string{
+		"CustomerX",
+		"private-repo",
+		"BEGIN PRIVATE KEY",
+		"patient_name:",
+		"account_number:",
+		"unredacted_telemetry_path",
+		"logs/telemetry/",
+		"logs/conversations/",
+		`"raw_prompt_captured": true`,
+		`"raw_file_body_captured": true`,
+		`"secret_capture_allowed": true`,
+		`"secret_captured": true`,
+		`"private_path_captured": true`,
+		`"private_repo_url_captured": true`,
+		`"unredacted_log_captured": true`,
+		`"hosted_telemetry_required": true`,
+		`"raw_task_captured": true`,
+	} {
+		if strings.Contains(text, marker) {
+			return marker
+		}
+	}
+	for _, field := range strings.Fields(text) {
+		token := strings.Trim(field, " \t\r\n.,:;()[]{}\"'`")
+		lower := strings.ToLower(token)
+		for _, prefix := range []string{"sk-", "sk_", "ghp_", "github_pat_", "xoxb-"} {
+			if strings.HasPrefix(lower, prefix) && len(token) > len(prefix) {
+				return "secret_value"
+			}
+		}
+	}
+	return ""
+}
+
+func p911DemoText(demo p711DemoTranscript) string {
+	var parts []string
+	parts = append(parts,
+		demo.ID,
+		demo.Classification,
+		demo.ClassificationLabel,
+		demo.Stance,
+		demo.P76CommandID,
+		demo.ValueClaim,
+		demo.SellingPoint,
+		demo.MVPLimitation,
+		demo.FinalStateExpansion,
+		demo.PrivacyPosture,
+		demo.ReleaseClaimImpact,
+	)
+	parts = append(parts, demo.GenericPrimitives...)
+	parts = append(parts, demo.SharedSecurityContracts...)
+	parts = append(parts, demo.EvidenceFields...)
+	parts = append(parts, demo.PassNoGoCriteria.Pass...)
+	parts = append(parts, demo.PassNoGoCriteria.NoGo...)
+	for _, command := range demo.Commands {
+		parts = append(parts, command.ID, command.Command)
+		parts = append(parts, command.Argv...)
+		parts = append(parts, command.ExpectedOutputShape.StableFields...)
+		for key, value := range command.ExpectedOutputShape.JSONString {
+			parts = append(parts, key, value)
+		}
+		parts = append(parts, command.ExpectedOutputShape.JSONPresent...)
+		parts = append(parts, command.ExpectedOutputShape.JSONNonEmpty...)
+		parts = append(parts, command.ExpectedOutputShape.JSONNull...)
+		parts = append(parts, command.ExpectedOutputShape.StdoutIncludes...)
+		parts = append(parts, command.ExpectedOutputShape.StdoutExcludes...)
+	}
+	return strings.Join(parts, "\n")
+}
+
 func p711AuditSignal(localOps *localOpsBenchmarkReport, security p711SecurityPosture) p711SignalSummary {
 	s := p711SignalSummary{ID: "audit", Status: "partial", Completeness: "partial", SourceRefs: []string{"local_ops_benchmark", "p7.9_security_privacy_posture"}, RedactionStatus: "redacted", ReleaseGates: []string{"P7.9", "P9.1", "P9.3", "P9.9"}, Counts: map[string]int{"security_controls": len(security.RequiredControls)}}
 	if localOps != nil && localOps.Quickstart != nil {
@@ -1553,13 +2567,16 @@ func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPo
 	return rows
 }
 
-func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord, p99 p711ReleaseGateLinkage, p910 p711ReleaseGateLinkage) []p711ReleaseGateLinkage {
+func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord, p99 p711ReleaseGateLinkage, p910 p711ReleaseGateLinkage, p911 p711ReleaseGateLinkage) []p711ReleaseGateLinkage {
 	classStatus := "evidence_present"
 	for _, row := range classes {
 		if row.Status != "pass" {
 			classStatus = "needs_evidence"
 			break
 		}
+	}
+	if p911.Status != "evidence_present" {
+		classStatus = "needs_evidence"
 	}
 	p97 := p97ValidationGate(records)
 	p98 := p98IntegrationGateFromSignals(signals)
@@ -1570,6 +2587,7 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 		{Gate: "P9.8", Status: p98.Status, Evidence: p98.Evidence, ClaimImpact: p98.ClaimImpact, Counts: p98.Counts, Blockers: p98.Blockers, EvidenceIDs: p98.EvidenceIDs},
 		{Gate: "P9.9", Status: p99.Status, Evidence: p99.Evidence, ClaimImpact: p99.ClaimImpact, Counts: p99.Counts, Blockers: p99.Blockers, EvidenceIDs: p99.EvidenceIDs},
 		{Gate: "P9.10", Status: p910.Status, Evidence: p910.Evidence, ClaimImpact: p910.ClaimImpact, Counts: p910.Counts, Blockers: p910.Blockers, EvidenceIDs: p910.EvidenceIDs},
+		{Gate: "P9.11", Status: p911.Status, Evidence: p911.Evidence, ClaimImpact: p911.ClaimImpact, Counts: p911.Counts, Blockers: p911.Blockers, EvidenceIDs: p911.EvidenceIDs},
 		{Gate: "P9.12", Status: classStatus, Evidence: "classification coverage rows and limitations", ClaimImpact: "packaging/support thesis must cite statuses"},
 	}
 }
@@ -2069,6 +3087,14 @@ func p99ComplianceOverclaim(text string) string {
 	patterns := []string{
 		"hipaa compliant",
 		"hipaa compliance",
+		"hipaa ready",
+		"hipaa-ready",
+		"hipaa readiness",
+		"hipaa-readiness",
+		"hipaa approved",
+		"hipaa approval",
+		"hipaa authorization",
+		"hipaa authorized",
 		"hipaa-certified",
 		"hipaa certified",
 		"hipaa certification",
@@ -2076,6 +3102,14 @@ func p99ComplianceOverclaim(text string) string {
 		"hipaa conformance",
 		"finra compliant",
 		"finra compliance",
+		"finra ready",
+		"finra-ready",
+		"finra readiness",
+		"finra-readiness",
+		"finra approved",
+		"finra approval",
+		"finra authorization",
+		"finra authorized",
 		"finra-certified",
 		"finra certified",
 		"finra certification",
@@ -2083,6 +3117,18 @@ func p99ComplianceOverclaim(text string) string {
 		"finra conformance",
 		"nist compliant",
 		"nist compliance",
+		"nist ready",
+		"nist-ready",
+		"nist readiness",
+		"nist-readiness",
+		"nist approved",
+		"nist approval",
+		"nist authorization",
+		"nist authorized",
+		"nist 800-53 ready",
+		"nist 800-53 readiness",
+		"nist 800-53 approved",
+		"nist 800-53 approval",
 		"nist-certified",
 		"nist certified",
 		"nist certification",
@@ -2090,6 +3136,14 @@ func p99ComplianceOverclaim(text string) string {
 		"nist conformance",
 		"owasp compliant",
 		"owasp compliance",
+		"owasp ready",
+		"owasp-ready",
+		"owasp readiness",
+		"owasp-readiness",
+		"owasp approved",
+		"owasp approval",
+		"owasp authorization",
+		"owasp authorized",
 		"owasp-certified",
 		"owasp certified",
 		"owasp certification",
@@ -2097,6 +3151,14 @@ func p99ComplianceOverclaim(text string) string {
 		"owasp conformance",
 		"mcp compliant",
 		"mcp compliance",
+		"mcp ready",
+		"mcp-ready",
+		"mcp readiness",
+		"mcp-readiness",
+		"mcp approved",
+		"mcp approval",
+		"mcp authorization",
+		"mcp authorized",
 		"mcp-certified",
 		"mcp certified",
 		"mcp certification",
@@ -2104,10 +3166,34 @@ func p99ComplianceOverclaim(text string) string {
 		"mcp conformance",
 		"fedramp compliant",
 		"fedramp compliance",
+		"fedramp ready",
+		"fedramp-ready",
+		"fedramp readiness",
+		"fedramp-readiness",
+		"fedramp approved",
+		"fedramp approval",
+		"fedramp authorization",
+		"fedramp authorized",
 		"fedramp-certified",
 		"fedramp certified",
 		"fedramp certification",
 		"fedramp attestation",
+		"dod ready",
+		"dod-ready",
+		"dod readiness",
+		"dod-readiness",
+		"dod approved",
+		"dod approval",
+		"dod authorization",
+		"dod authorized",
+		"soc 2 ready",
+		"soc 2 readiness",
+		"soc 2 approved",
+		"soc 2 approval",
+		"soc2 ready",
+		"soc2 readiness",
+		"soc2 approved",
+		"soc2 approval",
 		"formal approval",
 		"formally approved",
 		"third-party approval",

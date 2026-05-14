@@ -97,9 +97,36 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		!stringSliceContains(gate.EvidenceIDs, "competitive_baseline:aider_repo_map") {
 		t.Fatalf("P9.10 release readiness should expose structured gate data: %#v", gate)
 	}
+	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.11"); gate.Status != "evidence_present" {
+		t.Fatalf("complete client demo fixture should satisfy P9.11 release readiness: %#v", gate)
+	} else if gate.Counts["covered_classifications"] != 7 ||
+		gate.Counts["runnable_command_rows"] != 7 ||
+		len(gate.Blockers) != 0 ||
+		!stringSliceContains(gate.EvidenceIDs, "p7.10-enterprise-saas") {
+		t.Fatalf("P9.11 release readiness should expose structured gate data: %#v", gate)
+	}
 	assertReleaseEvidenceClassifications(t, report.ClientReadiness)
 	if forbidden := localOpsForbiddenEvidenceLeak(string(body)); forbidden != "" {
 		t.Fatalf("release evidence leaked forbidden class %q: %s", forbidden, string(body))
+	}
+}
+
+func TestP911ReleaseEvidenceRequiresExecutableCommandValidation(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	p911MutateTranscriptByClass(t, root, "enterprise-saas", func(row map[string]any) {
+		command := row["commands"].([]any)[0].(map[string]any)
+		command["id"] = "mismatched-demo-command"
+	})
+	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
+	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.11")
+	if gate.Status != "needs_evidence" || gate.Counts["runnable_command_rows"] == 7 || gate.Counts["command_id_mismatch_rows"] == 0 {
+		t.Fatalf("release P9.11 must fail closed on command ID mismatch: %#v", gate)
+	}
+	if !p711TestBlockerContains(gate.Blockers, "command ID parity mismatch") {
+		t.Fatalf("release P9.11 command parity blocker not exposed: %#v", gate)
 	}
 }
 

@@ -42,7 +42,9 @@ type p710ClientDemoTranscript struct {
 	EvidenceFields          []string                      `json:"evidence_fields"`
 	MVPLimitation           string                        `json:"mvp_limitation"`
 	FinalStateExpansion     string                        `json:"final_state_expansion"`
+	PrivacyPosture          string                        `json:"privacy_posture"`
 	PassNoGoCriteria        p710PassNoGoCriteria          `json:"pass_no_go_criteria"`
+	ReleaseClaimImpact      string                        `json:"release_claim_impact"`
 	Commands                []p710ClientDemoCommand       `json:"commands"`
 }
 
@@ -301,17 +303,29 @@ func assertP710TranscriptShape(t *testing.T, transcript p710ClientDemoTranscript
 		"selling_point":         transcript.SellingPoint,
 		"mvp_limitation":        transcript.MVPLimitation,
 		"final_state_expansion": transcript.FinalStateExpansion,
+		"privacy_posture":       transcript.PrivacyPosture,
+		"release_claim_impact":  transcript.ReleaseClaimImpact,
 	} {
 		if strings.TrimSpace(value) == "" {
 			t.Fatalf("transcript %s missing %s", transcript.ID, fieldName)
 		}
 	}
+	for _, required := range []string{"no raw prompt", "no raw file", "secret", "private"} {
+		if !strings.Contains(strings.ToLower(transcript.PrivacyPosture), required) {
+			t.Fatalf("transcript %s privacy posture missing %q: %q", transcript.ID, required, transcript.PrivacyPosture)
+		}
+	}
 	if len(transcript.GenericPrimitives) == 0 || len(transcript.SharedSecurityContracts) == 0 || len(transcript.EvidenceFields) == 0 {
 		t.Fatalf("transcript %s must cite primitives, security contracts, and evidence fields", transcript.ID)
 	}
+	assertP710NonBlankList(t, transcript.ID, "generic_primitives", transcript.GenericPrimitives)
+	assertP710NonBlankList(t, transcript.ID, "shared_security_contracts", transcript.SharedSecurityContracts)
+	assertP710NonBlankList(t, transcript.ID, "evidence_fields", transcript.EvidenceFields)
 	if len(transcript.PassNoGoCriteria.Pass) == 0 || len(transcript.PassNoGoCriteria.NoGo) == 0 {
 		t.Fatalf("transcript %s missing pass/no-go criteria: %#v", transcript.ID, transcript.PassNoGoCriteria)
 	}
+	assertP710NonBlankList(t, transcript.ID, "pass_no_go_criteria.pass", transcript.PassNoGoCriteria.Pass)
+	assertP710NonBlankList(t, transcript.ID, "pass_no_go_criteria.no_go", transcript.PassNoGoCriteria.NoGo)
 	if len(transcript.Commands) == 0 {
 		t.Fatalf("transcript %s has no runnable commands", transcript.ID)
 	}
@@ -319,8 +333,41 @@ func assertP710TranscriptShape(t *testing.T, transcript p710ClientDemoTranscript
 		if command.ID == "" || !strings.HasPrefix(command.Command, "idiom ") || len(command.Argv) == 0 {
 			t.Fatalf("transcript %s has non-runnable command structure: %#v", transcript.ID, command)
 		}
+		assertP710NonBlankList(t, transcript.ID, "commands."+command.ID+".argv", command.Argv)
 		if len(command.ExpectedOutputShape.StableFields) == 0 {
 			t.Fatalf("transcript %s command %s does not declare stable expected fields", transcript.ID, command.ID)
+		}
+		assertP710ExpectedOutputShapeNonBlank(t, transcript.ID, command.ID, command.ExpectedOutputShape)
+	}
+}
+
+func assertP710NonBlankList(t *testing.T, transcriptID string, fieldName string, values []string) {
+	t.Helper()
+	for index, value := range values {
+		if strings.TrimSpace(value) == "" {
+			t.Fatalf("transcript %s has blank %s[%d]", transcriptID, fieldName, index)
+		}
+	}
+}
+
+func assertP710ExpectedOutputShapeNonBlank(t *testing.T, transcriptID string, commandID string, shape p710ExpectedOutputShape) {
+	t.Helper()
+	for _, list := range []struct {
+		name   string
+		values []string
+	}{
+		{name: "stable_fields", values: shape.StableFields},
+		{name: "json_present", values: shape.JSONPresent},
+		{name: "json_non_empty", values: shape.JSONNonEmpty},
+		{name: "json_null", values: shape.JSONNull},
+		{name: "stdout_includes", values: shape.StdoutIncludes},
+		{name: "stdout_excludes", values: shape.StdoutExcludes},
+	} {
+		assertP710NonBlankList(t, transcriptID, "commands."+commandID+".expected_output_shape."+list.name, list.values)
+	}
+	for key, value := range shape.JSONString {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			t.Fatalf("transcript %s command %s has blank expected_output_shape.json_string entry", transcriptID, commandID)
 		}
 	}
 }
