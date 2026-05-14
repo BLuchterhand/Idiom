@@ -78,6 +78,8 @@ const PlanArtifactSchemaVersion = "idiom.plan.v2"
 
 const planInlineTextSpillThreshold = 4096
 
+const submitPlanNoOpEditGuidance = "submit real edits, or answer `Decision: source-satisfied` with current-state evidence or review `Decision: pass` when no correction is needed"
+
 // submitPlan persists the planner's edit-plan artifact to disk and
 // returns the path so the caller (orchestrator) can find and execute
 // it. The artifact lives under .idiom/plans/<timestamp>.json by
@@ -104,6 +106,11 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	if len(artifact.Edits) == 0 {
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
 	}
+	validationArtifact := artifact
+	validationArtifact.Edits = append([]PlanEdit(nil), artifact.Edits...)
+	if err := hydratePlanArtifactRefs(m.planArtifactDir(), &validationArtifact); err != nil {
+		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
+	}
 	if planEditsAreVerificationOnly(artifact.Edits) {
 		return ToolResult{
 			Tool:    "submit_plan",
@@ -111,7 +118,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 			Error:   "submit_plan edits describe verification/checking work rather than state mutation. If the files already satisfy the task, answer `Decision: source-satisfied`; otherwise submit only real corrective edits or answer <<QUESTION>> with the exact blocker.",
 		}
 	}
-	for i, edit := range artifact.Edits {
+	for i, edit := range validationArtifact.Edits {
 		if err := validatePlanEdit(edit); err != nil {
 			return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: fmt.Sprintf("edits[%d]: %s", i, err.Error())}
 		}
@@ -180,7 +187,7 @@ func validatePlanEdit(edit PlanEdit) error {
 		return fmt.Errorf("requires one edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref")
 	}
 	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
-		return fmt.Errorf("old_text and new_text are identical; submit only real edits, or close as source-satisfied/pass when no correction is needed")
+		return fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidance)
 	}
 	return nil
 }
@@ -334,7 +341,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 				return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 			}
 		} else {
-			return fmt.Errorf("edit would not change %s; submit only real edits, or close as source-satisfied/pass when no correction is needed", edit.Path)
+			return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
 		}
 		return nil
 	}
@@ -364,7 +371,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 			return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 		}
 	} else {
-		return fmt.Errorf("edit would not change %s; submit only real edits, or close as source-satisfied/pass when no correction is needed", edit.Path)
+		return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
 	}
 	return nil
 }

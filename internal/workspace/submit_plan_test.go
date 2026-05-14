@@ -52,6 +52,11 @@ func writeSubmitPlanContextView(t *testing.T, root string, packID string, paths 
 	writeSubmitPlanFixture(t, root, filepath.Join(".idiom", "comprehension", "views", packID+".json"), string(body))
 }
 
+func writeSubmitPlanBodyRef(t *testing.T, root string, ref string, content string) {
+	t.Helper()
+	writeSubmitPlanFixture(t, root, filepath.Join(".idiom", "plans", filepath.FromSlash(ref)), content)
+}
+
 func submitPlanTestContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -1087,7 +1092,7 @@ func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("no-op substring edit should be rejected")
 	}
-	for _, want := range []string{"old_text and new_text are identical", "source-satisfied/pass"} {
+	for _, want := range []string{"old_text and new_text are identical", "Decision: source-satisfied", "Decision: pass"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op rejection should include %q, got %q", want, result.Error)
 		}
@@ -1111,6 +1116,102 @@ func TestSubmitPlanRejectsNoOpRangeEditBeforeWritingArtifact(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, "edit would not change x.txt") {
 		t.Fatalf("no-op range rejection should name unchanged edit, got %q", result.Error)
+	}
+	for _, want := range []string{"Decision: source-satisfied", "Decision: pass"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("no-op range rejection should include %q, got %q", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRejectsNoOpWholeFileEditBeforeWritingArtifactOrAssets(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	large := strings.Repeat("same line\n", 600)
+	writeSubmitPlanFixture(t, root, "large.txt", large)
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "large.txt", NewText: large, ReplaceAll: true, Purpose: "no-op whole-file repair"},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("no-op whole-file edit should be rejected")
+	}
+	for _, want := range []string{"edit would not change large.txt", "Decision: source-satisfied", "Decision: pass"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("no-op whole-file rejection should include %q, got %q", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, ".idiom", "plans", "assets", "*"))
+	if err != nil {
+		t.Fatalf("glob spill assets: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("submit_plan should reject before spilling edit assets, got %v", matches)
+	}
+}
+
+func TestSubmitPlanAcceptsRefBackedEdits(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "whole.txt", "before\n")
+	writeSubmitPlanFixture(t, root, "range.txt", "before\n")
+	writeSubmitPlanBodyRef(t, root, "assets/whole-body.txt", "after whole\n")
+	writeSubmitPlanBodyRef(t, root, "assets/range-body.txt", "after range\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "whole.txt", NewTextRef: "assets/whole-body.txt", ReplaceAll: true, Purpose: "Replace whole file from a plan body ref."},
+			{Path: "range.txt", StartLine: 1, EndLine: 1, ContentRef: "assets/range-body.txt", Purpose: "Replace line from a plan body ref."},
+		},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("ref-backed edits should be valid plan edits: %s", result.Error)
+	}
+	planPath := filepath.Join(root, ".idiom", "plans", "last.plan.json")
+	body, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read raw ref-backed plan: %v", err)
+	}
+	var raw PlanArtifact
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode raw ref-backed plan: %v", err)
+	}
+	if raw.Edits[0].NewText != "" || raw.Edits[0].NewTextRef != "assets/whole-body.txt" || raw.Edits[1].Content != "" || raw.Edits[1].ContentRef != "assets/range-body.txt" {
+		t.Fatalf("expected raw artifact to preserve refs without inline hydrated bodies, got %#v", raw.Edits)
+	}
+	plan, err := LoadPlanArtifact(planPath)
+	if err != nil {
+		t.Fatalf("load ref-backed plan: %v", err)
+	}
+	if len(plan.Edits) != 2 {
+		t.Fatalf("expected two ref-backed edits, got %d", len(plan.Edits))
+	}
+	if plan.Edits[0].NewText != "after whole\n" || plan.Edits[1].Content != "after range\n" {
+		t.Fatalf("expected LoadPlanArtifact to hydrate refs, got %#v", plan.Edits)
+	}
+}
+
+func TestSubmitPlanRejectsNoOpRefBackedEditBeforeWritingArtifact(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "range.txt", "same\n")
+	writeSubmitPlanBodyRef(t, root, "assets/range-body.txt", "same\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{
+			{Path: "range.txt", StartLine: 1, EndLine: 1, ContentRef: "assets/range-body.txt", Purpose: "no-op ref-backed repair"},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("no-op ref-backed edit should be rejected")
+	}
+	if !strings.Contains(result.Error, "edit would not change range.txt") {
+		t.Fatalf("no-op ref-backed rejection should name unchanged edit, got %q", result.Error)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
 		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
