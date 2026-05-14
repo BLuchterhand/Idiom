@@ -1810,8 +1810,8 @@ Review signoff:
 | P9.23 | Harden P9.9 privacy-block, overclaim, contradiction, and source-verification semantics | P9.9 | Turing the 4th | - [x] | Parfit the 4th + P9.24/P9.25 follow-ups | - [x] |
 | P9.24 | Tighten P9.9 source-verification parsing and phrase-local overclaim negation | P9.23 | Ptolemy the 4th | - [x] | Euler the 4th + P9.25 follow-up | - [x] |
 | P9.25 | Extend P9.9 certification overclaim checks to posture matrix output | P9.24 | Nietzsche the 4th | - [x] | Carson the 4th | - [x] |
-| P9.10 | Gate release on competitive benchmark coverage or documented infeasibility for each external baseline | P4.6, P9.1 | Hume the 4th | - [x] | Lagrange the 4th + P9.26 follow-up | - [ ] |
-| P9.26 | Make P9.10 zero counts explicit and cover missing competitive evidence cases | P9.10 | Noether the 4th | - [x] | Descartes the 4th | - [ ] |
+| P9.10 | Gate release on competitive benchmark coverage or documented infeasibility for each external baseline | P4.6, P9.1 | Hume the 4th | - [x] | Lagrange the 4th + P9.26 follow-up | - [x] |
+| P9.26 | Make P9.10 zero counts explicit and cover missing competitive evidence cases | P9.10 | Noether the 4th | - [x] | Descartes the 4th | - [x] |
 | P9.11 | Gate release on runnable client demo transcripts and honest MVP/final-state limitations for every client classification | P7.10, P8.5, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.12 | Gate release on packaging, pricing, support, admin, and ICP thesis with explicit continue/pivot decision | P0.7, P0.11, P9.1-P9.11 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 
