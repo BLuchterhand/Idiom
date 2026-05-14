@@ -32,6 +32,7 @@ Idiom's posture is contract-first:
 | Retention and local artifact scope | P7.9 and local-ops quickstart checks record local artifact directory classes, cleanup status, artifact IDs/hashes, and no hosted dependency. | Exact global deletion windows for all logs and graph caches are not fully enforced until P7.11/P9.9. |
 | Telemetry minimization | Local-ops privacy evidence has `metadata_only:true`, raw prompt/file-body capture flags false, and hosted telemetry defaults false; telemetry argument redaction is tested. | Local diagnostic JSONL can be written when telemetry is enabled; it is not a hosted analytics pipeline or formal DLP system. |
 | Side-effect policy | Discovery profile tests deny writes, shell, destructive/open-world effects, unknown effects, and local context-artifact writes before execution. | CLI sidecar behavior is covered; MCP/app parity remains later review scope. |
+| MCP/resource containment | MCP integration and classification-parity tests cover stdio replay, roots/resources metadata, protected-resource denial, caller metadata, and CLI/MCP parity evidence without raw protocol body export. | Current evidence supports fixture-level stdio/resource containment only; broader MCP resource body export, non-stdio authorization, and formal conformance remain no-go until reviewed. |
 
 ## Classification Coverage
 

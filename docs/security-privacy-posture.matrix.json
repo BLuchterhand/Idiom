@@ -3,7 +3,7 @@
   "artifact_id": "p7.9-security-privacy-posture",
   "scope": {
     "product": "Idiom local sidecar and coding-agent harness",
-    "mvp_stance": "evidence-backed local posture, not a compliance attestation",
+    "mvp_stance": "evidence-backed local posture, not third-party approval",
     "decision_boundary": "harness owns privacy, permission, side-effect, telemetry, retention, and readiness contracts; model owns strategy",
     "source_artifacts": [
       "docs/security-privacy-posture.md",
@@ -129,6 +129,25 @@
           "check_id": "p75-shell-side-effect-denial"
         }
       ]
+    },
+    {
+      "id": "mcp_resource_containment",
+      "claim": "MCP stdio resources and tools use the same profile, root, redaction, caller, and freshness contracts as CLI discovery proof fixtures.",
+      "mvp_limitations": "This covers fixture-level stdio/resource containment. Broader MCP resource body export, non-stdio authorization, hosted operation, and formal conformance remain no-go until reviewed.",
+      "evidence": [
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP86MCPStdioIntegrationProofReplay",
+          "path": "cmd/idiom/p8_6_mcp_integration_proof_test.go",
+          "check_id": "p86-mcp-stdio-resource-containment"
+        },
+        {
+          "kind": "go_test",
+          "command": "go test ./cmd/idiom -run TestP85MCPClassificationParity",
+          "path": "cmd/idiom/p8_5_mcp_classification_parity_test.go",
+          "check_id": "p85-mcp-classification-parity"
+        }
+      ]
     }
   ],
   "client_classification_coverage": [
@@ -141,7 +160,8 @@
         "redaction_no_raw_prompt_or_file_body",
         "retention_local_artifact_scope",
         "telemetry_minimization_no_hosted_default",
-        "side_effect_policy_read_only_discovery"
+        "side_effect_policy_read_only_discovery",
+        "mcp_resource_containment"
       ],
       "limitation": "No regulated finance compliance or FINRA-specific product claim."
     },
@@ -154,7 +174,8 @@
         "redaction_no_raw_prompt_or_file_body",
         "retention_local_artifact_scope",
         "telemetry_minimization_no_hosted_default",
-        "side_effect_policy_read_only_discovery"
+        "side_effect_policy_read_only_discovery",
+        "mcp_resource_containment"
       ],
       "limitation": "No HIPAA compliance claim or PHI-processing attestation."
     },
@@ -167,7 +188,8 @@
         "redaction_no_raw_prompt_or_file_body",
         "retention_local_artifact_scope",
         "telemetry_minimization_no_hosted_default",
-        "side_effect_policy_read_only_discovery"
+        "side_effect_policy_read_only_discovery",
+        "mcp_resource_containment"
       ],
       "limitation": "No FedRAMP, DoD, or NIST certification claim."
     },
@@ -180,7 +202,8 @@
         "redaction_no_raw_prompt_or_file_body",
         "retention_local_artifact_scope",
         "telemetry_minimization_no_hosted_default",
-        "side_effect_policy_read_only_discovery"
+        "side_effect_policy_read_only_discovery",
+        "mcp_resource_containment"
       ],
       "limitation": "Buyer-value, retained-use, and paid-signal claims remain P7.11/P9.7 scope."
     },
@@ -191,7 +214,8 @@
       "covered_control_ids": [
         "redaction_no_raw_prompt_or_file_body",
         "telemetry_minimization_no_hosted_default",
-        "side_effect_policy_read_only_discovery"
+        "side_effect_policy_read_only_discovery",
+        "mcp_resource_containment"
       ],
       "limitation": "MCP resource parity remains P8.4/P8.5/P9.9 scope."
     },
@@ -234,7 +258,11 @@
     "P7.2",
     "P7.5",
     "P7.6",
+    "P7.9",
     "P7.11",
+    "P8.4",
+    "P9.1",
+    "P9.3",
     "P9.7",
     "P9.9"
   ]

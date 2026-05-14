@@ -138,6 +138,17 @@ type p711ReleaseGateLinkage struct {
 	EvidenceIDs []string       `json:"evidence_ids,omitempty"`
 }
 
+type p99ProductPrivacyState struct {
+	ExportStatus            string
+	RedactionStatus         string
+	ForbiddenFieldCheck     string
+	RawPromptCaptured       bool
+	RawFileBodyCaptured     bool
+	SecretCaptured          bool
+	PrivatePathCaptured     bool
+	ValidationRecordsStatus string
+}
+
 func runProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 {
 		printProductEvidenceUsage(stderr)
@@ -191,6 +202,8 @@ func runProductEvidenceExport(args []string, stdout io.Writer, stderr io.Writer,
 		report.Status = "blocked"
 		report.Privacy.RedactionStatus = "blocked"
 		report.Privacy.ForbiddenFieldCheck = "failed:" + forbidden
+		refreshProductEvidenceP99Gate(root, &report)
+		finalizeProductEvidenceIdentity(&report)
 		body, err = json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			fmt.Fprintf(stderr, "product-evidence export: marshal blocked report: %v\n", err)
@@ -259,6 +272,16 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 		privacy.RedactionStatus = "blocked"
 		privacy.ForbiddenFieldCheck = "failed:validation_records"
 	}
+	p99 := p99SecurityPrivacyGate(root, p99ProductPrivacyState{
+		ExportStatus:            status,
+		RedactionStatus:         privacy.RedactionStatus,
+		ForbiddenFieldCheck:     privacy.ForbiddenFieldCheck,
+		RawPromptCaptured:       privacy.RawPromptCaptured,
+		RawFileBodyCaptured:     privacy.RawFileBodyCaptured,
+		SecretCaptured:          privacy.SecretCaptured,
+		PrivatePathCaptured:     privacy.PrivatePathCaptured,
+		ValidationRecordsStatus: recordsRef.Status,
+	})
 	report := productEvidenceExportReport{
 		SchemaVersion: "idiom.product_evidence_export.v1",
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339Nano),
@@ -288,7 +311,7 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			Benchmark:                  p711GateFromSignal(signals, "benchmark"),
 			Audit:                      p711GateFromSignal(signals, "audit"),
 			Learning:                   p711GateFromSignal(signals, "learning"),
-			SecurityPrivacy:            p711GateFromSignal(signals, "audit"),
+			SecurityPrivacy:            p99.Status,
 			LocalProductEvidenceExport: "pass",
 		},
 		SignalCompleteness: completeness,
@@ -302,14 +325,13 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			recordsRef,
 			learningRef,
 		},
-		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records),
+		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records, p99),
 		Limitations:        productEvidenceExportLimitations(integration),
 		Metadata: map[string]any{
 			"generated_by": "idiom product-evidence export",
 		},
 	}
-	report.ArtifactHash = productEvidenceReportHash(report)
-	report.ExportID = "product-evidence-" + report.ArtifactHash
+	finalizeProductEvidenceIdentity(&report)
 	return report
 }
 
@@ -471,16 +493,34 @@ func p711SetIntegrationProofPrivacyField(privacy *p711IntegrationProofPrivacy, f
 }
 
 type p711SecurityPosture struct {
+	SchemaVersion                string                 `json:"schema_version"`
 	ArtifactID                   string                 `json:"artifact_id"`
-	RequiredControls             []struct{ ID string }  `json:"required_controls"`
+	RequiredControls             []p99PostureControl    `json:"required_controls"`
 	ClientClassificationCoverage []p711SecurityClassRow `json:"client_classification_coverage"`
+	ForbiddenEvidenceFields      []string               `json:"forbidden_evidence_fields"`
+	ReleaseGateTiebacks          []string               `json:"release_gate_tiebacks"`
 }
 
 type p711SecurityClassRow struct {
-	Classification string `json:"classification"`
-	Stance         string `json:"stance"`
-	P76CommandID   string `json:"p7_6_command_id"`
-	Limitation     string `json:"limitation"`
+	Classification    string   `json:"classification"`
+	Stance            string   `json:"stance"`
+	P76CommandID      string   `json:"p7_6_command_id"`
+	CoveredControlIDs []string `json:"covered_control_ids"`
+	Limitation        string   `json:"limitation"`
+}
+
+type p99PostureControl struct {
+	ID             string               `json:"id"`
+	Claim          string               `json:"claim"`
+	MVPLimitations string               `json:"mvp_limitations"`
+	Evidence       []p99PostureEvidence `json:"evidence"`
+}
+
+type p99PostureEvidence struct {
+	Kind    string `json:"kind"`
+	Command string `json:"command"`
+	Path    string `json:"path"`
+	CheckID string `json:"check_id"`
 }
 
 type p711DemoTranscriptSet struct {
@@ -1229,7 +1269,7 @@ func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPo
 	return rows
 }
 
-func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord) []p711ReleaseGateLinkage {
+func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711ClassCoverage, localOps *localOpsBenchmarkReport, records []p711ValidationRecord, p99 p711ReleaseGateLinkage) []p711ReleaseGateLinkage {
 	classStatus := "evidence_present"
 	for _, row := range classes {
 		if row.Status != "pass" {
@@ -1244,8 +1284,743 @@ func buildP711ReleaseGateLinkage(signals []p711SignalSummary, classes []p711Clas
 		{Gate: "P9.6", Status: p96ActivationReleaseGateStatus(localOps), Evidence: "standalone product export cannot close P9.6 without current release validation evidence", ClaimImpact: "release activation claims are no-go until the release bundle consumes activation plus validation evidence"},
 		{Gate: "P9.7", Status: p97.Status, Evidence: p97.Evidence, ClaimImpact: p97.ClaimImpact, Counts: p97.Counts, Blockers: p97.Blockers, EvidenceIDs: p97.EvidenceIDs},
 		{Gate: "P9.8", Status: p98.Status, Evidence: p98.Evidence, ClaimImpact: p98.ClaimImpact, Counts: p98.Counts, Blockers: p98.Blockers, EvidenceIDs: p98.EvidenceIDs},
+		{Gate: "P9.9", Status: p99.Status, Evidence: p99.Evidence, ClaimImpact: p99.ClaimImpact, Counts: p99.Counts, Blockers: p99.Blockers, EvidenceIDs: p99.EvidenceIDs},
 		{Gate: "P9.12", Status: classStatus, Evidence: "classification coverage rows and limitations", ClaimImpact: "packaging/support thesis must cite statuses"},
 	}
+}
+
+func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) p711ReleaseGateLinkage {
+	counts := map[string]int{
+		"required_sections":        10,
+		"required_controls":        len(p99RequiredControlIDs()),
+		"required_client_rows":     len(p711Classifications()),
+		"required_gate_tiebacks":   len(p99RequiredTiebacks()),
+		"required_forbidden_terms": len(p99ForbiddenEvidenceFields()),
+	}
+	var blockers []string
+	var evidenceIDs []string
+	addBlocker := func(reason string) {
+		if strings.TrimSpace(reason) != "" {
+			blockers = append(blockers, reason)
+		}
+	}
+
+	matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
+	matrixData, err := os.ReadFile(matrixPath)
+	var matrix p711SecurityPosture
+	if err != nil {
+		addBlocker("missing posture matrix: docs/security-privacy-posture.matrix.json")
+	} else if err := json.Unmarshal(matrixData, &matrix); err != nil {
+		addBlocker("malformed posture matrix JSON")
+	} else {
+		evidenceIDs = append(evidenceIDs, firstNonEmptyCLIString(matrix.ArtifactID, "p7.9-security-privacy-posture"))
+		p99EvaluateMatrix(matrix, counts, addBlocker)
+	}
+
+	postureText, postureOK := p99ReadText(filepath.Join(root, "docs", "security-privacy-posture.md"))
+	if !postureOK {
+		addBlocker("missing posture artifact: docs/security-privacy-posture.md")
+	}
+	planText, planOK := p99ReadText(filepath.Join(root, "docs", "idiom-implementation-plan.md"))
+	if !planOK {
+		addBlocker("missing P0.9 threat model/data-flow/control mapping artifact")
+	}
+	p09Text := p99P09Section(planText)
+	reportText, reportOK := p99ReadText(filepath.Join(root, "docs", "release-gate-p9.9.md"))
+	if !reportOK {
+		addBlocker("missing P9.9 release-gate report")
+	} else {
+		evidenceIDs = append(evidenceIDs, "release-gate-p9.9")
+	}
+
+	for label, text := range map[string]string{
+		"security/privacy posture": postureText,
+		"P0.9 threat model":        p09Text,
+		"P9.9 report":              reportText,
+	} {
+		if overclaim := p99ComplianceOverclaim(text); overclaim != "" {
+			addBlocker(label + " contains regulated/compliance overclaim language: " + overclaim)
+		}
+	}
+	if planOK {
+		p99EvaluateP09Plan(p09Text, counts, addBlocker)
+	}
+	if postureOK {
+		if strings.Contains(postureText, "Reviewer Command") {
+			counts["repro_evidence_sections"]++
+		} else {
+			addBlocker("posture artifact missing reviewer command/repro evidence")
+		}
+	}
+	if reportOK {
+		p99EvaluateReviewReport(reportText, counts, addBlocker)
+	}
+	p99EvaluateDependentGateDoc(root, "P9.3", "docs/release-gate-p9.3.md", counts, addBlocker)
+	p99EvaluateDependentGateDoc(root, "P9.8", "docs/release-gate-p9.8.md", counts, addBlocker)
+	p99EvaluateDependentGateDoc(root, "P9.1", "docs/release-decision-p9.2.md", counts, addBlocker)
+	p99EvaluateProductPrivacy(privacy, counts, addBlocker)
+
+	status := "evidence_present"
+	if len(blockers) > 0 {
+		status = "needs_evidence"
+	}
+	counts["blockers"] = len(blockers)
+	return p711ReleaseGateLinkage{
+		Gate:        "P9.9",
+		Status:      status,
+		Evidence:    p99EvidenceSummary(counts),
+		ClaimImpact: p99ClaimImpact(status),
+		Counts:      counts,
+		Blockers:    p711Compact(blockers...),
+		EvidenceIDs: p711Compact(evidenceIDs...),
+	}
+}
+
+func p99EvaluateProductPrivacy(privacy p99ProductPrivacyState, counts map[string]int, addBlocker func(string)) {
+	addPrivacyBlocker := func(reason string) {
+		counts["product_privacy_blockers"]++
+		addBlocker(reason)
+	}
+	if privacy.ExportStatus == "blocked" {
+		addPrivacyBlocker("product evidence export status is privacy-blocked")
+	}
+	if privacy.RedactionStatus == "blocked" {
+		addPrivacyBlocker("product evidence redaction status is blocked")
+	}
+	if privacy.ForbiddenFieldCheck != "" && privacy.ForbiddenFieldCheck != "pass" {
+		addPrivacyBlocker("product evidence forbidden-field check failed: " + privacy.ForbiddenFieldCheck)
+	}
+	if privacy.RawPromptCaptured {
+		addPrivacyBlocker("product evidence raw prompt capture flag is true")
+	}
+	if privacy.RawFileBodyCaptured {
+		addPrivacyBlocker("product evidence raw file body capture flag is true")
+	}
+	if privacy.SecretCaptured {
+		addPrivacyBlocker("product evidence secret capture flag is true")
+	}
+	if privacy.PrivatePathCaptured {
+		addPrivacyBlocker("product evidence private path capture flag is true")
+	}
+	if privacy.ValidationRecordsStatus == "blocked" {
+		addPrivacyBlocker("P0.8 validation records failed privacy validation")
+	}
+}
+
+func p99EvaluateMatrix(matrix p711SecurityPosture, counts map[string]int, addBlocker func(string)) {
+	if matrix.SchemaVersion != "idiom.security_privacy_posture.v1" {
+		addBlocker("posture matrix schema_version is missing or unexpected")
+	}
+	if matrix.ArtifactID != "p7.9-security-privacy-posture" {
+		addBlocker("posture matrix artifact_id is missing or unexpected")
+	}
+	controlIDs := map[string]bool{}
+	for i, control := range matrix.RequiredControls {
+		controlIDs[control.ID] = true
+		p99CheckPostureFieldOverclaim(fmt.Sprintf("required_controls[%d].claim", i), control.Claim, counts, addBlocker)
+		p99CheckPostureFieldOverclaim(fmt.Sprintf("required_controls[%d].mvp_limitations", i), control.MVPLimitations, counts, addBlocker)
+		if strings.TrimSpace(control.Claim) == "" || strings.TrimSpace(control.MVPLimitations) == "" {
+			addBlocker("control row missing claim or limitation: " + control.ID)
+		}
+		if len(control.Evidence) == 0 {
+			addBlocker("control row missing executable evidence: " + control.ID)
+			continue
+		}
+		for _, evidence := range control.Evidence {
+			if evidence.Kind != "go_test" || !strings.HasPrefix(evidence.Command, "go test ") ||
+				strings.TrimSpace(evidence.Path) == "" || strings.TrimSpace(evidence.CheckID) == "" ||
+				filepath.IsAbs(evidence.Path) || strings.Contains(evidence.Path, "/Users/") {
+				addBlocker("control row has invalid or privacy-unsafe evidence: " + control.ID)
+				break
+			}
+		}
+	}
+	counts["control_rows"] = len(matrix.RequiredControls)
+	for _, id := range p99RequiredControlIDs() {
+		if controlIDs[id] {
+			counts["mapped_required_controls"]++
+			continue
+		}
+		addBlocker("posture matrix missing required control: " + id)
+	}
+
+	rows := map[string]p711SecurityClassRow{}
+	for i, row := range matrix.ClientClassificationCoverage {
+		rows[row.Classification] = row
+		p99CheckPostureFieldOverclaim(fmt.Sprintf("client_classification_coverage[%d].stance", i), row.Stance, counts, addBlocker)
+		p99CheckPostureFieldOverclaim(fmt.Sprintf("client_classification_coverage[%d].limitation", i), row.Limitation, counts, addBlocker)
+		if strings.TrimSpace(row.P76CommandID) == "" || len(row.CoveredControlIDs) == 0 {
+			addBlocker("client row missing P7.6 command or control mapping: " + row.Classification)
+		}
+		for _, controlID := range row.CoveredControlIDs {
+			if !controlIDs[controlID] {
+				addBlocker("client row maps unknown control: " + row.Classification + "/" + controlID)
+			}
+		}
+		if p99RegulatedClass(row.Classification) && !p99RegulatedRowProofOnly(row) {
+			addBlocker("regulated client row is not explicitly proof-only/deferred: " + row.Classification)
+		}
+	}
+	counts["client_rows"] = len(matrix.ClientClassificationCoverage)
+	for _, class := range p711Classifications() {
+		if _, ok := rows[class]; ok {
+			counts["mapped_client_rows"]++
+			continue
+		}
+		addBlocker("posture matrix missing client row: " + class)
+	}
+
+	tiebacks := map[string]bool{}
+	for _, tieback := range matrix.ReleaseGateTiebacks {
+		tiebacks[strings.TrimSpace(tieback)] = true
+	}
+	for _, tieback := range p99RequiredTiebacks() {
+		if tiebacks[tieback] {
+			counts["mapped_gate_tiebacks"]++
+			continue
+		}
+		addBlocker("posture matrix missing release-gate tieback: " + tieback)
+	}
+	forbidden := map[string]bool{}
+	for _, field := range matrix.ForbiddenEvidenceFields {
+		forbidden[field] = true
+	}
+	for _, field := range p99ForbiddenEvidenceFields() {
+		if forbidden[field] {
+			counts["mapped_forbidden_terms"]++
+			continue
+		}
+		addBlocker("posture matrix missing forbidden evidence field: " + field)
+	}
+}
+
+func p99CheckPostureFieldOverclaim(fieldPath string, text string, counts map[string]int, addBlocker func(string)) {
+	if overclaim := p99ComplianceOverclaim(text); overclaim != "" {
+		counts["matrix_overclaim_blockers"]++
+		addBlocker("posture matrix field " + fieldPath + " contains regulated/compliance overclaim language: " + overclaim)
+	}
+}
+
+func p99EvaluateP09Plan(text string, counts map[string]int, addBlocker func(string)) {
+	required := map[string]string{
+		"threat_model":             "Product threat model:",
+		"data_flow_map":            "Data-flow map:",
+		"privacy_retention":        "Privacy and retention posture:",
+		"control_mapping":          "Control mapping evidence:",
+		"source_dates":             "Source anchors checked on",
+		"downstream_gate_tiebacks": "Downstream go/no-go gates:",
+	}
+	for key, marker := range required {
+		if strings.Contains(text, marker) {
+			counts["present_sections"]++
+			counts[key] = 1
+			continue
+		}
+		addBlocker("P0.9 artifact missing section: " + key)
+	}
+	for _, marker := range []string{"P7.9", "P8.4", "P9.1", "P9.3", "P9.9"} {
+		if !strings.Contains(text, marker) {
+			addBlocker("P0.9 artifact missing dependent gate reference: " + marker)
+		}
+	}
+	p99EvaluateP09SourceVerification(text, counts, addBlocker)
+}
+
+func p99EvaluateReviewReport(text string, counts map[string]int, addBlocker func(string)) {
+	lower := strings.ToLower(text)
+	hasGo := strings.Contains(lower, "reviewer signoff: go") || strings.Contains(lower, "decision: go")
+	hasNoGo := strings.Contains(lower, "decision: no-go") || strings.Contains(lower, "reviewer signoff: no-go")
+	if hasGo {
+		counts["reviewer_go"] = 1
+	}
+	if hasNoGo {
+		counts["reviewer_no_go"] = 1
+	}
+	switch {
+	case hasGo && hasNoGo:
+		addBlocker("P9.9 report has conflicting GO/no-go markers")
+	case hasNoGo:
+		addBlocker("P9.9 report records explicit no-go")
+	case hasGo:
+		// Reviewer GO is necessary but not sufficient; dependent evidence still gates readiness.
+	default:
+		addBlocker("P9.9 report lacks reviewer GO or explicit no-go")
+	}
+	for _, marker := range []string{"Threat model", "Data-flow", "Privacy", "Control mapping", "Reproduction Commands"} {
+		if strings.Contains(lower, strings.ToLower(marker)) {
+			counts["report_sections"]++
+			continue
+		}
+		addBlocker("P9.9 report missing section marker: " + marker)
+	}
+}
+
+func p99EvaluateP09SourceVerification(text string, counts map[string]int, addBlocker func(string)) {
+	records, ok := p99ParseSourceVerificationRecords(text)
+	if !ok {
+		addBlocker("P0.9 artifact missing structured source verification evidence")
+		return
+	}
+	if len(records) == 0 {
+		addBlocker("P0.9 source verification evidence missing source_id records")
+		return
+	}
+
+	for _, record := range records {
+		recordOK := true
+		label := firstNonEmptyCLIString(record.SourceID, "unlabeled")
+		if strings.TrimSpace(record.SourceID) == "" {
+			addBlocker("P0.9 source verification record source_id is empty")
+			recordOK = false
+		}
+		checkedDate := strings.TrimSpace(record.CheckedDate)
+		switch {
+		case checkedDate == "":
+			addBlocker("P0.9 source verification record checked_date is empty: " + label)
+			recordOK = false
+		default:
+			parsed, err := time.Parse("2006-01-02", checkedDate)
+			if err != nil || parsed.Format("2006-01-02") != checkedDate {
+				addBlocker("P0.9 source verification record checked_date must be YYYY-MM-DD: " + label)
+				recordOK = false
+			}
+		}
+		if strings.TrimSpace(record.VerificationMethod) == "" {
+			addBlocker("P0.9 source verification record verification_method is empty: " + label)
+			recordOK = false
+		}
+		if record.unreachable() {
+			if strings.TrimSpace(record.UnreachableSourceVerificationMethod) == "" {
+				addBlocker("P0.9 unreachable source evidence missing verification method for source_id: " + label)
+				recordOK = false
+			} else {
+				counts["unreachable_source_verification_methods"]++
+			}
+		}
+		if recordOK {
+			counts["source_verification_records"]++
+		}
+	}
+}
+
+type p99SourceVerificationRecord struct {
+	SourceID                            string
+	CheckedDate                         string
+	VerificationMethod                  string
+	SourceStatus                        string
+	UnreachableSourceVerificationMethod string
+	raw                                 string
+}
+
+func (record p99SourceVerificationRecord) unreachable() bool {
+	return p99MentionsUnreachableSource(strings.ToLower(record.SourceID + " " + record.SourceStatus + " " + record.raw))
+}
+
+func p99ParseSourceVerificationRecords(text string) ([]p99SourceVerificationRecord, bool) {
+	marker := "source verification evidence:"
+	lower := strings.ToLower(text)
+	start := strings.Index(lower, marker)
+	if start < 0 {
+		return nil, false
+	}
+	body := text[start+len(marker):]
+	var records []p99SourceVerificationRecord
+	var current *p99SourceVerificationRecord
+	flush := func() {
+		if current != nil {
+			records = append(records, *current)
+			current = nil
+		}
+	}
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- ") {
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		}
+		key, value, ok := p99SourceVerificationField(trimmed)
+		if !ok {
+			if current != nil {
+				current.raw += "\n" + trimmed
+			}
+			continue
+		}
+		if key == "source_id" {
+			flush()
+			current = &p99SourceVerificationRecord{SourceID: value, raw: trimmed}
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		current.raw += "\n" + trimmed
+		switch key {
+		case "checked_date":
+			current.CheckedDate = value
+		case "verification_method":
+			current.VerificationMethod = value
+		case "source_status":
+			current.SourceStatus = value
+		case "unreachable_source_verification_method":
+			current.UnreachableSourceVerificationMethod = value
+		}
+	}
+	flush()
+	return records, true
+}
+
+func p99SourceVerificationField(line string) (string, string, bool) {
+	key, value, ok := strings.Cut(line, ":")
+	if !ok {
+		return "", "", false
+	}
+	key = strings.ToLower(strings.TrimSpace(key))
+	switch key {
+	case "source_id", "checked_date", "verification_method", "source_status", "unreachable_source_verification_method":
+		return key, strings.TrimSpace(value), true
+	default:
+		return "", "", false
+	}
+}
+
+func p99MentionsUnreachableSource(lower string) bool {
+	for _, marker := range []string{"403", "unreachable", "could not verify", "access denied", "forbidden", "host returned"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func p99EvaluateDependentGateDoc(root, gate, rel string, counts map[string]int, addBlocker func(string)) {
+	text, ok := p99ReadText(filepath.Join(root, filepath.FromSlash(rel)))
+	if !ok {
+		addBlocker(gate + " dependent evidence missing: " + rel)
+		return
+	}
+	counts["dependent_gate_docs"]++
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "decision: no-go") || strings.Contains(lower, "status:partial") {
+		addBlocker(gate + " dependent evidence is not GO/complete")
+	}
+}
+
+func p99ReadText(path string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
+}
+
+func p99P09Section(text string) string {
+	start := strings.Index(text, "### P0.9 Product Security And Privacy Posture")
+	if start < 0 {
+		return p99P09LedgerRow(text)
+	}
+	section := text[start:]
+	if next := strings.Index(section[len("### "):], "\n### "); next >= 0 {
+		return section[:len("### ")+next]
+	}
+	return section
+}
+
+func p99P09LedgerRow(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "| P0.9:") {
+			return trimmed
+		}
+	}
+	return text
+}
+
+func p99RequiredControlIDs() []string {
+	return []string{
+		"protected_path_denial",
+		"redaction_no_raw_prompt_or_file_body",
+		"retention_local_artifact_scope",
+		"telemetry_minimization_no_hosted_default",
+		"side_effect_policy_read_only_discovery",
+		"mcp_resource_containment",
+	}
+}
+
+func p99RequiredTiebacks() []string {
+	return []string{"P7.9", "P8.4", "P9.1", "P9.3", "P9.9"}
+}
+
+func p99ForbiddenEvidenceFields() []string {
+	return []string{"raw_prompt", "raw_file_body", "secret_value", "private_repo_url", "unredacted_log_excerpt", "customer_identifier", "patient_name", "account_number"}
+}
+
+func p711Classifications() []string {
+	return []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"}
+}
+
+func p99RegulatedClass(class string) bool {
+	switch class {
+	case "finance", "healthcare", "public-sector":
+		return true
+	default:
+		return false
+	}
+}
+
+func p99RegulatedRowProofOnly(row p711SecurityClassRow) bool {
+	text := strings.ToLower(row.Stance + " " + row.Limitation)
+	if strings.Contains(text, "sales ready") || strings.Contains(text, "sales-ready") ||
+		strings.Contains(text, "regulated sales readiness") || strings.Contains(text, "release ready") ||
+		strings.Contains(text, "commercially ready") {
+		return false
+	}
+	return strings.Contains(text, "proof-only") || strings.Contains(text, "proof only") ||
+		strings.Contains(text, "deferred") || strings.Contains(text, "no ") && strings.Contains(text, "compliance")
+}
+
+func p99ComplianceOverclaim(text string) string {
+	patterns := []string{
+		"hipaa compliant",
+		"hipaa compliance",
+		"hipaa-certified",
+		"hipaa certified",
+		"hipaa certification",
+		"hipaa attestation",
+		"hipaa conformance",
+		"finra compliant",
+		"finra compliance",
+		"finra-certified",
+		"finra certified",
+		"finra certification",
+		"finra attestation",
+		"finra conformance",
+		"nist compliant",
+		"nist compliance",
+		"nist-certified",
+		"nist certified",
+		"nist certification",
+		"nist attestation",
+		"nist conformance",
+		"owasp compliant",
+		"owasp compliance",
+		"owasp-certified",
+		"owasp certified",
+		"owasp certification",
+		"owasp attestation",
+		"owasp conformance",
+		"mcp compliant",
+		"mcp compliance",
+		"mcp-certified",
+		"mcp certified",
+		"mcp certification",
+		"mcp attestation",
+		"mcp conformance",
+		"fedramp compliant",
+		"fedramp compliance",
+		"fedramp-certified",
+		"fedramp certified",
+		"fedramp certification",
+		"fedramp attestation",
+		"formal approval",
+		"formally approved",
+		"third-party approval",
+		"regulated sales ready",
+		"regulated-sales-ready",
+		"regulated sales readiness",
+		"sales ready",
+		"sales readiness",
+		"sales-ready",
+		"release ready",
+		"commercially ready",
+	}
+	for _, assertion := range p99ClaimAssertions(text) {
+		lower := strings.ToLower(assertion)
+		for _, pattern := range patterns {
+			if strings.Contains(lower, pattern) && !p99NegatesPattern(lower, pattern) {
+				return pattern
+			}
+		}
+	}
+	return ""
+}
+
+func p99ClaimAssertions(text string) []string {
+	text = strings.ReplaceAll(text, "\n", " ")
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		switch r {
+		case '.', ';', '!', '?':
+			return true
+		default:
+			return false
+		}
+	})
+	var out []string
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+func p99NegatesPattern(assertion string, pattern string) bool {
+	idx := strings.Index(assertion, pattern)
+	if idx < 0 {
+		return false
+	}
+	prefix := strings.TrimSpace(assertion[:idx])
+	suffix := strings.TrimSpace(assertion[idx+len(pattern):])
+	return p99LocalNegationPrefix(prefix) || p99LocalNegationSuffix(suffix)
+}
+
+func p99LocalNegationPrefix(prefix string) bool {
+	for _, negator := range []string{
+		"no",
+		"not",
+		"not a",
+		"not an",
+		"does not prove",
+		"does not support",
+		"doesn't prove",
+		"doesn't support",
+		"do not claim",
+		"does not claim",
+		"must not claim",
+		"cannot claim",
+		"can't claim",
+	} {
+		if p99EndsWithPhrase(prefix, negator) {
+			return true
+		}
+	}
+	for _, negator := range []string{"no", "not", "not a", "not an", "does not prove", "does not support", "doesn't prove", "doesn't support", "do not claim", "does not claim", "must not claim", "cannot claim", "can't claim"} {
+		if p99ContainsLocalListNegation(prefix, negator) {
+			return true
+		}
+	}
+	if p99ContainsNoAssertionNegation(prefix) {
+		return true
+	}
+	return false
+}
+
+func p99ContainsLocalListNegation(prefix string, negator string) bool {
+	idx := p99LastPhraseIndex(prefix, negator)
+	if idx < 0 {
+		return false
+	}
+	afterNegator := strings.TrimSpace(prefix[idx+len(negator):])
+	if len(afterNegator) > 180 || p99ContainsPositiveClaimCue(afterNegator) {
+		return false
+	}
+	return true
+}
+
+func p99ContainsNoAssertionNegation(prefix string) bool {
+	idx := p99LastPhraseIndex(prefix, "no")
+	if idx < 0 {
+		return false
+	}
+	afterNo := strings.TrimSpace(prefix[idx:])
+	if len(afterNo) > 180 {
+		return false
+	}
+	padded := " " + afterNo + " "
+	return strings.Contains(padded, " asserts ") || strings.Contains(padded, " assert ") ||
+		strings.Contains(padded, " claims ") || strings.Contains(padded, " claim ")
+}
+
+func p99LastPhraseIndex(text string, phrase string) int {
+	for idx := strings.LastIndex(text, phrase); idx >= 0; idx = strings.LastIndex(text[:idx], phrase) {
+		beforeOK := idx == 0 || p99PhraseBoundary(text[idx-1])
+		after := idx + len(phrase)
+		afterOK := after == len(text) || p99PhraseBoundary(text[after])
+		if beforeOK && afterOK {
+			return idx
+		}
+	}
+	return -1
+}
+
+func p99PhraseBoundary(ch byte) bool {
+	switch ch {
+	case ' ', '\t', '\n', ',', ';', ':', '(', ')', '[', ']', '{', '}', '/', '-':
+		return true
+	default:
+		return false
+	}
+}
+
+func p99ContainsPositiveClaimCue(text string) bool {
+	padded := " " + strings.TrimSpace(text) + " "
+	for _, cue := range []string{
+		" has ",
+		" have ",
+		" had ",
+		" provides ",
+		" provide ",
+		" provided ",
+		" asserts ",
+		" assert ",
+		" claims ",
+		" claim ",
+		" offers ",
+		" offer ",
+		" proves ",
+		" prove ",
+		" supports ",
+		" support ",
+	} {
+		if strings.Contains(padded, cue) {
+			return true
+		}
+	}
+	return false
+}
+
+func p99LocalNegationSuffix(suffix string) bool {
+	suffix = strings.TrimLeft(suffix, " \t,")
+	for _, allowed := range []string{
+		"claim",
+		"claims",
+		"is claimed",
+		"are claimed",
+		"remains no-go",
+		"remain no-go",
+		"remains a no-go",
+		"remain a no-go",
+	} {
+		if suffix == allowed || strings.HasPrefix(suffix, allowed+" ") || strings.HasPrefix(suffix, allowed+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func p99EndsWithPhrase(text string, phrase string) bool {
+	text = strings.TrimRight(text, " \t,;:")
+	if text == phrase {
+		return true
+	}
+	return strings.HasSuffix(text, " "+phrase)
+}
+
+func p99EvidenceSummary(counts map[string]int) string {
+	return fmt.Sprintf("controls:%d/%d client_rows:%d/%d tiebacks:%d/%d blockers:%d",
+		counts["mapped_required_controls"], counts["required_controls"],
+		counts["mapped_client_rows"], counts["required_client_rows"],
+		counts["mapped_gate_tiebacks"], counts["required_gate_tiebacks"],
+		counts["blockers"])
+}
+
+func p99ClaimImpact(status string) string {
+	if status == "evidence_present" {
+		return "security/privacy posture may be cited as reviewed control-mapping evidence, not compliance, certification, attestation, or regulated sales readiness"
+	}
+	return "regulated, compliance-adjacent, and security/privacy readiness claims remain proof-only/no-go until P9.9 blockers close"
 }
 
 func p98IntegrationGateFromSignals(signals []p711SignalSummary) p98IntegrationGateResult {
@@ -1666,6 +2441,42 @@ func productEvidenceReportHash(report productEvidenceExportReport) string {
 	}
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:8])
+}
+
+func finalizeProductEvidenceIdentity(report *productEvidenceExportReport) {
+	report.ArtifactHash = productEvidenceReportHash(*report)
+	report.ExportID = "product-evidence-" + report.ArtifactHash
+}
+
+func refreshProductEvidenceP99Gate(root string, report *productEvidenceExportReport) {
+	p99 := p99SecurityPrivacyGate(root, p99ProductPrivacyStateFromReport(*report))
+	report.ProductSuccessGates.SecurityPrivacy = p99.Status
+	for i, gate := range report.ReleaseGateLinkage {
+		if gate.Gate == "P9.9" {
+			report.ReleaseGateLinkage[i] = p99
+			return
+		}
+	}
+	report.ReleaseGateLinkage = append(report.ReleaseGateLinkage, p99)
+}
+
+func p99ProductPrivacyStateFromReport(report productEvidenceExportReport) p99ProductPrivacyState {
+	state := p99ProductPrivacyState{
+		ExportStatus:        report.Status,
+		RedactionStatus:     report.Privacy.RedactionStatus,
+		ForbiddenFieldCheck: report.Privacy.ForbiddenFieldCheck,
+		RawPromptCaptured:   report.Privacy.RawPromptCaptured,
+		RawFileBodyCaptured: report.Privacy.RawFileBodyCaptured,
+		SecretCaptured:      report.Privacy.SecretCaptured,
+		PrivatePathCaptured: report.Privacy.PrivatePathCaptured,
+	}
+	for _, ref := range report.SourceReferences {
+		if ref.ID == "p0.8_validation_records" {
+			state.ValidationRecordsStatus = ref.Status
+			break
+		}
+	}
+	return state
 }
 
 func sanitizeProductEvidenceTelemetryArgs(args []string) []string {

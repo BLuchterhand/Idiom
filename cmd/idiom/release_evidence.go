@@ -761,6 +761,9 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 		if gate.Gate == "P9.8" && gate.Status != "evidence_present" {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.8 integration proof evidence incomplete", Evidence: gate.Status})
 		}
+		if gate.Gate == "P9.9" && gate.Status != "evidence_present" {
+			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.9 security/privacy posture evidence incomplete", Evidence: gate.Status})
+		}
 	}
 	return releaseEvidenceCompactBlockers(blockers)
 }

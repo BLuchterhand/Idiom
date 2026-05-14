@@ -1076,6 +1076,364 @@ func p711ValidationRecordFixture(recordID string, class string) map[string]any {
 	}
 }
 
+func TestP99ProductEvidenceNeedsEvidenceWhenPostureMissingOrMalformed(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
+	if err := os.Remove(matrixPath); err != nil {
+		t.Fatalf("remove matrix: %v", err)
+	}
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "missing posture matrix") {
+		t.Fatalf("missing posture matrix should fail closed: %#v", gate)
+	}
+
+	writeP711Text(t, matrixPath, "{not-json")
+	report = buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "malformed posture matrix JSON") {
+		t.Fatalf("malformed posture matrix should fail closed: %#v", gate)
+	}
+}
+
+func TestP99ProductEvidenceRejectsComplianceOverclaimAndRegulatedSalesReadiness(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\nIdiom is HIPAA compliant.\n")
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "overclaim") {
+		t.Fatalf("compliance overclaim should fail closed: %#v", gate)
+	}
+
+	stageP711ProductEvidenceFixtures(t, root)
+	matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
+	var matrix map[string]any
+	data, err := os.ReadFile(matrixPath)
+	if err != nil {
+		t.Fatalf("read matrix: %v", err)
+	}
+	if err := json.Unmarshal(data, &matrix); err != nil {
+		t.Fatalf("decode matrix: %v", err)
+	}
+	rows := matrix["client_classification_coverage"].([]any)
+	row := rows[0].(map[string]any)
+	row["classification"] = "finance"
+	row["stance"] = "regulated sales ready"
+	row["limitation"] = "ready for finance sales"
+	writeP711JSON(t, matrixPath, matrix)
+
+	report = buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "regulated client row") {
+		t.Fatalf("regulated sales-readiness row should fail closed: %#v", gate)
+	}
+}
+
+func TestP99ProductEvidenceBlocksAssertionAwareOverclaimsButAllowsNegatedLimitations(t *testing.T) {
+	for _, phrase := range []string{
+		"Idiom provides HIPAA attestation.",
+		"Idiom has HIPAA attestation, release remains no-go.",
+		"Idiom has NIST conformance.",
+		"Idiom has NIST certification.",
+		"HIPAA certification.",
+		"Idiom has MCP conformance.",
+		"MCP certification.",
+		"Idiom has formal approval.",
+		"Idiom has formal approval, readiness remains no-go.",
+		"Idiom has regulated sales readiness.",
+	} {
+		t.Run(p711SafeID(phrase, "phrase"), func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\n"+phrase+"\n")
+
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "overclaim") {
+				t.Fatalf("positive overclaim %q should fail closed: %#v", phrase, gate)
+			}
+		})
+	}
+
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), strings.Join([]string{
+		"Reviewer Command",
+		"No HIPAA compliance claim.",
+		"HIPAA attestation remains no-go until reviewed.",
+		"Does not prove MCP conformance.",
+		"Does not prove regulated sales readiness, formal approval, or MCP conformance.",
+		"Do not claim FINRA compliance or regulated sales readiness before review.",
+		"No release material asserts regulated readiness or formal approval beyond evidence.",
+		"No NIST certification claim.",
+		"MCP conformance remains no-go until reviewed.",
+		"NIST certification remains no-go until reviewed.",
+		"This is not a NIST attestation.",
+		"No formal approval is claimed.",
+		"No regulated sales readiness claim.",
+	}, "\n"))
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if p711TestBlockerContains(gate.Blockers, "overclaim") {
+		t.Fatalf("negated limitations should not be treated as overclaims: %#v", gate)
+	}
+}
+
+func TestP99ProductEvidenceRejectsPostureMatrixOverclaims(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(map[string]any)
+		pattern string
+	}{
+		{
+			name: "control_claim_mcp_conformance",
+			mutate: func(matrix map[string]any) {
+				controls := matrix["required_controls"].([]any)
+				control := controls[0].(map[string]any)
+				control["claim"] = "Idiom has MCP conformance."
+			},
+			pattern: "mcp conformance",
+		},
+		{
+			name: "client_limitation_hipaa_certification",
+			mutate: func(matrix map[string]any) {
+				rows := matrix["client_classification_coverage"].([]any)
+				row := rows[3].(map[string]any)
+				row["limitation"] = "HIPAA certification."
+			},
+			pattern: "hipaa certification",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
+			var matrix map[string]any
+			data, err := os.ReadFile(matrixPath)
+			if err != nil {
+				t.Fatalf("read matrix: %v", err)
+			}
+			if err := json.Unmarshal(data, &matrix); err != nil {
+				t.Fatalf("decode matrix: %v", err)
+			}
+			tc.mutate(matrix)
+			writeP711JSON(t, matrixPath, matrix)
+
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+			if gate.Status != "needs_evidence" ||
+				gate.Counts["matrix_overclaim_blockers"] == 0 ||
+				!p711TestBlockerContains(gate.Blockers, "posture matrix field") ||
+				!p711TestBlockerContains(gate.Blockers, tc.pattern) {
+				t.Fatalf("matrix overclaim %q should fail closed with structured blocker: %#v", tc.pattern, gate)
+			}
+		})
+	}
+}
+
+func TestP99ProductEvidenceRejectsHollowSourceVerificationRecords(t *testing.T) {
+	cases := []struct {
+		name    string
+		records string
+		blocker string
+	}{
+		{
+			name: "empty_source_id",
+			records: "- source_id:\n" +
+				"  checked_date: 2026-05-14\n" +
+				"  verification_method: browser/manual source check\n",
+			blocker: "source_id is empty",
+		},
+		{
+			name: "empty_checked_date",
+			records: "- source_id: nist-ai-rmf\n" +
+				"  checked_date:\n" +
+				"  verification_method: browser/manual source check\n",
+			blocker: "checked_date is empty",
+		},
+		{
+			name: "empty_verification_method",
+			records: "- source_id: nist-ai-rmf\n" +
+				"  checked_date: 2026-05-14\n" +
+				"  verification_method:\n",
+			blocker: "verification_method is empty",
+		},
+		{
+			name: "invalid_checked_date",
+			records: "- source_id: nist-ai-rmf\n" +
+				"  checked_date: 2026/05/14\n" +
+				"  verification_method: browser/manual source check\n",
+			blocker: "checked_date must be YYYY-MM-DD",
+		},
+		{
+			name: "missing_per_record_unreachable_method",
+			records: "- source_id: reachable-source\n" +
+				"  checked_date: 2026-05-14\n" +
+				"  source_status: reachable\n" +
+				"  verification_method: browser/manual source check\n" +
+				"  unreachable_source_verification_method: fallback recorded on this record\n" +
+				"- source_id: blocked-source\n" +
+				"  checked_date: 2026-05-14\n" +
+				"  source_status: unreachable_403\n" +
+				"  verification_method: browser/manual source check\n",
+			blocker: "unreachable source evidence missing verification method for source_id: blocked-source",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageP711ProductEvidenceFixtures(t, root)
+			writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), p99PlanFixtureWithSourceRecords(tc.records))
+
+			report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, tc.blocker) {
+				t.Fatalf("source verification blocker %q missing: %#v", tc.blocker, gate)
+			}
+		})
+	}
+}
+
+func TestP99ProductEvidencePrivacyBlockedExportNeedsEvidence(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	path := filepath.Join(root, "validation-records.json")
+	writeP711JSON(t, path, []map[string]any{{
+		"record_id":             "record-enterprise-saas",
+		"client_classification": "enterprise-saas",
+		"evidence_status":       "complete",
+		"retained_use_status":   "observed",
+		"adoption_signal_type":  "internal_sponsor",
+		"redaction_status":      "redacted",
+		"raw_prompt":            "RAW_PROMPT_BODY",
+	}})
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{
+		ProjectRoot:       root,
+		ValidationRecords: path,
+	})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if report.Status != "blocked" || report.Privacy.ForbiddenFieldCheck != "failed:validation_records" {
+		t.Fatalf("fixture should block product export privacy: status=%q privacy=%#v", report.Status, report.Privacy)
+	}
+	if gate.Status != "needs_evidence" ||
+		!p711TestBlockerContains(gate.Blockers, "product evidence export status is privacy-blocked") ||
+		!p711TestBlockerContains(gate.Blockers, "validation records failed privacy validation") {
+		t.Fatalf("privacy-blocked product export should block P9.9 with structured blockers: %#v", gate)
+	}
+
+	release := buildReleaseEvidenceBundle(root, laneHistorySummary{}, releaseEvidenceOptions{
+		ProjectRoot:       root,
+		ValidationRecords: path,
+	})
+	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.9")
+	if releaseGate.Status != gate.Status ||
+		releaseGate.Counts["product_privacy_blockers"] != gate.Counts["product_privacy_blockers"] ||
+		!p711TestBlockerContains(releaseGate.Blockers, "product evidence export status is privacy-blocked") {
+		t.Fatalf("privacy-blocked product/release P9.9 should remain aligned: product=%#v release=%#v", gate, releaseGate)
+	}
+}
+
+func TestP99ProductEvidenceContradictoryReportMarkersFailClosed(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.9.md"), "# P9.9 Security Privacy Gate\n\nDecision: no-go\nReviewer signoff: GO\n\nThreat model\nData-flow\nPrivacy\nControl mapping\n\n## Reproduction Commands\n")
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "conflicting GO/no-go markers") {
+		t.Fatalf("contradictory report markers should fail closed: %#v", gate)
+	}
+}
+
+func TestP99ProductEvidenceRequiresStructuredSourceVerificationMethod(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), "### P0.9 Product Security And Privacy Posture\n\nSource anchors checked on 2026-05-14 UTC.\n\nProduct threat model:\nP7.9 P8.4 P9.1 P9.3 P9.9\n\nData-flow map:\n\nPrivacy and retention posture:\n\nControl mapping evidence:\n\nDownstream go/no-go gates:\n")
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "structured source verification evidence") {
+		t.Fatalf("missing structured source verification should fail closed: %#v", gate)
+	}
+
+	writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), p99PlanFixtureText(false))
+	report = buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "unreachable source evidence missing verification method") {
+		t.Fatalf("unreachable source without method should fail closed: %#v", gate)
+	}
+}
+
+func TestP99ProductEvidenceNeedsEvidenceWhenControlEvidenceOrTiebacksMissing(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
+	var matrix map[string]any
+	data, err := os.ReadFile(matrixPath)
+	if err != nil {
+		t.Fatalf("read matrix: %v", err)
+	}
+	if err := json.Unmarshal(data, &matrix); err != nil {
+		t.Fatalf("decode matrix: %v", err)
+	}
+	controls := matrix["required_controls"].([]any)
+	first := controls[0].(map[string]any)
+	first["evidence"] = []any{}
+	matrix["release_gate_tiebacks"] = []string{"P7.9"}
+	writeP711JSON(t, matrixPath, matrix)
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+	if gate.Status != "needs_evidence" ||
+		!p711TestBlockerContains(gate.Blockers, "missing executable evidence") ||
+		!p711TestBlockerContains(gate.Blockers, "missing release-gate tieback: P8.4") {
+		t.Fatalf("missing control evidence/tiebacks should fail closed: %#v", gate)
+	}
+}
+
+func TestP99ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
+	root := t.TempDir()
+	stageP711ProductEvidenceFixtures(t, root)
+	localOpsPath := writeP711LocalOpsReport(t, root)
+	recordsPath := writeP711ValidationRecords(t, root)
+	stageReleaseEvidenceCommandBundle(t, root, "baseline", releaseEvidenceBaselineCommands())
+	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+
+	product := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{
+		ProjectRoot:       root,
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+	})
+	release := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot:       root,
+		BaselineDir:       "baseline",
+		CurrentDir:        "current",
+		LocalOpsReport:    localOpsPath,
+		ValidationRecords: recordsPath,
+	})
+	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.9")
+	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.9")
+	if productGate.Status != releaseGate.Status || productGate.Status != "evidence_present" {
+		t.Fatalf("product/release P9.9 status should agree: product=%#v release=%#v", productGate, releaseGate)
+	}
+	for _, key := range []string{"mapped_required_controls", "mapped_client_rows", "mapped_gate_tiebacks", "blockers"} {
+		if productGate.Counts[key] != releaseGate.Counts[key] {
+			t.Fatalf("product/release P9.9 count %q should agree: product=%#v release=%#v", key, productGate, releaseGate)
+		}
+	}
+	if len(productGate.Blockers) != 0 || len(releaseGate.Blockers) != 0 ||
+		!stringSliceContains(productGate.EvidenceIDs, "p7.9-security-privacy-posture") ||
+		!stringSliceContains(releaseGate.EvidenceIDs, "release-gate-p9.9") {
+		t.Fatalf("P9.9 structured fields incomplete: product=%#v release=%#v", productGate, releaseGate)
+	}
+}
+
 func p711TestSourceRef(refs []p711SourceReference, id string) p711SourceReference {
 	for _, ref := range refs {
 		if ref.ID == id {
@@ -1092,6 +1450,15 @@ func p711TestReleaseGate(rows []p711ReleaseGateLinkage, gate string) p711Release
 		}
 	}
 	return p711ReleaseGateLinkage{}
+}
+
+func p711TestBlockerContains(blockers []string, needle string) bool {
+	for _, blocker := range blockers {
+		if strings.Contains(blocker, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func assertP811IntegrationNeedsEvidence(t *testing.T, report productEvidenceExportReport) {
@@ -1115,17 +1482,17 @@ func stageP711ProductEvidenceFixtures(t *testing.T, root string) {
 		p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
 		p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
 	})
-	var controls []map[string]any
-	controls = append(controls, map[string]any{"id": "redaction_no_body_capture"})
 	var securityRows []map[string]any
 	var transcripts []map[string]any
+	controlIDs := p99RequiredControlIDs()
 	for _, class := range []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"} {
 		commandID := "p76-" + class
 		securityRows = append(securityRows, map[string]any{
-			"classification":  class,
-			"stance":          p711DefaultStance(class),
-			"p7_6_command_id": commandID,
-			"limitation":      "proof only",
+			"classification":      class,
+			"stance":              p711DefaultStance(class),
+			"p7_6_command_id":     commandID,
+			"covered_control_ids": controlIDs,
+			"limitation":          "proof-only reviewed control fixture",
 		})
 		transcripts = append(transcripts, map[string]any{
 			"id":              "p7.10-" + class,
@@ -1136,16 +1503,68 @@ func stageP711ProductEvidenceFixtures(t *testing.T, root string) {
 			"commands":        []map[string]any{{"id": commandID, "exit_code": 0}},
 		})
 	}
-	writeP711JSON(t, filepath.Join(root, "docs", "security-privacy-posture.matrix.json"), map[string]any{
-		"artifact_id":                    "p7.9-security-privacy-posture",
-		"required_controls":              controls,
-		"client_classification_coverage": securityRows,
-	})
+	stageP99PostureGateFixtures(t, root, securityRows)
 	writeP711JSON(t, filepath.Join(root, "testdata", "sidecar", "client-demo-transcripts.json"), map[string]any{
 		"schema_version": "idiom.client_demo_transcripts.v1",
 		"name":           "p7.10-client-demo-transcripts",
 		"transcripts":    transcripts,
 	})
+}
+
+func stageP99PostureGateFixtures(t *testing.T, root string, securityRows []map[string]any) {
+	t.Helper()
+	var controls []map[string]any
+	for _, id := range p99RequiredControlIDs() {
+		controls = append(controls, map[string]any{
+			"id":              id,
+			"claim":           "reviewed " + id,
+			"mvp_limitations": "fixture evidence only",
+			"evidence": []map[string]any{{
+				"kind":     "go_test",
+				"command":  "go test ./cmd/idiom -run TestP99",
+				"path":     "cmd/idiom/p9_9_security_privacy_gate_test.go",
+				"check_id": "fixture-" + id,
+			}},
+		})
+	}
+	writeP711JSON(t, filepath.Join(root, "docs", "security-privacy-posture.matrix.json"), map[string]any{
+		"schema_version":                 "idiom.security_privacy_posture.v1",
+		"artifact_id":                    "p7.9-security-privacy-posture",
+		"required_controls":              controls,
+		"client_classification_coverage": securityRows,
+		"forbidden_evidence_fields":      p99ForbiddenEvidenceFields(),
+		"release_gate_tiebacks":          p99RequiredTiebacks(),
+	})
+	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "# Security And Privacy Posture\n\nReviewer Command\n\nThis fixture is not a certification or attestation.\n")
+	writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), p99PlanFixtureText(true))
+	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.3.md"), "# P9.3 Release Gate\n\nDecision: GO\n")
+	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.8.md"), "# P9.8 Release Gate\n\nDecision: GO\n")
+	writeP711Text(t, filepath.Join(root, "docs", "release-decision-p9.2.md"), "# P9.2 Release Decision\n\nDecision: GO\n")
+	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.9.md"), "# P9.9 Security Privacy Gate\n\nReviewer signoff: GO\n\nThreat model\nData-flow\nPrivacy\nControl mapping\n\n## Reproduction Commands\n")
+}
+
+func p99PlanFixtureText(includeUnreachableMethod bool) string {
+	unreachableMethod := ""
+	if includeUnreachableMethod {
+		unreachableMethod = "  unreachable_source_verification_method: browser/manual source check after CLI received 403\n"
+	}
+	return p99PlanFixtureWithSourceRecords("- source_id: hhs-hipaa-security-rule\n" +
+		"  checked_date: 2026-05-14\n" +
+		"  source_status: unreachable_403\n" +
+		"  verification_method: browser/manual source check\n" +
+		unreachableMethod)
+}
+
+func p99PlanFixtureWithSourceRecords(records string) string {
+	return "### P0.9 Product Security And Privacy Posture\n\n" +
+		"Source anchors checked on 2026-05-14 UTC.\n\n" +
+		"Product threat model:\nP7.9 P8.4 P9.1 P9.3 P9.9\n\n" +
+		"Data-flow map:\n\n" +
+		"Privacy and retention posture:\n\n" +
+		"Control mapping evidence:\n\n" +
+		"Source verification evidence:\n" +
+		records +
+		"\nDownstream go/no-go gates:\n"
 }
 
 func writeP711IntegrationProofs(t *testing.T, root string, proofs []map[string]any) {
@@ -1239,6 +1658,16 @@ func writeP711JSON(t *testing.T, path string, value any) {
 		t.Fatalf("mkdir fixture: %v", err)
 	}
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+}
+
+func writeP711Text(t *testing.T, path string, value string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 }
