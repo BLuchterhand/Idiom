@@ -1791,7 +1791,7 @@ Review signoff:
 | P9.1 | Produce release evidence bundle from baseline/current metrics, tests, audit, benchmark, and sidecar smoke | P0-P8 | Wegener the 3rd | - [x] | Pasteur the 3rd + P9.13 follow-up | - [ ] |
 | P9.13 | Downgrade release bundle statuses when required evidence is missing | P9.1 | Gibbs the 3rd | - [x] | Pauli the 3rd + P9.14 follow-up | - [ ] |
 | P9.14 | Synchronize embedded release gate linkage with downgraded release readiness | P9.13 | Banach the 3rd | - [x] | Nietzsche the 3rd + P9.15 follow-up | - [ ] |
-| P9.15 | Refresh stale generated release evidence artifacts | P9.14 | Zeno the 3rd | - [ ] | unassigned review subagent | - [ ] |
+| P9.15 | Refresh stale generated release evidence artifacts | P9.14 | Zeno the 3rd | - [x] | unassigned review subagent | - [ ] |
 | P9.2 | Record project go/no-go/pivot decision against measured criteria | P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.3 | Gate release on no unresolved high contract/security regressions and owned high/medium audit findings with evidence and reproduce commands | P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P9.4 | Gate release on complete client-classification example-test coverage and reviewer signoff that every example maps to generic architecture primitives | P7.6, P8.5, P9.1 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
