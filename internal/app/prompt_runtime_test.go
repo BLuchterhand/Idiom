@@ -877,6 +877,53 @@ evidence: native/src/simulation/transport/route_graph.cpp
 	}
 }
 
+func TestStructuredRequiredEditPathsSingleLineJSONDoesNotBleed(t *testing.T) {
+	prompt := `{"required_edit_paths":["native/src/a.cpp"],"evidence":[".idiom/config.json","native/src/b.cpp"]}`
+	got := structuredRequiredEditPathsFromPrompt(prompt)
+	if len(got) != 1 || got[0] != "native/src/a.cpp" {
+		t.Fatalf("expected single-line JSON required paths only, got %#v", got)
+	}
+}
+
+func TestStructuredRequiredEditPathsIgnoreInlineEvidenceCommand(t *testing.T) {
+	prompt := `
+Freshness:
+- idiom tool context_status --config .idiom/config.json --input '{"refresh":true,"required_edit_paths":["native/src/a.cpp"],"limit":20}'
+`
+	if got := structuredRequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+		t.Fatalf("inline evidence commands must not define required edit paths, got %#v", got)
+	}
+}
+
+func TestRequiredEditPathsIgnoreStructuredKeysInsideEvidenceCommands(t *testing.T) {
+	prompt := `
+# Atom
+
+## Files To Modify
+
+| File | Change |
+|---|---|
+| ` + "`native/src/a.cpp`" + ` | MODIFY source |
+| ` + "`native/tests/test_a.cpp`" + ` | ADD coverage |
+
+## Freshness / Staleness Gate
+
+- idiom tool context_status --config .idiom/config.json --input '{"refresh":true,"required_edit_paths":["native/src/a.cpp","native/tests/test_a.cpp"],"limit":20}'
+`
+	got := requiredEditPathsFromPrompt(prompt)
+	for _, want := range []string{"native/src/a.cpp", "native/tests/test_a.cpp"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("missing required edit path %q, got %#v", want, got)
+		}
+	}
+	if slices.Contains(got, ".idiom/config.json") {
+		t.Fatalf("evidence command config path must not become required edit path, got %#v", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected only Files To Modify paths, got %#v", got)
+	}
+}
+
 func TestRequiredEditPathsDoNotBleedFromFollowingEvidenceSection(t *testing.T) {
 	prompt := `
 Files To Modify:

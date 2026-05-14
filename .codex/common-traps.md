@@ -52,6 +52,11 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Source-satisfied dispatch**: already-complete or source-satisfied artifacts
   should be classified before spending model tokens. If such a run is useful,
   treat it as a regression fixture for the gate, not normal throughput.
+- **Evidence paths as write scope**: command examples, freshness probes, context
+  packets, audit output, and transcript excerpts are evidence, not edit
+  authority. Required edit paths must come from explicit allowlist headings or
+  structured top-level allowlist fields; broad mentioned-path scans may populate
+  target/evidence refs but must not authorize writes.
 - **Review that cannot act**: a review pass should verify behavior, contracts,
   scope, evidence, and test coverage, then either repair within its authority or
   produce a typed blocker. A pure "looks good" review is weak for local models.

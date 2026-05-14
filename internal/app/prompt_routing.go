@@ -275,12 +275,16 @@ func structuredRequiredEditPathsFromPrompt(prompt string) []string {
 		if !active && structuredEditPathKeyLine(line, keys) {
 			active = true
 			started = true
-			activeArray = strings.Contains(line, "[") && !strings.Contains(line, "]")
+			activeArray = structuredEditPathLineStartsArray(line)
 		}
 		if !active {
 			continue
 		}
-		linePaths := promptPacketWorkspacePaths(line)
+		scanLine := line
+		if started {
+			scanLine = structuredEditPathInlineValue(line)
+		}
+		linePaths := promptPacketWorkspacePaths(scanLine)
 		if len(linePaths) > 0 {
 			paths = appendUniqueBriefStrings(paths, linePaths...)
 		}
@@ -300,18 +304,152 @@ func structuredRequiredEditPathsFromPrompt(prompt string) []string {
 }
 
 func structuredEditPathKeyLine(line string, keys []string) bool {
-	normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(strings.TrimSpace(line)))
+	normalized := normalizeStructuredEditPathKeyPrefix(line)
 	for _, key := range keys {
 		switch {
 		case normalized == key:
 			return true
 		case strings.HasPrefix(normalized, key+":") || strings.HasPrefix(normalized, key+"="):
 			return true
-		case strings.Contains(normalized, `"`+key+`"`) || strings.Contains(normalized, `'`+key+`'`):
+		case strings.HasPrefix(normalized, `"`+key+`":`) || strings.HasPrefix(normalized, `"`+key+`"=`):
+			return true
+		case strings.HasPrefix(normalized, `'`+key+`':`) || strings.HasPrefix(normalized, `'`+key+`'=`):
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeStructuredEditPathKeyPrefix(line string) string {
+	normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(strings.TrimSpace(line)))
+	normalized = strings.TrimLeft(normalized, "{[, ")
+	if strings.HasPrefix(normalized, "-_") {
+		normalized = strings.TrimSpace(strings.TrimPrefix(normalized, "-_"))
+	}
+	return normalized
+}
+
+func structuredEditPathLineStartsArray(line string) bool {
+	value := structuredEditPathInlineRawValue(line)
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "[") && structuredInlineClosingIndex(value, '[', ']') < 0
+}
+
+func structuredEditPathInlineValue(line string) string {
+	return structuredEditPathValueSegment(structuredEditPathInlineRawValue(line))
+}
+
+func structuredEditPathInlineRawValue(line string) string {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimLeft(trimmed, "{[, ")
+	if strings.HasPrefix(trimmed, "- ") {
+		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+	}
+	colon := strings.Index(trimmed, ":")
+	equals := strings.Index(trimmed, "=")
+	switch {
+	case colon < 0 && equals < 0:
+		return ""
+	case colon < 0:
+		return trimmed[equals+1:]
+	case equals < 0:
+		return trimmed[colon+1:]
+	case colon < equals:
+		return trimmed[colon+1:]
+	default:
+		return trimmed[equals+1:]
+	}
+}
+
+func structuredEditPathValueSegment(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	switch value[0] {
+	case '[':
+		if end := structuredInlineClosingIndex(value, '[', ']'); end >= 0 {
+			return strings.TrimSpace(value[:end+1])
+		}
+		return value
+	case '{':
+		if end := structuredInlineClosingIndex(value, '{', '}'); end >= 0 {
+			return strings.TrimSpace(value[:end+1])
+		}
+		return value
+	case '"', '\'':
+		if end := structuredInlineQuoteClosingIndex(value, value[0]); end >= 0 {
+			return strings.TrimSpace(value[:end+1])
+		}
+		return value
+	default:
+		end := len(value)
+		if comma := strings.Index(value, ","); comma >= 0 && comma < end {
+			end = comma
+		}
+		if comment := strings.Index(value, " #"); comment >= 0 && comment < end {
+			end = comment
+		}
+		return strings.TrimSpace(value[:end])
+	}
+}
+
+func structuredInlineClosingIndex(value string, open byte, close byte) int {
+	depth := 0
+	var quote byte
+	escaped := false
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			quote = ch
+			continue
+		}
+		if ch == open {
+			depth++
+			continue
+		}
+		if ch != close {
+			continue
+		}
+		depth--
+		if depth == 0 {
+			return i
+		}
+	}
+	return -1
+}
+
+func structuredInlineQuoteClosingIndex(value string, quote byte) int {
+	escaped := false
+	for i := 1; i < len(value); i++ {
+		ch := value[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == quote {
+			return i
+		}
+	}
+	return -1
 }
 
 func structuredEditPathBlockEnded(line string, activeArray bool) bool {
