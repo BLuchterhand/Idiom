@@ -1778,7 +1778,7 @@ Review signoff:
 | P7.19 | Detect embedded absolute paths in product-evidence validation records | P7.18 | Hypatia the 3rd | - [x] | Chandrasekhar the 3rd | - [x] |
 | P8.1 | Implement `idiom mcp serve --stdio --profile discovery` from the same schemas | P7 | Ramanujan the 3rd | - [x] | Anscombe the 3rd | - [x] |
 | P8.2 | Add MCP resources, root clamping, and protocol/error tests | P8.1 | Jason the 3rd | - [x] | James the 3rd + P8.7 follow-up | - [ ] |
-| P8.7 | Deny protected `secrets` resource paths before MCP metadata exposure | P8.2 | McClintock the 3rd | - [ ] | unassigned review subagent | - [ ] |
+| P8.7 | Deny protected `secrets` resource paths before MCP metadata exposure | P8.2 | McClintock the 3rd | - [x] | Sartre the 3rd | - [ ] |
 | P8.3 | Add MCP client smoke tests and telemetry/caller attribution parity with CLI | P8.1, P8.2 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P8.4 | Add MCP resource redaction, protected-path containment, and stale-freshness parity tests | P8.2, P7.5 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
 | P8.5 | Add MCP parity coverage for any classification example that depends on resources, caller metadata, or redaction semantics | P8.1-P8.4, P7.6 | unassigned subagent | - [ ] | unassigned review subagent | - [ ] |
