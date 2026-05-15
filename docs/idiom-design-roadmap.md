@@ -32,6 +32,13 @@ The executable implementation plan is
 | Eval/audit/learning flywheel | [design-eval-audit-learning-flywheel.md](design-eval-audit-learning-flywheel.md) | Runs produce structured evidence that becomes evals, audits, ranker updates, and regression protection. |
 | Agent substrate and sidecar | [design-agent-substrate-sidecar.md](design-agent-substrate-sidecar.md) | Idiom's context, audit, verification, and contract surfaces become reusable by Codex, Claude Code, OpenCode, Aider, scripts, and MCP clients. |
 
+## Cross-Pillar Designs
+
+- [PRD to ADR to brief research workflow](design-prd-adr-brief-research-workflow.md)
+  defines the upstream artifact pipeline that turns aligned research evidence
+  into traceable product requirements, architecture decisions, proactive TDD
+  obligations, and dispatch-ready Idiom briefs.
+
 ## System Shape
 
 The pillars are not independent feature tracks. They form one architecture:
