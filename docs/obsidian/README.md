@@ -28,6 +28,9 @@ and can be read directly in any editor.
 18. [[17 - Security Privacy and Data Boundaries]]
 19. [[18 - Prompt Stack and Profiles]]
 20. [[19 - CLI TUI and Operator Surface]]
+21. [[20 - PRD ADR Brief Research Workflow PROPOSAL]]
+22. [[21 - Behavioral TDD Coverage PROPOSAL]]
+23. [[22 - Product Workflow ROADMAP]]
 
 ## Source Documents
 
@@ -44,6 +47,8 @@ This vault summarizes and connects the repository's canonical documents:
 - [docs/design-local-model-operations.md](../design-local-model-operations.md)
 - [docs/design-eval-audit-learning-flywheel.md](../design-eval-audit-learning-flywheel.md)
 - [docs/design-agent-substrate-sidecar.md](../design-agent-substrate-sidecar.md)
+- [docs/design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
+- [docs/design-tdd-coverage.md](../design-tdd-coverage.md)
 - [docs/security-privacy-posture.md](../security-privacy-posture.md)
 - [docs/product-evidence-export.md](../product-evidence-export.md)
 - [.codex/project-context.md](../../.codex/project-context.md)

@@ -85,6 +85,22 @@ before discussing enterprise or regulated use.
 - [[17 - Security Privacy and Data Boundaries]]
 - [[18 - Prompt Stack and Profiles]]
 - [[19 - CLI TUI and Operator Surface]]
+- [[20 - PRD ADR Brief Research Workflow PROPOSAL]]
+- [[21 - Behavioral TDD Coverage PROPOSAL]]
+- [[22 - Product Workflow ROADMAP]]
+
+## Proposals and Roadmaps
+
+These notes track proposed but unimplemented work. All seven architectural
+pillars are complete; the product workflow and TDD coverage pipeline are design
+only.
+
+- [[20 - PRD ADR Brief Research Workflow PROPOSAL]] — upstream artifact pipeline
+  from research evidence to dispatch-ready briefs
+- [[21 - Behavioral TDD Coverage PROPOSAL]] — exhaustive behavioral coverage
+  between human-approved ADR and implementation brief
+- [[22 - Product Workflow ROADMAP]] — what is done, what remains, and the
+  implementation phase plan
 
 ## Core Sources
 
