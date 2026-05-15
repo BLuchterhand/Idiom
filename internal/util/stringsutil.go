@@ -53,6 +53,13 @@ func NonEmptyTrimmedLines(text string) []string {
 	return lines
 }
 
+func Fallback(value, alt string) string {
+	if strings.TrimSpace(value) == "" {
+		return alt
+	}
+	return value
+}
+
 func TrimHeadingQualifier(heading string) string {
 	heading = strings.TrimSpace(heading)
 	for _, marker := range []string{" (", " [", " - ", " -- "} {

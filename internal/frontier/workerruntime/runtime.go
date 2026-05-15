@@ -1309,12 +1309,5 @@ func firstNonEmpty(values ...string) string {
 }
 
 func truncate(value string, max int) string {
-	value = strings.TrimSpace(value)
-	if max <= 0 || len(value) <= max {
-		return value
-	}
-	if max <= 1 {
-		return value[:max]
-	}
-	return value[:max-1] + "..."
+	return util.Truncate(strings.TrimSpace(value), max)
 }

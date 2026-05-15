@@ -15,14 +15,7 @@ func containsAny(text string, needles ...string) bool {
 }
 
 func truncateText(text string, limit int) string {
-	text = strings.TrimSpace(text)
-	if limit <= 0 || len(text) <= limit {
-		return text
-	}
-	if limit <= 3 {
-		return text[:limit]
-	}
-	return text[:limit-3] + "..."
+	return util.Truncate(strings.TrimSpace(text), limit)
 }
 
 func firstNonEmptyString(values ...string) string {

@@ -202,7 +202,7 @@ func (s *Server) handle(conn net.Conn) {
 	dec := json.NewDecoder(conn)
 	var req Request
 	if err := dec.Decode(&req); err != nil {
-		writeResponse(conn, Response{Error: fmt.Sprintf("decode request: %v", err)})
+		writeJSON(conn, Response{Error: fmt.Sprintf("decode request: %v", err)})
 		return
 	}
 	// Clear the deadline now that we've read the action — Acquire
@@ -218,7 +218,7 @@ func (s *Server) handle(conn net.Conn) {
 	case ActionCancel:
 		s.handleCancel(conn, req)
 	default:
-		writeResponse(conn, Response{Error: fmt.Sprintf("unknown action %q", req.Action)})
+		writeJSON(conn, Response{Error: fmt.Sprintf("unknown action %q", req.Action)})
 	}
 }
 
@@ -229,7 +229,7 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 	}
 	j, position, err := s.enqueue(pool, req.Label, req.Client)
 	if err != nil {
-		writeResponse(conn, Response{Error: err.Error()})
+		writeJSON(conn, Response{Error: err.Error()})
 		return
 	}
 	// Always release on exit, whether granted-then-disconnect or
@@ -240,7 +240,7 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 	// First frame: position (or implicit grant if position == 0; the
 	// dispatcher closed grantedCh in that case, which the loop below
 	// will pick up immediately).
-	if err := writeResponse(conn, Response{JobID: j.ID, Pool: j.Pool, Position: position}); err != nil {
+	if err := writeJSON(conn, Response{JobID: j.ID, Pool: j.Pool, Position: position}); err != nil {
 		return
 	}
 
@@ -257,7 +257,7 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 	for {
 		select {
 		case <-j.grantedCh:
-			if err := writeResponse(conn, Response{JobID: j.ID, Pool: j.Pool, Granted: true}); err != nil {
+			if err := writeJSON(conn, Response{JobID: j.ID, Pool: j.Pool, Granted: true}); err != nil {
 				return
 			}
 			// Hold the slot until the client disconnects.
@@ -267,7 +267,7 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 			}
 			return
 		case pos := <-j.posCh:
-			if err := writeResponse(conn, Response{JobID: j.ID, Pool: j.Pool, Position: pos}); err != nil {
+			if err := writeJSON(conn, Response{JobID: j.ID, Pool: j.Pool, Position: pos}); err != nil {
 				return
 			}
 		case <-disconnect:
@@ -280,11 +280,11 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 
 func (s *Server) handleStatus(conn net.Conn) {
 	snap := s.snapshot()
-	_ = writeResponse(conn, Response{Status: &snap})
+	_ = writeJSON(conn, Response{Status: &snap})
 }
 
 func (s *Server) handlePing(conn net.Conn) {
-	_ = writeResponse(conn, Response{
+	_ = writeJSON(conn, Response{
 		Pong:   true,
 		Uptime: time.Since(s.startedAt).Seconds(),
 	})
@@ -292,15 +292,15 @@ func (s *Server) handlePing(conn net.Conn) {
 
 func (s *Server) handleCancel(conn net.Conn, req Request) {
 	if req.JobID == "" {
-		_ = writeResponse(conn, Response{Error: "cancel: job_id required"})
+		_ = writeJSON(conn, Response{Error: "cancel: job_id required"})
 		return
 	}
 	ok, errMsg := s.cancel(req.JobID)
 	if !ok {
-		_ = writeResponse(conn, Response{Error: errMsg})
+		_ = writeJSON(conn, Response{Error: errMsg})
 		return
 	}
-	_ = writeResponse(conn, Response{JobID: req.JobID})
+	_ = writeJSON(conn, Response{JobID: req.JobID})
 }
 
 // enqueue inserts a job into a pool. If a slot is free it grants
@@ -363,11 +363,8 @@ func (s *Server) release(jobID string) {
 		return
 	}
 	// In-flight path: free a slot, promote head of waiting.
-	for i, inflight := range p.inFlight {
-		if inflight.ID != jobID {
-			continue
-		}
-		p.inFlight = append(p.inFlight[:i], p.inFlight[i+1:]...)
+	if updated, found := removeJobByID(p.inFlight, jobID); found {
+		p.inFlight = updated
 		if len(p.waiting) > 0 {
 			next := p.waiting[0]
 			p.waiting = p.waiting[1:]
@@ -379,13 +376,9 @@ func (s *Server) release(jobID string) {
 		return
 	}
 	// Waiting path: drop from queue, shift everyone behind.
-	for i, waiting := range p.waiting {
-		if waiting.ID != jobID {
-			continue
-		}
-		p.waiting = append(p.waiting[:i], p.waiting[i+1:]...)
+	if updated, found := removeJobByID(p.waiting, jobID); found {
+		p.waiting = updated
 		s.broadcastPositions(p)
-		return
 	}
 }
 
@@ -411,16 +404,22 @@ func (s *Server) cancel(jobID string) (bool, string) {
 			return false, fmt.Sprintf("job %q is in-flight; ctrl-C the holding command instead", jobID)
 		}
 	}
-	for i, waiting := range p.waiting {
-		if waiting.ID != jobID {
-			continue
-		}
-		p.waiting = append(p.waiting[:i], p.waiting[i+1:]...)
+	if updated, found := removeJobByID(p.waiting, jobID); found {
+		p.waiting = updated
 		delete(s.jobs, jobID)
 		s.broadcastPositions(p)
 		return true, ""
 	}
 	return false, fmt.Sprintf("job %q not found in pool %q", jobID, j.Pool)
+}
+
+func removeJobByID(slice []*job, id string) ([]*job, bool) {
+	for i, j := range slice {
+		if j.ID == id {
+			return append(slice[:i], slice[i+1:]...), true
+		}
+	}
+	return slice, false
 }
 
 // broadcastPositions pushes new 1-indexed positions to every waiter
@@ -500,10 +499,8 @@ func (s *Server) newJobID() string {
 	return fmt.Sprintf("j-%d-%d", time.Now().UnixMilli(), n)
 }
 
-// writeResponse marshals and writes one JSON line. Newline-terminated
-// so a streaming reader on the other end can json.Decode in a loop.
-func writeResponse(w io.Writer, r Response) error {
-	data, err := json.Marshal(r)
+func writeJSON(w io.Writer, v any) error {
+	data, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}

@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/cmdutil"
 	"idiom/internal/eval"
 	"idiom/internal/util"
 )
@@ -166,7 +165,7 @@ func printSuiteReport(report eval.SWESuiteReport) {
 	if !report.Passed {
 		status = "FAIL"
 	}
-	fmt.Fprintf(output, "%s %s (%d tasks)\n", status, cmdutil.Fallback(report.Suite, "<unnamed suite>"), reportTaskCount(report))
+	fmt.Fprintf(output, "%s %s (%d tasks)\n", status, util.Fallback(report.Suite, "<unnamed suite>"), reportTaskCount(report))
 	printCoverage(report.Coverage)
 	printLint(report.LintFindings)
 	printSummary(report.Summary)
@@ -176,7 +175,7 @@ func printSuiteReport(report eval.SWESuiteReport) {
 		if !task.Passed {
 			taskStatus = "FAIL"
 		}
-		fmt.Fprintf(output, "- %s %s", taskStatus, cmdutil.Fallback(task.TaskID, "<unnamed task>"))
+		fmt.Fprintf(output, "- %s %s", taskStatus, util.Fallback(task.TaskID, "<unnamed task>"))
 		if strings.TrimSpace(task.Family) != "" {
 			fmt.Fprintf(output, " [%s]", task.Family)
 		}

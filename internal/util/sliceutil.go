@@ -15,3 +15,10 @@ func AppendUnique(values []string, value string) []string {
 	}
 	return append(values, value)
 }
+
+func LimitSlice(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return append([]string(nil), values...)
+	}
+	return append([]string(nil), values[:limit]...)
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -575,14 +576,7 @@ func TestProtocolErrorsOnGarbage(t *testing.T) {
 }
 
 func contains(haystack, needle string) bool {
-	return len(haystack) >= len(needle) && (func() bool {
-		for i := 0; i+len(needle) <= len(haystack); i++ {
-			if haystack[i:i+len(needle)] == needle {
-				return true
-			}
-		}
-		return false
-	})()
+	return strings.Contains(haystack, needle)
 }
 
 // TestStatusReportsAgeAndIdleFlag verifies #81: in-flight jobs

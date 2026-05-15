@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
@@ -22,21 +23,29 @@ const dialTimeout = 2 * time.Second
 // Status fetches a single snapshot from the daemon. One round trip,
 // connection closes after the reply. Returned StatusPayload is safe
 // to print directly; pools/jobs are pre-sorted by the server.
-func Status(socketPath string) (StatusPayload, error) {
+func roundTrip(socketPath string, req Request) (Response, error) {
 	conn, err := dial(socketPath)
 	if err != nil {
-		return StatusPayload{}, err
+		return Response{}, err
 	}
 	defer conn.Close()
-	if err := writeRequest(conn, Request{Action: ActionStatus}); err != nil {
-		return StatusPayload{}, err
+	if err := writeRequest(conn, req); err != nil {
+		return Response{}, err
 	}
 	var resp Response
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return StatusPayload{}, fmt.Errorf("decode status: %w", err)
+		return Response{}, fmt.Errorf("decode %s: %w", req.Action, err)
 	}
 	if resp.Error != "" {
-		return StatusPayload{}, errors.New(resp.Error)
+		return Response{}, errors.New(resp.Error)
+	}
+	return resp, nil
+}
+
+func Status(socketPath string) (StatusPayload, error) {
+	resp, err := roundTrip(socketPath, Request{Action: ActionStatus})
+	if err != nil {
+		return StatusPayload{}, err
 	}
 	if resp.Status == nil {
 		return StatusPayload{}, errors.New("status response missing payload")
@@ -48,20 +57,9 @@ func Status(socketPath string) (StatusPayload, error) {
 // been up. Useful for `idiom queue ping` and as a self-test from
 // install scripts that need to know whether to start the daemon.
 func Ping(socketPath string) (uptime time.Duration, err error) {
-	conn, err := dial(socketPath)
+	resp, err := roundTrip(socketPath, Request{Action: ActionPing})
 	if err != nil {
 		return 0, err
-	}
-	defer conn.Close()
-	if err := writeRequest(conn, Request{Action: ActionPing}); err != nil {
-		return 0, err
-	}
-	var resp Response
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return 0, fmt.Errorf("decode ping: %w", err)
-	}
-	if resp.Error != "" {
-		return 0, errors.New(resp.Error)
 	}
 	return time.Duration(resp.Uptime * float64(time.Second)), nil
 }
@@ -70,22 +68,8 @@ func Ping(socketPath string) (uptime time.Duration, err error) {
 // in-flight or unknown — the daemon refuses to cancel running jobs
 // (the operator should ctrl-C the holding command instead).
 func Cancel(socketPath, jobID string) error {
-	conn, err := dial(socketPath)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if err := writeRequest(conn, Request{Action: ActionCancel, JobID: jobID}); err != nil {
-		return err
-	}
-	var resp Response
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return fmt.Errorf("decode cancel: %w", err)
-	}
-	if resp.Error != "" {
-		return errors.New(resp.Error)
-	}
-	return nil
+	_, err := roundTrip(socketPath, Request{Action: ActionCancel, JobID: jobID})
+	return err
 }
 
 // Lease holds an acquired slot. The caller's job runs while the
@@ -252,14 +236,6 @@ func dial(socketPath string) (net.Conn, error) {
 	return conn, nil
 }
 
-func writeRequest(c net.Conn, req Request) error {
-	data, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if _, err := c.Write(data); err != nil {
-		return err
-	}
-	return nil
+func writeRequest(w io.Writer, req Request) error {
+	return writeJSON(w, req)
 }

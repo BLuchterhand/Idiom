@@ -61,6 +61,30 @@ func TestNonEmptyTrimmedLines(t *testing.T) {
 	}
 }
 
+func TestFallbackNonEmpty(t *testing.T) {
+	if got := Fallback("hello", "alt"); got != "hello" {
+		t.Errorf("Fallback = %q, want %q", got, "hello")
+	}
+}
+
+func TestFallbackEmpty(t *testing.T) {
+	if got := Fallback("", "alt"); got != "alt" {
+		t.Errorf("Fallback = %q, want %q", got, "alt")
+	}
+}
+
+func TestFallbackWhitespaceOnly(t *testing.T) {
+	if got := Fallback("   ", "alt"); got != "alt" {
+		t.Errorf("Fallback = %q, want %q", got, "alt")
+	}
+}
+
+func TestFallbackBothEmpty(t *testing.T) {
+	if got := Fallback("", ""); got != "" {
+		t.Errorf("Fallback = %q, want empty", got)
+	}
+}
+
 func TestTrimHeadingQualifier(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"Hello (world)", "Hello"},

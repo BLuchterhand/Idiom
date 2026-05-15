@@ -23,6 +23,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/llama"
+	"idiom/internal/util"
 )
 
 // clusterThreshold is the fixed low bar: a shape must occur at least this
@@ -705,11 +706,7 @@ func orDash(s string) string {
 }
 
 func truncate(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
+	return util.TruncateBytes(strings.ReplaceAll(s, "\n", " "), n, "…")
 }
 
 // llmReview sends one request to the local llama-server with a compressed

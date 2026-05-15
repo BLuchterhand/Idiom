@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,7 +58,7 @@ func TestBuildRankerLearningAuditClassifiesObservedSources(t *testing.T) {
 	if got.LearningSummary == nil || got.LearningSummary.BoostCount != 1 {
 		t.Fatalf("learning summary missing boost: %#v", got.LearningSummary)
 	}
-	if !contains(got.WiredSources, "eval") {
+	if !slices.Contains(got.WiredSources, "eval") {
 		t.Fatalf("eval should be classified wired, got %v", got.WiredSources)
 	}
 	for _, t2 := range got.TriggerRecommendations {
@@ -155,13 +156,4 @@ func TestBuildContextCacheAuditReportsNonCurrentRows(t *testing.T) {
 	if cache.Rows != 2 || cache.Fresh != 2 || cache.Stale != 0 || cache.NonCurrent != 1 || cache.CurrentIndexID != build.IndexID {
 		t.Fatalf("expected one non-current row in cache audit, got %#v", cache)
 	}
-}
-
-func contains(set []string, want string) bool {
-	for _, v := range set {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }

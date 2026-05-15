@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"idiom/internal/cmdutil"
 	"idiom/internal/eval"
+	"idiom/internal/util"
 )
 
 var output io.Writer = os.Stdout
@@ -187,7 +187,7 @@ func workspaceRootForCorpus(path string) string {
 }
 
 func printMetrics(metrics eval.Metrics) {
-	fmt.Fprintf(output, "Last user prompt: %s\n", cmdutil.Fallback(metrics.LastUser, "<none>"))
+	fmt.Fprintf(output, "Last user prompt: %s\n", util.Fallback(metrics.LastUser, "<none>"))
 	if metrics.DurationMillis > 0 {
 		fmt.Fprintf(output, "Duration: %dms\n", metrics.DurationMillis)
 	}
@@ -203,7 +203,7 @@ func printMetrics(metrics eval.Metrics) {
 	fmt.Fprintf(output, "Verification: %s (%d checks)\n", eval.VerificationStatus(metrics), metrics.VerificationChecks)
 	if len(metrics.VerificationPlans) > 0 {
 		plan := metrics.VerificationPlans[len(metrics.VerificationPlans)-1]
-		fmt.Fprintf(output, "Verification plan: confidence=%s", cmdutil.Fallback(plan.Confidence, "unknown"))
+		fmt.Fprintf(output, "Verification plan: confidence=%s", util.Fallback(plan.Confidence, "unknown"))
 		if strings.TrimSpace(plan.Coverage) != "" {
 			fmt.Fprintf(output, " coverage=%s", plan.Coverage)
 		}
@@ -280,7 +280,7 @@ func printMetrics(metrics eval.Metrics) {
 	}
 	if len(metrics.EffortPolicies) > 0 {
 		policy := metrics.EffortPolicies[len(metrics.EffortPolicies)-1]
-		fmt.Fprintf(output, "Effort policy: lane=%s level=%s", cmdutil.Fallback(policy.Lane, "unknown"), cmdutil.Fallback(policy.Level, "unknown"))
+		fmt.Fprintf(output, "Effort policy: lane=%s level=%s", util.Fallback(policy.Lane, "unknown"), util.Fallback(policy.Level, "unknown"))
 		if policy.AnalysisToolBudget > 0 {
 			fmt.Fprintf(output, " analysis_budget=%d", policy.AnalysisToolBudget)
 		}
@@ -304,8 +304,8 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.BudgetLedgers) > 0 {
 		ledger := metrics.BudgetLedgers[len(metrics.BudgetLedgers)-1]
 		fmt.Fprintf(output, "Budget ledger: lane=%s stop=%s model_calls=%d deepening=%d/%d evidence=%d",
-			cmdutil.Fallback(ledger.Lane, "unknown"),
-			cmdutil.Fallback(ledger.StopReason, "unknown"),
+			util.Fallback(ledger.Lane, "unknown"),
+			util.Fallback(ledger.StopReason, "unknown"),
 			ledger.UsedModelCalls,
 			ledger.UsedDeepeningPasses,
 			ledger.MaxDeepeningPasses,
@@ -319,9 +319,9 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.ControlRails) > 0 {
 		rails := metrics.ControlRails[len(metrics.ControlRails)-1]
 		fmt.Fprintf(output, "Control rails: lane=%s family=%s permission=%s",
-			cmdutil.Fallback(rails.Lane, "unknown"),
-			cmdutil.Fallback(rails.TaskFamily, "unknown"),
-			cmdutil.Fallback(rails.PermissionProfile, "unknown"),
+			util.Fallback(rails.Lane, "unknown"),
+			util.Fallback(rails.TaskFamily, "unknown"),
+			util.Fallback(rails.PermissionProfile, "unknown"),
 		)
 		if strings.TrimSpace(rails.Contract) != "" {
 			fmt.Fprintf(output, " contract=%s", rails.Contract)
@@ -340,8 +340,8 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.ClaimConfidences) > 0 {
 		confidence := metrics.ClaimConfidences[len(metrics.ClaimConfidences)-1]
 		fmt.Fprintf(output, "Claim confidence: lane=%s confidence=%s evidence_paths=%d unresolved=%d\n",
-			cmdutil.Fallback(confidence.Lane, "unknown"),
-			cmdutil.Fallback(confidence.Confidence, "unknown"),
+			util.Fallback(confidence.Lane, "unknown"),
+			util.Fallback(confidence.Confidence, "unknown"),
 			len(confidence.EvidencePaths),
 			len(confidence.UnresolvedUncertainty),
 		)
@@ -362,14 +362,14 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.RouteAmbiguities) > 0 {
 		ambiguity := metrics.RouteAmbiguities[len(metrics.RouteAmbiguities)-1]
 		fmt.Fprintf(output, "Route ambiguity: selected=%s ambiguous=%t signals=%s\n",
-			cmdutil.Fallback(ambiguity.SelectedLane, "unknown"),
+			util.Fallback(ambiguity.SelectedLane, "unknown"),
 			ambiguity.Ambiguous,
 			strings.Join(ambiguity.Signals, ","),
 		)
 	}
 	if len(metrics.LongHorizonStates) > 0 {
 		state := metrics.LongHorizonStates[len(metrics.LongHorizonStates)-1]
-		fmt.Fprintf(output, "Long-horizon state: action=%s", cmdutil.Fallback(state.Action, "unknown"))
+		fmt.Fprintf(output, "Long-horizon state: action=%s", util.Fallback(state.Action, "unknown"))
 		if strings.TrimSpace(state.MemoryKind) != "" {
 			fmt.Fprintf(output, " kind=%s", state.MemoryKind)
 		}
@@ -405,7 +405,7 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.LanguageCapabilities) > 0 {
 		fmt.Fprintln(output, "Language capabilities:")
 		for _, capability := range metrics.LanguageCapabilities {
-			line := fmt.Sprintf("- %s", cmdutil.Fallback(capability.Language, "unknown"))
+			line := fmt.Sprintf("- %s", util.Fallback(capability.Language, "unknown"))
 			if len(capability.Tools) > 0 {
 				line += " tools=" + strings.Join(capability.Tools, ",")
 			}
@@ -418,12 +418,12 @@ func printMetrics(metrics eval.Metrics) {
 	if len(metrics.Phases) > 0 {
 		fmt.Fprintln(output, "Phases:")
 		for _, phase := range metrics.Phases {
-			fmt.Fprintf(output, "- %s / %s [%s]\n", cmdutil.Fallback(phase.Lane, "unknown"), cmdutil.Fallback(phase.Phase, "unknown"), cmdutil.Fallback(phase.State, "unknown"))
+			fmt.Fprintf(output, "- %s / %s [%s]\n", util.Fallback(phase.Lane, "unknown"), util.Fallback(phase.Phase, "unknown"), util.Fallback(phase.State, "unknown"))
 		}
 	}
 	if len(metrics.RoutePlans) > 0 {
 		plan := metrics.RoutePlans[len(metrics.RoutePlans)-1]
-		fmt.Fprintf(output, "Route plan: initial=%s", cmdutil.Fallback(plan.InitialLane, "unknown"))
+		fmt.Fprintf(output, "Route plan: initial=%s", util.Fallback(plan.InitialLane, "unknown"))
 		if strings.TrimSpace(plan.FollowupLane) != "" {
 			fmt.Fprintf(output, " followup=%s", plan.FollowupLane)
 		}
@@ -440,7 +440,7 @@ func printMetrics(metrics eval.Metrics) {
 	}
 	if len(metrics.Replans) > 0 {
 		replan := metrics.Replans[len(metrics.Replans)-1]
-		fmt.Fprintf(output, "Replan recommendation: %s -> %s", cmdutil.Fallback(replan.FromLane, "unknown"), cmdutil.Fallback(replan.ToLane, "unknown"))
+		fmt.Fprintf(output, "Replan recommendation: %s -> %s", util.Fallback(replan.FromLane, "unknown"), util.Fallback(replan.ToLane, "unknown"))
 		if strings.TrimSpace(replan.Reason) != "" {
 			fmt.Fprintf(output, " reason=%s", replan.Reason)
 		}
@@ -453,7 +453,7 @@ func printLocalizationCorpusReport(report eval.LocalizationCorpusReport) {
 	if !report.Passed {
 		status = "FAIL"
 	}
-	fmt.Fprintf(output, "Localization corpus: %s %s tasks=%d experimental=%t\n", status, cmdutil.Fallback(report.Name, "<unnamed corpus>"), report.TotalTasks, report.Experimental)
+	fmt.Fprintf(output, "Localization corpus: %s %s tasks=%d experimental=%t\n", status, util.Fallback(report.Name, "<unnamed corpus>"), report.TotalTasks, report.Experimental)
 	fmt.Fprintf(output, "Sources: %s\n", formatEvalCountMap(report.SourceCoverage))
 	fmt.Fprintf(output, "Themes: %s\n", formatEvalCountMap(report.ThemeCoverage))
 	fmt.Fprintf(output, "Redaction: %s\n", formatEvalCountMap(report.RedactionStatus))
@@ -572,7 +572,7 @@ func printLocalizationUnifiedReport(report eval.LocalizationUnifiedReport) {
 	if !report.Passed {
 		status = "FAIL"
 	}
-	fmt.Fprintf(output, "Localization report: %s %s schema=%s experimental=%t\n", status, cmdutil.Fallback(report.Name, "<unnamed corpus>"), report.SchemaVersion, report.Experimental)
+	fmt.Fprintf(output, "Localization report: %s %s schema=%s experimental=%t\n", status, util.Fallback(report.Name, "<unnamed corpus>"), report.SchemaVersion, report.Experimental)
 	fmt.Fprintf(output, "Outcome: samples=%d expected_files=%d expected_symbols=%d expected_tests=%d top_k=%s broad_reads=%d/%d available=%t zero_hit_searches=%d/%d available=%t candidate_waste=%d/%d rate=%.3f path_waste=%d/%d rate=%.3f available=%t\n",
 		report.Outcome.SampleCount,
 		report.Outcome.ExpectedFiles,
@@ -608,7 +608,7 @@ func printLocalizationUnifiedReport(report eval.LocalizationUnifiedReport) {
 		report.CacheFreshness.Indexed,
 		report.CacheFreshness.Fresh,
 		report.CacheFreshness.IndexIDPresent,
-		cmdutil.Fallback(report.CacheFreshness.StoreKind, "not_available"),
+		util.Fallback(report.CacheFreshness.StoreKind, "not_available"),
 		report.CacheFreshness.StalePathCount,
 		report.CacheFreshness.MissingFileCount,
 		report.CacheFreshness.Rows,
@@ -617,7 +617,7 @@ func printLocalizationUnifiedReport(report eval.LocalizationUnifiedReport) {
 		report.CacheFreshness.NonCurrentRows,
 		report.CacheFreshness.ContractRows,
 		report.CacheFreshness.UnresolvedGapRows,
-		cmdutil.Fallback(report.CacheFreshness.FreshnessProvenanceSource, "not_available"),
+		util.Fallback(report.CacheFreshness.FreshnessProvenanceSource, "not_available"),
 	)
 	reasonCountKeys := 0
 	totalEvents := 0
@@ -667,8 +667,8 @@ func printLocalizationUnifiedReport(report eval.LocalizationUnifiedReport) {
 		fmt.Fprintf(output, "- %s status=%s evidence=%s reason=%s\n",
 			gate.Gate,
 			gate.Status,
-			cmdutil.Fallback(gate.Evidence, "not_available"),
-			cmdutil.Fallback(gate.Reason, "not_available"),
+			util.Fallback(gate.Evidence, "not_available"),
+			util.Fallback(gate.Reason, "not_available"),
 		)
 	}
 	fmt.Fprintf(output, "Client/product: generic=%t client_specific_branches=%t areas=%s covered=%s missing=%s classification_rows=%d\n",
@@ -686,8 +686,8 @@ func printLocalizationUnifiedReport(report eval.LocalizationUnifiedReport) {
 			row.Label,
 			row.Status,
 			row.SampleCount,
-			cmdutil.Fallback(row.Reason, "not_available"),
-			cmdutil.Fallback(row.Evidence, "not_available"),
+			util.Fallback(row.Reason, "not_available"),
+			util.Fallback(row.Evidence, "not_available"),
 		)
 	}
 	fmt.Fprintf(output, "Privacy: policy=%s prompt_text=%t file_bodies=%t log_excerpts=%t secrets=%t\n",
@@ -763,7 +763,7 @@ func printReport(report eval.Report) {
 	if !report.Passed {
 		status = "FAIL"
 	}
-	fmt.Fprintf(output, "%s %s\n", status, cmdutil.Fallback(report.Scenario, "<unnamed scenario>"))
+	fmt.Fprintf(output, "%s %s\n", status, util.Fallback(report.Scenario, "<unnamed scenario>"))
 	fmt.Fprintf(output, "Log: %s\n", report.LogPath)
 	printMetrics(report.Metrics)
 	if len(report.Findings) > 0 {
