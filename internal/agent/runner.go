@@ -49,11 +49,11 @@ const forceAnswerTailGatheredEvidence = "Write the normal final answer from the 
 const forceAnswerTailEvidenceAlreadyGathered = "Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
 
 type Runner struct {
-	Client *llama.Client
+	Client llama.LLMClient
 	// ImplementerClient, when non-nil, is used for write-enabled child
 	// tasks (isolated workbranch children). Read-only children and the
 	// parent loop stay on Client. When nil, all child work uses Client.
-	ImplementerClient     *llama.Client
+	ImplementerClient     llama.LLMClient
 	Workspace             *workspace.Manager
 	MaxToolSteps          int
 	Policy                RunPolicy
@@ -803,7 +803,7 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "doom_loop_guard", Content: fmt.Sprintf("model repeated %s %d times — approval required", req.Tool, identicalCallRun)})
 				if r.DoomLoopGate(req, identicalCallRun) {
 					// User approved — reset the streak and let this call execute.
-					requestBudget.identicalCallRun = 0
+					requestBudget.fingerprint.identicalRun = 0
 				} else {
 					// User denied — feed a blocker result, then force a
 					// no-tools closeout from gathered evidence. Returning the
@@ -835,24 +835,12 @@ func (r *Runner) Run(
 				return finish(answer, err, "doom_loop_guard", true)
 			}
 		}
-		if decision := requestBudget.fingerprintDecision(policy, req, currentFingerprint); decision.Handled {
-			if decision.Nudge != "" {
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
-			}
-			if decision.EventRole != "" {
-				r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
-			}
-			if decision.ForceAnswerPrompt != "" {
-				answer, err := controller.completeWithoutMoreToolsWithReason(decision.ForceAnswerPrompt)
-				return finish(answer, err, decision.ForceAnswerReason, true)
-			}
-			if decision.RejectSummary != "" {
-				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.RejectSummary, decision.RejectError)
-				if done {
-					return finish(answer, err, decision.RejectStopReason, true)
-				}
-				continue
-			}
+		if res := requestBudget.fingerprintDecision(policy, req, currentFingerprint).apply(budgetDecisionContext{
+			controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
+		}); res.shouldFinish {
+			return finish(res.answer, res.err, res.reason, true)
+		} else if res.shouldContinue {
+			continue
 		}
 		if scope := postReadinessGapScopeForBrief(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req, r.RuntimeBrief); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
@@ -904,28 +892,19 @@ func (r *Runner) Run(
 			answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
 			return finish(answer, err, "closure_synthesis_after_ignored_nudge", true)
 		}
-		if decision := requestBudget.explorationDecision(r, req, collectedResults); decision.Handled {
-			if decision.Nudge != "" {
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
-			}
-			if decision.EventRole != "" {
-				r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
-			}
-			if decision.RejectSummary != "" {
-				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.RejectSummary, decision.RejectError)
-				if done {
-					return finish(answer, err, decision.RejectStopReason, true)
-				}
-				continue
-			}
+		if res := requestBudget.explorationDecision(r, req, collectedResults).apply(budgetDecisionContext{
+			controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
+		}); res.shouldFinish {
+			return finish(res.answer, res.err, res.reason, true)
+		} else if res.shouldContinue {
+			continue
 		}
-		if decision := requestBudget.synthesisDecision(policy, metrics.ToolCalls); decision.Handled {
-			if decision.Nudge != "" {
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
-			}
-			if decision.EventRole != "" {
-				r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
-			}
+		if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls).apply(budgetDecisionContext{
+			controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
+		}); res.shouldFinish {
+			return finish(res.answer, res.err, res.reason, true)
+		} else if res.shouldContinue {
+			continue
 		}
 		if decision := discoveryRedirect.Consider(req, r.Workspace); decision.ShouldRedirect {
 			// Hard-reject path: the model has been nudged enough times
@@ -967,26 +946,12 @@ func (r *Runner) Run(
 		if isReadClassTool(req) {
 			requestBudget.noteReadClassRequest(req)
 			metrics.ReadClassCalls++
-			if decision := requestBudget.readBudgetDecision(policy, req); decision.Handled {
-				if decision.EventRole != "" {
-					r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
-				}
-				if decision.Nudge != "" {
-					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
-				}
-				if decision.RejectSummary != "" {
-					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.RejectSummary, decision.RejectError)
-					if done {
-						return finish(answer, err, decision.RejectStopReason, true)
-					}
-				}
-				if decision.ForceAnswerPrompt != "" {
-					answer, err = controller.completeWithoutMoreToolsWithReason(decision.ForceAnswerPrompt)
-					return finish(answer, err, decision.ForceAnswerReason, true)
-				}
-				if decision.RejectSummary != "" {
-					continue
-				}
+			if res := requestBudget.readBudgetDecision(policy, req).apply(budgetDecisionContext{
+				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
+			}); res.shouldFinish {
+				return finish(res.answer, res.err, res.reason, true)
+			} else if res.shouldContinue {
+				continue
 			}
 		}
 		if summary, errorText, reject := declarationMoveConstraintRejection(req, declarationMovesForbidden); reject {
@@ -1202,7 +1167,7 @@ func (r *Runner) Run(
 					requestBudget.noteReadOnlyChildPacket(evidencePaths)
 					hideBroadDiscoveryTools(turnHiddenTools)
 					rebuildTools()
-					requestBudget.postChildReadCalls = 0
+					requestBudget.postChild.readCalls = 0
 					nudge := childPacketBoundaryNudge(r.RuntimeBrief.Objective, evidencePaths, postChildReadBudget)
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "child_packet_boundary", Content: nudge})
@@ -1453,7 +1418,7 @@ func (r *Runner) Run(
 			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", mapKeys(changedPathsFromToolResults([]workspace.ToolResult{result})))
 		}
 		if update.ResetVerificationGuards {
-			clearVerificationGateFingerprints(requestBudget.rejectedFingerprints)
+			clearVerificationGateFingerprints(requestBudget.fingerprint.rejected)
 			clearRunnerStringIntMap(rejectedActions)
 			rebuildTools()
 		}

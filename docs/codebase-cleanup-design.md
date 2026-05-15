@@ -148,7 +148,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Estimated lines saved:** ~500+ across 24 files
 - **Affected files:** 24 files across `agent/`, `workspace/`, `app/`,
   `frontier/`, `eval/`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Created `util/toolclass.go` with 7 categories and 130+ tools. Replaced `isReadClassTool` switch in runner.go. 8 tests added.
 - **Verification:** `go test ./internal/agent/... ./internal/workspace/... ./internal/app/...`
   — all existing tool-dispatch tests pass. New unit test verifies
   `ClassifyTool` covers all known tool names.
@@ -231,7 +232,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Extract Class (Refactoring) + Command Pattern (GoF)
 - **Estimated lines saved:** 0 (restructure for maintainability)
 - **Affected files:** `internal/app/model_state.go`, `internal/app/lifecycle.go`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Extracted `planState` (10 fields), `sessionsState` (8 fields), `historyState` (9 fields) into `model_state_types.go`.
 - **Verification:** `go test ./internal/app/...` — all 25 existing app tests
   pass.
 
@@ -250,7 +252,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Template Method (simplified)
 - **Estimated lines saved:** ~60
 - **Affected files:** `internal/app/plan_autodoc.go`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Added `mutatePlanLines` helper. Refactored 3 occurrences in plan_autodoc.go.
 - **Verification:** `go test ./internal/app/...`
 
 ---
@@ -267,7 +270,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Table-Driven Design
 - **Estimated lines saved:** ~40
 - **Affected files:** `internal/app/lifecycle.go`, `internal/app/plan_autodoc.go`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Created `tool_intent.go` with merged `toolIntent` function. Removed `writeToolIntentSynth` from plan_autodoc.go. Simplified `toolRequestIntent` in lifecycle.go.
 - **Verification:** `go test ./internal/app/...`
 
 ---
@@ -287,7 +291,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** DRY
 - **Estimated lines saved:** ~80
 - **Affected files:** `internal/agent/runner.go`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Added `forceAnswerTailGatheredEvidence` and `forceAnswerTailEvidenceAlreadyGathered` constants. Replaced 9 inline duplicates.
 - **Verification:** `go test ./internal/agent/...`
 
 ---
@@ -478,7 +483,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Inline Class (Refactoring)
 - **Estimated lines saved:** ~43 (file deletion) + reduced indirection
 - **Affected files:** `internal/frontier/text.go` (delete), all callers
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Deleted text.go. Updated 3 caller files to import pathparse directly.
 - **Verification:** `go test ./...` — compilation proves all callers updated.
 
 ---
@@ -620,7 +626,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Command Dispatch (GoF)
 - **Estimated lines saved:** 0 (restructure)
 - **Affected files:** `internal/app/lifecycle.go`, `internal/app/model_state.go`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Decomposed Update() into 13 handlers in update_handlers.go. Decomposed handleSlashCommand into command registry with 22 handlers in slash_commands.go.
 - **Verification:** `go test ./internal/app/...`
 
 ---
@@ -655,7 +662,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Shared Kernel (DDD)
 - **Estimated lines saved:** ~50
 - **Affected files:** `internal/transcript/debuglog.go`, `internal/telemetry/recorder.go`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Created `util/redact.go` with `RedactSecrets` and `RedactedValue`. Updated transcript/debuglog.go and telemetry/recorder.go to delegate. 18 tests added.
 - **Verification:** `go test ./internal/transcript/... ./internal/telemetry/...`
 
 ---
@@ -680,7 +688,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Inline Class (Refactoring)
 - **Estimated lines saved:** ~40
 - **Affected files:** `internal/app/app.go`, all callers within `app/`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Removed 5 forwarding wrappers. Callers use util/pathparse directly. Kept 5 functions with genuine logic.
 - **Verification:** `go test ./internal/app/...`
 
 ---

@@ -71,7 +71,7 @@ func TestRunnerTurnControllerRejectToolRecordsRejectionState(t *testing.T) {
 	if got := rejectedActions[toolActionClass(req)]; got != 1 {
 		t.Fatalf("rejectedActions[%q] = %d, want 1", toolActionClass(req), got)
 	}
-	if got := requestBudget.rejectedFingerprints[currentFingerprint]; got != "Read rejected" {
+	if got := 	requestBudget.fingerprint.rejected[currentFingerprint]; got != "Read rejected" {
 		t.Fatalf("rejected fingerprint = %q, want %q", got, "Read rejected")
 	}
 	if lastToolKey == "" {
@@ -143,7 +143,7 @@ func TestRunnerTurnControllerRejectToolDoesNotMarkMissingNamedGapAsDeadEnd(t *te
 	if got := rejectedActions[toolActionClass(req)]; got != 0 {
 		t.Fatalf("rejectedActions[%q] = %d, want 0 for recoverable legibility rejection", toolActionClass(req), got)
 	}
-	if got := requestBudget.rejectedFingerprints[currentFingerprint]; got != "Post-readiness follow-up missing named gap" {
+	if got := 	requestBudget.fingerprint.rejected[currentFingerprint]; got != "Post-readiness follow-up missing named gap" {
 		t.Fatalf("rejected fingerprint = %q, want %q", got, "Post-readiness follow-up missing named gap")
 	}
 }

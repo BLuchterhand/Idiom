@@ -26,11 +26,14 @@ func mutatePlanLines(path string, fn func(lines []string) []string) error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
-// planWriteSnapshot captures the pre-execute state of a single file so
-// the post-execute callback can compute a diff. existed is tracked so
-// create-new-file writes render as all-add hunks rather than a diff
-// against an empty baseline that would be indistinguishable from a
-// truly-empty file.
+// planWriteSnapshot captures file content before a write for diff tracking
+// in the plan overlay. Unlike rollbackEntry (which powers /undo), this type
+// is consumed by recordWriteSuccess to compute unified diffs that appear in
+// the plan markdown and diffs.jsonl.
+//
+// existed is tracked so create-new-file writes render as all-add hunks rather
+// than a diff against an empty baseline that would be indistinguishable from
+// a truly-empty file.
 type planWriteSnapshot struct {
 	Path    string
 	Before  string

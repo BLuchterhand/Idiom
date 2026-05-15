@@ -27,19 +27,19 @@ type pinnedFile struct {
 	lastSeen time.Time
 }
 
-type pinnedFileRegistry struct {
+type PinnedFileRegistry struct {
 	mu    sync.Mutex
 	pins  map[string]*pinnedFile
 	order []string
 }
 
-func newPinnedFileRegistry() *pinnedFileRegistry {
-	return &pinnedFileRegistry{pins: map[string]*pinnedFile{}}
+func newPinnedFileRegistry() *PinnedFileRegistry {
+	return &PinnedFileRegistry{pins: map[string]*pinnedFile{}}
 }
 
 // Pin records that a path is in active use. Repeated pins refresh the
 // last-seen timestamp so LRU eviction can drop stale entries.
-func (r *pinnedFileRegistry) Pin(path string) {
+func (r *PinnedFileRegistry) Pin(path string) {
 	normalized := strings.TrimSpace(path)
 	if normalized == "" {
 		return
@@ -57,7 +57,7 @@ func (r *pinnedFileRegistry) Pin(path string) {
 }
 
 // Pins returns the currently pinned paths in most-recent-first order.
-func (r *pinnedFileRegistry) Pins() []string {
+func (r *PinnedFileRegistry) Pins() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]string, 0, len(r.pins))
@@ -75,7 +75,7 @@ func (r *pinnedFileRegistry) Pins() []string {
 // Forget drops a path from the pin set. Used when the model asks the
 // workspace to delete or move a file so we don't keep staging its
 // contents.
-func (r *pinnedFileRegistry) Forget(path string) {
+func (r *PinnedFileRegistry) Forget(path string) {
 	normalized := strings.TrimSpace(path)
 	if normalized == "" {
 		return
@@ -86,7 +86,7 @@ func (r *pinnedFileRegistry) Forget(path string) {
 	delete(r.pins, normalized)
 }
 
-func (r *pinnedFileRegistry) evictLRU(cap int) {
+func (r *PinnedFileRegistry) evictLRU(cap int) {
 	if cap <= 0 || len(r.pins) <= cap {
 		return
 	}
@@ -124,7 +124,7 @@ const (
 // each pinned file with its current on-disk contents. Truncated to a hard
 // byte cap so repeated injection stays bounded. Returns the empty string
 // when no pins exist or all reads fail.
-func (r *pinnedFileRegistry) BuildSnapshot(root string) string {
+func (r *PinnedFileRegistry) BuildSnapshot(root string) string {
 	if r == nil {
 		return ""
 	}

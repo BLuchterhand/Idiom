@@ -131,7 +131,7 @@ func discoveryAggregates(counts map[string]int) []transcript.DiscoveryAggregate 
 
 type Model struct {
 	cfg        config.Config
-	client     *llama.Client
+	client     llama.LLMClient
 	controller *llama.ServerController
 	// plannerSpec + executorSpec are the resolved LlamaServer specs for
 	// the planner and executor roles. They mirror cfg.LlamaServer /
@@ -145,7 +145,7 @@ type Model struct {
 	// config has a separate Implementer llama-server. Nil when the app
 	// runs in single-model mode. Used by runChildTask to route write-
 	// enabled child work onto the implementation model.
-	implementerClient     *llama.Client
+	implementerClient     llama.LLMClient
 	implementerController *llama.ServerController
 	workspace             *workspace.Manager
 	mcpRegistry           *mcp.Registry
@@ -190,7 +190,7 @@ type Model struct {
 
 	workspaceOverviewInjected bool
 
-	pinnedFiles *pinnedFileRegistry
+	pinnedFiles *PinnedFileRegistry
 
 	approvalMu          sync.Mutex
 	approvalSerial      sync.Mutex
@@ -205,7 +205,7 @@ type Model struct {
 	messageRenderHash   uint64
 	messageRenderMD     bool
 
-	summaryClient     *llama.Client
+	summaryClient     llama.LLMClient
 	summaryController *llama.ServerController
 
 	panelTab      int // panelTabHistory | panelTabPlan
@@ -233,7 +233,7 @@ type Model struct {
 }
 
 // pinnedFilesRegistry returns the lazy-initialized per-session pin set.
-func (m *Model) pinnedFilesRegistry() *pinnedFileRegistry {
+func (m *Model) pinnedFilesRegistry() *PinnedFileRegistry {
 	if m == nil {
 		return nil
 	}

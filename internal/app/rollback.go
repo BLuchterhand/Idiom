@@ -9,10 +9,12 @@ import (
 	"idiom/internal/workspace"
 )
 
-// rollbackEntry snapshots a file's on-disk contents before the agent
-// mutates it, so /undo can restore the prior state. Each write-class
-// tool produces one entry; apply_patch produces one per affected path.
-// Entries are ordered oldest-first; /undo pops from the tail.
+// rollbackEntry captures file content before an edit for the /undo command.
+// Unlike planWriteSnapshot (which powers the plan diff overlay), this type
+// feeds undoLast so the user can step backwards through write-tool mutations.
+//
+// Each write-class tool produces one entry; apply_patch produces one per
+// affected path. Entries are ordered oldest-first; /undo pops from the tail.
 type rollbackEntry struct {
 	path     string
 	contents []byte

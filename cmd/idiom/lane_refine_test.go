@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1681,7 +1682,7 @@ func TestRefineCanonicalTagsCoverAllClassifierEmissions(t *testing.T) {
 			emitted[tag] = true
 		}
 		// Each probe must produce its target tag.
-		if !contains(classifyBriefAtomShape([]byte(p.body)), p.want) {
+		if !slices.Contains(classifyBriefAtomShape([]byte(p.body)), p.want) {
 			t.Fatalf("probe %s: classifier did not emit %q for body:\n%s\nemitted=%v", p.name, p.want, p.body, classifyBriefAtomShape([]byte(p.body)))
 		}
 	}
@@ -1703,14 +1704,7 @@ func TestRefineCanonicalTagsCoverAllClassifierEmissions(t *testing.T) {
 	}
 }
 
-func contains(haystack []string, needle string) bool {
-	for _, h := range haystack {
-		if h == needle {
-			return true
-		}
-	}
-	return false
-}
+
 
 // TestPersistRefineLintJSONWritesEnvelopeToIterDir locks in Colony
 // §8's recommendation: the full JSON envelope lands at

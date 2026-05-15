@@ -46,13 +46,13 @@ func TestRunnerRequestBudgetAllowsOneCorrectedRetryAfterMissingNamedGap(t *testi
 		NamedGap: "inspect the exact branch that delegates the child task",
 	}
 	fingerprint := "read_file|internal/agent/runner.go"
-	state.rejectedFingerprints[fingerprint] = "Post-readiness follow-up missing named gap"
+	state.fingerprint.rejected[fingerprint] = "Post-readiness follow-up missing named gap"
 
 	decision := state.fingerprintDecision(RunPolicy{}, req, fingerprint)
 	if decision.Handled {
 		t.Fatalf("expected corrected retry to be allowed, got %#v", decision)
 	}
-	if _, ok := state.rejectedFingerprints[fingerprint]; ok {
+	if _, ok := state.fingerprint.rejected[fingerprint]; ok {
 		t.Fatalf("expected recoverable rejection fingerprint to be cleared after corrected retry")
 	}
 }
@@ -64,7 +64,7 @@ func TestRunnerRequestBudgetStillBlocksRejectedRetryWithoutNamedGap(t *testing.T
 		Path: "internal/agent/runner.go",
 	}
 	fingerprint := "read_file|internal/agent/runner.go"
-	state.rejectedFingerprints[fingerprint] = "Post-readiness follow-up missing named gap"
+	state.fingerprint.rejected[fingerprint] = "Post-readiness follow-up missing named gap"
 
 	decision := state.fingerprintDecision(RunPolicy{}, req, fingerprint)
 	if !decision.Handled || decision.ForceAnswerReason != "rejection_retry_blocked" {

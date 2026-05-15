@@ -5,34 +5,39 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/llama"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
+type fingerprintTrackingState struct {
+	lastFingerprint string
+	identicalRun    int
+	counts          map[string]int
+	nudgeFired      map[string]bool
+	zeroHit         map[string]string
+	rejected        map[string]string
+}
+
+type postChildBudgetState struct {
+	readCalls        int
+	readBudget       int
+	evidencePaths    []string
+	readFamilies     map[string]int
+	familyNudgeFired map[string]bool
+}
+
 type runnerRequestBudgetState struct {
-	lastRequestFingerprint           string
-	identicalCallRun                 int
-	fingerprintCounts                map[string]int
-	fingerprintNudgeFired            map[string]bool
+	fingerprint fingerprintTrackingState
+	postChild   postChildBudgetState
+
 	broadEvidenceDelegationRequired  bool
 	broadEvidenceDelegationSatisfied bool
 	readOnlyChildTaskSatisfied       bool
 	synthesisNudgeFired              bool
 	readCallCount                    int
 	readCallsSinceWrite              int
-	postChildReadCalls               int
-	postChildReadBudget              int
-	postChildEvidencePaths           []string
-	postChildReadFamilies            map[string]int
-	postChildReadFamilyNudgeFired    map[string]bool
-	zeroHitFingerprints              map[string]string
-	rejectedFingerprints             map[string]string
-	// postReadinessNoGapRejections counts the number of times this turn
-	// the model has been rejected for issuing a post-readiness read/search
-	// without `named_gap`. After the first such rejection the contract is
-	// in the model's context; if the model still emits another no-gap
-	// read, more rejection prose isn't going to teach it. Triggers a
-	// fast-track force-answer at threshold (≥2 — the second offense).
-	postReadinessNoGapRejections int
+	postReadinessNoGapRejections     int
 }
 
 func (s runnerRequestBudgetState) postChildActive() bool {
@@ -51,29 +56,82 @@ type runnerRequestBudgetDecision struct {
 	EventContent      string
 }
 
+type budgetDecisionContext struct {
+	controller     *runnerTurnController
+	stepNumber     int
+	activeToolCall *llama.ToolCall
+	req            workspace.ToolRequest
+}
+
+type budgetDecisionResult struct {
+	shouldFinish   bool
+	shouldContinue bool
+	answer         string
+	err            error
+	reason         string
+}
+
+func (d runnerRequestBudgetDecision) apply(ctx budgetDecisionContext) budgetDecisionResult {
+	if !d.Handled {
+		return budgetDecisionResult{}
+	}
+	if d.Nudge != "" {
+		*ctx.controller.turnMessages = append(*ctx.controller.turnMessages, llama.ChatMessage{Role: "system", Content: d.Nudge})
+	}
+	if d.EventRole != "" {
+		ctx.controller.runner.emitEvent(RunEvent{Role: d.EventRole, Content: util.FirstNonEmpty(d.EventContent, d.Nudge)})
+	}
+	if d.ForceAnswerPrompt != "" {
+		answer, err := ctx.controller.completeWithoutMoreToolsWithReason(d.ForceAnswerPrompt)
+		return budgetDecisionResult{
+			shouldFinish: true,
+			answer:       answer,
+			err:          err,
+			reason:       d.ForceAnswerReason,
+		}
+	}
+	if d.RejectSummary != "" {
+		answer, err, done := ctx.controller.rejectTool(ctx.stepNumber, ctx.activeToolCall, ctx.req, d.RejectSummary, d.RejectError)
+		if done {
+			return budgetDecisionResult{
+				shouldFinish: true,
+				answer:       answer,
+				err:          err,
+				reason:       d.RejectStopReason,
+			}
+		}
+		return budgetDecisionResult{shouldContinue: true}
+	}
+	return budgetDecisionResult{}
+}
+
 func newRunnerRequestBudgetState(postChildReadBudget int) runnerRequestBudgetState {
 	return runnerRequestBudgetState{
-		fingerprintCounts:             make(map[string]int),
-		fingerprintNudgeFired:         make(map[string]bool),
-		postChildReadBudget:           postChildReadBudget,
-		postChildReadFamilies:         make(map[string]int),
-		postChildReadFamilyNudgeFired: make(map[string]bool),
-		zeroHitFingerprints:           make(map[string]string),
-		rejectedFingerprints:          make(map[string]string),
+		fingerprint: fingerprintTrackingState{
+			counts:     make(map[string]int),
+			nudgeFired: make(map[string]bool),
+			zeroHit:    make(map[string]string),
+			rejected:   make(map[string]string),
+		},
+		postChild: postChildBudgetState{
+			readBudget:       postChildReadBudget,
+			readFamilies:     make(map[string]int),
+			familyNudgeFired: make(map[string]bool),
+		},
 	}
 }
 
 func (s *runnerRequestBudgetState) noteFingerprint(currentFingerprint string) int {
-	if currentFingerprint != "" && currentFingerprint == s.lastRequestFingerprint {
-		s.identicalCallRun++
+	if currentFingerprint != "" && currentFingerprint == s.fingerprint.lastFingerprint {
+		s.fingerprint.identicalRun++
 	} else {
-		s.identicalCallRun = 1
-		s.lastRequestFingerprint = currentFingerprint
+		s.fingerprint.identicalRun = 1
+		s.fingerprint.lastFingerprint = currentFingerprint
 	}
 	if currentFingerprint != "" {
-		s.fingerprintCounts[currentFingerprint]++
+		s.fingerprint.counts[currentFingerprint]++
 	}
-	return s.identicalCallRun
+	return s.fingerprint.identicalRun
 }
 
 func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req workspace.ToolRequest, currentFingerprint string) runnerRequestBudgetDecision {
@@ -81,10 +139,10 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 		return runnerRequestBudgetDecision{}
 	}
 	if policy.FingerprintNudgeAt > 0 {
-		count := s.fingerprintCounts[currentFingerprint]
-		nudgeFired := s.fingerprintNudgeFired[currentFingerprint]
+		count := s.fingerprint.counts[currentFingerprint]
+		nudgeFired := s.fingerprint.nudgeFired[currentFingerprint]
 		if count >= policy.FingerprintNudgeAt && !nudgeFired {
-			s.fingerprintNudgeFired[currentFingerprint] = true
+			s.fingerprint.nudgeFired[currentFingerprint] = true
 			return runnerRequestBudgetDecision{
 				Handled:   true,
 				Nudge:     fmt.Sprintf("You have called %s with the same arguments %d times this turn (not consecutively). Summarize what you learned from those calls and pick a materially different next step, or answer with the evidence you already have. Any further identical call will be blocked.", req.Tool, count),
@@ -101,7 +159,7 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 			}
 		}
 	}
-	if priorSummary, seen := s.zeroHitFingerprints[currentFingerprint]; seen {
+	if priorSummary, seen := s.fingerprint.zeroHit[currentFingerprint]; seen {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Zero-hit retry blocked",
@@ -109,9 +167,9 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 			RejectStopReason: "zero_hit_retry_budget_exhausted",
 		}
 	}
-	if priorSummary, seen := s.rejectedFingerprints[currentFingerprint]; seen {
+	if priorSummary, seen := s.fingerprint.rejected[currentFingerprint]; seen {
 		if isRecoverablePostReadinessGapRejection(priorSummary) && postReadinessGap(req) != "" {
-			delete(s.rejectedFingerprints, currentFingerprint)
+			delete(s.fingerprint.rejected, currentFingerprint)
 			return runnerRequestBudgetDecision{}
 		}
 		return runnerRequestBudgetDecision{
@@ -217,9 +275,9 @@ func (s *runnerRequestBudgetState) noteReadClassRequest(req workspace.ToolReques
 	s.readCallCount++
 	s.readCallsSinceWrite++
 	if s.postChildActive() {
-		s.postChildReadCalls++
+		s.postChild.readCalls++
 		if family := postChildRequestFamilyKey(req); family != "" {
-			s.postChildReadFamilies[family]++
+			s.postChild.readFamilies[family]++
 		}
 	}
 }
@@ -248,17 +306,17 @@ func (s *runnerRequestBudgetState) noteWriteProgress() {
 }
 
 func (s *runnerRequestBudgetState) noteReadOnlyChildPacket(paths []string) {
-	s.postChildEvidencePaths = normalizePostChildEvidencePaths(paths)
-	s.postChildReadFamilies = make(map[string]int)
-	s.postChildReadFamilyNudgeFired = make(map[string]bool)
+	s.postChild.evidencePaths = normalizePostChildEvidencePaths(paths)
+	s.postChild.readFamilies = make(map[string]int)
+	s.postChild.familyNudgeFired = make(map[string]bool)
 }
 
 func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolRequest, mutationParent bool) runnerRequestBudgetDecision {
-	if !mutationParent && postChildUnrelatedDiscovery(req, s.postChildEvidencePaths) {
+	if !mutationParent && postChildUnrelatedDiscovery(req, s.postChild.evidencePaths) {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
 			RejectSummary:    "Post-child unrelated discovery blocked",
-			RejectError:      fmt.Sprintf("the delegated read_only child already named the relevant evidence paths (%s). Answer now, or inspect one of those paths directly for a named gap.", summarizePostChildEvidencePaths(s.postChildEvidencePaths, 3)),
+			RejectError:      fmt.Sprintf("the delegated read_only child already named the relevant evidence paths (%s). Answer now, or inspect one of those paths directly for a named gap.", summarizePostChildEvidencePaths(s.postChild.evidencePaths, 3)),
 			RejectStopReason: "post_child_unrelated_discovery_blocked",
 		}
 	}
@@ -276,8 +334,8 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 	// exact-duplicate reads, MaxToolSteps for total budget, completion
 	// gate for mutation closure) own the closure contract. The nudge
 	// below (educational, fires once) is kept; the hard block is gone.
-	if count := s.postChildReadFamilies[family]; count >= 1 && !s.postChildReadFamilyNudgeFired[family] {
-		s.postChildReadFamilyNudgeFired[family] = true
+	if count := s.postChild.readFamilies[family]; count >= 1 && !s.postChild.familyNudgeFired[family] {
+		s.postChild.familyNudgeFired[family] = true
 		return runnerRequestBudgetDecision{
 			Handled:   true,
 			Nudge:     fmt.Sprintf("you already inspected %s after the child packet. Either answer now, or take one narrow probe that names the exact missing claim; the same path is fine if you can name what new line you expect.", label),

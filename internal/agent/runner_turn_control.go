@@ -37,7 +37,7 @@ func (c *runnerTurnController) rejectTool(step int, activeToolCall *llama.ToolCa
 		Error:   errorText,
 	}
 	if c.requestBudget != nil && c.currentFingerprint != nil && strings.TrimSpace(*c.currentFingerprint) != "" {
-		c.requestBudget.rejectedFingerprints[*c.currentFingerprint] = truncForRetryReason(summary)
+		c.requestBudget.fingerprint.rejected[*c.currentFingerprint] = truncForRetryReason(summary)
 	}
 	countAsDeadEnd := !isRecoverablePostReadinessGapRejection(summary)
 	if countAsDeadEnd {

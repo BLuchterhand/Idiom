@@ -99,7 +99,7 @@ func validateDelegateEditRequest(req workspace.ToolRequest) *workspace.ToolResul
 // call. ImplementerClient is the canonical executor (configured to
 // point at the 30B-coder backend in production). When unset the
 // runner has no separate executor — see runDelegateEdit's fallback.
-func (r *Runner) delegateEditExecutorClient() *llama.Client {
+func (r *Runner) delegateEditExecutorClient() llama.LLMClient {
 	if r == nil {
 		return nil
 	}

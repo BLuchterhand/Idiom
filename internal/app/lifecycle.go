@@ -262,11 +262,12 @@ func New(cfg config.Config) *Model {
 		}
 	}
 
+	plannerClient := llama.NewClientForServer(plannerSpec, callTimeout)
 	m := &Model{
 		cfg:                   cfg,
 		plannerSpec:           plannerSpec,
 		executorSpec:          executorSpec,
-		client:                llama.NewClientForServer(plannerSpec, callTimeout),
+		client:                plannerClient,
 		implementerClient:     implementerClient,
 		implementerController: implementerController,
 		summaryClient:         summaryClient,
@@ -281,7 +282,7 @@ func New(cfg config.Config) *Model {
 		agentModeName:         strings.TrimSpace(cfg.Chat.AgentMode),
 	}
 	if plannerSpec.IsLaunchable() {
-		m.controller = llama.NewServerController(plannerSpec, m.client)
+		m.controller = llama.NewServerController(plannerSpec, plannerClient)
 	}
 	m.workspace = workspace.NewManager(cfg.Workspace)
 	if cfg.Chat.AttachInstructionFiles {

@@ -109,10 +109,10 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 	}
 	if requestBudget != nil {
 		if currentFingerprint != "" && strings.TrimSpace(result.Error) == "" && workerruntime.IsZeroHitSearchResult(result) {
-			requestBudget.zeroHitFingerprints[currentFingerprint] = truncForRetryReason(result.Summary)
+			requestBudget.fingerprint.zeroHit[currentFingerprint] = truncForRetryReason(result.Summary)
 		}
 		if currentFingerprint != "" && strings.TrimSpace(result.Error) != "" && strings.Contains(strings.ToLower(result.Summary), "rejected") {
-			requestBudget.rejectedFingerprints[currentFingerprint] = truncForRetryReason(result.Summary)
+			requestBudget.fingerprint.rejected[currentFingerprint] = truncForRetryReason(result.Summary)
 		}
 	}
 	return update
