@@ -213,11 +213,12 @@ research into traceable PRDs, ADRs, TDD obligations, and dispatch-ready briefs.
 5. PRD audit
 6. ADR candidates
 7. ADR acceptance
-8. TDD obligation plan
+8. TDD obligation plan (with FMEA, HAZOP, PBT, decision tables)
+8a. Coverage gate (deterministic completeness check)
 9. Brief generation
 10. Brief lint and intake
 11. Lane dispatch
-12. Execution audit and learning
+12. Execution audit and learning (feeds back into step 8)
 ```
 
 This is the artifact flow at the level the harness should own:
@@ -230,11 +231,13 @@ flowchart TD
     EvidenceLedger --> PRD["PRD<br/>requirements and outcomes"]
     PRD --> ADRs["ADR set<br/>material decisions"]
     ADRs --> TDD["TDD obligations<br/>tests, evals, audits"]
-    TDD --> Briefs["Implementation briefs<br/>bounded executor contracts"]
+    TDD --> CoverageGate["Coverage gate<br/>deterministic completeness check<br/>EARS, BDD, FMEA, HAZOP, PBT, mutation"]
+    CoverageGate --> Briefs["Implementation briefs<br/>bounded executor contracts"]
     Briefs --> Gates["Lint and intake gates"]
     Gates --> Lanes["Idiom lanes<br/>implement or plan-execute"]
     Lanes --> Feedback["Execution audit and learning"]
     Feedback -. improves .-> EvidenceLedger
+    Feedback -. strengthens .-> TDD
 ```
 
 ### 0. Intake
@@ -295,7 +298,7 @@ Minimum researcher set:
 | `north_star` | Idiom thesis and strategy/contract split | Does this strengthen repo memory, freshness, contracts, audit, or evals without stealing model strategy? | project docs, decisioning docs, prior ADRs, harness audit |
 | `product` | user value and workflow fit | What user problem does this solve, and how will success be measured? | PRDs, issues, user notes, product evidence, usage logs |
 | `technical` | architecture and implementation risk | What architecture, contracts, boundaries, and migration path are needed? | context tools, language tools, tests, docs, telemetry |
-| `tdd_eval` | behavior and verification | What behavior should be characterized or tested before code changes? | tests, logs, `context_trace_pack`, `harness_audit`, eval suites |
+| `tdd_eval` | behavior and verification | What behavior should be characterized or tested before code changes? What failure modes exist at the contract boundary? | tests, logs, `context_trace_pack`, `harness_audit`, eval suites, FMEA templates, HAZOP guide-word checklists |
 | `domain:<name>` | project-specific domain lens | Which domain rules, vocabulary, invariants, and traps apply? | project profiles, domain docs, project discovery tools |
 
 Optional researchers can cover security/privacy, operations, UX, compliance,
@@ -432,18 +435,32 @@ Acceptance gate checks:
 The workflow should turn desired behavior into tests before implementation.
 This is the main place where "properly proactive TDD" becomes enforceable.
 
+The full behavioral coverage pipeline is specified in
+[design-tdd-coverage.md](design-tdd-coverage.md). This section summarizes the
+obligation types and rules. The coverage doc defines the staged pipeline from
+ADR through EARS requirements, example mapping, BDD scenarios, Design by
+Contract, failure mode analysis (FMEA, HAZOP, FTA), state machine modeling,
+test suite generation, and mutation verification.
+
 TDD obligation types:
 
-| Type | When to use | Evidence source |
-| --- | --- | --- |
-| `characterization` | existing behavior is unclear or risky | current tests, logs, local probes |
-| `regression` | a known failure or behavior bug exists | conversation logs, telemetry, issue repro, failing test |
-| `acceptance` | user-visible behavior or workflow must change | PRD requirement, product metric |
-| `contract` | harness boundary must hold | runtime brief, brief lint, atom intake, plan audit |
-| `source_sanity` | source files change | language diagnostics, build, typecheck |
-| `eval` | agent behavior must improve | `idiom-eval`, SWE suite, localization benchmark |
-| `audit` | evidence/audit behavior must improve | `harness_audit`, audit watch |
-| `manual` | automation is unavailable | explicit command or inspection steps plus blocker reason |
+| Type | Category | When to use | Evidence source |
+| --- | --- | --- | --- |
+| `characterization` | safety net | existing behavior is unclear or risky | current tests, logs, local probes |
+| `regression` | safety net | a known failure or behavior bug exists | conversation logs, telemetry, issue repro, failing test |
+| `acceptance` | positive | user-visible behavior or workflow must change | PRD requirement, product metric |
+| `contract` | positive | harness boundary must hold | runtime brief, brief lint, atom intake, plan audit |
+| `source_sanity` | positive | source files change | language diagnostics, build, typecheck |
+| `eval` | positive | agent behavior must improve | `idiom-eval`, SWE suite, localization benchmark |
+| `audit` | positive | evidence/audit behavior must improve | `harness_audit`, audit watch |
+| `property_based` | coverage | session invariant must hold for arbitrary sequences | contract invariants, state machine model |
+| `fmea_negative` | negative | failure mode with RPN >= 21 must be mitigated | FMEA analysis of contract boundary |
+| `hazop_deviation` | negative | deviation with severity >= 3 must be handled | guide-word analysis of workflow steps |
+| `decision_table` | combinatorial | behavior depends on multiple boolean conditions | combinatorial enumeration of conditions |
+| `boundary_value` | combinatorial | numeric bound must be tested at edges | contract parameters with numeric ranges |
+| `mutation_score` | verification | test suite must detect injected faults | mutation testing of contract implementation |
+| `post_mortem` | feedback | incident must produce at least one catching test | execution audit, telemetry, post-mortem |
+| `manual` | fallback | automation is unavailable | explicit command or inspection steps plus blocker reason |
 
 Rules:
 
@@ -452,11 +469,49 @@ Rules:
 - Every implementation brief must carry exact validation commands or an explicit
   reason why validation is blocked.
 - For behavior bugs, the first preferred test is a regression fixture that
-  catches the bad behavior, followed by a valid allowed-path test.
+  catches the bad behavior, followed by a valid allowed-path test, followed by
+  a FMEA failure mode entry if the failure mode was not previously enumerated.
 - For legacy or poorly understood behavior, characterization comes before
   change.
 - Patch hygiene alone is not enough for source edits.
 - Tautological tests and placeholder assertions must fail lint/audit.
+- Every session invariant must have a property-based test obligation.
+- Every failure mode with FMEA RPN >= 21 must have a negative test obligation.
+- Every deviation with HAZOP severity >= 3 must have a deviation test
+  obligation.
+- Every multi-condition decision must have a decision table obligation.
+- Every numeric bound must have boundary value test obligations.
+- Mutation score for contract-level tests must be >= 80% before dispatch.
+- Every execution incident must produce at least one post-mortem obligation.
+
+### 8a. Coverage Gate
+
+Between the TDD obligation plan and brief generation, the workflow must pass a
+deterministic coverage gate. The gate is defined in
+[design-tdd-coverage.md](design-tdd-coverage.md). Summary of gate criteria:
+
+| Criterion | Threshold | Blocks On |
+| --- | --- | --- |
+| EARS coverage | 100% of ADR consequences mapped | Unmapped consequence |
+| BDD scenario coverage | 100% of EARS requirements have scenarios | Requirement without scenario |
+| Contract coverage | 100% of BDD Then clauses mapped to postconditions | Unmapped assertion |
+| FMEA coverage | 100% of failure modes with RPN >= 21 have tests | Unmitigated high-risk failure |
+| HAZOP coverage | 100% of deviations with severity >= 3 have tests | Unmitigated deviation |
+| Decision table coverage | 100% of multi-condition decisions enumerated | Missing combination |
+| Boundary value coverage | 100% of numeric bounds tested at boundaries | Untested bound |
+| PBT coverage | 100% of session invariants have property-based tests | Untested invariant |
+| Mutation score | >= 80% for contract-level tests | Theatrical tests |
+
+The coverage gate emits `coverage_gate_evaluated` events. A blocked gate
+returns the obligation plan to the relevant owner:
+
+- missing EARS or BDD coverage → step 4 (PRD revision)
+- missing failure mode or deviation coverage → step 8 (obligation plan
+  revision with FMEA/HAZOP follow-up)
+- low mutation score → step 8 (obligation plan revision with test quality
+  improvement)
+- missing property-based or decision table tests → step 8 (obligation plan
+  revision)
 
 ### 9. Brief Generation
 
@@ -700,11 +755,50 @@ Recommended durable location:
 
 - `.idiom/product/<task-id>/tdd.json`
 
-Example:
+The obligation ledger schema v2 includes coverage metadata for gate evaluation.
+The full schema is specified in
+[design-tdd-coverage.md](design-tdd-coverage.md). Example v1 obligation:
 
 ```json
 {
   "schema_version": "idiom.tdd_obligations.v1",
+  "obligations": [
+    {
+      "id": "TDD-001",
+      "type": "contract",
+      "behavior": "Briefs with missing verified current state fail pre-dispatch lint.",
+      "owner": "cmd/idiom",
+      "command": "go test ./cmd/idiom",
+      "required_before": "brief_dispatch",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+Example v2 obligation with coverage metadata:
+
+```json
+{
+  "schema_version": "idiom.tdd_obligations.v2",
+  "coverage": {
+    "ears_total": 5,
+    "ears_mapped": 5,
+    "bdd_total": 12,
+    "bdd_with_concrete_data": 12,
+    "fmea_modes_total": 8,
+    "fmea_modes_mitigated": 8,
+    "hazop_deviations_total": 6,
+    "hazop_deviations_tested": 6,
+    "invariants_total": 3,
+    "invariants_with_pbt": 3,
+    "decision_tables_total": 2,
+    "decision_tables_enumerated": 2,
+    "mutation_score": 85,
+    "mutation_min_score": 80,
+    "gates_passed": ["ears", "bdd", "fmea", "hazop", "pbt", "decision_table", "mutation"],
+    "gates_blocked": []
+  },
   "obligations": [
     {
       "id": "TDD-001",
@@ -870,7 +964,13 @@ duplicating dispatch lint logic.
 ## TDD Design Details
 
 The workflow should treat test design as a first-class artifact, not as a
-footer in the brief.
+footer in the brief. The full behavioral coverage pipeline, including EARS
+requirements, example mapping, BDD scenarios, Design by Contract, failure mode
+analysis (FMEA, HAZOP, FTA), state machine modeling, property-based testing,
+decision tables, boundary values, mutation testing, and the coverage gate, is
+specified in [design-tdd-coverage.md](design-tdd-coverage.md).
+
+This section covers the implementation-facing aspects of test design.
 
 ### Test Selection
 
@@ -904,13 +1004,18 @@ For implementation briefs that change behavior:
 4. Run the focused test and source-sanity.
 5. Run broader verification when the changed contract or dependency surface
    justifies it.
-6. Feed results into the artifact ledger.
+6. Run property-based tests for affected invariants.
+7. Run mutation testing for the changed contract surface.
+8. Check coverage gate: are all new failure modes tested?
+9. Feed results into the artifact ledger.
 
 For harness behavior bugs, the expected default is:
 
 - one regression test for the bad behavior
 - one valid allowed-path test
 - an audit or telemetry assertion if the failure was not diagnosable before
+- one FMEA failure mode entry if the failure mode was not previously enumerated
+- one post-mortem obligation tracking the incident to a catching test
 
 ### Behavior Analysis Inputs
 
@@ -974,7 +1079,10 @@ stateDiagram-v2
     ADRAudit --> TDDAudit: ADRs accepted
     TDDAudit --> TDDBlocked: missing behavior obligation
     TDDBlocked --> TDDAudit: add test, eval, audit, or blocker
-    TDDAudit --> BriefLint: obligations ready
+    TDDAudit --> CoverageGate: obligations ready
+    CoverageGate --> CoverageBlocked: incomplete coverage
+    CoverageBlocked --> TDDAudit: add FMEA, HAZOP, PBT, or mutation obligations
+    CoverageGate --> BriefLint: coverage gate passes
     BriefLint --> BriefBlocked: lint failure or stale anchors
     BriefBlocked --> Draft: revise brief or refresh context
     BriefLint --> Intake: brief lint passes
@@ -995,6 +1103,7 @@ stateDiagram-v2
 | PRD audit | product workflow | unsupported requirement, hidden blocker, missing metric |
 | ADR audit | product workflow | missing decision, weak alternatives, no validation |
 | TDD audit | product workflow | high-priority requirement without test obligation |
+| coverage gate | product workflow | incomplete EARS, BDD, FMEA, HAZOP, PBT, decision table, or mutation coverage |
 | context freshness | comprehension | stale or missing local evidence needed for edit |
 | plan audit | architect | unsupported paths, handles, validation, placeholders |
 | brief lint | brief preflight | malformed brief, vague anchors, prompt magic |
@@ -1019,6 +1128,7 @@ New events should connect upstream decisions to downstream outcomes:
 - `adr_drafted`
 - `adr_accepted`
 - `tdd_obligations_created`
+- `coverage_gate_evaluated`
 - `brief_generated`
 - `brief_linted`
 - `product_artifact_dispatch_ready`
@@ -1053,6 +1163,17 @@ Product workflow quality:
 - ADRs with alternatives and consequences
 - unresolved conflicts per PRD
 - time from intake to dispatch-ready brief
+
+Coverage quality (see [design-tdd-coverage.md](design-tdd-coverage.md)):
+
+- EARS coverage percentage (ADR consequences mapped)
+- BDD scenario coverage percentage (EARS requirements with scenarios)
+- FMEA mitigation rate (failure modes with RPN >= 21 that have tests)
+- HAZOP tested rate (deviations with severity >= 3 that have tests)
+- session invariants with property-based test coverage
+- multi-condition decisions with decision table enumeration
+- contract-level mutation score
+- coverage gate first-pass rate
 
 Brief quality:
 
@@ -1128,6 +1249,19 @@ Harness learning:
 - Generate implementation briefs that satisfy existing brief lint.
 - Connect TDD obligations to brief Tests and Acceptance sections.
 - Add regression fixtures for generated brief failures.
+- Add TDD obligation schema v2 with coverage metadata.
+- Add seven new obligation types: `property_based`, `fmea_negative`,
+  `hazop_deviation`, `decision_table`, `boundary_value`, `mutation_score`,
+  `post_mortem`.
+- Add coverage gate between TDD audit and brief generation.
+- Coverage gate phases track the TDD coverage rollout plan in
+  [design-tdd-coverage.md](design-tdd-coverage.md):
+  - Phase 1: EARS and BDD coverage checks
+  - Phase 2: FMEA and HAZOP obligation generation
+  - Phase 3: PBT and decision table support
+  - Phase 4: Mutation score gate
+  - Phase 5: Feedback loop integration
+  - Phase 6: Formal methods integration (optional)
 
 ### Phase 5: Execution Feedback Loop
 
@@ -1152,7 +1286,8 @@ Harness learning:
 | Researcher consensus theater | Preserve conflicts and force ADR resolution instead of averaging recommendations. |
 | Prompt drift | Put durable gates in schemas and audits; prompts only explain how to satisfy them. |
 | Colony overfitting | Keep Colony references in profiles/examples, not core code. |
-| Test theater | Reject tautological assertions and require behavior-linked obligations. |
+| Test theater | Reject tautological assertions and require behavior-linked obligations. Use mutation testing to verify tests actually constrain behavior. |
+| Coverage obligation explosion | Require FMEA RPN >= 21 and HAZOP severity >= 3 as thresholds for mandatory tests; lower thresholds are advisory. Tier requirements by ADR blast radius. |
 | Stale local evidence | Carry freshness fields and block dispatch when stale evidence is load-bearing. |
 | Local model capacity | Run researchers sequentially by default; use queue admission for parallel lanes. |
 | Privacy leaks | Store IDs, paths, hashes, counts, and statuses; redact prompts, transcripts, secrets, and file bodies. |
@@ -1173,6 +1308,10 @@ Harness learning:
    bloating every packet?
 6. Which localization benchmark metrics should be mandatory before ranker
    learning consumes product workflow outcomes?
+7. Should coverage gate requirements be tiered by ADR blast radius (full
+   pipeline for high-impact, EARS + BDD + contract tests for low-impact)?
+8. What is the minimum mutation score threshold before dispatch, and should it
+   vary by obligation type?
 
 ## Acceptance Criteria For The Effort
 
@@ -1181,12 +1320,19 @@ The feature is useful when a team can:
 - define a researcher roster for a task
 - produce a PRD whose requirements cite evidence
 - accept ADRs for material decisions
-- generate TDD obligations before implementation
+- generate TDD obligations before implementation, including failure mode,
+  deviation, property-based, and mutation obligations
+- pass the coverage gate: EARS, BDD, FMEA, HAZOP, PBT, decision table, and
+  mutation coverage all meet threshold
 - generate one or more briefs that pass `idiom brief lint`
-- block stale/source-satisfied/non-dispatchable work before model dispatch
+- block stale/source-satisfied/non-dispatchable/under-covered work before model
+  dispatch
 - trace execution results back to PRD requirements, ADR decisions, and tests
+- trace every execution incident to a coverage gap and forward to a new
+  obligation
 - audit the workflow without reading raw transcripts
 - improve future context ranking or brief quality from verified outcomes
+- measure spec compliance independently of functional correctness
 
 That is the product shape: not "an agent wrote a plan", but "Idiom produced an
 auditable path from research evidence to product requirements, architecture

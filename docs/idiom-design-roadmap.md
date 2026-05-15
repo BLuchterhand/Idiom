@@ -38,6 +38,13 @@ The executable implementation plan is
   defines the upstream artifact pipeline that turns aligned research evidence
   into traceable product requirements, architecture decisions, proactive TDD
   obligations, and dispatch-ready Idiom briefs.
+- [Behavioral TDD coverage](design-tdd-coverage.md)
+  defines the staged pipeline from human-approved ADR through EARS requirements,
+  example mapping, BDD scenarios, Design by Contract, failure mode analysis
+  (FMEA, HAZOP, FTA), state machine modeling, property-based testing, decision
+  tables, mutation verification, and the deterministic coverage gate that blocks
+  dispatch when behavioral coverage is incomplete. This is the verification
+  contract for the PRD-to-brief workflow.
 
 ## System Shape
 
