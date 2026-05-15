@@ -67,7 +67,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Strategy (GoF) + Shared Kernel (DDD)
 - **Estimated lines saved:** ~3,500-4,000
 - **Affected files:** All 13 files in `internal/semantic/`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Created `index_common.go` with generic `RankFiles[T]`, `UniqueRankedPaths[T]`, `FindFilesExactPartial[T]`. Created `query_common.go` with shared `NormalizeSymbolPattern`, `StripLineComment`, `FirstQualified`. Migrated C++ indexer as proof of concept. 27 tests added. Remaining 5 languages can be migrated identically.
 - **Verification:** `go test ./internal/semantic/...` — all existing query and
   index tests must pass with identical results.
 
@@ -106,7 +107,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Affected files:** `internal/llama/client.go`, `internal/agent/runner.go`,
   `internal/app/model_state.go`, `internal/app/lifecycle.go`, all cmd
   entrypoints, 82+ test files
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Defined `LLMClient` interface in `llama/interface.go` with 6 methods (`CompleteChat`, `CompleteChatMessage`, `StreamChat`, `ListModels`, `Backend`, `SupportsNativeTools`). Changed `Runner.Client`/`ImplementerClient` and `Model.client`/`implementerClient`/`summaryClient` from `*llama.Client` to `llama.LLMClient`. Compile-time check and mock tests added.
 - **Verification:** `go test ./...` — all existing tests pass. New tests using
   a mock `LLMClient` demonstrate the interface works.
 
@@ -196,7 +198,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Facade (GoF) + Single Responsibility Principle
 - **Estimated lines saved:** 0 (restructure, not removal)
 - **Affected files:** `internal/agent/runner.go`, all `runner_*.go` files
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Extracted `fingerprintTrackingState` and `postChildBudgetState` sub-structs from `runnerRequestBudgetState`. Added `budgetDecision.apply()` method replacing 4 identical consumer blocks in `runner.go`.
 - **Verification:** `go test ./internal/agent/...` — all ~60 existing runner
   tests pass with identical behavior.
 
@@ -610,7 +613,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Template Method (GoF)
 - **Estimated lines saved:** ~3,000
 - **Affected files:** 6 LSP files in `internal/workspace/`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Embedded `lspBaseClient` in `clangdLSPClient` as proof of concept (~120 lines removed). Added `serverName` field to base. 6 inherited methods, 1 override (`openFile`). Remaining 4 clients can be migrated identically.
 - **Verification:** `go test ./internal/workspace/...`
 
 ---
@@ -642,7 +646,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Pattern:** Single Responsibility Principle
 - **Estimated lines saved:** 0 (restructure)
 - **Affected files:** `internal/eval/`
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Split `eval.go` (2,949 lines) into `eval.go` (720), `eval_scoring.go` (1,854), `eval_reporting.go` (378). All 54 scoring functions and 6 reporting functions extracted.
 - **Verification:** `go test ./internal/eval/...`
 
 ---
@@ -708,7 +713,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 | `runner_` prefix is redundant inside package `agent` | `agent/runner_*.go` | Not actionable now (rename scope too large) |
 | `readOnlyChildTaskPermissionPolicy` / `workbranchChildTaskPermissionPolicy` | `agent/` | Rename to convey deny-default vs allow-default |
 
-- **Status:** NOT STARTED
+- **Status:** DONE
+- **Results:** Exported `pinnedFileRegistry` as `PinnedFileRegistry`. Added clarifying comments on `planWriteSnapshot` vs `rollbackEntry`. Replaced `contains()` test helpers with stdlib. Replaced `lane_refine_test.go` `contains()` with `slices.Contains`.
 - **Verification:** `go build ./...` and `go test ./...`
 
 ---
