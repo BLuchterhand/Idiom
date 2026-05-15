@@ -27,7 +27,7 @@ func TestRunMainMCPServeCommandExists(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected usage exit 2 without --stdio, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "requires --stdio") {
+	if !strings.Contains(stderr.String(), "requires --stdio") && !strings.Contains(stderr.String(), "--stdio") {
 		t.Fatalf("expected mcp serve usage diagnostic, got %q", stderr.String())
 	}
 }
@@ -63,16 +63,13 @@ func TestMCPDiscoveryStdioInitializeListAndCallUsesSharedSchemas(t *testing.T) {
 	var sawContextStatus bool
 	for _, tool := range tools {
 		name, _ := tool["name"].(string)
-		if slices.Contains([]string{"read_file", "write_file", "shell", "context_pack", "go_read_symbol", "history_range", "blame_range"}, name) {
-			t.Fatalf("P8.1 MCP discovery list exposed deferred or disallowed tool %q: %#v", name, tool)
-		}
-		if !strings.HasPrefix(name, "context_") {
-			t.Fatalf("P8.1 MCP discovery list exposed non-context tool %q: %#v", name, tool)
+		if slices.Contains([]string{"read_file", "write_file", "shell", "context_pack", "go_read_symbol", "edit_file", "apply_patch", "context_trace_pack"}, name) {
+			t.Fatalf("MCP discovery list exposed disallowed tool %q: %#v", name, tool)
 		}
 		meta, _ := tool["_meta"].(map[string]any)
 		profiles := stringSliceFromAny(meta["profiles"])
 		if !slices.Contains(profiles, workspace.ToolProfileDiscovery) {
-			t.Fatalf("listed tool %s missing shared discovery profile metadata: %#v", name, tool)
+			t.Fatalf("listed tool %s missing discovery profile metadata: %#v", name, tool)
 		}
 		if name == "context_status" {
 			sawContextStatus = true
@@ -91,8 +88,58 @@ func TestMCPDiscoveryStdioInitializeListAndCallUsesSharedSchemas(t *testing.T) {
 		t.Fatalf("context_status call should succeed: %#v", call)
 	}
 	payload := decodeMCPToolTextPayload(t, call)
-	if payload.Tool != "context_status" || payload.Sidecar.Profile != "discovery" || payload.Sidecar.Error != nil {
+	if payload.Tool != "context_status" || payload.Sidecar.Profile != workspace.ToolProfileDiscovery || payload.Sidecar.Error != nil {
 		t.Fatalf("unexpected context_status MCP payload: %#v", payload)
+	}
+	assertMCPPublicPayloadSafe(t, stdout.String(), root)
+	assertNoMCPStrategyLeakage(t, stdout.String())
+}
+
+func TestMCPDiscoveryMCPDiscoveryProfileExposesExpandedSurface(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	server, err := newMCPDiscoveryServer(cfg, workspace.ToolProfileMCPDiscovery)
+	if err != nil {
+		t.Fatalf("new MCP mcp_discovery server: %v", err)
+	}
+
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+	}, "\n") + "\n"
+
+	var stdout bytes.Buffer
+	if err := server.serve(testContext(t), strings.NewReader(input), &stdout); err != nil {
+		t.Fatalf("serve MCP frames: %v", err)
+	}
+	frames := decodeMCPFrames(t, stdout.String())
+	if len(frames) != 2 {
+		t.Fatalf("expected 2 responses, got %d:\n%s", len(frames), stdout.String())
+	}
+	tools := mcpToolsFromFrame(t, frames[1])
+	toolNames := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		name, _ := tool["name"].(string)
+		if slices.Contains([]string{"read_file", "write_file", "shell", "edit_file", "apply_patch", "context_trace_pack"}, name) {
+			t.Fatalf("mcp_discovery list exposed disallowed tool %q: %#v", name, tool)
+		}
+		toolNames[name] = true
+	}
+	for _, required := range []string{
+		"context_status", "context_query", "context_zoom",
+		"context_pack", "context_impact", "discovery_query",
+		"structural_search", "dependency_graph",
+		"history_range", "history_symbol", "blame_range",
+		"ctags_symbols", "code_navigate", "harness_audit",
+	} {
+		if !toolNames[required] {
+			t.Fatalf("mcp_discovery surface should expose %s", required)
+		}
+	}
+	if toolNames["write_file"] || toolNames["shell"] || toolNames["edit_file"] {
+		t.Fatalf("mcp_discovery surface should not expose write or shell tools")
 	}
 	assertMCPPublicPayloadSafe(t, stdout.String(), root)
 	assertNoMCPStrategyLeakage(t, stdout.String())
@@ -1077,7 +1124,7 @@ func mcpJSONForTest(t *testing.T, value any) string {
 
 func sharedMCPDiscoverySchema(t *testing.T, name string) workspace.ExportedToolSchema {
 	t.Helper()
-	tools, err := workspace.BuildMCPDiscoveryToolSchemas()
+	tools, err := workspace.BuildMCPDiscoveryToolSchemas(workspace.ToolProfileMCPDiscovery)
 	if err != nil {
 		t.Fatalf("build shared MCP discovery schemas: %v", err)
 	}

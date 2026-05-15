@@ -10,6 +10,7 @@ import (
 
 const ToolProfileDefault = "default"
 const ToolProfileDiscovery = "discovery"
+const ToolProfileMCPDiscovery = "mcp_discovery"
 
 type ToolProfileDecision struct {
 	Allowed bool
@@ -23,7 +24,7 @@ func NormalizeToolProfile(profile string) (string, error) {
 		return ToolProfileDefault, nil
 	}
 	switch profile {
-	case ToolProfileDefault, ToolProfileDiscovery:
+	case ToolProfileDefault, ToolProfileDiscovery, ToolProfileMCPDiscovery:
 		return profile, nil
 	default:
 		return "", fmt.Errorf("unknown tool profile %q (expected default or discovery)", profile)
@@ -54,7 +55,7 @@ func ToolAllowedForProfile(tool string, profile string) ToolProfileDecision {
 		hasToolSchemaSideEffect(policy.SideEffects, autonomy.SideEffectDestructive) {
 		return discoveryProfileDenied("mutation side effects are not allowed")
 	}
-	if discoveryProfileToolWritesLocalContextArtifacts(tool) {
+	if profile == ToolProfileDiscovery && discoveryProfileToolWritesLocalContextArtifacts(tool) {
 		return discoveryProfileDenied("tool writes local context artifacts")
 	}
 	if !hasToolSchemaSideEffect(policy.SideEffects, autonomy.SideEffectReadOnly) {

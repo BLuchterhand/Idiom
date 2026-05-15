@@ -21,7 +21,7 @@ import (
 	"idiom/internal/workspace"
 )
 
-const mcpDiscoveryProfile = workspace.ToolProfileDiscovery
+const mcpDiscoveryProfile = workspace.ToolProfileMCPDiscovery
 const mcpStdioTransport = "mcp_stdio"
 
 type mcpRPCRequest struct {
@@ -87,7 +87,7 @@ func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, 
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "config.json", "path to config file")
 	stdio := fs.Bool("stdio", false, "serve MCP over newline-delimited stdio")
-	profileFlag := fs.String("profile", mcpDiscoveryProfile, "tool permission profile: discovery")
+	profileFlag := fs.String("profile", mcpDiscoveryProfile, "tool permission profile: discovery, mcp_discovery")
 	callerID := fs.String("caller-id", "", "opaque caller identifier for sidecar.caller metadata")
 	requestID := fs.String("request-id", "", "opaque request identifier for sidecar.caller metadata")
 	traceID := fs.String("trace-id", "", "opaque trace identifier for sidecar.caller metadata")
@@ -103,8 +103,8 @@ func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, 
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	if profile != mcpDiscoveryProfile {
-		fmt.Fprintln(stderr, "idiom mcp serve currently supports only --profile discovery")
+	if profile != workspace.ToolProfileDiscovery && profile != workspace.ToolProfileMCPDiscovery {
+		fmt.Fprintln(stderr, "idiom mcp serve supports --profile discovery or mcp_discovery")
 		return 2
 	}
 	caller, err := workspace.NewToolSidecarCaller(*callerID, *requestID, *traceID)
@@ -135,9 +135,11 @@ func runMCPMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, 
 func printMCPUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  idiom mcp serve --stdio --profile discovery [--config config.json] [--caller-id id] [--request-id id] [--trace-id id]")
+	fmt.Fprintln(stderr, "  idiom mcp serve --stdio --profile mcp_discovery [--config config.json] [--caller-id id] [--request-id id] [--trace-id id]")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Serves the MCP stdio discovery surface: initialize, tools/list, tools/call, roots/list, resources/list, and metadata-only resources/read.")
-	fmt.Fprintln(stderr, "Tool responses use the shared sidecar envelope with transport=mcp_stdio and optional caller metadata. Resource responses are metadata-only, protected-path aware, and report freshness without refreshing.")
+	fmt.Fprintln(stderr, "The mcp_discovery profile (default) exposes all semantic discovery tools including context_pack, context_impact, and discovery_query.")
+	fmt.Fprintln(stderr, "The discovery profile exposes only graph-backed context_* tools with no local artifact writes.")
 }
 
 type mcpDiscoveryServerOptions struct {
@@ -161,7 +163,7 @@ func newMCPDiscoveryServer(cfg config.Config, profile string) (*mcpDiscoveryServ
 }
 
 func newMCPDiscoveryServerWithOptions(cfg config.Config, profile string, opts mcpDiscoveryServerOptions) (*mcpDiscoveryServer, error) {
-	tools, err := workspace.BuildMCPDiscoveryToolSchemas()
+	tools, err := workspace.BuildMCPDiscoveryToolSchemas(profile)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +264,7 @@ func (s *mcpDiscoveryServer) initializeResult() map[string]any {
 			"name":    "idiom",
 			"version": version,
 		},
-		"instructions": "Stdio discovery server exposes schema-derived discovery tools plus metadata-only, root-clamped resources. Tool calls use shared sidecar caller attribution with transport=mcp_stdio. Resource responses report freshness without refreshing.",
+		"instructions": fmt.Sprintf("Stdio discovery server (profile=%s) exposes schema-derived discovery tools plus metadata-only, root-clamped resources. Tool calls use shared sidecar caller attribution with transport=mcp_stdio. Resource responses report freshness without refreshing.", s.profile),
 	}
 }
 

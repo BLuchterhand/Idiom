@@ -106,7 +106,7 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 }
 
 func TestBuildMCPDiscoveryToolSchemasDerivesFromDiscoveryProfileAndSemanticCapability(t *testing.T) {
-	tools, err := BuildMCPDiscoveryToolSchemas()
+	tools, err := BuildMCPDiscoveryToolSchemas(ToolProfileDiscovery)
 	if err != nil {
 		t.Fatalf("BuildMCPDiscoveryToolSchemas returned error: %v", err)
 	}
@@ -138,6 +138,54 @@ func TestBuildMCPDiscoveryToolSchemasDerivesFromDiscoveryProfileAndSemanticCapab
 	}
 	if !sawContextStatus {
 		t.Fatalf("MCP discovery schema surface should expose context_status: %#v", tools)
+	}
+}
+
+func TestBuildMCPDiscoveryToolSchemasMCPDiscoveryProfileExposesExpandedSurface(t *testing.T) {
+	tools, err := BuildMCPDiscoveryToolSchemas(ToolProfileMCPDiscovery)
+	if err != nil {
+		t.Fatalf("BuildMCPDiscoveryToolSchemas returned error: %v", err)
+	}
+	if len(tools) == 0 {
+		t.Fatal("expected mcp_discovery schema surface to contain tools")
+	}
+	toolNames := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		if !slices.Contains(tool.Profiles, ToolProfileMCPDiscovery) {
+			t.Fatalf("mcp_discovery tool %s missing mcp_discovery profile: %#v", tool.Name, tool.Profiles)
+		}
+		if !slices.Contains(tool.Policy.Capabilities, autonomy.CapabilitySemanticDiscovery) {
+			t.Fatalf("mcp_discovery tool %s is not schema-classified as semantic discovery: %#v", tool.Name, tool.Policy.Capabilities)
+		}
+		if !ToolAllowedForProfile(tool.Name, ToolProfileMCPDiscovery).Allowed {
+			t.Fatalf("mcp_discovery tool %s is not allowed by mcp_discovery profile", tool.Name)
+		}
+		toolNames[tool.Name] = true
+	}
+	for _, required := range []string{
+		"context_status", "context_query", "context_zoom",
+		"context_pack", "context_impact", "discovery_query",
+		"structural_search", "dependency_graph",
+		"history_range", "history_symbol", "blame_range",
+		"ctags_symbols", "code_navigate", "harness_audit",
+	} {
+		if !toolNames[required] {
+			names := make([]string, 0, len(toolNames))
+			for n := range toolNames {
+				names = append(names, n)
+			}
+			slices.Sort(names)
+			t.Fatalf("mcp_discovery schema surface should expose %s, got: %v", required, names)
+		}
+	}
+	for _, forbidden := range []string{"read_file", "write_file", "shell", "edit_file", "apply_patch", "context_trace_pack"} {
+		if toolNames[forbidden] {
+			t.Fatalf("mcp_discovery schema surface should not expose %s", forbidden)
+		}
+	}
+	discoveryTools, _ := BuildMCPDiscoveryToolSchemas(ToolProfileDiscovery)
+	if len(tools) <= len(discoveryTools) {
+		t.Fatalf("mcp_discovery surface (%d tools) should be strictly larger than discovery surface (%d tools)", len(tools), len(discoveryTools))
 	}
 }
 

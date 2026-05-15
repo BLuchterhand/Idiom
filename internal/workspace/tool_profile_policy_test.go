@@ -65,6 +65,41 @@ func TestToolAllowedForDiscoveryProfileDeniesContextToolsThatWriteArtifacts(t *t
 	}
 }
 
+func TestToolAllowedForMCPDiscoveryProfileAllowsContextToolsThatWriteArtifacts(t *testing.T) {
+	for _, tool := range []string{"context_pack", "context_impact", "discovery_query"} {
+		decision := ToolAllowedForProfile(tool, ToolProfileMCPDiscovery)
+		if !decision.Allowed {
+			t.Fatalf("%s should be allowed for mcp_discovery profile, got %#v", tool, decision)
+		}
+	}
+}
+
+func TestToolAllowedForMCPDiscoveryProfileDeniesMutationShellAndUnknownEffects(t *testing.T) {
+	for _, tool := range []string{"write_file", "apply_patch", "shell", "context_trace_pack", "project_external"} {
+		decision := ToolAllowedForProfile(tool, ToolProfileMCPDiscovery)
+		if decision.Allowed {
+			t.Fatalf("%s should be denied for mcp_discovery profile", tool)
+		}
+		if decision.Code != "profile_denied" || decision.Reason == "" {
+			t.Fatalf("%s denial should be structured, got %#v", tool, decision)
+		}
+	}
+}
+
+func TestToolAllowedForMCPDiscoveryProfileAllowsReadOnlyDiscoveryTools(t *testing.T) {
+	for _, tool := range []string{
+		"context_status", "context_query", "context_zoom",
+		"discovery_query", "structural_search", "dependency_graph",
+		"history_range", "history_symbol", "blame_range",
+		"ctags_symbols", "code_navigate", "harness_audit",
+	} {
+		decision := ToolAllowedForProfile(tool, ToolProfileMCPDiscovery)
+		if !decision.Allowed {
+			t.Fatalf("%s should be allowed for mcp_discovery profile, got %#v", tool, decision)
+		}
+	}
+}
+
 func TestToolAllowedForDiscoveryProfileDeniesMutationShellAndUnknownEffects(t *testing.T) {
 	for _, tool := range []string{"write_file", "apply_patch", "shell", "context_trace_pack", "project_external"} {
 		decision := ToolAllowedForProfile(tool, ToolProfileDiscovery)

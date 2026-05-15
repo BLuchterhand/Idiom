@@ -1,5 +1,18 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "lsp": {
+    "gopls": {
+      "command": ["gopls"]
+    }
+  },
+  "mcp": {
+    "idiom-discovery": {
+      "type": "local",
+      "command": ["idiom", "mcp", "serve", "--stdio"],
+      "enabled": true,
+      "timeout": 30000
+    }
+  },
   "provider": {
     "llama-local": {
       "npm": "@ai-sdk/openai-compatible",

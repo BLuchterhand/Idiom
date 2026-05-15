@@ -52,26 +52,24 @@ func BuildToolSchemaExport(allowedTools []string) (ToolSchemaExport, error) {
 }
 
 // BuildMCPDiscoveryToolSchemas returns the schema-derived tool surface exposed
-// by the P8.1 MCP stdio server. The selection is intentionally derived from
-// the same exported schema/profile/policy metadata as `idiom tool schemas`:
-// tools must be allowed by the discovery profile, must be semantic discovery
-// tools, and in P8.1 must be graph-backed context tools. Raw file, language
-// source, history/blame, scan, and resource surfaces are deferred to later MCP
-// containment/parity work.
-func BuildMCPDiscoveryToolSchemas() ([]ExportedToolSchema, error) {
+// by the MCP stdio server for the given profile. The discovery profile retains
+// the original context_-only surface; the mcp_discovery profile exposes all
+// semantic discovery tools including context_pack, context_impact, and
+// discovery_query.
+func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) {
 	export, err := BuildToolSchemaExport(nil)
 	if err != nil {
 		return nil, err
 	}
 	var tools []ExportedToolSchema
 	for _, tool := range export.Tools {
-		if !exportedToolSchemaHasProfile(tool, ToolProfileDiscovery) {
+		if !exportedToolSchemaHasProfile(tool, profile) {
 			continue
 		}
 		if !exportedToolSchemaHasCapability(tool, autonomy.CapabilitySemanticDiscovery) {
 			continue
 		}
-		if !strings.HasPrefix(tool.Name, "context_") {
+		if profile == ToolProfileDiscovery && !strings.HasPrefix(tool.Name, "context_") {
 			continue
 		}
 		tools = append(tools, tool)
@@ -196,6 +194,9 @@ func toolSchemaExportProfiles() map[string][]string {
 	}) {
 		if ToolAllowedForProfile(tool, ToolProfileDiscovery).Allowed {
 			profiles[tool] = append(profiles[tool], ToolProfileDiscovery)
+		}
+		if ToolAllowedForProfile(tool, ToolProfileMCPDiscovery).Allowed {
+			profiles[tool] = append(profiles[tool], ToolProfileMCPDiscovery)
 		}
 	}
 	for tool, names := range profiles {
