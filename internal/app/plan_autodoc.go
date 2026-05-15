@@ -16,6 +16,16 @@ import (
 	"idiom/internal/workspace"
 )
 
+func mutatePlanLines(path string, fn func(lines []string) []string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	lines = fn(lines)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
 // planWriteSnapshot captures the pre-execute state of a single file so
 // the post-execute callback can compute a diff. existed is tracked so
 // create-new-file writes render as all-add hunks rather than a diff
@@ -762,14 +772,16 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	if matchID == "" {
 		return false
 	}
-	data, err := os.ReadFile(planPath)
+	anchor := "<!-- tid:" + matchID + " -->"
+
+	raw, err := os.ReadFile(planPath)
 	if err != nil {
 		return false
 	}
-	anchor := "<!-- tid:" + matchID + " -->"
-	if !strings.Contains(string(data), anchor) {
+	if !strings.Contains(string(raw), anchor) {
 		return false
 	}
+
 	// Record the hit before we decide whether the item is fully
 	// fulfilled — the current write counts toward completion.
 	if m.planLedgerHits == nil {
@@ -790,29 +802,24 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 		}
 	}
 
-	// Rewrite the matching line: optionally flip [ ] → [x], and append
-	// this write's diff id. Multiple writes append multiple id anchors
-	// rather than replacing, so no attached diff is lost.
-	lines := strings.Split(string(data), "\n")
 	var changed bool
-	for i, line := range lines {
-		if !strings.Contains(line, anchor) {
-			continue
+	if err := mutatePlanLines(planPath, func(lines []string) []string {
+		for i, line := range lines {
+			if !strings.Contains(line, anchor) {
+				continue
+			}
+			newLine := line
+			if allHit {
+				newLine = strings.Replace(newLine, "- [ ]", "- [x]", 1)
+				newLine = strings.Replace(newLine, "* [ ]", "* [x]", 1)
+			}
+			newLine = strings.TrimRight(newLine, " ") + " <!-- id:" + diffID + " -->"
+			lines[i] = newLine
+			changed = true
+			break
 		}
-		newLine := line
-		if allHit {
-			newLine = strings.Replace(newLine, "- [ ]", "- [x]", 1)
-			newLine = strings.Replace(newLine, "* [ ]", "* [x]", 1)
-		}
-		newLine = strings.TrimRight(newLine, " ") + " <!-- id:" + diffID + " -->"
-		lines[i] = newLine
-		changed = true
-		break
-	}
-	if !changed {
-		return false
-	}
-	if err := os.WriteFile(planPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return lines
+	}); err != nil || !changed {
 		return false
 	}
 	if allHit {
@@ -868,27 +875,21 @@ func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
 	}
 
 	anchor := "<!-- pid:" + matchID + " -->"
-	data, err := os.ReadFile(planPath)
-	if err != nil {
-		return false
-	}
-	lines := strings.Split(string(data), "\n")
 	var changed bool
-	for i, line := range lines {
-		if !strings.Contains(line, anchor) {
-			continue
+	if err := mutatePlanLines(planPath, func(lines []string) []string {
+		for i, line := range lines {
+			if !strings.Contains(line, anchor) {
+				continue
+			}
+			newLine := strings.Replace(line, "- [ ]", "- [x]", 1)
+			newLine = strings.Replace(newLine, "- [~]", "- [x]", 1)
+			newLine = strings.TrimRight(newLine, " ") + " <!-- id:" + diffID + " -->"
+			lines[i] = newLine
+			changed = true
+			break
 		}
-		newLine := strings.Replace(line, "- [ ]", "- [x]", 1)
-		newLine = strings.Replace(newLine, "- [~]", "- [x]", 1)
-		newLine = strings.TrimRight(newLine, " ") + " <!-- id:" + diffID + " -->"
-		lines[i] = newLine
-		changed = true
-		break
-	}
-	if !changed {
-		return false
-	}
-	if err := os.WriteFile(planPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return lines
+	}); err != nil || !changed {
 		return false
 	}
 	return true
@@ -911,13 +912,6 @@ func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 	if status == "pending" || status == "" {
 		return
 	}
-	data, err := os.ReadFile(planPath)
-	if err != nil {
-		return
-	}
-	if !strings.Contains(string(data), anchor) {
-		return
-	}
 	var targetBox string
 	switch status {
 	case "completed", "cancelled":
@@ -927,25 +921,22 @@ func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 	default:
 		return
 	}
-	lines := strings.Split(string(data), "\n")
-	var changed bool
-	for i, line := range lines {
-		if !strings.Contains(line, anchor) {
-			continue
+	_ = mutatePlanLines(planPath, func(lines []string) []string {
+		for i, line := range lines {
+			if !strings.Contains(line, anchor) {
+				continue
+			}
+			newLine := line
+			for _, oldBox := range []string{"[ ]", "[~]", "[x]", "[X]"} {
+				newLine = strings.Replace(newLine, oldBox, targetBox, 1)
+			}
+			if newLine != line {
+				lines[i] = newLine
+			}
+			break
 		}
-		newLine := line
-		for _, oldBox := range []string{"[ ]", "[~]", "[x]", "[X]"} {
-			newLine = strings.Replace(newLine, oldBox, targetBox, 1)
-		}
-		if newLine != line {
-			lines[i] = newLine
-			changed = true
-		}
-		break
-	}
-	if changed {
-		_ = os.WriteFile(planPath, []byte(strings.Join(lines, "\n")), 0o644)
-	}
+		return lines
+	})
 }
 
 // recordSubmittedPlan intercepts a successful submit_plan tool result

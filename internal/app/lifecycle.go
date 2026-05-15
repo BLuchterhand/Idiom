@@ -20,6 +20,7 @@ import (
 	"idiom/internal/projectartifacts"
 	"idiom/internal/promptstack"
 	"idiom/internal/transcript"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -982,7 +983,7 @@ func looksLikeFileHandle(token string) bool {
 func (m *Model) initDebugLogger() {
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:           m.cfg.Chat.DebugLogDir,
-		Mode:          transcript.DebugLogMode(firstNonEmptyString(m.cfg.Chat.DebugLogMode, "redacted")),
+		Mode:          transcript.DebugLogMode(util.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),
 		WorkspaceRoot: m.workspace.Root(),
 		SessionID:     m.cfg.Workspace.SessionID,
 	})
@@ -1035,7 +1036,7 @@ func (m *Model) composedSystemPrompt() (string, []promptstack.Source) {
 		return m.composedPrompt, append([]promptstack.Source(nil), m.composedPromptSources...)
 	}
 	mode := m.currentMode()
-	overlayModel := firstNonEmptyString(m.plannerSpec.Model, m.cfg.LlamaServer.Model)
+	overlayModel := util.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)
 	stack := promptstack.AppendOverlays(
 		m.promptStack,
 		promptstack.ModelCompatibilityOverlays(m.cfg.Chat.ModelFamily, overlayModel),
@@ -1064,7 +1065,7 @@ func (m *Model) composedPromptKey() string {
 	return strings.Join([]string{
 		m.currentMode().Name,
 		strings.TrimSpace(m.cfg.Chat.ModelFamily),
-		strings.TrimSpace(firstNonEmptyString(m.plannerSpec.Model, m.cfg.LlamaServer.Model)),
+		strings.TrimSpace(util.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)),
 	}, "\x00")
 }
 

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/util"
 )
 
@@ -48,7 +49,7 @@ func LocateSearchScopes(prompt string) []string {
 	if ContainsAny(normalized, "bubbletea", "window", "header", "footer", "badge", "chat", "menu", "status", "banner") {
 		add("internal/app")
 	}
-	for _, path := range PromptMentionedWorkspacePaths(prompt) {
+	for _, path := range pathparse.MentionedWorkspacePaths(prompt) {
 		add(path)
 	}
 	add("internal")

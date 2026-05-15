@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/llama"
 	"idiom/internal/transcript"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -60,7 +61,7 @@ func (m *Model) ResumeSession(id string) error {
 	// new-session log that initDebugLogger just created.
 	newLogger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:           m.cfg.Chat.DebugLogDir,
-		Mode:          transcript.DebugLogMode(firstNonEmptyString(m.cfg.Chat.DebugLogMode, "redacted")),
+		Mode:          transcript.DebugLogMode(util.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),
 		WorkspaceRoot: m.workspace.Root(),
 		ResumePath:    path,
 	})

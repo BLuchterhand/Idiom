@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"idiom/internal/frontier"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
@@ -198,7 +198,7 @@ func shouldDelegateMainReadOnlyBootstrapRequest(req workspace.ToolRequest) bool 
 		return pattern == "" || pattern == "*" || pattern == "*.go" || strings.HasPrefix(pattern, "*")
 	case "search_content":
 		path := strings.TrimSpace(req.Path)
-		return path == "" || path == "." || !frontier.HasWorkspaceFileExtension(path)
+		return path == "" || path == "." || !pathparse.HasWorkspaceFileExtension(path)
 	default:
 		return workspace.IsBroadInspectionRequest(req)
 	}
@@ -256,7 +256,7 @@ func (r *Runner) delegatedReadOnlyBootstrapRequest(results []workspace.ToolResul
 		}
 	case "search_content":
 		path := strings.TrimSpace(req.Path)
-		if path == "" || path == "." || !frontier.HasWorkspaceFileExtension(path) {
+		if path == "" || path == "." || !pathparse.HasWorkspaceFileExtension(path) {
 			if redirected, ok := delegatedReadOnlyBootstrapStructuredRequest(r.RuntimeBrief.Objective, r.RuntimeBrief.AllowedTools); ok {
 				return redirected, true
 			}
@@ -279,8 +279,8 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 	if delegatedReadOnlyBootstrapHasExactStructuredProbe(r.RuntimeBrief.Objective, r.RuntimeBrief.AllowedTools) {
 		return workspace.ToolRequest{}, false
 	}
-	for _, path := range frontier.PromptMentionedWorkspacePaths(r.RuntimeBrief.Objective) {
-		if frontier.HasWorkspaceFileExtension(path) {
+	for _, path := range pathparse.MentionedWorkspacePaths(r.RuntimeBrief.Objective) {
+		if pathparse.HasWorkspaceFileExtension(path) {
 			return workspace.ToolRequest{}, false
 		}
 	}
@@ -378,7 +378,7 @@ func delegatedReadOnlyBootstrapSearchRequest(objective string) (workspace.ToolRe
 	if scope := delegatedReadOnlyBootstrapScope(objective); scope != "" && scope != "." {
 		req.Path = scope
 	}
-	if !frontier.HasWorkspaceFileExtension(req.Path) {
+	if !pathparse.HasWorkspaceFileExtension(req.Path) {
 		req.Glob = "*.go"
 	}
 	return req, true
@@ -416,12 +416,12 @@ func delegatedReadOnlyBootstrapScope(objective string) string {
 			return filepath.ToSlash(strings.TrimSuffix(candidate, "/"))
 		}
 	}
-	for _, candidate := range frontier.PromptMentionedWorkspacePaths(objective) {
+	for _, candidate := range pathparse.MentionedWorkspacePaths(objective) {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" {
 			continue
 		}
-		if frontier.HasWorkspaceFileExtension(candidate) {
+		if pathparse.HasWorkspaceFileExtension(candidate) {
 			dir := filepath.ToSlash(filepath.Dir(candidate))
 			if dir != "." && dir != "" {
 				return dir
@@ -447,7 +447,7 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 			}
 		}
 	}
-	for _, fragment := range frontier.QuotedPromptFragments(objective) {
+	for _, fragment := range pathparse.QuotedFragments(objective) {
 		if term, ok := delegatedReadOnlySearchTerm(fragment); ok {
 			terms = util.AppendUnique(terms, term)
 		}
@@ -508,7 +508,7 @@ func delegatedReadOnlyBootstrapSymbolPattern(objective string) string {
 			}
 		}
 	}
-	for _, fragment := range frontier.QuotedPromptFragments(objective) {
+	for _, fragment := range pathparse.QuotedFragments(objective) {
 		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(fragment); ok {
 			candidates = util.AppendUnique(candidates, symbol)
 		}
@@ -523,7 +523,7 @@ func delegatedReadOnlySearchTerm(raw string) (string, bool) {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	value = strings.Trim(value, "`'\"()[]{}<>,.:;!?")
 	value = strings.TrimSpace(strings.TrimPrefix(value, "./"))
-	if value == "" || frontier.LooksLikeWorkspacePathToken(value) {
+	if value == "" || pathparse.LooksLikeWorkspacePathToken(value) {
 		return "", false
 	}
 	switch value {
@@ -554,7 +554,7 @@ func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
 	value := strings.TrimSpace(raw)
 	value = strings.Trim(value, "`'\"()[]{}<>,.:;!?")
 	value = strings.TrimSpace(strings.TrimPrefix(value, "./"))
-	if value == "" || frontier.LooksLikeWorkspacePathToken(strings.ToLower(value)) {
+	if value == "" || pathparse.LooksLikeWorkspacePathToken(strings.ToLower(value)) {
 		return "", false
 	}
 	if len(value) < 4 {
@@ -655,7 +655,7 @@ func delegatedReadOnlySecondaryEvidencePath(path string) bool {
 
 func delegatedReadOnlyNamedPrimaryPathRedirect(objective string, blockedPath string) (workspace.ToolRequest, bool) {
 	blockedPath = filepath.ToSlash(strings.TrimSpace(blockedPath))
-	for _, candidate := range frontier.PromptMentionedWorkspacePaths(objective) {
+	for _, candidate := range pathparse.MentionedWorkspacePaths(objective) {
 		candidate = filepath.ToSlash(strings.TrimSpace(candidate))
 		if candidate == "" || candidate == blockedPath || delegatedReadOnlySecondaryEvidencePath(candidate) {
 			continue

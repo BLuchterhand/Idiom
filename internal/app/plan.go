@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"idiom/internal/util"
 )
 
 // planCommentRe strips HTML-comment anchors (`<!-- id:... -->`,
@@ -347,7 +349,7 @@ func (m *Model) prepareEditPlanCmd() (tea.Cmd, string, error) {
 		}
 	}
 
-	editor := firstNonEmptyString(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
+	editor := util.FirstNonEmpty(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
 	c := exec.Command("sh", "-c", fmt.Sprintf("%s %q", editor, path))
 	teaCmd := tea.ExecProcess(c, func(err error) tea.Msg {
 		return planEditorDoneMsg{err: err}

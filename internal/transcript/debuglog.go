@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"idiom/internal/util"
 )
 
 type DebugLogMode string
@@ -597,7 +598,7 @@ func (l *DebugLogger) sanitizeText(text string) string {
 		return text
 	}
 	text = redactWorkspacePaths(text, l.workspaceRoot)
-	text = redactSecrets(text)
+	text = util.RedactSecrets(text)
 	return text
 }
 
@@ -687,18 +688,5 @@ func redactWorkspacePaths(text string, workspaceRoot string) string {
 	}
 	text = strings.ReplaceAll(text, workspaceRoot+string(filepath.Separator), "./")
 	text = strings.ReplaceAll(text, workspaceRoot, ".")
-	return text
-}
-
-var (
-	apiKeyPattern    = regexp.MustCompile(`(?i)\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*([^\s,;]+)`)
-	bearerPattern    = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._-]+\b`)
-	openAIKeyPattern = regexp.MustCompile(`\bsk-[A-Za-z0-9]{12,}\b`)
-)
-
-func redactSecrets(text string) string {
-	text = apiKeyPattern.ReplaceAllString(text, `$1=<redacted>`)
-	text = bearerPattern.ReplaceAllString(text, `Bearer <redacted>`)
-	text = openAIKeyPattern.ReplaceAllString(text, `<redacted-secret>`)
 	return text
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -513,269 +512,12 @@ func (m *Model) handleSlashCommand(raw string) bool {
 		return false
 	}
 
-	switch fields[0] {
-	case "/quit", "/exit":
-		return true
-	case "/help":
-		m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
-	case "/clear":
-		m.messages = nil
-		m.status = "Cleared chat."
-	case "/save":
-		m.saveTranscriptAsync()
-	case "/context":
-		m.status = "Active context: " + m.contextSummary()
-	case "/workspace":
-		m.status = "Workspace: " + m.workspaceSummary()
-	case "/pwd":
-		m.status = "Current workspace directory: " + m.displayPath(m.workspace.CWD())
-	case "/debuglog":
-		switch {
-		case len(fields) == 1 && m.debugLogPath == "":
-			m.status = "Debug conversation logging is unavailable."
-		case len(fields) == 1:
-			m.status = "Debug log: " + m.displayPath(m.debugLogPath) + " | mode: " + firstNonEmptyString(m.cfg.Chat.DebugLogMode, "redacted")
-		case len(fields) == 3 && fields[1] == "mode":
-			switch fields[2] {
-			case "redacted", "full":
-				m.cfg.Chat.DebugLogMode = fields[2]
-				if m.debugLogger != nil {
-					m.debugLogger.SetMode(transcript.DebugLogMode(fields[2]))
-				}
-				m.status = "Debug log mode set to " + fields[2] + "."
-			default:
-				m.status = "Usage: /debuglog [mode redacted|full]"
-			}
-		default:
-			m.status = "Usage: /debuglog [mode redacted|full]"
-		}
-	case "/trace":
-		switch {
-		case len(fields) == 1:
-			m.status = "Current trace mode: " + m.traceSummary()
-		case len(fields) == 2:
-			switch fields[1] {
-			case string(traceDisplayCompact):
-				m.traceMode = traceDisplayCompact
-				m.status = "Trace mode set to compact."
-			case string(traceDisplayDetail):
-				m.traceMode = traceDisplayDetail
-				m.status = "Trace mode set to detail."
-			default:
-				m.status = "Usage: /trace [compact|detail]"
-			}
-		default:
-			m.status = "Usage: /trace [compact|detail]"
-		}
-	case "/mode":
-		switch {
-		case len(fields) == 1:
-			m.status = "Current mode: " + m.modeSummary()
-		case len(fields) == 2:
-			name := strings.ToLower(strings.TrimSpace(fields[1]))
-			mode, ok := agent.ModeByName(name)
-			if !ok {
-				m.status = "Usage: /mode [build|plan|general]"
-				return false
-			}
-			m.agentModeName = mode.Name
-			m.invalidateComposedPrompt()
-			m.applyModePermissions(mode)
-			m.status = "Agent mode set to " + mode.Name + "."
-		default:
-			m.status = "Usage: /mode [build|plan|general]"
-		}
-	case "/approve":
-		if summary, ok := m.resolveApproval(true); ok {
-			m.status = "Approved: " + summary
-		} else {
-			m.status = "No pending tool approval."
-		}
-	case "/deny":
-		if summary, ok := m.resolveApproval(false); ok {
-			m.status = "Denied: " + summary
-		} else {
-			m.status = "No pending tool approval."
-		}
-	case "/undo":
-		summary, err := m.undoLast()
-		if err != nil {
-			m.status = "Undo failed: " + err.Error()
-		} else {
-			m.status = summary
-		}
-	case "/panel":
-		m.setHistoryPanelOpen(!m.historyPanelOpen)
-		if m.historyPanelOpen {
-			m.status = "Panel open. Ctrl+T cycles tabs · Tab focuses · ↑↓ select · Enter expand · PgUp/PgDn or j/k scroll"
-		} else {
-			m.status = "Panel closed."
-		}
-	case "/resume":
-		// /resume with no arg opens the Sessions tab and focuses it
-		// so ↑/↓/Enter pick from the list. With an arg it's a direct
-		// shortcut that swaps into the named session immediately.
-		if len(fields) < 2 {
-			m.setHistoryPanelOpen(true)
-			m.panelTab = panelTabSessions
-			m.refreshSessionsList()
-			m.historyFocused = true
-			m.renderSessionsPanelContent()
-			if len(m.sessionsList) == 0 {
-				m.status = "No prior sessions found."
-			} else {
-				m.status = "Pick a session: ↑/↓ select · Enter resume · Esc cancel."
-			}
-			break
-		}
-		id := fields[1]
-		if err := m.ResumeSession(id); err != nil {
-			m.status = "Resume failed: " + err.Error()
-		} else {
-			m.status = "Resumed session " + id + "."
-			m.rerenderActivePanel()
-		}
-	case "/plan":
-		m.setHistoryPanelOpen(true)
-		m.panelTab = panelTabPlan
-		cmd, status, err := m.prepareEditPlanCmd()
-		m.rerenderActivePanel()
-		if err != nil {
-			m.status = "Plan editor failed: " + err.Error()
-		} else {
-			m.status = status
-			m.pendingExec = cmd
-		}
-	case "/system":
-		prompt := strings.TrimSpace(strings.TrimPrefix(raw, "/system"))
-		switch prompt {
-		case "":
-			m.status = "Usage: /system <prompt>"
-		default:
-			m.cfg.Chat.SystemPrompt = prompt
-			if err := m.reloadPromptStack(); err != nil {
-				m.setContextError("Prompt context failed: " + err.Error())
-			} else {
-				m.clearContextError()
-				m.status = "Updated inline system prompt."
-			}
-		}
-	case "/temp":
-		if len(fields) != 2 {
-			m.status = "Usage: /temp <value>"
-			return false
-		}
-		value, err := strconv.ParseFloat(fields[1], 64)
-		if err != nil {
-			m.status = "Temperature must be a number."
-			return false
-		}
-		m.cfg.Chat.Temperature = value
-		m.cfg.Chat.Preset = "custom"
-		m.status = fmt.Sprintf("Temperature set to %.2f", value)
-	case "/preset":
-		switch {
-		case len(fields) == 1:
-			m.status = "Current preset: " + fallback(strings.TrimSpace(m.cfg.Chat.Preset), "custom") + " | " + m.samplingSummary()
-		case len(fields) == 2 && fields[1] == "list":
-			m.status = "Presets: " + joinOrNone(config.BuiltinChatPresetNames()) + " | current: " + fallback(strings.TrimSpace(m.cfg.Chat.Preset), "custom")
-		case len(fields) == 2:
-			if err := config.ApplyBuiltinChatPreset(&m.cfg.Chat, fields[1]); err != nil {
-				m.status = err.Error()
-				return false
-			}
-			m.status = fmt.Sprintf("Applied preset %q. %s", m.cfg.Chat.Preset, m.samplingSummary())
-		default:
-			m.status = "Usage: /preset [list|name]"
-		}
-	case "/server":
-		if len(fields) < 2 {
-			m.status = "Usage: /server <start|stop|restart|status>"
-			return false
-		}
-		if m.controller == nil {
-			m.status = fmt.Sprintf("Backend %s is hosted at %s; local server controls are unavailable.", m.plannerSpec.Kind, m.plannerSpec.EndpointBaseURL())
-			return false
-		}
-		switch fields[1] {
-		case "start":
-			m.startServerAsync()
-		case "stop":
-			m.stopServerAsync()
-		case "restart":
-			m.restartServerAsync()
-		case "status":
-			state := "down"
-			if m.serverUp {
-				state = "up"
-			}
-			m.status = fmt.Sprintf("Server %s on %s. Model: %s", state, m.plannerSpec.EndpointBaseURL(), fallback(m.modelID, "unknown"))
-		default:
-			m.status = "Usage: /server <start|stop|restart|status>"
-		}
-	case "/profile":
-		if len(fields) < 2 {
-			m.status = "Usage: /profile <list|add|remove>"
-			return false
-		}
-		switch fields[1] {
-		case "list":
-			names, err := promptstack.ListProfiles(m.cfg.Chat.ProfilesDir)
-			if err != nil {
-				m.setContextError("Profile listing failed: " + err.Error())
-				return false
-			}
-			m.clearContextError()
-			m.status = fmt.Sprintf("Profiles available: %s | active: %s", joinOrNone(names), joinOrNone(m.activeProfiles))
-		case "add":
-			if len(fields) != 3 {
-				m.status = "Usage: /profile add <name>"
-				return false
-			}
-			name := fields[2]
-			if slices.Contains(m.activeProfiles, name) {
-				m.status = "Profile already active: " + name
-				return false
-			}
-			nextProfiles := append(append([]string(nil), m.activeProfiles...), name)
-			if err := m.reloadPromptStackWithProfiles(nextProfiles); err != nil {
-				m.setContextError("Profile add failed: " + err.Error())
-				return false
-			}
-			m.activeProfiles = nextProfiles
-			m.clearContextError()
-			m.status = fmt.Sprintf("Activated profile %q. Context: %s", name, m.contextSummary())
-		case "remove":
-			if len(fields) != 3 {
-				m.status = "Usage: /profile remove <name>"
-				return false
-			}
-			name := fields[2]
-			if !slices.Contains(m.activeProfiles, name) {
-				m.status = "Profile is not active: " + name
-				return false
-			}
-			nextProfiles := make([]string, 0, len(m.activeProfiles)-1)
-			for _, profile := range m.activeProfiles {
-				if profile != name {
-					nextProfiles = append(nextProfiles, profile)
-				}
-			}
-			if err := m.reloadPromptStackWithProfiles(nextProfiles); err != nil {
-				m.setContextError("Profile remove failed: " + err.Error())
-				return false
-			}
-			m.activeProfiles = nextProfiles
-			m.clearContextError()
-			m.status = fmt.Sprintf("Removed profile %q. Context: %s", name, m.contextSummary())
-		default:
-			m.status = "Usage: /profile <list|add|remove>"
-		}
-	default:
+	handler, ok := slashCommands[fields[0]]
+	if !ok {
 		m.status = "Unknown command. Use /help."
+		return false
 	}
-
-	return false
+	return handler(m, raw, fields)
 }
 
 func (m *Model) startServerAsync() {
@@ -1166,7 +908,7 @@ func (m *Model) insertBeforePendingAssistant(message llama.ChatMessage) {
 }
 
 func (m *Model) setPendingAssistantMessage(message llama.ChatMessage) {
-	message.Role = fallback(strings.TrimSpace(message.Role), "assistant")
+	message.Role = util.Fallback(strings.TrimSpace(message.Role), "assistant")
 	idx := m.pendingAssistantIndex()
 	if idx == -1 {
 		m.messages = append(m.messages, message)
@@ -1320,7 +1062,7 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 			if m.debugLogger != nil {
 				_ = m.debugLogger.LogModelCall(transcript.ModelCall{
 					Step:             payload.Step,
-					Agent:            firstNonEmptyString(payload.Agent, payload.Label),
+					Agent:            util.FirstNonEmpty(payload.Agent, payload.Label),
 					PromptTokens:     payload.PromptTokens,
 					CompletionTokens: payload.CompletionTokens,
 					TotalTokens:      payload.TotalTokens,

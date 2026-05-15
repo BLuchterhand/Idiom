@@ -14,7 +14,6 @@ import (
 	"unicode"
 
 	"idiom/internal/autonomy"
-	"idiom/internal/frontier"
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
@@ -44,6 +43,10 @@ var (
 // named-gap contract, diminishing-return nudges, loop fuses, and MaxToolSteps
 // for enforcement.
 const delegatedReadOnlyProbeBudget = 2
+
+const forceAnswerTailGatheredEvidence = "Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer."
+
+const forceAnswerTailEvidenceAlreadyGathered = "Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
 
 type Runner struct {
 	Client *llama.Client
@@ -391,11 +394,11 @@ func (r *Runner) Run(
 	for step := 0; policy.unbounded() || step < policy.MaxToolSteps; step++ {
 		stepNumber := step + 1
 		if policy.shouldStopForDuration(metrics.startedAt) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Run duration budget is exhausted. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+			answer, err := controller.completeWithoutMoreToolsWithReason("Run duration budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 			return finish(answer, err, "duration_budget_exhausted", true)
 		}
 		if policy.shouldStopForModelCalls(metrics.ModelCalls) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Model-call budget is exhausted. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+			answer, err := controller.completeWithoutMoreToolsWithReason("Model-call budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 			return finish(answer, err, "model_call_budget_exhausted", true)
 		}
 		if r.compactTurnMessagesIfNeeded(&turnMessages, policy, taskLedger, collectedResults) {
@@ -529,7 +532,7 @@ func (r *Runner) Run(
 					return finish(answer, nil, blockerKind, true)
 				}
 				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-					answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+					answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 					return finish(answer, err, "no_progress_budget_exhausted", true)
 				}
 				continue
@@ -856,7 +859,7 @@ func (r *Runner) Run(
 				requestBudget.postReadinessNoGapRejections++
 				if strings.HasPrefix(r.agentName(), "child:") {
 					if requestBudget.postReadinessNoGapRejections >= 2 {
-						prompt := "You have repeatedly issued post-readiness reads without `named_gap`. Tools are now disabled. Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
+						prompt := "You have repeatedly issued post-readiness reads without `named_gap`. Tools are now disabled. " + forceAnswerTailEvidenceAlreadyGathered
 						answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
 						return finish(answer, err, "post_readiness_no_gap_repeated", true)
 					}
@@ -872,7 +875,7 @@ func (r *Runner) Run(
 					}
 					continue
 				}
-				prompt := "You issued a post-readiness read without `named_gap`. Tools are now disabled. Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
+				prompt := "You issued a post-readiness read without `named_gap`. Tools are now disabled. " + forceAnswerTailEvidenceAlreadyGathered
 				answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
 				return finish(answer, err, "post_readiness_no_gap", true)
 			}
@@ -1217,7 +1220,7 @@ func (r *Runner) Run(
 			recorder.activeToolCall = activeToolCall
 			recorder.record(stepNumber, req, result, "task_ledger_result", true, true)
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 				return finish(answer, err, "no_progress_budget_exhausted", true)
 			}
 			continue
@@ -1235,7 +1238,7 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "required_edit_paths_progress", Content: checklist})
 			}
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the delegated edit. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the delegated edit. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 				return finish(answer, err, "no_progress_budget_exhausted", true)
 			}
 			continue
@@ -1279,7 +1282,7 @@ func (r *Runner) Run(
 					return finish(answer, err, "guard_rejection_budget_exhausted", true)
 				}
 				if bootstrapReadReminder && policy.shouldStopForNoProgress(consecutiveNoProgress) {
-					answer, err := controller.completeWithoutMoreToolsWithReason("The implementation target was already available from bootstrap evidence, but progress stalled on duplicate reads. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+					answer, err := controller.completeWithoutMoreToolsWithReason("The implementation target was already available from bootstrap evidence, but progress stalled on duplicate reads. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 					return finish(answer, err, "no_progress_budget_exhausted", true)
 				}
 				continue
@@ -1607,7 +1610,7 @@ func (r *Runner) Run(
 			return finish(answer, err, "missing_path_probe_budget_exhausted", true)
 		}
 		if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+			answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 			return finish(answer, err, "no_progress_budget_exhausted", true)
 		}
 	}
@@ -3485,7 +3488,7 @@ func postReadinessGapNamesCodeToken(gap string) bool {
 	}
 	for _, field := range strings.Fields(gap) {
 		field = strings.Trim(field, "`'\"()[]{}<>,.:;!?")
-		if frontier.HasWorkspaceFileExtension(field) {
+		if pathparse.HasWorkspaceFileExtension(field) {
 			return true
 		}
 	}
@@ -6151,38 +6154,7 @@ func isConcreteInspectionTool(tool string) bool {
 // so mutating tools can never be miscounted. Shell is excluded because it
 // can mutate even when the command looks benign.
 func isReadClassTool(req workspace.ToolRequest) bool {
-	switch strings.TrimSpace(req.Tool) {
-	case "list_files", "read_file",
-		"search_files", "search_content", "rg", "grep",
-		"file_stats", "code_navigate", "read_only_capability", "source_sanity", "harness_audit",
-		"context_status", "context_index", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack",
-		"discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
-		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const",
-		"go_file_outline", "go_read_symbol", "go_find_package", "go_related_files",
-		"go_importers", "go_workspace_symbol",
-		"go_definition", "go_references", "go_implementations",
-		"go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
-		"cpp_overview", "cpp_entrypoints", "cpp_find_symbol", "cpp_file_outline", "cpp_read_symbol",
-		"cpp_related_files", "cpp_definition", "cpp_declaration", "cpp_implementations",
-		"cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body",
-		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol",
-		"cpp_workspace_symbol", "cpp_diagnostics",
-		"python_overview", "python_entrypoints", "python_find_symbol", "python_read_symbol",
-		"python_related_files", "python_definition", "python_references", "python_implementations",
-		"python_calls_from", "python_calls_into", "python_workspace_symbol", "python_diagnostics", "python_file_outline",
-		"ts_overview", "ts_entrypoints", "ts_find_symbol", "ts_read_symbol", "ts_related_files",
-		"ts_definition", "ts_implementations", "ts_references", "ts_calls_from", "ts_calls_into",
-		"ts_workspace_symbol", "ts_diagnostics", "ts_file_outline",
-		"rust_overview", "rust_entrypoints", "rust_find_symbol", "rust_read_symbol", "rust_related_files",
-		"rust_definition", "rust_implementations", "rust_references", "rust_calls_from", "rust_calls_into",
-		"rust_workspace_symbol", "rust_diagnostics", "rust_file_outline",
-		"java_overview", "java_entrypoints", "java_find_symbol", "java_read_symbol", "java_related_files",
-		"java_definition", "java_references", "java_implementations", "java_calls_from", "java_calls_into",
-		"java_workspace_symbol", "java_diagnostics", "java_file_outline":
-		return true
-	default:
-		return false
-	}
+	return util.IsReadTool(strings.TrimSpace(req.Tool))
 }
 
 func toolActionClass(req workspace.ToolRequest) string {
@@ -8598,7 +8570,7 @@ func (r *Runner) augmentReadOnlyChildPrompt(prompt string) string {
 		"Use repository-relative workspace paths in the answer. Do not rely on transient file handles such as f23 or tool-local aliases.",
 		"Prefer targeted symbol tools and bounded file reads over workspace-wide overviews.",
 	}
-	if namedPaths := frontier.PromptMentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
+	if namedPaths := pathparse.MentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
 		guidance = append(guidance, fmt.Sprintf("Start from these named workspace paths: %s.", strings.Join(namedPaths, ", ")))
 	}
 	return strings.TrimSpace(prompt) + "\n\nScope guidance:\n- " + strings.Join(guidance, "\n- ")

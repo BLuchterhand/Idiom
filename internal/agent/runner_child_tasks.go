@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"idiom/internal/config"
-	"idiom/internal/frontier"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/util"
@@ -57,7 +57,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		childPolicy.MaxContextChars = effective.MaxContextChars
 	}
 	childBrief := workerruntime.RuntimeBriefForRole("child_read_only", "child:"+agentName, prompt)
-	if len(frontier.PromptMentionedWorkspacePaths(prompt)) > 0 {
+	if len(pathparse.MentionedWorkspacePaths(prompt)) > 0 {
 		childBrief.AllowedTools = filterOutRunnerTools(childBrief.AllowedTools,
 			"go_overview", "go_entrypoints",
 			"cpp_overview", "cpp_entrypoints",
@@ -155,7 +155,7 @@ func normalizeReadOnlyChildPrompt(prompt string) string {
 			kept = util.AppendUnique(kept, line)
 		}
 	}
-	if namedPaths := frontier.PromptMentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
+	if namedPaths := pathparse.MentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
 		kept = util.AppendUnique(kept, "Named workspace scope: "+strings.Join(namedPaths, ", "))
 	}
 	if keyTerms := readOnlyChildKeyTerms(prompt); len(keyTerms) > 0 {
@@ -253,9 +253,9 @@ func trimReadOnlyChildLeadAtBroadMarker(line string) string {
 
 func readOnlyChildKeyTerms(prompt string) []string {
 	terms := make([]string, 0, 6)
-	for _, fragment := range frontier.QuotedPromptFragments(prompt) {
+	for _, fragment := range pathparse.QuotedFragments(prompt) {
 		fragment = strings.TrimSpace(fragment)
-		if fragment == "" || frontier.LooksLikeWorkspacePathToken(fragment) {
+		if fragment == "" || pathparse.LooksLikeWorkspacePathToken(fragment) {
 			continue
 		}
 		lower := strings.ToLower(fragment)
@@ -266,7 +266,7 @@ func readOnlyChildKeyTerms(prompt string) []string {
 	}
 	for _, candidate := range strings.Fields(prompt) {
 		candidate = strings.TrimSpace(candidate)
-		if candidate == "" || frontier.LooksLikeWorkspacePathToken(candidate) {
+		if candidate == "" || pathparse.LooksLikeWorkspacePathToken(candidate) {
 			continue
 		}
 		lower := strings.ToLower(strings.Trim(candidate, "`'\"()[]{}<>,.:;!?"))

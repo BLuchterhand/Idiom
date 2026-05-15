@@ -11,6 +11,7 @@ import (
 	"idiom/internal/agent"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
+	"idiom/internal/util"
 )
 
 type turnRoutePlan struct {
@@ -181,62 +182,62 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.InitialLane = "main"
 		plan.FollowupLane = ""
 		plan.Contract = "direct_answer"
-		plan.Reason = firstNonEmptyString(plan.Reason, "direct_conversation")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "direct_conversation")
 	case "debug_logs":
 		plan.InitialLane = "explore"
 		plan.FollowupLane = ""
 		plan.Contract = "grounded_explanation"
-		plan.Reason = firstNonEmptyString(plan.Reason, "logs_failure_analysis")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "logs_failure_analysis")
 	case "verification_only":
 		plan.InitialLane = "main"
 		plan.FollowupLane = ""
 		plan.Contract = "direct_answer"
-		plan.Reason = firstNonEmptyString(plan.Reason, "verification_request")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "verification_request")
 	case "locate":
 		plan.InitialLane = "locate"
 		plan.FollowupLane = ""
 		plan.Contract = "locate_targets"
-		plan.Reason = firstNonEmptyString(plan.Reason, "locate_request")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "locate_request")
 	case "locate_then_implement":
 		plan.InitialLane = "locate"
 		plan.FollowupLane = "implement"
 		plan.Contract = "implementation_result"
-		plan.Reason = firstNonEmptyString(plan.Reason, "locate_request")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "locate_request")
 	case "explore_then_implement", "investigate_then_implement":
 		plan.InitialLane = "explore"
 		plan.FollowupLane = "implement"
 		plan.Contract = "implementation_result"
-		plan.Reason = firstNonEmptyString(plan.Reason, "explore_request")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "explore_request")
 	case "review_then_implement":
 		plan.InitialLane = "review"
 		plan.FollowupLane = "implement"
 		plan.Contract = "implementation_result"
-		plan.Reason = firstNonEmptyString(plan.Reason, "review_request")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "review_request")
 	case "security_review":
 		plan.InitialLane = "review"
 		plan.FollowupLane = ""
 		plan.Contract = "review_findings"
-		plan.Reason = firstNonEmptyString(plan.Reason, "security_review")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "security_review")
 	case "performance_review":
 		plan.InitialLane = "review"
 		plan.FollowupLane = ""
 		plan.Contract = "review_findings"
-		plan.Reason = firstNonEmptyString(plan.Reason, "performance_review")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "performance_review")
 	case "architecture":
 		plan.InitialLane = "architecture"
 		plan.FollowupLane = ""
 		plan.Contract = "architecture_assessment"
-		plan.Reason = firstNonEmptyString(plan.Reason, "architecture_request")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "architecture_request")
 	case "architecture_then_implement":
 		plan.InitialLane = "architecture"
 		plan.FollowupLane = "implement"
 		plan.Contract = "implementation_result"
-		plan.Reason = firstNonEmptyString(plan.Reason, "architecture_request")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "architecture_request")
 	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
-		plan.Reason = firstNonEmptyString(plan.Reason, "direct_implementation")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "direct_implementation")
 	case "plan_then_execute_planner":
 		// Planner phase of `idiom plan-execute`. Same lane shape as
 		// implementation (write-capable contract, single turn) but the
@@ -247,7 +248,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
-		plan.Reason = firstNonEmptyString(plan.Reason, "plan_then_execute_planner")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "plan_then_execute_planner")
 	case "plan_then_execute_review_repair":
 		// Post-executor review phase for `idiom plan-execute`. This is
 		// review-shaped, not implementation-shaped: the model may close
@@ -256,11 +257,11 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.InitialLane = "review"
 		plan.FollowupLane = ""
 		plan.Contract = "review_findings"
-		plan.Reason = firstNonEmptyString(plan.Reason, "plan_then_execute_review_repair")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "plan_then_execute_review_repair")
 	case "multi_turn_state":
 		plan.InitialLane = "main"
 		plan.Contract = "direct_answer"
-		plan.Reason = firstNonEmptyString(plan.Reason, "context_followup")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "context_followup")
 	default:
 		return fallbackTurnRoute("", mode)
 	}
@@ -275,7 +276,7 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent
 			Reason: "edit_intent_overrides_verification",
 		}, mode)
 	}
-	if plan.Family == "debug_logs" && !containsAny(words, " latest ", " recent ", " most recent ", " failed ", " failure ", " why this failed ", " why it failed ", " why ") {
+	if plan.Family == "debug_logs" && !util.ContainsAny(words, " latest ", " recent ", " most recent ", " failed ", " failure ", " why this failed ", " why it failed ", " why ") {
 		return fallbackTurnRoute(prompt, mode)
 	}
 	if isImplementationLikeFamily(plan.Family) && isAnalysisContinuationPrompt(words) {
@@ -291,7 +292,7 @@ func isAnalysisContinuationPrompt(words string) bool {
 	if hasEditIntent(words) {
 		return false
 	}
-	if !containsAny(words,
+	if !util.ContainsAny(words,
 		" continue ",
 		" continue your investigation ",
 		" continue investigating ",
@@ -305,7 +306,7 @@ func isAnalysisContinuationPrompt(words string) bool {
 	) {
 		return false
 	}
-	return containsAny(words,
+	return util.ContainsAny(words,
 		" investigate ",
 		" investigation ",
 		" deeper ",
@@ -329,59 +330,59 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	lower := " " + strings.ToLower(strings.TrimSpace(prompt)) + " "
 	words := plannerWordText(prompt)
 	switch {
-	case containsAny(words, " log ", " logs ", " jsonl ", " trace ") && containsAny(words, " fail ", " failed ", " error ", " why ", " latest ", " recent "):
+	case util.ContainsAny(words, " log ", " logs ", " jsonl ", " trace ") && util.ContainsAny(words, " fail ", " failed ", " error ", " why ", " latest ", " recent "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "debug_logs"}, mode)
-	case !hasEditIntent(words) && containsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
+	case !hasEditIntent(words) && util.ContainsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
-	case containsAny(words, " find where ", " locate ", " where is ", " where the ") && containsAny(words, " remove ", " fix ", " update ", " edit ", " change ", " add "):
+	case util.ContainsAny(words, " find where ", " locate ", " where is ", " where the ") && util.ContainsAny(words, " remove ", " fix ", " update ", " edit ", " change ", " add "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "locate_then_implement"}, mode)
-	case containsAny(words, " find where ", " locate ", " where is ", " where the "):
+	case util.ContainsAny(words, " find where ", " locate ", " where is ", " where the "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "locate"}, mode)
-	case containsAny(words, " architecture ", " boundary ", " boundaries ", " coupling ", " refactor stage "):
-		if containsAny(words, " fix ", " change ", " implement ", " refactor ", " update ", " edit ") {
+	case util.ContainsAny(words, " architecture ", " boundary ", " boundaries ", " coupling ", " refactor stage "):
+		if util.ContainsAny(words, " fix ", " change ", " implement ", " refactor ", " update ", " edit ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture_then_implement"}, mode)
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
 	case isExplanationOnlyCodeQuestion(words):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
-	case containsAny(words, " security ", " prompt injection ", " adversarial "):
+	case util.ContainsAny(words, " security ", " prompt injection ", " adversarial "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "security_review"}, mode)
-	case containsAny(words, " performance ", " perf ", " timeout ", " timed out ", " regression ", " slow "):
-		if containsAny(words, " fix ", " change ", " implement ", " update ", " edit ") {
+	case util.ContainsAny(words, " performance ", " perf ", " timeout ", " timed out ", " regression ", " slow "):
+		if util.ContainsAny(words, " fix ", " change ", " implement ", " update ", " edit ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "review_then_implement"}, mode)
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "performance_review"}, mode)
-	case containsAny(words, " review ", " investigate "):
-		if containsAny(words, " fix ", " change ", " implement ", " update ", " edit ") {
+	case util.ContainsAny(words, " review ", " investigate "):
+		if util.ContainsAny(words, " fix ", " change ", " implement ", " update ", " edit ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "review_then_implement"}, mode)
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "performance_review"}, mode)
-	case containsAny(words, " write test ", " add regression test ", " add a test "):
+	case util.ContainsAny(words, " write test ", " add regression test ", " add a test "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "test_authoring"}, mode)
-	case containsAny(words, " readme ", " docs ", " documentation ", " doc "):
-		if containsAny(words, " update ", " add ", " edit ", " write ", " change ") {
+	case util.ContainsAny(words, " readme ", " docs ", " documentation ", " doc "):
+		if util.ContainsAny(words, " update ", " add ", " edit ", " write ", " change ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
 		}
-	case containsAny(lower, " config ", ".json", ".yaml", ".toml"):
-		if containsAny(words, " update ", " edit ", " change ", " add ") {
+	case util.ContainsAny(lower, " config ", ".json", ".yaml", ".toml"):
+		if util.ContainsAny(words, " update ", " edit ", " change ", " add ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "config_edit"}, mode)
 		}
 	case strings.Contains(lower, ".gd"):
-		if containsAny(words, " update ", " edit ", " change ", " add ", " fix ", " remove ", " delete ", " rename ", " replace ") {
+		if util.ContainsAny(words, " update ", " edit ", " change ", " add ", " fix ", " remove ", " delete ", " rename ", " replace ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "gdscript_edit"}, mode)
 		}
-	case containsAny(lower, " script ", ".sh", " shell "):
-		if containsAny(words, " update ", " edit ", " change ", " add ", " fix ") {
+	case util.ContainsAny(lower, " script ", ".sh", " shell "):
+		if util.ContainsAny(words, " update ", " edit ", " change ", " add ", " fix ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "script_edit"}, mode)
 		}
-	case containsAny(lower, " prompt ", " prompts "):
-		if containsAny(words, " update ", " edit ", " change ", " add ", " fix ") {
+	case util.ContainsAny(lower, " prompt ", " prompts "):
+		if util.ContainsAny(words, " update ", " edit ", " change ", " add ", " fix ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "prompt_edit_security"}, mode)
 		}
 	case hasEditIntent(words):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
 	}
-	if containsAny(words,
+	if util.ContainsAny(words,
 		" help me ",
 		" help test ",
 		" help with ",
@@ -431,7 +432,7 @@ func isImplementationLikeFamily(family string) bool {
 }
 
 func isExplanationOnlyCodeQuestion(words string) bool {
-	if hasEditIntent(words) || containsAny(words,
+	if hasEditIntent(words) || util.ContainsAny(words,
 		" review ",
 		" performance ",
 		" perf ",
@@ -445,7 +446,7 @@ func isExplanationOnlyCodeQuestion(words string) bool {
 	) {
 		return false
 	}
-	if !containsAny(words,
+	if !util.ContainsAny(words,
 		" how does ",
 		" how do ",
 		" how is ",
@@ -457,7 +458,7 @@ func isExplanationOnlyCodeQuestion(words string) bool {
 	) {
 		return false
 	}
-	return containsAny(words,
+	return util.ContainsAny(words,
 		" harness ",
 		" codebase ",
 		" repo ",
@@ -483,7 +484,7 @@ func isExplanationOnlyCodeQuestion(words string) bool {
 }
 
 func hasEditIntent(words string) bool {
-	return containsAny(words,
+	return util.ContainsAny(words,
 		" fix ",
 		" change ",
 		" update ",
@@ -549,7 +550,7 @@ func renderTurnRoutePlan(plan turnRoutePlan) string {
 
 func turnRoutePlanRuntimeBrief(plan turnRoutePlan, mode agent.Mode, workspaceAllowed []string) workerruntime.WorkerRuntimeBrief {
 	plan = normalizeTurnRoutePlan(plan, mode)
-	brief := workerruntime.RuntimeBriefForTaskFamily(plan.Family, firstNonEmptyString(plan.InitialLane, "main"), workspaceAllowed)
+	brief := workerruntime.RuntimeBriefForTaskFamily(plan.Family, util.FirstNonEmpty(plan.InitialLane, "main"), workspaceAllowed)
 	if plan.FollowupLane != "" {
 		brief.Constraints = append(brief.Constraints, "followup_lane="+plan.FollowupLane)
 	}

@@ -1,8 +1,6 @@
 package telemetry
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"idiom/internal/util"
 )
 
 const (
@@ -253,7 +253,7 @@ func sanitizeArgs(args []string) []string {
 		}
 		if flag, value, ok := strings.Cut(arg, "="); ok && strings.HasPrefix(flag, "-") {
 			if isSensitiveFlag(flag) {
-				out = append(out, flag+"="+redactedValue(value))
+				out = append(out, flag+"="+util.RedactedValue(value))
 			} else {
 				out = append(out, flag+"="+sanitizeArgValue(value))
 			}
@@ -262,7 +262,7 @@ func sanitizeArgs(args []string) []string {
 		out = append(out, arg)
 		if isSensitiveFlag(arg) && i+1 < len(args) {
 			i++
-			out = append(out, redactedValue(args[i]))
+			out = append(out, util.RedactedValue(args[i]))
 		}
 	}
 	return out
@@ -284,16 +284,7 @@ func sanitizeArgValue(value string) string {
 		return value
 	}
 	if len(value) > 240 {
-		return redactedValue(value)
+		return util.RedactedValue(value)
 	}
 	return value
-}
-
-func redactedValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "<empty>"
-	}
-	sum := sha256.Sum256([]byte(value))
-	return fmt.Sprintf("<redacted len=%d sha256:%s>", len(value), hex.EncodeToString(sum[:4]))
 }

@@ -46,7 +46,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	chatOpts := tuneChatOptionsForPlan(m.chatOptions(), plan)
 	chatOpts = applyMaxTokensOverride(chatOpts, m.maxTokensOverride)
 	if m.workspace != nil {
-		m.workspace.PrimeDiscoveredPaths(promptMentionedWorkspacePaths(prompt))
+		m.workspace.PrimeDiscoveredPaths(pathparse.MentionedWorkspacePaths(prompt))
 	}
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
 	m.logMessage("user", prompt)
@@ -703,7 +703,7 @@ func promptContextPacketMarkers(prompt string) []string {
 
 func promptHasStructuredPacketMarker(prompt string) bool {
 	lower := strings.ToLower(prompt)
-	if containsAny(lower, `"context_packet"`, `"context_pack"`) ||
+	if util.ContainsAny(lower, `"context_packet"`, `"context_pack"`) ||
 		(strings.Contains(lower, `"planning_packet`) && strings.Contains(lower, `"schema"`)) {
 		return true
 	}

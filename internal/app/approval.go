@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -32,7 +33,7 @@ func (p *pendingApproval) summary() string {
 	case "apply_patch":
 		return fmt.Sprintf("apply_patch (%d bytes)", len(req.Content))
 	default:
-		target := firstNonEmptyString(req.Path, req.Command)
+		target := util.FirstNonEmpty(req.Path, req.Command)
 		if target == "" {
 			return req.Tool
 		}
