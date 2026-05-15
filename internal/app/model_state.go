@@ -205,17 +205,9 @@ type Model struct {
 	messageRenderHash   uint64
 	messageRenderMD     bool
 
-	// History panel
-	historyEntries    []historyEntry
-	historySelected   int
-	historyExpanded   bool
-	historyPanelOpen  bool
-	historyFocused    bool
-	historyViewport   viewport.Model
 	summaryClient     *llama.Client
 	summaryController *llama.ServerController
 
-	// Side-panel tabs
 	panelTab      int // panelTabHistory | panelTabPlan
 	planViewport  viewport.Model
 	planPath      string
@@ -223,73 +215,9 @@ type Model struct {
 	planContent   string
 	planLoadError string
 
-	// planWriteSnapshots holds the pre-edit file contents captured during
-	// PreExecute for write-class tools. Keyed by step number (one key
-	// per tool call) with a slice of snapshots because apply_patch may
-	// touch multiple files in one call. Entries are consumed and cleared
-	// after the matching ToolResult event records its diff.
-	planWriteSnapshots map[int][]planWriteSnapshot
-	// planSessionHeadingWritten is set once per live session after the
-	// `## Session …` heading has been appended to the plan file. Keeping
-	// it in-memory avoids repeated disk scans on every successful write.
-	planSessionHeadingWritten bool
-	// planLedgerItems mirrors the most recent task_ledger submission,
-	// keyed by item id. recordWriteSuccess consults it to find a
-	// planned item that mentions the written path and check it off in
-	// place instead of adding a fresh "Unplanned" line.
-	planLedgerItems map[string]workspace.TaskLedgerItem
-	// planLedgerRenderedIDs tracks which ledger item ids have already
-	// been rendered into the plan file, so repeated task_ledger calls
-	// only append newly-introduced items rather than duplicating the
-	// whole list on each update.
-	planLedgerRenderedIDs map[string]bool
-	// planLedgerHits records which paths of each ledger item have
-	// already been attached to a successful write. Keyed by item id,
-	// inner map keyed by path. Used so multi-path items only flip to
-	// `[x]` after every listed path is accounted for, and so a second
-	// write to the same path doesn't double-attach.
-	planLedgerHits map[string]map[string]bool
-	// planCursor is the index into the parsed plan-item list that the
-	// selection highlight points at. Reset when the plan reloads or a
-	// new session starts. Only meaningful when the plan panel is
-	// focused and no diff overlay is visible.
-	planCursor int
-	// planOverlayID holds the diff id currently displayed in the
-	// overlay, or empty when no overlay is visible. Acts as the mode
-	// switch between "plan list" and "diff overlay" navigation.
-	planOverlayID string
-	// planOverlayBody caches the rendered overlay body so redraws
-	// don't re-read and re-colorize the diff on every tick.
-	planOverlayBody string
-	// planAutoShown is set once after the side panel is automatically
-	// opened to show plan content. Prevents re-triggering on every
-	// planRefreshMsg. The user can still close the panel with Ctrl+B.
-	planAutoShown bool
-	// planSubmittedEdits maps synthetic plan-edit anchors ("pe-0",
-	// "pe-1", …) to their PlanEdit so recordWriteSuccess can match
-	// executor writes back to the upfront plan checklist.
-	planSubmittedEdits map[string]workspace.PlanEdit
-
-	// sessionsViewport renders the third side-panel tab: a selectable
-	// list of prior sessions (id + one-line summary). Enter resumes
-	// the highlighted session.
-	sessionsViewport viewport.Model
-	// sessionsList caches the last ListRecordedSessions snapshot so
-	// ↑/↓ navigation doesn't re-scan the debug-log dir on every key.
-	// Refreshed on Ctrl+T into the Sessions tab and on /resume.
-	sessionsList []SessionInfo
-	// sessionsRawCache stores the newest-first directory scan before
-	// filtering out the current live session. Reused while the debug-log
-	// directory mtime is unchanged so opening/focusing the Sessions tab
-	// does not rescan every JSONL file.
-	sessionsRawCache      []SessionInfo
-	sessionsRawCacheDir   string
-	sessionsRawCacheMTime time.Time
-	sessionsRawCacheValid bool
-	sessionsSummaryCache  map[string]sessionSummaryCacheEntry
-	// sessionsCursor is the index into sessionsList that Enter would
-	// resume. Clamped during render when the list shrinks under it.
-	sessionsCursor int
+	plan     planState
+	sessions sessionsState
+	history  historyState
 
 	// pendingExec carries a tea.Cmd (typically tea.ExecProcess) that a slash
 	// command wants to run, but can't dispatch itself because handleSlashCommand
@@ -299,12 +227,9 @@ type Model struct {
 
 	// Tool-call names collected during the current agent turn; consumed when
 	// streamDoneMsg fires and cleared before the next turn begins.
-	currentTurnTools          []string
-	currentTurnHistoryIndex   int
-	currentTurnHistoryActive  bool
-	historyRenderPending      bool
-	historyRenderLast         time.Time
-	historyRenderScrollBottom bool
+	currentTurnTools         []string
+	currentTurnHistoryIndex  int
+	currentTurnHistoryActive bool
 }
 
 // pinnedFilesRegistry returns the lazy-initialized per-session pin set.
@@ -601,20 +526,20 @@ func (m *Model) restartServerAsync() {
 }
 
 // renderHistoryPanelContent rebuilds the history viewport content from
-// m.historyEntries. Call whenever entry data or selection changes.
+// m.history.entries. Call whenever entry data or selection changes.
 func (m *Model) renderHistoryPanelContent() {
-	if !m.historyPanelOpen {
+	if !m.history.panelOpen {
 		return
 	}
-	w := max(8, m.historyViewport.Width)
+	w := max(8, m.history.viewport.Width)
 
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.Width(w).Render("◈ History"))
 	b.WriteString("\n")
 
-	for i, entry := range m.historyEntries {
-		selected := i == m.historySelected
-		expanded := selected && (m.historyExpanded || entry.inProgress)
+	for i, entry := range m.history.entries {
+		selected := i == m.history.selected
+		expanded := selected && (m.history.expanded || entry.inProgress)
 
 		prefix := "  "
 		if selected && expanded {
@@ -632,7 +557,7 @@ func (m *Model) renderHistoryPanelContent() {
 
 		var style lipgloss.Style
 		switch {
-		case selected && m.historyFocused:
+		case selected && m.history.focused:
 			style = panelFocusedStyle
 		case selected:
 			style = panelUnfocusedStyle
@@ -678,7 +603,7 @@ func (m *Model) renderHistoryPanelContent() {
 		}
 	}
 
-	if len(m.historyEntries) == 0 {
+	if len(m.history.entries) == 0 {
 		b.WriteString(panelDetailStyle.Width(w).Render("No history yet."))
 		b.WriteString("\n")
 		b.WriteString(panelDetailStyle.Width(w).Render("Entries appear as"))
@@ -686,12 +611,12 @@ func (m *Model) renderHistoryPanelContent() {
 		b.WriteString(panelDetailStyle.Width(w).Render("messages are sent."))
 	}
 
-	m.historyViewport.SetContent(strings.TrimRight(b.String(), "\n"))
+	m.history.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
 }
 
 func (m *Model) resize() {
 	start := time.Now()
-	defer m.logUISlowPath("ui.resize", start, fmt.Sprintf("panel_open=%t tab=%d size=%dx%d", m.historyPanelOpen, m.panelTab, m.width, m.height))
+	defer m.logUISlowPath("ui.resize", start, fmt.Sprintf("panel_open=%t tab=%d size=%dx%d", m.history.panelOpen, m.panelTab, m.width, m.height))
 
 	headerHeight := 1
 	dividerCount := 2 // one after header, one before input
@@ -700,7 +625,7 @@ func (m *Model) resize() {
 	contentHeight := max(m.height-headerHeight-dividerCount-inputHeight-footerHeight, 5)
 
 	var mainWidth, panelWidth int
-	if m.historyPanelOpen {
+	if m.history.panelOpen {
 		panelWidth = m.width / 3
 		mainWidth = max(24, m.width-panelWidth-1) // 1 for the │ divider
 	} else {
@@ -715,15 +640,15 @@ func (m *Model) resize() {
 	m.viewport.Width = mainWidth
 	m.viewport.Height = contentHeight
 
-	if m.historyPanelOpen {
+	if m.history.panelOpen {
 		// Reserve 1 row for the tab header strip above the active viewport.
 		panelContentHeight := max(3, contentHeight-1)
-		m.historyViewport.Width = panelWidth
-		m.historyViewport.Height = panelContentHeight
+		m.history.viewport.Width = panelWidth
+		m.history.viewport.Height = panelContentHeight
 		m.planViewport.Width = panelWidth
 		m.planViewport.Height = panelContentHeight
-		m.sessionsViewport.Width = panelWidth
-		m.sessionsViewport.Height = panelContentHeight
+		m.sessions.viewport.Width = panelWidth
+		m.sessions.viewport.Height = panelContentHeight
 	}
 
 	m.input.SetWidth(m.width)
@@ -732,7 +657,7 @@ func (m *Model) resize() {
 		m.invalidateMessageRenderCache()
 	}
 	m.renderMessages(false)
-	if m.historyPanelOpen {
+	if m.history.panelOpen {
 		m.rerenderActivePanel()
 	}
 }
@@ -763,20 +688,20 @@ func (m *Model) setHistoryPanelOpen(open bool) {
 	start := time.Now()
 	defer m.logUISlowPath("ui.toggle_panel", start, fmt.Sprintf("open=%t tab=%d", open, m.panelTab))
 
-	if m.historyPanelOpen == open && m.ready {
+	if m.history.panelOpen == open && m.ready {
 		if open {
 			m.rerenderActivePanel()
 		}
 		return
 	}
-	m.historyPanelOpen = open
-	m.historyFocused = false
+	m.history.panelOpen = open
+	m.history.focused = false
 	if !open {
-		m.historyRenderPending = false
-		m.historyRenderScrollBottom = false
+		m.history.renderPending = false
+		m.history.renderScrollBottom = false
 	}
-	if open && len(m.historyEntries) > 0 {
-		m.historySelected = len(m.historyEntries) - 1
+	if open && len(m.history.entries) > 0 {
+		m.history.selected = len(m.history.entries) - 1
 	}
 	if open && m.panelTab == panelTabSessions {
 		m.refreshSessionsList()

@@ -169,8 +169,8 @@ func (m *Model) slashUndo(_ string, _ []string) bool {
 }
 
 func (m *Model) slashPanel(_ string, _ []string) bool {
-	m.setHistoryPanelOpen(!m.historyPanelOpen)
-	if m.historyPanelOpen {
+	m.setHistoryPanelOpen(!m.history.panelOpen)
+	if m.history.panelOpen {
 		m.status = "Panel open. Ctrl+T cycles tabs · Tab focuses · ↑↓ select · Enter expand · PgUp/PgDn or j/k scroll"
 	} else {
 		m.status = "Panel closed."
@@ -183,9 +183,9 @@ func (m *Model) slashResume(_ string, fields []string) bool {
 		m.setHistoryPanelOpen(true)
 		m.panelTab = panelTabSessions
 		m.refreshSessionsList()
-		m.historyFocused = true
+		m.history.focused = true
 		m.renderSessionsPanelContent()
-		if len(m.sessionsList) == 0 {
+		if len(m.sessions.list) == 0 {
 			m.status = "No prior sessions found."
 		} else {
 			m.status = "Pick a session: ↑/↓ select · Enter resume · Esc cancel."

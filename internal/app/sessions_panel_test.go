@@ -19,10 +19,10 @@ func sessionsPanelModel(t *testing.T, dir string) *Model {
 	t.Helper()
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
 	m := &Model{cfg: cfg}
-	m.historyPanelOpen = true
-	m.historyFocused = true
+	m.history.panelOpen = true
+	m.history.focused = true
 	m.panelTab = panelTabSessions
-	m.sessionsViewport = viewport.New(40, 12)
+	m.sessions.viewport = viewport.New(40, 12)
 	return m
 }
 
@@ -39,10 +39,10 @@ func TestRefreshSessionsListExcludesCurrentSession(t *testing.T) {
 	m.debugLogPath = filepath.Join(dir, "live.jsonl")
 	m.refreshSessionsList()
 
-	if len(m.sessionsList) != 2 {
-		t.Fatalf("want 2 sessions (live filtered), got %d", len(m.sessionsList))
+	if len(m.sessions.list) != 2 {
+		t.Fatalf("want 2 sessions (live filtered), got %d", len(m.sessions.list))
 	}
-	for _, s := range m.sessionsList {
+	for _, s := range m.sessions.list {
 		if s.ID == "live" {
 			t.Errorf("live session should be filtered out of the list")
 		}
@@ -63,7 +63,7 @@ func TestRenderSessionsPanelShowsSummaryNotJustID(t *testing.T) {
 	m.refreshSessionsList()
 	m.renderSessionsPanelContent()
 
-	got := m.sessionsViewport.View()
+	got := m.sessions.viewport.View()
 	if !strings.Contains(got, "20260101-000000") {
 		t.Errorf("rendered panel missing session id:\n%s", got)
 	}
@@ -84,7 +84,7 @@ func TestRenderSessionsPanelEmptyShowsPlaceholder(t *testing.T) {
 	m.refreshSessionsList()
 	m.renderSessionsPanelContent()
 
-	got := m.sessionsViewport.View()
+	got := m.sessions.viewport.View()
 	if !strings.Contains(got, "No prior sessions") {
 		t.Errorf("empty panel should surface a placeholder, got:\n%s", got)
 	}
@@ -100,14 +100,14 @@ func TestSessionsCursorClampsAfterRefresh(t *testing.T) {
 	writeSessionLog(t, dir, "b.jsonl", []string{`{"type":"message","role":"user","content":"y"}`})
 	m := sessionsPanelModel(t, dir)
 	m.refreshSessionsList()
-	m.sessionsCursor = 1
+	m.sessions.cursor = 1
 
 	if err := os.Remove(filepath.Join(dir, "b.jsonl")); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	m.refreshSessionsList()
-	if m.sessionsCursor >= len(m.sessionsList) {
-		t.Errorf("cursor not clamped after list shrank: cursor=%d len=%d", m.sessionsCursor, len(m.sessionsList))
+	if m.sessions.cursor >= len(m.sessions.list) {
+		t.Errorf("cursor not clamped after list shrank: cursor=%d len=%d", m.sessions.cursor, len(m.sessions.list))
 	}
 }
 
@@ -117,15 +117,15 @@ func TestRefreshSessionsListReusesCachedSummaryForUnchangedLog(t *testing.T) {
 	m := sessionsPanelModel(t, dir)
 
 	m.refreshSessionsList()
-	cached := m.sessionsSummaryCache[path]
+	cached := m.sessions.summaryCache[path]
 	cached.info.FirstPrompt = "cached prompt"
-	m.sessionsSummaryCache[path] = cached
+	m.sessions.summaryCache[path] = cached
 
 	m.refreshSessionsList()
-	if len(m.sessionsList) != 1 {
-		t.Fatalf("expected one session, got %d", len(m.sessionsList))
+	if len(m.sessions.list) != 1 {
+		t.Fatalf("expected one session, got %d", len(m.sessions.list))
 	}
-	if got := m.sessionsList[0].FirstPrompt; got != "cached prompt" {
+	if got := m.sessions.list[0].FirstPrompt; got != "cached prompt" {
 		t.Fatalf("expected unchanged log to reuse cached summary, got %q", got)
 	}
 }
@@ -144,10 +144,10 @@ func TestRefreshSessionsListReloadsChangedLogSummary(t *testing.T) {
 	}
 
 	m.refreshSessionsList()
-	if len(m.sessionsList) != 1 {
-		t.Fatalf("expected one session, got %d", len(m.sessionsList))
+	if len(m.sessions.list) != 1 {
+		t.Fatalf("expected one session, got %d", len(m.sessions.list))
 	}
-	if got := m.sessionsList[0].FirstPrompt; got != "updated prompt" {
+	if got := m.sessions.list[0].FirstPrompt; got != "updated prompt" {
 		t.Fatalf("expected changed log to be re-summarized, got %q", got)
 	}
 }

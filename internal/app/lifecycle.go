@@ -392,224 +392,109 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.resize()
+		cmd, done := m.handleWindowSize(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case tea.KeyMsg:
-		// ── Plan panel navigation (consumes key, returns early) ──────────────
-		if m.historyPanelOpen && m.historyFocused && m.panelTab == panelTabPlan {
-			if handled, cmd := m.handlePlanPanelKey(msg); handled {
-				return m, cmd
-			}
+		cmd, done := m.handleKeyPress(msg)
+		if done {
+			return m, cmd
 		}
-		// ── Sessions panel navigation (consumes key, returns early) ──────────
-		if m.historyPanelOpen && m.historyFocused && m.panelTab == panelTabSessions {
-			if handled, cmd := m.handleSessionsPanelKey(msg); handled {
-				return m, cmd
-			}
-		}
-		// ── History panel navigation (consumes key, returns early) ────────────
-		if m.historyPanelOpen && m.historyFocused {
-			switch msg.Type {
-			case tea.KeyUp:
-				if m.historySelected > 0 {
-					m.historySelected--
-					m.historyExpanded = false
-					m.renderHistoryPanelContent()
-				}
-				return m, waitForEvent(m.events)
-			case tea.KeyDown:
-				if m.historySelected < len(m.historyEntries)-1 {
-					m.historySelected++
-					m.historyExpanded = false
-					m.renderHistoryPanelContent()
-				}
-				return m, waitForEvent(m.events)
-			case tea.KeyEnter:
-				m.historyExpanded = !m.historyExpanded
-				m.renderHistoryPanelContent()
-				return m, waitForEvent(m.events)
-			case tea.KeyEsc:
-				m.historyFocused = false
-				m.renderHistoryPanelContent()
-				return m, waitForEvent(m.events)
-			case tea.KeyPgUp, tea.KeyPgDown:
-				m.historyViewport, _ = m.historyViewport.Update(msg)
-				return m, waitForEvent(m.events)
-			case tea.KeyRunes:
-				// j / k line-scroll the panel when focused (vim-style).
-				switch string(msg.Runes) {
-				case "j":
-					m.historyViewport.ScrollDown(1)
-					return m, waitForEvent(m.events)
-				case "k":
-					m.historyViewport.ScrollUp(1)
-					return m, waitForEvent(m.events)
-				}
-			}
-		}
-		// ── Global key bindings ───────────────────────────────────────────────
-		switch msg.Type {
-		case tea.KeyCtrlC:
-			return m, tea.Quit
-		case tea.KeyCtrlS:
-			m.saveTranscriptAsync()
-		case tea.KeyCtrlL:
-			m.messages = nil
-			m.status = "Cleared chat."
-			m.renderMessages(true)
-		case tea.KeyCtrlR:
-			m.restartServerAsync()
-		case tea.KeyCtrlB:
-			// Ctrl+B toggles the history panel open/closed.
-			// Panel opens unfocused — Tab moves focus in, Esc moves focus back.
-			if !m.historyPanelOpen {
-				m.panelTab = panelTabHistory
-			}
-			m.setHistoryPanelOpen(!m.historyPanelOpen)
-			if m.historyPanelOpen {
-				m.status = "History panel open. Tab focuses it. Ctrl+T cycles tabs."
-			} else {
-				m.status = "Panel closed."
-			}
-			return m, waitForEvent(m.events)
-		case tea.KeyCtrlT:
-			// Ctrl+T cycles the side-panel tabs. Opens the panel if closed.
-			if !m.historyPanelOpen {
-				m.setHistoryPanelOpen(true)
-			}
-			m.panelTab = (m.panelTab + 1) % panelTabCount
-			if m.panelTab == panelTabSessions {
-				m.refreshSessionsList()
-			}
-			m.rerenderActivePanel()
-			return m, waitForEvent(m.events)
-		case tea.KeyTab:
-			// Tab toggles keyboard focus between input and side panel.
-			// Re-render the active tab so its focus hint / cursor
-			// highlight updates — not just the history viewport.
-			if m.historyPanelOpen {
-				m.historyFocused = !m.historyFocused
-				m.rerenderActivePanel()
-			}
-			return m, waitForEvent(m.events)
-		case tea.KeyEnter:
-			text := strings.TrimSpace(m.input.Value())
-			if text == "" {
-				break
-			}
-			m.input.SetValue("")
-			if strings.HasPrefix(text, "/") {
-				if quit := m.handleSlashCommand(text); quit {
-					return m, tea.Quit
-				}
-				if m.pendingExec != nil {
-					cmd := m.pendingExec
-					m.pendingExec = nil
-					m.renderMessages(true)
-					return m, cmd
-				}
-			} else if !m.streaming {
-				m.appendHistoryMessage("user", text, nil)
-				m.sendPromptAsync(text)
-			}
-			m.renderMessages(true)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case tea.MouseMsg:
-		// Route mouse events to whichever viewport is under the cursor.
-		// When the panel is open, anything past the main viewport's width
-		// (plus the 1-col divider) belongs to the history panel.
-		// Return early so scroll/click events do not reach the textarea
-		// via the fall-through m.input.Update at the bottom of Update.
-		if m.historyPanelOpen && msg.X >= m.viewport.Width+1 {
-			m.historyViewport, _ = m.historyViewport.Update(msg)
-		} else {
-			m.updateViewport(msg)
+		cmd, done := m.handleMouse(msg)
+		if done {
+			return m, cmd
 		}
-		return m, waitForEvent(m.events)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		if m.streaming {
-			m.workingFrame = (m.workingFrame + 1) % 4
-			m.renderMessages(false)
+		cmd, done := m.handleSpinnerTick(msg)
+		if done {
+			return m, cmd
 		}
-		cmds = append(cmds, cmd)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case serverStatusMsg:
-		m.bootingServer = false
-		m.logServerEvent(msg)
-		if msg.err != nil {
-			m.serverUp = false
-			m.setRuntimeError("Server error: " + msg.err.Error())
-		} else {
-			m.serverUp = msg.running
-			if !msg.running {
-				m.modelID = ""
-			}
-			m.modelID = msg.modelID
-			m.managedServer = m.managedServer || msg.owned
-			m.clearRuntimeErrorIfServerRelated()
-			if msg.running {
-				m.status = fmt.Sprintf("Server ready on %s. Model: %s", m.plannerSpec.EndpointBaseURL(), msg.modelID)
-			} else {
-				m.status = "Server stopped."
-			}
+		cmd, done := m.handleServerStatus(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case streamDoneMsg:
-		m.streaming = false
-		m.workingFrame = 0
-		if msg.err != nil {
-			m.failAgentHistoryTurn(msg.err)
-			m.setRuntimeError("Chat failed: " + msg.err.Error())
-		} else {
-			m.clearRuntimeError()
-			m.status = "Response complete."
-			m.recordAgentTurn()
+		cmd, done := m.handleStreamDone(msg)
+		if done {
+			return m, cmd
 		}
-		m.renderMessages(false)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case transcriptSavedMsg:
-		if msg.err != nil {
-			m.setRuntimeError("Save failed: " + msg.err.Error())
-		} else {
-			m.clearRuntimeError()
-			m.status = "Transcript saved to " + m.displayPath(msg.path)
-			m.logArtifact("transcript", msg.path)
+		cmd, done := m.handleTranscriptSaved(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case infoMsg:
-		m.status = msg.text
-	case toolTraceMsg:
-		if m.traceMode == traceDisplayDetail && !msg.running {
-			m.insertBeforePendingAssistant(llama.ChatMessage{Role: "tool", Content: msg.text})
-			m.logMessage("tool", msg.text)
+		cmd, done := m.handleInfoMessage(msg)
+		if done {
+			return m, cmd
 		}
-		// Always reflect tool activity in the history panel regardless of trace mode.
-		m.recordToolTraceInHistory(msg.step, msg.text, msg.intent, msg.running)
-		m.renderMessages(false)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case toolTraceMsg:
+		cmd, done := m.handleToolTrace(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case historySummaryMsg:
-		if msg.index >= 0 && msg.index < len(m.historyEntries) {
-			m.historyEntries[msg.index].summary = msg.summary
-			m.requestHistoryPanelRender(false, false)
+		cmd, done := m.handleHistorySummary(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case historyPanelRefreshMsg:
-		if m.historyRenderPending {
-			m.flushHistoryPanelRender()
+		cmd, done := m.handleHistoryPanelRefresh(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case planEditorDoneMsg:
-		if msg.err != nil {
-			m.status = "Editor exited with error: " + msg.err.Error()
-		} else {
-			m.status = "Plan updated: " + m.displayPath(m.planPath)
+		cmd, done := m.handlePlanEditorDone(msg)
+		if done {
+			return m, cmd
 		}
-		m.renderPlanPanelContent()
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case planRefreshMsg:
-		if !m.historyPanelOpen && !m.planAutoShown {
-			if m.planPanelAutoShowNeeded() {
-				m.panelTab = panelTabPlan
-				m.setHistoryPanelOpen(true)
-				m.planAutoShown = true
-			}
+		cmd, done := m.handlePlanRefresh(msg)
+		if done {
+			return m, cmd
 		}
-		m.renderPlanPanelContent()
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case nil:
 	default:
 	}

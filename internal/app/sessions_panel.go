@@ -26,7 +26,7 @@ type sessionSummaryCacheEntry struct {
 func (m *Model) refreshSessionsList() {
 	start := time.Now()
 	defer func() {
-		m.logUISlowPath("ui.refresh_sessions", start, fmt.Sprintf("tab=%d entries=%d", m.panelTab, len(m.sessionsList)))
+		m.logUISlowPath("ui.refresh_sessions", start, fmt.Sprintf("tab=%d entries=%d", m.panelTab, len(m.sessions.list)))
 	}()
 
 	dir := strings.TrimSpace(m.cfg.Chat.DebugLogDir)
@@ -36,19 +36,19 @@ func (m *Model) refreshSessionsList() {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			m.sessionsList = nil
-			m.sessionsRawCache = nil
-			m.sessionsRawCacheDir = dir
-			m.sessionsRawCacheMTime = time.Time{}
-			m.sessionsRawCacheValid = true
-			m.sessionsSummaryCache = nil
+			m.sessions.list = nil
+			m.sessions.rawCache = nil
+			m.sessions.rawCacheDir = dir
+			m.sessions.rawCacheMTime = time.Time{}
+			m.sessions.rawCacheValid = true
+			m.sessions.summaryCache = nil
 			return
 		}
-		m.sessionsList = nil
+		m.sessions.list = nil
 		return
 	}
-	if m.sessionsSummaryCache == nil {
-		m.sessionsSummaryCache = make(map[string]sessionSummaryCacheEntry, len(entries))
+	if m.sessions.summaryCache == nil {
+		m.sessions.summaryCache = make(map[string]sessionSummaryCacheEntry, len(entries))
 	}
 	nextCache := make(map[string]sessionSummaryCacheEntry, len(entries))
 	sessions := make([]SessionInfo, 0, len(entries))
@@ -74,7 +74,7 @@ func (m *Model) refreshSessionsList() {
 		modTime := info.ModTime()
 
 		session := SessionInfo{ID: id, Path: path}
-		if cached, ok := m.sessionsSummaryCache[path]; ok && cached.size == size && cached.modTime.Equal(modTime) {
+		if cached, ok := m.sessions.summaryCache[path]; ok && cached.size == size && cached.modTime.Equal(modTime) {
 			session = cached.info
 		} else {
 			session = summarizeSessionLog(path)
@@ -91,11 +91,11 @@ func (m *Model) refreshSessionsList() {
 	slices.SortFunc(sessions, func(a, b SessionInfo) int {
 		return -cmp.Compare(a.ID, b.ID)
 	})
-	m.sessionsSummaryCache = nextCache
-	m.sessionsRawCache = append(m.sessionsRawCache[:0], sessions...)
-	m.sessionsRawCacheDir = dir
-	m.sessionsRawCacheMTime = dirMTime
-	m.sessionsRawCacheValid = true
+	m.sessions.summaryCache = nextCache
+	m.sessions.rawCache = append(m.sessions.rawCache[:0], sessions...)
+	m.sessions.rawCacheDir = dir
+	m.sessions.rawCacheMTime = dirMTime
+	m.sessions.rawCacheValid = true
 	// Filter out the live session's own log: resuming into yourself
 	// adds nothing and invites confusion. Empty debugLogPath (pre-init
 	// race) falls through harmlessly.
@@ -107,12 +107,12 @@ func (m *Model) refreshSessionsList() {
 		}
 		filtered = append(filtered, s)
 	}
-	m.sessionsList = filtered
-	if m.sessionsCursor < 0 {
-		m.sessionsCursor = 0
+	m.sessions.list = filtered
+	if m.sessions.cursor < 0 {
+		m.sessions.cursor = 0
 	}
-	if m.sessionsCursor >= len(m.sessionsList) {
-		m.sessionsCursor = max(0, len(m.sessionsList)-1)
+	if m.sessions.cursor >= len(m.sessions.list) {
+		m.sessions.cursor = max(0, len(m.sessions.list)-1)
 	}
 }
 
@@ -121,30 +121,30 @@ func (m *Model) refreshSessionsList() {
 // so the user can recognize a session without hunting through log
 // files. When the panel has focus the cursor row is highlighted.
 func (m *Model) renderSessionsPanelContent() {
-	if !m.historyPanelOpen {
+	if !m.history.panelOpen {
 		return
 	}
-	w := max(8, m.sessionsViewport.Width)
+	w := max(8, m.sessions.viewport.Width)
 
 	var b strings.Builder
 	title := "◇ Sessions"
-	if m.historyFocused && m.panelTab == panelTabSessions {
+	if m.history.focused && m.panelTab == panelTabSessions {
 		title = "◇ Sessions · ↑/↓ select · Enter resume"
 	}
 	b.WriteString(panelTitleStyle.Width(w).Render(title))
 	b.WriteString("\n")
 
-	if len(m.sessionsList) == 0 {
+	if len(m.sessions.list) == 0 {
 		msg := "No prior sessions found."
 		for _, wl := range wrapLines(msg, max(1, w-2)) {
 			b.WriteString(panelDetailStyle.Width(w).Render(wl))
 			b.WriteString("\n")
 		}
-		m.sessionsViewport.SetContent(strings.TrimRight(b.String(), "\n"))
+		m.sessions.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
 		return
 	}
 
-	for i, s := range m.sessionsList {
+	for i, s := range m.sessions.list {
 		summary := strings.TrimSpace(s.FirstPrompt)
 		if summary == "" {
 			summary = "(no user prompt recorded)"
@@ -152,7 +152,7 @@ func (m *Model) renderSessionsPanelContent() {
 		msgCount := fmt.Sprintf("%d msg", s.UserMessages+s.AssistMessage)
 		header := fmt.Sprintf("%s · %s", s.ID, msgCount)
 		body := "  " + summary
-		focused := i == m.sessionsCursor && m.historyFocused && m.panelTab == panelTabSessions
+		focused := i == m.sessions.cursor && m.history.focused && m.panelTab == panelTabSessions
 
 		if focused {
 			b.WriteString(panelFocusedStyle.Width(w).Render("▸ " + header))
@@ -170,7 +170,7 @@ func (m *Model) renderSessionsPanelContent() {
 		}
 	}
 
-	m.sessionsViewport.SetContent(strings.TrimRight(b.String(), "\n"))
+	m.sessions.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
 }
 
 // handleSessionsPanelKey consumes a key press while the Sessions tab
@@ -181,29 +181,29 @@ func (m *Model) handleSessionsPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case tea.KeyEsc:
 		// Drop focus and re-render so the title's "↑/↓ select" hint
 		// disappears, signalling the panel is no longer interactive.
-		m.historyFocused = false
+		m.history.focused = false
 		m.renderSessionsPanelContent()
 		return true, waitForEvent(m.events)
 	case tea.KeyUp:
-		if m.sessionsCursor > 0 {
-			m.sessionsCursor--
+		if m.sessions.cursor > 0 {
+			m.sessions.cursor--
 			m.renderSessionsPanelContent()
 		}
 		return true, waitForEvent(m.events)
 	case tea.KeyDown:
-		if m.sessionsCursor < len(m.sessionsList)-1 {
-			m.sessionsCursor++
+		if m.sessions.cursor < len(m.sessions.list)-1 {
+			m.sessions.cursor++
 			m.renderSessionsPanelContent()
 		}
 		return true, waitForEvent(m.events)
 	case tea.KeyEnter:
-		if len(m.sessionsList) == 0 {
+		if len(m.sessions.list) == 0 {
 			return true, waitForEvent(m.events)
 		}
-		if m.sessionsCursor < 0 || m.sessionsCursor >= len(m.sessionsList) {
+		if m.sessions.cursor < 0 || m.sessions.cursor >= len(m.sessions.list) {
 			return true, waitForEvent(m.events)
 		}
-		id := m.sessionsList[m.sessionsCursor].ID
+		id := m.sessions.list[m.sessions.cursor].ID
 		if err := m.ResumeSession(id); err != nil {
 			m.status = "Resume failed: " + err.Error()
 		} else {

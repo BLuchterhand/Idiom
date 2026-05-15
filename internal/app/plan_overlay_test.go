@@ -161,15 +161,15 @@ func TestOpenPlanDiffOverlayLoadsSelectedItem(t *testing.T) {
 	if items[0].DiffID == "" {
 		t.Fatalf("plan item should have a diff id")
 	}
-	m.planCursor = 0
+	m.plan.cursor = 0
 	if !m.openPlanDiffOverlay() {
 		t.Fatal("openPlanDiffOverlay returned false for valid item")
 	}
-	if m.planOverlayID != items[0].DiffID {
-		t.Errorf("overlay id mismatch: %q vs %q", m.planOverlayID, items[0].DiffID)
+	if m.plan.overlayID != items[0].DiffID {
+		t.Errorf("overlay id mismatch: %q vs %q", m.plan.overlayID, items[0].DiffID)
 	}
-	if !strings.Contains(m.planOverlayBody, "-x") || !strings.Contains(m.planOverlayBody, "+y") {
-		t.Errorf("overlay body missing diff:\n%s", m.planOverlayBody)
+	if !strings.Contains(m.plan.overlayBody, "-x") || !strings.Contains(m.plan.overlayBody, "+y") {
+		t.Errorf("overlay body missing diff:\n%s", m.plan.overlayBody)
 	}
 }
 
@@ -192,19 +192,19 @@ func TestOpenPlanDiffOverlayFalseForUnattachedLedgerItem(t *testing.T) {
 	if got := m.openPlanDiffOverlay(); got {
 		t.Fatal("unattached ledger item should not open overlay")
 	}
-	if m.planOverlayID != "" {
-		t.Errorf("overlay id should remain empty, got %q", m.planOverlayID)
+	if m.plan.overlayID != "" {
+		t.Errorf("overlay id should remain empty, got %q", m.plan.overlayID)
 	}
 }
 
 func TestClosePlanDiffOverlayClearsState(t *testing.T) {
 	root := t.TempDir()
 	m := snapshotModel(t, root)
-	m.planOverlayID = "abc"
-	m.planOverlayBody = "body"
+	m.plan.overlayID = "abc"
+	m.plan.overlayBody = "body"
 	m.closePlanDiffOverlay()
-	if m.planOverlayID != "" || m.planOverlayBody != "" {
-		t.Errorf("close did not clear state: id=%q body=%q", m.planOverlayID, m.planOverlayBody)
+	if m.plan.overlayID != "" || m.plan.overlayBody != "" {
+		t.Errorf("close did not clear state: id=%q body=%q", m.plan.overlayID, m.plan.overlayBody)
 	}
 }
 

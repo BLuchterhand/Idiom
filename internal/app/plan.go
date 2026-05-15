@@ -104,7 +104,7 @@ func (m *Model) loadPlanContent() string {
 
 // renderPlanPanelContent rebuilds the plan viewport from the current plan file.
 func (m *Model) renderPlanPanelContent() {
-	if !m.historyPanelOpen {
+	if !m.history.panelOpen {
 		return
 	}
 	w := max(8, m.planViewport.Width)
@@ -112,19 +112,19 @@ func (m *Model) renderPlanPanelContent() {
 	// Diff overlay takes precedence — when the user picks an entry,
 	// we swap the entire panel content for the colored diff so the
 	// familiar j/k scrolling applies to the diff payload directly.
-	if m.planOverlayID != "" && m.planOverlayBody != "" {
+	if m.plan.overlayID != "" && m.plan.overlayBody != "" {
 		var b strings.Builder
 		title := "◇ Plan · diff · Esc to close"
 		b.WriteString(panelTitleStyle.Width(w).Render(title))
 		b.WriteString("\n")
-		b.WriteString(m.planOverlayBody)
+		b.WriteString(m.plan.overlayBody)
 		m.planViewport.SetContent(strings.TrimRight(b.String(), "\n"))
 		return
 	}
 
 	var b strings.Builder
 	title := "◇ Plan"
-	if m.historyFocused && m.panelTab == panelTabPlan {
+	if m.history.focused && m.panelTab == panelTabPlan {
 		// When the panel has focus, surface the keybinds so the user
 		// knows ↑/↓ navigates and Enter opens a diff. Without this hint
 		// the interactivity is invisible.
@@ -168,14 +168,14 @@ func (m *Model) renderPlanPanelContent() {
 	// cursor row so the user sees which Enter will open.
 	items := parsePlanItems(content)
 	var cursorLineIdx = -1
-	if m.panelTab == panelTabPlan && m.historyFocused && len(items) > 0 {
-		if m.planCursor < 0 {
-			m.planCursor = 0
+	if m.panelTab == panelTabPlan && m.history.focused && len(items) > 0 {
+		if m.plan.cursor < 0 {
+			m.plan.cursor = 0
 		}
-		if m.planCursor >= len(items) {
-			m.planCursor = len(items) - 1
+		if m.plan.cursor >= len(items) {
+			m.plan.cursor = len(items) - 1
 		}
-		cursorLineIdx = items[m.planCursor].LineIdx
+		cursorLineIdx = items[m.plan.cursor].LineIdx
 	}
 	for i, raw := range strings.Split(content, "\n") {
 		rendered := renderPlanLine(raw, w)
@@ -202,28 +202,28 @@ func (m *Model) currentPlanItems() []planItemMeta {
 // ledger stub) so the caller can surface a nudge instead.
 func (m *Model) openPlanDiffOverlay() bool {
 	items := m.currentPlanItems()
-	if len(items) == 0 || m.planCursor < 0 || m.planCursor >= len(items) {
+	if len(items) == 0 || m.plan.cursor < 0 || m.plan.cursor >= len(items) {
 		return false
 	}
-	item := items[m.planCursor]
+	item := items[m.plan.cursor]
 	if item.DiffID == "" {
 		return false
 	}
 	entry, err := m.loadPlanDiffEntry(item.DiffID)
 	if err != nil {
-		m.planOverlayID = item.DiffID
-		m.planOverlayBody = diffHeaderStyle.Render(fmt.Sprintf("(could not load diff %s: %v)", item.DiffID, err))
+		m.plan.overlayID = item.DiffID
+		m.plan.overlayBody = diffHeaderStyle.Render(fmt.Sprintf("(could not load diff %s: %v)", item.DiffID, err))
 		return true
 	}
-	m.planOverlayID = item.DiffID
-	m.planOverlayBody = renderPlanDiffOverlay(entry)
+	m.plan.overlayID = item.DiffID
+	m.plan.overlayBody = renderPlanDiffOverlay(entry)
 	return true
 }
 
 // closePlanDiffOverlay switches back to the plan list view.
 func (m *Model) closePlanDiffOverlay() {
-	m.planOverlayID = ""
-	m.planOverlayBody = ""
+	m.plan.overlayID = ""
+	m.plan.overlayBody = ""
 }
 
 // handlePlanPanelKey consumes a key press when the plan panel has
@@ -236,7 +236,7 @@ func (m *Model) closePlanDiffOverlay() {
 // through so the shared viewport scrolling handles the diff text.
 func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	// Overlay mode: Esc closes; scroll keys fall through.
-	if m.planOverlayID != "" {
+	if m.plan.overlayID != "" {
 		if msg.Type == tea.KeyEsc {
 			m.closePlanDiffOverlay()
 			m.renderPlanPanelContent()
@@ -246,15 +246,15 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	}
 	switch msg.Type {
 	case tea.KeyUp:
-		if m.planCursor > 0 {
-			m.planCursor--
+		if m.plan.cursor > 0 {
+			m.plan.cursor--
 			m.renderPlanPanelContent()
 		}
 		return true, waitForEvent(m.events)
 	case tea.KeyDown:
 		items := m.currentPlanItems()
-		if m.planCursor < len(items)-1 {
-			m.planCursor++
+		if m.plan.cursor < len(items)-1 {
+			m.plan.cursor++
 			m.renderPlanPanelContent()
 		}
 		return true, waitForEvent(m.events)
@@ -267,21 +267,21 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.status = "No diff attached to this item."
 		return true, waitForEvent(m.events)
 	case tea.KeyEsc:
-		m.historyFocused = false
+		m.history.focused = false
 		m.renderPlanPanelContent()
 		return true, waitForEvent(m.events)
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
 		case "j":
 			items := m.currentPlanItems()
-			if m.planCursor < len(items)-1 {
-				m.planCursor++
+			if m.plan.cursor < len(items)-1 {
+				m.plan.cursor++
 				m.renderPlanPanelContent()
 			}
 			return true, waitForEvent(m.events)
 		case "k":
-			if m.planCursor > 0 {
-				m.planCursor--
+			if m.plan.cursor > 0 {
+				m.plan.cursor--
 				m.renderPlanPanelContent()
 			}
 			return true, waitForEvent(m.events)
@@ -425,9 +425,9 @@ func (m *Model) activePanelViewport() viewport.Model {
 	case panelTabPlan:
 		return m.planViewport
 	case panelTabSessions:
-		return m.sessionsViewport
+		return m.sessions.viewport
 	default:
-		return m.historyViewport
+		return m.history.viewport
 	}
 }
 

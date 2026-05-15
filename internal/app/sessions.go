@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bufio"
 	"cmp"
 	"encoding/json"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/llama"
+	"idiom/internal/util"
 )
 
 // SessionInfo describes a recorded session under the chat debug-log directory.
@@ -82,20 +82,13 @@ func ListRecordedSessions(cfg config.Config) ([]SessionInfo, error) {
 
 func summarizeSessionLog(path string) SessionInfo {
 	info := SessionInfo{}
-	file, err := os.Open(path)
-	if err != nil {
-		return info
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 1<<16), 1<<22)
-	for scanner.Scan() {
+	_ = util.ScanFile(path, func(raw json.RawMessage) error {
 		var record map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return nil
 		}
 		if record["type"] != "message" {
-			continue
+			return nil
 		}
 		role, _ := record["role"].(string)
 		content, _ := record["content"].(string)
@@ -108,7 +101,8 @@ func summarizeSessionLog(path string) SessionInfo {
 		case "assistant":
 			info.AssistMessage++
 		}
-	}
+		return nil
+	})
 	return info
 }
 
@@ -140,35 +134,29 @@ func (m *Model) LoadHistoryFromSession(path string) error {
 	if path == "" {
 		return fmt.Errorf("session path is required")
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 1<<16), 1<<22)
 	loaded := 0
-	for scanner.Scan() {
+	err := util.ScanFile(path, func(raw json.RawMessage) error {
 		var record map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return nil
 		}
 		if record["type"] != "message" {
-			continue
+			return nil
 		}
 		role, _ := record["role"].(string)
 		content, _ := record["content"].(string)
 		if role != "user" && role != "assistant" {
-			continue
+			return nil
 		}
 		if strings.TrimSpace(content) == "" {
-			continue
+			return nil
 		}
 		m.messages = append(m.messages, llama.ChatMessage{Role: role, Content: content})
 		loaded++
-	}
-	if err := scanner.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("read session log: %w", err)
 	}
 	if loaded == 0 {

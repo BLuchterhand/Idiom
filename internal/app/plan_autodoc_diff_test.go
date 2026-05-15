@@ -80,7 +80,7 @@ func TestRecordWriteSuccessCapturesDiffAndPlanEntry(t *testing.T) {
 		Description: "change greeting",
 	}
 	m.capturePlanSnapshot(5, req)
-	if _, ok := m.planWriteSnapshots[5]; !ok {
+	if _, ok := m.plan.writeSnapshots[5]; !ok {
 		t.Fatalf("snapshot was not captured for step 5")
 	}
 
@@ -90,7 +90,7 @@ func TestRecordWriteSuccessCapturesDiffAndPlanEntry(t *testing.T) {
 	res := workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md"}
 	m.recordWriteSuccess(5, req, res)
 
-	if _, ok := m.planWriteSnapshots[5]; ok {
+	if _, ok := m.plan.writeSnapshots[5]; ok {
 		t.Errorf("snapshot map should be cleared after record")
 	}
 
@@ -148,7 +148,7 @@ func TestRecordWriteSuccessIgnoresFailures(t *testing.T) {
 	if _, err := os.Stat(plan); !os.IsNotExist(err) {
 		t.Fatalf("failed write should not produce plan file; stat err = %v", err)
 	}
-	if _, ok := m.planWriteSnapshots[1]; ok {
+	if _, ok := m.plan.writeSnapshots[1]; ok {
 		t.Errorf("snapshot still present after failed recordWriteSuccess — would leak into next step")
 	}
 }
@@ -207,7 +207,7 @@ func TestCapturePlanSnapshotMissingFileRecordsEmptyBaseline(t *testing.T) {
 	m := snapshotModel(t, root)
 	req := workspace.ToolRequest{Tool: "write_file", Path: "new.md", Description: "create file"}
 	m.capturePlanSnapshot(2, req)
-	snaps, ok := m.planWriteSnapshots[2]
+	snaps, ok := m.plan.writeSnapshots[2]
 	if !ok {
 		t.Fatalf("missing-path write should still record a snapshot")
 	}
@@ -287,7 +287,7 @@ func TestRecordWriteSuccessMultiplePathsPerCall(t *testing.T) {
 	// rollbackPathsForRequest — that helper only returns multi-path
 	// results for apply_patch, but its parser needs a real patch and
 	// we're testing the record flow, not the patch parser.
-	m.planWriteSnapshots = map[int][]planWriteSnapshot{
+	m.plan.writeSnapshots = map[int][]planWriteSnapshot{
 		3: {
 			{Path: "a.txt", Before: "alpha\n", Existed: true},
 			{Path: "b.txt", Before: "beta\n", Existed: true},

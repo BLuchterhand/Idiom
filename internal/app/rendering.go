@@ -73,10 +73,10 @@ func (m *Model) View() string {
 
 	// ── Content row: main viewport + optional side panel (tabbed) ────────────
 	var contentRow string
-	if m.historyPanelOpen {
+	if m.history.panelOpen {
 		h := m.viewport.Height
 		vertBar := dividerStyle.Render(strings.Repeat("│\n", h-1) + "│")
-		panelWidth := m.historyViewport.Width
+		panelWidth := m.history.viewport.Width
 		activeVP := m.activePanelViewport()
 		panel := lipgloss.JoinVertical(lipgloss.Left,
 			m.renderPanelTabs(panelWidth),

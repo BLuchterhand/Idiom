@@ -1,7 +1,6 @@
 package eval
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,8 +16,6 @@ type Record struct {
 	Type string
 	Data map[string]any
 }
-
-const maxJSONLRecordBytes = 64 * 1024 * 1024
 
 type PhaseExpectation struct {
 	Lane  string `json:"lane,omitempty"`
@@ -575,28 +572,17 @@ type Report struct {
 }
 
 func LoadRecords(path string) ([]Record, error) {
-	file, err := os.Open(filepath.Clean(path))
-	if err != nil {
-		return nil, fmt.Errorf("open log: %w", err)
-	}
-	defer file.Close()
-
 	records := make([]Record, 0, 64)
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 1024*1024), maxJSONLRecordBytes)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
+	err := util.ScanFile(filepath.Clean(path), func(raw json.RawMessage) error {
 		payload := make(map[string]any)
-		if err := json.Unmarshal([]byte(line), &payload); err != nil {
-			return nil, fmt.Errorf("decode log record: %w", err)
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return fmt.Errorf("decode log record: %w", err)
 		}
 		records = append(records, normalizeLogRecord(payload))
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan log: %w", err)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return records, nil
 }

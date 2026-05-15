@@ -1,7 +1,6 @@
 package comprehension
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"idiom/internal/util"
 )
 
 // LearningLogEntry is one record in the per-workspace ranker learning log.
@@ -552,29 +553,19 @@ func normalizeLearningLogToken(value string) string {
 // malformed lines. Missing log returns an empty slice with no error.
 func ReadLearningLog(root string) ([]LearningLogEntry, error) {
 	path := learningLogPath(root)
-	f, err := os.Open(path)
+	var out []LearningLogEntry
+	err := util.ScanFile(path, func(raw json.RawMessage) error {
+		var entry LearningLogEntry
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return nil
+		}
+		out = append(out, entry)
+		return nil
+	})
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, err
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	var out []LearningLogEntry
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var entry LearningLogEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-		out = append(out, entry)
-	}
-	if err := scanner.Err(); err != nil {
 		return out, err
 	}
 	return out, nil

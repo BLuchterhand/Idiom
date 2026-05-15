@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -86,13 +85,13 @@ func (m *Model) ResumeSession(id string) error {
 	// Reset plan caches so ensurePlanPath re-resolves against the new
 	// session id and the rehydrator can build fresh maps.
 	m.planPath = ""
-	m.planLedgerItems = map[string]workspace.TaskLedgerItem{}
-	m.planLedgerRenderedIDs = map[string]bool{}
-	m.planLedgerHits = map[string]map[string]bool{}
-	m.planSessionHeadingWritten = false
-	m.planCursor = 0
-	m.planOverlayID = ""
-	m.planOverlayBody = ""
+	m.plan.ledgerItems = map[string]workspace.TaskLedgerItem{}
+	m.plan.ledgerRenderedIDs = map[string]bool{}
+	m.plan.ledgerHits = map[string]map[string]bool{}
+	m.plan.sessionHeadingWritten = false
+	m.plan.cursor = 0
+	m.plan.overlayID = ""
+	m.plan.overlayBody = ""
 
 	// Replace chat history with the replayed messages. We replace
 	// wholesale rather than append — on /resume mid-session, leftover
@@ -110,33 +109,27 @@ func (m *Model) ResumeSession(id string) error {
 // returns the slice instead of appending so ResumeSession can swap
 // history atomically.
 func replaySessionMessages(path string) ([]llama.ChatMessage, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 1<<16), 1<<22)
 	var out []llama.ChatMessage
-	for scanner.Scan() {
+	err := util.ScanFile(path, func(raw json.RawMessage) error {
 		var rec map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return nil
 		}
 		if rec["type"] != "message" {
-			continue
+			return nil
 		}
 		role, _ := rec["role"].(string)
 		content, _ := rec["content"].(string)
 		if role != "user" && role != "assistant" {
-			continue
+			return nil
 		}
 		if strings.TrimSpace(content) == "" {
-			continue
+			return nil
 		}
 		out = append(out, llama.ChatMessage{Role: role, Content: content})
-	}
-	if err := scanner.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, fmt.Errorf("read session log: %w", err)
 	}
 	return out, nil
@@ -157,14 +150,14 @@ func rehydratePlanState(m *Model) {
 	}
 	// Defensive init so callers can wipe maps to nil to simulate a
 	// fresh process and still exercise the rehydrate path.
-	if m.planLedgerItems == nil {
-		m.planLedgerItems = map[string]workspace.TaskLedgerItem{}
+	if m.plan.ledgerItems == nil {
+		m.plan.ledgerItems = map[string]workspace.TaskLedgerItem{}
 	}
-	if m.planLedgerRenderedIDs == nil {
-		m.planLedgerRenderedIDs = map[string]bool{}
+	if m.plan.ledgerRenderedIDs == nil {
+		m.plan.ledgerRenderedIDs = map[string]bool{}
 	}
-	if m.planLedgerHits == nil {
-		m.planLedgerHits = map[string]map[string]bool{}
+	if m.plan.ledgerHits == nil {
+		m.plan.ledgerHits = map[string]map[string]bool{}
 	}
 	planPath := m.ensurePlanPath()
 	if planPath == "" {
@@ -181,7 +174,7 @@ func rehydratePlanState(m *Model) {
 	// Session heading — if the resumed session's own heading already
 	// exists, suppress re-emission when writes resume.
 	if strings.Contains(plan, "## Session "+m.sessionID()) {
-		m.planSessionHeadingWritten = true
+		m.plan.sessionHeadingWritten = true
 	}
 
 	// Walk each plan line. We look for lines carrying a tid anchor
@@ -257,19 +250,19 @@ func rehydratePlanState(m *Model) {
 		if lm.Checked {
 			status = "completed"
 		}
-		m.planLedgerItems[lm.TID] = workspace.TaskLedgerItem{
+		m.plan.ledgerItems[lm.TID] = workspace.TaskLedgerItem{
 			ID:      lm.TID,
 			Content: lm.Content,
 			Status:  status,
 			Paths:   lm.Paths,
 		}
-		m.planLedgerRenderedIDs[lm.TID] = true
-		if m.planLedgerHits[lm.TID] == nil {
-			m.planLedgerHits[lm.TID] = map[string]bool{}
+		m.plan.ledgerRenderedIDs[lm.TID] = true
+		if m.plan.ledgerHits[lm.TID] == nil {
+			m.plan.ledgerHits[lm.TID] = map[string]bool{}
 		}
 		for _, did := range lm.DiffIDs {
 			if p, ok := diffPaths[did]; ok && p != "" {
-				m.planLedgerHits[lm.TID][p] = true
+				m.plan.ledgerHits[lm.TID][p] = true
 			}
 		}
 		// If the item rendered checked but we don't know any hit
@@ -277,7 +270,7 @@ func rehydratePlanState(m *Model) {
 		// state matches what the box claims.
 		if lm.Checked && len(lm.Paths) > 0 && len(lm.DiffIDs) == 0 {
 			for _, p := range lm.Paths {
-				m.planLedgerHits[lm.TID][p] = true
+				m.plan.ledgerHits[lm.TID][p] = true
 			}
 		}
 	}
@@ -292,26 +285,16 @@ func loadDiffPathIndex(path string) map[string]string {
 	if strings.TrimSpace(path) == "" {
 		return out
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return out
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024*4)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
+	_ = util.ScanFile(path, func(raw json.RawMessage) error {
 		var rec planDiffEntry
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return nil
 		}
 		if rec.ID != "" {
 			out[rec.ID] = rec.Path
 		}
-	}
+		return nil
+	})
 	return out
 }
 

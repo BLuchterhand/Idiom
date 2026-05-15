@@ -42,11 +42,11 @@ func TestRecordSubmittedPlanAppendsChecklist(t *testing.T) {
 	if !strings.Contains(got, "<!-- pid:pe-1 -->") {
 		t.Errorf("missing pid anchor for pe-1:\n%s", got)
 	}
-	if m.planSubmittedEdits == nil {
+	if m.plan.submittedEdits == nil {
 		t.Fatal("planSubmittedEdits should be initialized")
 	}
-	if len(m.planSubmittedEdits) != 2 {
-		t.Fatalf("want 2 submitted edits, got %d", len(m.planSubmittedEdits))
+	if len(m.plan.submittedEdits) != 2 {
+		t.Fatalf("want 2 submitted edits, got %d", len(m.plan.submittedEdits))
 	}
 }
 
@@ -307,7 +307,7 @@ func TestPlanPanelAutoShowNeededPlanExecute(t *testing.T) {
 	}
 }
 
-func TestWriteToolIntentSynth(t *testing.T) {
+func TestToolIntent(t *testing.T) {
 	cases := []struct {
 		tool string
 		path string
@@ -319,12 +319,12 @@ func TestWriteToolIntentSynth(t *testing.T) {
 		{"append_file", "log.txt", "append content to log.txt"},
 		{"apply_patch", "a.go", "apply a patch to a.go"},
 		{"mkdir", "dir/sub", "create directory dir/sub"},
-		{"unknown_tool", "f.go", "unknown_tool f.go"},
+		{"unknown_tool", "f.go", ""},
 	}
 	for _, tc := range cases {
-		got := writeToolIntentSynth(tc.tool, tc.path)
+		got := toolIntent(tc.tool, tc.path)
 		if got != tc.want {
-			t.Errorf("writeToolIntentSynth(%q, %q) = %q, want %q", tc.tool, tc.path, got, tc.want)
+			t.Errorf("toolIntent(%q, %q) = %q, want %q", tc.tool, tc.path, got, tc.want)
 		}
 	}
 }

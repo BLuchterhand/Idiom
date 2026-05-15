@@ -39,27 +39,27 @@ func TestRehydratePlanStateRecoversLedgerAndHits(t *testing.T) {
 
 	// Simulate restart: blow away the in-memory state a fresh process
 	// would have, then rehydrate.
-	m.planLedgerItems = nil
-	m.planLedgerRenderedIDs = nil
-	m.planLedgerHits = nil
-	m.planSessionHeadingWritten = false
+	m.plan.ledgerItems = nil
+	m.plan.ledgerRenderedIDs = nil
+	m.plan.ledgerHits = nil
+	m.plan.sessionHeadingWritten = false
 	m.planPath = ""
 
 	rehydratePlanState(m)
 
-	if !m.planSessionHeadingWritten {
+	if !m.plan.sessionHeadingWritten {
 		t.Errorf("session heading flag should be restored")
 	}
-	if !m.planLedgerRenderedIDs["t1"] {
+	if !m.plan.ledgerRenderedIDs["t1"] {
 		t.Errorf("rendered id set should include t1")
 	}
-	if got := m.planLedgerItems["t1"]; got.ID != "t1" || len(got.Paths) != 2 {
+	if got := m.plan.ledgerItems["t1"]; got.ID != "t1" || len(got.Paths) != 2 {
 		t.Errorf("ledger item not rebuilt: %#v", got)
 	}
-	if !m.planLedgerHits["t1"]["a.go"] {
+	if !m.plan.ledgerHits["t1"]["a.go"] {
 		t.Errorf("a.go should remain marked hit after rehydrate")
 	}
-	if m.planLedgerHits["t1"]["b.go"] {
+	if m.plan.ledgerHits["t1"]["b.go"] {
 		t.Errorf("b.go was not written pre-restart — should not be hit")
 	}
 
@@ -99,12 +99,12 @@ func TestRehydratePlanStatePreservesCheckedItems(t *testing.T) {
 	m.recordWriteSuccess(1, req, workspace.ToolResult{Summary: "ok"})
 
 	// Wipe and rehydrate.
-	m.planLedgerItems = nil
-	m.planLedgerRenderedIDs = nil
-	m.planLedgerHits = nil
+	m.plan.ledgerItems = nil
+	m.plan.ledgerRenderedIDs = nil
+	m.plan.ledgerHits = nil
 	rehydratePlanState(m)
 
-	item, ok := m.planLedgerItems["t1"]
+	item, ok := m.plan.ledgerItems["t1"]
 	if !ok {
 		t.Fatalf("t1 missing from rehydrated ledger")
 	}
@@ -122,7 +122,7 @@ func TestRehydratePlanStateMissingFileIsSilent(t *testing.T) {
 	// Don't create .planning/. Call rehydrate and verify no panic,
 	// no state populated.
 	rehydratePlanState(m)
-	if len(m.planLedgerItems) != 0 || len(m.planLedgerRenderedIDs) != 0 {
+	if len(m.plan.ledgerItems) != 0 || len(m.plan.ledgerRenderedIDs) != 0 {
 		t.Errorf("rehydrate without plan file should leave maps empty")
 	}
 }

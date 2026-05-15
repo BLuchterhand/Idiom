@@ -68,8 +68,8 @@ func (m *Model) appendHistoryMessage(sender, content string, toolCalls []string)
 	}
 
 	grouped := false
-	if n := len(m.historyEntries); n > 0 && m.historyEntries[n-1].sender == sender && !m.historyEntries[n-1].inProgress {
-		entry := &m.historyEntries[n-1]
+	if n := len(m.history.entries); n > 0 && m.history.entries[n-1].sender == sender && !m.history.entries[n-1].inProgress {
+		entry := &m.history.entries[n-1]
 		if content != "" {
 			entry.contents = append(entry.contents, content)
 		}
@@ -84,13 +84,13 @@ func (m *Model) appendHistoryMessage(sender, content string, toolCalls []string)
 			entry.contents = []string{content}
 		}
 		entry.summary = localFallbackSummary(&entry)
-		m.historyEntries = append(m.historyEntries, entry)
-		m.historySelected = len(m.historyEntries) - 1
+		m.history.entries = append(m.history.entries, entry)
+		m.history.selected = len(m.history.entries) - 1
 	}
 
-	idx := len(m.historyEntries) - 1
+	idx := len(m.history.entries) - 1
 	if m.cfg.RouteClassifier.Enabled && m.summaryClient != nil {
-		go m.summarizeEntry(idx, m.historyEntries[idx])
+		go m.summarizeEntry(idx, m.history.entries[idx])
 	}
 
 	m.requestHistoryPanelRender(false, true)
@@ -114,12 +114,12 @@ func historyToolCallsFromLines(lines []string) []historyToolCall {
 func (m *Model) beginAgentHistoryTurn() {
 	m.currentTurnTools = nil
 	m.currentTurnHistoryActive = true
-	m.currentTurnHistoryIndex = len(m.historyEntries)
+	m.currentTurnHistoryIndex = len(m.history.entries)
 
 	entry := historyEntry{sender: "agent", inProgress: true}
 	entry.summary = localFallbackSummary(&entry)
-	m.historyEntries = append(m.historyEntries, entry)
-	m.historySelected = len(m.historyEntries) - 1
+	m.history.entries = append(m.history.entries, entry)
+	m.history.selected = len(m.history.entries) - 1
 
 	m.requestHistoryPanelRender(true, true)
 }
@@ -129,10 +129,10 @@ func (m *Model) activeAgentHistoryEntry() (int, *historyEntry, bool) {
 		return 0, nil, false
 	}
 	idx := m.currentTurnHistoryIndex
-	if idx < 0 || idx >= len(m.historyEntries) {
+	if idx < 0 || idx >= len(m.history.entries) {
 		return 0, nil, false
 	}
-	entry := &m.historyEntries[idx]
+	entry := &m.history.entries[idx]
 	if entry.sender != "agent" || !entry.inProgress {
 		return 0, nil, false
 	}
@@ -236,15 +236,15 @@ func (m *Model) failAgentHistoryTurn(err error) {
 
 func (m *Model) removeEmptyCurrentHistoryEntry() {
 	idx := m.currentTurnHistoryIndex
-	if idx < 0 || idx >= len(m.historyEntries) {
+	if idx < 0 || idx >= len(m.history.entries) {
 		return
 	}
-	m.historyEntries = append(m.historyEntries[:idx], m.historyEntries[idx+1:]...)
-	if m.historySelected >= len(m.historyEntries) {
-		m.historySelected = len(m.historyEntries) - 1
+	m.history.entries = append(m.history.entries[:idx], m.history.entries[idx+1:]...)
+	if m.history.selected >= len(m.history.entries) {
+		m.history.selected = len(m.history.entries) - 1
 	}
-	if m.historySelected < 0 {
-		m.historySelected = 0
+	if m.history.selected < 0 {
+		m.history.selected = 0
 	}
 	m.requestHistoryPanelRender(true, false)
 }
@@ -254,24 +254,24 @@ func (m *Model) requestHistoryPanelRender(force bool, stickBottom bool) {
 		return
 	}
 	if stickBottom {
-		m.historyRenderScrollBottom = true
+		m.history.renderScrollBottom = true
 	}
-	if !m.historyPanelOpen || m.panelTab != panelTabHistory {
+	if !m.history.panelOpen || m.panelTab != panelTabHistory {
 		return
 	}
-	if force || !m.streaming || !m.currentTurnHistoryActive || m.historyFocused {
+	if force || !m.streaming || !m.currentTurnHistoryActive || m.history.focused {
 		m.flushHistoryPanelRender()
 		return
 	}
-	if m.historyRenderLast.IsZero() || time.Since(m.historyRenderLast) >= historyPanelRenderThrottle {
+	if m.history.renderLast.IsZero() || time.Since(m.history.renderLast) >= historyPanelRenderThrottle {
 		m.flushHistoryPanelRender()
 		return
 	}
-	if m.historyRenderPending {
+	if m.history.renderPending {
 		return
 	}
-	m.historyRenderPending = true
-	delay := historyPanelRenderThrottle - time.Since(m.historyRenderLast)
+	m.history.renderPending = true
+	delay := historyPanelRenderThrottle - time.Since(m.history.renderLast)
 	if delay < 0 {
 		delay = historyPanelRenderThrottle
 	}
@@ -285,13 +285,13 @@ func (m *Model) flushHistoryPanelRender() {
 	if m == nil {
 		return
 	}
-	m.historyRenderPending = false
+	m.history.renderPending = false
 	m.renderHistoryPanelContent()
-	if m.historyPanelOpen && m.historyRenderScrollBottom {
-		m.historyViewport.GotoBottom()
+	if m.history.panelOpen && m.history.renderScrollBottom {
+		m.history.viewport.GotoBottom()
 	}
-	m.historyRenderScrollBottom = false
-	m.historyRenderLast = time.Now()
+	m.history.renderScrollBottom = false
+	m.history.renderLast = time.Now()
 }
 
 // localFallbackSummary produces a short readable summary without hitting any

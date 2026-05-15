@@ -17,10 +17,12 @@ import (
 
 func newHistoryPanelModel() *Model {
 	return &Model{
-		historyPanelOpen: true,
-		historyViewport:  viewport.New(72, 20),
-		panelTab:         panelTabHistory,
-		events:           make(chan tea.Msg, 2),
+		history: historyState{
+			panelOpen: true,
+			viewport:  viewport.New(72, 20),
+		},
+		panelTab: panelTabHistory,
+		events:   make(chan tea.Msg, 2),
 	}
 }
 
@@ -29,10 +31,10 @@ func TestLiveAgentHistoryEntryUpdatesToolCallInPlace(t *testing.T) {
 	m.appendHistoryMessage("user", "inspect the app", nil)
 	m.beginAgentHistoryTurn()
 
-	if len(m.historyEntries) != 2 {
-		t.Fatalf("expected user entry plus live agent entry, got %d", len(m.historyEntries))
+	if len(m.history.entries) != 2 {
+		t.Fatalf("expected user entry plus live agent entry, got %d", len(m.history.entries))
 	}
-	agentEntry := &m.historyEntries[1]
+	agentEntry := &m.history.entries[1]
 	if !agentEntry.inProgress {
 		t.Fatal("agent history entry should be marked in progress")
 	}
@@ -47,11 +49,11 @@ func TestLiveAgentHistoryEntryUpdatesToolCallInPlace(t *testing.T) {
 	if !agentEntry.toolCalls[0].running {
 		t.Fatal("tool line should be marked running")
 	}
-	if !strings.Contains(m.historyViewport.View(), "read_file | running internal/app/history.go") {
-		t.Fatalf("history viewport did not render running tool line:\n%s", m.historyViewport.View())
+	if !strings.Contains(m.history.viewport.View(), "read_file | running internal/app/history.go") {
+		t.Fatalf("history viewport did not render running tool line:\n%s", m.history.viewport.View())
 	}
-	if !strings.Contains(m.historyViewport.View(), "why: inspect the history model") {
-		t.Fatalf("history viewport did not render tool intent:\n%s", m.historyViewport.View())
+	if !strings.Contains(m.history.viewport.View(), "why: inspect the history model") {
+		t.Fatalf("history viewport did not render tool intent:\n%s", m.history.viewport.View())
 	}
 
 	m.recordToolTraceInHistory(1, "read_file | Read internal/app/history.go lines 1-40", "", false)
@@ -78,10 +80,10 @@ func TestRecordAgentTurnFinalizesLiveHistoryEntry(t *testing.T) {
 
 	m.recordAgentTurn()
 
-	if len(m.historyEntries) != 2 {
-		t.Fatalf("expected two history entries, got %d", len(m.historyEntries))
+	if len(m.history.entries) != 2 {
+		t.Fatalf("expected two history entries, got %d", len(m.history.entries))
 	}
-	agentEntry := m.historyEntries[1]
+	agentEntry := m.history.entries[1]
 	if agentEntry.inProgress {
 		t.Fatal("agent history entry should be finalized")
 	}
@@ -130,10 +132,10 @@ func TestFailAgentHistoryTurnFinalizesPlaceholder(t *testing.T) {
 
 	m.failAgentHistoryTurn(errors.New("server unavailable"))
 
-	if len(m.historyEntries) != 1 {
-		t.Fatalf("expected failed placeholder to remain as history entry, got %d", len(m.historyEntries))
+	if len(m.history.entries) != 1 {
+		t.Fatalf("expected failed placeholder to remain as history entry, got %d", len(m.history.entries))
 	}
-	entry := m.historyEntries[0]
+	entry := m.history.entries[0]
 	if entry.inProgress {
 		t.Fatal("failed history entry should not remain in progress")
 	}
@@ -147,16 +149,16 @@ func TestRecordToolTraceInHistoryThrottlesLiveHistoryRender(t *testing.T) {
 	m.appendHistoryMessage("user", "inspect the app", nil)
 	m.beginAgentHistoryTurn()
 	m.streaming = true
-	m.historyFocused = false
-	m.historyRenderLast = time.Now()
+	m.history.focused = false
+	m.history.renderLast = time.Now()
 
 	m.recordToolTraceInHistory(1, "read_file | running internal/app/history.go", "inspect the history model", true)
 
-	if !m.historyRenderPending {
+	if !m.history.renderPending {
 		t.Fatal("expected live history render to be throttled while streaming")
 	}
-	if strings.Contains(m.historyViewport.View(), "read_file | running internal/app/history.go") {
-		t.Fatalf("expected throttled render to defer viewport update, got:\n%s", m.historyViewport.View())
+	if strings.Contains(m.history.viewport.View(), "read_file | running internal/app/history.go") {
+		t.Fatalf("expected throttled render to defer viewport update, got:\n%s", m.history.viewport.View())
 	}
 }
 
@@ -175,7 +177,7 @@ func TestCtrlBOpensHistoryTabAndSetsStatusWhileStreaming(t *testing.T) {
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
 	updated := model.(*Model)
 
-	if !updated.historyPanelOpen {
+	if !updated.history.panelOpen {
 		t.Fatal("expected Ctrl+B to open the panel")
 	}
 	if updated.panelTab != panelTabHistory {
