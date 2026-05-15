@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/workspace"
 )
@@ -273,7 +274,7 @@ func TestPlanPanelAutoShowNeeded(t *testing.T) {
 
 	writeFile(t, root, ".planning/sessA.md", "## Session\n")
 	m.planContent = ""
-	m.planMTime = m.planMTime
+	m.planMTime = time.Time{}
 
 	if m.planPanelAutoShowNeeded() {
 		t.Error("should not auto-show with empty content")
@@ -281,7 +282,7 @@ func TestPlanPanelAutoShowNeeded(t *testing.T) {
 
 	writeFile(t, root, ".planning/sessA.md", "## Session\n- [ ] a task\n")
 	m.planContent = ""
-	m.planMTime = m.planMTime
+	m.planMTime = time.Time{}
 
 	if !m.planPanelAutoShowNeeded() {
 		t.Error("should auto-show with checkbox items")
@@ -295,7 +296,7 @@ func TestPlanPanelAutoShowNeededPlanExecute(t *testing.T) {
 
 	writeFile(t, root, ".planning/sessA.md", "## Session\n### Plan\n- [ ] do it\n")
 	m.planContent = ""
-	m.planMTime = m.planMTime
+	m.planMTime = time.Time{}
 
 	if !m.planPanelAutoShowNeeded() {
 		t.Error("plan-execute should always auto-show when plan exists")

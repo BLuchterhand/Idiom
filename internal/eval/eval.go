@@ -580,7 +580,7 @@ func LoadRecords(path string) ([]Record, error) {
 		}
 		records = append(records, normalizeLogRecord(payload))
 		return nil
-	})
+	}, 64*1024*1024)
 	if err != nil {
 		return nil, err
 	}

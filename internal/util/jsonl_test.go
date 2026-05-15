@@ -205,3 +205,54 @@ func TestScanFileSingleRecord(t *testing.T) {
 		t.Error("obj.Only = false, want true")
 	}
 }
+
+func TestScanFileWhitespaceOnlyLinesSkipped(t *testing.T) {
+	path := writeJSONL(t,
+		`{"a":1}`,
+		"   ",
+		"\t\t",
+		`{"a":2}`,
+		"  \t  ",
+		`{"a":3}`,
+	)
+	var count int
+	err := ScanFile(path, func(json.RawMessage) error {
+		count++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ScanFile returned error: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("got %d calls, want 3", count)
+	}
+}
+
+func TestScanFileCustomMaxLineBytes(t *testing.T) {
+	big := strings.Repeat("x", 5*1024*1024)
+	path := writeJSONL(t, `{"data":"`+big+`"}`)
+
+	err := ScanFile(path, func(json.RawMessage) error {
+		return nil
+	}, 1024*1024)
+	if err == nil {
+		t.Fatal("expected error for line exceeding custom maxLineBytes")
+	}
+}
+
+func TestScanFileCustomMaxLineBytesLargeEnough(t *testing.T) {
+	big := strings.Repeat("x", 512)
+	path := writeJSONL(t, `{"data":"`+big+`"}`)
+
+	var count int
+	err := ScanFile(path, func(json.RawMessage) error {
+		count++
+		return nil
+	}, 4*1024*1024)
+	if err != nil {
+		t.Fatalf("ScanFile returned error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("got %d calls, want 1", count)
+	}
+}

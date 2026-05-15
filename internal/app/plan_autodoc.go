@@ -885,6 +885,13 @@ func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 	default:
 		return
 	}
+	data, err := os.ReadFile(planPath)
+	if err != nil {
+		return
+	}
+	if !strings.Contains(string(data), anchor) {
+		return
+	}
 	_ = mutatePlanLines(planPath, func(lines []string) []string {
 		for i, line := range lines {
 			if !strings.Contains(line, anchor) {
