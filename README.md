@@ -1,24 +1,25 @@
 # Idiom
 
-A local coding-agent harness for running local-LLM models through `llama.cpp` or MLX, 
-with a Bubble Tea terminal UI plus structured CLI subcommands for plan-execute /
-implement / atom-spec lanes.
+A local coding-agent harness for running local and hosted models through
+`llama.cpp`, MLX, or OpenAI-compatible APIs, with structured CLI subcommands
+for plan-execute / implement / atom-spec lanes plus a Bubble Tea terminal UI.
 
-Idiom is being build and optimized around the Qwen3.6 family of models, 
-though it as also been tested successfully against the GLM 5.1 and Minimax m2.7 models.
-It is meant to be an agnostic harness for local & remote models, but it has yet to be 
-more broadly tested as such.
+Idiom is being built and optimized around the Qwen 3.6 family of models,
+though it has also been tested successfully against GLM 5.1 and Minimax m2.7
+models. It is meant to be an agnostic harness for local and hosted models, but
+it has not yet been broadly validated across providers.
 
-CURRENT STATE: Idiom is being used as a headless runner. While it does contain a TUI
-experience, it is very likely to be broken and hardly functional.
+CURRENT STATE: Idiom is used primarily as a headless runner. The TUI still
+exists, but it is not the actively maintained path and may be broken.
 
 ## What it does
 
-- launches or attaches to a local `llama-server`
-- streams chat responses into a terminal UI
+- launches or attaches to local `llama-server` / `mlx_lm.server` backends, or
+  calls a hosted backend
+- can stream chat responses into a terminal UI
 - saves transcripts to Markdown
 - loads baseline behavior from prompt files and profiles every session
-- gives Qwen scoped workspace access for reads, search, writes, and shell commands
+- gives the model scoped workspace access for reads, search, writes, and shell commands
 - keeps model weights, caches, and harness logs out of the target repository
 
 ## Architecture at a glance
@@ -32,12 +33,57 @@ For a connected architecture and operations knowledge base, open
 deterministic evidence-based development pattern, runtime lanes, repository
 memory, tool contracts, verification, audit, evals, and package ownership.
 
-## Quick install (binary)
+## Install from source (current path)
 
-> Requires a published GitHub release. Phase 9 of the
-> [reusability roadmap](docs/reusability-design.md) ships the goreleaser
-> pipeline and `install.sh`; once the first release tag exists, the
-> command below resolves it automatically.
+Use this path when working from this repository or before a binary release
+exists. The release installer needs a published GitHub Release asset; until a
+`v*` tag has been pushed and the release workflow has uploaded binaries, build
+from a clone.
+
+On macOS with Homebrew, run the master installer to install the required local
+toolchain, workspace discovery backends, the source-built `idiom` binary, and
+the per-user queue daemon:
+
+```bash
+./scripts/install-requirements.sh
+```
+
+The default install covers Go, ripgrep, ast-grep, Universal Ctags, Semgrep,
+Joern, and `gopls`. It runs `make build`, which compiles the canonical
+source-build binary at `~/.idiom/bin/idiom`, then refreshes `bin/idiom`,
+repo-root `./idiom`, and `~/.local/bin/idiom` as symlinks to that file.
+
+To install optional precision backends for other language families, run:
+
+```bash
+./scripts/install-requirements.sh --all
+```
+
+Useful installer flags:
+
+- `--no-build` — install/check the toolchain without running `make build`.
+- `--no-audit` — skip the final `harness_audit` tool-surface check.
+- `--no-queue` — skip the macOS launchd queue daemon install.
+
+If you already have the prerequisites and only need the binary:
+
+```bash
+make build
+```
+
+On Linux or other Unix-like systems, `scripts/install-requirements.sh` exits by
+design because it is macOS/Homebrew-specific. Install the Go version declared in
+`go.mod` and any discovery CLIs you need, then run `make build` or:
+
+```bash
+go build -o bin/idiom ./cmd/idiom
+```
+
+## Release install (after a tagged release)
+
+`install.sh` downloads a release archive from GitHub Releases. This command
+will fail until a release tag exists and `.github/workflows/release.yml` has
+uploaded assets for that tag.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh
@@ -49,9 +95,9 @@ binary in `~/.local/bin/idiom` (or `/usr/local/bin/idiom` if that's
 writable without sudo). Add `~/.local/bin` to your shell's `$PATH` if
 you don't already have it.
 
-Override knobs (env vars): `IDIOM_VERSION=v0.1.0` to pin a release,
-`IDIOM_INSTALL_DIR=~/bin` to change the destination,
-`IDIOM_REPO=owner/fork` to install from a fork.
+Override knobs (env vars): `IDIOM_VERSION=v0.1.0` to pin an existing release,
+`IDIOM_INSTALL_DIR=~/bin` to change the destination, and `IDIOM_REPO=owner/fork`
+to install from a fork.
 
 ## Quick start
 
@@ -77,7 +123,7 @@ the readiness section while keeping the legacy host checks.
 Run a lane against a brief:
 
 ```bash
-idiom lane plan-execute --title atom-001 .planning/atom-001.md
+idiom lane plan-execute --title my-task path/to/brief.md
 ```
 
 `idiom lane` is the recommended entry — it composes the prompt
@@ -157,37 +203,15 @@ Other useful subcommands:
 - `idiom lane postflight --diff <patch>` — QC pipeline against a
   returned diff.
 
-For the source-build path (cloning the repo, installing the
-toolchain, running from `bin/idiom`), see "Install from source" below.
-
 ## Layout
 
-- `config.example.json`: example runtime config (copy to `config.json` and edit)
+- `.idiom/config.json`: self-hosted lane/doctor config for this repo
+- `config.example.json`: portable llama.cpp starter config for new environments
+- `config.json`: root direct-run config for this checkout; do not treat it as
+  the portable template
 - `prompts/`: baseline prompts and behavior profiles
 - `logs/`: server output, per-session JSONL debug logs, and telemetry
 - `transcripts/`: saved chats
-
-## Install from source
-
-For development on idiom itself, or when you want the full toolchain
-(ripgrep, ast-grep, ctags, semgrep, joern, gopls) installed alongside
-the binary, build from a clone instead of using the curl install above.
-
-On macOS, run the master installer to install the required local toolchain,
-workspace discovery backends, build `bin/idiom`, and verify the active harness
-audit requirements:
-
-```bash
-./scripts/install-requirements.sh
-```
-
-The default install covers Go, ripgrep, ast-grep, Universal Ctags, Semgrep,
-Joern, and `gopls`. To also install optional precision backends for other
-language families, run:
-
-```bash
-./scripts/install-requirements.sh --all
-```
 
 ## Run
 
@@ -382,12 +406,23 @@ Notes:
 
 ## Inference backends
 
-Each of the three server blocks (`llama_server`, `implementer`, `route_classifier`) accepts a `kind` field that selects the inference backend:
+Each of the three server blocks (`llama_server`, `implementer`,
+`route_classifier`) accepts a `kind` field that selects the inference backend.
+Local, harness-launchable backends are:
 
 - `"kind": "llama"` (default) — launches `llama-server` from llama.cpp with the existing GGUF model path and llama-specific flags (`jinja`, `flash_attention`, `reasoning*`, `cache-type-*`, etc).
 - `"kind": "mlx"` — launches `mlx_lm.server` from [mlx-lm](https://github.com/ml-explore/mlx-lm). On Apple Silicon this typically beats llama.cpp's Metal backend by ~15–30% throughput and ~10% memory. `model` becomes a Hugging Face ID (e.g. `Qwen/Qwen3.6-35B-A3B`) or a local MLX directory — not a GGUF path. Llama-specific flags (`jinja`, `flash_attention`, `reasoning*`) are ignored. Current `mlx_lm.server` builds honor per-request `chat_template_kwargs`, so idiom can intentionally switch `enable_thinking` / `preserve_thinking` for routes that need a different mode; keep server defaults in `extra_args` for fallback behavior, for example `--chat-template-args '{"enable_thinking":true,"preserve_thinking":true}'`. Idiom does not send OpenAI native `tools` arrays to MLX backends; current MLX Qwen tool parsers can terminate the HTTP request on malformed generated tool XML, so MLX lanes use idiom's JSON tool protocol and harness-side validation instead.
 
-The blocks are independent, so mixed setups work — for example, main chat on MLX and the route classifier still on llama.cpp. Set `binary` to `mlx_lm.server` (install via `pip install mlx-lm`) and pass any additional flags via `extra_args`.
+Hosted, client-only backends are `"openai_responses"`, `"codex"`, `"zai"`,
+and `"minimax"`. They do not start a local process and cannot be used with
+`--server-only`; set `model`, optional `base_url`, and optional `api_key_env`.
+Default API key env vars are `OPENAI_API_KEY` for OpenAI/Codex,
+`ZAI_API_KEY`, and `MINIMAX_API_KEY`.
+
+The blocks are independent, so mixed setups work — for example, main chat on
+MLX and the route classifier still on llama.cpp, or a hosted planner with a
+local implementer. Set `binary` to `mlx_lm.server` for MLX (install via
+`pip install mlx-lm`) and pass any additional flags via `extra_args`.
 
 ## Local job queue
 
@@ -892,8 +927,11 @@ evidence-only prompt section.
 ## Notes
 
 - The TUI stops the server on exit only if it started that server itself.
-- `config.example.json` shows a llama.cpp GGUF setup; copy it to `config.json`
-  and adjust `llama_server.model` and related model paths for the local weights
-  you actually have. `config.json` is gitignored so local paths stay local.
+- `config.example.json` shows a portable llama.cpp GGUF setup. For a new
+  environment, copy it to the config path you plan to use (`config.json` for
+  direct `./idiom -config config.json` runs, or `.idiom/config.json` for the
+  lane/doctor defaults) and adjust `llama_server.model` plus related model
+  paths. In shared repos, keep private model paths and API-key choices out of
+  committed config.
 - Keep project prompt files short. A distilled `.qwen.md` is usually better than sending a large architecture manual every turn.
 - `workspace.enable_writes` and `workspace.enable_shell` can be turned off if you want a read-only or no-exec mode.
