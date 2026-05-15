@@ -297,78 +297,18 @@ func (idx *CppIndex) FileByPath(path string) *CppFile {
 }
 
 func (idx *CppIndex) findFiles(pattern string) []string {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
-	if idx == nil || pattern == "" {
+	if idx == nil {
 		return nil
 	}
-	exact := make([]string, 0)
-	partial := make([]string, 0)
-	for _, file := range idx.Files {
-		base := strings.ToLower(filepath.Base(file.Path))
-		full := strings.ToLower(file.Path)
-		switch {
-		case base == pattern || full == pattern:
-			exact = append(exact, file.Path)
-		case strings.Contains(base, pattern) || strings.Contains(full, pattern):
-			partial = append(partial, file.Path)
-		}
-	}
-	if len(exact) > 0 {
-		slices.Sort(exact)
-		return exact
-	}
-	slices.Sort(partial)
-	return partial
+	return FindFilesExactPartial(idx.Files, pattern)
 }
 
 func (idx *CppIndex) rankFiles(scoreFn func(CppFile) int, limit int) []CppFile {
-	scored := make([]struct {
-		file  CppFile
-		score int
-	}, 0, len(idx.Files))
-	for _, file := range idx.Files {
-		score := scoreFn(file)
-		if score <= 0 {
-			continue
-		}
-		scored = append(scored, struct {
-			file  CppFile
-			score int
-		}{file: file, score: score})
-	}
-	slices.SortFunc(scored, func(a, b struct {
-		file  CppFile
-		score int
-	}) int {
-		if c := -cmp.Compare(a.score, b.score); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.file.Path, b.file.Path)
-	})
-	if limit > 0 && len(scored) > limit {
-		scored = scored[:limit]
-	}
-	out := make([]CppFile, 0, len(scored))
-	for _, item := range scored {
-		out = append(out, item.file)
-	}
-	return out
+	return RankFiles(idx.Files, scoreFn, limit)
 }
 
 func (idx *CppIndex) uniqueRankedPaths(files []CppFile, limit int) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(files))
-	for _, file := range files {
-		if _, ok := seen[file.Path]; ok {
-			continue
-		}
-		seen[file.Path] = struct{}{}
-		out = append(out, file.Path)
-		if limit > 0 && len(out) >= limit {
-			break
-		}
-	}
-	return out
+	return UniqueRankedPaths(files, limit)
 }
 
 func parseCppIncludes(rel string, content string, byName map[string][]string, byRel map[string]string) []string {
@@ -621,10 +561,7 @@ func cppParenBalance(text string) int {
 }
 
 func stripCppLineComment(line string) string {
-	if idx := strings.Index(line, "//"); idx >= 0 {
-		return line[:idx]
-	}
-	return line
+	return StripLineComment(line)
 }
 
 func isCppPath(path string) bool {

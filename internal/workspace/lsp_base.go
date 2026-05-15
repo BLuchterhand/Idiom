@@ -17,11 +17,12 @@ import (
 )
 
 type lspBaseClient struct {
-	cmd               *exec.Cmd
-	stdin             io.WriteCloser
-	stdout            *bufio.Reader
-	stderr            bytes.Buffer
-	nextID            int
+	cmd                *exec.Cmd
+	stdin              io.WriteCloser
+	stdout             *bufio.Reader
+	stderr             bytes.Buffer
+	nextID             int
+	serverName         string
 	handleNotification lspNotificationHandler
 }
 
@@ -96,10 +97,10 @@ type LSPOutgoingCall struct {
 
 type lspNotificationHandler func(method string, params json.RawMessage)
 
-func (c *lspBaseClient) close(serverName string) {
+func (c *lspBaseClient) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_ = c.request(ctx, serverName, "shutdown", nil, nil)
+	_ = c.request(ctx, "shutdown", nil, nil)
 	_ = c.notify("exit", map[string]any{})
 	c.forceClose()
 }
@@ -122,7 +123,7 @@ func (c *lspBaseClient) notify(method string, params any) error {
 	return c.writeMessage(msg)
 }
 
-func (c *lspBaseClient) request(ctx context.Context, serverName string, method string, params any, result any) error {
+func (c *lspBaseClient) request(ctx context.Context, method string, params any, result any) error {
 	id := c.nextID + 1
 	c.nextID = id
 	msg := map[string]any{
@@ -138,7 +139,7 @@ func (c *lspBaseClient) request(ctx context.Context, serverName string, method s
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		body, err := c.readMessage(serverName)
+		body, err := c.readMessage()
 		if err != nil {
 			if stderr := strings.TrimSpace(c.stderr.String()); stderr != "" {
 				return fmt.Errorf("%w: %s", err, stderr)
@@ -185,7 +186,7 @@ func (c *lspBaseClient) writeMessage(msg any) error {
 	return err
 }
 
-func (c *lspBaseClient) readMessage(serverName string) ([]byte, error) {
+func (c *lspBaseClient) readMessage() ([]byte, error) {
 	contentLength := -1
 	for {
 		line, err := c.stdout.ReadString('\n')
@@ -209,7 +210,7 @@ func (c *lspBaseClient) readMessage(serverName string) ([]byte, error) {
 		}
 	}
 	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length header from %s", serverName)
+		return nil, fmt.Errorf("missing Content-Length header from %s", c.serverName)
 	}
 	body := make([]byte, contentLength)
 	if _, err := io.ReadFull(c.stdout, body); err != nil {

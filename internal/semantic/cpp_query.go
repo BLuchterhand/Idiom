@@ -80,13 +80,7 @@ var cppSymbolPatternExtractors = []*regexp.Regexp{
 }
 
 func normalizeCppSymbolPattern(pattern string) string {
-	pattern = strings.TrimSpace(pattern)
-	for _, re := range cppSymbolPatternExtractors {
-		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
-			return m[1]
-		}
-	}
-	return pattern
+	return NormalizeSymbolPattern(pattern, cppSymbolPatternExtractors)
 }
 
 func (idx *CppIndex) FindCallsFrom(pattern string, limit int) []CppCallMatch {
@@ -253,10 +247,7 @@ func firstCppQualified(symbol CppSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
-	if strings.TrimSpace(symbol.Scope) != "" {
-		return symbol.Scope + "::" + symbol.Name
-	}
-	return symbol.Name
+	return FirstQualified(symbol.Scope, symbol.Name, "::")
 }
 
 func transitiveStringClosure(graph map[string][]string, start string) []string {

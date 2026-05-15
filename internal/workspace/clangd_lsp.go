@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -15,17 +14,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"idiom/internal/semantic"
 )
 
 type clangdLSPClient struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr bytes.Buffer
-	nextID int
+	lspBaseClient
 }
 
 
@@ -51,9 +45,12 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 		return nil, err
 	}
 	client := &clangdLSPClient{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: bufio.NewReader(stdout),
+		lspBaseClient: lspBaseClient{
+			serverName: "clangd",
+			cmd:        cmd,
+			stdin:      stdin,
+			stdout:     bufio.NewReader(stdout),
+		},
 	}
 	cmd.Stderr = &client.stderr
 	if err := cmd.Start(); err != nil {
@@ -86,138 +83,6 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 		return nil, fmt.Errorf("clangd initialized notification failed: %w", err)
 	}
 	return client, nil
-}
-
-func (c *clangdLSPClient) close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = c.request(ctx, "shutdown", nil, nil)
-	_ = c.notify("exit", map[string]any{})
-	c.forceClose()
-}
-
-func (c *clangdLSPClient) forceClose() {
-	_ = c.stdin.Close()
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-	}
-	_, _ = io.Copy(io.Discard, c.stdout)
-	_ = c.cmd.Wait()
-}
-
-func (c *clangdLSPClient) notify(method string, params any) error {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  params,
-	}
-	return c.writeMessage(msg)
-}
-
-func (c *clangdLSPClient) request(ctx context.Context, method string, params any, result any) error {
-	id := c.nextID + 1
-	c.nextID = id
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}
-	if err := c.writeMessage(msg); err != nil {
-		return err
-	}
-
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		body, err := c.readMessage()
-		if err != nil {
-			if stderr := strings.TrimSpace(c.stderr.String()); stderr != "" {
-				return fmt.Errorf("%w: %s", err, stderr)
-			}
-			return err
-		}
-		var env LSPEnvelope
-		if err := json.Unmarshal(body, &env); err != nil {
-			continue
-		}
-		if len(env.ID) == 0 {
-			continue
-		}
-		respID, err := parseClangdResponseID(env.ID)
-		if err != nil || respID != id {
-			continue
-		}
-		if env.Error != nil {
-			return fmt.Errorf("%s (code %d)", env.Error.Message, env.Error.Code)
-		}
-		if result != nil && len(env.Result) > 0 {
-			if err := json.Unmarshal(env.Result, result); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-}
-
-func parseClangdResponseID(raw json.RawMessage) (int, error) {
-	var id int
-	if err := json.Unmarshal(raw, &id); err == nil {
-		return id, nil
-	}
-	var idString string
-	if err := json.Unmarshal(raw, &idString); err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(idString)
-}
-
-func (c *clangdLSPClient) writeMessage(msg any) error {
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
-	if _, err := io.WriteString(c.stdin, header); err != nil {
-		return err
-	}
-	_, err = c.stdin.Write(body)
-	return err
-}
-
-func (c *clangdLSPClient) readMessage() ([]byte, error) {
-	contentLength := -1
-	for {
-		line, err := c.stdout.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
-			value := strings.TrimSpace(parts[1])
-			n, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, err
-			}
-			contentLength = n
-		}
-	}
-	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length header from clangd")
-	}
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(c.stdout, body); err != nil {
-		return nil, err
-	}
-	return body, nil
 }
 
 func (c *clangdLSPClient) openFile(path string) error {
