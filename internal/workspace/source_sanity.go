@@ -35,8 +35,8 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 		limit = defaultSourceSanityLimit
 	}
 	if len(targets) > limit {
-		rel := make([]string, 0, minInt(limit, len(targets)))
-		for _, target := range targets[:minInt(limit, len(targets))] {
+		rel := make([]string, 0, min(limit, len(targets)))
+		for _, target := range targets[:min(limit, len(targets))] {
 			rel = append(rel, filepath.ToSlash(m.displayPath(target)))
 		}
 		return ToolResult{

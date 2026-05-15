@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "01 - System Map.md",
+                "file": "16 - Operational Commands and Evidence Products.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "01 - System Map"
+              "title": "16 - Operational Commands and Evidence Products"
             }
           }
         ]
@@ -94,7 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "01 - System Map.md",
+                "file": "16 - Operational Commands and Evidence Products.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for 01 - System Map"
+              "title": "Backlinks for 16 - Operational Commands and Evidence Products"
             }
           },
           {
@@ -113,12 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "01 - System Map.md",
+                "file": "16 - Operational Commands and Evidence Products.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from 01 - System Map"
+              "title": "Outgoing links from 16 - Operational Commands and Evidence Products"
             }
           },
           {
@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "01 - System Map.md",
+                "file": "16 - Operational Commands and Evidence Products.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of 01 - System Map"
+              "title": "Outline of 16 - Operational Commands and Evidence Products"
             }
           }
         ]
@@ -185,6 +185,17 @@
   },
   "active": "56c496f1de24b534",
   "lastOpenFiles": [
+    "18 - Prompt Stack and Profiles.md",
+    "10 - Telemetry Audit Eval and Learning.md",
+    "11 - Local Model Operations.md",
+    "14 - Maintenance Playbooks.md",
+    "README.md",
+    "17 - Security Privacy and Data Boundaries.md",
+    "16 - Operational Commands and Evidence Products.md",
+    "13 - Package Guide.md",
+    "07 - Repository Memory and Context Graph.md",
+    "02 - Deterministic Evidence-Based Development.md",
+    "01 - System Map.md",
     "00 - Home.md"
   ]
 }

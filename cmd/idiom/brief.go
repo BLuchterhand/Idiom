@@ -159,7 +159,7 @@ func validatePreloadKind(kind string) error {
 	if kind == "" {
 		return fmt.Errorf("brief preload: empty kind")
 	}
-	if strings.ContainsAny(kind, `/\` + "\x00") || strings.Contains(kind, "..") {
+	if strings.ContainsAny(kind, `/\`+"\x00") || strings.Contains(kind, "..") {
 		return fmt.Errorf("brief preload: invalid kind %q (must be a single name without path separators)", kind)
 	}
 	return nil

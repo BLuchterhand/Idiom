@@ -601,9 +601,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.renderPlanPanelContent()
 	case planRefreshMsg:
-		// Re-render is self-gating: renderPlanPanelContent no-ops when
-		// the panel is closed, so firing this on every write/ledger
-		// event is cheap in the common case.
+		if !m.historyPanelOpen && !m.planAutoShown {
+			if m.planPanelAutoShowNeeded() {
+				m.panelTab = panelTabPlan
+				m.setHistoryPanelOpen(true)
+				m.planAutoShown = true
+			}
+		}
 		m.renderPlanPanelContent()
 	case nil:
 	default:
@@ -892,17 +896,14 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			m.recordWriteFailure(event.Step, event.Request, event.Result)
 			m.recordWriteSuccess(event.Step, event.Request, event.Result)
 			m.recordTaskLedger(event.Request, event.Result)
+			m.recordSubmittedPlan(event.Request, event.Result)
 			if workspace.IsWorkspaceWriteTool(event.Request.Tool) && strings.TrimSpace(event.Result.Error) == "" {
 				if err := m.reloadPromptStack(); err != nil {
 					m.setContextError("Prompt context failed: " + err.Error())
 				}
 			}
 			m.events <- toolTraceMsg{step: event.Step, text: workspace.FormatToolTrace(event.Result)}
-			// Poke the UI only when this tool could have mutated the
-			// plan (write tools + task_ledger). Other tool results
-			// don't change the plan file, so re-rendering would be
-			// wasted work.
-			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == "task_ledger" {
+			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == "task_ledger" || event.Request.Tool == "submit_plan" {
 				m.events <- planRefreshMsg{}
 			}
 		},

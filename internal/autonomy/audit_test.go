@@ -1,6 +1,7 @@
 package autonomy
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -125,7 +126,7 @@ func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
 		t.Fatalf("expected gate decision coverage, got %#v", report.GateCoverage)
 	}
 	for _, want := range []string{"obl-write-runner", "obl-verify"} {
-		if !containsAuditString(report.GateCoverage.OpenObligationRefs, want) {
+		if !slices.Contains(report.GateCoverage.OpenObligationRefs, want) {
 			t.Fatalf("gate coverage missing open obligation %q: %#v", want, report.GateCoverage.OpenObligationRefs)
 		}
 	}
@@ -355,15 +356,6 @@ func mustAutonomyEvent(event Event, err error) Event {
 func hasEventAuditFinding(report EventAuditReport, id string) bool {
 	for _, finding := range report.Findings {
 		if finding.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-func containsAuditString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
 			return true
 		}
 	}

@@ -987,7 +987,7 @@ func TestContextStatusRefreshDefaultBudgetBlocksLargeUnboundedStaleSet(t *testin
 		Fresh          bool     `json:"fresh"`
 		StaleFileCount int      `json:"stale_file_count"`
 		StaleFiles     []string `json:"stale_files"`
-		AutoRefresh struct {
+		AutoRefresh    struct {
 			Attempted      bool     `json:"attempted"`
 			Reason         string   `json:"reason"`
 			SkippedReason  string   `json:"skipped_reason"`

@@ -120,8 +120,6 @@ surrounding development system deterministic:
 - Verification is tied to risk and changed paths.
 - Audit and evals replay observed behavior.
 
-That distinction is the center of the architecture.
-
 ## Related Notes
 
 - [[02 - Deterministic Evidence-Based Development]]

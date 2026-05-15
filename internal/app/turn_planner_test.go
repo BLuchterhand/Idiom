@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -202,16 +203,16 @@ func TestClassifyTurnRouteSkipsModelForDecisiveFallback(t *testing.T) {
 	}
 }
 
-func TestTurnRoutePlanRuntimeBriefForDirectQuestionUsesConversationOnly(t *testing.T) {
+func TestTurnRoutePlanRuntimeBriefForDirectQuestionUsesReadOnlyWorkspace(t *testing.T) {
 	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "go_workspace_symbol", "go_read_symbol", "edit_file", "shell"}
 	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "direct_question"}, agent.BuildMode(), available)
-	if brief.PermissionProfile != "conversation_only" {
-		t.Fatalf("permission = %q, want conversation_only", brief.PermissionProfile)
+	if brief.PermissionProfile != "read_only_workspace" {
+		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
-	if len(brief.AllowedTools) != 0 {
-		t.Fatalf("direct question should not advertise tools in conversation-only mode, got %#v", brief.AllowedTools)
+	if len(brief.AllowedTools) == 0 {
+		t.Fatalf("direct question should advertise read-only tools, got %#v", brief.AllowedTools)
 	}
-	if len(brief.ReadinessGate) != 0 || !containsAppString(brief.FinalCritic, "answers_actual_user_request") {
+	if len(brief.ReadinessGate) != 0 || !slices.Contains(brief.FinalCritic, "answers_actual_user_request") {
 		t.Fatalf("expected direct question to use no readiness gate and a final answer critic, got %#v", brief)
 	}
 }
@@ -263,13 +264,4 @@ func TestTurnRoutePlanRuntimeBriefForArchitectureUsesShapingOnly(t *testing.T) {
 	if len(brief.ReadinessGate) == 0 || len(brief.FinalCritic) == 0 {
 		t.Fatalf("expected architecture analysis to keep a closure gate and final critic, got %#v", brief)
 	}
-}
-
-func containsAppString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }

@@ -13,20 +13,6 @@ func containsAny(text string, needles ...string) bool {
 	return frontier.ContainsAny(text, needles...)
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func truncateText(text string, limit int) string {
 	text = strings.TrimSpace(text)
 	if limit <= 0 || len(text) <= limit {
@@ -71,14 +57,6 @@ func uniqueNonEmptyStrings(values []string) []string {
 
 func uniqueLimitedStrings(values []string, limit int) []string {
 	return frontier.LimitStrings(values, limit)
-}
-
-func cloneBoolPtr(v *bool) *bool {
-	if v == nil {
-		return nil
-	}
-	b := *v
-	return &b
 }
 
 func waitForEvent(ch <-chan tea.Msg) tea.Cmd {

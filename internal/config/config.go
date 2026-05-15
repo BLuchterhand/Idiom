@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
+
+	"idiom/internal/util"
 )
 
 type Config struct {
@@ -385,7 +388,7 @@ func Default() Config {
 			MinP:                   0.0,
 			PresencePenalty:        0.0,
 			RepetitionPenalty:      1.0,
-			EnableThinking:         boolPtr(true),
+			EnableThinking:         util.Ptr(true),
 			PreserveThinking:       true,
 			MaxTokens:              8192,
 			MaxHistory:             20,
@@ -559,7 +562,7 @@ func (c Config) Validate() error {
 	if c.Chat.MaxTokens <= 0 {
 		return fmt.Errorf("chat.max_tokens must be positive")
 	}
-	if c.Chat.DebugLogMode != "" && !containsString([]string{"redacted", "full"}, c.Chat.DebugLogMode) {
+	if c.Chat.DebugLogMode != "" && !slices.Contains([]string{"redacted", "full"}, c.Chat.DebugLogMode) {
 		return fmt.Errorf("chat.debug_log_mode must be one of redacted, full")
 	}
 	if c.Chat.Preset != "" && c.Chat.Preset != "custom" {
@@ -959,7 +962,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   0.0,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    boolPtr(true),
+			EnableThinking:    util.Ptr(true),
 			PreserveThinking:  false,
 			MaxTokens:         8192,
 		},
@@ -971,7 +974,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   0.0,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    boolPtr(true),
+			EnableThinking:    util.Ptr(true),
 			PreserveThinking:  true,
 			MaxTokens:         8192,
 		},
@@ -983,7 +986,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   1.5,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    boolPtr(true),
+			EnableThinking:    util.Ptr(true),
 			PreserveThinking:  false,
 			MaxTokens:         8192,
 		},
@@ -995,7 +998,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   1.5,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    boolPtr(false),
+			EnableThinking:    util.Ptr(false),
 			PreserveThinking:  false,
 			MaxTokens:         4096,
 		},
@@ -1007,7 +1010,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   1.5,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    boolPtr(false),
+			EnableThinking:    util.Ptr(false),
 			PreserveThinking:  false,
 			MaxTokens:         4096,
 		},
@@ -1046,32 +1049,11 @@ func applyChatPreset(chat *Chat, preset ChatPreset) {
 	chat.MinP = preset.MinP
 	chat.PresencePenalty = preset.PresencePenalty
 	chat.RepetitionPenalty = preset.RepetitionPenalty
-	chat.EnableThinking = cloneBoolPtr(preset.EnableThinking)
+	chat.EnableThinking = util.ClonePtr(preset.EnableThinking)
 	chat.PreserveThinking = preset.PreserveThinking
 	if preset.MaxTokens > 0 {
 		chat.MaxTokens = preset.MaxTokens
 	}
-}
-
-func boolPtr(v bool) *bool {
-	b := v
-	return &b
-}
-
-func cloneBoolPtr(v *bool) *bool {
-	if v == nil {
-		return nil
-	}
-	return boolPtr(*v)
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
 
 func knownBackendKinds() []string {
@@ -1079,7 +1061,7 @@ func knownBackendKinds() []string {
 }
 
 func isKnownBackendKind(kind string) bool {
-	return containsString(knownBackendKinds(), strings.ToLower(strings.TrimSpace(kind)))
+	return slices.Contains(knownBackendKinds(), strings.ToLower(strings.TrimSpace(kind)))
 }
 
 func backendKindList() string {
@@ -1162,10 +1144,10 @@ func validateBackend(name string, b LlamaServer) error {
 		if b.CtxSize <= 0 {
 			return fmt.Errorf("%s.ctx_size must be positive", name)
 		}
-		if b.Reasoning != "" && !containsString([]string{"on", "off", "auto"}, b.Reasoning) {
+		if b.Reasoning != "" && !slices.Contains([]string{"on", "off", "auto"}, b.Reasoning) {
 			return fmt.Errorf("%s.reasoning must be one of on, off, auto", name)
 		}
-		if b.ReasoningFormat != "" && !containsString([]string{"auto", "none", "deepseek", "deepseek-legacy"}, b.ReasoningFormat) {
+		if b.ReasoningFormat != "" && !slices.Contains([]string{"auto", "none", "deepseek", "deepseek-legacy"}, b.ReasoningFormat) {
 			return fmt.Errorf("%s.reasoning_format must be one of auto, none, deepseek, deepseek-legacy", name)
 		}
 	}

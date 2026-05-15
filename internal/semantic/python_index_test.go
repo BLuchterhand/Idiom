@@ -3,6 +3,7 @@ package semantic
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -170,10 +171,10 @@ def load():
 		"src/demo/core.py":     "src/demo/core.py",
 		"src/demo/plugin.py":   "src/demo/plugin.py",
 	})
-	if !containsString(raw, ".plugin") || !containsString(raw, "demo.core") || !containsString(raw, "demo.plugin") {
+	if !slices.Contains(raw, ".plugin") || !slices.Contains(raw, "demo.core") || !slices.Contains(raw, "demo.plugin") {
 		t.Fatalf("expected raw imports to include relative, multi-import, and dynamic imports, got %v", raw)
 	}
-	if !containsString(resolved, "src/demo/plugin.py") || !containsString(resolved, "src/demo/core.py") {
+	if !slices.Contains(resolved, "src/demo/plugin.py") || !slices.Contains(resolved, "src/demo/core.py") {
 		t.Fatalf("expected imports to resolve plugin and core, got %v", resolved)
 	}
 }

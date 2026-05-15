@@ -261,8 +261,8 @@ func TestPlanLineLabelFallbacks(t *testing.T) {
 	}{
 		{"desc+path", workspace.ToolRequest{Tool: "edit_file", Description: "d"}, "x.go", "d (x.go)"},
 		{"desc only", workspace.ToolRequest{Tool: "edit_file", Description: "d"}, "", "d"},
-		{"path only", workspace.ToolRequest{Tool: "edit_file"}, "x.go", "edit_file x.go"},
-		{"tool only", workspace.ToolRequest{Tool: "mkdir"}, "", "mkdir"},
+		{"path only", workspace.ToolRequest{Tool: "edit_file"}, "x.go", "apply the planned change in x.go"},
+		{"tool only", workspace.ToolRequest{Tool: "mkdir"}, "", "create a directory"},
 	}
 	for _, tc := range cases {
 		if got := planLineLabel(tc.req, tc.path); got != tc.want {

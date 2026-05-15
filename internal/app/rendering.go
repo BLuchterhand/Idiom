@@ -18,7 +18,7 @@ func (m *Model) View() string {
 		return "Loading UI..."
 	}
 
-	w := maxInt(0, m.width)
+	w := max(0, m.width)
 
 	// ── Header ────────────────────────────────────────────────────────────────
 	serverState := "down"
@@ -147,7 +147,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 
 	stickBottom := forceBottom || m.viewport.AtBottom()
 
-	msgBodyStyle := bodyStyle.Width(maxInt(1, m.viewport.Width))
+	msgBodyStyle := bodyStyle.Width(max(1, m.viewport.Width))
 	base := m.renderedMessageBody()
 
 	// While a turn is in flight, render a live "Qwen is working" affordance
@@ -180,7 +180,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 }
 
 func (m *Model) renderedMessageBody() string {
-	width := maxInt(1, m.viewport.Width)
+	width := max(1, m.viewport.Width)
 	useMarkdown := m.mdRenderer != nil
 	hash := messageRenderFingerprint(m.messages)
 	if m.messageRenderWidth == width && m.messageRenderHash == hash && m.messageRenderMD == useMarkdown {

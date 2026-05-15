@@ -41,9 +41,8 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		return RuntimeContractSpec{
 			TaskFamily:           "direct_answer",
 			Contract:             "direct_answer",
-			PermissionProfile:    "conversation_only",
-			ToolProfile:          CapabilityConversationReadOnly,
-			ForbiddenTools:       append([]string(nil), workspace.WorkspaceWriteToolNames()...),
+			PermissionProfile:    "read_only_workspace",
+			ToolProfile:          CapabilityReadOnlyDiscovery,
 			RequiredEvidence:     []string{"answer_addresses_prompt"},
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"required_evidence_satisfied"},

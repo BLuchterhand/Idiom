@@ -277,7 +277,7 @@ func (m *Manager) genericCodeNavigationMatches(req ToolRequest) ([]string, bool,
 		}
 	}
 	pattern := strings.TrimSpace(req.Pattern)
-	matches := make([]string, 0, minInt(limit, defaultCodeNavigationMatchLimit))
+	matches := make([]string, 0, min(limit, defaultCodeNavigationMatchLimit))
 	truncated := false
 	for _, file := range files {
 		lines, err := genericCodeNavigationFileMatches(file, pattern, limit-len(matches))
@@ -334,7 +334,7 @@ func genericCodeNavigationFileMatches(path string, pattern string, remaining int
 		return nil, err
 	}
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-	matches := make([]string, 0, minInt(remaining, 8))
+	matches := make([]string, 0, min(remaining, 8))
 	for i, line := range lines {
 		if strings.Contains(line, pattern) {
 			matches = append(matches, fmt.Sprintf("%d: %s", i+1, strings.TrimSpace(line)))

@@ -140,7 +140,7 @@ func TestRunDelegateEditExecutorPathLandsTheEdit(t *testing.T) {
 
 	runner := &Runner{
 		ImplementerClient: llama.NewClient(executor.URL, 2*time.Second),
-		Workspace: newDelegateEditTestWorkspace(t, root),
+		Workspace:         newDelegateEditTestWorkspace(t, root),
 	}
 	result := runner.runDelegateEdit(context.Background(), workspace.ToolRequest{
 		Tool:    "delegate_edit",
@@ -184,7 +184,7 @@ func TestRunDelegateEditFallsBackToDirectDispatchWhenExecutorErrors(t *testing.T
 
 	runner := &Runner{
 		ImplementerClient: llama.NewClient(executor.URL, 500*time.Millisecond),
-		Workspace: newDelegateEditTestWorkspace(t, root),
+		Workspace:         newDelegateEditTestWorkspace(t, root),
 	}
 	result := runner.runDelegateEdit(context.Background(), workspace.ToolRequest{
 		Tool:    "delegate_edit",
@@ -226,7 +226,7 @@ func TestRunDelegateEditWithoutExecutorClientFallsBackImmediately(t *testing.T) 
 	defer planner.Close()
 
 	runner := &Runner{
-		Client: llama.NewClient(planner.URL, time.Second),
+		Client:    llama.NewClient(planner.URL, time.Second),
 		Workspace: newDelegateEditTestWorkspace(t, root),
 	}
 	result := runner.runDelegateEdit(context.Background(), workspace.ToolRequest{
@@ -313,7 +313,7 @@ func TestRunDelegateEditFallsBackOnUnparseableExecutorReply(t *testing.T) {
 	var parseErrorEmitted bool
 	runner := &Runner{
 		ImplementerClient: llama.NewClient(executor.URL, time.Second),
-		Workspace: newDelegateEditTestWorkspace(t, root),
+		Workspace:         newDelegateEditTestWorkspace(t, root),
 		OnEvent: func(ev RunEvent) {
 			if ev.Role == "delegate_edit_parse_error" {
 				parseErrorEmitted = true

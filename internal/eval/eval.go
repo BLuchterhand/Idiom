@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"idiom/internal/frontier"
 )
 
 type Record struct {
@@ -2874,20 +2876,7 @@ func sortedToolKeys(tools map[string]int) []string {
 }
 
 func uniqueNonEmptyStrings(items []string) []string {
-	seen := make(map[string]struct{}, len(items))
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		if _, ok := seen[item]; ok {
-			continue
-		}
-		seen[item] = struct{}{}
-		out = append(out, item)
-	}
-	return out
+	return frontier.UniqueNonEmptyStrings(items)
 }
 
 func containsStringFold(items []string, target string) bool {

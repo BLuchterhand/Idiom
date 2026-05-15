@@ -569,7 +569,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			CollectorVersion:       graph.CollectorVersion,
 			CollectorVersions:      graph.CollectorVersions,
 			Incremental:            true,
-			ReusedIndexedFiles:     maxInt(counts.FilesIndexed-filesIndexed, 0),
+			ReusedIndexedFiles:     max(counts.FilesIndexed-filesIndexed, 0),
 			ExpandedScope:          expandedScope,
 			DependencyRefreshFiles: dependencyRefreshFiles,
 			PartialRefreshReason:   partialRefreshReason,
@@ -713,13 +713,6 @@ func checkBuildContext(ctx context.Context) error {
 func scopePathMissing(root string, scope string) bool {
 	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(cleanScope(scope))))
 	return os.IsNotExist(err)
-}
-
-func maxInt(left int, right int) int {
-	if left > right {
-		return left
-	}
-	return right
 }
 
 func collectorReportsExcept(reports []CollectorReport, names ...string) []CollectorReport {

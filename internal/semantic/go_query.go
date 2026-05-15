@@ -134,7 +134,7 @@ func (idx *GoIndex) FindPackages(pattern string, limit int) []PackageMatch {
 		default:
 			continue
 		}
-		score += minInt(pkg.Funcs+pkg.Methods+pkg.Types, 20)
+		score += min(pkg.Funcs+pkg.Methods+pkg.Types, 20)
 		matches = append(matches, PackageMatch{
 			Path:    path,
 			Name:    pkg.Name,

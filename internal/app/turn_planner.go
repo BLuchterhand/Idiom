@@ -381,6 +381,27 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	case hasEditIntent(words):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
 	}
+	if containsAny(words,
+		" help me ",
+		" help test ",
+		" help with ",
+		" try out ",
+		" test out ",
+		" try the ",
+		" test the ",
+		" show me ",
+		" walk me ",
+		" walk through ",
+		" walk me through ",
+		" lets ",
+		" let's ",
+		" let me ",
+		" i want to ",
+		" i'd like to ",
+		" i need to ",
+	) {
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
+	}
 	if strings.EqualFold(mode.Name, "plan") {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
 	}

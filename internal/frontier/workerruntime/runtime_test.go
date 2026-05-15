@@ -1,6 +1,7 @@
 package workerruntime
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,13 +22,13 @@ func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
 		DeclarationMovesForbidden: true,
 	})
 
-	if !containsString(guidance.Constraints, "declaration_moves_forbidden") {
+	if !slices.Contains(guidance.Constraints, "declaration_moves_forbidden") {
 		t.Fatalf("missing declaration move constraint: %#v", guidance)
 	}
-	if !containsString(guidance.Constraints, "bootstrap_evidence_available") {
+	if !slices.Contains(guidance.Constraints, "bootstrap_evidence_available") {
 		t.Fatalf("missing bootstrap evidence constraint: %#v", guidance)
 	}
-	if !containsString(guidance.InvalidNext, "duplicate_read_file_on_bootstrapped_target") {
+	if !slices.Contains(guidance.InvalidNext, "duplicate_read_file_on_bootstrapped_target") {
 		t.Fatalf("missing duplicate read invalid action: %#v", guidance)
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
@@ -51,7 +52,7 @@ func TestBuildActionGuidanceForExactAnchorWriteFailure(t *testing.T) {
 		WriteCapable: true,
 	})
 
-	if !containsString(guidance.InvalidNext, "read/search before resolving exact-anchor write failure") {
+	if !slices.Contains(guidance.InvalidNext, "read/search before resolving exact-anchor write failure") {
 		t.Fatalf("missing exact-anchor invalid action: %#v", guidance)
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
@@ -99,7 +100,7 @@ func TestBuildActionGuidanceForExactAnchorHiddenPrewriteTool(t *testing.T) {
 		Constraints:  []string{"exact_anchor_implementation"},
 		WriteCapable: true,
 	})
-	if !containsString(guidance.InvalidNext, "read/search/shell before first exact-anchor write") {
+	if !slices.Contains(guidance.InvalidNext, "read/search/shell before first exact-anchor write") {
 		t.Fatalf("missing exact-anchor hidden-tool invalid action: %#v", guidance)
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
@@ -145,7 +146,7 @@ func TestBuildActionGuidanceForWriteReadyImplementationPacket(t *testing.T) {
 			Output:  "TEST_CASE(\"existing pattern\") {}",
 		},
 	})
-	if !containsString(guidance.InvalidNext, "orientation read/search after required edit paths and packet evidence without a named missing fact") {
+	if !slices.Contains(guidance.InvalidNext, "orientation read/search after required edit paths and packet evidence without a named missing fact") {
 		t.Fatalf("missing write-ready invalid action: %#v", guidance)
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
@@ -200,10 +201,10 @@ func TestBuildActionGuidanceIgnoresCompletionGatePhrasesInSearchOutput(t *testin
 			Output:  "internal/agent/runner.go:123: completion gate\ninternal/agent/runner.go:124: final answer rejected\n",
 		},
 	})
-	if containsString(guidance.Constraints, "completion_gate_active") {
+	if slices.Contains(guidance.Constraints, "completion_gate_active") {
 		t.Fatalf("search output should not fabricate completion-gate state: %#v", guidance)
 	}
-	if containsString(guidance.InvalidNext, "final_answer_without_satisfying_completion_gate") {
+	if slices.Contains(guidance.InvalidNext, "final_answer_without_satisfying_completion_gate") {
 		t.Fatalf("search output should not block answers as if a gate fired: %#v", guidance)
 	}
 	if strings.Contains(strings.Join(guidance.ValidNext, "\n"), "gate") {
@@ -221,10 +222,10 @@ func TestBuildActionGuidancePrefersClosureAfterPostChildGapBlocker(t *testing.T)
 			Error:   "the child packet already contains sufficient evidence to bias toward answering. Before any additional read/search call, include `named_gap` describing one exact unresolved claim this follow-up will verify or falsify. Use `why_not_answering` to state what would be materially wrong or missing if you answered now.",
 		},
 	})
-	if !containsString(guidance.Constraints, "child_packet_available") {
+	if !slices.Contains(guidance.Constraints, "child_packet_available") {
 		t.Fatalf("expected child-packet closure constraint, got %#v", guidance)
 	}
-	if !containsString(guidance.InvalidNext, "open-ended discovery after readiness without one exact missing claim and one exact probe") {
+	if !slices.Contains(guidance.InvalidNext, "open-ended discovery after readiness without one exact missing claim and one exact probe") {
 		t.Fatalf("expected closure invalid action, got %#v", guidance)
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
@@ -306,7 +307,7 @@ func TestBuildRecoveryPlanDoesNotTreatOptionListVerificationAsRequirement(t *tes
 	if plan.FailureClass == "verification_unresolved" {
 		t.Fatalf("option-list wording should not become verification_unresolved, got %#v", plan)
 	}
-	if containsString(plan.RequiredNext, "resolve verification status before claiming completion") {
+	if slices.Contains(plan.RequiredNext, "resolve verification status before claiming completion") {
 		t.Fatalf("option-list wording should not add verification required_next, got %#v", plan)
 	}
 }
@@ -821,12 +822,12 @@ func TestRoleSpecForChildWriteCarriesIsolatedContract(t *testing.T) {
 		t.Fatalf("unexpected child write role: %#v", spec)
 	}
 	for _, want := range []string{"edit_file", "apply_patch", "go_move_declarations", "shell"} {
-		if !containsString(spec.AllowedTools, want) {
+		if !slices.Contains(spec.AllowedTools, want) {
 			t.Fatalf("expected child write role to allow %q, got %#v", want, spec.AllowedTools)
 		}
 	}
 	for _, want := range []string{"task", "git_history_mutation", "git_index_mutation", "git_push", "publish", "deploy"} {
-		if !containsString(spec.ForbiddenTools, want) {
+		if !slices.Contains(spec.ForbiddenTools, want) {
 			t.Fatalf("expected child write role to forbid %q, got %#v", want, spec.ForbiddenTools)
 		}
 	}
@@ -842,17 +843,17 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 		t.Fatalf("unexpected child read-only role: %#v", spec)
 	}
 	for _, forbidden := range []string{"task", "list_files"} {
-		if containsString(spec.AllowedTools, forbidden) {
+		if slices.Contains(spec.AllowedTools, forbidden) {
 			t.Fatalf("child read-only role must not advertise %q, got %#v", forbidden, spec.AllowedTools)
 		}
 	}
 	for _, want := range []string{"read_file", "search_files", "search_content", "file_stats", "code_navigate", "context_pack", "discovery_query", "structural_search"} {
-		if !containsString(spec.AllowedTools, want) {
+		if !slices.Contains(spec.AllowedTools, want) {
 			t.Fatalf("expected child read-only role to allow %q, got %#v", want, spec.AllowedTools)
 		}
 	}
 	for _, want := range []string{"answer_when_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "prefer_symbol_or_handle_probes_over_raw_path_reads"} {
-		if !containsString(spec.SearchPolicy, want) {
+		if !slices.Contains(spec.SearchPolicy, want) {
 			t.Fatalf("expected child read-only search policy to include %q, got %#v", want, spec.SearchPolicy)
 		}
 	}
@@ -861,7 +862,7 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 func TestRoleSpecForImplementTrustsPreloadedAnchors(t *testing.T) {
 	spec := RoleSpecFor("implement")
 	for _, want := range []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported"} {
-		if !containsString(spec.SearchPolicy, want) {
+		if !slices.Contains(spec.SearchPolicy, want) {
 			t.Fatalf("expected implement search policy to include %q, got %#v", want, spec.SearchPolicy)
 		}
 	}
@@ -875,13 +876,4 @@ func TestRoleSpecForMainUsesConversationOnlyFallback(t *testing.T) {
 	if len(spec.AllowedTools) != 0 {
 		t.Fatalf("main role should not advertise tools by default, got %#v", spec.AllowedTools)
 	}
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }

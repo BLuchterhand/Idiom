@@ -281,8 +281,8 @@ func (idx *TsIndex) DefaultFiles(limit int) []string {
 		if file.IsTest {
 			score -= 30
 		}
-		score += minInt(file.Funcs+file.Methods*2, 24)
-		score += minInt(file.Types*2, 16)
+		score += min(file.Funcs+file.Methods*2, 24)
+		score += min(file.Types*2, 16)
 		base := strings.ToLower(filepath.Base(file.Path))
 		if base == "index.ts" || base == "index.tsx" || base == "index.js" || base == "index.jsx" || base == "main.ts" || base == "main.tsx" || base == "main.js" {
 			score += 18

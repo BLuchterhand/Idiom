@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -92,7 +93,7 @@ func (r *Runner) Run(
 	executionState := newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects)
 	delegatedReadOnlyAnswerReadyNudged := false
 	planThenExecuteReadinessNudged := false
-	delegatedReadOnlyAnswerReady := containsRunnerString(r.RuntimeBrief.Constraints, "answer_readiness_reached")
+	delegatedReadOnlyAnswerReady := slices.Contains(r.RuntimeBrief.Constraints, "answer_readiness_reached")
 	delegatedReadOnlyPostReadyFollowups := 0
 	delegatedReadOnlyDiminishingNudgeStage := 0
 	postChildPacketActive := false
@@ -2668,7 +2669,7 @@ func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string
 }
 
 func delegatedReadOnlyClosureReady(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if containsRunnerString(brief.Constraints, "answer_readiness_reached") {
+	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
 		return true
 	}
 	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") || strings.TrimSpace(brief.TaskFamily) != "delegated_read_only" {
@@ -2707,7 +2708,7 @@ func postChildPacketClosureReady(results []workspace.ToolResult) bool {
 }
 
 func postChildPacketClosureReadyWithBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if containsRunnerString(brief.Constraints, "child_packet_available") {
+	if slices.Contains(brief.Constraints, "child_packet_available") {
 		return true
 	}
 	for _, result := range results {
@@ -3275,7 +3276,7 @@ func invalidPostReadinessProbeShape(scope string, req workspace.ToolRequest, res
 	span := postReadinessReadSpan(req)
 	fileTopicGap := postReadinessGapLooksFileTopic(gap, path)
 	tooWide := span > 160
-	inspected := containsRunnerString(delegatedReadOnlyInspectedImplementationPaths(results), path)
+	inspected := slices.Contains(delegatedReadOnlyInspectedImplementationPaths(results), path)
 	pathCandidates := closureProbeCandidatesByPath(results, 4)
 	knownExactProbes := pathCandidates[path]
 	rawWholeFileRead := span == 0
@@ -3939,9 +3940,9 @@ func closureHasExactProbeEvidence(results []workspace.ToolResult) bool {
 func applyClosurePromptRefinement(state runnerNextActionState) runnerNextActionState {
 	scope := ""
 	switch {
-	case containsRunnerString(state.Constraints, "child_packet_available"):
+	case slices.Contains(state.Constraints, "child_packet_available"):
 		scope = "child_packet_available"
-	case containsRunnerString(state.Constraints, "answer_readiness_reached"):
+	case slices.Contains(state.Constraints, "answer_readiness_reached"):
 		scope = "answer_readiness_reached"
 	default:
 		return state
@@ -5037,12 +5038,12 @@ func runtimeBriefDefinesWriteReadyReadContract(brief workerruntime.WorkerRuntime
 	if !briefHasUsableEditAnchors(brief) {
 		return false
 	}
-	if containsRunnerString(brief.Constraints, "implementation_packet_write_ready") ||
-		containsRunnerString(brief.Constraints, "required_edit_paths_define_write_scope") {
+	if slices.Contains(brief.Constraints, "implementation_packet_write_ready") ||
+		slices.Contains(brief.Constraints, "required_edit_paths_define_write_scope") {
 		return true
 	}
 	if brief.Readiness != nil && brief.Readiness.ReadyToWrite {
-		if containsRunnerString(brief.Readiness.ClosedClaims, "required_edit_paths_define_write_scope") ||
+		if slices.Contains(brief.Readiness.ClosedClaims, "required_edit_paths_define_write_scope") ||
 			strings.Contains(strings.ToLower(brief.Readiness.FurtherReadsRequire), "named_gap") {
 			return true
 		}
@@ -5733,7 +5734,7 @@ func implementationPreWriteAllowedTools(tools []string) []string {
 	filtered := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		tool = strings.TrimSpace(tool)
-		if implementationPreWriteToolAllowed(tool) && !containsRunnerString(filtered, tool) {
+		if implementationPreWriteToolAllowed(tool) && !slices.Contains(filtered, tool) {
 			filtered = append(filtered, tool)
 		}
 	}
@@ -5782,7 +5783,7 @@ func implementationScopedEditAllowedToolsWithRegistry(tools []string, extReg *wo
 	filtered := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		tool = strings.TrimSpace(tool)
-		if implementationScopedEditToolAllowedWithRegistry(tool, extReg) && !containsRunnerString(filtered, tool) {
+		if implementationScopedEditToolAllowedWithRegistry(tool, extReg) && !slices.Contains(filtered, tool) {
 			filtered = append(filtered, tool)
 		}
 	}
@@ -5834,7 +5835,7 @@ func exactAnchorImplementationActive(brief workerruntime.WorkerRuntimeBrief) boo
 	if !runnerBriefRequiresMutation(brief) {
 		return false
 	}
-	return containsRunnerString(brief.Constraints, "exact_anchor_implementation")
+	return slices.Contains(brief.Constraints, "exact_anchor_implementation")
 }
 
 func requiredEditPathScopeRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) (summary string, errorText string, reject bool) {
@@ -6391,16 +6392,6 @@ func containsRunnerTool(tools []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, tool := range tools {
 		if strings.TrimSpace(tool) == target {
-			return true
-		}
-	}
-	return false
-}
-
-func containsRunnerString(values []string, target string) bool {
-	target = strings.TrimSpace(target)
-	for _, value := range values {
-		if strings.TrimSpace(value) == target {
 			return true
 		}
 	}
@@ -7738,7 +7729,7 @@ func prematureTargetReadRejection(req workspace.ToolRequest, results []workspace
 		return "", "", false
 	}
 	path := strings.TrimSpace(req.Path)
-	if path == "" || !containsRunnerString(brief.TargetRefs, path) {
+	if path == "" || !slices.Contains(brief.TargetRefs, path) {
 		return "", "", false
 	}
 	if !isLargeTargetRead(req) {
@@ -7768,12 +7759,12 @@ func evidenceFirstTargetReadRedirect(brief workerruntime.WorkerRuntimeBrief, res
 			return workspace.ToolRequest{}, false
 		}
 		path := strings.TrimSpace(req.Path)
-		if strings.TrimSpace(req.Tool) == "read_file" && containsRunnerString(brief.TargetRefs, path) && !isLargeTargetRead(req) {
+		if strings.TrimSpace(req.Tool) == "read_file" && slices.Contains(brief.TargetRefs, path) && !isLargeTargetRead(req) {
 			return workspace.ToolRequest{}, false
 		}
 		return firstTargetReadWindowRequest(brief.TargetRefs), true
 	}
-	if strings.TrimSpace(req.Tool) != "read_file" || !containsRunnerString(brief.TargetRefs, strings.TrimSpace(req.Path)) {
+	if strings.TrimSpace(req.Tool) != "read_file" || !slices.Contains(brief.TargetRefs, strings.TrimSpace(req.Path)) {
 		return workspace.ToolRequest{}, false
 	}
 	if !targetReadNeedsBounding(req) {
@@ -7814,12 +7805,12 @@ func hasFocusedNonTargetEvidence(results []workspace.ToolResult, targetRefs []st
 		switch tool := strings.TrimSpace(result.Tool); {
 		case tool == "read_file":
 			path := extractRunnerFilePath(result.Summary)
-			if path != "" && !containsRunnerString(targetRefs, path) {
+			if path != "" && !slices.Contains(targetRefs, path) {
 				return true
 			}
 		case strings.HasSuffix(tool, "_file_outline"), strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 			path := extractSemanticInspectionPath(result.Summary)
-			if path != "" && !containsRunnerString(targetRefs, path) {
+			if path != "" && !slices.Contains(targetRefs, path) {
 				return true
 			}
 		}
@@ -7837,7 +7828,7 @@ func successfulTargetReadCount(results []workspace.ToolResult, targetRefs []stri
 		if strings.TrimSpace(result.Tool) != "read_file" || strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		if path := extractRunnerFilePath(result.Summary); containsRunnerString(targetRefs, path) {
+		if path := extractRunnerFilePath(result.Summary); slices.Contains(targetRefs, path) {
 			count++
 		}
 	}
@@ -7909,7 +7900,7 @@ func latestSuccessfulTargetReadWindow(results []workspace.ToolResult, targetRefs
 			continue
 		}
 		window, ok := parseDebugLogReadWindow(result)
-		if !ok || !containsRunnerString(targetRefs, strings.TrimSpace(window.Path)) {
+		if !ok || !slices.Contains(targetRefs, strings.TrimSpace(window.Path)) {
 			continue
 		}
 		return window, true
@@ -10478,7 +10469,7 @@ func isPrematureEvidenceFirstTargetRead(req workspace.ToolRequest, results []wor
 	return isEvidenceFirstMutationTaskFamily(brief.TaskFamily) &&
 		len(brief.TargetRefs) > 0 &&
 		strings.TrimSpace(req.Tool) == "read_file" &&
-		containsRunnerString(brief.TargetRefs, strings.TrimSpace(req.Path)) &&
+		slices.Contains(brief.TargetRefs, strings.TrimSpace(req.Path)) &&
 		!hasFocusedNonTargetEvidence(results, brief.TargetRefs)
 }
 
@@ -10486,7 +10477,7 @@ func nonTargetRecoveryFileCandidates(results []workspace.ToolResult, targetRefs 
 	raw := rejectionRecoveryFileCandidates(results)
 	filtered := make([]string, 0, len(raw))
 	for _, path := range raw {
-		if containsRunnerString(targetRefs, path) {
+		if slices.Contains(targetRefs, path) {
 			continue
 		}
 		filtered = append(filtered, path)

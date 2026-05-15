@@ -15,19 +15,18 @@ import (
 // user clicks through to; for ledger items that haven't been attached
 // yet DiffID is empty and the item is inert.
 type planItemMeta struct {
-	LineIdx int    // line index in the plan markdown (0-based)
-	RawText string // the whole markdown line, unmodified
-	DiffID  string // from `<!-- id:... -->`, empty if not present
-	TaskID  string // from `<!-- tid:... -->`, empty if not present
-	Checked bool   // true if `[x]` / `[X]`
+	LineIdx    int
+	RawText    string
+	DiffID     string
+	TaskID     string
+	PlanEditID string
+	Checked    bool
 }
 
 var (
-	// Accept either `<!-- id:... -->` (diff anchor) or `<!-- tid:... -->`
-	// (ledger item anchor). Whitespace inside the comment is tolerated
-	// because a user hand-editing the plan may reflow the line.
 	planDiffAnchorRe = regexp.MustCompile(`<!--\s*id:\s*([^ \t<]+?)\s*-->`)
 	planTaskAnchorRe = regexp.MustCompile(`<!--\s*tid:\s*([^ \t<]+?)\s*-->`)
+	planPEAnchorRe   = regexp.MustCompile(`<!--\s*pid:\s*([^ \t<]+?)\s*-->`)
 )
 
 // parsePlanItems walks the plan markdown and returns one entry per
@@ -52,6 +51,9 @@ func parsePlanItems(plan string) []planItemMeta {
 		}
 		if m := planTaskAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
 			meta.TaskID = m[1]
+		}
+		if m := planPEAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
+			meta.PlanEditID = m[1]
 		}
 		items = append(items, meta)
 	}

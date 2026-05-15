@@ -9,11 +9,9 @@ tags:
 
 # Telemetry Audit Eval and Learning
 
-Telemetry, audit, and eval systems turn individual agent sessions into
-diagnosable and improvable behavior.
+Telemetry, audit, and eval systems turn individual agent sessions into diagnosable and improvable behavior.
 
-The point is not to collect logs for their own sake. The point is to make
-behavioral failures visible, replayable, and fixable.
+The goal is to make behavioral failures visible, replayable, and fixable.
 
 ## Evidence Flywheel
 

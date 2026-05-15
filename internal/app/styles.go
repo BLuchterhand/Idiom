@@ -73,9 +73,10 @@ var (
 	panelTabInactiveStyle = lipgloss.NewStyle().Foreground(colorDim).Background(colorMuted)
 
 	// Plan tab styles.
-	planTodoStyle = lipgloss.NewStyle().Foreground(colorText).PaddingLeft(1)
-	planDoneStyle = lipgloss.NewStyle().Foreground(colorDim).PaddingLeft(1).Strikethrough(true)
-	planH1Style   = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
-	planH2Style   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).PaddingLeft(1)
-	planH3Style   = lipgloss.NewStyle().Bold(true).Foreground(colorText).PaddingLeft(1)
+	planTodoStyle       = lipgloss.NewStyle().Foreground(colorText).PaddingLeft(1)
+	planDoneStyle       = lipgloss.NewStyle().Foreground(colorDim).PaddingLeft(1).Strikethrough(true)
+	planInProgressStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).PaddingLeft(1)
+	planH1Style         = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
+	planH2Style         = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).PaddingLeft(1)
+	planH3Style         = lipgloss.NewStyle().Bold(true).Foreground(colorText).PaddingLeft(1)
 )

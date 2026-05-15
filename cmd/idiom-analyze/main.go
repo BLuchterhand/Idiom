@@ -288,10 +288,10 @@ var (
 	// doesn't know the exact signature. These slip past looksLikeIdentifier
 	// because of the wildcard, so the current redirect misses them.
 	reGoFuncWildcard = regexp.MustCompile(`^func[.\\\s]*[*+]?\s*[A-Za-z_]\w*`)
-	reCppClassDef     = regexp.MustCompile(`^(class|struct)\s+[A-Za-z_]\w*`)
-	reCppFuncDef      = regexp.MustCompile(`^[A-Za-z_][\w:]*\s+[A-Za-z_]\w*\s*\(`)
-	reBareIdent       = regexp.MustCompile(`^[A-Za-z_][\w:]*$`)
-	reRegexMeta       = regexp.MustCompile(`\\[bBdDsSwW]|\.[*+?]|\([^)]*[|*+?]|\[[^\]]+\]`)
+	reCppClassDef    = regexp.MustCompile(`^(class|struct)\s+[A-Za-z_]\w*`)
+	reCppFuncDef     = regexp.MustCompile(`^[A-Za-z_][\w:]*\s+[A-Za-z_]\w*\s*\(`)
+	reBareIdent      = regexp.MustCompile(`^[A-Za-z_][\w:]*$`)
+	reRegexMeta      = regexp.MustCompile(`\\[bBdDsSwW]|\.[*+?]|\([^)]*[|*+?]|\[[^\]]+\]`)
 )
 
 func classifySearch(tc *toolCall) {

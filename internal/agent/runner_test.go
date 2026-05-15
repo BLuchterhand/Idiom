@@ -680,11 +680,11 @@ func TestPinnedPathsFromToolResultsRejectsToolJSONFragments(t *testing.T) {
 		},
 	}, 8)
 
-	if !containsRunnerString(paths, "internal/app/analysis_agents.go") {
+	if !slices.Contains(paths, "internal/app/analysis_agents.go") {
 		t.Fatalf("expected source path to be pinned, got %#v", paths)
 	}
 	for _, forbidden := range []string{"internal/app/orchestration.go", "internal/app/implementation.go"} {
-		if containsRunnerString(paths, forbidden) {
+		if slices.Contains(paths, forbidden) {
 			t.Fatalf("destination path %s must not be pinned as context, got %#v", forbidden, paths)
 		}
 	}
@@ -841,7 +841,7 @@ func TestRunnerEmitsNextActionStateAfterPreExecuteGuard(t *testing.T) {
 	if feedback[0].FailureClass != "guard_rejection" {
 		t.Fatalf("expected frontier failure class, got %#v", feedback[0])
 	}
-	if !containsRunnerString(feedback[0].DoNotRepeat, "duplicate_read_file_on_bootstrapped_target") {
+	if !slices.Contains(feedback[0].DoNotRepeat, "duplicate_read_file_on_bootstrapped_target") {
 		t.Fatalf("expected duplicate read in do-not-repeat actions, got %#v", feedback[0])
 	}
 	if len(stepInstructions) != 0 {
@@ -3647,7 +3647,7 @@ func TestControlRailsConversationOnlySuppressesAllowedTools(t *testing.T) {
 	if len(rails.AllowedTools) != 0 {
 		t.Fatalf("expected conversation-only rails to suppress allowed tools, got %#v", rails.AllowedTools)
 	}
-	if !containsRunnerString(rails.FinalCritic, "answers_actual_user_request") {
+	if !slices.Contains(rails.FinalCritic, "answers_actual_user_request") {
 		t.Fatalf("expected conversation-only rails to keep explicit final critic, got %#v", rails.FinalCritic)
 	}
 }
@@ -4864,7 +4864,7 @@ func TestRunnerBriefWithPhaseHintsPromotesRequiredPathWriteReadiness(t *testing.
 	}
 
 	live := runnerBriefWithPhaseHints(brief, nil)
-	if !containsRunnerString(live.Constraints, "implementation_packet_write_ready") {
+	if !slices.Contains(live.Constraints, "implementation_packet_write_ready") {
 		t.Fatalf("expected write-ready constraint, got %#v", live.Constraints)
 	}
 	required := strings.Join(live.RequiredNext, "\n")
@@ -4882,7 +4882,7 @@ func TestRunnerBriefWithPhaseHintsPromotesRequiredPathWriteReadiness(t *testing.
 		{Tool: "edit_file", Summary: "Edited native/src/system.cpp"},
 	}
 	live = runnerBriefWithPhaseHints(brief, results)
-	if !containsRunnerString(live.Constraints, "implementation_required_paths_remaining") {
+	if !slices.Contains(live.Constraints, "implementation_required_paths_remaining") {
 		t.Fatalf("expected remaining-path constraint, got %#v", live.Constraints)
 	}
 	if !strings.Contains(strings.Join(live.RequiredNext, "\n"), "remaining required path") {
@@ -4901,7 +4901,7 @@ func TestRunnerBriefWithPhaseHintsOmitsWriteReadyConstraintWithoutAnchors(t *tes
 	}
 
 	live := runnerBriefWithPhaseHints(brief, nil)
-	if containsRunnerString(live.Constraints, "implementation_packet_write_ready") {
+	if slices.Contains(live.Constraints, "implementation_packet_write_ready") {
 		t.Fatalf("write-ready constraint should be omitted when brief lacks anchors, got %#v", live.Constraints)
 	}
 	if runtimeBriefDefinesWriteReadyReadContract(live) {
@@ -6308,7 +6308,7 @@ func TestExactAnchorPreWriteVisibleBriefAdvertisesWriteOnlySurface(t *testing.T)
 	}, nil)
 
 	for _, forbidden := range []string{"read_file", "search_content", "shell", "task_ledger", "harness_feedback"} {
-		if containsRunnerString(brief.AllowedTools, forbidden) {
+		if slices.Contains(brief.AllowedTools, forbidden) {
 			t.Fatalf("exact-anchor pre-write brief advertised %s in allowed tools: %#v", forbidden, brief.AllowedTools)
 		}
 		manifest, err := json.Marshal(brief.ToolManifest)
@@ -6320,14 +6320,14 @@ func TestExactAnchorPreWriteVisibleBriefAdvertisesWriteOnlySurface(t *testing.T)
 		}
 	}
 	for _, allowed := range []string{"edit_file", "apply_patch"} {
-		if !containsRunnerString(brief.AllowedTools, allowed) {
+		if !slices.Contains(brief.AllowedTools, allowed) {
 			t.Fatalf("exact-anchor pre-write brief should keep %s, got %#v", allowed, brief.AllowedTools)
 		}
 	}
 	if !reflect.DeepEqual(brief.RequiredTools, []string{"edit_file_or_apply_patch"}) {
 		t.Fatalf("exact-anchor pre-write required tools = %#v, want edit only", brief.RequiredTools)
 	}
-	if !containsRunnerString(brief.InvalidActions, "read/search/shell before first exact-anchor write") {
+	if !slices.Contains(brief.InvalidActions, "read/search/shell before first exact-anchor write") {
 		t.Fatalf("expected explicit invalid pre-write read/search/shell action, got %#v", brief.InvalidActions)
 	}
 }
@@ -6346,12 +6346,12 @@ func TestWriteReadyPreWriteVisibleBriefAdvertisesScopedSurface(t *testing.T) {
 	}, nil)
 
 	for _, forbidden := range []string{"search_content", "task_ledger", "harness_feedback"} {
-		if containsRunnerString(brief.AllowedTools, forbidden) {
+		if slices.Contains(brief.AllowedTools, forbidden) {
 			t.Fatalf("write-ready pre-write brief advertised broad tool %s in allowed tools: %#v", forbidden, brief.AllowedTools)
 		}
 	}
 	for _, allowed := range []string{"read_file", "code_navigate", "edit_file", "write_file", "apply_patch"} {
-		if !containsRunnerString(brief.AllowedTools, allowed) {
+		if !slices.Contains(brief.AllowedTools, allowed) {
 			t.Fatalf("write-ready pre-write brief should keep scoped tool %s, got %#v", allowed, brief.AllowedTools)
 		}
 	}
@@ -6380,12 +6380,12 @@ func TestControlRailsExactAnchorPreWriteDoesNotAdvertiseReadShell(t *testing.T) 
 
 	rails := runner.controlRails(nil)
 	for _, forbidden := range []string{"read_file", "search_content", "shell", "task_ledger"} {
-		if containsRunnerString(rails.AllowedTools, forbidden) {
+		if slices.Contains(rails.AllowedTools, forbidden) {
 			t.Fatalf("exact-anchor pre-write control rails advertised %s: %#v", forbidden, rails.AllowedTools)
 		}
 	}
 	for _, allowed := range []string{"edit_file", "apply_patch"} {
-		if !containsRunnerString(rails.AllowedTools, allowed) {
+		if !slices.Contains(rails.AllowedTools, allowed) {
 			t.Fatalf("exact-anchor pre-write control rails should keep %s, got %#v", allowed, rails.AllowedTools)
 		}
 	}
@@ -7243,11 +7243,11 @@ func TestDelegatedDiscoveryQueryEvidencePathsFeedSynthesizedAnswer(t *testing.T)
 		t.Fatalf("expected text-anchor evidence paths to outrank target listing paths, got %#v", paths)
 	}
 	for _, want := range []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"} {
-		if !containsRunnerString(paths, want) {
+		if !slices.Contains(paths, want) {
 			t.Fatalf("expected discovery paths to contain %q, got %#v", want, paths)
 		}
 	}
-	if containsRunnerString(paths, ".idiom/discovery/queries/query.json") {
+	if slices.Contains(paths, ".idiom/discovery/queries/query.json") {
 		t.Fatalf("discovery artifact path should not displace implementation evidence, got %#v", paths)
 	}
 
@@ -7285,11 +7285,11 @@ func TestDelegatedDiscoveryQueryEvidencePathsPreferCoreRunnerFiles(t *testing.T)
 
 	paths := delegatedDiscoveryQueryEvidencePaths(results, 5)
 	for _, want := range []string{"internal/agent/answer_composer.go", "internal/agent/runner.go", "internal/agent/runner_lane_policy.go"} {
-		if !containsRunnerString(paths, want) {
+		if !slices.Contains(paths, want) {
 			t.Fatalf("expected core path %q in top evidence paths, got %#v", want, paths)
 		}
 	}
-	if containsRunnerString(paths, "internal/agent/modes.go") {
+	if slices.Contains(paths, "internal/agent/modes.go") {
 		t.Fatalf("incidental path displaced core runner evidence: %#v", paths)
 	}
 }
@@ -7948,13 +7948,13 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterDelegatedReadiness(t *test
 		false,
 		brief,
 	)
-	if !containsRunnerString(state.Constraints, "answer_readiness_reached") {
+	if !slices.Contains(state.Constraints, "answer_readiness_reached") {
 		t.Fatalf("expected delegated readiness closure bias, got %#v", state)
 	}
-	if containsRunnerString(state.Constraints, "completion_gate_active") {
+	if slices.Contains(state.Constraints, "completion_gate_active") {
 		t.Fatalf("search output should not fabricate completion gate state, got %#v", state)
 	}
-	if containsRunnerString(state.InvalidNextActions, "final_answer_without_satisfying_completion_gate") {
+	if slices.Contains(state.InvalidNextActions, "final_answer_without_satisfying_completion_gate") {
 		t.Fatalf("closure-biased state should not block answering on a fabricated gate, got %#v", state)
 	}
 	if len(state.NextValidActions) < 1 || state.NextValidActions[0] != "answer directly from the evidence already gathered" {
@@ -7964,7 +7964,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterDelegatedReadiness(t *test
 		"internal/agent/runner.go",
 		"internal/agent/runner_child_tasks.go",
 	} {
-		if !containsRunnerString(state.EvidencePaths, want) {
+		if !slices.Contains(state.EvidencePaths, want) {
 			t.Fatalf("expected delegated closure state to preserve evidence path %q, got %#v", want, state.EvidencePaths)
 		}
 	}
@@ -7981,13 +7981,13 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterChildPacket(t *testing.T) 
 		false,
 		workerruntime.WorkerRuntimeBrief{TaskFamily: "architecture", Objective: "Explain how subagents work."},
 	)
-	if !containsRunnerString(state.Constraints, "child_packet_available") {
+	if !slices.Contains(state.Constraints, "child_packet_available") {
 		t.Fatalf("expected child-packet closure bias, got %#v", state)
 	}
 	if len(state.NextValidActions) == 0 || state.NextValidActions[0] != "answer directly from the child packet if it already resolves the question" {
 		t.Fatalf("expected child packet answer-first guidance, got %#v", state.NextValidActions)
 	}
-	if !containsRunnerString(state.InvalidNextActions, "open-ended discovery after a child packet without naming a concrete gap") {
+	if !slices.Contains(state.InvalidNextActions, "open-ended discovery after a child packet without naming a concrete gap") {
 		t.Fatalf("expected anti-drift invalid action, got %#v", state.InvalidNextActions)
 	}
 }
@@ -8014,7 +8014,7 @@ func TestBuildRunnerNextActionStateUsesClosureConstraintsForSuccessfulPostChildS
 		false,
 		workerruntime.WorkerRuntimeBrief{TaskFamily: "architecture", Objective: "Explain how subagents work."},
 	)
-	if !containsRunnerString(state.Constraints, "child_packet_available") {
+	if !slices.Contains(state.Constraints, "child_packet_available") {
 		t.Fatalf("expected child-packet closure constraint, got %#v", state)
 	}
 	for _, forbidden := range []string{
@@ -8022,7 +8022,7 @@ func TestBuildRunnerNextActionStateUsesClosureConstraintsForSuccessfulPostChildS
 		"targeted verification evidence",
 		"update task_ledger or answer with the concrete blocker",
 	} {
-		if containsRunnerString(state.NextValidActions, forbidden) {
+		if slices.Contains(state.NextValidActions, forbidden) {
 			t.Fatalf("expected closure-constrained next actions to omit %q, got %#v", forbidden, state.NextValidActions)
 		}
 	}
@@ -8052,7 +8052,7 @@ func TestBuildRunnerNextActionStatePreservesDurableChildPacketClosureAfterSucces
 			EvidencePaths: []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"},
 		},
 	)
-	if !containsRunnerString(state.Constraints, "child_packet_available") {
+	if !slices.Contains(state.Constraints, "child_packet_available") {
 		t.Fatalf("expected durable child-packet closure constraint, got %#v", state)
 	}
 	for _, forbidden := range []string{
@@ -8060,7 +8060,7 @@ func TestBuildRunnerNextActionStatePreservesDurableChildPacketClosureAfterSucces
 		"references or calls-into capability on a named declaration",
 		"go_move_declarations",
 	} {
-		if containsRunnerString(state.NextValidActions, forbidden) {
+		if slices.Contains(state.NextValidActions, forbidden) {
 			t.Fatalf("expected durable closure state to omit %q, got %#v", forbidden, state.NextValidActions)
 		}
 	}
@@ -8716,12 +8716,12 @@ func TestEmitDelegatedReadOnlyAnswerReadyEventCanonicalizesEvidencePaths(t *test
 		"internal/agent/runner_child_tasks.go",
 		"internal/agent/answer_composer.go",
 	} {
-		if !containsRunnerString(payload.EvidencePaths, want) {
+		if !slices.Contains(payload.EvidencePaths, want) {
 			t.Fatalf("expected answer-ready event to include %q, got %#v", want, payload.EvidencePaths)
 		}
 	}
 	for _, forbidden := range []string{"runner.go", "runner_child_tasks.go"} {
-		if containsRunnerString(payload.EvidencePaths, forbidden) {
+		if slices.Contains(payload.EvidencePaths, forbidden) {
 			t.Fatalf("expected answer-ready event to avoid bare duplicate path %q, got %#v", forbidden, payload.EvidencePaths)
 		}
 	}
@@ -9027,12 +9027,12 @@ func TestEmitAcceptedAnswerSignalsSanitizesEvidencePaths(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"} {
-		if !containsRunnerString(got, want) {
+		if !slices.Contains(got, want) {
 			t.Fatalf("expected sanitized readiness paths to contain %q, got %#v", want, got)
 		}
 	}
 	for _, forbidden := range []string{".idiom/discovery/queries/query.json", "symbol/body/branch"} {
-		if containsRunnerString(got, forbidden) {
+		if slices.Contains(got, forbidden) {
 			t.Fatalf("did not expect sanitized readiness paths to retain %q, got %#v", forbidden, got)
 		}
 	}
@@ -9077,11 +9077,11 @@ func TestEmitAcceptedAnswerSignalsPrefersExactProbePathsOverNoisyPinnedPaths(t *
 			got = append(got, value)
 		}
 	}
-	if !containsRunnerString(got, "internal/agent/runner_child_tasks.go") {
+	if !slices.Contains(got, "internal/agent/runner_child_tasks.go") {
 		t.Fatalf("expected exact probe path in readiness paths, got %#v", got)
 	}
 	for _, forbidden := range []string{"internal/agent/instructions.go", "internal/agent/modes.go"} {
-		if containsRunnerString(got, forbidden) {
+		if slices.Contains(got, forbidden) {
 			t.Fatalf("did not expect noisy pinned path %q in readiness paths, got %#v", forbidden, got)
 		}
 	}
@@ -9197,7 +9197,7 @@ func TestPromptEvidencePathsFromToolResultsPrefersExactProbePathsOverEarlyScaffo
 		t.Fatalf("expected exact semantic probe path to be prioritized, got %#v", got)
 	}
 	for _, forbidden := range []string{"codex/README.md", "codex/project-context.md", "codex/AGENTS.md"} {
-		if containsRunnerString(got, forbidden) {
+		if slices.Contains(got, forbidden) {
 			t.Fatalf("expected prompt scaffolding path %q to be deprioritized, got %#v", forbidden, got)
 		}
 	}

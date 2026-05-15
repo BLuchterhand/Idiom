@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -527,10 +528,10 @@ func TestPlanThenExecuteVisibleBriefKeepsSubmitPlanContract(t *testing.T) {
 		TargetPacket:      []string{"verified anchors"},
 	}, nil)
 
-	if !containsRunnerString(brief.AllowedTools, "submit_plan") {
+	if !slices.Contains(brief.AllowedTools, "submit_plan") {
 		t.Fatalf("plan-execute planner surface must keep submit_plan, got %#v", brief.AllowedTools)
 	}
-	if !containsRunnerString(brief.AllowedTools, "harness_feedback") {
+	if !slices.Contains(brief.AllowedTools, "harness_feedback") {
 		t.Fatalf("plan-execute planner surface should not be narrowed by implementation scoped-edit filters, got %#v", brief.AllowedTools)
 	}
 	if strings.Join(brief.RequiredTools, "\n") != "submit_plan" {
@@ -555,16 +556,16 @@ func TestPlanThenExecuteControlRailsKeepSubmitPlanContract(t *testing.T) {
 	}
 
 	rails := runner.controlRails(nil)
-	if !containsRunnerString(rails.RequiredTools, "submit_plan") {
+	if !slices.Contains(rails.RequiredTools, "submit_plan") {
 		t.Fatalf("control rails must require submit_plan for planner phase, got %#v", rails.RequiredTools)
 	}
-	if containsRunnerString(rails.RequiredTools, "edit_file_or_apply_patch") {
+	if slices.Contains(rails.RequiredTools, "edit_file_or_apply_patch") {
 		t.Fatalf("control rails must not advertise per-edit write requirement in planner phase: %#v", rails.RequiredTools)
 	}
-	if !containsRunnerString(rails.ReadinessGate, "submit_plan_or_source_satisfied_or_blocker_reported") {
+	if !slices.Contains(rails.ReadinessGate, "submit_plan_or_source_satisfied_or_blocker_reported") {
 		t.Fatalf("control rails must keep submit_plan readiness gate, got %#v", rails.ReadinessGate)
 	}
-	if !containsRunnerString(rails.FinalCritic, "submit_plan_called_or_source_satisfied") {
+	if !slices.Contains(rails.FinalCritic, "submit_plan_called_or_source_satisfied") {
 		t.Fatalf("control rails must keep submit_plan final critic, got %#v", rails.FinalCritic)
 	}
 }

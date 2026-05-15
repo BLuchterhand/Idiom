@@ -9,8 +9,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
+
+	"idiom/internal/util"
 )
 
 const loadingModelRetryDelay = 500 * time.Millisecond
@@ -224,7 +227,7 @@ func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwar
 		return nil
 	}
 	return &chatTemplateKwargs{
-		EnableThinking:   cloneBoolPtr(opts.EnableThinking),
+		EnableThinking:   util.ClonePtr(opts.EnableThinking),
 		PreserveThinking: opts.PreserveThinking,
 		ThinkingBudget:   opts.ThinkingBudget,
 	}
@@ -542,6 +545,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		if delta == "" {
 			delta = parsed.Choices[0].Message.Content
 		}
+		delta = stripSpecialTokens(delta)
 
 		if delta != "" {
 			if err := onDelta(delta); err != nil {
@@ -784,7 +788,7 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 	}
 	return ChatMessage{
 		Role:      role,
-		Content:   content.String(),
+		Content:   stripSpecialTokens(content.String()),
 		ToolCalls: toolCalls,
 		Usage: Usage{
 			PromptTokens:     parsed.Usage.InputTokens,
@@ -891,7 +895,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		}
 		return ChatMessage{
 			Role:             role,
-			Content:          message.Content,
+			Content:          stripSpecialTokens(message.Content),
 			ReasoningContent: reasoning,
 			ToolCalls:        message.ToolCalls,
 			Usage:            parsed.Usage,
@@ -900,20 +904,18 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 	}
 }
 
-func cloneBoolPtr(v *bool) *bool {
-	if v == nil {
-		return nil
-	}
-	b := *v
-	return &b
-}
-
 func shouldRetryLoadingModel(statusCode int, body string) bool {
 	if statusCode != http.StatusServiceUnavailable {
 		return false
 	}
 	body = strings.ToLower(body)
 	return strings.Contains(body, "loading model") || strings.Contains(body, "unavailable_error")
+}
+
+var specialTokenPattern = regexp.MustCompile(`<\|(?:mask_start|mask_end|mask_?start|mask_?end|endoftext|im_start|im_end|fim_prefix|fim_middle|fim_suffix|repo_name)[^>]*>`)
+
+func stripSpecialTokens(s string) string {
+	return specialTokenPattern.ReplaceAllString(s, "")
 }
 
 func sleepWithContext(ctx context.Context, delay time.Duration) error {

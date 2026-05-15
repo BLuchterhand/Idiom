@@ -388,10 +388,10 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 	if _, ok := data["context_trace_success"]; ok && !boolField(data, "context_trace_success") {
 		ctx.TraceFailures++
 	}
-	ctx.MaxFilesIndexed = maxInt(ctx.MaxFilesIndexed, intField(data, "context_files_indexed"))
-	ctx.MaxSymbolsIndexed = maxInt(ctx.MaxSymbolsIndexed, intField(data, "context_symbols_indexed"))
-	ctx.MaxEdgesIndexed = maxInt(ctx.MaxEdgesIndexed, intField(data, "context_edges_indexed"))
-	ctx.MaxStaleSymbols = maxInt(ctx.MaxStaleSymbols, intField(data, "context_stale_symbols"))
+	ctx.MaxFilesIndexed = max(ctx.MaxFilesIndexed, intField(data, "context_files_indexed"))
+	ctx.MaxSymbolsIndexed = max(ctx.MaxSymbolsIndexed, intField(data, "context_symbols_indexed"))
+	ctx.MaxEdgesIndexed = max(ctx.MaxEdgesIndexed, intField(data, "context_edges_indexed"))
+	ctx.MaxStaleSymbols = max(ctx.MaxStaleSymbols, intField(data, "context_stale_symbols"))
 	ctx.RefreshedStaleSymbols += intField(data, "context_refreshed_stale_symbols")
 	ctx.StaleSymbolSamples += intField(data, "context_stale_symbol_samples")
 	if boolField(data, "context_incremental") {
@@ -561,7 +561,7 @@ func ingestLocalOpsTelemetry(rep *PerfReport, eventType string, data map[string]
 		if boolField(data, "degraded") || (state != "" && state != "granted" && state != "acquired" && state != "disabled" && state != "nested_same_pool") {
 			stats.QueueDegraded++
 		}
-		stats.QueueMaxWaitMillis = maxInt(stats.QueueMaxWaitMillis, intField(data, "wait_ms"))
+		stats.QueueMaxWaitMillis = max(stats.QueueMaxWaitMillis, intField(data, "wait_ms"))
 	}
 	if isDoctor {
 		stats.DoctorReadinessProfiles++
@@ -1524,10 +1524,10 @@ func mergeContextStats(target **ContextStats, source *ContextStats) {
 	dst.StaleResults += source.StaleResults
 	dst.IncompatibleBackendResults += source.IncompatibleBackendResults
 	dst.TraceFailures += source.TraceFailures
-	dst.MaxFilesIndexed = maxInt(dst.MaxFilesIndexed, source.MaxFilesIndexed)
-	dst.MaxSymbolsIndexed = maxInt(dst.MaxSymbolsIndexed, source.MaxSymbolsIndexed)
-	dst.MaxEdgesIndexed = maxInt(dst.MaxEdgesIndexed, source.MaxEdgesIndexed)
-	dst.MaxStaleSymbols = maxInt(dst.MaxStaleSymbols, source.MaxStaleSymbols)
+	dst.MaxFilesIndexed = max(dst.MaxFilesIndexed, source.MaxFilesIndexed)
+	dst.MaxSymbolsIndexed = max(dst.MaxSymbolsIndexed, source.MaxSymbolsIndexed)
+	dst.MaxEdgesIndexed = max(dst.MaxEdgesIndexed, source.MaxEdgesIndexed)
+	dst.MaxStaleSymbols = max(dst.MaxStaleSymbols, source.MaxStaleSymbols)
 	dst.RefreshedStaleSymbols += source.RefreshedStaleSymbols
 	dst.StaleSymbolSamples += source.StaleSymbolSamples
 	dst.IncrementalRefreshes += source.IncrementalRefreshes
@@ -1613,7 +1613,7 @@ func mergeLocalOpsStats(target **LocalOpsStats, source *LocalOpsStats) {
 	dst.BackendConfigured += source.BackendConfigured
 	dst.QueueEvents += source.QueueEvents
 	dst.QueueDegraded += source.QueueDegraded
-	dst.QueueMaxWaitMillis = maxInt(dst.QueueMaxWaitMillis, source.QueueMaxWaitMillis)
+	dst.QueueMaxWaitMillis = max(dst.QueueMaxWaitMillis, source.QueueMaxWaitMillis)
 	dst.ContextBudgetEvents += source.ContextBudgetEvents
 	dst.ContextBudgetDegraded += source.ContextBudgetDegraded
 	dst.ClassifierEvents += source.ClassifierEvents
@@ -1656,11 +1656,4 @@ func maxOf(values []int) int {
 		}
 	}
 	return best
-}
-
-func maxInt(a int, b int) int {
-	if b > a {
-		return b
-	}
-	return a
 }

@@ -23,6 +23,7 @@ import (
 	"idiom/internal/mcp"
 	"idiom/internal/promptstack"
 	"idiom/internal/transcript"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 
 	"encoding/json"
@@ -261,6 +262,14 @@ type Model struct {
 	// planOverlayBody caches the rendered overlay body so redraws
 	// don't re-read and re-colorize the diff on every tick.
 	planOverlayBody string
+	// planAutoShown is set once after the side panel is automatically
+	// opened to show plan content. Prevents re-triggering on every
+	// planRefreshMsg. The user can still close the panel with Ctrl+B.
+	planAutoShown bool
+	// planSubmittedEdits maps synthetic plan-edit anchors ("pe-0",
+	// "pe-1", …) to their PlanEdit so recordWriteSuccess can match
+	// executor writes back to the upfront plan checklist.
+	planSubmittedEdits map[string]workspace.PlanEdit
 
 	// sessionsViewport renders the third side-panel tab: a selectable
 	// list of prior sessions (id + one-line summary). Enter resumes
@@ -362,7 +371,7 @@ func (m *Model) Close() {
 }
 
 func (m *Model) chatOptions() llama.ChatOptions {
-	enableThinking := cloneBoolPtr(m.cfg.Chat.EnableThinking)
+	enableThinking := util.ClonePtr(m.cfg.Chat.EnableThinking)
 	preserveThinking := m.cfg.Chat.PreserveThinking
 	chatTemplateKwargs := false
 	if enableThinking != nil && !*enableThinking {
@@ -855,7 +864,7 @@ func (m *Model) renderHistoryPanelContent() {
 	if !m.historyPanelOpen {
 		return
 	}
-	w := maxInt(8, m.historyViewport.Width)
+	w := max(8, m.historyViewport.Width)
 
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.Width(w).Render("◈ History"))
@@ -888,7 +897,7 @@ func (m *Model) renderHistoryPanelContent() {
 		default:
 			style = panelEntryStyle
 		}
-		for j, wl := range wrapLines(entry.summary, maxInt(1, w-len([]rune(head)))) {
+		for j, wl := range wrapLines(entry.summary, max(1, w-len([]rune(head)))) {
 			row := indent + wl
 			if j == 0 {
 				row = head + wl
@@ -899,13 +908,13 @@ func (m *Model) renderHistoryPanelContent() {
 
 		if expanded {
 			for _, c := range entry.contents {
-				for _, wl := range wrapLines(c, maxInt(1, w-2)) {
+				for _, wl := range wrapLines(c, max(1, w-2)) {
 					b.WriteString(panelDetailStyle.Width(w).Render(wl))
 					b.WriteString("\n")
 				}
 			}
 			for _, tc := range entry.toolCalls {
-				for j, wl := range wrapLines(tc.line, maxInt(1, w-4)) {
+				for j, wl := range wrapLines(tc.line, max(1, w-4)) {
 					prefix := "▶ "
 					if tc.running {
 						prefix = "… "
@@ -917,7 +926,7 @@ func (m *Model) renderHistoryPanelContent() {
 					b.WriteString("\n")
 				}
 				if strings.TrimSpace(tc.intent) != "" {
-					for _, wl := range wrapLines("why: "+tc.intent, maxInt(1, w-4)) {
+					for _, wl := range wrapLines("why: "+tc.intent, max(1, w-4)) {
 						b.WriteString(panelDetailStyle.Width(w).Render("  " + wl))
 						b.WriteString("\n")
 					}
@@ -951,9 +960,9 @@ func (m *Model) resize() {
 	var mainWidth, panelWidth int
 	if m.historyPanelOpen {
 		panelWidth = m.width / 3
-		mainWidth = maxInt(24, m.width-panelWidth-1) // 1 for the │ divider
+		mainWidth = max(24, m.width-panelWidth-1) // 1 for the │ divider
 	} else {
-		mainWidth = maxInt(24, m.width)
+		mainWidth = max(24, m.width)
 	}
 
 	if !m.ready {
@@ -966,7 +975,7 @@ func (m *Model) resize() {
 
 	if m.historyPanelOpen {
 		// Reserve 1 row for the tab header strip above the active viewport.
-		panelContentHeight := maxInt(3, contentHeight-1)
+		panelContentHeight := max(3, contentHeight-1)
 		m.historyViewport.Width = panelWidth
 		m.historyViewport.Height = panelContentHeight
 		m.planViewport.Width = panelWidth
@@ -976,7 +985,7 @@ func (m *Model) resize() {
 	}
 
 	m.input.SetWidth(m.width)
-	m.ensureMarkdownRenderer(maxInt(20, mainWidth-2))
+	m.ensureMarkdownRenderer(max(20, mainWidth-2))
 	if mainWidthChanged {
 		m.invalidateMessageRenderCache()
 	}

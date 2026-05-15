@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -261,7 +262,7 @@ func (m *Manager) rustRelatedFiles(req ToolRequest) ToolResult {
 		if resolveErr == nil {
 			rel := filepath.ToSlash(m.displayPath(abs))
 			for _, sibling := range index.ModuleSiblings(rel, 8) {
-				if !containsString(collected, sibling) {
+				if !slices.Contains(collected, sibling) {
 					collected = append(collected, sibling)
 				}
 			}
@@ -638,15 +639,6 @@ func filterRustRelatedPaths(paths []string, pathFilter string) []string {
 		}
 	}
 	return out
-}
-
-func containsString(values []string, value string) bool {
-	for _, existing := range values {
-		if existing == value {
-			return true
-		}
-	}
-	return false
 }
 
 func rustReferencePattern(pattern string) string {

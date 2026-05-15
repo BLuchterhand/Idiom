@@ -1,9 +1,16 @@
 # Idiom
 
-A local coding-agent harness for running `Qwen3.6-35B-A3B` (and other
-local-LLM models) through `llama.cpp` or MLX, with a Bubble Tea
-terminal UI plus structured CLI subcommands for plan-execute /
+A local coding-agent harness for running local-LLM models through `llama.cpp` or MLX, 
+with a Bubble Tea terminal UI plus structured CLI subcommands for plan-execute /
 implement / atom-spec lanes.
+
+Idiom is being build and optimized around the Qwen3.6 family of models, 
+though it as also been tested successfully against the GLM 5.1 and Minimax m2.7 models.
+It is meant to be an agnostic harness for local & remote models, but it has yet to be 
+more broadly tested as such.
+
+CURRENT STATE: Idiom is being used as a headless runner. While it does contain a TUI
+experience, it is very likely to be broken and hardly functional.
 
 ## What it does
 
@@ -19,21 +26,6 @@ implement / atom-spec lanes.
 Idiom's core split is simple: the model owns strategy; the harness owns
 contracts, evidence, and verification. The runtime surfaces that split through
 typed lanes, repository memory, capability-oriented tools, and audit output.
-
-```mermaid
-flowchart LR
-    User["User or external agent"] --> Entrypoints["CLI, TUI, sidecar, MCP"]
-    Entrypoints --> Contracts["Typed contracts<br/>permissions, paths, readiness, verification"]
-    Contracts --> Lanes["Lanes<br/>plan-execute, implement, atom intake"]
-    Contracts --> Memory["Repository memory<br/>context_pack, context_query, graph views"]
-    Lanes --> Router["Role routing<br/>planner, executor, classifier"]
-    Router --> Model["Local model backend<br/>llama.cpp, MLX, Ollama"]
-    Lanes --> Tools["Workspace capabilities<br/>semantic tools, shell, writes"]
-    Memory --> Tools
-    Tools --> Evidence["Telemetry, audit, eval evidence"]
-    Evidence --> Contracts
-    Evidence --> Memory
-```
 
 For a connected architecture and operations knowledge base, open
 [`docs/obsidian`](docs/obsidian/README.md) as an Obsidian vault. It explains the
@@ -60,10 +52,6 @@ you don't already have it.
 Override knobs (env vars): `IDIOM_VERSION=v0.1.0` to pin a release,
 `IDIOM_INSTALL_DIR=~/bin` to change the destination,
 `IDIOM_REPO=owner/fork` to install from a fork.
-
-Windows: download the `.zip` from the
-[releases page](https://github.com/BLuchterhand/idiom/releases) and
-extract `idiom.exe` to a directory on `%PATH%`.
 
 ## Quick start
 
@@ -174,11 +162,9 @@ toolchain, running from `bin/idiom`), see "Install from source" below.
 
 ## Layout
 
-- `config.json`: runtime config
+- `config.example.json`: example runtime config (copy to `config.json` and edit)
 - `prompts/`: baseline prompts and behavior profiles
-- `models/`: local GGUF weights
-- `logs/llama-server.log`: server output
-- `logs/conversations/`: per-session JSONL debug logs
+- `logs/`: server output, per-session JSONL debug logs, and telemetry
 - `transcripts/`: saved chats
 
 ## Install from source
@@ -906,8 +892,8 @@ evidence-only prompt section.
 ## Notes
 
 - The TUI stops the server on exit only if it started that server itself.
-- `config.example.json` shows a llama.cpp GGUF setup; the checked-in
-  `config.json` is a local MLX/llama setup. Adjust `llama_server.model` and
-  related model paths for the local weights you actually have.
+- `config.example.json` shows a llama.cpp GGUF setup; copy it to `config.json`
+  and adjust `llama_server.model` and related model paths for the local weights
+  you actually have. `config.json` is gitignored so local paths stay local.
 - Keep project prompt files short. A distilled `.qwen.md` is usually better than sending a large architecture manual every turn.
 - `workspace.enable_writes` and `workspace.enable_shell` can be turned off if you want a read-only or no-exec mode.

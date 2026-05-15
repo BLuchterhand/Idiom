@@ -3,6 +3,7 @@ package autonomy
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -90,7 +91,7 @@ func TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect(t
 	assertEffectivePathRole(t, resolved, "deploy/prod/release.json", PathRoleExternalEffect, PolicyAsk, InvariantExternalEffectPath)
 
 	required := findPathResolution(t, resolved, "internal/autonomy/path_roles.go")
-	if !containsString(required.EvidenceRefs, "ev-required") {
+	if !slices.Contains(required.EvidenceRefs, "ev-required") {
 		t.Fatalf("required role should carry evidence ref, got %#v", required.EvidenceRefs)
 	}
 	if resolved.RoleCounts[string(PathRoleRequiredEdit)] != 1 ||
@@ -326,13 +327,4 @@ func resolvedRole(t *testing.T, roles []ResolvedPathRole, role PathRoleKind) Res
 	}
 	t.Fatalf("missing role %q in %#v", role, roles)
 	return ResolvedPathRole{}
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }

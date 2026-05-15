@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"idiom/internal/frontier/workerruntime"
@@ -287,7 +288,7 @@ func exactProbeObservations(symbol string, output string) []string {
 	observations := make([]string, 0, 5)
 	add := func(value string) {
 		value = strings.TrimSpace(value)
-		if value == "" || containsRunnerString(observations, value) {
+		if value == "" || slices.Contains(observations, value) {
 			return
 		}
 		observations = append(observations, value)

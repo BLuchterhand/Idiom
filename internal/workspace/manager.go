@@ -1152,7 +1152,7 @@ func levenshteinDistance(a, b string) int {
 			if a[i-1] == b[j-1] {
 				cost = 0
 			}
-			curr[j] = minInt3(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+			curr[j] = min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
 		}
 		prev, curr = curr, prev
 	}
@@ -4615,7 +4615,7 @@ func lineRangeReplacementDuplicatesPrecedingContext(current string, spans []line
 	context := current[spans[contextStartLine-1].start:spans[startLine-2].end]
 	contextLines := normalizedNonEmptyLines(context)
 	replacementLines := normalizedNonEmptyLines(replacement)
-	maxCompare := minInt(len(contextLines), len(replacementLines), 6)
+	maxCompare := min(len(contextLines), len(replacementLines), 6)
 	for n := maxCompare; n >= 3; n-- {
 		if equalStringSlices(contextLines[len(contextLines)-n:], replacementLines[:n]) {
 			return true
@@ -4654,19 +4654,6 @@ func containsCaseFoldedSubstring(content string, oldText string) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(content), strings.ToLower(oldText))
-}
-
-func minInt(values ...int) int {
-	if len(values) == 0 {
-		return 0
-	}
-	minimum := values[0]
-	for _, value := range values[1:] {
-		if value < minimum {
-			minimum = value
-		}
-	}
-	return minimum
 }
 
 func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, path string, contents []byte) *ToolResult {
@@ -5932,24 +5919,11 @@ func levenshtein(a, b string) int {
 			del := prev[i] + 1
 			ins := curr[i-1] + 1
 			sub := prev[i-1] + cost
-			curr[i] = minInt3(del, ins, sub)
+			curr[i] = min(del, ins, sub)
 		}
 		prev, curr = curr, prev
 	}
 	return prev[la]
-}
-
-func minInt3(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
 }
 
 func defaultString(value, fallback string) string {

@@ -105,7 +105,7 @@ func (m *Model) renderPlanPanelContent() {
 	if !m.historyPanelOpen {
 		return
 	}
-	w := maxInt(8, m.planViewport.Width)
+	w := max(8, m.planViewport.Width)
 
 	// Diff overlay takes precedence — when the user picks an entry,
 	// we swap the entire panel content for the colored diff so the
@@ -151,7 +151,7 @@ func (m *Model) renderPlanPanelContent() {
 			lines = append(lines, "", "Load error: "+m.planLoadError)
 		}
 		for _, line := range lines {
-			for _, wl := range wrapLines(line, maxInt(1, w-2)) {
+			for _, wl := range wrapLines(line, max(1, w-2)) {
 				b.WriteString(panelDetailStyle.Width(w).Render(wl))
 				b.WriteString("\n")
 			}
@@ -299,6 +299,11 @@ func renderPlanLine(raw string, w int) string {
 	indent := visible[:len(visible)-len(trimmed)]
 
 	switch {
+	case strings.HasPrefix(trimmed, "- [~]") || strings.HasPrefix(trimmed, "* [~]"):
+		rest := strings.TrimSpace(trimmed[5:])
+		box := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("[~]")
+		line := indent + box + " " + rest
+		return planInProgressStyle.Width(w).Render(line)
 	case strings.HasPrefix(trimmed, "- [ ]") || strings.HasPrefix(trimmed, "* [ ]"):
 		rest := strings.TrimSpace(trimmed[5:])
 		box := lipgloss.NewStyle().Foreground(colorMuted).Render("[ ]")
@@ -380,12 +385,17 @@ func (m *Model) planLastModifiedLabel() string {
 // renderPanelTabs builds the header strip that sits above the active tab's
 // content. Active tab is highlighted; inactive tabs render dim.
 func (m *Model) renderPanelTabs(width int) string {
+	planLabel := "Plan"
+	if checked, total := m.planCheckboxCounts(); total > 0 {
+		planLabel = fmt.Sprintf("Plan · %d/%d", checked, total)
+	}
+
 	tabs := []struct {
 		idx   int
 		label string
 	}{
 		{panelTabHistory, "History"},
-		{panelTabPlan, "Plan"},
+		{panelTabPlan, planLabel},
 		{panelTabSessions, "Sessions"},
 	}
 
@@ -430,4 +440,50 @@ func (m *Model) rerenderActivePanel() {
 	default:
 		m.renderHistoryPanelContent()
 	}
+}
+
+var planCheckboxRe = regexp.MustCompile(`(?m)^[\-\*]\s+\[[ xX~]\]`)
+
+// planPanelAutoShowNeeded returns true when the plan file has at least
+// one checkbox line and the panel should be auto-opened. Checks the
+// in-memory cache first (fast path); reads from disk only when the
+// cache is empty and the mtime differs.
+func (m *Model) planPanelAutoShowNeeded() bool {
+	if m == nil {
+		return false
+	}
+	family := strings.TrimSpace(m.forcedTaskFamily)
+	isPlanExecute := family == "plan_then_execute_planner" || family == "plan_then_execute_review_repair"
+	content := m.loadPlanContent()
+	if strings.TrimSpace(content) == "" {
+		return false
+	}
+	if isPlanExecute {
+		return true
+	}
+	return planCheckboxRe.MatchString(content)
+}
+
+// planCheckboxCounts returns (checked, total) counts of checkbox lines
+// in the current plan content. Used by the tab label to show progress.
+func (m *Model) planCheckboxCounts() (checked, total int) {
+	content := m.loadPlanContent()
+	if strings.TrimSpace(content) == "" {
+		return 0, 0
+	}
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, "- [") && !strings.HasPrefix(trimmed, "* [") {
+			continue
+		}
+		if len(trimmed) < 5 {
+			continue
+		}
+		total++
+		box := trimmed[3]
+		if box == 'x' || box == 'X' {
+			checked++
+		}
+	}
+	return
 }

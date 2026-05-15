@@ -321,8 +321,8 @@ func (idx *GoIndex) DefaultFiles(limit int) []string {
 		if file.IsTest {
 			score -= 30
 		}
-		score += minInt(file.Funcs+file.Methods, 20)
-		score += minInt(file.Types*2, 10)
+		score += min(file.Funcs+file.Methods, 20)
+		score += min(file.Types*2, 10)
 		return score
 	}, limit), limit)
 }
@@ -367,8 +367,8 @@ func (idx *GoIndex) IssueHuntFiles(limit int) []string {
 		if file.IsTest {
 			score -= 35
 		}
-		score += minInt(file.Funcs+file.Methods*2, 24)
-		score += minInt(file.Types, 10)
+		score += min(file.Funcs+file.Methods*2, 24)
+		score += min(file.Types, 10)
 		pathLower := strings.ToLower(file.Path)
 		if strings.Contains(pathLower, "app") || strings.Contains(pathLower, "manager") || strings.Contains(pathLower, "runner") || strings.Contains(pathLower, "client") {
 			score += 6
@@ -392,10 +392,10 @@ func (idx *GoIndex) SmellHuntFiles(limit int) []string {
 		}
 
 		surface := file.Funcs + file.Methods*2
-		score += minInt(surface, 30)
-		score += minInt(file.Types*3, 18)
-		score += minInt(len(file.Imports), 12)
-		score += minInt(exportedSymbolCount(file.Symbols), 12)
+		score += min(surface, 30)
+		score += min(file.Types*3, 18)
+		score += min(len(file.Imports), 12)
+		score += min(exportedSymbolCount(file.Symbols), 12)
 
 		pathLower := strings.ToLower(file.Path)
 		if strings.Contains(pathLower, "manager") || strings.Contains(pathLower, "runner") || strings.Contains(pathLower, "workspace") || strings.Contains(pathLower, "controller") {
@@ -676,11 +676,4 @@ func symbolDisplayName(symbol GoSymbol) string {
 
 func intString(v int) string {
 	return strconv.Itoa(v)
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

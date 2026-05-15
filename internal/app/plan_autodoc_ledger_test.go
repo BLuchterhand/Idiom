@@ -268,7 +268,7 @@ func TestMultiPathItemStaysUncheckedUntilAllPathsHit(t *testing.T) {
 func TestPlannedItemLineStatus(t *testing.T) {
 	cases := map[string]string{
 		"pending":     "- [ ] ",
-		"in_progress": "- [ ] ",
+		"in_progress": "- [~] ",
 		"completed":   "- [x] ",
 		"cancelled":   "- [x] ",
 	}

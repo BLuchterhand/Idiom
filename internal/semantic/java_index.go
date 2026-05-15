@@ -274,8 +274,8 @@ func (idx *JavaIndex) DefaultFiles(limit int) []string {
 		if file.IsTest {
 			score -= 30
 		}
-		score += minInt(file.Methods*2, 24)
-		score += minInt((file.Classes+file.Interfaces+file.Enums)*3, 18)
+		score += min(file.Methods*2, 24)
+		score += min((file.Classes+file.Interfaces+file.Enums)*3, 18)
 		return score
 	}, limit), limit)
 }

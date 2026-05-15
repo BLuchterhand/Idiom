@@ -50,3 +50,10 @@ config.*.backup.json
 REVIEW_*.md
 NOTES_*.md
 SCRATCH_*.md
+
+# Internal working docs (bugs, feature requests)
+BUG_*.md
+FEATURE_REQUEST_*.md
+
+# Agent state
+.qwen/

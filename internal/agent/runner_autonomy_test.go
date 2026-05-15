@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"idiom/internal/autonomy"
@@ -113,7 +114,7 @@ func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *test
 		t.Fatalf("intent event did not classify read-only bounded read: %#v", intent.Policy)
 	}
 	paths := mustAutonomyPolicyEvent(t, events, autonomy.EventPathRolesResolved, "read_file", "")
-	if !containsAutonomyString(policyEventPaths(paths.Policy), "docs/decisioning-north-star.md") {
+	if !slices.Contains(policyEventPaths(paths.Policy), "docs/decisioning-north-star.md") {
 		t.Fatalf("path resolution event should include evidence path match: %#v", paths.Policy)
 	}
 	result := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "read_file", "no_approval_needed")
@@ -186,7 +187,7 @@ func TestRunnerAutonomyRecorderPolicyEventsMapProtectedForbiddenAndApprovalOutco
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	protected := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "apply_patch", "denied")
-	if protected.Policy.InvariantID != string(autonomy.InvariantProtectedPath) || !containsAutonomyString(protected.Policy.ProtectedMatches, ".git/config") {
+	if protected.Policy.InvariantID != string(autonomy.InvariantProtectedPath) || !slices.Contains(protected.Policy.ProtectedMatches, ".git/config") {
 		t.Fatalf("protected path denial did not normalize to protected invariant: %#v", protected.Policy)
 	}
 	forbidden := mustAutonomyPolicyEventByInvariant(t, events, autonomy.EventToolPolicyResult, string(autonomy.InvariantForbiddenPath), "denied")
@@ -374,7 +375,7 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 			t.Fatalf("missing opened obligation kind %q in %#v", want, obligationKinds)
 		}
 	}
-	if !containsAutonomyString(gateObligationRefs[autonomy.GateVerification], "obl-verify-post-write") {
+	if !slices.Contains(gateObligationRefs[autonomy.GateVerification], "obl-verify-post-write") {
 		t.Fatalf("verification gate should reference typed verify obligation: %#v", gateObligationRefs)
 	}
 }
@@ -433,7 +434,7 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 				if !hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, want) {
 					t.Fatalf("expected obligation_resolved for %q in %#v", want, events)
 				}
-				if !containsAutonomyString(report.GateCoverage.ResolvedObligationRefs, want) {
+				if !slices.Contains(report.GateCoverage.ResolvedObligationRefs, want) {
 					t.Fatalf("expected gate resolved_obligations to include %q: %#v", want, report.GateCoverage.ResolvedObligationRefs)
 				}
 			}
@@ -485,10 +486,10 @@ func TestRunnerAutonomyRecorderWriteGateResolvesOnlyChangedRequiredPath(t *testi
 	if !hasUnresolvedAutonomyObligation(report, secondWriteID) {
 		t.Fatalf("expected audit to preserve unresolved write obligation %q, got %#v", secondWriteID, report.ObligationCoverage.UnresolvedObligations)
 	}
-	if !containsAutonomyString(report.GateCoverage.ResolvedObligationRefs, firstWriteID) {
+	if !slices.Contains(report.GateCoverage.ResolvedObligationRefs, firstWriteID) {
 		t.Fatalf("write gate should report resolved changed-path obligation %q: %#v", firstWriteID, report.GateCoverage.ResolvedObligationRefs)
 	}
-	if !containsAutonomyString(report.GateCoverage.OpenObligationRefs, secondWriteID) {
+	if !slices.Contains(report.GateCoverage.OpenObligationRefs, secondWriteID) {
 		t.Fatalf("write gate should report open unchanged-path obligation %q: %#v", secondWriteID, report.GateCoverage.OpenObligationRefs)
 	}
 }
@@ -526,7 +527,7 @@ func TestRunnerAutonomyRecorderWriteGateResolvesWorkspaceChangeWithoutRequiredPa
 	if hasUnresolvedAutonomyObligation(report, workspaceWriteID) {
 		t.Fatalf("workspace write obligation %q should not remain unresolved: %#v", workspaceWriteID, report.ObligationCoverage.UnresolvedObligations)
 	}
-	if !containsAutonomyString(report.GateCoverage.ResolvedObligationRefs, workspaceWriteID) {
+	if !slices.Contains(report.GateCoverage.ResolvedObligationRefs, workspaceWriteID) {
 		t.Fatalf("write gate should report resolved workspace write obligation %q: %#v", workspaceWriteID, report.GateCoverage.ResolvedObligationRefs)
 	}
 }
@@ -612,15 +613,6 @@ func hasPathRole(roles []autonomy.PathRole, kind autonomy.PathRoleKind, pattern 
 }
 
 func containsAutonomyCapability(values []autonomy.Capability, want autonomy.Capability) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func containsAutonomyString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
 			return true

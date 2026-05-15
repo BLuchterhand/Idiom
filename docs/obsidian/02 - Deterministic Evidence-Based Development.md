@@ -5,7 +5,6 @@ tags:
   - evidence
   - deterministic
 ---
-
 # Deterministic Evidence-Based Development
 
 This is the most important working pattern in the repo.
@@ -66,7 +65,6 @@ scripts. Idiom should avoid hard-picking the model's next step unless a real
 invariant is at risk.
 
 Prefer:
-
 - Nudge over forced tool call.
 - Redirect over immediate hard rejection.
 - Bounded recovery over endless retry.
@@ -75,7 +73,6 @@ Prefer:
 - Typed contract over prompt reminder.
 
 Hard enforcement is appropriate for:
-
 - Permissions.
 - Protected paths.
 - Tool protocol correctness.
@@ -110,7 +107,6 @@ current system; docs identify desired intent or stale guidance to update.
 The user's original requirement for this cleanup effort was: behavior tests
 first, then refactor, then verify again. In this repo that should be interpreted
 as:
-
 1. Localize the behavior with `context_pack` or a more specific discovery tool.
 2. Read the canonical design docs for that subsystem.
 3. Find existing tests that cover the behavior.
@@ -127,7 +123,6 @@ as:
 A change is complete only when the relevant readiness contract is closed.
 
 For a code change this normally means:
-
 - The intended files changed.
 - No unrelated user edits were reverted.
 - Behavior tests exist for the touched behavior.
@@ -138,7 +133,6 @@ For a code change this normally means:
 - Audit or telemetry can expose the same class of failure if it recurs.
 
 For a docs-only change this normally means:
-
 - The documentation is grounded in source files and canonical docs.
 - Links are usable from the repo.
 - Diagrams reflect actual package or workflow boundaries.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -288,7 +289,7 @@ func loadPromptTurns(path string) ([]string, error) {
 	if err := json.Unmarshal(data, &prompts); err == nil {
 		return cleanPromptTurns(prompts)
 	}
-	scanner := bufio.NewScanner(bytesReader(data))
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		prompts = append(prompts, scanner.Text())
 	}
@@ -296,10 +297,6 @@ func loadPromptTurns(path string) ([]string, error) {
 		return nil, fmt.Errorf("scan turns file: %w", err)
 	}
 	return cleanPromptTurns(prompts)
-}
-
-func bytesReader(data []byte) io.Reader {
-	return strings.NewReader(string(data))
 }
 
 func cleanPromptTurns(prompts []string) ([]string, error) {

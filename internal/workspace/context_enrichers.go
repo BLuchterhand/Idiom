@@ -576,7 +576,7 @@ func (lookup graphRelationshipLookup) symbolAt(path string, line int, name strin
 			}
 			if line >= node.StartLine && line <= end {
 				score += 40
-				score += maxInt(0, 20-(end-node.StartLine))
+				score += max(0, 20-(end-node.StartLine))
 			} else if line == node.StartLine {
 				score += 35
 			}
@@ -826,13 +826,6 @@ func uniqueStringValues(values []string) []string {
 		out = append(out, value)
 	}
 	return out
-}
-
-func maxInt(left int, right int) int {
-	if left > right {
-		return left
-	}
-	return right
 }
 
 func confidenceFromPrecisionTier(tier string) string {

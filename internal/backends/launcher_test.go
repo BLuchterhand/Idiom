@@ -399,9 +399,12 @@ func TestStopUsesPIDFileWhenPresent(t *testing.T) {
 	prof := Profile{Models: []Model{{Alias: "racy", Binary: "x", Port: 9000}}}
 	var killedPID int
 	opts := StopOptions{
-		RunDir:     runDir,
-		IsAlive:    func(pid int) bool { return pid == 4242 },
-		PIDForPort: func(int) (int, error) { t.Fatal("PIDForPort must not be consulted when PID file is alive"); return 0, nil },
+		RunDir:  runDir,
+		IsAlive: func(pid int) bool { return pid == 4242 },
+		PIDForPort: func(int) (int, error) {
+			t.Fatal("PIDForPort must not be consulted when PID file is alive")
+			return 0, nil
+		},
 		Kill: func(pid int, sig Signal) error {
 			killedPID = pid
 			return nil

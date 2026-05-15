@@ -3,6 +3,7 @@ package semantic
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -102,7 +103,7 @@ public class AppTest {
 	if app.Package != "com.example" {
 		t.Fatalf("App.java package: %q", app.Package)
 	}
-	if !containsString(app.Imports, "com.example.util.Helper") {
+	if !slices.Contains(app.Imports, "com.example.util.Helper") {
 		t.Fatalf("App.java imports: %v", app.Imports)
 	}
 
@@ -251,13 +252,4 @@ func writeJavaFixture(t *testing.T, path string, content string) {
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
-}
-
-func containsString(values []string, target string) bool {
-	for _, v := range values {
-		if v == target {
-			return true
-		}
-	}
-	return false
 }

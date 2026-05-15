@@ -60,11 +60,11 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 	// cleanly with the rejected-blocker shape callers expect.
 	if m.eventStream != nil {
 		m.emitJSONEvent(map[string]any{
-			"event":    "approval_auto_denied",
-			"tool":     req.Tool,
-			"mode":     modeName,
-			"reason":   "headless mode (json event stream active); no TUI available to approve",
-			"session":  m.eventStream.sessionID,
+			"event":   "approval_auto_denied",
+			"tool":    req.Tool,
+			"mode":    modeName,
+			"reason":  "headless mode (json event stream active); no TUI available to approve",
+			"session": m.eventStream.sessionID,
 		})
 		return false
 	}

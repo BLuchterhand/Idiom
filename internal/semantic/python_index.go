@@ -261,8 +261,8 @@ func (idx *PythonIndex) DefaultFiles(limit int) []string {
 		if file.IsTest {
 			score -= 30
 		}
-		score += minInt(file.Funcs+file.Methods*2, 24)
-		score += minInt(file.Classes*2, 16)
+		score += min(file.Funcs+file.Methods*2, 24)
+		score += min(file.Classes*2, 16)
 		return score
 	}, limit), limit)
 }

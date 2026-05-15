@@ -111,7 +111,7 @@ func (m *Model) refreshSessionsList() {
 		m.sessionsCursor = 0
 	}
 	if m.sessionsCursor >= len(m.sessionsList) {
-		m.sessionsCursor = maxInt(0, len(m.sessionsList)-1)
+		m.sessionsCursor = max(0, len(m.sessionsList)-1)
 	}
 }
 
@@ -123,7 +123,7 @@ func (m *Model) renderSessionsPanelContent() {
 	if !m.historyPanelOpen {
 		return
 	}
-	w := maxInt(8, m.sessionsViewport.Width)
+	w := max(8, m.sessionsViewport.Width)
 
 	var b strings.Builder
 	title := "◇ Sessions"
@@ -135,7 +135,7 @@ func (m *Model) renderSessionsPanelContent() {
 
 	if len(m.sessionsList) == 0 {
 		msg := "No prior sessions found."
-		for _, wl := range wrapLines(msg, maxInt(1, w-2)) {
+		for _, wl := range wrapLines(msg, max(1, w-2)) {
 			b.WriteString(panelDetailStyle.Width(w).Render(wl))
 			b.WriteString("\n")
 		}
@@ -159,7 +159,7 @@ func (m *Model) renderSessionsPanelContent() {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("  " + header))
 		}
 		b.WriteString("\n")
-		for _, wl := range wrapLines(body, maxInt(1, w-2)) {
+		for _, wl := range wrapLines(body, max(1, w-2)) {
 			if focused {
 				b.WriteString(panelFocusedStyle.Width(w).Render(wl))
 			} else {

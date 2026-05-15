@@ -26,8 +26,8 @@ var errProcUnavailable = errors.New("backends: /proc not available")
 //
 // Layout of /proc/net/tcp lines (man 5 proc):
 //
-//	  sl  local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-//	   0: 0100007F:BAB6 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 ...
+//	sl  local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+//	 0: 0100007F:BAB6 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 ...
 //
 // We only care about three fields: local_address (HEX:HEX), st
 // (`0A` is LISTEN), and the inode (column 10).

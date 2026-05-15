@@ -243,7 +243,8 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 			Summary:     result.Summary,
 			Diff:        "",
 		})
-		if !m.attachWriteToPlannedItem(req, strings.TrimSpace(req.Path), id) {
+		if !m.attachWriteToPlannedItem(req, strings.TrimSpace(req.Path), id) &&
+			!m.attachWriteToSubmittedEdit(strings.TrimSpace(req.Path), id) {
 			m.appendUnplannedCheckedLine(planLineLabel(req, ""), id)
 		}
 		return
@@ -270,7 +271,8 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 			Summary:     result.Summary,
 			Diff:        diff,
 		})
-		if !m.attachWriteToPlannedItem(req, snap.Path, id) {
+		if !m.attachWriteToPlannedItem(req, snap.Path, id) &&
+			!m.attachWriteToSubmittedEdit(snap.Path, id) {
 			m.appendUnplannedCheckedLine(planLineLabel(req, snap.Path), id)
 		}
 	}
@@ -311,15 +313,64 @@ func planLineLabel(req workspace.ToolRequest, path string) string {
 	if path == "" {
 		path = strings.TrimSpace(req.Path)
 	}
-	switch {
-	case desc != "" && path != "":
+	if desc != "" && path != "" {
 		return fmt.Sprintf("%s (%s)", desc, path)
-	case desc != "":
+	}
+	if desc != "" {
 		return desc
-	case path != "":
+	}
+	if workspace.IsWorkspaceWriteTool(req.Tool) {
+		return writeToolIntentSynth(req.Tool, path)
+	}
+	if path != "" {
 		return fmt.Sprintf("%s %s", req.Tool, path)
+	}
+	return req.Tool
+}
+
+// writeToolIntentSynth produces a human-readable intent string for a
+// write tool when the model didn't supply a Description. Mirrors the
+// patterns from toolRequestIntent but is self-contained so plan_autodoc
+// doesn't depend on lifecycle.
+func writeToolIntentSynth(tool, path string) string {
+	tool = strings.TrimSpace(tool)
+	path = strings.TrimSpace(path)
+	switch tool {
+	case "edit_file":
+		if path == "" {
+			return "apply the planned code change"
+		}
+		return "apply the planned change in " + path
+	case "write_file":
+		if path == "" {
+			return "create or replace a file"
+		}
+		return "create or replace " + path
+	case "append_file":
+		if path == "" {
+			return "append content to a file"
+		}
+		return "append content to " + path
+	case "apply_patch":
+		if path == "" {
+			return "apply a patch"
+		}
+		return "apply a patch to " + path
+	case "mkdir":
+		if path == "" {
+			return "create a directory"
+		}
+		return "create directory " + path
+	case "go_move_declarations":
+		if path == "" {
+			return "move declarations"
+		}
+		return "move declarations in " + path
 	default:
-		return req.Tool
+		if path != "" {
+			return tool + " " + path
+		}
+		return tool
 	}
 }
 
@@ -446,11 +497,13 @@ func (m *Model) recordTaskLedger(req workspace.ToolRequest, result workspace.Too
 		m.planLedgerItems[item.ID] = item
 		if !m.planLedgerRenderedIDs[item.ID] {
 			if m.findDuplicateLedgerItemID(item.Content, renderedSnapshot) != "" {
-				m.planLedgerRenderedIDs[item.ID] = true // suppress future re-render of this alias
+				m.planLedgerRenderedIDs[item.ID] = true
 				continue
 			}
 			newItems = append(newItems, item)
 			m.planLedgerRenderedIDs[item.ID] = true
+		} else {
+			m.updatePlanItemCheckbox(item)
 		}
 	}
 	if len(newItems) == 0 {
@@ -575,6 +628,8 @@ func plannedItemLine(item workspace.TaskLedgerItem) string {
 	switch strings.ToLower(strings.TrimSpace(item.Status)) {
 	case "completed", "cancelled":
 		box = "[x]"
+	case "in_progress":
+		box = "[~]"
 	}
 	content := strings.TrimSpace(item.Content)
 	if content == "" {
@@ -766,4 +821,227 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 		m.planLedgerItems[matchID] = item
 	}
 	return true
+}
+
+// attachWriteToSubmittedEdit matches a successful write against a
+// submit_plan checklist entry by path, flipping [ ] → [x] and
+// appending the diff anchor. Returns true on a successful match.
+func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
+	if m == nil || len(m.planSubmittedEdits) == 0 {
+		return false
+	}
+	planPath := m.ensurePlanPath()
+	if planPath == "" {
+		return false
+	}
+
+	ids := make([]string, 0, len(m.planSubmittedEdits))
+	for id := range m.planSubmittedEdits {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	var matchID string
+	for _, id := range ids {
+		edit := m.planSubmittedEdits[id]
+		if strings.TrimSpace(edit.Path) != path {
+			continue
+		}
+		anchor := "<!-- pid:" + id + " -->"
+		data, err := os.ReadFile(planPath)
+		if err != nil || !strings.Contains(string(data), anchor) {
+			continue
+		}
+		// Check it isn't already checked.
+		if strings.Contains(string(data), "- [x]") {
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.Contains(line, anchor) && strings.Contains(line, "- [x]") {
+					continue
+				}
+			}
+		}
+		matchID = id
+		break
+	}
+	if matchID == "" {
+		return false
+	}
+
+	anchor := "<!-- pid:" + matchID + " -->"
+	data, err := os.ReadFile(planPath)
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(string(data), "\n")
+	var changed bool
+	for i, line := range lines {
+		if !strings.Contains(line, anchor) {
+			continue
+		}
+		newLine := strings.Replace(line, "- [ ]", "- [x]", 1)
+		newLine = strings.Replace(newLine, "- [~]", "- [x]", 1)
+		newLine = strings.TrimRight(newLine, " ") + " <!-- id:" + diffID + " -->"
+		lines[i] = newLine
+		changed = true
+		break
+	}
+	if !changed {
+		return false
+	}
+	if err := os.WriteFile(planPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return false
+	}
+	return true
+}
+
+// updatePlanItemCheckbox rewrites the checkbox on an already-rendered
+// ledger item when its status changes (e.g. pending → in_progress).
+// The rewrite is in-place in the plan file, preserving all anchors and
+// the item text. No-op when the item has not been rendered yet.
+func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
+	if m == nil {
+		return
+	}
+	planPath := m.ensurePlanPath()
+	if planPath == "" {
+		return
+	}
+	anchor := "<!-- tid:" + item.ID + " -->"
+	status := strings.ToLower(strings.TrimSpace(item.Status))
+	if status == "pending" || status == "" {
+		return
+	}
+	data, err := os.ReadFile(planPath)
+	if err != nil {
+		return
+	}
+	if !strings.Contains(string(data), anchor) {
+		return
+	}
+	var targetBox string
+	switch status {
+	case "completed", "cancelled":
+		targetBox = "[x]"
+	case "in_progress":
+		targetBox = "[~]"
+	default:
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	var changed bool
+	for i, line := range lines {
+		if !strings.Contains(line, anchor) {
+			continue
+		}
+		newLine := line
+		for _, oldBox := range []string{"[ ]", "[~]", "[x]", "[X]"} {
+			newLine = strings.Replace(newLine, oldBox, targetBox, 1)
+		}
+		if newLine != line {
+			lines[i] = newLine
+			changed = true
+		}
+		break
+	}
+	if changed {
+		_ = os.WriteFile(planPath, []byte(strings.Join(lines, "\n")), 0o644)
+	}
+}
+
+// recordSubmittedPlan intercepts a successful submit_plan tool result
+// and populates the plan panel with unchecked checklist items — one per
+// edit in the submitted plan. Each line carries a synthetic "pid:"
+// anchor so executor-phase writes can be matched back and checked off.
+//
+// On a second submit_plan (correction round), the existing "### Plan"
+// section is replaced entirely with the latest artifact.
+func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.ToolResult) {
+	if m == nil {
+		return
+	}
+	if strings.TrimSpace(req.Tool) != "submit_plan" {
+		return
+	}
+	if strings.TrimSpace(result.Error) != "" {
+		return
+	}
+	if m.sessionID() == "" {
+		return
+	}
+	var edits []workspace.PlanEdit
+	if req.PlanArtifact != nil {
+		edits = req.PlanArtifact.Edits
+	}
+	if len(edits) == 0 {
+		edits = req.Edits
+	}
+	if len(edits) == 0 {
+		return
+	}
+	m.ensurePlanSessionHeading()
+
+	if m.planSubmittedEdits == nil {
+		m.planSubmittedEdits = map[string]workspace.PlanEdit{}
+	}
+
+	path := m.ensurePlanPath()
+	if path == "" {
+		return
+	}
+
+	existing, _ := os.ReadFile(path)
+	content := string(existing)
+
+	var b strings.Builder
+	rest, hasSection := cutPlanSection(content, "### Plan")
+	if hasSection {
+		// Drop the old ### Plan section; we'll rewrite it.
+	}
+	b.WriteString(rest)
+	if !strings.HasSuffix(rest, "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString("### Plan\n")
+	for i, edit := range edits {
+		peID := fmt.Sprintf("pe-%d", i)
+		label := planEditLabel(edit)
+		b.WriteString(fmt.Sprintf("- [ ] %s <!-- pid:%s -->\n", label, peID))
+		m.planSubmittedEdits[peID] = edit
+	}
+	_ = os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+// cutPlanSection splits content at the "### Plan" heading, returning
+// everything before it (plus anything after the next ### heading or
+// end-of-file). Returns (before, true) when the section exists.
+func cutPlanSection(content, heading string) (string, bool) {
+	idx := strings.Index(content, heading+"\n")
+	if idx < 0 {
+		return content, false
+	}
+	before := content[:idx]
+	after := content[idx:]
+	nextHeading := strings.Index(after[len(heading)+1:], "\n### ")
+	if nextHeading >= 0 {
+		cut := nextHeading + len(heading) + 1
+		return before + after[cut+1:], true
+	}
+	return before, true
+}
+
+// planEditLabel builds a human-readable label for a PlanEdit, using its
+// Purpose field with a path fallback.
+func planEditLabel(edit workspace.PlanEdit) string {
+	desc := strings.TrimSpace(edit.Purpose)
+	p := strings.TrimSpace(edit.Path)
+	switch {
+	case desc != "" && p != "":
+		return fmt.Sprintf("%s (%s)", desc, p)
+	case desc != "":
+		return desc
+	case p != "":
+		return p
+	default:
+		return fmt.Sprintf("edit %d", 0)
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -403,7 +404,7 @@ func (b *packFileBuilder) add(node Node, role string, reason string, handle stri
 	if _, ok := b.stale[node.Path]; ok {
 		existing.Stale = true
 	}
-	if handle != "" && !containsString(existing.Handles, handle) {
+	if handle != "" && !slices.Contains(existing.Handles, handle) {
 		existing.Handles = append(existing.Handles, handle)
 		sort.Strings(existing.Handles)
 	}
@@ -432,7 +433,7 @@ func (b *packFileBuilder) addPackFile(file PackFile) {
 	}
 	existing.Stale = existing.Stale || file.Stale
 	for _, handle := range file.Handles {
-		if handle != "" && !containsString(existing.Handles, handle) {
+		if handle != "" && !slices.Contains(existing.Handles, handle) {
 			existing.Handles = append(existing.Handles, handle)
 		}
 	}
@@ -845,13 +846,4 @@ func savePack(root string, result PackResult) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
