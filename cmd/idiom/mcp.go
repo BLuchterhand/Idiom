@@ -816,7 +816,7 @@ func bytesForMCPArguments(args json.RawMessage) []byte {
 
 func mcpArgumentsContainPrivatePath(args []byte) bool {
 	text := string(args)
-	for _, re := range mcpPrivatePathRegexes() {
+	for _, re := range mcpPrivatePathRegexPatterns {
 		if re.MatchString(text) {
 			return true
 		}
@@ -862,7 +862,7 @@ func (s *mcpDiscoveryServer) redactText(text string) string {
 	if text == "" {
 		return ""
 	}
-	for _, re := range mcpPrivatePathRegexes() {
+	for _, re := range mcpPrivatePathRegexPatterns {
 		text = re.ReplaceAllString(text, "<redacted_path>")
 	}
 	replacements := []string{
@@ -883,13 +883,11 @@ func (s *mcpDiscoveryServer) redactText(text string) string {
 	return text
 }
 
-func mcpPrivatePathRegexes() []*regexp.Regexp {
-	return []*regexp.Regexp{
-		regexp.MustCompile(`/private<redacted_path>`),
-		regexp.MustCompile(`/private/var/folders/[^\s"']+`),
-		regexp.MustCompile(`/var/folders/[^\s"']+`),
-		regexp.MustCompile(`/tmp/[^\s"']+`),
-		regexp.MustCompile(`/Users/[^\s"']+`),
-		regexp.MustCompile(`logs/(telemetry|conversations)/[^\s"']+`),
-	}
+var mcpPrivatePathRegexPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`/private<redacted_path>`),
+	regexp.MustCompile(`/private/var/folders/[^\s"']+`),
+	regexp.MustCompile(`/var/folders/[^\s"']+`),
+	regexp.MustCompile(`/tmp/[^\s"']+`),
+	regexp.MustCompile(`/Users/[^\s"']+`),
+	regexp.MustCompile(`logs/(telemetry|conversations)/[^\s"']+`),
 }

@@ -265,82 +265,12 @@ func accumulateLaneHistoryRunMetrics(out *laneHistorySummary, evt laneHistoryEve
 	}
 }
 
-// summarizeLaneHistory reads the history file and aggregates.
-// Malformed lines are skipped. A missing file returns an empty
-// summary with nil error.
 func summarizeLaneHistory(projectRoot string) (laneHistorySummary, error) {
-	path := filepath.Join(projectRoot, laneHistoryRelPath)
-	body, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return newLaneHistorySummary(), nil
-		}
-		return laneHistorySummary{}, err
-	}
-	out := newLaneHistorySummary()
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var evt laneHistoryEvent
-		if err := json.Unmarshal([]byte(line), &evt); err != nil {
-			continue
-		}
-		out.Total++
-		out.ByMode[evt.Mode]++
-		out.ByExitCode[evt.ExitCode]++
-		if evt.FinalState != "" {
-			out.ByFinalState[evt.FinalState]++
-		}
-		if evt.Brief != "" {
-			out.BriefsByPath[evt.Brief]++
-		}
-		if evt.BriefProvenance != "" {
-			out.ByProvenance[evt.BriefProvenance]++
-		}
-		accumulateLaneHistoryRunMetrics(&out, evt)
-	}
-	return out, nil
+	return summarizeLaneHistoryWithFilter(projectRoot, laneHistoryFilter{})
 }
 
 func summarizeLaneHistoryByMode(projectRoot string, mode string) (laneHistorySummary, error) {
-	path := filepath.Join(projectRoot, laneHistoryRelPath)
-	body, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return newLaneHistorySummary(), nil
-		}
-		return laneHistorySummary{}, err
-	}
-	out := newLaneHistorySummary()
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var evt laneHistoryEvent
-		if err := json.Unmarshal([]byte(line), &evt); err != nil {
-			continue
-		}
-		if evt.Mode != mode {
-			continue
-		}
-		out.Total++
-		out.ByMode[evt.Mode]++
-		out.ByExitCode[evt.ExitCode]++
-		if evt.FinalState != "" {
-			out.ByFinalState[evt.FinalState]++
-		}
-		if evt.Brief != "" {
-			out.BriefsByPath[evt.Brief]++
-		}
-		if evt.BriefProvenance != "" {
-			out.ByProvenance[evt.BriefProvenance]++
-		}
-		accumulateLaneHistoryRunMetrics(&out, evt)
-	}
-	return out, nil
+	return summarizeLaneHistoryWithFilter(projectRoot, laneHistoryFilter{ModeFilter: mode})
 }
 
 // printLaneHistorySummary writes a human-readable breakdown to w.

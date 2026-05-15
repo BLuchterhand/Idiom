@@ -785,7 +785,7 @@ You can also set the investigation depth:
 In explore mode:
 
 - Qwen is restricted to read-only workspace tools
-- `mkdir`, `edit_file`, `write_file`, and `append_file` are rejected
+- `mkdir`, `edit_file`, `write_file`, `append_file`, `apply_patch`, and `go_move_declarations` are rejected
 - `shell` is limited to read-only inspection commands such as `ls`, `find`, `rg`, `grep`, `awk`, `sed`, `cat`, `head`, `tail`, `wc`, `file`, and read-only `git` commands
 - after one broad orientation step, the runner pushes Qwen to narrow with `search_files`, `search_content`, or `read_file` instead of continuing to survey the repo
 - the same “narrow after the first broad step” rule now applies in normal mode too, so repeated `list_files` / `ls` / `find` loops get rejected before they burn the whole tool budget

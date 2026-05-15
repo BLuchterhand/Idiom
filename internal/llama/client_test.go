@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"idiom/internal/config"
 )
 
 func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
@@ -83,11 +85,11 @@ func TestCompleteChatCapturesFinishReasonFromBothBackends(t *testing.T) {
 		body    string
 		want    string
 	}{
-		{"llama-stop", BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`, "stop"},
-		{"llama-length", BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"length"}]}`, "length"},
-		{"mlx-stop", BackendMLX, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`, "stop"},
-		{"mlx-length", BackendMLX, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"length"}]}`, "length"},
-		{"omitted", BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`, ""},
+		{"llama-stop", config.BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`, "stop"},
+		{"llama-length", config.BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"length"}]}`, "length"},
+		{"mlx-stop", config.BackendMLX, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`, "stop"},
+		{"mlx-length", config.BackendMLX, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"length"}]}`, "length"},
+		{"omitted", config.BackendLlama, `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := tc.body
@@ -118,7 +120,7 @@ func TestMLXBackendOmitsDefaultChatTemplateKwargs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, time.Second).WithBackend(BackendMLX)
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendMLX)
 	if _, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
 		Model:            "mlx-model",
 		EnableThinking:   &enableThinking,
@@ -145,7 +147,7 @@ func TestMLXBackendSendsExplicitChatTemplateKwargs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, time.Second).WithBackend(BackendMLX)
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendMLX)
 	if _, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
 		Model:              "mlx-model",
 		EnableThinking:     &enableThinking,
@@ -181,7 +183,7 @@ func TestMLXBackendOmitsNativeToolDefinitions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, time.Second).WithBackend(BackendMLX)
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendMLX)
 	_, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
 		Model:      "mlx-model",
 		MaxTokens:  32,
@@ -212,7 +214,7 @@ func TestLlamaBackendKeepsNativeToolDefinitions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, time.Second).WithBackend(BackendLlama)
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendLlama)
 	_, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
 		Model:      "llama-model",
 		MaxTokens:  32,
@@ -250,7 +252,7 @@ func TestZAIBackendUsesHostedChatEndpointAuthAndThinking(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, time.Second).WithBackend(BackendZAI).WithAPIKeyEnv("ZAI_API_KEY")
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendZAI).WithAPIKeyEnv("ZAI_API_KEY")
 	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "assistant", Content: "prior", ReasoningContent: "do not resend"}, {Role: "user", Content: "hi"}}, ChatOptions{
 		Model:          "glm-5.1",
 		Temperature:    1.0,
@@ -322,7 +324,7 @@ func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, time.Second).
-		WithBackend(BackendCodex).
+		WithBackend(config.BackendCodex).
 		WithAPIKeyEnv("OPENAI_API_KEY").
 		WithReasoningEffort("high").
 		WithVerbosity("low")
@@ -388,42 +390,42 @@ func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
 }
 
 func TestBackendSupportsNativeTools(t *testing.T) {
-	if BackendSupportsNativeTools(BackendMLX) {
+	if BackendSupportsNativeTools(config.BackendMLX) {
 		t.Fatal("MLX should use idiom textual JSON tools, not native tool parsing")
 	}
-	if !BackendSupportsNativeTools(BackendLlama) {
+	if !BackendSupportsNativeTools(config.BackendLlama) {
 		t.Fatal("llama backend should keep native tools")
 	}
-	if !BackendSupportsNativeTools(BackendCodex) || !BackendSupportsNativeTools(BackendZAI) {
+	if !BackendSupportsNativeTools(config.BackendCodex) || !BackendSupportsNativeTools(config.BackendZAI) {
 		t.Fatal("hosted backends should keep native tools")
 	}
-	if !NewClient("http://example.invalid", time.Second).WithBackend(BackendLlama).SupportsNativeTools() {
+	if !NewClient("http://example.invalid", time.Second).WithBackend(config.BackendLlama).SupportsNativeTools() {
 		t.Fatal("llama client should report native tool support")
 	}
-	if NewClient("http://example.invalid", time.Second).WithBackend(BackendMLX).SupportsNativeTools() {
+	if NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX).SupportsNativeTools() {
 		t.Fatal("MLX client should report textual tool mode")
 	}
 }
 
 func TestWithBackendNormalizesValue(t *testing.T) {
 	c := NewClient("http://example.invalid", time.Second)
-	if c.Backend() != BackendLlama {
+	if c.Backend() != config.BackendLlama {
 		t.Fatalf("expected default backend llama, got %q", c.Backend())
 	}
 	c.WithBackend("MLX")
-	if c.Backend() != BackendMLX {
+	if c.Backend() != config.BackendMLX {
 		t.Fatalf("expected mlx after WithBackend(MLX), got %q", c.Backend())
 	}
 	c.WithBackend("codex")
-	if c.Backend() != BackendCodex {
+	if c.Backend() != config.BackendCodex {
 		t.Fatalf("expected codex after WithBackend(codex), got %q", c.Backend())
 	}
 	c.WithBackend("zai")
-	if c.Backend() != BackendZAI {
+	if c.Backend() != config.BackendZAI {
 		t.Fatalf("expected zai after WithBackend(zai), got %q", c.Backend())
 	}
 	c.WithBackend("unknown")
-	if c.Backend() != BackendLlama {
+	if c.Backend() != config.BackendLlama {
 		t.Fatalf("expected fallback to llama for unknown backend, got %q", c.Backend())
 	}
 }

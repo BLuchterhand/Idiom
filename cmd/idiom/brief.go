@@ -515,7 +515,9 @@ func runBriefLintResult(content string, stderr io.Writer) (int, []string) {
 	}
 	tmpPath := tmpBrief.Name()
 	tmpBrief.Close()
-	os.WriteFile(tmpPath, []byte(content), 0o644)
+	if err := os.WriteFile(tmpPath, []byte(content), 0o644); err != nil {
+		return 2, []string{fmt.Sprintf("cannot write temp brief: %v", err)}
+	}
 	defer os.Remove(tmpPath)
 
 	cmd := exec.Command("python3", scriptPath, tmpPath)

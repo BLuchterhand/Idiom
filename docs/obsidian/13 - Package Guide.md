@@ -70,6 +70,7 @@ serve.
 | `internal/llama` | llama.cpp/local model integration |
 | `internal/config` | Project and runtime configuration |
 | `internal/cmdutil` | Shared CLI utilities |
+| `internal/util` | Shared utility helpers: string, exec, IO, JSON, and generic pointer functions |
 | `internal/autodetect` | Host, model, backend, and toolchain discovery helpers |
 
 ## Evidence And Diagnostics

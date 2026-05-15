@@ -74,7 +74,7 @@ func TestPlanThenExecuteWriteGuardLetsSubmitPlanThrough(t *testing.T) {
 
 func TestMLXPlanThenExecuteAdvertisesTextualSubmitPlanProtocol(t *testing.T) {
 	runner := &Runner{
-		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(llama.BackendMLX),
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),
 	}
 	brief := workerruntime.NormalizeRuntimeBrief(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -102,7 +102,7 @@ func TestMLXPlanThenExecuteAdvertisesTextualSubmitPlanProtocol(t *testing.T) {
 
 func TestNativeToolBackendSkipsTextualToolProtocolPrompt(t *testing.T) {
 	runner := &Runner{
-		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(llama.BackendLlama),
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendLlama),
 	}
 	brief := workerruntime.NormalizeRuntimeBrief(workerruntime.WorkerRuntimeBrief{
 		AllowedTools:  []string{"submit_plan"},

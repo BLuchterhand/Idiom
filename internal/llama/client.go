@@ -13,21 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/config"
 	"idiom/internal/util"
 )
 
 const loadingModelRetryDelay = 500 * time.Millisecond
-
-// Backend identifiers for Client. Mirrored from config backend constants;
-// keep values in sync.
-const (
-	BackendLlama           = "llama"
-	BackendMLX             = "mlx"
-	BackendMiniMax         = "minimax"
-	BackendOpenAIResponses = "openai_responses"
-	BackendCodex           = "codex"
-	BackendZAI             = "zai"
-)
 
 type Client struct {
 	baseURL         string
@@ -209,9 +199,9 @@ func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwar
 	// and preserve_thinking hooks). Other OpenAI-compatible backends may reject
 	// unknown request keys, so keep the field scoped to verified backends.
 	switch backend {
-	case "", BackendLlama:
+	case "", config.BackendLlama:
 		// Existing llama.cpp behavior: request-level options are the contract.
-	case BackendMLX:
+	case config.BackendMLX:
 		// MLX deployments commonly encode the model's default thinking mode in
 		// server-start --chat-template-args. Only send per-request kwargs when
 		// a caller intentionally overrides those defaults; otherwise a generic
@@ -250,7 +240,7 @@ func normalizeChatRequestForBackend(req *chatRequest, backend string) {
 
 func BackendSupportsNativeTools(backend string) bool {
 	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case BackendMLX:
+	case config.BackendMLX:
 		return false
 	default:
 		return true
@@ -259,7 +249,7 @@ func BackendSupportsNativeTools(backend string) bool {
 
 func isOpenAIResponsesBackend(backend string) bool {
 	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case BackendOpenAIResponses, BackendCodex:
+	case config.BackendOpenAIResponses, config.BackendCodex:
 		return true
 	default:
 		return false
@@ -268,7 +258,7 @@ func isOpenAIResponsesBackend(backend string) bool {
 
 func isHostedChatBackend(backend string) bool {
 	b := strings.ToLower(strings.TrimSpace(backend))
-	return b == BackendZAI || b == BackendMiniMax
+	return b == config.BackendZAI || b == config.BackendMiniMax
 }
 
 func backendRequiresAuth(backend string) bool {
@@ -277,11 +267,11 @@ func backendRequiresAuth(backend string) bool {
 
 func defaultAPIKeyEnv(backend string) string {
 	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case BackendOpenAIResponses, BackendCodex:
+	case config.BackendOpenAIResponses, config.BackendCodex:
 		return "OPENAI_API_KEY"
-	case BackendZAI:
+	case config.BackendZAI:
 		return "ZAI_API_KEY"
-	case BackendMiniMax:
+	case config.BackendMiniMax:
 		return "MINIMAX_API_KEY"
 	default:
 		return ""
@@ -291,7 +281,7 @@ func defaultAPIKeyEnv(backend string) string {
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		backend: BackendLlama,
+		backend: config.BackendLlama,
 		http: &http.Client{
 			Timeout: timeout,
 		},
@@ -299,25 +289,25 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 }
 
 // WithBackend sets the backend kind this client is talking to. Defaults to
-// llama; call with BackendMLX when the endpoint is mlx_lm.server (or another
+// llama; call with config.BackendMLX when the endpoint is mlx_lm.server (or another
 // OpenAI-compatible server that doesn't understand llama.cpp extensions like
 // chat_template_kwargs). Returns the same client for chaining at call sites.
 func (c *Client) WithBackend(backend string) *Client {
 	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case BackendMLX:
-		c.backend = BackendMLX
-	case BackendMiniMax:
-		c.backend = BackendMiniMax
-	case BackendOpenAIResponses:
-		c.backend = BackendOpenAIResponses
-	case BackendCodex:
-		c.backend = BackendCodex
-	case BackendZAI:
-		c.backend = BackendZAI
-	case "", BackendLlama:
-		c.backend = BackendLlama
+	case config.BackendMLX:
+		c.backend = config.BackendMLX
+	case config.BackendMiniMax:
+		c.backend = config.BackendMiniMax
+	case config.BackendOpenAIResponses:
+		c.backend = config.BackendOpenAIResponses
+	case config.BackendCodex:
+		c.backend = config.BackendCodex
+	case config.BackendZAI:
+		c.backend = config.BackendZAI
+	case "", config.BackendLlama:
+		c.backend = config.BackendLlama
 	default:
-		c.backend = BackendLlama
+		c.backend = config.BackendLlama
 	}
 	return c
 }
@@ -340,7 +330,7 @@ func (c *Client) WithVerbosity(verbosity string) *Client {
 // Backend reports the backend kind configured on this client.
 func (c *Client) Backend() string {
 	if c.backend == "" {
-		return BackendLlama
+		return config.BackendLlama
 	}
 	return c.backend
 }
@@ -353,14 +343,14 @@ func (c *Client) SupportsNativeTools() bool {
 }
 
 func (c *Client) modelsURL() string {
-	if c.Backend() == BackendZAI {
+	if c.Backend() == config.BackendZAI {
 		return c.baseURL + "/models"
 	}
 	return c.baseURL + "/v1/models"
 }
 
 func (c *Client) chatCompletionsURL() string {
-	if c.Backend() == BackendZAI {
+	if c.Backend() == config.BackendZAI {
 		return c.baseURL + "/chat/completions"
 	}
 	return c.baseURL + "/v1/chat/completions"
@@ -437,7 +427,7 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 	if opts.ToolChoice != "" && BackendSupportsNativeTools(backend) {
 		payload["tool_choice"] = opts.ToolChoice
 	}
-	if strings.EqualFold(strings.TrimSpace(backend), BackendZAI) && opts.EnableThinking != nil {
+	if strings.EqualFold(strings.TrimSpace(backend), config.BackendZAI) && opts.EnableThinking != nil {
 		mode := "disabled"
 		if *opts.EnableThinking {
 			mode = "enabled"

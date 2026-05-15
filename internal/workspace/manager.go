@@ -27,6 +27,15 @@ import (
 	"idiom/internal/semantic"
 )
 
+var exploreBlockedTools = map[string]string{
+	"go_move_declarations": "moving declarations",
+	"mkdir":               "creating directories",
+	"edit_file":           "editing files",
+	"write_file":          "writing files",
+	"append_file":         "appending files",
+	"apply_patch":         "applying patches",
+}
+
 type Manager struct {
 	cfg config.Workspace
 
@@ -972,33 +981,33 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 	case "go_workspace_symbol":
 		return m.goWorkspaceSymbol(ctx, req)
 	case "go_move_declarations":
-		if mode == ModeExplore {
-			return ToolResult{Tool: "go_move_declarations", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before moving declarations"}
+		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
+			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
 		}
 		return m.goMoveDeclarations(req)
 	case "mkdir":
-		if mode == ModeExplore {
-			return ToolResult{Tool: "mkdir", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before creating directories"}
+		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
+			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
 		}
 		return m.makeDir(req)
 	case "edit_file":
-		if mode == ModeExplore {
-			return ToolResult{Tool: "edit_file", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before editing files"}
+		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
+			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
 		}
 		return m.editFile(req)
 	case "write_file":
-		if mode == ModeExplore {
-			return ToolResult{Tool: "write_file", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before writing files"}
+		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
+			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
 		}
 		return m.writeFile(req, false)
 	case "append_file":
-		if mode == ModeExplore {
-			return ToolResult{Tool: "append_file", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before appending files"}
+		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
+			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
 		}
 		return m.writeFile(req, true)
 	case "apply_patch":
-		if mode == ModeExplore {
-			return ToolResult{Tool: "apply_patch", Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before applying patches"}
+		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
+			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
 		}
 		return m.applyPatch(req)
 	case "shell":
