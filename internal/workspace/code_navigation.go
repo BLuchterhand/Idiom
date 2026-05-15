@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"idiom/internal/discovery"
+	"idiom/internal/util"
 )
 
 const (
@@ -31,7 +33,7 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 	if err != nil {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: err.Error()}
 	}
-	req.Pattern = firstNonEmptyString(req.Pattern, req.Query)
+	req.Pattern = util.FirstNonEmpty(req.Pattern, req.Query)
 	if spec.RequiresPattern && strings.TrimSpace(req.Pattern) == "" {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: fmt.Sprintf("pattern is required for %s", spec.Name)}
 	}
@@ -111,7 +113,7 @@ func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool
 			for _, lang := range active {
 				names = append(names, lang.Name)
 			}
-			sort.Strings(names)
+			slices.Sort(names)
 			return LanguageSupport{}, false, fmt.Sprintf("multiple active languages (%s); pass path or language to route precisely", strings.Join(names, ", "))
 		}
 	}
@@ -160,7 +162,7 @@ func codeNavigationWrapResult(spec codeNavigationSpec, language string, routedTo
 }
 
 func codeNavigationResultDetail(result ToolResult) string {
-	return firstNonEmptyString(result.Error, result.Summary, result.Output)
+	return util.FirstNonEmpty(result.Error, result.Summary, result.Output)
 }
 
 func (m *Manager) genericCodeNavigationFallback(req ToolRequest, spec codeNavigationSpec, reason string) ToolResult {
@@ -171,7 +173,7 @@ func (m *Manager) genericCodeNavigationFallback(req ToolRequest, spec codeNaviga
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: fmt.Sprintf("pattern is required for generic %s fallback", spec.Name)}
 	}
 	if strings.TrimSpace(req.Path) == "" {
-		return ToolResult{Tool: "code_navigate", Summary: "Code navigation needs route context", Error: fmt.Sprintf("%s; pass a path so generic fallback stays bounded", firstNonEmptyString(reason, "no language route matched"))}
+		return ToolResult{Tool: "code_navigate", Summary: "Code navigation needs route context", Error: fmt.Sprintf("%s; pass a path so generic fallback stays bounded", util.FirstNonEmpty(reason, "no language route matched"))}
 	}
 
 	matches, truncated, err := m.genericCodeNavigationMatches(req)
@@ -349,7 +351,7 @@ func genericCodeNavigationFileMatches(path string, pattern string, remaining int
 func codeNavigationDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	spec, err := codeNavigationSpecFor(req.Capability)
 	if err != nil {
-		return discoveryProfile("language_symbol", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Pattern, req.Query)), "low", true)
+		return discoveryProfile("language_symbol", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
 	}
-	return discoveryProfile(spec.Class, scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Pattern, req.Query)), spec.Cost, true)
+	return discoveryProfile(spec.Class, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), spec.Cost, true)
 }

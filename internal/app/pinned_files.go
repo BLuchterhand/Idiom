@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -98,9 +99,7 @@ func (r *pinnedFileRegistry) evictLRU(cap int) {
 	for path, pin := range r.pins {
 		entries = append(entries, entry{path: path, t: pin.lastSeen})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].t.Before(entries[j].t)
-	})
+	slices.SortFunc(entries, func(a, b entry) int { return a.t.Compare(b.t) })
 	toDrop := len(entries) - cap
 	for i := 0; i < toDrop; i++ {
 		delete(r.pins, entries[i].path)

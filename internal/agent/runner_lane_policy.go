@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"idiom/internal/frontier"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -442,19 +443,19 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 		}
 		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
 			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
-				terms = appendUniqueSearchTerm(terms, term)
+				terms = util.AppendUnique(terms, term)
 			}
 		}
 	}
 	for _, fragment := range frontier.QuotedPromptFragments(objective) {
 		if term, ok := delegatedReadOnlySearchTerm(fragment); ok {
-			terms = appendUniqueSearchTerm(terms, term)
+			terms = util.AppendUnique(terms, term)
 		}
 	}
 	if len(terms) == 0 {
 		for _, candidate := range strings.Fields(delegatedReadOnlyQuestionText(objective)) {
 			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
-				terms = appendUniqueSearchTerm(terms, term)
+				terms = util.AppendUnique(terms, term)
 			}
 			if len(terms) >= 4 {
 				break
@@ -463,7 +464,7 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 	}
 	for _, term := range delegatedReadOnlyMechanismTerms(objective) {
 		if normalized, ok := delegatedReadOnlySearchTerm(term); ok {
-			terms = appendUniqueSearchTerm(terms, normalized)
+			terms = util.AppendUnique(terms, normalized)
 		}
 	}
 	return strings.Join(terms, "|")
@@ -503,13 +504,13 @@ func delegatedReadOnlyBootstrapSymbolPattern(objective string) string {
 		}
 		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
 			if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(candidate); ok {
-				candidates = appendUniqueSearchTerm(candidates, symbol)
+				candidates = util.AppendUnique(candidates, symbol)
 			}
 		}
 	}
 	for _, fragment := range frontier.QuotedPromptFragments(objective) {
 		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(fragment); ok {
-			candidates = appendUniqueSearchTerm(candidates, symbol)
+			candidates = util.AppendUnique(candidates, symbol)
 		}
 	}
 	if len(candidates) == 0 {
@@ -601,19 +602,6 @@ func delegatedReadOnlyLooksCodeShapedSymbol(value string) bool {
 	return false
 }
 
-func appendUniqueSearchTerm(values []string, value string) []string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return values
-	}
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
-}
-
 func (r *Runner) delegatedReadOnlySecondaryEvidenceRedirect(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
 	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
 		return workspace.ToolRequest{}, false
@@ -684,7 +672,7 @@ func delegatedReadOnlyNamedPrimaryPathRedirect(objective string, blockedPath str
 func delegatedReadOnlyImplementationPattern(objective string, targetPath string) string {
 	terms := make([]string, 0, 8)
 	for _, part := range strings.Split(delegatedReadOnlyBootstrapPattern(objective), "|") {
-		terms = appendUniqueSearchTerm(terms, part)
+		terms = util.AppendUnique(terms, part)
 	}
 	base := strings.TrimSuffix(filepath.Base(targetPath), filepath.Ext(targetPath))
 	base = strings.TrimSuffix(base, "_test")
@@ -692,12 +680,12 @@ func delegatedReadOnlyImplementationPattern(objective string, targetPath string)
 		return r == '_' || r == '-' || unicode.IsSpace(r)
 	}) {
 		if term, ok := delegatedReadOnlySearchTerm(fragment); ok {
-			terms = appendUniqueSearchTerm(terms, term)
+			terms = util.AppendUnique(terms, term)
 		}
 	}
 	for _, term := range delegatedReadOnlyMechanismTerms(objective) {
 		if normalized, ok := delegatedReadOnlySearchTerm(term); ok {
-			terms = appendUniqueSearchTerm(terms, normalized)
+			terms = util.AppendUnique(terms, normalized)
 		}
 	}
 	return strings.Join(terms, "|")
@@ -708,7 +696,7 @@ func delegatedReadOnlyMechanismTerms(objective string) []string {
 	terms := make([]string, 0, 6)
 	if containsAny(lower, "invoke", "invoked", "execute", "executed", "run", "runner", "workflow", "wired") {
 		for _, term := range []string{"invoke", "execute"} {
-			terms = appendUniqueSearchTerm(terms, term)
+			terms = util.AppendUnique(terms, term)
 		}
 	}
 	return terms
@@ -821,7 +809,7 @@ func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolReque
 	if runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
 		return false
 	}
-	tool := strings.TrimSpace(firstNonEmpty(result.Tool, req.Tool))
+	tool := strings.TrimSpace(util.FirstNonEmpty(result.Tool, req.Tool))
 	switch {
 	case tool == "discovery_query":
 		if !delegatedReadOnlyHasCompositeDiscoveryPacket(results) {

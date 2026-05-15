@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"idiom/internal/util"
 )
 
 const (
@@ -467,12 +469,12 @@ func localizationCompetitiveConditionFailureReasons(metric LocalizationCompetiti
 			for _, reason := range coverage.FailureReasons {
 				if reason == localizationFailureCompetitiveCandidates || reason == localizationFailurePartialCompetitiveCandidates {
 					reasons = append(reasons, reason)
-					return localizationUniqueStrings(reasons)
+					return util.UniqueNonEmpty(reasons)
 				}
 			}
 		}
 	}
-	return localizationUniqueStrings(reasons)
+	return util.UniqueNonEmpty(reasons)
 }
 
 func localizationCompetitiveCondition(task LocalizationCorpusTask, baseline string) (LocalizationCompetitiveConditionInput, bool) {
@@ -569,26 +571,6 @@ func LocalizationCompetitiveBaselineIDs() []string {
 		out = append(out, definition.ID)
 	}
 	return out
-}
-
-func localizationUniqueStrings(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(values))
-	unique := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		unique = append(unique, value)
-	}
-	return unique
 }
 
 func localizationContextPacket(task LocalizationCorpusTask) *LocalizationContextPacketEvidence {

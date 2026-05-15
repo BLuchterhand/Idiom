@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -172,7 +172,7 @@ func summarySymbolNames(symbols []Node, limit int) []string {
 			values = append(values, name)
 		}
 	}
-	sort.Strings(values)
+	slices.Sort(values)
 	values = uniqueStrings(values)
 	if limit > 0 && len(values) > limit {
 		values = values[:limit]

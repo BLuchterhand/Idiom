@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"idiom/internal/util"
 )
 
 const PlanArtifactLegacySchemaVersion = "idiom.plan.v1"
@@ -127,8 +129,8 @@ func (e *PlanArtifactValidationError) Error() string {
 	parts := make([]string, 0, limit+1)
 	for i := 0; i < limit; i++ {
 		item := e.Errors[i]
-		field := firstNonEmptyString(strings.TrimSpace(item.Field), "(root)")
-		code := firstNonEmptyString(strings.TrimSpace(item.Code), "invalid")
+		field := util.FirstNonEmpty(strings.TrimSpace(item.Field), "(root)")
+		code := util.FirstNonEmpty(strings.TrimSpace(item.Code), "invalid")
 		detail := strings.TrimSpace(item.Detail)
 		if detail != "" {
 			parts = append(parts, fmt.Sprintf("%s:%s:%s", field, code, detail))
@@ -185,7 +187,7 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 		SessionID:     strings.TrimSpace(sessionID),
 		Edits:         append([]PlanEdit(nil), req.Edits...),
 		Task: PlanArtifactTask{
-			Summary: sanitizePlanArtifactText(firstNonEmptyString(req.Rationale, "legacy submit_plan request"), 240),
+			Summary: sanitizePlanArtifactText(util.FirstNonEmpty(req.Rationale, "legacy submit_plan request"), 240),
 		},
 		Contract: PlanArtifactContract{
 			Kind:              "plan_then_execute",
@@ -220,15 +222,15 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 }
 
 func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, created string, planID string, legacyRequest bool) PlanArtifact {
-	artifact.SchemaVersion = firstNonEmptyString(strings.TrimSpace(artifact.SchemaVersion), PlanArtifactSchemaVersion)
-	artifact.PlanID = sanitizePlanArtifactID(firstNonEmptyString(artifact.PlanID, planID))
-	artifact.Created = firstNonEmptyString(strings.TrimSpace(artifact.Created), created)
-	artifact.SessionID = sanitizePlanArtifactID(firstNonEmptyString(artifact.SessionID, sessionID))
+	artifact.SchemaVersion = util.FirstNonEmpty(strings.TrimSpace(artifact.SchemaVersion), PlanArtifactSchemaVersion)
+	artifact.PlanID = sanitizePlanArtifactID(util.FirstNonEmpty(artifact.PlanID, planID))
+	artifact.Created = util.FirstNonEmpty(strings.TrimSpace(artifact.Created), created)
+	artifact.SessionID = sanitizePlanArtifactID(util.FirstNonEmpty(artifact.SessionID, sessionID))
 	artifact.Rationale = sanitizePlanArtifactText(artifact.Rationale, 2000)
 	artifact.Task.ID = sanitizePlanArtifactID(artifact.Task.ID)
 	artifact.Task.Summary = sanitizePlanArtifactText(artifact.Task.Summary, 240)
 	if legacyRequest && strings.TrimSpace(artifact.Task.Summary) == "" {
-		artifact.Task.Summary = sanitizePlanArtifactText(firstNonEmptyString(artifact.Rationale, "legacy submit_plan request"), 240)
+		artifact.Task.Summary = sanitizePlanArtifactText(util.FirstNonEmpty(artifact.Rationale, "legacy submit_plan request"), 240)
 	}
 	artifact.Task.ClientClassifications = normalizePlanArtifactClientClassifications(artifact.Task.ClientClassifications)
 	artifact.Contract.Kind = sanitizePlanArtifactToken(artifact.Contract.Kind)
@@ -237,11 +239,11 @@ func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, cre
 	artifact.Contract.PermissionProfile = sanitizePlanArtifactToken(artifact.Contract.PermissionProfile)
 	artifact.Contract.VerificationOwner = sanitizePlanArtifactToken(artifact.Contract.VerificationOwner)
 	if legacyRequest {
-		artifact.Contract.Kind = firstNonEmptyString(artifact.Contract.Kind, "plan_then_execute")
-		artifact.Contract.StrategyOwner = firstNonEmptyString(artifact.Contract.StrategyOwner, "model")
-		artifact.Contract.ContractOwner = firstNonEmptyString(artifact.Contract.ContractOwner, "harness")
-		artifact.Contract.PermissionProfile = firstNonEmptyString(artifact.Contract.PermissionProfile, "plan_then_execute")
-		artifact.Contract.VerificationOwner = firstNonEmptyString(artifact.Contract.VerificationOwner, "planner")
+		artifact.Contract.Kind = util.FirstNonEmpty(artifact.Contract.Kind, "plan_then_execute")
+		artifact.Contract.StrategyOwner = util.FirstNonEmpty(artifact.Contract.StrategyOwner, "model")
+		artifact.Contract.ContractOwner = util.FirstNonEmpty(artifact.Contract.ContractOwner, "harness")
+		artifact.Contract.PermissionProfile = util.FirstNonEmpty(artifact.Contract.PermissionProfile, "plan_then_execute")
+		artifact.Contract.VerificationOwner = util.FirstNonEmpty(artifact.Contract.VerificationOwner, "planner")
 	}
 	artifact.Contract.RequiredEditPaths = normalizePlanArtifactPaths(artifact.Contract.RequiredEditPaths)
 	artifact.Contract.ForbiddenPaths = normalizePlanArtifactPaths(artifact.Contract.ForbiddenPaths)
@@ -281,12 +283,12 @@ func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, cre
 		artifact.VerificationObligations = []PlanArtifactVerificationObligation{{
 			ID:       "verification-1",
 			Kind:     "executor_lane_sanity",
-			Owner:    firstNonEmptyString(artifact.Contract.VerificationOwner, "planner"),
+			Owner:    util.FirstNonEmpty(artifact.Contract.VerificationOwner, "planner"),
 			Status:   "open",
 			Required: true,
 		}}
 	}
-	artifact.Approval.Status = sanitizePlanArtifactToken(firstNonEmptyString(artifact.Approval.Status, "implicit"))
+	artifact.Approval.Status = sanitizePlanArtifactToken(util.FirstNonEmpty(artifact.Approval.Status, "implicit"))
 	artifact.Approval.ScopeID = sanitizePlanArtifactID(artifact.Approval.ScopeID)
 	artifact.Approval.Mode = sanitizePlanArtifactToken(artifact.Approval.Mode)
 	artifact.Approval.ApprovedBy = sanitizePlanArtifactID(artifact.Approval.ApprovedBy)
@@ -310,11 +312,11 @@ func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, cre
 	}
 	artifact.Handoff.From = sanitizePlanArtifactToken(artifact.Handoff.From)
 	artifact.Handoff.To = sanitizePlanArtifactToken(artifact.Handoff.To)
-	artifact.Handoff.Status = sanitizePlanArtifactToken(firstNonEmptyString(artifact.Handoff.Status, "ready"))
+	artifact.Handoff.Status = sanitizePlanArtifactToken(util.FirstNonEmpty(artifact.Handoff.Status, "ready"))
 	artifact.Handoff.Blockers = normalizePlanArtifactTokens(artifact.Handoff.Blockers)
 	if legacyRequest {
-		artifact.Handoff.From = firstNonEmptyString(artifact.Handoff.From, "planner")
-		artifact.Handoff.To = firstNonEmptyString(artifact.Handoff.To, "plan_execute_executor")
+		artifact.Handoff.From = util.FirstNonEmpty(artifact.Handoff.From, "planner")
+		artifact.Handoff.To = util.FirstNonEmpty(artifact.Handoff.To, "plan_execute_executor")
 		if len(artifact.Handoff.Blockers) == 0 {
 			artifact.Handoff.Ready = true
 		}
@@ -329,7 +331,7 @@ func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, cre
 func NormalizeLoadedPlanArtifact(artifact PlanArtifact) PlanArtifact {
 	if artifact.SchemaVersion == PlanArtifactLegacySchemaVersion {
 		artifact.SchemaVersion = PlanArtifactLegacySchemaVersion
-		artifact = normalizePlanArtifactForSubmit(artifact, artifact.SessionID, artifact.Created, firstNonEmptyString(artifact.PlanID, "legacy-plan"), true)
+		artifact = normalizePlanArtifactForSubmit(artifact, artifact.SessionID, artifact.Created, util.FirstNonEmpty(artifact.PlanID, "legacy-plan"), true)
 		return artifact
 	}
 	return normalizePlanArtifactForSubmit(artifact, artifact.SessionID, artifact.Created, artifact.PlanID, false)
@@ -445,7 +447,7 @@ func defaultPlanArtifactEvidence(artifact PlanArtifact) []PlanArtifactEvidence {
 			ID:        "evidence-1",
 			Kind:      "context_packet",
 			Handle:    "context_pack://" + artifact.Packet.PackID,
-			Freshness: firstNonEmptyString(artifact.Packet.Freshness, artifact.Packet.Status),
+			Freshness: util.FirstNonEmpty(artifact.Packet.Freshness, artifact.Packet.Status),
 		}}
 	}
 	return []PlanArtifactEvidence{{
@@ -566,7 +568,7 @@ func normalizePlanArtifactEvidence(values []PlanArtifactEvidence) []PlanArtifact
 	out := make([]PlanArtifactEvidence, 0, len(values))
 	for i, value := range values {
 		item := PlanArtifactEvidence{
-			ID:         sanitizePlanArtifactID(firstNonEmptyString(value.ID, fmt.Sprintf("evidence-%d", i+1))),
+			ID:         sanitizePlanArtifactID(util.FirstNonEmpty(value.ID, fmt.Sprintf("evidence-%d", i+1))),
 			Kind:       sanitizePlanArtifactToken(value.Kind),
 			Handle:     sanitizePlanArtifactHandle(value.Handle),
 			Path:       sanitizePlanArtifactPathValue(value.Path),
@@ -586,7 +588,7 @@ func normalizePlanArtifactQuestions(values []PlanArtifactQuestion) []PlanArtifac
 	out := make([]PlanArtifactQuestion, 0, len(values))
 	for i, value := range values {
 		item := PlanArtifactQuestion{
-			ID:                    sanitizePlanArtifactID(firstNonEmptyString(value.ID, fmt.Sprintf("question-%d", i+1))),
+			ID:                    sanitizePlanArtifactID(util.FirstNonEmpty(value.ID, fmt.Sprintf("question-%d", i+1))),
 			Claim:                 sanitizePlanArtifactText(value.Claim, 240),
 			Probe:                 sanitizePlanArtifactText(value.Probe, 240),
 			Status:                sanitizePlanArtifactToken(value.Status),
@@ -604,7 +606,7 @@ func normalizePlanArtifactVerification(values []PlanArtifactVerificationObligati
 	out := make([]PlanArtifactVerificationObligation, 0, len(values))
 	for i, value := range values {
 		item := PlanArtifactVerificationObligation{
-			ID:       sanitizePlanArtifactID(firstNonEmptyString(value.ID, fmt.Sprintf("verification-%d", i+1))),
+			ID:       sanitizePlanArtifactID(util.FirstNonEmpty(value.ID, fmt.Sprintf("verification-%d", i+1))),
 			Kind:     sanitizePlanArtifactToken(value.Kind),
 			Command:  sanitizePlanArtifactText(value.Command, 240),
 			Path:     sanitizePlanArtifactPathValue(value.Path),
@@ -693,7 +695,7 @@ func normalizePlanArtifactPaths(values []string) []string {
 		seen[path] = struct{}{}
 		out = append(out, path)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

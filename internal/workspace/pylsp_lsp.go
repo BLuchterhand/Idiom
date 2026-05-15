@@ -3,6 +3,7 @@ package workspace
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,77 +37,10 @@ type pylspLSPClient struct {
 	server string // "pyright" or "pylsp"
 }
 
-type pylspEnvelope struct {
-	ID     json.RawMessage `json:"id,omitempty"`
-	Method string          `json:"method,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *pylspRPCError  `json:"error,omitempty"`
-	Params json.RawMessage `json:"params,omitempty"`
-}
 
-type pylspRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-type pylspPosition struct {
-	Line      int `json:"line"`
-	Character int `json:"character"`
-}
-
-type pylspRange struct {
-	Start pylspPosition `json:"start"`
-	End   pylspPosition `json:"end"`
-}
-
-type pylspLocation struct {
-	URI   string     `json:"uri"`
-	Range pylspRange `json:"range"`
-}
-
-type pylspLocationLink struct {
-	TargetURI            string     `json:"targetUri"`
-	TargetRange          pylspRange `json:"targetRange"`
-	TargetSelectionRange pylspRange `json:"targetSelectionRange"`
-}
-
-type pylspSymbolInfo struct {
-	Name          string        `json:"name"`
-	Kind          int           `json:"kind"`
-	Location      pylspLocation `json:"location"`
-	ContainerName string        `json:"containerName"`
-}
-
-type pylspCallHierarchyItem struct {
-	Name           string     `json:"name"`
-	Kind           int        `json:"kind"`
-	URI            string     `json:"uri"`
-	Range          pylspRange `json:"range"`
-	SelectionRange pylspRange `json:"selectionRange"`
-	Detail         string     `json:"detail"`
-}
-
-type pylspDocumentSymbol struct {
-	Name           string                `json:"name"`
-	Detail         string                `json:"detail"`
-	Kind           int                   `json:"kind"`
-	Range          pylspRange            `json:"range"`
-	SelectionRange pylspRange            `json:"selectionRange"`
-	Children       []pylspDocumentSymbol `json:"children"`
-}
-
-type pylspIncomingCall struct {
-	From       pylspCallHierarchyItem `json:"from"`
-	FromRanges []pylspRange           `json:"fromRanges"`
-}
-
-type pylspOutgoingCall struct {
-	To         pylspCallHierarchyItem `json:"to"`
-	FromRanges []pylspRange           `json:"fromRanges"`
-}
 
 type pylspDiagnostic struct {
-	Range    pylspRange `json:"range"`
+	Range    LSPRange `json:"range"`
 	Severity int        `json:"severity"`
 	Code     any        `json:"code"`
 	Source   string     `json:"source"`
@@ -241,7 +175,7 @@ func (c *pylspLSPClient) request(ctx context.Context, method string, params any,
 			}
 			return err
 		}
-		var env pylspEnvelope
+		var env LSPEnvelope
 		if err := json.Unmarshal(body, &env); err != nil {
 			continue
 		}
@@ -373,7 +307,7 @@ func (m *Manager) pythonWorkspaceSymbolsViaLSP(ctx context.Context, pattern stri
 	}
 	defer client.close()
 
-	var symbols []pylspSymbolInfo
+	var symbols []LSPSymbolInfo
 	if err := client.request(ctx, "workspace/symbol", map[string]any{"query": pattern}, &symbols); err != nil {
 		return "", err
 	}
@@ -389,7 +323,7 @@ func (m *Manager) pythonWorkspaceSymbolsViaLSP(ctx context.Context, pattern stri
 	if len(candidates) == 0 {
 		candidates = index.DefaultFiles(max(limit*2, 6))
 	}
-	collected := make([]pylspSymbolInfo, 0, len(candidates)*4)
+	collected := make([]LSPSymbolInfo, 0, len(candidates)*4)
 	for _, rel := range candidates {
 		abs, err := m.resolvePath(rel, "")
 		if err != nil {
@@ -398,7 +332,7 @@ func (m *Manager) pythonWorkspaceSymbolsViaLSP(ctx context.Context, pattern stri
 		if err := client.openFile(abs); err != nil {
 			continue
 		}
-		var docSymbols []pylspDocumentSymbol
+		var docSymbols []LSPDocumentSymbol
 		if err := client.request(ctx, "textDocument/documentSymbol", map[string]any{
 			"textDocument": map[string]any{"uri": pylspFileURI(abs)},
 		}, &docSymbols); err != nil {
@@ -492,7 +426,7 @@ func (m *Manager) pythonReferencesViaLSP(ctx context.Context, match semantic.Pyt
 			"includeDeclaration": true,
 		},
 	}
-	var locations []pylspLocation
+	var locations []LSPLocation
 	if err := client.request(ctx, "textDocument/references", params, &locations); err != nil {
 		return "", err
 	}
@@ -517,7 +451,7 @@ func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.
 		"textDocument": map[string]any{"uri": pylspFileURI(abs)},
 		"position":     m.pythonLSPPosition(abs, match),
 	}
-	var items []pylspCallHierarchyItem
+	var items []LSPCallHierarchyItem
 	if err := client.request(ctx, "textDocument/prepareCallHierarchy", params, &items); err != nil {
 		return callHierarchyResult{}, err
 	}
@@ -525,13 +459,13 @@ func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.
 		return callHierarchyResult{}, nil
 	}
 	if incoming {
-		var calls []pylspIncomingCall
+		var calls []LSPIncomingCall
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 			return callHierarchyResult{}, err
 		}
 		return m.formatPylspIncomingCalls(calls, pathFilter, match), nil
 	}
-	var calls []pylspOutgoingCall
+	var calls []LSPOutgoingCall
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 		return callHierarchyResult{}, err
 	}
@@ -562,7 +496,7 @@ func (m *Manager) pythonDiagnosticsViaLSP(ctx context.Context, abs string) ([]py
 		if err != nil {
 			break
 		}
-		var env pylspEnvelope
+		var env LSPEnvelope
 		if err := json.Unmarshal(body, &env); err != nil {
 			continue
 		}
@@ -636,49 +570,49 @@ func (m *Manager) pythonLSPCharacter(abs string, match semantic.PythonSymbolMatc
 	return 0, false
 }
 
-func parsePylspLocations(raw json.RawMessage) ([]pylspLocation, error) {
+func parsePylspLocations(raw json.RawMessage) ([]LSPLocation, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil, nil
 	}
-	var list []pylspLocation
+	var list []LSPLocation
 	if err := json.Unmarshal(trimmed, &list); err == nil {
 		return list, nil
 	}
-	var single pylspLocation
+	var single LSPLocation
 	if err := json.Unmarshal(trimmed, &single); err == nil && single.URI != "" {
-		return []pylspLocation{single}, nil
+		return []LSPLocation{single}, nil
 	}
-	var links []pylspLocationLink
+	var links []LSPLocationLink
 	if err := json.Unmarshal(trimmed, &links); err == nil {
-		out := make([]pylspLocation, 0, len(links))
+		out := make([]LSPLocation, 0, len(links))
 		for _, link := range links {
-			location := pylspLocation{
+			location := LSPLocation{
 				URI:   link.TargetURI,
 				Range: link.TargetSelectionRange,
 			}
-			if location.Range == (pylspRange{}) {
+			if location.Range == (LSPRange{}) {
 				location.Range = link.TargetRange
 			}
 			out = append(out, location)
 		}
 		return out, nil
 	}
-	var link pylspLocationLink
+	var link LSPLocationLink
 	if err := json.Unmarshal(trimmed, &link); err == nil && link.TargetURI != "" {
-		location := pylspLocation{
+		location := LSPLocation{
 			URI:   link.TargetURI,
 			Range: link.TargetSelectionRange,
 		}
-		if location.Range == (pylspRange{}) {
+		if location.Range == (LSPRange{}) {
 			location.Range = link.TargetRange
 		}
-		return []pylspLocation{location}, nil
+		return []LSPLocation{location}, nil
 	}
 	return nil, fmt.Errorf("unsupported Python LSP location payload")
 }
 
-func (m *Manager) formatPylspLocations(locations []pylspLocation, pathFilter string, limit int, includeLineText bool) string {
+func (m *Manager) formatPylspLocations(locations []LSPLocation, pathFilter string, limit int, includeLineText bool) string {
 	type entry struct {
 		path string
 		line int
@@ -712,14 +646,14 @@ func (m *Manager) formatPylspLocations(locations []pylspLocation, pathFilter str
 		}
 		entries = append(entries, entry{path: abs, line: line, col: col, text: text})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].col < entries[j].col
+		return cmp.Compare(a.col, b.col)
 	})
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
@@ -737,7 +671,7 @@ func (m *Manager) formatPylspLocations(locations []pylspLocation, pathFilter str
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatPylspWorkspaceSymbols(symbols []pylspSymbolInfo, pathFilter string, limit int) string {
+func (m *Manager) formatPylspWorkspaceSymbols(symbols []LSPSymbolInfo, pathFilter string, limit int) string {
 	type entry struct {
 		path          string
 		line          int
@@ -766,14 +700,14 @@ func (m *Manager) formatPylspWorkspaceSymbols(symbols []pylspSymbolInfo, pathFil
 			kind:          symbol.Kind,
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
@@ -791,7 +725,7 @@ func (m *Manager) formatPylspWorkspaceSymbols(symbols []pylspSymbolInfo, pathFil
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatPylspIncomingCalls(calls []pylspIncomingCall, pathFilter string, target semantic.PythonSymbolMatch) callHierarchyResult {
+func (m *Manager) formatPylspIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semantic.PythonSymbolMatch) callHierarchyResult {
 	type entry struct {
 		path string
 		line int
@@ -813,14 +747,14 @@ func (m *Manager) formatPylspIncomingCalls(calls []pylspIncomingCall, pathFilter
 		line := call.From.SelectionRange.Start.Line + 1
 		entries = append(entries, entry{path: abs, line: line, name: call.From.Name})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	lines := make([]string, 0, len(entries))
 	relationships := make([]ToolRelationship, 0, len(entries))
@@ -838,7 +772,7 @@ func (m *Manager) formatPylspIncomingCalls(calls []pylspIncomingCall, pathFilter
 	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
-func (m *Manager) formatPylspOutgoingCalls(callerPath string, callerName string, calls []pylspOutgoingCall, pathFilter string) callHierarchyResult {
+func (m *Manager) formatPylspOutgoingCalls(callerPath string, callerName string, calls []LSPOutgoingCall, pathFilter string) callHierarchyResult {
 	type entry struct {
 		callsitePath string
 		callsiteLine int
@@ -871,14 +805,14 @@ func (m *Manager) formatPylspOutgoingCalls(callerPath string, callerName string,
 			name:         call.To.Name,
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].callsitePath != entries[j].callsitePath {
-			return entries[i].callsitePath < entries[j].callsitePath
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.callsitePath, b.callsitePath); c != 0 {
+			return c
 		}
-		if entries[i].callsiteLine != entries[j].callsiteLine {
-			return entries[i].callsiteLine < entries[j].callsiteLine
+		if c := cmp.Compare(a.callsiteLine, b.callsiteLine); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	lines := make([]string, 0, len(entries))
 	relationships := make([]ToolRelationship, 0, len(entries))
@@ -916,15 +850,15 @@ func pylspSymbolKindName(kind int) string {
 	}
 }
 
-func flattenPylspDocumentSymbols(path string, container string, symbols []pylspDocumentSymbol) []pylspSymbolInfo {
-	out := make([]pylspSymbolInfo, 0, len(symbols))
+func flattenPylspDocumentSymbols(path string, container string, symbols []LSPDocumentSymbol) []LSPSymbolInfo {
+	out := make([]LSPSymbolInfo, 0, len(symbols))
 	for _, symbol := range symbols {
 		currentContainer := strings.TrimSpace(container)
-		out = append(out, pylspSymbolInfo{
+		out = append(out, LSPSymbolInfo{
 			Name:          symbol.Name,
 			Kind:          symbol.Kind,
 			ContainerName: currentContainer,
-			Location: pylspLocation{
+			Location: LSPLocation{
 				URI:   pylspFileURI(path),
 				Range: symbol.SelectionRange,
 			},
@@ -938,12 +872,12 @@ func flattenPylspDocumentSymbols(path string, container string, symbols []pylspD
 	return out
 }
 
-func filterPylspDocumentSymbolMatches(symbols []pylspSymbolInfo, pattern string) []pylspSymbolInfo {
+func filterPylspDocumentSymbolMatches(symbols []LSPSymbolInfo, pattern string) []LSPSymbolInfo {
 	pattern = strings.ToLower(strings.TrimSpace(pattern))
 	if pattern == "" {
 		return symbols
 	}
-	filtered := make([]pylspSymbolInfo, 0, len(symbols))
+	filtered := make([]LSPSymbolInfo, 0, len(symbols))
 	for _, symbol := range symbols {
 		name := strings.ToLower(symbol.Name)
 		container := strings.ToLower(symbol.ContainerName)

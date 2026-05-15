@@ -3,11 +3,12 @@
 package autonomy
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -425,12 +426,12 @@ func (c *AutonomyContract) Normalize() {
 	c.Completion.normalize()
 	c.Readiness.normalize()
 	c.Metadata.normalize()
-	sort.Slice(c.Authority, func(i, j int) bool { return c.Authority[i].sortKey() < c.Authority[j].sortKey() })
-	sort.Slice(c.PathRoles, func(i, j int) bool { return c.PathRoles[i].sortKey() < c.PathRoles[j].sortKey() })
-	sort.Slice(c.ToolPolicy, func(i, j int) bool { return c.ToolPolicy[i].sortKey() < c.ToolPolicy[j].sortKey() })
-	sort.Slice(c.Obligations, func(i, j int) bool { return c.Obligations[i].sortKey() < c.Obligations[j].sortKey() })
-	sort.Slice(c.PolicyDecisions, func(i, j int) bool { return c.PolicyDecisions[i].sortKey() < c.PolicyDecisions[j].sortKey() })
-	sort.Slice(c.Evidence, func(i, j int) bool { return c.Evidence[i].EvidenceID < c.Evidence[j].EvidenceID })
+	slices.SortFunc(c.Authority, func(a, b AuthoritySource) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
+	slices.SortFunc(c.PathRoles, func(a, b PathRole) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
+	slices.SortFunc(c.ToolPolicy, func(a, b ToolPolicyRule) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
+	slices.SortFunc(c.Obligations, func(a, b Obligation) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
+	slices.SortFunc(c.PolicyDecisions, func(a, b PolicyDecision) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
+	slices.SortFunc(c.Evidence, func(a, b EvidenceRef) int { return cmp.Compare(a.EvidenceID, b.EvidenceID) })
 }
 
 func (c AutonomyContract) Validate() error {
@@ -944,7 +945,7 @@ func uniqueCapabilities(values []Capability) []Capability {
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -964,7 +965,7 @@ func uniqueSideEffects(values []SideEffectClass) []SideEffectClass {
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -984,7 +985,7 @@ func uniqueClientClassifications(values []ClientClassification) []ClientClassifi
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -1004,7 +1005,7 @@ func uniqueProductSignals(values []ProductSignal) []ProductSignal {
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -1025,7 +1026,7 @@ func compactStrings(values []string) []string {
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

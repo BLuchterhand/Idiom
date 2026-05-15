@@ -7,10 +7,11 @@ import (
 
 	"idiom/internal/frontier"
 	"idiom/internal/frontier/pathparse"
+	"idiom/internal/util"
 )
 
 func containsAny(text string, needles ...string) bool {
-	return frontier.ContainsAny(text, needles...)
+	return util.ContainsAny(text, needles...)
 }
 
 func truncateText(text string, limit int) string {
@@ -25,12 +26,7 @@ func truncateText(text string, limit int) string {
 }
 
 func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+	return util.FirstNonEmpty(values...)
 }
 
 func joinOrNone(values []string) string {
@@ -52,7 +48,7 @@ func normalizeHistoryRole(role string) string {
 }
 
 func uniqueNonEmptyStrings(values []string) []string {
-	return frontier.UniqueNonEmptyStrings(values)
+	return util.UniqueNonEmpty(values)
 }
 
 func uniqueLimitedStrings(values []string, limit int) []string {

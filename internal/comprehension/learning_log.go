@@ -9,7 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -238,7 +239,7 @@ func sanitizeLearningLogPathList(paths []string) []string {
 		seen[key] = struct{}{}
 		out = append(out, key)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -665,8 +666,8 @@ func SummarizeLearningLog(entries []LearningLogEntry) LearningLogSummary {
 	}
 	// Newest-first recent slice; cap at 10.
 	sorted := append([]LearningLogEntry(nil), entries...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].Timestamp > sorted[j].Timestamp
+	slices.SortFunc(sorted, func(a, b LearningLogEntry) int {
+		return -cmp.Compare(a.Timestamp, b.Timestamp)
 	})
 	if len(sorted) > 10 {
 		sorted = sorted[:10]

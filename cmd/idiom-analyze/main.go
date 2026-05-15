@@ -16,7 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,7 +100,7 @@ func main() {
 	if len(files) == 0 {
 		fatalf("no log files match %q", *logsGlob)
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 
 	var calls []toolCall
 	sessionSummaries := make(map[string]*sessionSummary)
@@ -495,11 +496,11 @@ func clusterByShape(calls []toolCall) []shapeCluster {
 		}
 		out = append(out, *cl)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Count != out[j].Count {
-			return out[i].Count > out[j].Count
-		}
-		return out[i].Shape < out[j].Shape
+	slices.SortFunc(out, func(a, b shapeCluster) int {
+		return cmp.Or(
+			-cmp.Compare(a.Count, b.Count),
+			cmp.Compare(a.Shape, b.Shape),
+		)
 	})
 	return out
 }
@@ -567,7 +568,7 @@ func renderReport(in reportInputs) string {
 	for name := range in.Sessions {
 		sessionNames = append(sessionNames, name)
 	}
-	sort.Strings(sessionNames)
+	slices.Sort(sessionNames)
 	for _, name := range sessionNames {
 		s := in.Sessions[name]
 		pct := 0.0
@@ -636,7 +637,7 @@ func renderCluster(b *strings.Builder, cl shapeCluster, maxExamples int, existin
 		for name, n := range cl.Sessions {
 			pairs = append(pairs, fmt.Sprintf("%s×%d", name, n))
 		}
-		sort.Strings(pairs)
+		slices.Sort(pairs)
 		fmt.Fprintf(b, "- By session: %s\n", strings.Join(pairs, ", "))
 	}
 	if len(cl.Examples) > 0 {
@@ -743,7 +744,7 @@ func llmReview(cfgPath string, calls []toolCall, sessions map[string]*sessionSum
 	for n := range sessions {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, name := range names {
 		traces := traceFor(calls, name, 60)
 		fmt.Fprintf(&userBuf, "\n[%s]\n%s\n", name, strings.Join(traces, " → "))

@@ -1,8 +1,9 @@
 package semantic
 
 import (
+	"cmp"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -57,17 +58,17 @@ func (idx *GoIndex) FindSymbols(pattern string, limit int) []SymbolMatch {
 		}
 	}
 
-	sort.Slice(matches, func(i, j int) bool {
-		if matches[i].Score != matches[j].Score {
-			return matches[i].Score > matches[j].Score
+	slices.SortFunc(matches, func(a, b SymbolMatch) int {
+		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
+			return c
 		}
-		if matches[i].Path != matches[j].Path {
-			return matches[i].Path < matches[j].Path
+		if c := cmp.Compare(a.Path, b.Path); c != 0 {
+			return c
 		}
-		if matches[i].Line != matches[j].Line {
-			return matches[i].Line < matches[j].Line
+		if c := cmp.Compare(a.Line, b.Line); c != 0 {
+			return c
 		}
-		return matches[i].Name < matches[j].Name
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	if limit > 0 && len(matches) > limit {
@@ -146,11 +147,11 @@ func (idx *GoIndex) FindPackages(pattern string, limit int) []PackageMatch {
 		})
 	}
 
-	sort.Slice(matches, func(i, j int) bool {
-		if matches[i].Score != matches[j].Score {
-			return matches[i].Score > matches[j].Score
+	slices.SortFunc(matches, func(a, b PackageMatch) int {
+		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
+			return c
 		}
-		return matches[i].Path < matches[j].Path
+		return cmp.Compare(a.Path, b.Path)
 	})
 
 	if limit > 0 && len(matches) > limit {
@@ -258,11 +259,11 @@ func (idx *GoIndex) FindCallsInto(pattern string, limit int) []CallMatch {
 			}
 		}
 	}
-	sort.Slice(matches, func(i, j int) bool {
-		if matches[i].Caller.Path != matches[j].Caller.Path {
-			return matches[i].Caller.Path < matches[j].Caller.Path
+	slices.SortFunc(matches, func(a, b CallMatch) int {
+		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
+			return c
 		}
-		return matches[i].Line < matches[j].Line
+		return cmp.Compare(a.Line, b.Line)
 	})
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/frontier"
+	"idiom/internal/util"
 )
 
 type Record struct {
@@ -1299,9 +1299,9 @@ func Analyze(records []Record) Metrics {
 	if !firstTS.IsZero() && !lastTS.IsZero() && !lastTS.Before(firstTS) {
 		metrics.DurationMillis = lastTS.Sub(firstTS).Milliseconds()
 	}
-	metrics.Errors = uniqueNonEmptyStrings(metrics.Errors)
-	metrics.EvidencePaths = uniqueNonEmptyStrings(metrics.EvidencePaths)
-	metrics.SummaryRejectionLanes = uniqueNonEmptyStrings(metrics.SummaryRejectionLanes)
+	metrics.Errors = util.UniqueNonEmpty(metrics.Errors)
+	metrics.EvidencePaths = util.UniqueNonEmpty(metrics.EvidencePaths)
+	metrics.SummaryRejectionLanes = util.UniqueNonEmpty(metrics.SummaryRejectionLanes)
 	metrics.LanguageCapabilities = mergeLanguageCapabilities(nil, metrics.LanguageCapabilities)
 	return metrics
 }
@@ -1863,9 +1863,9 @@ func parseVerificationPlan(content string) VerificationPlanSnapshot {
 		return VerificationPlanSnapshot{}
 	}
 	plan.Raw = content
-	plan.Commands = uniqueNonEmptyStrings(plan.Commands)
-	plan.Reasons = uniqueNonEmptyStrings(plan.Reasons)
-	plan.ExpectedFailures = uniqueNonEmptyStrings(plan.ExpectedFailures)
+	plan.Commands = util.UniqueNonEmpty(plan.Commands)
+	plan.Reasons = util.UniqueNonEmpty(plan.Reasons)
+	plan.ExpectedFailures = util.UniqueNonEmpty(plan.ExpectedFailures)
 	plan.Coverage = strings.TrimSpace(plan.Coverage)
 	plan.Confidence = strings.TrimSpace(plan.Confidence)
 	plan.RiskLevel = strings.TrimSpace(plan.RiskLevel)
@@ -1913,7 +1913,7 @@ func parseReadinessCheck(content string) ReadinessSnapshot {
 	readiness.Confidence = strings.TrimSpace(readiness.Confidence)
 	readiness.Action = strings.TrimSpace(readiness.Action)
 	readiness.Reason = strings.TrimSpace(readiness.Reason)
-	readiness.EvidencePaths = uniqueNonEmptyStrings(readiness.EvidencePaths)
+	readiness.EvidencePaths = util.UniqueNonEmpty(readiness.EvidencePaths)
 	return readiness
 }
 
@@ -1956,7 +1956,7 @@ func parseDeepeningAttempt(content string) DeepeningSnapshot {
 	deepening.Lane = strings.TrimSpace(deepening.Lane)
 	deepening.Action = strings.TrimSpace(deepening.Action)
 	deepening.Reason = strings.TrimSpace(deepening.Reason)
-	deepening.EvidencePaths = uniqueNonEmptyStrings(deepening.EvidencePaths)
+	deepening.EvidencePaths = util.UniqueNonEmpty(deepening.EvidencePaths)
 	return deepening
 }
 
@@ -1998,7 +1998,7 @@ func parseFinalAnswerCritic(content string) FinalAnswerCriticSnapshot {
 	critic.Raw = content
 	critic.Contract = strings.TrimSpace(critic.Contract)
 	critic.Action = strings.TrimSpace(critic.Action)
-	critic.Findings = uniqueNonEmptyStrings(critic.Findings)
+	critic.Findings = util.UniqueNonEmpty(critic.Findings)
 	return critic
 }
 
@@ -2084,13 +2084,13 @@ func parseLongHorizonState(content string) LongHorizonStateSnapshot {
 	state.MemoryKind = strings.TrimSpace(state.MemoryKind)
 	state.SourceLane = strings.TrimSpace(state.SourceLane)
 	state.FocusPath = strings.TrimSpace(state.FocusPath)
-	state.Changed = uniqueNonEmptyStrings(state.Changed)
-	state.Remaining = uniqueNonEmptyStrings(state.Remaining)
-	state.OpenGaps = uniqueNonEmptyStrings(state.OpenGaps)
-	state.AttemptedSearches = uniqueNonEmptyStrings(state.AttemptedSearches)
-	state.ChosenTargets = uniqueNonEmptyStrings(state.ChosenTargets)
-	state.VerificationHistory = uniqueNonEmptyStrings(state.VerificationHistory)
-	state.NextActions = uniqueNonEmptyStrings(state.NextActions)
+	state.Changed = util.UniqueNonEmpty(state.Changed)
+	state.Remaining = util.UniqueNonEmpty(state.Remaining)
+	state.OpenGaps = util.UniqueNonEmpty(state.OpenGaps)
+	state.AttemptedSearches = util.UniqueNonEmpty(state.AttemptedSearches)
+	state.ChosenTargets = util.UniqueNonEmpty(state.ChosenTargets)
+	state.VerificationHistory = util.UniqueNonEmpty(state.VerificationHistory)
+	state.NextActions = util.UniqueNonEmpty(state.NextActions)
 	state.NextStep = strings.TrimSpace(state.NextStep)
 	state.Verification = strings.TrimSpace(state.Verification)
 	state.Reason = strings.TrimSpace(state.Reason)
@@ -2174,13 +2174,13 @@ func parseWorkflowState(content string) WorkflowStateSnapshot {
 	state.Phase = strings.TrimSpace(state.Phase)
 	state.SourceLane = strings.TrimSpace(state.SourceLane)
 	state.Objective = strings.TrimSpace(state.Objective)
-	state.TargetRefs = uniqueNonEmptyStrings(state.TargetRefs)
-	state.EditableTargets = uniqueNonEmptyStrings(state.EditableTargets)
-	state.ReadOnlyEvidence = uniqueNonEmptyStrings(state.ReadOnlyEvidence)
-	state.EvidencePaths = uniqueNonEmptyStrings(state.EvidencePaths)
-	state.AllowedDestinations = uniqueNonEmptyStrings(state.AllowedDestinations)
-	state.Verification = uniqueNonEmptyStrings(state.Verification)
-	state.NextActions = uniqueNonEmptyStrings(state.NextActions)
+	state.TargetRefs = util.UniqueNonEmpty(state.TargetRefs)
+	state.EditableTargets = util.UniqueNonEmpty(state.EditableTargets)
+	state.ReadOnlyEvidence = util.UniqueNonEmpty(state.ReadOnlyEvidence)
+	state.EvidencePaths = util.UniqueNonEmpty(state.EvidencePaths)
+	state.AllowedDestinations = util.UniqueNonEmpty(state.AllowedDestinations)
+	state.Verification = util.UniqueNonEmpty(state.Verification)
+	state.NextActions = util.UniqueNonEmpty(state.NextActions)
 	state.Reason = strings.TrimSpace(state.Reason)
 	return state
 }
@@ -2252,7 +2252,7 @@ func parseBudgetLedger(content string) BudgetLedgerSnapshot {
 	ledger.Lane = strings.TrimSpace(ledger.Lane)
 	ledger.Level = strings.TrimSpace(ledger.Level)
 	ledger.StopReason = strings.TrimSpace(ledger.StopReason)
-	ledger.NextAllowedActions = uniqueNonEmptyStrings(ledger.NextAllowedActions)
+	ledger.NextAllowedActions = util.UniqueNonEmpty(ledger.NextAllowedActions)
 	ledger.MarginalEvidencePolicy = strings.TrimSpace(ledger.MarginalEvidencePolicy)
 	ledger.UserVisibleUncertainty = strings.TrimSpace(ledger.UserVisibleUncertainty)
 	return ledger
@@ -2294,7 +2294,7 @@ func parseEvidenceDelta(content string) EvidenceDeltaSnapshot {
 	}
 	delta.Raw = content
 	delta.Lane = strings.TrimSpace(delta.Lane)
-	delta.NewEvidencePaths = uniqueNonEmptyStrings(delta.NewEvidencePaths)
+	delta.NewEvidencePaths = util.UniqueNonEmpty(delta.NewEvidencePaths)
 	delta.MarginalValue = strings.TrimSpace(delta.MarginalValue)
 	return delta
 }
@@ -2330,9 +2330,9 @@ func parseClaimConfidence(content string) ClaimConfidenceSnapshot {
 	confidence.Raw = content
 	confidence.Lane = strings.TrimSpace(confidence.Lane)
 	confidence.Confidence = strings.TrimSpace(confidence.Confidence)
-	confidence.EvidencePaths = uniqueNonEmptyStrings(confidence.EvidencePaths)
-	confidence.UnresolvedUncertainty = uniqueNonEmptyStrings(confidence.UnresolvedUncertainty)
-	confidence.Contradictions = uniqueNonEmptyStrings(confidence.Contradictions)
+	confidence.EvidencePaths = util.UniqueNonEmpty(confidence.EvidencePaths)
+	confidence.UnresolvedUncertainty = util.UniqueNonEmpty(confidence.UnresolvedUncertainty)
+	confidence.Contradictions = util.UniqueNonEmpty(confidence.Contradictions)
 	confidence.CalibrationBasis = strings.TrimSpace(confidence.CalibrationBasis)
 	return confidence
 }
@@ -2366,7 +2366,7 @@ func parseContextCompaction(content string) ContextCompactionSnapshot {
 		return ContextCompactionSnapshot{}
 	}
 	compaction.Raw = content
-	compaction.PinnedPaths = uniqueNonEmptyStrings(compaction.PinnedPaths)
+	compaction.PinnedPaths = util.UniqueNonEmpty(compaction.PinnedPaths)
 	compaction.PinnedMemoryKind = strings.TrimSpace(compaction.PinnedMemoryKind)
 	compaction.Strategy = strings.TrimSpace(compaction.Strategy)
 	return compaction
@@ -2412,7 +2412,7 @@ func parseRouteAmbiguity(content string) RouteAmbiguitySnapshot {
 	ambiguity.Raw = content
 	ambiguity.SelectedLane = strings.TrimSpace(ambiguity.SelectedLane)
 	ambiguity.Reason = strings.TrimSpace(ambiguity.Reason)
-	ambiguity.Signals = uniqueNonEmptyStrings(ambiguity.Signals)
+	ambiguity.Signals = util.UniqueNonEmpty(ambiguity.Signals)
 	ambiguity.TieBreak = strings.TrimSpace(ambiguity.TieBreak)
 	return ambiguity
 }
@@ -2452,9 +2452,9 @@ func parseVerificationFeedback(content string) VerificationFeedbackSnapshot {
 	feedback.RiskLevel = strings.TrimSpace(feedback.RiskLevel)
 	feedback.Coverage = strings.TrimSpace(feedback.Coverage)
 	feedback.Confidence = strings.TrimSpace(feedback.Confidence)
-	feedback.Commands = uniqueNonEmptyStrings(feedback.Commands)
-	feedback.FailedCommands = uniqueNonEmptyStrings(feedback.FailedCommands)
-	feedback.FailureClasses = uniqueNonEmptyStrings(feedback.FailureClasses)
+	feedback.Commands = util.UniqueNonEmpty(feedback.Commands)
+	feedback.FailedCommands = util.UniqueNonEmpty(feedback.FailedCommands)
+	feedback.FailureClasses = util.UniqueNonEmpty(feedback.FailureClasses)
 	feedback.LearnedRecommendation = strings.TrimSpace(feedback.LearnedRecommendation)
 	return feedback
 }
@@ -2532,17 +2532,17 @@ func parseControlRails(content string) ControlRailsSnapshot {
 	rails.WorkflowPhase = strings.TrimSpace(rails.WorkflowPhase)
 	rails.TaskFamily = strings.TrimSpace(rails.TaskFamily)
 	rails.PermissionProfile = strings.TrimSpace(rails.PermissionProfile)
-	rails.TargetRefs = uniqueNonEmptyStrings(rails.TargetRefs)
-	rails.RequiredEditPaths = uniqueNonEmptyStrings(rails.RequiredEditPaths)
-	rails.RequiredEvidence = uniqueNonEmptyStrings(rails.RequiredEvidence)
-	rails.RequiredTools = uniqueNonEmptyStrings(rails.RequiredTools)
-	rails.AllowedTools = uniqueNonEmptyStrings(rails.AllowedTools)
-	rails.ForbiddenTools = uniqueNonEmptyStrings(rails.ForbiddenTools)
-	rails.ReadinessGate = uniqueNonEmptyStrings(rails.ReadinessGate)
-	rails.SearchPolicy = uniqueNonEmptyStrings(rails.SearchPolicy)
+	rails.TargetRefs = util.UniqueNonEmpty(rails.TargetRefs)
+	rails.RequiredEditPaths = util.UniqueNonEmpty(rails.RequiredEditPaths)
+	rails.RequiredEvidence = util.UniqueNonEmpty(rails.RequiredEvidence)
+	rails.RequiredTools = util.UniqueNonEmpty(rails.RequiredTools)
+	rails.AllowedTools = util.UniqueNonEmpty(rails.AllowedTools)
+	rails.ForbiddenTools = util.UniqueNonEmpty(rails.ForbiddenTools)
+	rails.ReadinessGate = util.UniqueNonEmpty(rails.ReadinessGate)
+	rails.SearchPolicy = util.UniqueNonEmpty(rails.SearchPolicy)
 	rails.VerificationContract = strings.TrimSpace(rails.VerificationContract)
-	rails.StopConditions = uniqueNonEmptyStrings(rails.StopConditions)
-	rails.FinalCritic = uniqueNonEmptyStrings(rails.FinalCritic)
+	rails.StopConditions = util.UniqueNonEmpty(rails.StopConditions)
+	rails.FinalCritic = util.UniqueNonEmpty(rails.FinalCritic)
 	return rails
 }
 
@@ -2685,8 +2685,8 @@ func parseLanguageCapabilities(content string) []LanguageCapabilitySnapshot {
 		}
 		caps = append(caps, LanguageCapabilitySnapshot{
 			Language: language,
-			Tools:    uniqueNonEmptyStrings(tools),
-			Signals:  uniqueNonEmptyStrings(signals),
+			Tools:    util.UniqueNonEmpty(tools),
+			Signals:  util.UniqueNonEmpty(signals),
 		})
 	}
 	return caps
@@ -2721,8 +2721,8 @@ func mergeLanguageCapabilities(existing []LanguageCapabilitySnapshot, incoming [
 			byLanguage[key] = &copy
 			current = &copy
 		}
-		current.Tools = uniqueNonEmptyStrings(append(current.Tools, cap.Tools...))
-		current.Signals = uniqueNonEmptyStrings(append(current.Signals, cap.Signals...))
+		current.Tools = util.UniqueNonEmpty(append(current.Tools, cap.Tools...))
+		current.Signals = util.UniqueNonEmpty(append(current.Signals, cap.Signals...))
 	}
 	for _, cap := range existing {
 		add(cap)
@@ -2804,7 +2804,7 @@ func extractChangedFiles(text string) []string {
 		}
 		changed = append(changed, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
 	}
-	return uniqueNonEmptyStrings(changed)
+	return util.UniqueNonEmpty(changed)
 }
 
 func evidencePathsFromText(text string) []string {
@@ -2873,10 +2873,6 @@ func sortedToolKeys(tools map[string]int) []string {
 	}
 	slices.Sort(keys)
 	return keys
-}
-
-func uniqueNonEmptyStrings(items []string) []string {
-	return frontier.UniqueNonEmptyStrings(items)
 }
 
 func containsStringFold(items []string, target string) bool {

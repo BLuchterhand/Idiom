@@ -11,18 +11,54 @@ func FirstNonEmpty(values ...string) string {
 	return ""
 }
 
-func CombineOutput(stdout, stderr string) string {
-	stdout = strings.TrimSpace(stdout)
-	stderr = strings.TrimSpace(stderr)
-	if stdout == "" {
-		return stderr
+func ContainsAny(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
 	}
-	if stderr == "" {
-		return stdout
+	return false
+}
+
+func UniqueNonEmpty(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
 	}
-	return stdout + "\n" + stderr
+	return out
 }
 
 func EqualTrimFold(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+func NonEmptyTrimmedLines(text string) []string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func TrimHeadingQualifier(heading string) string {
+	heading = strings.TrimSpace(heading)
+	for _, marker := range []string{" (", " [", " - ", " -- "} {
+		if idx := strings.Index(heading, marker); idx > 0 {
+			return strings.TrimSpace(heading[:idx])
+		}
+	}
+	return heading
 }

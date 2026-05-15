@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/util"
 )
 
 const ToolProfileDefault = "default"
@@ -78,9 +79,9 @@ func ToolRequestAllowedForProfile(req ToolRequest, profile string) ToolProfileDe
 }
 
 func ToolProfileDeniedResult(tool string, profile string, decision ToolProfileDecision) ToolResult {
-	profile = firstNonEmptyString(strings.TrimSpace(profile), ToolProfileDefault)
-	code := firstNonEmptyString(strings.TrimSpace(decision.Code), "profile_denied")
-	reason := firstNonEmptyString(strings.TrimSpace(decision.Reason), "tool is not allowed by profile")
+	profile = util.FirstNonEmpty(strings.TrimSpace(profile), ToolProfileDefault)
+	code := util.FirstNonEmpty(strings.TrimSpace(decision.Code), "profile_denied")
+	reason := util.FirstNonEmpty(strings.TrimSpace(decision.Reason), "tool is not allowed by profile")
 	return ToolResult{
 		Tool:    strings.TrimSpace(tool),
 		Summary: "Tool request denied by " + profile + " profile",

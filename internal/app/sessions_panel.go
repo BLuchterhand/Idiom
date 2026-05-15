@@ -1,10 +1,11 @@
 package app
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -87,8 +88,8 @@ func (m *Model) refreshSessionsList() {
 		}
 		sessions = append(sessions, session)
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].ID > sessions[j].ID
+	slices.SortFunc(sessions, func(a, b SessionInfo) int {
+		return -cmp.Compare(a.ID, b.ID)
 	})
 	m.sessionsSummaryCache = nextCache
 	m.sessionsRawCache = append(m.sessionsRawCache[:0], sessions...)

@@ -1,13 +1,14 @@
 package postflight
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -58,7 +59,7 @@ func LoadProjectChecks(projectRoot string) ([]Check, error) {
 	var checks []Check
 	// Sort so the run order is deterministic across operating
 	// systems (os.ReadDir order is platform-dependent).
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	slices.SortFunc(entries, func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
 	for _, ent := range entries {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".json") {
 			continue

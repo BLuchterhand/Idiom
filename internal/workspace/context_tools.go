@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/comprehension"
+	"idiom/internal/util"
 )
 
 const (
@@ -69,8 +70,8 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 			Root:      m.cfg.Root,
 			Operation: "context_status",
 			Policy:    policy,
-			Path:      firstNonEmptyString(req.Path, req.Workdir),
-			Query:     firstNonEmptyString(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
+			Path:      util.FirstNonEmpty(req.Path, req.Workdir),
+			Query:     util.FirstNonEmpty(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
 			Language:  contextRefreshLanguage(req),
 			Mode:      req.Mode,
 			MaxFiles:  req.FreshnessMaxFiles,
@@ -123,7 +124,7 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 		Root:            m.cfg.Root,
 		Query:           req.Query,
 		Path:            req.Path,
-		Symbol:          firstNonEmptyString(req.Pattern, req.ID),
+		Symbol:          util.FirstNonEmpty(req.Pattern, req.ID),
 		Scope:           req.Workdir,
 		Resolution:      req.Resolution,
 		Limit:           req.Limit,
@@ -153,7 +154,7 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 }
 
 func (m *Manager) contextZoom(ctx context.Context, req ToolRequest) ToolResult {
-	handle := strings.TrimSpace(firstNonEmptyString(req.ID, req.Handle, req.Pattern, req.Path))
+	handle := strings.TrimSpace(util.FirstNonEmpty(req.ID, req.Handle, req.Pattern, req.Path))
 	freshness, err := m.contextReadFreshness(ctx, ToolRequest{
 		Tool:              req.Tool,
 		ID:                handle,
@@ -200,7 +201,7 @@ func (m *Manager) contextZoom(ctx context.Context, req ToolRequest) ToolResult {
 }
 
 func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
-	task := strings.TrimSpace(firstNonEmptyString(req.Task, req.Query, req.Prompt, req.Content, req.Pattern))
+	task := strings.TrimSpace(util.FirstNonEmpty(req.Task, req.Query, req.Prompt, req.Content, req.Pattern))
 	freshness, err := m.contextReadFreshness(ctx, req, "context_pack")
 	if err != nil {
 		return ToolResult{Tool: "context_pack", Summary: "Context pack freshness check failed", Error: err.Error()}
@@ -310,7 +311,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 		Task:              task,
 		Path:              req.Path,
 		Scope:             req.Workdir,
-		Mode:              firstNonEmptyString(req.Mode, "plan"),
+		Mode:              util.FirstNonEmpty(req.Mode, "plan"),
 		Limit:             req.Limit,
 		BudgetTokens:      req.BudgetTokens,
 		RequiredTests:     req.RequiredTests,
@@ -363,7 +364,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 }
 
 func (m *Manager) contextImpactTask(req ToolRequest) string {
-	if task := strings.TrimSpace(firstNonEmptyString(req.Task, req.Query, req.Prompt, req.Content, req.Pattern)); task != "" {
+	if task := strings.TrimSpace(util.FirstNonEmpty(req.Task, req.Query, req.Prompt, req.Content, req.Pattern)); task != "" {
 		return task
 	}
 	path := normalizeGraphOutputPath(req.Path, m.cfg.Root)
@@ -393,7 +394,7 @@ func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpac
 		signals := []contextImpactSignal{{
 			Kind:   "context_pack_candidate",
 			Weight: 0.32,
-			Detail: firstNonEmptyString(file.Reason, file.Role),
+			Detail: util.FirstNonEmpty(file.Reason, file.Role),
 		}}
 		if file.Score > 0 {
 			signals = append(signals, contextImpactSignal{
@@ -410,11 +411,11 @@ func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpac
 			})
 		}
 		item := contextImpactItem{
-			Handle:     firstNonEmptyString(firstString(file.Handles), "file://"+file.Path),
+			Handle:     util.FirstNonEmpty(firstString(file.Handles), "file://"+file.Path),
 			Path:       file.Path,
 			Kind:       "file",
 			Rank:       rank,
-			Confidence: firstNonEmptyString(file.Confidence, "heuristic"),
+			Confidence: util.FirstNonEmpty(file.Confidence, "heuristic"),
 			Signals:    signals,
 		}
 		if file.Stale {
@@ -424,12 +425,12 @@ func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpac
 	}
 	for _, symbol := range pack.CandidateSymbols {
 		item := contextImpactItem{
-			Handle:     firstNonEmptyString(symbol.ID, "symbol://"+symbol.Path+"#"+symbol.QualifiedName),
+			Handle:     util.FirstNonEmpty(symbol.ID, "symbol://"+symbol.Path+"#"+symbol.QualifiedName),
 			Path:       symbol.Path,
 			Symbol:     symbol.QualifiedName,
-			Kind:       firstNonEmptyString(symbol.Kind, "symbol"),
+			Kind:       util.FirstNonEmpty(symbol.Kind, "symbol"),
 			Rank:       0.68,
-			Confidence: firstNonEmptyString(symbol.Confidence, "heuristic"),
+			Confidence: util.FirstNonEmpty(symbol.Confidence, "heuristic"),
 			Signals: []contextImpactSignal{{
 				Kind:   "context_pack_symbol",
 				Weight: 0.30,
@@ -458,7 +459,7 @@ func contextImpactItems(pack comprehension.PackResult, limit int) []contextImpac
 			Signals: []contextImpactSignal{{
 				Kind:   "validation_candidate",
 				Weight: 0.25,
-				Detail: firstNonEmptyString(test.Reason, test.Command),
+				Detail: util.FirstNonEmpty(test.Reason, test.Command),
 			}},
 		})
 	}
@@ -515,9 +516,9 @@ func (m *Manager) contextReadFreshness(ctx context.Context, req ToolRequest, ope
 		Root:             m.cfg.Root,
 		Operation:        operation,
 		Policy:           contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
-		Path:             firstNonEmptyString(req.Path, req.Workdir),
-		Handle:           firstNonEmptyString(req.ID, req.Handle, req.Pattern),
-		Query:            firstNonEmptyString(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
+		Path:             util.FirstNonEmpty(req.Path, req.Workdir),
+		Handle:           util.FirstNonEmpty(req.ID, req.Handle, req.Pattern),
+		Query:            util.FirstNonEmpty(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
 		ReferencedPaths:  req.RequiredEditPaths,
 		Language:         contextRefreshLanguage(req),
 		Mode:             req.Mode,
@@ -548,8 +549,8 @@ func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, s
 		Root:              m.cfg.Root,
 		Operation:         "context_status",
 		Policy:            contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
-		Path:              firstNonEmptyString(req.Path, req.Workdir),
-		Query:             firstNonEmptyString(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
+		Path:              util.FirstNonEmpty(req.Path, req.Workdir),
+		Query:             util.FirstNonEmpty(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
 		ReferencedPaths:   req.RequiredEditPaths,
 		Language:          contextRefreshLanguage(req),
 		Mode:              req.Mode,
@@ -691,7 +692,7 @@ func contextFreshnessBlockerResult(tool string, freshness comprehension.Freshnes
 }
 
 func boundedContextRefreshScope(req ToolRequest) string {
-	scope := strings.TrimSpace(firstNonEmptyString(req.Path, req.Workdir))
+	scope := strings.TrimSpace(util.FirstNonEmpty(req.Path, req.Workdir))
 	scope = filepath.ToSlash(filepath.Clean(scope))
 	if scope == "." || scope == "" {
 		return ""

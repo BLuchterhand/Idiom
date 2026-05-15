@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/comprehension"
 	"idiom/internal/telemetry"
+	"idiom/internal/util"
 )
 
 func runRankerMain(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -70,7 +71,7 @@ func runRankerNudge(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	files := uniqueRankerFiles(fs.Args())
+	files := util.UniqueNonEmpty(fs.Args())
 	if len(files) == 0 {
 		fmt.Fprintf(stderr, "ranker %s: at least one file path is required\n", action)
 		return 2
@@ -261,21 +262,4 @@ func printRankerWeights(stdout io.Writer, root string, weights map[string]float6
 		fmt.Fprintf(stdout, "  %-50s %.3f\n", key, weights[key])
 	}
 	return 0
-}
-
-func uniqueRankerFiles(args []string) []string {
-	seen := make(map[string]struct{}, len(args))
-	out := make([]string, 0, len(args))
-	for _, raw := range args {
-		v := strings.TrimSpace(raw)
-		if v == "" {
-			continue
-		}
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-	}
-	return out
 }

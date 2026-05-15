@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -178,7 +178,7 @@ func (f File) ModelByAlias(alias string) (Model, bool) {
 			names = append(names, name)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, name := range names {
 		p := f.Profiles[name]
 		if m, ok := p.ModelByAlias(alias); ok {

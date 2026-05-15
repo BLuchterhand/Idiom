@@ -3,6 +3,8 @@ package workspace
 import (
 	"path/filepath"
 	"strings"
+
+	"idiom/internal/util"
 )
 
 type ToolDiscoveryProfile struct {
@@ -41,13 +43,13 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 	case "context_status":
 		return discoveryProfile("context_status", "targeted", "low", true)
 	case "context_query":
-		return discoveryProfile("context_query", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Pattern, req.Query)), "low", true)
+		return discoveryProfile("context_query", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
 	case "context_zoom":
 		return discoveryProfile("context_zoom", "targeted", "low", true)
 	case "context_pack":
-		return discoveryProfile("context_pack", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Task, req.Query, req.Pattern)), "medium", true)
+		return discoveryProfile("context_pack", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
 	case "context_impact":
-		return discoveryProfile("context_impact", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Task, req.Query, req.Pattern)), "medium", true)
+		return discoveryProfile("context_impact", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
 	case "context_trace_pack":
 		return discoveryProfile("runtime_trace", scopeFromPathAndPattern(req.Path, req.Command), "medium", true)
 	case "discovery_query":
@@ -90,7 +92,7 @@ func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	case string(ReadOnlyCapabilityRelatedFiles):
 		routed.Capability = string(CapRelatedFiles)
 	default:
-		return discoveryProfile("read_only_capability", scopeFromPathAndPattern(req.Path, firstNonEmptyString(req.Pattern, req.Query)), "medium", true)
+		return discoveryProfile("read_only_capability", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "medium", true)
 	}
 	return codeNavigationDiscoveryProfile(routed)
 }

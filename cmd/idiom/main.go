@@ -11,7 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -596,7 +596,7 @@ func runToolListWithConfig(stdout io.Writer, configPath string, profile string) 
 				baseDir = cfg.Workspace.Root
 			}
 			names := reg.AvailableNames(baseDir)
-			sort.Strings(names)
+			slices.Sort(names)
 			for _, name := range names {
 				if profile == workspace.ToolProfileDiscovery && !reg.IsReadOnlyDiscovery(name) {
 					continue

@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/cmdutil"
 	"idiom/internal/eval"
+	"idiom/internal/util"
 )
 
 var output io.Writer = os.Stdout
@@ -134,12 +135,7 @@ func writeSWESuite(path string, suite eval.SWESuite) error {
 }
 
 func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
+	return util.FirstNonEmpty(values...)
 }
 
 func printOrEncodeReport(report eval.SWESuiteReport, jsonOut bool, stdout io.Writer) {

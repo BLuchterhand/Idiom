@@ -2,7 +2,7 @@ package agent
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/workspace"
@@ -139,7 +139,7 @@ func ModeNames() []string {
 	for _, mode := range modes {
 		names = append(names, mode.Name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

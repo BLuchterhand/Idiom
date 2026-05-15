@@ -1,6 +1,10 @@
 package eval
 
-import "strings"
+import (
+	"strings"
+
+	"idiom/internal/util"
+)
 
 func BuildFailingScenarioSuite(name string, source SWESuite, report SWESuiteReport, recordsByTask map[string][]Record) SWESuite {
 	name = strings.TrimSpace(name)
@@ -34,10 +38,10 @@ func BuildFailingScenarioSuite(name string, source SWESuite, report SWESuiteRepo
 		if prompt == "" && len(sourceTask.Turns) > 0 {
 			prompt = strings.TrimSpace(sourceTask.Turns[len(sourceTask.Turns)-1])
 		}
-		tags := uniqueNonEmptyStrings(append(append([]string(nil), sourceTask.Tags...), "generated-regression"))
+		tags := util.UniqueNonEmpty(append(append([]string(nil), sourceTask.Tags...), "generated-regression"))
 		out.Tasks = append(out.Tasks, SWETask{
 			ID:       id + "-regression",
-			Family:   firstNonEmptyString(sourceTask.Family, taskReport.Family, "regression"),
+			Family:   util.FirstNonEmpty(sourceTask.Family, taskReport.Family, "regression"),
 			Prompt:   prompt,
 			Turns:    append([]string(nil), sourceTask.Turns...),
 			Tags:     tags,
@@ -47,13 +51,4 @@ func BuildFailingScenarioSuite(name string, source SWESuite, report SWESuiteRepo
 		})
 	}
 	return out
-}
-
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }

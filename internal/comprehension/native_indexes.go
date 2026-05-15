@@ -1,10 +1,11 @@
 package comprehension
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/semantic"
@@ -707,7 +708,7 @@ func uniqueNativeSymbolRefs(in []nativeSymbolRef) []nativeSymbolRef {
 		seen[ref.ID] = struct{}{}
 		out = append(out, ref)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b nativeSymbolRef) int { return cmp.Compare(a.ID, b.ID) })
 	return out
 }
 

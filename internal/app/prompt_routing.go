@@ -11,6 +11,7 @@ import (
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
+	"idiom/internal/util"
 )
 
 // promptExecutionPlan is the minimal OpenCode-aligned carrier for a turn.
@@ -1157,24 +1158,8 @@ func defaultVerificationPlan(root string) []string {
 }
 
 func appendUniqueBriefStrings(dst []string, values ...string) []string {
-	seen := make(map[string]struct{}, len(dst)+len(values))
-	for _, value := range dst {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-	}
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
-		}
-		if _, ok := seen[trimmed]; ok {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		dst = append(dst, trimmed)
+	for _, v := range values {
+		dst = util.AppendUnique(dst, v)
 	}
 	return dst
 }

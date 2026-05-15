@@ -1,16 +1,19 @@
 package architect
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"idiom/internal/util"
 )
 
 type PlanningPacketV2Options struct {
@@ -342,11 +345,11 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 		item.Limitations = cleanStrings(item.Limitations)
 		out = append(out, item)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Rank == out[j].Rank {
-			return out[i].Handle < out[j].Handle
+	slices.SortFunc(out, func(a, b RankedScopeItem) int {
+		if a.Rank == b.Rank {
+			return cmp.Compare(a.Handle, b.Handle)
 		}
-		return out[i].Rank > out[j].Rank
+		return -cmp.Compare(a.Rank, b.Rank)
 	})
 	return out
 }
@@ -439,7 +442,7 @@ func buildLanguageCapabilities(packet Packet, views []contextViewSummary) []Lang
 		row.Limitations = cleanStrings(row.Limitations)
 		out = append(out, row)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Language < out[j].Language })
+	slices.SortFunc(out, func(a, b LanguageCapabilityReport) int { return cmp.Compare(a.Language, b.Language) })
 	return out
 }
 
@@ -744,12 +747,7 @@ func precisionRank(confidence string) int {
 }
 
 func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+	return util.FirstNonEmpty(values...)
 }
 
 func pluralCount(count int, label string) string {

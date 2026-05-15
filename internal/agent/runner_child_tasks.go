@@ -10,6 +10,7 @@ import (
 	"idiom/internal/frontier"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -65,8 +66,8 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			"rust_overview", "rust_entrypoints",
 			"java_overview", "java_entrypoints",
 		)
-		childBrief.SearchPolicy = appendUniqueRunnerState(childBrief.SearchPolicy, "start_from_named_paths_before_workspace_overview")
-		childBrief.Constraints = appendUniqueRunnerState(childBrief.Constraints, "named_paths_scoped")
+		childBrief.SearchPolicy = util.AppendUnique(childBrief.SearchPolicy, "start_from_named_paths_before_workspace_overview")
+		childBrief.Constraints = util.AppendUnique(childBrief.Constraints, "named_paths_scoped")
 	}
 	child := &Runner{
 		Client:           r.Client,
@@ -151,14 +152,14 @@ func normalizeReadOnlyChildPrompt(prompt string) string {
 		if strings.HasPrefix(lower, "answer ") ||
 			strings.HasPrefix(lower, "named workspace scope:") ||
 			strings.HasPrefix(lower, "key terms:") {
-			kept = appendUniqueString(kept, line)
+			kept = util.AppendUnique(kept, line)
 		}
 	}
 	if namedPaths := frontier.PromptMentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
-		kept = appendUniqueString(kept, "Named workspace scope: "+strings.Join(namedPaths, ", "))
+		kept = util.AppendUnique(kept, "Named workspace scope: "+strings.Join(namedPaths, ", "))
 	}
 	if keyTerms := readOnlyChildKeyTerms(prompt); len(keyTerms) > 0 {
-		kept = appendUniqueString(kept, "Key terms: "+strings.Join(keyTerms, ", "))
+		kept = util.AppendUnique(kept, "Key terms: "+strings.Join(keyTerms, ", "))
 	}
 	if len(kept) == 0 {
 		return prompt
@@ -261,7 +262,7 @@ func readOnlyChildKeyTerms(prompt string) []string {
 		if readOnlyChildKeyTermStopWord(lower) {
 			continue
 		}
-		terms = appendUniqueString(terms, fragment)
+		terms = util.AppendUnique(terms, fragment)
 	}
 	for _, candidate := range strings.Fields(prompt) {
 		candidate = strings.TrimSpace(candidate)
@@ -275,7 +276,7 @@ func readOnlyChildKeyTerms(prompt string) []string {
 		if len(lower) < 5 {
 			continue
 		}
-		terms = appendUniqueString(terms, lower)
+		terms = util.AppendUnique(terms, lower)
 		if len(terms) >= 8 {
 			break
 		}
@@ -298,19 +299,6 @@ func readOnlyChildKeyTermStopWord(lower string) bool {
 	default:
 		return false
 	}
-}
-
-func appendUniqueString(values []string, value string) []string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return values
-	}
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
 }
 
 func isWriteChildMode(mode string) bool {

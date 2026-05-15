@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -83,7 +83,7 @@ func SaveLearnedWeights(root string, weights map[string]float64) error {
 	for k := range cleaned {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	sorted := make(map[string]float64, len(cleaned))
 	for _, k := range keys {
 		sorted[k] = cleaned[k]

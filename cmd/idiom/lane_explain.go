@@ -6,7 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 )
 
@@ -288,11 +289,11 @@ func buildLaneExplainSummary(body []byte) laneExplainSummary {
 	for tool, n := range toolCounts {
 		out.ToolsByCount = append(out.ToolsByCount, toolCount{Tool: tool, Count: n})
 	}
-	sort.Slice(out.ToolsByCount, func(i, j int) bool {
-		if out.ToolsByCount[i].Count != out.ToolsByCount[j].Count {
-			return out.ToolsByCount[i].Count > out.ToolsByCount[j].Count
-		}
-		return out.ToolsByCount[i].Tool < out.ToolsByCount[j].Tool
+	slices.SortFunc(out.ToolsByCount, func(a, b toolCount) int {
+		return cmp.Or(
+			-cmp.Compare(a.Count, b.Count),
+			cmp.Compare(a.Tool, b.Tool),
+		)
 	})
 	return out
 }

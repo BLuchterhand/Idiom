@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"idiom/internal/telemetry"
+	"idiom/internal/util"
 )
 
 type atomIntakeState string
@@ -500,7 +501,7 @@ func (m atomRequiredEditMatch) Better(other atomRequiredEditMatch) atomRequiredE
 
 func atomRequiredEditSnippetMatch(content, snippet, anchor, path string) atomRequiredEditMatch {
 	if atomEditSnippetContiguousMatchesContent(content, snippet) {
-		lines := atomNonEmptyTrimmedLines(snippet)
+		lines := util.NonEmptyTrimmedLines(snippet)
 		return atomRequiredEditMatch{
 			Kind:         atomSnippetMatchExact,
 			Path:         path,
@@ -508,8 +509,8 @@ func atomRequiredEditSnippetMatch(content, snippet, anchor, path string) atomReq
 			TotalLines:   len(lines),
 		}
 	}
-	contentLines := atomNonEmptyTrimmedLines(content)
-	snippetLines := atomNonEmptyTrimmedLines(snippet)
+	contentLines := util.NonEmptyTrimmedLines(content)
+	snippetLines := util.NonEmptyTrimmedLines(snippet)
 	matchedLines := atomLineMultisetMatchCount(contentLines, snippetLines)
 	if atomIsNearRequiredEditMatch(matchedLines, len(snippetLines)) {
 		if strings.TrimSpace(anchor) != "" && atomEditSnippetMatchesContent(content, anchor) {
@@ -821,19 +822,9 @@ func atomNormalizeMarkdownHeadingText(text string) string {
 }
 
 func atomMarkdownHeadingMatches(candidate string, want string) bool {
-	candidate = atomTrimHeadingQualifier(candidate)
-	want = atomTrimHeadingQualifier(want)
+	candidate = util.TrimHeadingQualifier(candidate)
+	want = util.TrimHeadingQualifier(want)
 	return candidate == want
-}
-
-func atomTrimHeadingQualifier(heading string) string {
-	heading = strings.TrimSpace(heading)
-	for _, marker := range []string{" (", " [", " - ", " -- "} {
-		if idx := strings.Index(heading, marker); idx > 0 {
-			return strings.TrimSpace(heading[:idx])
-		}
-	}
-	return heading
 }
 
 func atomMarkdownFenceOpen(line string) (marker string, info string, ok bool) {
@@ -869,11 +860,11 @@ func atomEditSnippetMatchesContent(content string, snippet string) bool {
 	if strings.Contains(content, snippet) {
 		return true
 	}
-	snippetLines := atomNonEmptyTrimmedLines(snippet)
+	snippetLines := util.NonEmptyTrimmedLines(snippet)
 	if len(snippetLines) == 0 {
 		return true
 	}
-	contentLines := atomNonEmptyTrimmedLines(content)
+	contentLines := util.NonEmptyTrimmedLines(content)
 	next := 0
 	for _, line := range contentLines {
 		if line != snippetLines[next] {
@@ -896,11 +887,11 @@ func atomEditSnippetContiguousMatchesContent(content string, snippet string) boo
 	if strings.Contains(content, snippet) {
 		return true
 	}
-	snippetLines := atomNonEmptyTrimmedLines(snippet)
+	snippetLines := util.NonEmptyTrimmedLines(snippet)
 	if len(snippetLines) == 0 {
 		return true
 	}
-	contentLines := atomNonEmptyTrimmedLines(content)
+	contentLines := util.NonEmptyTrimmedLines(content)
 	if len(snippetLines) > len(contentLines) {
 		return false
 	}
@@ -917,18 +908,6 @@ func atomEditSnippetContiguousMatchesContent(content string, snippet string) boo
 		}
 	}
 	return false
-}
-
-func atomNonEmptyTrimmedLines(text string) []string {
-	var lines []string
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return lines
 }
 
 func classifyAtomScopePaths(projectRoot string, paths []string) (existing []string, missing []string, invalid []string, invalidReasons map[string]string) {

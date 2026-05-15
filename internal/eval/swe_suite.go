@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"idiom/internal/comprehension"
+	"idiom/internal/util"
 )
 
 const (
@@ -879,7 +880,7 @@ func evaluateGroundednessOracle(metrics Metrics, oracle SWEGroundednessOracle) (
 // groundedness signals the opposite. Scores in the noisy middle band record
 // a no-op so the audit trail still reflects that the eval ran.
 func applyEvalLearnedWeights(workspaceRoot string, oracle SWEGroundednessOracle, score float64, taskID string) *SWELearningUpdateRecord {
-	files := uniqueNonEmptyStrings(oracle.ContextFiles)
+	files := util.UniqueNonEmpty(oracle.ContextFiles)
 	rec := &SWELearningUpdateRecord{
 		Score:     score,
 		Files:     files,
@@ -1205,7 +1206,7 @@ func taskShapes(task SWETask) []string {
 	if taskHasAnyTag(task, "docs", "config", "shell", "tests", "prompts", "go") {
 		shapes = append(shapes, "surface_specific_edit")
 	}
-	return uniqueNonEmptyStrings(shapes)
+	return util.UniqueNonEmpty(shapes)
 }
 
 func taskScenarioAssertions(task SWETask) []string {
@@ -1322,7 +1323,7 @@ func taskScenarioAssertions(task SWETask) []string {
 	if len(scenario.RequireRunEvents) > 0 {
 		assertions = append(assertions, "run_events")
 	}
-	return uniqueNonEmptyStrings(assertions)
+	return util.UniqueNonEmpty(assertions)
 }
 
 func taskReadinessAction(task SWETask) string {
@@ -1443,7 +1444,7 @@ func fileSurfaces(paths []string) []string {
 			surfaces = append(surfaces, surface)
 		}
 	}
-	return uniqueNonEmptyStrings(surfaces)
+	return util.UniqueNonEmpty(surfaces)
 }
 
 func fileSurface(path string) string {
@@ -1522,7 +1523,7 @@ func taskOracleAssertions(task SWETask) []string {
 	if task.Scenario.RequireVerificationPlan != nil {
 		assertions = append(assertions, "verification_plan")
 	}
-	return uniqueNonEmptyStrings(assertions)
+	return util.UniqueNonEmpty(assertions)
 }
 
 func taskHasTag(task SWETask, tag string) bool {

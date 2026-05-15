@@ -10,6 +10,7 @@ package workspace
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,7 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,77 +37,10 @@ type tsLSPClient struct {
 	pendingDiagnostics map[string][]tsDiagnostic
 }
 
-type tsEnvelope struct {
-	ID     json.RawMessage `json:"id,omitempty"`
-	Method string          `json:"method,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *tsRPCError     `json:"error,omitempty"`
-	Params json.RawMessage `json:"params,omitempty"`
-}
 
-type tsRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-type tsPosition struct {
-	Line      int `json:"line"`
-	Character int `json:"character"`
-}
-
-type tsRange struct {
-	Start tsPosition `json:"start"`
-	End   tsPosition `json:"end"`
-}
-
-type tsLocation struct {
-	URI   string  `json:"uri"`
-	Range tsRange `json:"range"`
-}
-
-type tsLocationLink struct {
-	TargetURI            string  `json:"targetUri"`
-	TargetRange          tsRange `json:"targetRange"`
-	TargetSelectionRange tsRange `json:"targetSelectionRange"`
-}
-
-type tsSymbolInfo struct {
-	Name          string     `json:"name"`
-	Kind          int        `json:"kind"`
-	Location      tsLocation `json:"location"`
-	ContainerName string     `json:"containerName"`
-}
-
-type tsDocumentSymbol struct {
-	Name           string             `json:"name"`
-	Detail         string             `json:"detail"`
-	Kind           int                `json:"kind"`
-	Range          tsRange            `json:"range"`
-	SelectionRange tsRange            `json:"selectionRange"`
-	Children       []tsDocumentSymbol `json:"children"`
-}
-
-type tsCallHierarchyItem struct {
-	Name           string  `json:"name"`
-	Kind           int     `json:"kind"`
-	URI            string  `json:"uri"`
-	Range          tsRange `json:"range"`
-	SelectionRange tsRange `json:"selectionRange"`
-	Detail         string  `json:"detail"`
-}
-
-type tsIncomingCall struct {
-	From       tsCallHierarchyItem `json:"from"`
-	FromRanges []tsRange           `json:"fromRanges"`
-}
-
-type tsOutgoingCall struct {
-	To         tsCallHierarchyItem `json:"to"`
-	FromRanges []tsRange           `json:"fromRanges"`
-}
 
 type tsDiagnostic struct {
-	Range    tsRange `json:"range"`
+	Range    LSPRange `json:"range"`
 	Severity int     `json:"severity"`
 	Code     any     `json:"code"`
 	Source   string  `json:"source"`
@@ -241,7 +175,7 @@ func (c *tsLSPClient) request(ctx context.Context, method string, params any, re
 			}
 			return err
 		}
-		var env tsEnvelope
+		var env LSPEnvelope
 		if err := json.Unmarshal(body, &env); err != nil {
 			continue
 		}
@@ -446,7 +380,7 @@ func (m *Manager) tsWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, 
 	}
 	defer client.close()
 
-	var symbols []tsSymbolInfo
+	var symbols []LSPSymbolInfo
 	if err := client.request(ctx, "workspace/symbol", map[string]any{"query": pattern}, &symbols); err != nil {
 		return "", err
 	}
@@ -463,7 +397,7 @@ func (m *Manager) tsWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, 
 	if len(candidates) == 0 {
 		candidates = index.DefaultFiles(max(limit*2, 6))
 	}
-	collected := make([]tsSymbolInfo, 0, len(candidates)*4)
+	collected := make([]LSPSymbolInfo, 0, len(candidates)*4)
 	for _, rel := range candidates {
 		abs, err := m.resolvePath(rel, "")
 		if err != nil {
@@ -472,7 +406,7 @@ func (m *Manager) tsWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, 
 		if err := client.openFile(abs); err != nil {
 			continue
 		}
-		var docSymbols []tsDocumentSymbol
+		var docSymbols []LSPDocumentSymbol
 		if err := client.request(ctx, "textDocument/documentSymbol", map[string]any{
 			"textDocument": map[string]any{"uri": tsFileURI(abs)},
 		}, &docSymbols); err != nil {
@@ -484,10 +418,10 @@ func (m *Manager) tsWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, 
 }
 
 func (m *Manager) tsDefinitionViaLSP(ctx context.Context, match semantic.TsSymbolMatch) (string, error) {
-	return m.tsLocationQueryViaLSP(ctx, match, "textDocument/definition")
+	return m.LSPLocationQueryViaLSP(ctx, match, "textDocument/definition")
 }
 
-func (m *Manager) tsLocationQueryViaLSP(ctx context.Context, match semantic.TsSymbolMatch, method string) (string, error) {
+func (m *Manager) LSPLocationQueryViaLSP(ctx context.Context, match semantic.TsSymbolMatch, method string) (string, error) {
 	client, err := m.newTsLSPClient(ctx)
 	if err != nil {
 		return "", err
@@ -564,7 +498,7 @@ func (m *Manager) tsReferencesViaLSP(ctx context.Context, match semantic.TsSymbo
 		"position":     m.tsLSPPosition(abs, match),
 		"context":      map[string]any{"includeDeclaration": true},
 	}
-	var locations []tsLocation
+	var locations []LSPLocation
 	if err := client.request(ctx, "textDocument/references", params, &locations); err != nil {
 		return "", err
 	}
@@ -593,20 +527,20 @@ func (m *Manager) tsCallHierarchyViaLSP(ctx context.Context, match semantic.TsSy
 		return callHierarchyResult{}, nil
 	}
 	if incoming {
-		var calls []tsIncomingCall
+		var calls []LSPIncomingCall
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 			return callHierarchyResult{}, err
 		}
 		return m.formatTsIncomingCalls(calls, pathFilter, match), nil
 	}
-	var calls []tsOutgoingCall
+	var calls []LSPOutgoingCall
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 		return callHierarchyResult{}, err
 	}
 	return m.formatTsOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
-func (m *Manager) tsPrepareCallHierarchy(ctx context.Context, client *tsLSPClient, abs string, position map[string]any) ([]tsCallHierarchyItem, error) {
+func (m *Manager) tsPrepareCallHierarchy(ctx context.Context, client *tsLSPClient, abs string, position map[string]any) ([]LSPCallHierarchyItem, error) {
 	if err := client.openFile(abs); err != nil {
 		return nil, err
 	}
@@ -614,7 +548,7 @@ func (m *Manager) tsPrepareCallHierarchy(ctx context.Context, client *tsLSPClien
 		"textDocument": map[string]any{"uri": tsFileURI(abs)},
 		"position":     position,
 	}
-	var items []tsCallHierarchyItem
+	var items []LSPCallHierarchyItem
 	if err := client.request(ctx, "textDocument/prepareCallHierarchy", params, &items); err != nil {
 		return nil, err
 	}
@@ -639,43 +573,43 @@ func (m *Manager) tsDiagnosticsViaLSP(ctx context.Context, rel string) (string, 
 	return m.formatTsDiagnostics(abs, diagnostics), nil
 }
 
-func parseTsLocations(raw json.RawMessage) ([]tsLocation, error) {
+func parseTsLocations(raw json.RawMessage) ([]LSPLocation, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil, nil
 	}
-	var list []tsLocation
+	var list []LSPLocation
 	if err := json.Unmarshal(trimmed, &list); err == nil {
 		return list, nil
 	}
-	var single tsLocation
+	var single LSPLocation
 	if err := json.Unmarshal(trimmed, &single); err == nil && single.URI != "" {
-		return []tsLocation{single}, nil
+		return []LSPLocation{single}, nil
 	}
-	var links []tsLocationLink
+	var links []LSPLocationLink
 	if err := json.Unmarshal(trimmed, &links); err == nil {
-		out := make([]tsLocation, 0, len(links))
+		out := make([]LSPLocation, 0, len(links))
 		for _, link := range links {
-			location := tsLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
-			if location.Range == (tsRange{}) {
+			location := LSPLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
+			if location.Range == (LSPRange{}) {
 				location.Range = link.TargetRange
 			}
 			out = append(out, location)
 		}
 		return out, nil
 	}
-	var link tsLocationLink
+	var link LSPLocationLink
 	if err := json.Unmarshal(trimmed, &link); err == nil && link.TargetURI != "" {
-		location := tsLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
-		if location.Range == (tsRange{}) {
+		location := LSPLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
+		if location.Range == (LSPRange{}) {
 			location.Range = link.TargetRange
 		}
-		return []tsLocation{location}, nil
+		return []LSPLocation{location}, nil
 	}
 	return nil, fmt.Errorf("unsupported ts LSP location payload")
 }
 
-func (m *Manager) formatTsLocations(locations []tsLocation, pathFilter string, limit int, includeLineText bool) string {
+func (m *Manager) formatTsLocations(locations []LSPLocation, pathFilter string, limit int, includeLineText bool) string {
 	type entry struct {
 		path string
 		line int
@@ -709,14 +643,14 @@ func (m *Manager) formatTsLocations(locations []tsLocation, pathFilter string, l
 		}
 		entries = append(entries, entry{path: abs, line: line, col: col, text: text})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].col < entries[j].col
+		return cmp.Compare(a.col, b.col)
 	})
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
@@ -734,7 +668,7 @@ func (m *Manager) formatTsLocations(locations []tsLocation, pathFilter string, l
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatTsWorkspaceSymbols(symbols []tsSymbolInfo, pathFilter string, limit int) string {
+func (m *Manager) formatTsWorkspaceSymbols(symbols []LSPSymbolInfo, pathFilter string, limit int) string {
 	type entry struct {
 		path          string
 		line          int
@@ -763,14 +697,14 @@ func (m *Manager) formatTsWorkspaceSymbols(symbols []tsSymbolInfo, pathFilter st
 			kind:          symbol.Kind,
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
@@ -788,7 +722,7 @@ func (m *Manager) formatTsWorkspaceSymbols(symbols []tsSymbolInfo, pathFilter st
 	return strings.Join(lines, "\n")
 }
 
-func (m *Manager) formatTsIncomingCalls(calls []tsIncomingCall, pathFilter string, target semantic.TsSymbolMatch) callHierarchyResult {
+func (m *Manager) formatTsIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semantic.TsSymbolMatch) callHierarchyResult {
 	type entry struct {
 		path string
 		line int
@@ -810,14 +744,14 @@ func (m *Manager) formatTsIncomingCalls(calls []tsIncomingCall, pathFilter strin
 		line := call.From.SelectionRange.Start.Line + 1
 		entries = append(entries, entry{path: abs, line: line, name: call.From.Name})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	lines := make([]string, 0, len(entries))
 	relationships := make([]ToolRelationship, 0, len(entries))
@@ -835,7 +769,7 @@ func (m *Manager) formatTsIncomingCalls(calls []tsIncomingCall, pathFilter strin
 	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
 }
 
-func (m *Manager) formatTsOutgoingCalls(callerPath string, callerName string, calls []tsOutgoingCall, pathFilter string) callHierarchyResult {
+func (m *Manager) formatTsOutgoingCalls(callerPath string, callerName string, calls []LSPOutgoingCall, pathFilter string) callHierarchyResult {
 	type entry struct {
 		callsitePath string
 		callsiteLine int
@@ -868,14 +802,14 @@ func (m *Manager) formatTsOutgoingCalls(callerPath string, callerName string, ca
 			name:         call.To.Name,
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].callsitePath != entries[j].callsitePath {
-			return entries[i].callsitePath < entries[j].callsitePath
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.callsitePath, b.callsitePath); c != 0 {
+			return c
 		}
-		if entries[i].callsiteLine != entries[j].callsiteLine {
-			return entries[i].callsiteLine < entries[j].callsiteLine
+		if c := cmp.Compare(a.callsiteLine, b.callsiteLine); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	lines := make([]string, 0, len(entries))
 	relationships := make([]ToolRelationship, 0, len(entries))
@@ -964,15 +898,15 @@ func tsSeverityName(severity int) string {
 	}
 }
 
-func flattenTsDocumentSymbols(path string, container string, symbols []tsDocumentSymbol) []tsSymbolInfo {
-	out := make([]tsSymbolInfo, 0, len(symbols))
+func flattenTsDocumentSymbols(path string, container string, symbols []LSPDocumentSymbol) []LSPSymbolInfo {
+	out := make([]LSPSymbolInfo, 0, len(symbols))
 	for _, symbol := range symbols {
 		currentContainer := strings.TrimSpace(container)
-		out = append(out, tsSymbolInfo{
+		out = append(out, LSPSymbolInfo{
 			Name:          symbol.Name,
 			Kind:          symbol.Kind,
 			ContainerName: currentContainer,
-			Location: tsLocation{
+			Location: LSPLocation{
 				URI:   tsFileURI(path),
 				Range: symbol.SelectionRange,
 			},
@@ -986,12 +920,12 @@ func flattenTsDocumentSymbols(path string, container string, symbols []tsDocumen
 	return out
 }
 
-func filterTsDocumentSymbolMatches(symbols []tsSymbolInfo, pattern string) []tsSymbolInfo {
+func filterTsDocumentSymbolMatches(symbols []LSPSymbolInfo, pattern string) []LSPSymbolInfo {
 	pattern = strings.ToLower(strings.TrimSpace(pattern))
 	if pattern == "" {
 		return symbols
 	}
-	filtered := make([]tsSymbolInfo, 0, len(symbols))
+	filtered := make([]LSPSymbolInfo, 0, len(symbols))
 	for _, symbol := range symbols {
 		name := strings.ToLower(symbol.Name)
 		container := strings.ToLower(symbol.ContainerName)

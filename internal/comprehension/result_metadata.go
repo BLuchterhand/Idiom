@@ -2,6 +2,7 @@ package comprehension
 
 import (
 	"fmt"
+	"idiom/internal/util"
 	"strings"
 )
 
@@ -131,7 +132,7 @@ func AttachPackResultContract(result *PackResult) {
 	result.UnresolvedGapDetails = normalizedGapDetails(result.UnresolvedGapDetails, result.UnresolvedGaps)
 	result.Contract = GraphViewResultContract{
 		SchemaVersion:  GraphViewResultContractVersion,
-		Operation:      firstNonEmpty(strings.TrimSpace(result.Provenance.Operation), "context_pack"),
+		Operation:      util.FirstNonEmpty(strings.TrimSpace(result.Provenance.Operation), "context_pack"),
 		Confidence:     result.Confidence,
 		Provenance:     result.Provenance,
 		Freshness:      result.Freshness,
@@ -311,7 +312,7 @@ func GraphResultConfidenceForFreshness(globalFresh bool, freshness *FreshnessDec
 	}
 	source := "freshness_decision"
 	if !freshness.FreshForScope {
-		reason := firstNonEmpty(strings.TrimSpace(freshness.Reason), strings.TrimSpace(freshness.Blocker), "stale_scope")
+		reason := util.FirstNonEmpty(strings.TrimSpace(freshness.Reason), strings.TrimSpace(freshness.Blocker), "stale_scope")
 		return GraphResultConfidence{Level: "low", Source: source, Reason: reason}
 	}
 	if !freshness.GlobalFresh {
@@ -359,7 +360,7 @@ func GraphGapDetailForStatus(report StatusReport) (GraphUnresolvedGap, bool) {
 }
 
 func FreshnessGapForDecision(decision FreshnessDecision) string {
-	reason := firstNonEmpty(strings.TrimSpace(decision.Reason), strings.TrimSpace(decision.Blocker), "freshness_blocker")
+	reason := util.FirstNonEmpty(strings.TrimSpace(decision.Reason), strings.TrimSpace(decision.Blocker), "freshness_blocker")
 	parts := []string{
 		"reason=" + reason,
 		fmt.Sprintf("fresh_for_scope=%t", decision.FreshForScope),
@@ -389,7 +390,7 @@ func FreshnessGapForDecision(decision FreshnessDecision) string {
 }
 
 func FreshnessGapDetailForDecision(decision FreshnessDecision) GraphUnresolvedGap {
-	reason := firstNonEmpty(strings.TrimSpace(decision.Reason), strings.TrimSpace(decision.Blocker), "freshness_blocker")
+	reason := util.FirstNonEmpty(strings.TrimSpace(decision.Reason), strings.TrimSpace(decision.Blocker), "freshness_blocker")
 	state := StaleEvidenceSafetyForFreshness(decision).State
 	return GraphUnresolvedGap{
 		Reason:           reason,
@@ -445,7 +446,7 @@ func normalizedGapDetails(details []GraphUnresolvedGap, legacy []string) []Graph
 
 func GraphGapDetailFromString(gap string) GraphUnresolvedGap {
 	fields := parseGapFields(gap)
-	reason := firstNonEmpty(fields["reason"], neutralGapReason(gap))
+	reason := util.FirstNonEmpty(fields["reason"], neutralGapReason(gap))
 	detail := GraphUnresolvedGap{
 		Reason:             reason,
 		State:              gapStateForReason(reason),

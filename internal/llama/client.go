@@ -403,36 +403,49 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	return parsed.Data, nil
 }
 
-func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream bool, backend string) map[string]any {
-	payload := map[string]any{
-		"model":    opts.Model,
-		"messages": hostedChatMessages(messages),
-		"stream":   stream,
+type hostedChatPayload struct {
+	Model           string        `json:"model"`
+	Messages        []ChatMessage `json:"messages"`
+	Stream          bool          `json:"stream"`
+	MaxTokens       int           `json:"max_tokens,omitempty"`
+	Temperature     float64       `json:"temperature,omitempty"`
+	TopP            float64       `json:"top_p,omitempty"`
+	PresencePenalty float64       `json:"presence_penalty,omitempty"`
+	Tools           any           `json:"tools,omitempty"`
+	ToolChoice      string        `json:"tool_choice,omitempty"`
+	Thinking        any           `json:"thinking,omitempty"`
+}
+
+func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream bool, backend string) any {
+	payload := hostedChatPayload{
+		Model:    opts.Model,
+		Messages: hostedChatMessages(messages),
+		Stream:   stream,
 	}
 	if opts.MaxTokens > 0 {
-		payload["max_tokens"] = opts.MaxTokens
+		payload.MaxTokens = opts.MaxTokens
 	}
 	if opts.Temperature > 0 {
-		payload["temperature"] = opts.Temperature
+		payload.Temperature = opts.Temperature
 	}
 	if opts.TopP > 0 {
-		payload["top_p"] = opts.TopP
+		payload.TopP = opts.TopP
 	}
 	if opts.PresencePenalty != 0 {
-		payload["presence_penalty"] = opts.PresencePenalty
+		payload.PresencePenalty = opts.PresencePenalty
 	}
 	if len(opts.Tools) > 0 && BackendSupportsNativeTools(backend) {
-		payload["tools"] = opts.Tools
+		payload.Tools = opts.Tools
 	}
 	if opts.ToolChoice != "" && BackendSupportsNativeTools(backend) {
-		payload["tool_choice"] = opts.ToolChoice
+		payload.ToolChoice = opts.ToolChoice
 	}
 	if strings.EqualFold(strings.TrimSpace(backend), config.BackendZAI) && opts.EnableThinking != nil {
 		mode := "disabled"
 		if *opts.EnableThinking {
 			mode = "enabled"
 		}
-		payload["thinking"] = map[string]string{"type": mode}
+		payload.Thinking = map[string]string{"type": mode}
 	}
 	return payload
 }

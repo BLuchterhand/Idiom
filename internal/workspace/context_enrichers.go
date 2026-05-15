@@ -1,17 +1,20 @@
 package workspace
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"idiom/internal/comprehension"
+	"idiom/internal/util"
 )
 
 const (
@@ -219,7 +222,7 @@ func sortedLanguageKeys(values map[string]struct{}) []string {
 	for value := range values {
 		out = append(out, value)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -332,7 +335,7 @@ func languageEnrichmentTools(language string) []string {
 	for _, tool := range relationshipToolsForGraphLanguage(language) {
 		tools = append(tools, tool)
 	}
-	sort.Strings(tools)
+	slices.Sort(tools)
 	return tools
 }
 
@@ -364,13 +367,11 @@ func newGraphRelationshipLookup(graph comprehension.Graph) graphRelationshipLook
 		}
 	}
 	for path := range lookup.symbolsByPath {
-		sort.Slice(lookup.symbolsByPath[path], func(i, j int) bool {
-			left := lookup.symbolsByPath[path][i]
-			right := lookup.symbolsByPath[path][j]
-			if left.StartLine != right.StartLine {
-				return left.StartLine < right.StartLine
+		slices.SortFunc(lookup.symbolsByPath[path], func(a, b comprehension.Node) int {
+			if c := cmp.Compare(a.StartLine, b.StartLine); c != 0 {
+				return c
 			}
-			return left.QualifiedName < right.QualifiedName
+			return cmp.Compare(a.QualifiedName, b.QualifiedName)
 		})
 	}
 	return lookup
@@ -533,7 +534,7 @@ func (lookup graphRelationshipLookup) resolveSymbolFromText(text string) string 
 	if name, location, ok := strings.Cut(text, " in "); ok {
 		path, line, rest, found := parseToolLocationText(location, lookup.root)
 		if found {
-			if node, ok := lookup.symbolAt(path, line, firstNonEmptyString(strings.TrimSpace(name), firstToolName(rest))); ok {
+			if node, ok := lookup.symbolAt(path, line, util.FirstNonEmpty(strings.TrimSpace(name), firstToolName(rest))); ok {
 				return node.ID
 			}
 		}
@@ -731,7 +732,7 @@ func graphNameLookupKeys(values ...string) []string {
 			}
 		}
 	}
-	return uniqueStringValues(keys)
+	return util.UniqueNonEmpty(keys)
 }
 
 func graphSymbolMatchesName(node comprehension.Node, name string) bool {
@@ -809,23 +810,6 @@ func toolWarning(tool string, subject string, result ToolResult) string {
 		message += " | output: " + strings.ReplaceAll(excerpt, "\n", " ")
 	}
 	return message
-}
-
-func uniqueStringValues(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
 }
 
 func confidenceFromPrecisionTier(tier string) string {

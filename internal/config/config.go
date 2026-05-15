@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 
 	"idiom/internal/util"
@@ -456,7 +455,7 @@ func UnknownJSONKeys(data []byte, target any) ([]string, error) {
 	}
 	var unknown []string
 	collectUnknownJSONKeys(decoded, reflect.TypeOf(target), "", &unknown)
-	sort.Strings(unknown)
+	slices.Sort(unknown)
 	return unknown, nil
 }
 
@@ -1023,7 +1022,7 @@ func BuiltinChatPresetNames() []string {
 	for name := range presets {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

@@ -2,6 +2,7 @@ package comprehension
 
 import (
 	"path"
+	"idiom/internal/util"
 	"regexp"
 	"sort"
 	"strings"
@@ -365,7 +366,7 @@ func RankPackFiles(in RankInputs) []PackFile {
 		base := roleFloor(file.Role, weights)
 		reasons := []RankerReason{{
 			Reason:     "role_floor",
-			State:      firstNonEmpty(file.Role, "default"),
+			State:      util.FirstNonEmpty(file.Role, "default"),
 			ScoreDelta: roundScore(base),
 		}}
 		bonus := 0.0

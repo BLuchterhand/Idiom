@@ -8,7 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -152,7 +152,7 @@ func canonicalSkillNames() ([]string, error) {
 		}
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names, nil
 }
 

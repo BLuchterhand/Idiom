@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/discovery"
@@ -298,7 +298,7 @@ func (m *Manager) regexDependencyGraph(target string, lang string, extensions []
 			lines = append(lines, fmt.Sprintf("%s -> %s", rel, dep))
 		}
 	}
-	sort.Strings(lines)
+	slices.Sort(lines)
 	if len(lines) == 0 {
 		return ToolResult{Tool: "dependency_graph", Summary: fmt.Sprintf("No %s imports found in %d file(s)", lang, len(files))}
 	}
@@ -325,7 +325,7 @@ func uniqueRegexDeps(text string, re *regexp.Regexp) []string {
 	for dep := range seen {
 		out = append(out, dep)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -376,7 +376,7 @@ func collectFilesByExtension(root string, target string, extensions []string, li
 		}
 		return nil
 	})
-	sort.Strings(files)
+	slices.Sort(files)
 	return files
 }
 

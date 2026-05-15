@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/config"
@@ -147,7 +147,7 @@ func ListProfiles(dir string) ([]string, error) {
 		profiles = append(profiles, strings.TrimSuffix(name, ".md"))
 	}
 
-	sort.Strings(profiles)
+	slices.Sort(profiles)
 	return profiles, nil
 }
 

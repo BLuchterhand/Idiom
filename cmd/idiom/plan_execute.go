@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1448,7 +1449,7 @@ func autoRepairReviewPatchHygiene(root string, changedPaths []string, evidence r
 		}
 		paths = append(paths, normalized)
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 
 	report := patchHygieneAutoRepairReport{Repaired: true, Paths: paths}
 	for _, path := range paths {

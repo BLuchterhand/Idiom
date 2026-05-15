@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/frontier/workerruntime"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -348,7 +349,7 @@ func exactProbeCallNames(symbol string, output string, max int) []string {
 		if strings.EqualFold(candidate, skip) || strings.EqualFold(candidate, "String") || strings.EqualFold(candidate, "Error") {
 			continue
 		}
-		calls = appendUniqueSearchTerm(calls, candidate)
+		calls = util.AppendUnique(calls, candidate)
 		if len(calls) >= max {
 			return calls
 		}

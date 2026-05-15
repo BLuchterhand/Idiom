@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"cmp"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +21,7 @@ import (
 
 	"idiom/internal/discovery"
 	"idiom/internal/semantic"
+	"idiom/internal/util"
 )
 
 const (
@@ -527,7 +530,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			}
 		}
 		graph.StoreKind = sqliteStoreKind
-		graph.ID = firstNonEmpty(statusBefore.IndexID, graphID(graph))
+		graph.ID = util.FirstNonEmpty(statusBefore.IndexID, graphID(graph))
 		graph.CollectorReports = collectorReportsExcept(statusBefore.CollectorReports, "summary_index")
 		counts, err := patchSQLiteGraphScope(root, graph, scope, statusBefore)
 		if err != nil {
@@ -1690,7 +1693,7 @@ func collectGenericSourceFiles(ctx context.Context, root string, scope string, l
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	slices.SortFunc(files, func(a, b genericSourceFile) int { return cmp.Compare(a.Path, b.Path) })
 	return files, nil
 }
 
@@ -1739,7 +1742,7 @@ func collectGDScriptProjectFiles(ctx context.Context, root string, scope string,
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	slices.SortFunc(files, func(a, b genericSourceFile) int { return cmp.Compare(a.Path, b.Path) })
 	return files, nil
 }
 
@@ -1875,7 +1878,7 @@ func graphID(graph Graph) string {
 		}
 		files = append(files, filePair{path: node.Path, fingerprint: node.Fingerprint})
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
+	slices.SortFunc(files, func(a, b filePair) int { return cmp.Compare(a.path, b.path) })
 	collectors := make([]collectorPair, 0, len(graph.CollectorVersions))
 	for name, version := range graph.CollectorVersions {
 		name = strings.TrimSpace(name)
@@ -1885,7 +1888,7 @@ func graphID(graph Graph) string {
 		}
 		collectors = append(collectors, collectorPair{name: name, version: version})
 	}
-	sort.Slice(collectors, func(i, j int) bool { return collectors[i].name < collectors[j].name })
+	slices.SortFunc(collectors, func(a, b collectorPair) int { return cmp.Compare(a.name, b.name) })
 	h := sha256.New()
 	h.Write([]byte(graph.Root))
 	h.Write([]byte("\x00"))
@@ -2545,7 +2548,7 @@ func genericDependencies(language string, content string) []genericDependency {
 		switch normalizeLanguage(language) {
 		case "python":
 			if match := pythonImportRe.FindStringSubmatch(line); len(match) == 3 {
-				add(firstNonEmpty(match[1], match[2]), lineNo)
+				add(util.FirstNonEmpty(match[1], match[2]), lineNo)
 			}
 		case "typescript", "javascript":
 			if match := tsImportFromRe.FindStringSubmatch(line); len(match) == 2 {
@@ -2811,7 +2814,7 @@ func gdscriptDependencies(path string, content string, existing map[string]struc
 			if len(match) != 3 {
 				continue
 			}
-			add(firstNonEmpty(match[1], match[2]), i+1)
+			add(util.FirstNonEmpty(match[1], match[2]), i+1)
 		}
 	}
 	return deps
@@ -2903,7 +2906,7 @@ func sortedNodes(nodes map[string]Node) []Node {
 	for _, node := range nodes {
 		out = append(out, node)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b Node) int { return cmp.Compare(a.ID, b.ID) })
 	return out
 }
 
@@ -2912,7 +2915,7 @@ func sortedEdges(edges map[string]Edge) []Edge {
 	for _, edge := range edges {
 		out = append(out, edge)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b Edge) int { return cmp.Compare(a.ID, b.ID) })
 	return out
 }
 
@@ -3245,28 +3248,14 @@ func sortedStringSet(values map[string]struct{}) []string {
 			out = append(out, value)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
 func uniqueSortedStrings(values []string) []string {
-	set := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			set[value] = struct{}{}
-		}
-	}
-	return sortedStringSet(set)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
+	out := util.UniqueNonEmpty(values)
+	slices.Sort(out)
+	return out
 }
 
 func normalizeLanguage(value string) string {

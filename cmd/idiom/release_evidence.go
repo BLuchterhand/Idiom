@@ -11,7 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"sort"
+	"cmp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -446,8 +447,8 @@ func loadReleaseEvidenceInputBundle(root string, dir string, label string) relea
 			out.Artifacts = append(out.Artifacts, artifact)
 		}
 	}
-	sort.Slice(out.Commands, func(i, j int) bool { return out.Commands[i].ID < out.Commands[j].ID })
-	sort.Slice(out.Artifacts, func(i, j int) bool { return out.Artifacts[i].Path.RelativePath < out.Artifacts[j].Path.RelativePath })
+	slices.SortFunc(out.Commands, func(a, b releaseEvidenceCommand) int { return cmp.Compare(a.ID, b.ID) })
+	slices.SortFunc(out.Artifacts, func(a, b releaseEvidenceArtifact) int { return cmp.Compare(a.Path.RelativePath, b.Path.RelativePath) })
 	out.CommandCount = len(out.Commands)
 	out.ArtifactCount = len(out.Artifacts)
 	if out.CommandCount == 0 {

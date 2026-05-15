@@ -1,9 +1,12 @@
 package semantic
 
 import (
+	"cmp"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
+
+	"idiom/internal/util"
 )
 
 type PythonSymbolMatch struct {
@@ -52,14 +55,14 @@ func (idx *PythonIndex) FindSymbols(pattern string, limit int) []PythonSymbolMat
 			})
 		}
 	}
-	sort.Slice(matches, func(i, j int) bool {
-		if matches[i].Score != matches[j].Score {
-			return matches[i].Score > matches[j].Score
+	slices.SortFunc(matches, func(a, b PythonSymbolMatch) int {
+		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
+			return c
 		}
-		if matches[i].Path != matches[j].Path {
-			return matches[i].Path < matches[j].Path
+		if c := cmp.Compare(a.Path, b.Path); c != 0 {
+			return c
 		}
-		return matches[i].Line < matches[j].Line
+		return cmp.Compare(a.Line, b.Line)
 	})
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
@@ -145,18 +148,18 @@ func (idx *PythonIndex) FindCallsInto(pattern string, limit int) []PythonCallMat
 						StartLine: symbol.StartLine,
 						EndLine:   symbol.EndLine,
 					},
-					CalleeName: firstNonEmptyPython(target.Qualified, target.Name),
+					CalleeName: util.FirstNonEmpty(target.Qualified, target.Name),
 					Line:       call.Line,
 					Score:      target.Score,
 				})
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Caller.Path != out[j].Caller.Path {
-			return out[i].Caller.Path < out[j].Caller.Path
+	slices.SortFunc(out, func(a, b PythonCallMatch) int {
+		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
+			return c
 		}
-		return out[i].Line < out[j].Line
+		return cmp.Compare(a.Line, b.Line)
 	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
@@ -182,7 +185,7 @@ func (idx *PythonIndex) Dependencies(pattern string) []string {
 			out = append(out, dep)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -204,7 +207,7 @@ func (idx *PythonIndex) WhoImports(pattern string) []string {
 			out = append(out, dep)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -260,11 +263,11 @@ func (idx *PythonIndex) Implementations(pattern string) []PythonSymbolMatch {
 			})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Path != out[j].Path {
-			return out[i].Path < out[j].Path
+	slices.SortFunc(out, func(a, b PythonSymbolMatch) int {
+		if c := cmp.Compare(a.Path, b.Path); c != 0 {
+			return c
 		}
-		return out[i].Line < out[j].Line
+		return cmp.Compare(a.Line, b.Line)
 	})
 	return out
 }
@@ -305,14 +308,4 @@ func firstPythonQualified(symbol PythonSymbol) string {
 		return symbol.Scope + "." + symbol.Name
 	}
 	return symbol.Name
-}
-
-func firstNonEmptyPython(values ...string) string {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

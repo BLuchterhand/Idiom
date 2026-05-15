@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -582,7 +582,7 @@ func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string
 	for id := range rendered {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 
 	var sb strings.Builder
 	sb.WriteString("Given a new task and a list of existing tasks, reply with the ID of the semantically equivalent existing task, or \"none\". Reply with the ID only — no explanation.\n\nNew task: ")
@@ -678,7 +678,7 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	for id := range m.planLedgerItems {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 
 	pending := func(item workspace.TaskLedgerItem) bool {
 		status := strings.ToLower(strings.TrimSpace(item.Status))
@@ -839,7 +839,7 @@ func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
 	for id := range m.planSubmittedEdits {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 
 	var matchID string
 	for _, id := range ids {

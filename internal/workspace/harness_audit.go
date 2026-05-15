@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/util"
 	"idiom/internal/comprehension"
 	"idiom/internal/discovery"
 	"idiom/internal/eval"
@@ -432,7 +433,7 @@ func auditSchemaDefinitionNames(defs []ToolDefinition) ([]string, []string) {
 			invalid = append(invalid, name)
 		}
 	}
-	sort.Strings(invalid)
+	slices.Sort(invalid)
 	return names, invalid
 }
 
@@ -470,8 +471,8 @@ func auditStaleUseBlockerCoverage(export ToolSchemaExport) ([]harnessAuditStaleU
 		}
 		coverage = append(coverage, row)
 	}
-	sort.Strings(missing)
-	sort.Strings(reportOnly)
+	slices.Sort(missing)
+	slices.Sort(reportOnly)
 	return coverage, missing, reportOnly
 }
 
@@ -1021,18 +1022,18 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 		switch eventType {
 		case "process_start":
 			facts.HasProcessStart = true
-			facts.Command = firstNonEmptyAuditString(facts.Command, auditStringField(record, "command"))
-			facts.WorkspaceRoot = firstNonEmptyAuditString(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
+			facts.Command = util.FirstNonEmpty(facts.Command, auditStringField(record, "command"))
+			facts.WorkspaceRoot = util.FirstNonEmpty(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
 			facts.PID = auditIntField(record, "pid")
 		case "session_start":
-			facts.Command = firstNonEmptyAuditString(facts.Command, auditStringField(record, "command"))
-			facts.WorkspaceRoot = firstNonEmptyAuditString(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
+			facts.Command = util.FirstNonEmpty(facts.Command, auditStringField(record, "command"))
+			facts.WorkspaceRoot = util.FirstNonEmpty(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
 		case "process_exit":
 			facts.HasProcessExit = true
 		case "model_session":
 			facts.HasModelSession = true
-			facts.SessionID = firstNonEmptyAuditString(facts.SessionID, auditStringField(record, "session_id"))
-			facts.DebugLogPath = firstNonEmptyAuditString(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
+			facts.SessionID = util.FirstNonEmpty(facts.SessionID, auditStringField(record, "session_id"))
+			facts.DebugLogPath = util.FirstNonEmpty(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
 		case "session_summary":
 			facts.HasSessionSummary = true
 		}
@@ -1201,15 +1202,6 @@ func auditIntField(record map[string]any, key string) int {
 		return int(n)
 	}
 	return 0
-}
-
-func firstNonEmptyAuditString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func firstNonEmptyAuditInProgressSessionPath(session harnessAuditInProgressSession) string {
@@ -1434,7 +1426,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 		tools := append(append([]string(nil), surface.ManifestWithoutExportedSchema...), surface.ExportedSchemaWithoutManifest...)
 		tools = append(tools, surface.SchemaWithoutExportedSchema...)
 		tools = append(tools, surface.ExportedSchemaWithoutSchema...)
-		tools = uniqueToolManifestTools(tools)
+		tools = util.UniqueNonEmpty(tools)
 		evidence := fmt.Sprintf("%d exported-schema drift item(s) detected", len(tools))
 		if surface.ExportError != "" {
 			evidence = "schema export failed: " + surface.ExportError
@@ -1503,7 +1495,7 @@ func unsafeCapabilityAdapterTools(adapters []ReadOnlyCapabilityUnsafeAdapterSpec
 			tools = append(tools, tool)
 		}
 	}
-	return uniqueToolManifestTools(tools)
+	return util.UniqueNonEmpty(tools)
 }
 
 func backendFindings(backends []harnessAuditBackend) []harnessAuditFinding {
@@ -1699,7 +1691,7 @@ func planningQualityRecommendedSurfaces(report *harnessAuditPlanningQuality) []s
 	if len(surfaces) == 0 && report.PlanningFeedback > 0 {
 		surfaces = append(surfaces, "harness_feedback")
 	}
-	return uniqueStringValues(surfaces)
+	return util.UniqueNonEmpty(surfaces)
 }
 
 func staticImprovementQuestions(report harnessAuditReport) []harnessAuditQuestion {
@@ -1980,7 +1972,7 @@ func auditSetDiff(left map[string]struct{}, right map[string]struct{}) []string 
 			out = append(out, value)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -2002,7 +1994,7 @@ func auditDuplicates(values []string) []string {
 	for value := range dups {
 		out = append(out, value)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

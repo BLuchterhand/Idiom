@@ -2,8 +2,10 @@ package workerruntime
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -164,8 +166,8 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	closureScope := closureGuidanceScope(input.Constraints, statusCombined)
 	closureActive := closureScope != ""
 	writeReadyPacket := implementationPacketWriteReady(input.Constraints)
-	exactAnchorPacket := containsStringValue(input.Constraints, "exact_anchor_implementation") ||
-		containsStringValue(input.Constraints, "exact_anchor_prewrite_write_first")
+	exactAnchorPacket := slices.Contains(input.Constraints, "exact_anchor_implementation") ||
+		slices.Contains(input.Constraints, "exact_anchor_prewrite_write_first")
 	requiredPathsRemaining := implementationRequiredPathsRemaining(input.Constraints)
 	guidance := ActionGuidance{}
 	if input.DeclarationMovesForbidden {
@@ -399,9 +401,9 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 
 func closureGuidanceScope(constraints []string, statusCombined string) string {
 	switch {
-	case containsStringValue(constraints, "child_packet_available"):
+	case slices.Contains(constraints, "child_packet_available"):
 		return "child_packet_available"
-	case containsStringValue(constraints, "answer_readiness_reached"):
+	case slices.Contains(constraints, "answer_readiness_reached"):
 		return "answer_readiness_reached"
 	}
 	switch {
@@ -423,7 +425,7 @@ func closureGuidanceScope(constraints []string, statusCombined string) string {
 }
 
 func exactAnchorWriteFailure(constraints []string, tool string, statusCombined string) bool {
-	if !containsStringValue(constraints, "exact_anchor_implementation") {
+	if !slices.Contains(constraints, "exact_anchor_implementation") {
 		return false
 	}
 	if !workspace.IsWorkspaceWriteTool(tool) {
@@ -442,7 +444,7 @@ func exactAnchorWriteFailure(constraints []string, tool string, statusCombined s
 }
 
 func exactAnchorHiddenPrewriteTool(constraints []string, tool string, statusCombined string) bool {
-	if !containsStringValue(constraints, "exact_anchor_implementation") {
+	if !slices.Contains(constraints, "exact_anchor_implementation") {
 		return false
 	}
 	if workspace.IsWorkspaceWriteTool(tool) || strings.TrimSpace(tool) == "task_ledger" || strings.TrimSpace(tool) == "harness_feedback" {
@@ -455,11 +457,11 @@ func exactAnchorHiddenPrewriteTool(constraints []string, tool string, statusComb
 }
 
 func implementationPacketWriteReady(constraints []string) bool {
-	return containsStringValue(constraints, "implementation_packet_write_ready")
+	return slices.Contains(constraints, "implementation_packet_write_ready")
 }
 
 func implementationRequiredPathsRemaining(constraints []string) bool {
-	return containsStringValue(constraints, "implementation_required_paths_remaining")
+	return slices.Contains(constraints, "implementation_required_paths_remaining")
 }
 
 func scopeSpecificClosureLabel(scope string) string {
@@ -760,7 +762,7 @@ func BuildStepInstruction(state RunState) StepInstruction {
 		directive = "Use this current-state packet for the next action. The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToAnswer {
 		directive = "Use this current-state packet for the next action. The readiness state says answering is supported; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
-	} else if containsStringValue(state.Constraints, "answer_readiness_reached") || containsStringValue(state.Constraints, "child_packet_available") {
+	} else if slices.Contains(state.Constraints, "answer_readiness_reached") || slices.Contains(state.Constraints, "child_packet_available") {
 		directive = "Use this current-state packet for the next action. Prefer answering now; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	}
 	return StepInstruction{
@@ -1118,9 +1120,9 @@ func discoveryExamplesWouldCompeteWithWriteReadyPacket(brief WorkerRuntimeBrief)
 	if state.Readiness != nil && state.Readiness.ReadyToWrite {
 		return true
 	}
-	if containsStringValue(state.Constraints, "implementation_packet_write_ready") ||
-		containsStringValue(state.Constraints, "exact_anchor_implementation") ||
-		containsStringValue(state.Constraints, "required_edit_paths_define_write_scope") {
+	if slices.Contains(state.Constraints, "implementation_packet_write_ready") ||
+		slices.Contains(state.Constraints, "exact_anchor_implementation") ||
+		slices.Contains(state.Constraints, "required_edit_paths_define_write_scope") {
 		return true
 	}
 	return len(state.TargetPacket) > 0 && (len(state.TargetRefs) > 0 || len(state.EvidencePaths) > 0)
@@ -1270,25 +1272,7 @@ func IsZeroHitSearchResult(result workspace.ToolResult) bool {
 }
 
 func containsAny(value string, needles ...string) bool {
-	for _, needle := range needles {
-		if strings.Contains(value, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsStringValue(values []string, want string) bool {
-	want = strings.TrimSpace(want)
-	if want == "" {
-		return false
-	}
-	for _, value := range values {
-		if strings.TrimSpace(value) == want {
-			return true
-		}
-	}
-	return false
+	return util.ContainsAny(value, needles...)
 }
 
 func appendUnique(values []string, value string) []string {
@@ -1313,11 +1297,7 @@ func mergeStrings(base []string, extra []string) []string {
 }
 
 func uniqueNonEmpty(values []string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		out = appendUnique(out, value)
-	}
-	return out
+	return util.UniqueNonEmpty(values)
 }
 
 func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
@@ -1325,12 +1305,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 }
 
 func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+	return util.FirstNonEmpty(values...)
 }
 
 func truncate(value string, max int) string {

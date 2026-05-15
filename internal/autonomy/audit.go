@@ -1,9 +1,12 @@
 package autonomy
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
+
+	"idiom/internal/util"
 )
 
 const AuditReportSchemaVersion = "idiom.autonomy.audit.v1"
@@ -200,11 +203,11 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 	}
 
 	ordered := append([]Event(nil), events...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		if ordered[i].Sequence == ordered[j].Sequence {
-			return ordered[i].EventID < ordered[j].EventID
-		}
-		return ordered[i].Sequence < ordered[j].Sequence
+	slices.SortStableFunc(ordered, func(a, b Event) int {
+		return cmp.Or(
+			cmp.Compare(a.Sequence, b.Sequence),
+			cmp.Compare(a.EventID, b.EventID),
+		)
 	})
 	state.report.TotalEvents = len(ordered)
 	for i := range ordered {
@@ -346,11 +349,11 @@ func (s *eventAuditState) addObligation(event Event) {
 		incrementStringMap(&coverage.ObligationKindCounts, string(event.Obligation.Kind))
 		switch event.Type {
 		case EventObligationOpened:
-			coverage.OpenObligations = appendUniqueString(coverage.OpenObligations, event.Obligation.ObligationID)
+			coverage.OpenObligations = util.AppendUnique(coverage.OpenObligations, event.Obligation.ObligationID)
 		case EventObligationResolved:
-			coverage.ResolvedObligations = appendUniqueString(coverage.ResolvedObligations, event.Obligation.ObligationID)
+			coverage.ResolvedObligations = util.AppendUnique(coverage.ResolvedObligations, event.Obligation.ObligationID)
 		case EventObligationWaived:
-			coverage.WaivedObligations = appendUniqueString(coverage.WaivedObligations, event.Obligation.ObligationID)
+			coverage.WaivedObligations = util.AppendUnique(coverage.WaivedObligations, event.Obligation.ObligationID)
 		}
 	}
 	key := obligationKey(event.ContractID, event.Obligation.ObligationID)
@@ -427,7 +430,7 @@ func (s *eventAuditState) addSidecarToolCorrelation(event Event) {
 			s.sidecarRequestIDs[event.Correlation.SidecarRequestID] = struct{}{}
 			if event.ContractID != "" {
 				coverage := s.contractCoverage(event.ContractID)
-				coverage.SidecarRequestIDs = appendUniqueString(coverage.SidecarRequestIDs, event.Correlation.SidecarRequestID)
+				coverage.SidecarRequestIDs = util.AppendUnique(coverage.SidecarRequestIDs, event.Correlation.SidecarRequestID)
 			}
 		}
 	}
@@ -437,7 +440,7 @@ func (s *eventAuditState) addSidecarToolCorrelation(event Event) {
 			s.toolCallIDs[toolCallID] = struct{}{}
 			if event.ContractID != "" {
 				coverage := s.contractCoverage(event.ContractID)
-				coverage.ToolCallIDs = appendUniqueString(coverage.ToolCallIDs, toolCallID)
+				coverage.ToolCallIDs = util.AppendUnique(coverage.ToolCallIDs, toolCallID)
 			}
 		}
 	}
@@ -504,11 +507,11 @@ func (s *eventAuditState) finish() {
 				Reason:     "parent_id has no lifecycle event or expected contract",
 			})
 		}
-		sort.Strings(coverage.OpenObligations)
-		sort.Strings(coverage.ResolvedObligations)
-		sort.Strings(coverage.WaivedObligations)
-		sort.Strings(coverage.SidecarRequestIDs)
-		sort.Strings(coverage.ToolCallIDs)
+		slices.Sort(coverage.OpenObligations)
+		slices.Sort(coverage.ResolvedObligations)
+		slices.Sort(coverage.WaivedObligations)
+		slices.Sort(coverage.SidecarRequestIDs)
+		slices.Sort(coverage.ToolCallIDs)
 	}
 	for _, ref := range s.openObligations {
 		s.report.ObligationCoverage.OpenObligations = append(s.report.ObligationCoverage.OpenObligations, ref)
@@ -535,7 +538,7 @@ func (s *eventAuditState) finish() {
 	sortAuditRefs(s.report.ReferenceCoverage.StaleContractReferences)
 	sortAuditRefs(s.report.ReferenceCoverage.UnmatchedParentReferences)
 	sortAuditRefs(s.report.GateCoverage.InconsistentOpenObligationRefs)
-	sort.Strings(s.report.ReferenceCoverage.MissingExpectedContracts)
+	slices.Sort(s.report.ReferenceCoverage.MissingExpectedContracts)
 	sortSidecarIssues(s.report.SidecarToolCorrelation.UnmatchedCorrelations)
 	s.addFindings()
 	s.report.AllClear = s.report.TotalEvents > 0 && len(s.report.Findings) == 0 && len(s.report.ObligationCoverage.UnresolvedObligations) == 0
@@ -725,25 +728,7 @@ func isPolicyToolEvent(eventType EventType) bool {
 }
 
 func firstNonEmptyAuditValue(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-func appendUniqueString(values []string, next string) []string {
-	next = strings.TrimSpace(next)
-	if next == "" {
-		return values
-	}
-	for _, value := range values {
-		if value == next {
-			return values
-		}
-	}
-	return append(values, next)
+	return util.FirstNonEmpty(values...)
 }
 
 func removeString(values []string, remove string) []string {
@@ -767,7 +752,7 @@ func sortedKeys(set map[string]struct{}) []string {
 			out = append(out, key)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -778,7 +763,7 @@ func sortedMapKeys(values map[string]int) []string {
 			out = append(out, key)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -787,45 +772,45 @@ func sortedContractCoverages(values map[string]*ContractEventCoverage) []Contrac
 	for _, coverage := range values {
 		out = append(out, *coverage)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].ContractID < out[j].ContractID
+	slices.SortFunc(out, func(a, b ContractEventCoverage) int {
+		return cmp.Compare(a.ContractID, b.ContractID)
 	})
 	return out
 }
 
 func sortAuditRefs(refs []EventAuditRef) {
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].Sequence == refs[j].Sequence {
-			if refs[i].ContractID == refs[j].ContractID {
-				return refs[i].EventID < refs[j].EventID
-			}
-			return refs[i].ContractID < refs[j].ContractID
+	slices.SortFunc(refs, func(a, b EventAuditRef) int {
+		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
+			return c
 		}
-		return refs[i].Sequence < refs[j].Sequence
+		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.EventID, b.EventID)
 	})
 }
 
 func sortObligationRefs(refs []ObligationAuditRef) {
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].Sequence == refs[j].Sequence {
-			if refs[i].ContractID == refs[j].ContractID {
-				return refs[i].ObligationID < refs[j].ObligationID
-			}
-			return refs[i].ContractID < refs[j].ContractID
+	slices.SortFunc(refs, func(a, b ObligationAuditRef) int {
+		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
+			return c
 		}
-		return refs[i].Sequence < refs[j].Sequence
+		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ObligationID, b.ObligationID)
 	})
 }
 
 func sortSidecarIssues(issues []SidecarToolCorrelationIssue) {
-	sort.Slice(issues, func(i, j int) bool {
-		if issues[i].Sequence == issues[j].Sequence {
-			if issues[i].ContractID == issues[j].ContractID {
-				return issues[i].EventID < issues[j].EventID
-			}
-			return issues[i].ContractID < issues[j].ContractID
+	slices.SortFunc(issues, func(a, b SidecarToolCorrelationIssue) int {
+		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
+			return c
 		}
-		return issues[i].Sequence < issues[j].Sequence
+		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.EventID, b.EventID)
 	})
 }
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -612,7 +612,7 @@ func removeCoveredFreshnessScopes(scopes []string) []string {
 			out = append(out, scope)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -660,7 +660,7 @@ func replaceScopedStatusPaths(before []string, scoped []string, scope string) []
 	for path := range seen {
 		out = append(out, path)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -777,7 +777,7 @@ func freshnessRelevantPaths(paths []string, scope string, checkedPaths []string)
 	for path := range seen {
 		out = append(out, path)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -807,7 +807,7 @@ func cleanFreshnessPaths(paths []string) []string {
 	for path := range seen {
 		out = append(out, path)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

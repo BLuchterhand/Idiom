@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -300,7 +300,7 @@ func filesReferencingSymbol(root, symbol string, exts map[string]bool) ([]string
 	if walkErr != nil {
 		return nil, fmt.Errorf("audit enum-mirrors: walk %s: %w", root, walkErr)
 	}
-	sort.Strings(matches)
+	slices.Sort(matches)
 	return matches, nil
 }
 

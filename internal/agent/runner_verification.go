@@ -3,7 +3,7 @@ package agent
 import (
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/frontier/workerruntime"
@@ -172,7 +172,7 @@ func changedSourcePaths(results []workspace.ToolResult) []string {
 			paths = append(paths, normalized)
 		}
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths
 }
 

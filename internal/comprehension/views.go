@@ -8,9 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"idiom/internal/util"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -85,7 +86,7 @@ func canonicalStringSlice(in []string) []string {
 		seen[v] = struct{}{}
 		out = append(out, v)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -195,7 +196,7 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 	}
 	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
-	result.Cache = GraphViewCacheStateForKey(key, firstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
+	result.Cache = GraphViewCacheStateForKey(key, util.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	AttachPackResultContract(&result)
 	return result, true, nil
 }
@@ -259,7 +260,7 @@ func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus,
 	if err := json.Unmarshal([]byte(row.OutputJSON), &result); err != nil {
 		return PackResult{}, status, fmt.Errorf("decode cached view %s: %w", packID, err)
 	}
-	status.RowIndexID = firstNonEmpty(row.IndexID, result.IndexID)
+	status.RowIndexID = util.FirstNonEmpty(row.IndexID, result.IndexID)
 	status.CurrentIndexID = cachedViewCurrentIndexID(root)
 	if row.Stale != 0 {
 		viewCacheStaleRowMisses.Add(1)
@@ -283,7 +284,7 @@ func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus,
 	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
 	key := cachedViewKeyFromRow(row, packID)
-	result.Cache = GraphViewCacheStateForKey(key, firstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
+	result.Cache = GraphViewCacheStateForKey(key, util.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	result.Cache.CacheKey = packID
 	result.Cache.PackID = packID
 	AttachPackResultContract(&result)
@@ -446,7 +447,7 @@ func referencedPaths(result PackResult) []string {
 	for p := range seen {
 		out = append(out, p)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -573,7 +574,7 @@ func validateCachedViewFreshnessStatus(root string, row cachedViewRow, result Pa
 		Operation:         operation,
 		Policy:            FreshnessRequire,
 		ReferencedPaths:   references,
-		Mode:              firstNonEmpty(result.Mode, row.Mode),
+		Mode:              util.FirstNonEmpty(result.Mode, row.Mode),
 		MaxFiles:          viewFreshnessMaxFiles,
 		ExactScopeRefresh: true,
 	})
@@ -581,7 +582,7 @@ func validateCachedViewFreshnessStatus(root string, row cachedViewRow, result Pa
 		return PackResult{}, false, "", err
 	}
 	if !decision.FreshForScope {
-		return result, false, firstNonEmpty(decision.Reason, decision.Blocker, FreshnessReasonStaleGraph), nil
+		return result, false, util.FirstNonEmpty(decision.Reason, decision.Blocker, FreshnessReasonStaleGraph), nil
 	}
 	if decision.Refresh != nil && decision.Refresh.Attempted {
 		return result, false, "refreshed_referenced_paths", nil
@@ -621,12 +622,12 @@ func filterSourceReferencePaths(paths []string) []string {
 	for path := range seen {
 		out = append(out, path)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
 func cachedViewIndexMatchesCurrent(root string, row cachedViewRow, result PackResult) bool {
-	rowIndexID := firstNonEmpty(row.IndexID, result.IndexID)
+	rowIndexID := util.FirstNonEmpty(row.IndexID, result.IndexID)
 	if rowIndexID == "" {
 		return false
 	}
@@ -657,8 +658,8 @@ func cachedViewFingerprintsMatch(root string, row cachedViewRow) bool {
 
 func staleCachedViewResult(result PackResult, status ViewLoadStatus) PackResult {
 	reason := cachedViewStaleReason(status.Reason)
-	result.PackID = firstNonEmpty(strings.TrimSpace(result.PackID), strings.TrimSpace(status.PackID))
-	result.IndexID = firstNonEmpty(strings.TrimSpace(result.IndexID), strings.TrimSpace(status.RowIndexID))
+	result.PackID = util.FirstNonEmpty(strings.TrimSpace(result.PackID), strings.TrimSpace(status.PackID))
+	result.IndexID = util.FirstNonEmpty(strings.TrimSpace(result.IndexID), strings.TrimSpace(status.RowIndexID))
 	result.Fresh = false
 	result.Confidence = GraphResultConfidence{Level: "low", Source: "graph_view_cache", Reason: reason}
 	result.StaleEvidence = StaleEvidenceSafety{
@@ -674,7 +675,7 @@ func staleCachedViewResult(result PackResult, status ViewLoadStatus) PackResult 
 		Reason:    reason,
 		CacheKey:  strings.TrimSpace(status.PackID),
 		PackID:    strings.TrimSpace(status.PackID),
-		StoreKind: firstNonEmpty(strings.TrimSpace(result.StoreKind), strings.TrimSpace(result.Provenance.StoreKind)),
+		StoreKind: util.FirstNonEmpty(strings.TrimSpace(result.StoreKind), strings.TrimSpace(result.Provenance.StoreKind)),
 		Invalidation: GraphViewInvalidationSemantics{
 			Policy:          "content_addressed_read_through",
 			State:           "stale",
@@ -731,7 +732,7 @@ func mapKeys(values map[string]string) []string {
 	for key := range values {
 		out = append(out, key)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -1079,7 +1080,7 @@ func ChangedPathsBetween(previous Graph, current Graph) []string {
 	for p := range seen {
 		out = append(out, p)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

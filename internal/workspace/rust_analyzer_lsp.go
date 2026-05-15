@@ -3,6 +3,7 @@ package workspace
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -573,14 +574,14 @@ func (m *Manager) formatRALocations(locations []raLocation, pathFilter string, l
 		}
 		entries = append(entries, entry{path: abs, line: line, col: col, text: text})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].col < entries[j].col
+		return cmp.Compare(a.col, b.col)
 	})
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
@@ -627,14 +628,14 @@ func (m *Manager) formatRAWorkspaceSymbols(symbols []raSymbolInfo, pathFilter st
 			kind:          symbol.Kind,
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
@@ -674,14 +675,14 @@ func (m *Manager) formatRAIncomingCalls(calls []raIncomingCall, pathFilter strin
 		line := call.From.SelectionRange.Start.Line + 1
 		entries = append(entries, entry{path: abs, line: line, name: call.From.Name})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.path, b.path); c != 0 {
+			return c
 		}
-		if entries[i].line != entries[j].line {
-			return entries[i].line < entries[j].line
+		if c := cmp.Compare(a.line, b.line); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	lines := make([]string, 0, len(entries))
 	relationships := make([]ToolRelationship, 0, len(entries))
@@ -732,14 +733,14 @@ func (m *Manager) formatRAOutgoingCalls(callerPath string, callerName string, ca
 			name:         call.To.Name,
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].callsitePath != entries[j].callsitePath {
-			return entries[i].callsitePath < entries[j].callsitePath
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.callsitePath, b.callsitePath); c != 0 {
+			return c
 		}
-		if entries[i].callsiteLine != entries[j].callsiteLine {
-			return entries[i].callsiteLine < entries[j].callsiteLine
+		if c := cmp.Compare(a.callsiteLine, b.callsiteLine); c != 0 {
+			return c
 		}
-		return entries[i].name < entries[j].name
+		return cmp.Compare(a.name, b.name)
 	})
 	lines := make([]string, 0, len(entries))
 	relationships := make([]ToolRelationship, 0, len(entries))

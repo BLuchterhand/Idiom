@@ -1,6 +1,7 @@
 package projectartifacts
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,7 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -270,7 +271,7 @@ func filterStatusLines(lines []string) []string {
 		}
 		out = append(out, line)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -307,7 +308,7 @@ func detectLanguages(root string) []string {
 	for _, lang := range langs {
 		names = append(names, lang.Name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -347,7 +348,7 @@ func discoverModules(root string) []ModulePacket {
 			Tags:      moduleTags(rel, false),
 		})
 	}
-	sort.Slice(modules, func(i, j int) bool { return modules[i].Path < modules[j].Path })
+	slices.SortFunc(modules, func(a, b ModulePacket) int { return cmp.Compare(a.Path, b.Path) })
 	if len(modules) > 24 {
 		modules = modules[:24]
 	}
@@ -467,11 +468,11 @@ func buildGlossary(root string, promptFiles []string) []GlossaryEntry {
 			add(term, "symbol", rel)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Source == out[j].Source {
-			return out[i].Term < out[j].Term
+	slices.SortFunc(out, func(a, b GlossaryEntry) int {
+		if c := cmp.Compare(a.Source, b.Source); c != 0 {
+			return c
 		}
-		return out[i].Source < out[j].Source
+		return cmp.Compare(a.Term, b.Term)
 	})
 	if len(out) > 20 {
 		out = out[:20]
@@ -578,11 +579,11 @@ func buildDecisions(root string, promptFiles []string) []DecisionEntry {
 			out = append(out, DecisionEntry{Rule: line, Kind: kind, Source: rel})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Source == out[j].Source {
-			return out[i].Rule < out[j].Rule
+	slices.SortFunc(out, func(a, b DecisionEntry) int {
+		if c := cmp.Compare(a.Source, b.Source); c != 0 {
+			return c
 		}
-		return out[i].Source < out[j].Source
+		return cmp.Compare(a.Rule, b.Rule)
 	})
 	if len(out) > 24 {
 		out = out[:24]
@@ -727,7 +728,7 @@ func setToSortedSlice(values map[string]struct{}) []string {
 	for value := range values {
 		out = append(out, value)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

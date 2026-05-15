@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"idiom/internal/util"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -353,7 +354,7 @@ func patchSQLiteGraphScope(root string, graph Graph, scope string, existing Stat
 		return sqlitePatchCounts{}, err
 	}
 
-	indexID := firstNonEmpty(existing.IndexID, graph.ID)
+	indexID := util.FirstNonEmpty(existing.IndexID, graph.ID)
 	if indexID == "" {
 		indexID = graphID(graph)
 	}
@@ -1406,7 +1407,7 @@ func graphFromSQLiteMetadata(values map[string]string) (Graph, error) {
 	if storeKind := strings.TrimSpace(values["store_kind"]); storeKind != "" && storeKind != sqliteStoreKind {
 		return Graph{}, fmt.Errorf("SQLite graph store kind %q does not match %q", storeKind, sqliteStoreKind)
 	}
-	gitDirty, err := strconv.ParseBool(firstNonEmpty(values["git_dirty"], "false"))
+	gitDirty, err := strconv.ParseBool(util.FirstNonEmpty(values["git_dirty"], "false"))
 	if err != nil {
 		return Graph{}, fmt.Errorf("decode SQLite graph git_dirty: %w", err)
 	}

@@ -1,11 +1,12 @@
 package workspace
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/discovery"
@@ -429,7 +430,7 @@ func (m *Manager) pythonFileOutline(req ToolRequest) ToolResult {
 	if len(file.RawImports) > 0 {
 		b.WriteString("imports:\n")
 		imports := append([]string(nil), file.RawImports...)
-		sort.Strings(imports)
+		slices.Sort(imports)
 		for _, imp := range imports {
 			fmt.Fprintf(&b, "- %s\n", imp)
 		}
@@ -441,9 +442,7 @@ func (m *Manager) pythonFileOutline(req ToolRequest) ToolResult {
 		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
 		symbols := append([]semantic.PythonSymbol(nil), file.Symbols...)
-		sort.SliceStable(symbols, func(i, j int) bool {
-			return symbols[i].Line < symbols[j].Line
-		})
+		slices.SortStableFunc(symbols, func(a, b semantic.PythonSymbol) int { return cmp.Compare(a.Line, b.Line) })
 		b.WriteString("declarations:\n")
 		for _, sym := range symbols {
 			name := pythonDisplayName(sym.Qualified, sym.Name)
@@ -551,7 +550,7 @@ func (m *Manager) pythonDiagnosticTargets(req ToolRequest) ([]string, error) {
 				files = append(files, file.Path)
 			}
 		}
-		sort.Strings(files)
+		slices.Sort(files)
 		if limit := goResultLimit(req.MaxDepth, 8); len(files) > limit {
 			files = files[:limit]
 		}

@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -848,7 +848,7 @@ func packetTestCommands(packet Packet) []string {
 	for _, test := range packet.Tests {
 		out = append(out, test.Command)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -1097,7 +1097,7 @@ func packetValidationCommands(packet Packet) []string {
 		}
 	}
 	out = cleanStrings(out)
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

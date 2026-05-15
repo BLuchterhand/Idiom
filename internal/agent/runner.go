@@ -18,6 +18,7 @@ import (
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -836,7 +837,7 @@ func (r *Runner) Run(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
 			}
 			if decision.EventRole != "" {
-				r.emitEvent(RunEvent{Role: decision.EventRole, Content: firstNonEmpty(decision.EventContent, decision.Nudge)})
+				r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
 			}
 			if decision.ForceAnswerPrompt != "" {
 				answer, err := controller.completeWithoutMoreToolsWithReason(decision.ForceAnswerPrompt)
@@ -905,7 +906,7 @@ func (r *Runner) Run(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
 			}
 			if decision.EventRole != "" {
-				r.emitEvent(RunEvent{Role: decision.EventRole, Content: firstNonEmpty(decision.EventContent, decision.Nudge)})
+				r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
 			}
 			if decision.RejectSummary != "" {
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.RejectSummary, decision.RejectError)
@@ -920,7 +921,7 @@ func (r *Runner) Run(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
 			}
 			if decision.EventRole != "" {
-				r.emitEvent(RunEvent{Role: decision.EventRole, Content: firstNonEmpty(decision.EventContent, decision.Nudge)})
+				r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
 			}
 		}
 		if decision := discoveryRedirect.Consider(req, r.Workspace); decision.ShouldRedirect {
@@ -965,7 +966,7 @@ func (r *Runner) Run(
 			metrics.ReadClassCalls++
 			if decision := requestBudget.readBudgetDecision(policy, req); decision.Handled {
 				if decision.EventRole != "" {
-					r.emitEvent(RunEvent{Role: decision.EventRole, Content: firstNonEmpty(decision.EventContent, decision.Nudge)})
+					r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
 				}
 				if decision.Nudge != "" {
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
@@ -1731,7 +1732,7 @@ func (r *Runner) renderStepInstruction(policy RunPolicy, messages []llama.ChatMe
 		EvidencePaths:  promptEvidencePathsFromToolResults(results, 6),
 		ChangedPaths:   mapKeys(changedPathsFromToolResults(results)),
 		Constraints:    mergeRunnerStateStrings(brief.Constraints, guidance.Constraints),
-		LastTool:       firstNonEmpty(strings.TrimSpace(req.Tool), strings.TrimSpace(result.Tool)),
+		LastTool:       util.FirstNonEmpty(strings.TrimSpace(req.Tool), strings.TrimSpace(result.Tool)),
 		LastResult:     workerruntime.SummarizeToolResult(result),
 		FailureClass:   failureClass,
 		NextActions:    mergeRunnerStateStrings(brief.RequiredNext, guidance.ValidNext),
@@ -2418,8 +2419,8 @@ func buildRunnerFailureFeedbackPacket(agent string, step int, reason string, req
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
 	})
 	if scratchpadFailedEvidenceFeedbackApplies(brief, req, result, results) {
-		recovery.DoNotRepeat = appendUniqueRunnerState(recovery.DoNotRepeat, "same failed evidence lookup through a lower-level or raw read")
-		recovery.RequiredNext = appendUniqueRunnerState(recovery.RequiredNext, "record the failed, stale, ambiguous, or out-of-scope evidence as a deliverable gap")
+		recovery.DoNotRepeat = util.AppendUnique(recovery.DoNotRepeat, "same failed evidence lookup through a lower-level or raw read")
+		recovery.RequiredNext = util.AppendUnique(recovery.RequiredNext, "record the failed, stale, ambiguous, or out-of-scope evidence as a deliverable gap")
 		recovery.ValidNext = []string{
 			"write the non-source deliverable with the evidence gap recorded",
 			"answer with <<QUESTION>> only if the evidence gap makes the deliverable impossible",
@@ -2574,7 +2575,7 @@ func mergeRunnerStateStrings(groups ...[]string) []string {
 	var out []string
 	for _, group := range groups {
 		for _, value := range group {
-			out = appendUniqueRunnerState(out, value)
+			out = util.AppendUnique(out, value)
 		}
 	}
 	return out
@@ -2597,26 +2598,13 @@ func runnerStateSummary(state runnerNextActionState) string {
 	return truncateRunnerStateText(strings.Join(parts, " | "), 320)
 }
 
-func appendUniqueRunnerState(values []string, value string) []string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return values
-	}
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
-}
-
 func prependRunnerStateStrings(preferred []string, existing []string) []string {
 	out := make([]string, 0, len(preferred)+len(existing))
 	for _, value := range preferred {
-		out = appendUniqueRunnerState(out, value)
+		out = util.AppendUnique(out, value)
 	}
 	for _, value := range existing {
-		out = appendUniqueRunnerState(out, value)
+		out = util.AppendUnique(out, value)
 	}
 	return out
 }
@@ -3216,7 +3204,7 @@ func postReadinessGapScopeForBrief(agent string, delegatedReadOnlyAnswerReady bo
 }
 
 func postReadinessGap(req workspace.ToolRequest) string {
-	return firstNonEmpty(req.NamedGap, req.WhyNotAnswering)
+	return util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering)
 }
 
 func invalidPostReadinessGap(scope string, objective string, req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
@@ -3750,7 +3738,7 @@ func closureProbeCandidates(results []workspace.ToolResult, max int) []string {
 	candidates := make([]string, 0, max)
 	add := func(raw string) {
 		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(raw); ok {
-			candidates = appendUniqueSearchTerm(candidates, symbol)
+			candidates = util.AppendUnique(candidates, symbol)
 		}
 	}
 	for _, result := range results {
@@ -4087,7 +4075,7 @@ func syntheticLegacyParseToolCall(step int, raw string) llama.ToolCall {
 
 func legacyToolCallHistoryMessage(reply llama.ChatMessage, call llama.ToolCall) llama.ChatMessage {
 	return llama.ChatMessage{
-		Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+		Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 		ReasoningContent: reply.ReasoningContent,
 		ToolCalls:        []llama.ToolCall{call},
 	}
@@ -4911,7 +4899,7 @@ func architectureUnsupportedExactDetail(reply string, results []workspace.ToolRe
 		if _, ok := exactSymbols[key]; ok {
 			continue
 		}
-		unsupported = appendUniqueSearchTerm(unsupported, symbol)
+		unsupported = util.AppendUnique(unsupported, symbol)
 	}
 	return unsupported
 }
@@ -4949,7 +4937,7 @@ func explicitAnswerCodeSymbols(reply string) []string {
 		if key == "" {
 			return
 		}
-		symbols = appendUniqueSearchTerm(symbols, raw)
+		symbols = util.AppendUnique(symbols, raw)
 	}
 	for _, match := range backtickedTokenPattern.FindAllStringSubmatch(reply, -1) {
 		if len(match) > 1 {
@@ -5309,7 +5297,7 @@ func (r *Runner) scopedImplementationDiscoveryLookupAllowed(req workspace.ToolRe
 	if strings.TrimSpace(req.Tool) == "context_status" {
 		return true
 	}
-	target := strings.TrimSpace(firstNonEmpty(req.Pattern, req.Query, req.Task, req.ID, req.Handle, req.Path, req.Command))
+	target := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Query, req.Task, req.ID, req.Handle, req.Path, req.Command))
 	if target == "" || len(target) < 3 {
 		return false
 	}
@@ -5374,7 +5362,7 @@ func scopedImplementationSymbolOwnerLookupAllowed(req workspace.ToolRequest) boo
 }
 
 func scopedImplementationLookupTargetAllowed(req workspace.ToolRequest) bool {
-	target := strings.TrimSpace(firstNonEmpty(req.Pattern, req.Query, req.ID, req.Handle))
+	target := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Query, req.ID, req.Handle))
 	if target == "" || len(target) < 3 {
 		return false
 	}
@@ -6218,17 +6206,17 @@ func toolActionClass(req workspace.ToolRequest) string {
 	case "shell":
 		return shellActionClass(req.Command)
 	case "read_file":
-		if target := firstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Path)); target != "" {
+		if target := util.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Path)); target != "" {
 			return "read_file:" + normalizeActionToken(target)
 		}
 		return "read_file"
 	case "source_sanity":
 		return tool + ":" + normalizeActionToken(req.Path)
 	case "code_navigate":
-		target := firstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
+		target := util.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
 		return tool + ":" + normalizeActionToken(req.Capability) + ":" + normalizeActionToken(target)
 	case "read_only_capability":
-		target := firstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
+		target := util.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
 		return tool + ":" + normalizeActionToken(req.Capability) + ":" + normalizeActionToken(target)
 	case "edit_file":
 		shape := strings.TrimSpace(req.OldText) + "->" + strings.TrimSpace(req.NewText)
@@ -6239,7 +6227,7 @@ func toolActionClass(req workspace.ToolRequest) string {
 	case "search_files", "search_content", "rg":
 		return tool + ":" + normalizeActionToken(req.Path) + ":" + normalizeActionToken(req.Pattern) + ":" + normalizeActionToken(req.Glob)
 	case "discovery_query":
-		purpose := firstNonEmpty(strings.TrimSpace(req.Purpose), strings.TrimSpace(req.Query))
+		purpose := util.FirstNonEmpty(strings.TrimSpace(req.Purpose), strings.TrimSpace(req.Query))
 		return tool + ":" + normalizeActionToken(purpose) + ":" + normalizeActionToken(req.Path) + ":" + normalizeActionToken(req.Pattern) + ":" + normalizeActionToken(req.Language)
 	case "structural_search":
 		return tool + ":" + normalizeActionToken(req.Path) + ":" + normalizeActionToken(req.Pattern) + ":" + normalizeActionToken(req.Language)
@@ -6255,10 +6243,10 @@ func toolActionClass(req workspace.ToolRequest) string {
 		"go_find_package", "go_related_files", "go_workspace_symbol",
 		"go_definition", "go_references", "go_implementations",
 		"go_calls_from", "go_calls_into", "go_extract_body", "go_importers", "go_diagnostics":
-		target := firstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Path), strings.TrimSpace(req.ID))
+		target := util.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Path), strings.TrimSpace(req.ID))
 		return tool + ":" + normalizeActionToken(target)
 	case "go_move_declarations":
-		target := firstNonEmpty(strings.TrimSpace(req.Path)+"->"+strings.TrimSpace(req.Destination), strings.TrimSpace(req.Pattern))
+		target := util.FirstNonEmpty(strings.TrimSpace(req.Path)+"->"+strings.TrimSpace(req.Destination), strings.TrimSpace(req.Pattern))
 		if len(req.Moves) > 0 {
 			target = strings.TrimSpace(req.Path) + "->batch"
 		}
@@ -6379,15 +6367,6 @@ func normalizeActionToken(value string) string {
 	return value
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
 func containsRunnerTool(tools []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, tool := range tools {
@@ -6428,7 +6407,7 @@ func defaultRunnerStateSlice(values []string, defaults []string) []string {
 
 func appendRunnerTools(values []string, tools ...string) []string {
 	for _, tool := range tools {
-		values = appendUniqueRunnerState(values, tool)
+		values = util.AppendUnique(values, tool)
 	}
 	return values
 }
@@ -7273,8 +7252,8 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	if r == nil || r.OnEvent == nil || strings.TrimSpace(answer) == "" {
 		return
 	}
-	lane := firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
-	contract := firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer")
+	lane := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
+	contract := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer")
 	evidencePaths := acceptedAnswerEvidencePaths(answer, results, r.RuntimeBrief)
 	if blockerKind, reason := r.finalAnswerBlockerKind(answer, results); blockerKind != "" {
 		r.emitEvent(marshalRunEvent("readiness_check", map[string]any{
@@ -7294,7 +7273,7 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 		}))
 		r.emitEvent(marshalRunEvent("control_rails_enforcement", map[string]any{
 			"lane":           lane,
-			"task_family":    firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
+			"task_family":    util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
 			"contract":       contract,
 			"passed":         false,
 			"action":         "block",
@@ -7326,7 +7305,7 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	r.emitEvent(marshalRunEvent("final_answer_critic", critic))
 	r.emitEvent(marshalRunEvent("control_rails_enforcement", map[string]any{
 		"lane":           lane,
-		"task_family":    firstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
+		"task_family":    util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
 		"contract":       contract,
 		"passed":         true,
 		"action":         "accept",
@@ -8470,9 +8449,9 @@ func (r *Runner) controlRailsForBrief(messages []llama.ChatMessage, brief worker
 		}
 	}
 	rails := runnerControlRails{
-		Lane:                 firstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName()),
-		Contract:             firstNonEmpty(strings.TrimSpace(brief.Contract), "direct_answer"),
-		TaskFamily:           firstNonEmpty(strings.TrimSpace(brief.TaskFamily), "direct_answer"),
+		Lane:                 util.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName()),
+		Contract:             util.FirstNonEmpty(strings.TrimSpace(brief.Contract), "direct_answer"),
+		TaskFamily:           util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "direct_answer"),
 		PermissionProfile:    profile,
 		RequiredEditPaths:    append([]string(nil), brief.RequiredEditPaths...),
 		RequiredEvidence:     append([]string(nil), brief.RequiredEvidence...),
@@ -8481,7 +8460,7 @@ func (r *Runner) controlRailsForBrief(messages []llama.ChatMessage, brief worker
 		ForbiddenTools:       append([]string(nil), brief.ForbiddenTools...),
 		ReadinessGate:        append([]string(nil), brief.ReadinessGate...),
 		SearchPolicy:         append([]string(nil), brief.SearchPolicy...),
-		VerificationContract: firstNonEmpty(strings.TrimSpace(brief.VerificationContract), "not_required_for_conversation"),
+		VerificationContract: util.FirstNonEmpty(strings.TrimSpace(brief.VerificationContract), "not_required_for_conversation"),
 		StopConditions:       append([]string(nil), brief.StopConditions...),
 		FinalCritic:          append([]string(nil), brief.FinalCritic...),
 		DynamicInstructions:  r.InstructionAttacher != nil,
@@ -8493,17 +8472,17 @@ func (r *Runner) controlRailsForBrief(messages []llama.ChatMessage, brief worker
 		rails.StopConditions = []string{"answered_user_request", "blocked_by_missing_information"}
 	}
 	if runnerBriefRequiresMutation(brief) {
-		rails.Lane = firstNonEmpty(strings.TrimSpace(brief.Lane), "main")
-		rails.Contract = firstNonEmpty(strings.TrimSpace(brief.Contract), "implementation_result")
-		rails.TaskFamily = firstNonEmpty(strings.TrimSpace(brief.TaskFamily), "implementation")
-		rails.PermissionProfile = firstNonEmpty(strings.TrimSpace(brief.PermissionProfile), "guarded_workspace_write")
+		rails.Lane = util.FirstNonEmpty(strings.TrimSpace(brief.Lane), "main")
+		rails.Contract = util.FirstNonEmpty(strings.TrimSpace(brief.Contract), "implementation_result")
+		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "implementation")
+		rails.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), "guarded_workspace_write")
 		if planThenExecutePlannerBrief(brief) {
 			rails.RequiredEvidence = mergeRunnerStateStrings([]string{"plan_submitted_or_source_satisfied_or_blocker"}, rails.RequiredEvidence)
 			rails.RequiredTools = mergeRunnerStateStrings([]string{"submit_plan"}, rails.RequiredTools)
-			rails.ForbiddenTools = appendUniqueRunnerState(rails.ForbiddenTools, "unbounded_write")
+			rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, "unbounded_write")
 			rails.ReadinessGate = mergeRunnerStateStrings([]string{"submit_plan_or_source_satisfied_or_blocker_reported"}, rails.ReadinessGate)
 			rails.SearchPolicy = mergeRunnerStateStrings([]string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"}, rails.SearchPolicy)
-			rails.VerificationContract = firstNonEmpty(strings.TrimSpace(rails.VerificationContract), "not_required_for_text_mutations")
+			rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), "not_required_for_text_mutations")
 			rails.StopConditions = mergeRunnerStateStrings([]string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"}, rails.StopConditions)
 			rails.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called_or_source_satisfied", "edits_or_source_satisfied_evidence_listed_in_summary"}
 			return rails
@@ -8516,18 +8495,18 @@ func (r *Runner) controlRailsForBrief(messages []llama.ChatMessage, brief worker
 		} else {
 			rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"})
 		}
-		rails.ForbiddenTools = appendUniqueRunnerState(rails.ForbiddenTools, "unbounded_write")
+		rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, "unbounded_write")
 		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"changed_paths_reported", "verification_status_reported"})
 		rails.SearchPolicy = defaultRunnerStateSlice(rails.SearchPolicy, []string{"consume_target_packet_first", "prefer_small_bounded_edits", "verify_changed_surface"})
-		rails.VerificationContract = firstNonEmpty(strings.TrimSpace(rails.VerificationContract), "tests_passed_or_failed_or_skipped_with_blocker")
+		rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), "tests_passed_or_failed_or_skipped_with_blocker")
 		rails.StopConditions = defaultRunnerStateSlice(rails.StopConditions, []string{"change_verified", "blocked_with_failed_verification_or_scope"})
 		rails.FinalCritic = []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"}
 		return rails
 	}
 	if runnerAllowsTool(rails.AllowedTools, "shell") && !runnerHasWorkspaceWriteCapability(brief, rails.AllowedTools) && runnerVerificationRequired(brief) {
-		rails.TaskFamily = firstNonEmpty(strings.TrimSpace(brief.TaskFamily), "verification")
-		rails.Contract = firstNonEmpty(strings.TrimSpace(brief.Contract), "grounded_explanation")
-		rails.PermissionProfile = firstNonEmpty(strings.TrimSpace(brief.PermissionProfile), "read_only_verification_shell")
+		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "verification")
+		rails.Contract = util.FirstNonEmpty(strings.TrimSpace(brief.Contract), "grounded_explanation")
+		rails.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), "read_only_verification_shell")
 		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{"verification_command", "pass_fail_status"})
 		rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{"shell"})
 		rails.ForbiddenTools = appendRunnerTools(rails.ForbiddenTools, "edit_file", "write_file", "append_file", "mkdir", "mutating_shell")
@@ -8556,13 +8535,13 @@ func (r *Runner) controlRailsForBrief(messages []llama.ChatMessage, brief worker
 		}
 	}
 	if rails.Contract == "direct_answer" {
-		rails.TaskFamily = firstNonEmpty(strings.TrimSpace(brief.TaskFamily), "direct_answer")
+		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "direct_answer")
 		if len(rails.AllowedTools) == 0 {
 			rails.PermissionProfile = "conversation_only"
-			rails.ForbiddenTools = appendUniqueRunnerState(rails.ForbiddenTools, "shell")
+			rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, "shell")
 		}
 		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{"answer_addresses_prompt"})
-		rails.VerificationContract = firstNonEmpty(strings.TrimSpace(rails.VerificationContract), "not_required_for_read_only_lane")
+		rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), "not_required_for_read_only_lane")
 		rails.StopConditions = defaultRunnerStateSlice(rails.StopConditions, []string{"required_evidence_satisfied"})
 		if runnerUsesSoftReadOnlyShapingOnly(brief, rails) {
 			rails.ReadinessGate = nil
@@ -8896,7 +8875,7 @@ func (r *Runner) retryInvalidFinalAnswer(
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
 		retryMessages = append(retryMessages, llama.ChatMessage{
-			Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+			Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 			Content:          reply.Content,
 			ReasoningContent: reply.ReasoningContent,
 		})
@@ -9400,7 +9379,7 @@ func removedTestDeclarationsFromDiff(diff string) []string {
 		}
 		missing = append(missing, entry.display)
 	}
-	sort.Strings(missing)
+	slices.Sort(missing)
 	return missing
 }
 
@@ -9503,7 +9482,7 @@ func requiredEditSnippetCandidatePaths(snippet workerruntime.RequiredEditSnippet
 		seen[normalized] = struct{}{}
 		candidates = append(candidates, normalized)
 	}
-	sort.Strings(candidates)
+	slices.Sort(candidates)
 	return candidates
 }
 
@@ -9626,7 +9605,7 @@ func claimedChangedPathsFromAnswer(reply string) []string {
 			paths = append(paths, path)
 		}
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths
 }
 
@@ -9769,7 +9748,7 @@ func mapKeys(values map[string]struct{}) []string {
 	for key := range values {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -9942,7 +9921,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
 		retryMessages = append(retryMessages, llama.ChatMessage{
-			Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+			Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 			Content:          reply.Content,
 			ReasoningContent: reply.ReasoningContent,
 		})
@@ -10356,7 +10335,7 @@ func evidenceFirstTargetInspectionRecoveryNudge(in recoveryNudgeInputs) (string,
 	if !evidenceFirstTargetInspectionActive(in.brief, in.results) {
 		return "", false
 	}
-	target := firstNonEmptyNonEmpty(in.brief.TargetRefs...)
+	target := util.FirstNonEmpty(in.brief.TargetRefs...)
 	if target == "" {
 		target = strings.TrimSpace(in.req.Path)
 	}
@@ -10454,15 +10433,6 @@ func buildClosureRecoveryNudge(scope string, req workspace.ToolRequest, results 
 	}
 	b.WriteString("If one detail remains uncertain, state that uncertainty in prose; do not request more tools or return a partial-findings template.")
 	return b.String()
-}
-
-func firstNonEmptyNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func isPrematureEvidenceFirstTargetRead(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) bool {

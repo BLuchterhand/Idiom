@@ -10,11 +10,12 @@ package workspace
 // the Manager struct itself so we don't need to modify manager.go.
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -429,7 +430,7 @@ func (m *Manager) tsFileOutline(req ToolRequest) ToolResult {
 	if len(file.Imports) > 0 {
 		b.WriteString("imports:\n")
 		imports := append([]string(nil), file.Imports...)
-		sort.Strings(imports)
+		slices.Sort(imports)
 		for _, imp := range imports {
 			fmt.Fprintf(&b, "- %s\n", imp)
 		}
@@ -441,9 +442,7 @@ func (m *Manager) tsFileOutline(req ToolRequest) ToolResult {
 		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
 		symbols := append([]semantic.TsSymbol(nil), file.Symbols...)
-		sort.SliceStable(symbols, func(i, j int) bool {
-			return symbols[i].Line < symbols[j].Line
-		})
+		slices.SortStableFunc(symbols, func(a, b semantic.TsSymbol) int { return cmp.Compare(a.Line, b.Line) })
 		b.WriteString("declarations:\n")
 		for _, sym := range symbols {
 			name := tsDisplayName(sym.Qualified, sym.Name)
@@ -554,11 +553,11 @@ func (m *Manager) tsImplementationFallback(match semantic.TsSymbolMatch, pathFil
 	if len(impls) == 0 {
 		return "", fmt.Errorf("no semantic implementation candidates found")
 	}
-	sort.Slice(impls, func(i, j int) bool {
-		if impls[i].Path != impls[j].Path {
-			return impls[i].Path < impls[j].Path
+	slices.SortFunc(impls, func(a, b semantic.TsSymbolMatch) int {
+		if c := cmp.Compare(a.Path, b.Path); c != 0 {
+			return c
 		}
-		return impls[i].Line < impls[j].Line
+		return cmp.Compare(a.Line, b.Line)
 	})
 	lines := make([]string, 0, len(impls))
 	for _, candidate := range impls {
@@ -639,7 +638,7 @@ func (m *Manager) tsDiagnosticTargets(req ToolRequest) ([]string, error) {
 				files = append(files, file.Path)
 			}
 		}
-		sort.Strings(files)
+		slices.Sort(files)
 		if limit := goResultLimit(req.MaxDepth, 8); len(files) > limit {
 			files = files[:limit]
 		}

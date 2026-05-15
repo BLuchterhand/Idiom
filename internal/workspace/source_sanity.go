@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"idiom/internal/discovery"
+	"idiom/internal/util"
 )
 
 const defaultSourceSanityLimit = 24
@@ -154,7 +155,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 				Path:   rel,
 				Method: tool,
 				Detail: oneLineSourceSanityDetail(result),
-				Error:  firstNonEmptyString(strings.TrimSpace(result.Error), strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary)),
+				Error:  util.FirstNonEmpty(strings.TrimSpace(result.Error), strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary)),
 			}
 		}
 		fallback, err := genericSourceSanity(absPath)
@@ -239,7 +240,7 @@ func diagnosticsUnavailableDetail(result ToolResult) string {
 }
 
 func oneLineSourceSanityDetail(result ToolResult) string {
-	detail := firstNonEmptyString(strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary))
+	detail := util.FirstNonEmpty(strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary))
 	detail = strings.ReplaceAll(detail, "\r\n", "\n")
 	detail = strings.TrimSpace(strings.Split(detail, "\n")[0])
 	if detail == "" {

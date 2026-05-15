@@ -1,13 +1,15 @@
 package semantic
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/discovery"
+	"idiom/internal/util"
 )
 
 type CppIndex struct {
@@ -132,7 +134,7 @@ func BuildCppIndexWithOptions(root string, opts IndexOptions) (*CppIndex, error)
 			return nil
 		}
 		paths = append(paths, rel)
-		byName[filepath.Base(rel)] = appendUniqueString(byName[filepath.Base(rel)], rel)
+		byName[filepath.Base(rel)] = util.AppendUnique(byName[filepath.Base(rel)], rel)
 		byRel[rel] = rel
 		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
 			return errStop
@@ -149,7 +151,7 @@ func BuildCppIndexWithOptions(root string, opts IndexOptions) (*CppIndex, error)
 		return nil, nil
 	}
 
-	sort.Strings(paths)
+	slices.Sort(paths)
 	for _, rel := range paths {
 		if err := indexContextErr(opts); err != nil {
 			return nil, err
@@ -186,16 +188,16 @@ func BuildCppIndexWithOptions(root string, opts IndexOptions) (*CppIndex, error)
 		index.Files = append(index.Files, file)
 	}
 
-	sort.Slice(index.Files, func(i, j int) bool {
-		return index.Files[i].Path < index.Files[j].Path
+	slices.SortFunc(index.Files, func(a, b CppFile) int {
+		return cmp.Compare(a.Path, b.Path)
 	})
 	for _, file := range index.Files {
 		if len(file.Includes) == 0 {
 			continue
 		}
 		for _, include := range file.Includes {
-			index.Forward[file.Path] = appendUniqueString(index.Forward[file.Path], include)
-			index.Reverse[include] = appendUniqueString(index.Reverse[include], file.Path)
+			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], include)
+			index.Reverse[include] = util.AppendUnique(index.Reverse[include], file.Path)
 		}
 	}
 	return index, nil
@@ -312,10 +314,10 @@ func (idx *CppIndex) findFiles(pattern string) []string {
 		}
 	}
 	if len(exact) > 0 {
-		sort.Strings(exact)
+		slices.Sort(exact)
 		return exact
 	}
-	sort.Strings(partial)
+	slices.Sort(partial)
 	return partial
 }
 
@@ -334,11 +336,14 @@ func (idx *CppIndex) rankFiles(scoreFn func(CppFile) int, limit int) []CppFile {
 			score int
 		}{file: file, score: score})
 	}
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
+	slices.SortFunc(scored, func(a, b struct {
+		file  CppFile
+		score int
+	}) int {
+		if c := -cmp.Compare(a.score, b.score); c != 0 {
+			return c
 		}
-		return scored[i].file.Path < scored[j].file.Path
+		return cmp.Compare(a.file.Path, b.file.Path)
 	})
 	if limit > 0 && len(scored) > limit {
 		scored = scored[:limit]
@@ -378,9 +383,9 @@ func parseCppIncludes(rel string, content string, byName map[string][]string, by
 		if include == "" {
 			include = filepath.ToSlash(strings.TrimSpace(match[1]))
 		}
-		includes = appendUniqueString(includes, include)
+		includes = util.AppendUnique(includes, include)
 	}
-	sort.Strings(includes)
+	slices.Sort(includes)
 	return includes
 }
 
@@ -478,11 +483,11 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 		parenDepth = 0
 	}
 
-	sort.Slice(symbols, func(i, j int) bool {
-		if symbols[i].SourceFile != symbols[j].SourceFile {
-			return symbols[i].SourceFile < symbols[j].SourceFile
-		}
-		return symbols[i].Line < symbols[j].Line
+	slices.SortStableFunc(symbols, func(a, b CppSymbol) int {
+		return cmp.Or(
+			cmp.Compare(a.SourceFile, b.SourceFile),
+			cmp.Compare(a.Line, b.Line),
+		)
 	})
 	return symbols
 }
@@ -663,15 +668,4 @@ func isCppKeywordName(name string) bool {
 	}
 }
 
-func appendUniqueString(values []string, value string) []string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return values
-	}
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
-}
+

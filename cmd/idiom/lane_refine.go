@@ -10,7 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"cmp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -867,7 +868,7 @@ func loadProjectTraps(overlayDir string, tags []string, stderr io.Writer) []trap
 			body:      bytes.TrimSpace(body),
 		})
 	}
-	sort.Slice(matched, func(i, j int) bool { return matched[i].name < matched[j].name })
+	slices.SortFunc(matched, func(a, b trapEntry) int { return cmp.Compare(a.name, b.name) })
 	return matched
 }
 
@@ -1886,17 +1887,17 @@ func refineEvidenceAnchorsForPath(path, source, promptText string, globalTerms [
 			score: score,
 		})
 	}
-	sort.SliceStable(anchors, func(i, j int) bool {
-		if anchors[i].score == anchors[j].score {
-			return anchors[i].line < anchors[j].line
+	slices.SortStableFunc(anchors, func(a, b refineEvidenceAnchor) int {
+		if c := -cmp.Compare(a.score, b.score); c != 0 {
+			return c
 		}
-		return anchors[i].score > anchors[j].score
+		return cmp.Compare(a.line, b.line)
 	})
 	if len(anchors) > refinePatchSourceEvidenceAnchorsPerPath {
 		anchors = anchors[:refinePatchSourceEvidenceAnchorsPerPath]
 	}
-	sort.SliceStable(anchors, func(i, j int) bool {
-		return anchors[i].line < anchors[j].line
+	slices.SortStableFunc(anchors, func(a, b refineEvidenceAnchor) int {
+		return cmp.Compare(a.line, b.line)
 	})
 	return anchors
 }
@@ -1937,12 +1938,11 @@ func refineEvidenceTerms(text string) []string {
 	for term := range seen {
 		terms = append(terms, term)
 	}
-	sort.SliceStable(terms, func(i, j int) bool {
-		left, right := seen[terms[i]], seen[terms[j]]
-		if left == right {
-			return terms[i] < terms[j]
+	slices.SortStableFunc(terms, func(a, b string) int {
+		if c := -cmp.Compare(seen[a], seen[b]); c != 0 {
+			return c
 		}
-		return left > right
+		return cmp.Compare(a, b)
 	})
 	return terms
 }
@@ -2257,7 +2257,7 @@ func parseRefineBugTitles(reviewBody string) []string {
 		}
 		out = append(out, strings.ToLower(title))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

@@ -12,7 +12,7 @@ package autodetect
 
 import (
 	"os/exec"
-	"sort"
+	"slices"
 )
 
 // Backend describes one local-LLM runner that's installed on this host.
@@ -65,6 +65,6 @@ func KnownBackendNames() []string {
 	for _, c := range backendCandidates {
 		out = append(out, c.bin)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

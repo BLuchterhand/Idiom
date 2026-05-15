@@ -9,7 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -319,7 +319,7 @@ func (s *Server) enqueue(poolName, label, client string) (*job, int, error) {
 		for n := range s.pools {
 			known = append(known, n)
 		}
-		sort.Strings(known)
+		slices.Sort(known)
 		return nil, 0, fmt.Errorf("unknown pool %q (known: %v)", poolName, known)
 	}
 	id := s.newJobID()
@@ -448,7 +448,7 @@ func (s *Server) snapshot() StatusPayload {
 	for name := range s.pools {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	out := StatusPayload{
 		Pools:    make([]PoolStatus, 0, len(names)),

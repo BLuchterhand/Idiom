@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -4267,7 +4267,7 @@ func p711ForbiddenValidationValue(value any) string {
 		for key := range typed {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		for _, key := range keys {
 			if forbidden := p711ForbiddenValidationKey(key); forbidden != "" {
 				return forbidden
@@ -4441,7 +4441,7 @@ func p711IntegrationProofIDs(proofs p711IntegrationProofSet) []string {
 			ids = append(ids, proof.ID)
 		}
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 

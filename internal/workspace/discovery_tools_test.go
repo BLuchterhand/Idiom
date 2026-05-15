@@ -2571,16 +2571,16 @@ func TestLSPCallHierarchyFormattersReturnStructuredRelationships(t *testing.T) {
 	writeWorkspaceFile(t, lib, "def helper():\n    return 'ok'\n")
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxDirectoryEntries: 16})
 
-	payload := mgr.formatPylspOutgoingCalls(app, "run", []pylspOutgoingCall{{
-		To: pylspCallHierarchyItem{
+	payload := mgr.formatPylspOutgoingCalls(app, "run", []LSPOutgoingCall{{
+		To: LSPCallHierarchyItem{
 			Name: "helper",
 			URI:  pylspFileURI(lib),
-			SelectionRange: pylspRange{
-				Start: pylspPosition{Line: 0, Character: 4},
+			SelectionRange: LSPRange{
+				Start: LSPPosition{Line: 0, Character: 4},
 			},
 		},
-		FromRanges: []pylspRange{{
-			Start: pylspPosition{Line: 1, Character: 11},
+		FromRanges: []LSPRange{{
+			Start: LSPPosition{Line: 1, Character: 11},
 		}},
 	}}, "")
 	if strings.TrimSpace(payload.Output) == "" || len(payload.Relationships) != 1 {

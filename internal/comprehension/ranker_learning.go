@@ -5,9 +5,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"idiom/internal/util"
 	"os"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -364,9 +365,9 @@ func learningEvidenceRef(req VerifiedRankerLearningRequest, files []string, inva
 		evidence.Kind = LearningReasonVerifiedFeedback
 	}
 	evidence.Verified = evidence.Verified || req.Verified
-	evidence.TaskID = firstNonEmpty(sanitizeLearningCorrelationID("task", evidence.TaskID), sanitizeLearningCorrelationID("task", req.TaskID))
-	evidence.CorpusID = firstNonEmpty(sanitizeLearningCorrelationID("corpus", evidence.CorpusID), sanitizeLearningCorrelationID("corpus", req.CorpusID))
-	evidence.ResultID = firstNonEmpty(sanitizeLearningCorrelationID("result", evidence.ResultID), sanitizeLearningCorrelationID("result", req.ResultID))
+	evidence.TaskID = util.FirstNonEmpty(sanitizeLearningCorrelationID("task", evidence.TaskID), sanitizeLearningCorrelationID("task", req.TaskID))
+	evidence.CorpusID = util.FirstNonEmpty(sanitizeLearningCorrelationID("corpus", evidence.CorpusID), sanitizeLearningCorrelationID("corpus", req.CorpusID))
+	evidence.ResultID = util.FirstNonEmpty(sanitizeLearningCorrelationID("result", evidence.ResultID), sanitizeLearningCorrelationID("result", req.ResultID))
 	evidence.Files = sanitizeLearningPathList(firstNonEmptyStrings(evidence.Files, files))
 	evidence.InvalidPathCount += invalidPathCount
 	evidence.Metrics = sanitizeLearningMetrics(evidence.Metrics)
@@ -424,7 +425,7 @@ func sanitizeLearningPaths(paths []string) ([]string, int) {
 		seen[key] = struct{}{}
 		out = append(out, key)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, invalid
 }
 
@@ -488,7 +489,7 @@ func learningEventID(entry LearningLogEntry) string {
 		h.Write([]byte{0})
 	}
 	files := append([]string(nil), entry.Files...)
-	sort.Strings(files)
+	slices.Sort(files)
 	for _, file := range files {
 		h.Write([]byte(file))
 		h.Write([]byte{0})

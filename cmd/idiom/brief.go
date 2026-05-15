@@ -11,7 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/telemetry"
@@ -204,7 +204,7 @@ func printBriefPreloadList(stdout io.Writer, projectRoot string) {
 	for k := range kinds {
 		names = append(names, k)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, n := range names {
 		fmt.Fprintf(stdout, "%s\t%s\n", n, kinds[n])
 	}

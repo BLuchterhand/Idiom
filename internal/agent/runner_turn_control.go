@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/llama"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -93,7 +94,7 @@ func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.
 
 func completionGateRejectedHistoryMessage(r *Runner, reply llama.ChatMessage, result workspace.ToolResult, results []workspace.ToolResult) llama.ChatMessage {
 	message := llama.ChatMessage{
-		Role:             firstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+		Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 		Content:          reply.Content,
 		ReasoningContent: reply.ReasoningContent,
 	}

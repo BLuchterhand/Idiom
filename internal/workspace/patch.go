@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -246,7 +246,7 @@ func PatchOpPaths(ops []PatchOp) []string {
 			add(op.MoveTo)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

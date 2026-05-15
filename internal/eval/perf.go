@@ -8,10 +8,13 @@ package eval
 // harness change will actually move the needle.
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
+
+	"idiom/internal/util"
 )
 
 // ToolCounts breaks down the tool mix used in a single turn. The
@@ -927,7 +930,7 @@ func detectNamedGapReadWalk(rep *PerfReport, steps []toolStep) {
 		if gap == "" {
 			continue
 		}
-		path := firstNonEmptyPerfString(perfRawJSONStringField(s.rawArgs, "path"), s.target)
+		path := util.FirstNonEmpty(perfRawJSONStringField(s.rawArgs, "path"), s.target)
 		if path == "" {
 			continue
 		}
@@ -1207,7 +1210,7 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 			}
 			reopened++
 			if len(examples) < 3 {
-				target := firstNonEmptyPerfString(stringField(rec.Data, "path"), targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "tool"))
+				target := util.FirstNonEmpty(stringField(rec.Data, "path"), targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "tool"))
 				examples = append(examples, fmt.Sprintf("after completion gate step %d: %s %s", armedStep, tool, target))
 			}
 			armedStep = 0
@@ -1230,7 +1233,7 @@ func detectRequiredPathsBlockedWithoutWrite(rep *PerfReport, records []Record) {
 		if rec.Type != "completion_status" {
 			continue
 		}
-		reason := strings.ToLower(firstNonEmptyPerfString(stringField(rec.Data, "reason"), stringField(rec.Data, "blocker_kind")))
+		reason := strings.ToLower(util.FirstNonEmpty(stringField(rec.Data, "reason"), stringField(rec.Data, "blocker_kind")))
 		if !strings.Contains(reason, "required_edit_paths_remaining") {
 			continue
 		}
@@ -1310,15 +1313,6 @@ func toolLooksLikeReadOrDiscovery(tool string) bool {
 		}
 	}
 	return false
-}
-
-func firstNonEmptyPerfString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func perfRawJSONStringField(raw string, key string) string {
@@ -1453,8 +1447,8 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 			HitRate:    float64(logsHit) / float64(len(reports)),
 		})
 	}
-	sort.Slice(agg.PatternHitRate, func(i, j int) bool {
-		return agg.PatternHitRate[i].LogsHit > agg.PatternHitRate[j].LogsHit
+	slices.SortFunc(agg.PatternHitRate, func(a, b PerfPatternHit) int {
+		return -cmp.Compare(a.LogsHit, b.LogsHit)
 	})
 
 	for tool, calls := range toolCalls {
@@ -1469,14 +1463,14 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 			AvgPerLog: float64(calls) / float64(len(reports)),
 		})
 	}
-	sort.Slice(agg.ToolMix, func(i, j int) bool {
-		return agg.ToolMix[i].Calls > agg.ToolMix[j].Calls
+	slices.SortFunc(agg.ToolMix, func(a, b PerfToolMix) int {
+		return -cmp.Compare(a.Calls, b.Calls)
 	})
 
 	// Worst-offender list: top 5 logs by anti-pattern score.
 	offenders := append([]PerfReport(nil), reports...)
-	sort.Slice(offenders, func(i, j int) bool {
-		return offenders[i].AntiPatternScore > offenders[j].AntiPatternScore
+	slices.SortFunc(offenders, func(a, b PerfReport) int {
+		return -cmp.Compare(a.AntiPatternScore, b.AntiPatternScore)
 	})
 	keep := 5
 	if len(offenders) < keep {
@@ -1640,7 +1634,7 @@ func median(values []int) int {
 		return 0
 	}
 	sorted := append([]int(nil), values...)
-	sort.Ints(sorted)
+	slices.Sort(sorted)
 	mid := len(sorted) / 2
 	if len(sorted)%2 == 1 {
 		return sorted[mid]

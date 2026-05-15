@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -386,7 +386,7 @@ func formatBackendsList(stdout io.Writer, src string, file backends.File) {
 	for name := range file.Profiles {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, name := range names {
 		prof := file.Profiles[name]
 		fmt.Fprintf(stdout, "profile %q\n", name)

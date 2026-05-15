@@ -1,11 +1,12 @@
 package autonomy
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -668,7 +669,7 @@ func (p *ContractPolicyEvent) normalize() {
 	for i := range p.PathRoles {
 		p.PathRoles[i].normalize()
 	}
-	sort.Slice(p.PathRoles, func(i, j int) bool { return p.PathRoles[i].sortKey() < p.PathRoles[j].sortKey() })
+	slices.SortFunc(p.PathRoles, func(a, b PathRoleMatch) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
 	p.ProtectedMatches = compactStrings(p.ProtectedMatches)
 	p.RequiredEditMatches = compactStrings(p.RequiredEditMatches)
 	p.OutsideWorkspace = compactStrings(p.OutsideWorkspace)

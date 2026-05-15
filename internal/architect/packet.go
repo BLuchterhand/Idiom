@@ -1,6 +1,7 @@
 package architect
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -520,7 +521,7 @@ func cleanGates(values []Gate) []Gate {
 		}
 		out = append(out, value)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b Gate) int { return cmp.Compare(a.Name, b.Name) })
 	return out
 }
 

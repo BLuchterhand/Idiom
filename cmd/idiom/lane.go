@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1208,7 +1208,7 @@ func projectRulesExtras(projectRoot string, canonical map[string]struct{}) []str
 		}
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	var extras []string
 	for _, name := range names {
 		body, err := os.ReadFile(filepath.Join(dir, name))

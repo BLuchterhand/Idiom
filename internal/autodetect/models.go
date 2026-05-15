@@ -1,9 +1,10 @@
 package autodetect
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -53,7 +54,7 @@ func DetectModels() []Model {
 	found = append(found, scanHuggingFaceCache(filepath.Join(home, ".cache", "huggingface", "hub"))...)
 	found = append(found, scanModelsDir(filepath.Join(home, "models"))...)
 	found = append(found, scanOllamaModels(filepath.Join(home, ".ollama", "models", "manifests"))...)
-	sort.Slice(found, func(i, j int) bool { return found[i].Alias < found[j].Alias })
+	slices.SortFunc(found, func(a, b Model) int { return cmp.Compare(a.Alias, b.Alias) })
 	return found
 }
 

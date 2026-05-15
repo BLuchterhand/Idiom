@@ -9,7 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -434,7 +434,7 @@ func sortedAliases(routes map[string]ProxyRoute) []string {
 	for a := range routes {
 		out = append(out, a)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

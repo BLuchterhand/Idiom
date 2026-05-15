@@ -1,10 +1,11 @@
 package autonomy
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -176,8 +177,8 @@ func ResolvePathRoles(input PathRoleResolverInput, paths ...string) (PathRoleRes
 		result.EvidenceRefs = append(result.EvidenceRefs, resolution.EvidenceRefs...)
 	}
 	result.EvidenceRefs = compactStrings(result.EvidenceRefs)
-	sort.Slice(result.Resolutions, func(i, j int) bool {
-		return result.Resolutions[i].Path < result.Resolutions[j].Path
+	slices.SortFunc(result.Resolutions, func(a, b PathRoleResolution) int {
+		return cmp.Compare(a.Path, b.Path)
 	})
 	return result, nil
 }
@@ -189,7 +190,7 @@ func (s PathRoleResolutionSet) PolicyPathMatches() []PathRoleMatch {
 	for _, resolution := range s.Resolutions {
 		out = append(out, resolution.Matches...)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].sortKey() < out[j].sortKey() })
+	slices.SortFunc(out, func(a, b PathRoleMatch) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
 	return out
 }
 
@@ -322,11 +323,11 @@ func resolveOnePath(candidate normalizedResolverPath, roles []normalizedResolver
 		resolution.Roles = append(resolution.Roles, *role)
 		resolution.EvidenceRefs = append(resolution.EvidenceRefs, role.EvidenceRefs...)
 	}
-	sort.Slice(resolution.Roles, func(i, j int) bool {
-		if resolution.Roles[i].Precedence == resolution.Roles[j].Precedence {
-			return resolution.Roles[i].Role < resolution.Roles[j].Role
+	slices.SortFunc(resolution.Roles, func(a, b ResolvedPathRole) int {
+		if c := -cmp.Compare(a.Precedence, b.Precedence); c != 0 {
+			return c
 		}
-		return resolution.Roles[i].Precedence > resolution.Roles[j].Precedence
+		return cmp.Compare(a.Role, b.Role)
 	})
 	if len(resolution.Roles) > 0 {
 		effective := resolution.Roles[0]
@@ -346,8 +347,8 @@ func resolveOnePath(candidate normalizedResolverPath, roles []normalizedResolver
 		}
 	}
 	resolution.EvidenceRefs = compactStrings(resolution.EvidenceRefs)
-	sort.Slice(resolution.Conflicts, func(i, j int) bool {
-		return string(resolution.Conflicts[i].SuppressedRole) < string(resolution.Conflicts[j].SuppressedRole)
+	slices.SortFunc(resolution.Conflicts, func(a, b PathRoleConflict) int {
+		return cmp.Compare(string(a.SuppressedRole), string(b.SuppressedRole))
 	})
 	return resolution
 }
@@ -386,9 +387,10 @@ func normalizeResolverPathRoles(roles []PathRole, workspaceRoot string) []normal
 		seen[key] = struct{}{}
 		out = append(out, normalizedResolverPathRole{role: role, pathPattern: normalizedPattern, absolutePattern: absolutePattern})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return strings.Join([]string{string(out[i].role.Role), out[i].pathPattern, out[i].absolutePattern}, "\x00") <
-			strings.Join([]string{string(out[j].role.Role), out[j].pathPattern, out[j].absolutePattern}, "\x00")
+	slices.SortFunc(out, func(a, b normalizedResolverPathRole) int {
+		keyA := strings.Join([]string{string(a.role.Role), a.pathPattern, a.absolutePattern}, "\x00")
+		keyB := strings.Join([]string{string(b.role.Role), b.pathPattern, b.absolutePattern}, "\x00")
+		return cmp.Compare(keyA, keyB)
 	})
 	return out
 }
@@ -582,7 +584,7 @@ func compactPathRoleMatches(matches []PathRoleMatch) []PathRoleMatch {
 		seen[key] = struct{}{}
 		out = append(out, match)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].sortKey() < out[j].sortKey() })
+	slices.SortFunc(out, func(a, b PathRoleMatch) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
 	return out
 }
 

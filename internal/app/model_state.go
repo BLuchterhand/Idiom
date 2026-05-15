@@ -26,8 +26,8 @@ import (
 	"idiom/internal/util"
 	"idiom/internal/workspace"
 
+	"cmp"
 	"encoding/json"
-	"sort"
 )
 
 // sessionAggregate is rolled forward each turn from runner telemetry so
@@ -105,8 +105,8 @@ func (a *sessionAggregate) topToolsByOutput(n int) []transcript.ToolOutputAggreg
 			OutputChars: bytes,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].OutputChars > out[j].OutputChars
+	slices.SortFunc(out, func(a, b transcript.ToolOutputAggregate) int {
+		return -cmp.Compare(a.OutputChars, b.OutputChars)
 	})
 	if len(out) > n {
 		out = out[:n]
@@ -122,7 +122,7 @@ func discoveryAggregates(counts map[string]int) []transcript.DiscoveryAggregate 
 	for name := range counts {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	out := make([]transcript.DiscoveryAggregate, 0, len(names))
 	for _, name := range names {
 		out = append(out, transcript.DiscoveryAggregate{Name: name, Calls: counts[name]})

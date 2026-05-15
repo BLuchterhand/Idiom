@@ -1,13 +1,15 @@
 package semantic
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/discovery"
+	"idiom/internal/util"
 )
 
 // JavaIndex is a lightweight, regex-based semantic index for a Java
@@ -165,7 +167,7 @@ func BuildJavaIndexWithOptions(root string, opts IndexOptions) (*JavaIndex, erro
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 
 	classByFQN := make(map[string]string) // fq class name -> file path
 	for _, rel := range paths {
@@ -204,15 +206,15 @@ func BuildJavaIndexWithOptions(root string, opts IndexOptions) (*JavaIndex, erro
 			if sib == file.Path {
 				continue
 			}
-			index.Forward[file.Path] = appendUniqueString(index.Forward[file.Path], sib)
-			index.Reverse[sib] = appendUniqueString(index.Reverse[sib], file.Path)
+			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], sib)
+			index.Reverse[sib] = util.AppendUnique(index.Reverse[sib], file.Path)
 		}
 		// Import edges — only those pointing at in-workspace FQNs.
 		for _, imp := range file.Imports {
 			target := strings.TrimSuffix(imp, ".*")
 			if rel, ok := classByFQN[target]; ok {
-				index.Forward[file.Path] = appendUniqueString(index.Forward[file.Path], rel)
-				index.Reverse[rel] = appendUniqueString(index.Reverse[rel], file.Path)
+				index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], rel)
+				index.Reverse[rel] = util.AppendUnique(index.Reverse[rel], file.Path)
 				continue
 			}
 			// Wildcard: pull in every file in the matching package.
@@ -222,8 +224,8 @@ func BuildJavaIndexWithOptions(root string, opts IndexOptions) (*JavaIndex, erro
 					if rel == file.Path {
 						continue
 					}
-					index.Forward[file.Path] = appendUniqueString(index.Forward[file.Path], rel)
-					index.Reverse[rel] = appendUniqueString(index.Reverse[rel], file.Path)
+					index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], rel)
+					index.Reverse[rel] = util.AppendUnique(index.Reverse[rel], file.Path)
 				}
 			}
 		}
@@ -347,10 +349,10 @@ func (idx *JavaIndex) findFiles(pattern string) []string {
 		}
 	}
 	if len(exact) > 0 {
-		sort.Strings(exact)
+		slices.Sort(exact)
 		return exact
 	}
-	sort.Strings(partial)
+	slices.Sort(partial)
 	return partial
 }
 
@@ -369,11 +371,14 @@ func (idx *JavaIndex) rankFiles(scoreFn func(JavaFile) int, limit int) []JavaFil
 			score int
 		}{file: file, score: score})
 	}
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
+	slices.SortFunc(scored, func(a, b struct {
+		file  JavaFile
+		score int
+	}) int {
+		if c := -cmp.Compare(a.score, b.score); c != 0 {
+			return c
 		}
-		return scored[i].file.Path < scored[j].file.Path
+		return cmp.Compare(a.file.Path, b.file.Path)
 	})
 	if limit > 0 && len(scored) > limit {
 		scored = scored[:limit]
@@ -436,7 +441,7 @@ func (idx *JavaIndex) Entrypoints(limit int) []string {
 			}
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -485,7 +490,7 @@ func parseJavaFile(rel string, content string) JavaFile {
 			}
 		}
 		if match := javaImportRe.FindStringSubmatch(trimmed); len(match) == 3 {
-			file.Imports = appendUniqueString(file.Imports, match[2])
+			file.Imports = util.AppendUnique(file.Imports, match[2])
 			continue
 		}
 		// Once we see a type declaration the preamble is over.
@@ -640,8 +645,8 @@ func parseJavaFile(rel string, content string) JavaFile {
 	// track full field symbols here to keep the parser tight.
 	file.Fields = countJavaFieldLines(lines)
 
-	sort.Slice(file.Symbols, func(i, j int) bool {
-		return file.Symbols[i].Line < file.Symbols[j].Line
+	slices.SortFunc(file.Symbols, func(a, b JavaSymbol) int {
+		return cmp.Compare(a.Line, b.Line)
 	})
 	return file
 }

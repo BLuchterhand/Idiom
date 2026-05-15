@@ -2,11 +2,12 @@ package app
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/config"
@@ -73,8 +74,8 @@ func ListRecordedSessions(cfg config.Config) ([]SessionInfo, error) {
 		info.Path = path
 		sessions = append(sessions, info)
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].ID > sessions[j].ID
+	slices.SortFunc(sessions, func(a, b SessionInfo) int {
+		return -cmp.Compare(a.ID, b.ID)
 	})
 	return sessions, nil
 }

@@ -1,13 +1,13 @@
 package workspace
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 
@@ -272,7 +272,7 @@ func (m *Manager) rustRelatedFiles(req ToolRequest) ToolResult {
 	if len(collected) == 0 {
 		return ToolResult{Tool: "rust_related_files", Summary: fmt.Sprintf("No related Rust files matched %q", pattern)}
 	}
-	sort.Strings(collected)
+	slices.Sort(collected)
 	lines := make([]string, 0, len(collected))
 	for _, rel := range collected {
 		display, err := m.rustHandleDisplay(rel)
@@ -326,7 +326,7 @@ func (m *Manager) rustFileOutline(req ToolRequest) ToolResult {
 	if len(file.Modules) > 0 {
 		b.WriteString("mod:\n")
 		mods := append([]string(nil), file.Modules...)
-		sort.Strings(mods)
+		slices.Sort(mods)
 		for _, mod := range mods {
 			fmt.Fprintf(&b, "- %s\n", mod)
 		}
@@ -334,7 +334,7 @@ func (m *Manager) rustFileOutline(req ToolRequest) ToolResult {
 	if len(file.Uses) > 0 && len(file.Uses) <= 32 {
 		b.WriteString("use:\n")
 		uses := append([]string(nil), file.Uses...)
-		sort.Strings(uses)
+		slices.Sort(uses)
 		for _, use := range uses {
 			fmt.Fprintf(&b, "- %s\n", use)
 		}
@@ -346,9 +346,7 @@ func (m *Manager) rustFileOutline(req ToolRequest) ToolResult {
 		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
 		symbols := append([]semantic.RustSymbol(nil), file.Symbols...)
-		sort.SliceStable(symbols, func(i, j int) bool {
-			return symbols[i].Line < symbols[j].Line
-		})
+		slices.SortStableFunc(symbols, func(a, b semantic.RustSymbol) int { return cmp.Compare(a.Line, b.Line) })
 		b.WriteString("declarations:\n")
 		for _, sym := range symbols {
 			name := rustDisplayName(sym.Qualified, sym.Name)

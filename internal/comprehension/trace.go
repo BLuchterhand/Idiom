@@ -2,13 +2,16 @@ package comprehension
 
 import (
 	"bufio"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"idiom/internal/util"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -580,7 +583,7 @@ func parseGoCoverageProfile(root string, text string, limit int) []TraceCoverage
 			Confidence:    "exact",
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	slices.SortFunc(out, func(a, b TraceCoverage) int { return cmp.Compare(a.Path, b.Path) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -654,7 +657,7 @@ func parseLCOVProfile(root string, text string, limit int) []TraceCoverage {
 			Confidence:   "exact",
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	slices.SortFunc(out, func(a, b TraceCoverage) int { return cmp.Compare(a.Path, b.Path) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -708,7 +711,7 @@ func traceFilesFromEvidence(root string, anchors []TraceAnchor, coverage []Trace
 		item.Fingerprint, _ = fileFingerprint(filepath.Join(root, filepath.FromSlash(item.Path)))
 		out = append(out, item)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	slices.SortFunc(out, func(a, b TraceFile) int { return cmp.Compare(a.Path, b.Path) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -866,7 +869,7 @@ func loadRecentTraces(root string, limit int) ([]TraceResult, error) {
 		}
 		traces = append(traces, trace)
 	}
-	sort.Slice(traces, func(i, j int) bool { return traces[i].GeneratedAt > traces[j].GeneratedAt })
+	slices.SortFunc(traces, func(a, b TraceResult) int { return -cmp.Compare(a.GeneratedAt, b.GeneratedAt) })
 	if limit > 0 && len(traces) > limit {
 		traces = traces[:limit]
 	}
@@ -969,7 +972,7 @@ func loadRecentTracesFromManifest(root string, manifest traceManifest, limit int
 		}
 		traces = append(traces, trace)
 	}
-	sort.Slice(traces, func(i, j int) bool { return traces[i].GeneratedAt > traces[j].GeneratedAt })
+	slices.SortFunc(traces, func(a, b TraceResult) int { return -cmp.Compare(a.GeneratedAt, b.GeneratedAt) })
 	if limit > 0 && len(traces) > limit {
 		traces = traces[:limit]
 	}
@@ -986,7 +989,7 @@ func updateTraceManifest(root string, result TraceResult, written []byte) error 
 	info, _ := os.Stat(path)
 	entry := traceManifestEntry{
 		TraceID:      traceID,
-		ArtifactPath: firstNonEmpty(strings.TrimSpace(result.ArtifactPath), filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", traceID+".json"))),
+		ArtifactPath: util.FirstNonEmpty(strings.TrimSpace(result.ArtifactPath), filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", traceID+".json"))),
 		GeneratedAt:  strings.TrimSpace(result.GeneratedAt),
 		Fingerprint:  shortSHA256Hex(written),
 	}

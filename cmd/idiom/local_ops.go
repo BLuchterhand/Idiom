@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -1200,7 +1200,7 @@ func localOpsForbiddenEvidenceValue(value any) string {
 		for key := range typed {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		for _, key := range keys {
 			if boolValue, ok := typed[key].(bool); ok && boolValue && localOpsForbiddenBooleanEvidenceKey(key) {
 				return key
@@ -1360,7 +1360,7 @@ func buildLocalOpsReplayReport(logPath string, logsGlob string) (localOpsReplayR
 	aggregate := eval.Aggregate(reports)
 	replay.Aggregate = sanitizeLocalOpsReplayAggregate(aggregate)
 	replay.LogCount = len(reports)
-	sort.Strings(replay.LogIDs)
+	slices.Sort(replay.LogIDs)
 	return replay, nil
 }
 
@@ -1421,7 +1421,7 @@ func localOpsReplayPaths(logPath string, logsGlob string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths, nil
 }
 

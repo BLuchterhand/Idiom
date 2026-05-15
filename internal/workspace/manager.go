@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -535,12 +537,12 @@ func (m *Manager) AllowedTools() []string {
 		for qualified := range registry.Tools() {
 			names = append(names, qualified)
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 		tools = append(tools, names...)
 	}
 	if registry := m.ExternalToolsRegistry(); registry != nil {
 		names := registry.AvailableNames(m.externalToolBaseDir())
-		sort.Strings(names)
+		slices.Sort(names)
 		tools = append(tools, names...)
 	}
 	return tools
@@ -595,7 +597,7 @@ func (m *Manager) BuildToolDefinitions(allowed []string) []ToolDefinition {
 		}
 		names = append(names, qualified)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, qualified := range names {
 		tool := tools[qualified]
 		server, _, _ := mcp.ParseQualifiedToolName(qualified)
@@ -628,7 +630,7 @@ func appendExternalToolDefinitions(defs []ToolDefinition, extReg *ExternalToolRe
 		return defs
 	}
 	extDefs := extReg.DefinitionsForBaseDir(baseDir)
-	sort.Slice(extDefs, func(i, j int) bool { return extDefs[i].Name < extDefs[j].Name })
+	slices.SortFunc(extDefs, func(a, b ToolDefinition) int { return cmp.Compare(a.Name, b.Name) })
 	for _, ed := range extDefs {
 		if allowedSet != nil {
 			if _, ok := allowedSet[ed.Name]; !ok {
@@ -2035,7 +2037,7 @@ func (m *Manager) listFiles(req ToolRequest) ToolResult {
 		if err != nil {
 			return ToolResult{Tool: "list_files", Summary: "Failed to read directory", Error: err.Error()}
 		}
-		sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
+		slices.SortFunc(children, func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
 		_ = appendEntry(base, true)
 		for _, child := range children {
 			childPath := filepath.Join(base, child.Name())
@@ -2320,7 +2322,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 			return matches[i].display < matches[j].display
 		})
 	} else {
-		sort.Slice(matches, func(i, j int) bool { return matches[i].display < matches[j].display })
+		slices.SortFunc(matches, func(a, b searchFileMatch) int { return cmp.Compare(a.display, b.display) })
 	}
 	displayLimit := len(matches)
 	if includeLogDirs && displayLimit > 24 {
@@ -3274,7 +3276,7 @@ func (m *Manager) goImporters(req ToolRequest) ToolResult {
 	if len(lines) == 0 {
 		return ToolResult{Tool: "go_importers", Summary: fmt.Sprintf("No local Go importers found for %q", pattern)}
 	}
-	sort.Strings(lines)
+	slices.Sort(lines)
 	return ToolResult{
 		Tool:    "go_importers",
 		Summary: fmt.Sprintf("Found %d Go importer file(s).", len(lines)),
@@ -4158,7 +4160,7 @@ func (m *Manager) goDiagnosticTargets(req ToolRequest) ([]string, error) {
 				files = append(files, file.Path)
 			}
 		}
-		sort.Strings(files)
+		slices.Sort(files)
 		limit := goResultLimit(req.MaxDepth, 8)
 		if limit > 0 && len(files) > limit {
 			files = files[:limit]
@@ -5586,7 +5588,7 @@ func (m *Manager) findPathSuggestions(query string, limit int) []string {
 	})
 
 	if len(suggestions) > 0 {
-		sort.Strings(suggestions)
+		slices.Sort(suggestions)
 		return suggestions
 	}
 
@@ -5615,14 +5617,14 @@ func (m *Manager) findPathSuggestions(query string, limit int) []string {
 		distance := levenshtein(queryLower, c.rel)
 		scoredList = append(scoredList, scored{path: c.rel, distance: distance, priority: priority})
 	}
-	sort.Slice(scoredList, func(i, j int) bool {
-		if scoredList[i].priority != scoredList[j].priority {
-			return scoredList[i].priority < scoredList[j].priority
+	slices.SortFunc(scoredList, func(a, b scored) int {
+		if c := cmp.Compare(a.priority, b.priority); c != 0 {
+			return c
 		}
-		if scoredList[i].distance != scoredList[j].distance {
-			return scoredList[i].distance < scoredList[j].distance
+		if c := cmp.Compare(a.distance, b.distance); c != 0 {
+			return c
 		}
-		return scoredList[i].path < scoredList[j].path
+		return cmp.Compare(a.path, b.path)
 	})
 	// Guard against runaway noise: only return candidates whose distance is
 	// small relative to the query length. Keeps "ls -la" suggestions from
@@ -5680,7 +5682,7 @@ func (m *Manager) symbolSearchSuggestion(pattern string) string {
 	if len(langs) == 0 {
 		return ""
 	}
-	sort.Strings(langs)
+	slices.Sort(langs)
 	return fmt.Sprintf("Pattern shape: bare identifier; this may refer to a symbol rather than a filename. Active language indexes: %s.", strings.Join(langs, ", "))
 }
 
@@ -5733,7 +5735,7 @@ func (m *Manager) tokenMatchedPaths(pattern string, limit int) []string {
 		}
 		return nil
 	})
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

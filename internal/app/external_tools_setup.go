@@ -1,11 +1,12 @@
 package app
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"idiom/internal/config"
 	"idiom/internal/workspace"
@@ -43,7 +44,7 @@ func setupExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolReg
 	}
 
 	// Stable order makes startup logging + tool-spec ordering deterministic.
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
+	slices.SortFunc(tools, func(a, b workspace.ExternalTool) int { return cmp.Compare(a.Name, b.Name) })
 	return workspace.NewExternalToolRegistry(tools)
 }
 

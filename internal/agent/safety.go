@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -127,13 +128,13 @@ func (s PermissionDecisionSnapshot) ToolResult() workspace.ToolResult {
 		return workspace.ToolResult{
 			Tool:    s.Tool,
 			Summary: "Tool permission denied",
-			Error:   fmt.Sprintf("permission policy denied %s on %s", s.Tool, firstNonEmpty(s.Target, "this target")),
+			Error:   fmt.Sprintf("permission policy denied %s on %s", s.Tool, util.FirstNonEmpty(s.Target, "this target")),
 		}
 	case PermissionAsk:
 		return workspace.ToolResult{
 			Tool:    s.Tool,
 			Summary: "Tool approval required",
-			Error:   fmt.Sprintf("permission policy requires approval for %s on %s", s.Tool, firstNonEmpty(s.Target, "this target")),
+			Error:   fmt.Sprintf("permission policy requires approval for %s on %s", s.Tool, util.FirstNonEmpty(s.Target, "this target")),
 		}
 	default:
 		return workspace.ToolResult{}

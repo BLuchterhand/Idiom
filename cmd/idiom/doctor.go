@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/autodetect"
@@ -923,7 +923,7 @@ func applyBackendRoleReadiness(report readinessProfileReport, backendFile backen
 		report.RoleAliases[role] = alias
 	}
 	if len(missing) > 0 {
-		sort.Strings(missing)
+		slices.Sort(missing)
 		report.Checks = append(report.Checks, readinessCheck{
 			Name:   "backend role config",
 			State:  "blocked",
@@ -945,7 +945,7 @@ func sortedRoleAliases(aliases map[string]string) []string {
 	for key := range aliases {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	out := make([]string, 0, len(keys))
 	for _, key := range keys {
 		out = append(out, key+"="+aliases[key])

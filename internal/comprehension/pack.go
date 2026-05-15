@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"idiom/internal/util"
 	"strings"
 	"time"
 )
@@ -180,7 +181,7 @@ func Pack(opts PackOptions) (PackResult, error) {
 		_ = err
 		cacheState = GraphViewCacheStateForKey(cacheKey, graph.StoreKind, "fallback_recompute", "cache_load_error")
 	} else if hit {
-		cached.Cache = GraphViewCacheStateForKey(cacheKey, firstNonEmpty(cached.StoreKind, graph.StoreKind), "hit", "fresh_cached_row")
+		cached.Cache = GraphViewCacheStateForKey(cacheKey, util.FirstNonEmpty(cached.StoreKind, graph.StoreKind), "hit", "fresh_cached_row")
 		cached.Provenance.Operation = "context_pack"
 		AttachPackResultContract(&cached)
 		_ = savePack(root, cached)
@@ -325,7 +326,7 @@ func Pack(opts PackOptions) (PackResult, error) {
 	result.ArtifactPath = filepath.ToSlash(filepath.Join(".idiom", "comprehension", "views", result.PackID+".json"))
 	result.Provenance.ArtifactPath = result.ArtifactPath
 	result.Cache.PackID = result.PackID
-	result.Cache.StoreKind = firstNonEmpty(result.Cache.StoreKind, result.StoreKind)
+	result.Cache.StoreKind = util.FirstNonEmpty(result.Cache.StoreKind, result.StoreKind)
 	result.Evidence = append(result.Evidence, PackEvidence{
 		Kind:    "context_view",
 		Label:   "context_pack",
@@ -406,7 +407,7 @@ func (b *packFileBuilder) add(node Node, role string, reason string, handle stri
 	}
 	if handle != "" && !slices.Contains(existing.Handles, handle) {
 		existing.Handles = append(existing.Handles, handle)
-		sort.Strings(existing.Handles)
+		slices.Sort(existing.Handles)
 	}
 	b.files[node.Path] = existing
 }
@@ -437,7 +438,7 @@ func (b *packFileBuilder) addPackFile(file PackFile) {
 			existing.Handles = append(existing.Handles, handle)
 		}
 	}
-	sort.Strings(existing.Handles)
+	slices.Sort(existing.Handles)
 	b.files[file.Path] = existing
 }
 
@@ -588,7 +589,7 @@ func (b *packTestBuilder) add(test PackTest) {
 	if test.Command == "" && test.Path == "" && test.Symbol == "" {
 		return
 	}
-	key := firstNonEmpty(test.Command, test.Path+"\x00"+test.Symbol)
+	key := util.FirstNonEmpty(test.Command, test.Path+"\x00"+test.Symbol)
 	if existing := b.tests[key]; existing.Command != "" || existing.Path != "" || existing.Symbol != "" {
 		if !existing.Required && test.Required {
 			existing.Required = true
@@ -671,7 +672,7 @@ func addPackTestFromNode(source Node, target Node, tests *packTestBuilder) {
 	test := PackTest{
 		Path:   source.Path,
 		Symbol: source.QualifiedName,
-		Reason: "context graph test edge covers " + firstNonEmpty(target.QualifiedName, target.Path, target.ID),
+		Reason: "context graph test edge covers " + util.FirstNonEmpty(target.QualifiedName, target.Path, target.ID),
 	}
 	if source.Language == "go" {
 		test.Command = goTestCommandForPath(source.Path)
@@ -734,7 +735,7 @@ func cleanPackPaths(paths []string) []string {
 		seen[path] = struct{}{}
 		out = append(out, path)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

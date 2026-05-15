@@ -3,11 +3,12 @@ package workspace
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/util"
 )
 
 const ToolSidecarEnvelopeVersion = "idiom.tool.v1"
@@ -66,8 +67,8 @@ func BuildToolSidecarEnvelope(req ToolRequest, result ToolResult, profile string
 }
 
 func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, profile string, opts ToolSidecarOptions) ToolSidecarEnvelope {
-	tool := firstNonEmptyString(strings.TrimSpace(result.Tool), strings.TrimSpace(req.Tool))
-	profile = firstNonEmptyString(strings.TrimSpace(profile), "default")
+	tool := util.FirstNonEmpty(strings.TrimSpace(result.Tool), strings.TrimSpace(req.Tool))
+	profile = util.FirstNonEmpty(strings.TrimSpace(profile), "default")
 	structuredOutput := toolSidecarStructuredOutput(result.Output)
 	outputObject := toolSidecarOutputObject(structuredOutput)
 	metadata := autonomy.DefaultContractMetadata("p7.1", "tool_sidecar_envelope")
@@ -276,10 +277,10 @@ func toolSidecarWarnings(output map[string]any) []ToolSidecarWarning {
 					warnings = append(warnings, ToolSidecarWarning{Code: "tool_warning", Message: message})
 				}
 			case map[string]any:
-				message := firstNonEmptyString(stringFromAny(value["message"]), stringFromAny(value["summary"]), stringFromAny(value["reason"]))
+				message := util.FirstNonEmpty(stringFromAny(value["message"]), stringFromAny(value["summary"]), stringFromAny(value["reason"]))
 				if message != "" {
 					warnings = append(warnings, ToolSidecarWarning{
-						Code:    firstNonEmptyString(stringFromAny(value["code"]), "tool_warning"),
+						Code:    util.FirstNonEmpty(stringFromAny(value["code"]), "tool_warning"),
 						Message: message,
 					})
 				}
@@ -320,7 +321,7 @@ func toolSidecarAuditEventIDs(output map[string]any) []string {
 		}
 	}
 	walk(output)
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 

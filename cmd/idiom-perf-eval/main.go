@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -68,7 +69,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "no files matched %q\n", logsGlob)
 			return 1
 		}
-		sort.Strings(paths)
+		slices.Sort(paths)
 		for _, p := range paths {
 			r, err := eval.AnalyzeLog(p)
 			if err != nil {

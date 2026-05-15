@@ -5,12 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"idiom/internal/autonomy"
 	"idiom/internal/frontier/workerruntime"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -74,7 +75,7 @@ func newRunnerAutonomyRecorder(r *Runner, policy RunPolicy, brief workerruntime.
 
 func runnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (autonomy.AutonomyContract, []autonomy.Obligation, bool) {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	lane := firstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName())
+	lane := util.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName())
 	if lane == "" {
 		lane = "main"
 	}
@@ -300,7 +301,7 @@ func runnerAutonomyObligations(brief workerruntime.WorkerRuntimeBrief, policy Ru
 			Status:                 autonomy.ObligationOpen,
 			Owner:                  autonomy.OwnerHost,
 			RequiredBy:             "completion_gate",
-			FinalAnswerRequirement: firstNonEmpty(strings.TrimSpace(brief.Contract), "direct_answer"),
+			FinalAnswerRequirement: util.FirstNonEmpty(strings.TrimSpace(brief.Contract), "direct_answer"),
 		},
 		autonomy.Obligation{
 			ObligationID: "obl-loop-fuse",
@@ -1237,7 +1238,7 @@ func compactRunnerAutonomyPaths(paths []string) []string {
 		seen[path] = struct{}{}
 		out = append(out, path)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

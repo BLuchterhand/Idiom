@@ -25,17 +25,73 @@ type lspBaseClient struct {
 	handleNotification lspNotificationHandler
 }
 
-type lspEnvelope struct {
+type LSPEnvelope struct {
 	ID     json.RawMessage `json:"id,omitempty"`
 	Method string          `json:"method,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
-	Error  *lspRPCError    `json:"error,omitempty"`
+	Error  *LSPRPCError    `json:"error,omitempty"`
 	Params json.RawMessage `json:"params,omitempty"`
 }
 
-type lspRPCError struct {
+type LSPRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+type LSPPosition struct {
+	Line      int `json:"line"`
+	Character int `json:"character"`
+}
+
+type LSPRange struct {
+	Start LSPPosition `json:"start"`
+	End   LSPPosition `json:"end"`
+}
+
+type LSPLocation struct {
+	URI   string   `json:"uri"`
+	Range LSPRange `json:"range"`
+}
+
+type LSPLocationLink struct {
+	TargetURI            string   `json:"targetUri"`
+	TargetRange          LSPRange `json:"targetRange"`
+	TargetSelectionRange LSPRange `json:"targetSelectionRange"`
+}
+
+type LSPSymbolInfo struct {
+	Name          string      `json:"name"`
+	Kind          int         `json:"kind"`
+	Location      LSPLocation `json:"location"`
+	ContainerName string      `json:"containerName"`
+}
+
+type LSPCallHierarchyItem struct {
+	Name           string   `json:"name"`
+	Kind           int      `json:"kind"`
+	URI            string   `json:"uri"`
+	Range          LSPRange `json:"range"`
+	SelectionRange LSPRange `json:"selectionRange"`
+	Detail         string   `json:"detail"`
+}
+
+type LSPDocumentSymbol struct {
+	Name           string              `json:"name"`
+	Detail         string              `json:"detail"`
+	Kind           int                 `json:"kind"`
+	Range          LSPRange            `json:"range"`
+	SelectionRange LSPRange            `json:"selectionRange"`
+	Children       []LSPDocumentSymbol `json:"children"`
+}
+
+type LSPIncomingCall struct {
+	From       LSPCallHierarchyItem `json:"from"`
+	FromRanges []LSPRange           `json:"fromRanges"`
+}
+
+type LSPOutgoingCall struct {
+	To         LSPCallHierarchyItem `json:"to"`
+	FromRanges []LSPRange           `json:"fromRanges"`
 }
 
 type lspNotificationHandler func(method string, params json.RawMessage)
@@ -89,7 +145,7 @@ func (c *lspBaseClient) request(ctx context.Context, serverName string, method s
 			}
 			return err
 		}
-		var env lspEnvelope
+		var env LSPEnvelope
 		if err := json.Unmarshal(body, &env); err != nil {
 			continue
 		}

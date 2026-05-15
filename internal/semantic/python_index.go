@@ -1,13 +1,15 @@
 package semantic
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/discovery"
+	"idiom/internal/util"
 )
 
 // PythonIndex is the tree-sitter-style index for a Python workspace. It
@@ -148,7 +150,7 @@ func BuildPythonIndexWithOptions(root string, opts IndexOptions) (*PythonIndex, 
 		return nil, nil
 	}
 
-	sort.Strings(paths)
+	slices.Sort(paths)
 	for _, rel := range paths {
 		if err := indexContextErr(opts); err != nil {
 			return nil, err
@@ -184,16 +186,16 @@ func BuildPythonIndexWithOptions(root string, opts IndexOptions) (*PythonIndex, 
 		index.Files = append(index.Files, file)
 	}
 
-	sort.Slice(index.Files, func(i, j int) bool {
-		return index.Files[i].Path < index.Files[j].Path
+	slices.SortFunc(index.Files, func(a, b PythonFile) int {
+		return cmp.Compare(a.Path, b.Path)
 	})
 	for _, file := range index.Files {
 		for _, dep := range file.Imports {
 			if dep == "" {
 				continue
 			}
-			index.Forward[file.Path] = appendUniqueString(index.Forward[file.Path], dep)
-			index.Reverse[dep] = appendUniqueString(index.Reverse[dep], file.Path)
+			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], dep)
+			index.Reverse[dep] = util.AppendUnique(index.Reverse[dep], file.Path)
 		}
 	}
 	return index, nil
@@ -331,10 +333,10 @@ func (idx *PythonIndex) findFiles(pattern string) []string {
 		}
 	}
 	if len(exact) > 0 {
-		sort.Strings(exact)
+		slices.Sort(exact)
 		return exact
 	}
-	sort.Strings(partial)
+	slices.Sort(partial)
 	return partial
 }
 
@@ -353,11 +355,14 @@ func (idx *PythonIndex) rankFiles(scoreFn func(PythonFile) int, limit int) []Pyt
 			score int
 		}{file: file, score: score})
 	}
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
+	slices.SortFunc(scored, func(a, b struct {
+		file  PythonFile
+		score int
+	}) int {
+		if c := -cmp.Compare(a.score, b.score); c != 0 {
+			return c
 		}
-		return scored[i].file.Path < scored[j].file.Path
+		return cmp.Compare(a.file.Path, b.file.Path)
 	})
 	if limit > 0 && len(scored) > limit {
 		scored = scored[:limit]
@@ -435,8 +440,8 @@ func parsePythonImports(rel string, content string, byModule map[string]string, 
 			}
 		}
 	}
-	sort.Strings(raw)
-	sort.Strings(resolved)
+	slices.Sort(raw)
+	slices.Sort(resolved)
 	return raw, resolved
 }
 
@@ -664,11 +669,11 @@ func parsePythonSymbols(rel string, content string) []PythonSymbol {
 		}
 	}
 
-	sort.SliceStable(symbols, func(i, j int) bool {
-		if symbols[i].SourceFile != symbols[j].SourceFile {
-			return symbols[i].SourceFile < symbols[j].SourceFile
-		}
-		return symbols[i].Line < symbols[j].Line
+	slices.SortStableFunc(symbols, func(a, b PythonSymbol) int {
+		return cmp.Or(
+			cmp.Compare(a.SourceFile, b.SourceFile),
+			cmp.Compare(a.Line, b.Line),
+		)
 	})
 	return symbols
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"idiom/internal/comprehension"
+	"idiom/internal/util"
 )
 
 const (
@@ -84,7 +85,7 @@ type discoveryQueryRunner struct {
 }
 
 func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResult {
-	purpose := normalizeDiscoveryQueryPurpose(firstNonEmptyString(req.Purpose, req.Query, "impact_analysis"))
+	purpose := normalizeDiscoveryQueryPurpose(util.FirstNonEmpty(req.Purpose, req.Query, "impact_analysis"))
 	if purpose == "" {
 		return ToolResult{Tool: "discovery_query", Summary: "Discovery query rejected", Error: "purpose must be one of impact_analysis, function_tracing, architecture_boundary, security_review, or history_context"}
 	}
@@ -759,11 +760,4 @@ func isRegularFile(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
+

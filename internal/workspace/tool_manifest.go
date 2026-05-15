@@ -3,6 +3,8 @@ package workspace
 import (
 	"slices"
 	"strings"
+
+	"idiom/internal/util"
 )
 
 type ToolManifestEntry struct {
@@ -195,24 +197,7 @@ func toolManifestToolsAcrossBuiltInSurfaces() []string {
 	tools := ToolManifestTools(opts)
 	opts.IncludePlanThenExecute = true
 	tools = append(tools, ToolManifestTools(opts)...)
-	return uniqueToolManifestTools(tools)
-}
-
-func uniqueToolManifestTools(tools []string) []string {
-	seen := make(map[string]struct{}, len(tools))
-	out := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		tool = strings.TrimSpace(tool)
-		if tool == "" {
-			continue
-		}
-		if _, ok := seen[tool]; ok {
-			continue
-		}
-		seen[tool] = struct{}{}
-		out = append(out, tool)
-	}
-	return out
+	return util.UniqueNonEmpty(tools)
 }
 
 func WorkspaceWriteToolNames() []string {

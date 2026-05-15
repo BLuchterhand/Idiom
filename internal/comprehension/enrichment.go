@@ -1,6 +1,7 @@
 package comprehension
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -483,7 +485,7 @@ func foundManifests(root string, scope string, manifests []manifestSpec) []found
 		fingerprint, _ := fileFingerprint(abs)
 		out = append(out, foundManifest{Path: rel, Role: manifest.Role, Fingerprint: fingerprint})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	slices.SortFunc(out, func(a, b foundManifest) int { return cmp.Compare(a.Path, b.Path) })
 	return out
 }
 

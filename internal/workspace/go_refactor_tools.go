@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -8,7 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -56,7 +57,7 @@ func (m *Manager) goFileOutline(req ToolRequest) ToolResult {
 		for name := range parsed.imports {
 			importNames = append(importNames, name)
 		}
-		sort.Strings(importNames)
+		slices.Sort(importNames)
 		for _, name := range importNames {
 			imp := parsed.imports[name]
 			fmt.Fprintf(&b, "- %s => %s\n", name, imp.path)
@@ -130,14 +131,14 @@ func goOutlineMoveBatches(parsed *goParsedFile) []goOutlineMoveBatch {
 	for file := range groups {
 		files = append(files, file)
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 	batches := make([]goOutlineMoveBatch, 0, len(files))
 	for _, file := range files {
 		names := groups[file]
 		if len(names) == 0 {
 			continue
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 		batches = append(batches, goOutlineMoveBatch{
 			destination:  filepath.Join(sourceDir, file),
 			tag:          strings.TrimSuffix(file, ".go"),
@@ -281,7 +282,7 @@ func (m *Manager) goMoveDeclarations(req ToolRequest) ToolResult {
 				missing = append(missing, requestedName)
 			}
 		}
-		sort.Strings(missing)
+		slices.Sort(missing)
 		return ToolResult{Tool: "go_move_declarations", Summary: "Go declaration move rejected", Error: "source declarations not found: " + strings.Join(missing, ", ")}
 	}
 
@@ -378,7 +379,7 @@ func (m *Manager) goMoveDeclarationBatch(req ToolRequest) ToolResult {
 	for path := range changed {
 		paths = append(paths, path)
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return ToolResult{
 		Tool:    "go_move_declarations",
 		Summary: fmt.Sprintf("Applied %d Go declaration move batch(es)", len(req.Moves)),
@@ -619,8 +620,8 @@ func goNeededImports(imports map[string]goImportDecl, decls []goTopDecl) []goImp
 			needed = append(needed, imp)
 		}
 	}
-	sort.Slice(needed, func(i, j int) bool {
-		return needed[i].path < needed[j].path
+	slices.SortFunc(needed, func(a, b goImportDecl) int {
+		return cmp.Compare(a.path, b.path)
 	})
 	return needed
 }

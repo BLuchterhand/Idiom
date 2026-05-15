@@ -3,7 +3,7 @@ package workspace
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/autonomy"
@@ -127,7 +127,7 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 		}
 	}
 	if len(problems) > 0 {
-		sort.Strings(problems)
+		slices.Sort(problems)
 		return ToolSchemaExport{}, fmt.Errorf("tool schema export drift: %s", strings.Join(problems, "; "))
 	}
 
@@ -135,7 +135,7 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 	for name := range purposesByTool {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	out := ToolSchemaExport{
 		SchemaVersion: ToolSchemaExportVersion,
@@ -366,6 +366,6 @@ func compactToolExportStrings(values []string) []string {
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

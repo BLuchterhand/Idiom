@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -560,7 +561,7 @@ func (m *Manager) cppFileOutline(req ToolRequest) ToolResult {
 	if len(file.Includes) > 0 {
 		b.WriteString("includes:\n")
 		includes := append([]string(nil), file.Includes...)
-		sort.Strings(includes)
+		slices.Sort(includes)
 		for _, inc := range includes {
 			fmt.Fprintf(&b, "- %s\n", inc)
 		}
@@ -1004,7 +1005,7 @@ func (m *Manager) cppDiagnosticTargets(req ToolRequest) ([]string, error) {
 				files = append(files, file.Path)
 			}
 		}
-		sort.Strings(files)
+		slices.Sort(files)
 		if limit := goResultLimit(req.MaxDepth, 8); len(files) > limit {
 			files = files[:limit]
 		}

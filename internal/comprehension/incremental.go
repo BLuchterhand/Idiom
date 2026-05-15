@@ -2,7 +2,7 @@ package comprehension
 
 import (
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -255,6 +255,6 @@ func sortedPathSet(paths map[string]struct{}) []string {
 			out = append(out, path)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

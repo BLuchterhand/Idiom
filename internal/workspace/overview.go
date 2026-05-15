@@ -1,10 +1,11 @@
 package workspace
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/discovery"
@@ -63,9 +64,9 @@ func OverviewSystemPrompt(root string) string {
 		}
 		topFiles = append(topFiles, name)
 	}
-	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name() < dirs[j].Name() })
-	sort.Strings(topFiles)
-	sort.Strings(notable)
+	slices.SortFunc(dirs, func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
+	slices.Sort(topFiles)
+	slices.Sort(notable)
 
 	var b strings.Builder
 	b.WriteString("Workspace overview (top-level layout, cheap snapshot at session start):\n")
@@ -144,7 +145,7 @@ func summarizeSubdir(path string, prefix string) (int, []string) {
 			}
 		}
 	}
-	sort.Strings(sample)
+	slices.Sort(sample)
 	if len(sample) > workspaceOverviewMaxFilesPerDir {
 		sample = sample[:workspaceOverviewMaxFilesPerDir]
 	}

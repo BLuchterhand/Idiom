@@ -11,6 +11,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"cmp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -495,7 +497,7 @@ func auditWatchPromotionForFinding(finding auditWatchFinding, opts auditWatchOpt
 	case "telemetry_gap", "audit_coverage":
 		targets = append(targets, "telemetry_or_audit_rule")
 	}
-	sort.Strings(targets)
+	slices.Sort(targets)
 	return auditWatchFindingPromotion{
 		Status:           "open",
 		CandidateTargets: auditWatchUniqueStrings(targets),
@@ -917,11 +919,11 @@ func collectAuditWatchFiles(root string, paths []string) ([]auditWatchFile, erro
 			return nil, fmt.Errorf("walk audit watch path %s: %w", path, err)
 		}
 	}
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].ModUnixNano == files[j].ModUnixNano {
-			return files[i].Path < files[j].Path
-		}
-		return files[i].ModUnixNano > files[j].ModUnixNano
+	slices.SortFunc(files, func(a, b auditWatchFile) int {
+		return cmp.Or(
+			-cmp.Compare(a.ModUnixNano, b.ModUnixNano),
+			cmp.Compare(a.Path, b.Path),
+		)
 	})
 	return files, nil
 }
@@ -992,8 +994,8 @@ func auditWatchTriggerForFile(file auditWatchFile, previous auditWatchSeenFile) 
 	for sessionID := range sessions {
 		out.Sessions = append(out.Sessions, sessionID)
 	}
-	sort.Strings(out.Reasons)
-	sort.Strings(out.Sessions)
+	slices.Sort(out.Reasons)
+	slices.Sort(out.Sessions)
 	return out, true
 }
 
@@ -1308,7 +1310,7 @@ func auditWatchUniqueStrings(values []string) []string {
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

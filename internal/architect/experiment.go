@@ -1,7 +1,8 @@
 package architect
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 )
 
@@ -55,11 +56,11 @@ func packetPlacementProbes(packet Packet) []PacketPlacementProbe {
 			Rationale:       rationale,
 		})
 	}
-	sort.Slice(probes, func(i, j int) bool {
-		if probes[i].SuggestedRegion == probes[j].SuggestedRegion {
-			return probes[i].Section < probes[j].Section
+	slices.SortFunc(probes, func(a, b PacketPlacementProbe) int {
+		if c := cmp.Compare(packetRegionRank(a.SuggestedRegion), packetRegionRank(b.SuggestedRegion)); c != 0 {
+			return c
 		}
-		return packetRegionRank(probes[i].SuggestedRegion) < packetRegionRank(probes[j].SuggestedRegion)
+		return cmp.Compare(a.Section, b.Section)
 	})
 	return probes
 }

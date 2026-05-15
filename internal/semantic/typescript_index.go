@@ -9,13 +9,15 @@ package semantic
 // the language server is not installed.
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/discovery"
+	"idiom/internal/util"
 )
 
 type TsIndex struct {
@@ -181,7 +183,7 @@ func BuildTsIndexWithOptions(root string, opts IndexOptions) (*TsIndex, error) {
 		return nil, nil
 	}
 
-	sort.Strings(paths)
+	slices.Sort(paths)
 	for _, rel := range paths {
 		if err := indexContextErr(opts); err != nil {
 			return nil, err
@@ -223,16 +225,16 @@ func BuildTsIndexWithOptions(root string, opts IndexOptions) (*TsIndex, error) {
 		index.Files = append(index.Files, file)
 	}
 
-	sort.Slice(index.Files, func(i, j int) bool {
-		return index.Files[i].Path < index.Files[j].Path
+	slices.SortFunc(index.Files, func(a, b TsFile) int {
+		return cmp.Compare(a.Path, b.Path)
 	})
 	for _, file := range index.Files {
 		if len(file.Imports) == 0 {
 			continue
 		}
 		for _, imp := range file.Imports {
-			index.Forward[file.Path] = appendUniqueString(index.Forward[file.Path], imp)
-			index.Reverse[imp] = appendUniqueString(index.Reverse[imp], file.Path)
+			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], imp)
+			index.Reverse[imp] = util.AppendUnique(index.Reverse[imp], file.Path)
 		}
 	}
 	return index, nil
@@ -353,10 +355,10 @@ func (idx *TsIndex) findFiles(pattern string) []string {
 		}
 	}
 	if len(exact) > 0 {
-		sort.Strings(exact)
+		slices.Sort(exact)
 		return exact
 	}
-	sort.Strings(partial)
+	slices.Sort(partial)
 	return partial
 }
 
@@ -375,11 +377,14 @@ func (idx *TsIndex) rankFiles(scoreFn func(TsFile) int, limit int) []TsFile {
 			score int
 		}{file: file, score: score})
 	}
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
+	slices.SortFunc(scored, func(a, b struct {
+		file  TsFile
+		score int
+	}) int {
+		if c := -cmp.Compare(a.score, b.score); c != 0 {
+			return c
 		}
-		return scored[i].file.Path < scored[j].file.Path
+		return cmp.Compare(a.file.Path, b.file.Path)
 	})
 	if limit > 0 && len(scored) > limit {
 		scored = scored[:limit]
@@ -428,9 +433,9 @@ func parseTsImports(rel string, content string, byName map[string]string, byRel 
 		if resolved == "" {
 			resolved = filepath.ToSlash(strings.TrimSpace(spec))
 		}
-		includes = appendUniqueString(includes, resolved)
+		includes = util.AppendUnique(includes, resolved)
 	}
-	sort.Strings(includes)
+	slices.Sort(includes)
 	return includes
 }
 
@@ -592,11 +597,11 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 		popClassFrames(&classStack, line, lineNo)
 	}
 
-	sort.Slice(symbols, func(i, j int) bool {
-		if symbols[i].SourceFile != symbols[j].SourceFile {
-			return symbols[i].SourceFile < symbols[j].SourceFile
+	slices.SortFunc(symbols, func(a, b TsSymbol) int {
+		if c := cmp.Compare(a.SourceFile, b.SourceFile); c != 0 {
+			return c
 		}
-		return symbols[i].Line < symbols[j].Line
+		return cmp.Compare(a.Line, b.Line)
 	})
 	return symbols
 }

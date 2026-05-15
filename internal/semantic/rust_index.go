@@ -1,13 +1,15 @@
 package semantic
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/discovery"
+	"idiom/internal/util"
 )
 
 // RustIndex is a lightweight, regex-based semantic index over the .rs
@@ -192,7 +194,7 @@ func BuildRustIndexWithOptions(root string, opts IndexOptions) (*RustIndex, erro
 		return nil, nil
 	}
 
-	sort.Strings(paths)
+	slices.Sort(paths)
 	for _, rel := range paths {
 		if err := indexContextErr(opts); err != nil {
 			return nil, err
@@ -242,8 +244,8 @@ func BuildRustIndexWithOptions(root string, opts IndexOptions) (*RustIndex, erro
 		index.Files = append(index.Files, file)
 	}
 
-	sort.Slice(index.Files, func(i, j int) bool {
-		return index.Files[i].Path < index.Files[j].Path
+	slices.SortFunc(index.Files, func(a, b RustFile) int {
+		return cmp.Compare(a.Path, b.Path)
 	})
 
 	// module -> file map via `mod foo;` declarations. We key the reverse
@@ -251,8 +253,8 @@ func BuildRustIndexWithOptions(root string, opts IndexOptions) (*RustIndex, erro
 	// that is what `related_files` needs to walk.
 	for _, file := range index.Files {
 		for _, mod := range file.Modules {
-			index.Forward[file.Path] = appendUniqueString(index.Forward[file.Path], mod)
-			index.Reverse[mod] = appendUniqueString(index.Reverse[mod], file.Path)
+			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], mod)
+			index.Reverse[mod] = util.AppendUnique(index.Reverse[mod], file.Path)
 		}
 	}
 	return index, nil
@@ -374,11 +376,14 @@ func (idx *RustIndex) rankFiles(scoreFn func(RustFile) int, limit int) []RustFil
 			score int
 		}{file: file, score: score})
 	}
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
+	slices.SortFunc(scored, func(a, b struct {
+		file  RustFile
+		score int
+	}) int {
+		if c := -cmp.Compare(a.score, b.score); c != 0 {
+			return c
 		}
-		return scored[i].file.Path < scored[j].file.Path
+		return cmp.Compare(a.file.Path, b.file.Path)
 	})
 	if limit > 0 && len(scored) > limit {
 		scored = scored[:limit]
@@ -436,11 +441,11 @@ func (idx *RustIndex) EntrypointFiles(limit int) []string {
 		}
 		entries = append(entries, scored{path: file.Path, score: score})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].score != entries[j].score {
-			return entries[i].score > entries[j].score
+	slices.SortFunc(entries, func(a, b scored) int {
+		if c := -cmp.Compare(a.score, b.score); c != 0 {
+			return c
 		}
-		return entries[i].path < entries[j].path
+		return cmp.Compare(a.path, b.path)
 	})
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
@@ -458,15 +463,15 @@ func parseRustUsesAndMods(content string) ([]string, []string) {
 	uses := make([]string, 0, 8)
 	for _, line := range lines {
 		if match := rustModRe.FindStringSubmatch(line); len(match) == 2 {
-			mods = appendUniqueString(mods, match[1])
+			mods = util.AppendUnique(mods, match[1])
 			continue
 		}
 		if match := rustUseRe.FindStringSubmatch(line); len(match) == 2 {
-			uses = appendUniqueString(uses, match[1])
+			uses = util.AppendUnique(uses, match[1])
 		}
 	}
-	sort.Strings(mods)
-	sort.Strings(uses)
+	slices.Sort(mods)
+	slices.Sort(uses)
 	return mods, uses
 }
 
@@ -704,11 +709,11 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 		}
 	}
 
-	sort.Slice(symbols, func(i, j int) bool {
-		if symbols[i].SourceFile != symbols[j].SourceFile {
-			return symbols[i].SourceFile < symbols[j].SourceFile
+	slices.SortFunc(symbols, func(a, b RustSymbol) int {
+		if c := cmp.Compare(a.SourceFile, b.SourceFile); c != 0 {
+			return c
 		}
-		return symbols[i].Line < symbols[j].Line
+		return cmp.Compare(a.Line, b.Line)
 	})
 	return symbols
 }

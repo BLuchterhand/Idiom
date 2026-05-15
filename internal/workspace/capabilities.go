@@ -3,12 +3,14 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"cmp"
 	"os"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/util"
 )
 
 const (
@@ -326,7 +328,7 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 }
 
 func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolResult {
-	requested := strings.TrimSpace(firstNonEmptyString(req.Capability, req.ID))
+	requested := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.ID))
 	if requested == "" {
 		return readOnlyCapabilityFallbackResult(requested, ReadOnlyCapabilityResolution{}, "invalid_input", "capability is required")
 	}
@@ -374,7 +376,7 @@ func readOnlyCapabilityResolverTools(req ToolRequest) []string {
 			tools = append(tools, tool)
 		}
 	}
-	return uniqueToolManifestTools(tools)
+	return util.UniqueNonEmpty(tools)
 }
 
 func readOnlyCapabilityRequestLanguage(req ToolRequest) (LanguageSupport, bool) {
@@ -404,7 +406,7 @@ func readOnlyCapabilityFallbackResult(requested string, resolution ReadOnlyCapab
 		Tool:    readOnlyCapabilityToolName,
 		Summary: "Read-only capability not routed",
 		Output:  marshalReadOnlyCapabilityExecutionResult(payload),
-		Error:   strings.TrimSpace(firstNonEmptyString(detail, reason)),
+		Error:   strings.TrimSpace(util.FirstNonEmpty(detail, reason)),
 	}
 }
 
@@ -929,7 +931,7 @@ func readOnlyCapabilityRuntimeRoutedIDs(registry ReadOnlyCapabilityRegistry, too
 			routed = append(routed, capability.ID)
 		}
 	}
-	sort.Strings(routed)
+	slices.Sort(routed)
 	return routed
 }
 
@@ -971,8 +973,8 @@ func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []
 			Reason:     strings.TrimSpace(adapter.Reason),
 		})
 	}
-	sort.Slice(states, func(i, j int) bool {
-		return states[i].Capability < states[j].Capability
+	slices.SortFunc(states, func(a, b ReadOnlyCapabilityRouteState) int {
+		return cmp.Compare(a.Capability, b.Capability)
 	})
 	return states
 }
@@ -984,7 +986,7 @@ func readOnlyCapabilityRoutedIDsFromStates(states []ReadOnlyCapabilityRouteState
 			routed = append(routed, state.Capability)
 		}
 	}
-	sort.Strings(routed)
+	slices.Sort(routed)
 	return routed
 }
 
@@ -995,7 +997,7 @@ func readOnlyCapabilityDisabledIDsFromStates(states []ReadOnlyCapabilityRouteSta
 			disabled = append(disabled, state.Capability)
 		}
 	}
-	sort.Strings(disabled)
+	slices.Sort(disabled)
 	return disabled
 }
 
@@ -1138,14 +1140,14 @@ func readOnlyCapabilityMetricAdapters(tools []string) []string {
 	if len(tools) == 0 {
 		tools = toolManifestToolsAcrossBuiltInSurfaces()
 	}
-	unique := uniqueToolManifestTools(tools)
+	unique := util.UniqueNonEmpty(tools)
 	out := make([]string, 0, len(unique))
 	for _, tool := range unique {
 		if isReadOnlyCapabilityMetricAdapter(tool) {
 			out = append(out, tool)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -1212,11 +1214,11 @@ func unsafeReadOnlyCapabilityMappingsForTools(registry ReadOnlyCapabilityRegistr
 			})
 		}
 	}
-	sort.Slice(unsafe, func(i, j int) bool {
-		if unsafe[i].Capability != unsafe[j].Capability {
-			return unsafe[i].Capability < unsafe[j].Capability
+	slices.SortFunc(unsafe, func(a, b ReadOnlyCapabilityUnsafeAdapterSpec) int {
+		if c := cmp.Compare(a.Capability, b.Capability); c != 0 {
+			return c
 		}
-		return unsafe[i].Tool < unsafe[j].Tool
+		return cmp.Compare(a.Tool, b.Tool)
 	})
 	return unsafe
 }
@@ -1249,11 +1251,11 @@ func deferredReadOnlyCapabilityAdaptersForTools(toolSet map[string]struct{}) []R
 		}
 		out = append(out, adapter)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Capability != out[j].Capability {
-			return out[i].Capability < out[j].Capability
+	slices.SortFunc(out, func(a, b ReadOnlyCapabilityDeferredAdapterSpec) int {
+		if c := cmp.Compare(a.Capability, b.Capability); c != 0 {
+			return c
 		}
-		return out[i].Tool < out[j].Tool
+		return cmp.Compare(a.Tool, b.Tool)
 	})
 	return append([]ReadOnlyCapabilityDeferredAdapterSpec(nil), out...)
 }

@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -45,6 +45,6 @@ func currentCollectorVersionEntries() []string {
 	for key, value := range currentCollectorVersions {
 		entries = append(entries, key+"="+value)
 	}
-	sort.Strings(entries)
+	slices.Sort(entries)
 	return entries
 }

@@ -1,12 +1,13 @@
 package semantic
 
 import (
+	"cmp"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -216,8 +217,8 @@ func BuildGoIndexWithOptions(root string, opts IndexOptions) (*GoIndex, error) {
 		return nil, nil
 	}
 
-	sort.Slice(index.Files, func(i, j int) bool {
-		return index.Files[i].Path < index.Files[j].Path
+	slices.SortFunc(index.Files, func(a, b GoFile) int {
+		return cmp.Compare(a.Path, b.Path)
 	})
 	return index, nil
 }
@@ -423,13 +424,13 @@ func (idx *GoIndex) sortedPackages() []rankedPackage {
 	for path, pkg := range idx.Package {
 		pkgs = append(pkgs, rankedPackage{path: path, pkg: pkg})
 	}
-	sort.Slice(pkgs, func(i, j int) bool {
-		left := pkgs[i].pkg.Funcs + pkgs[i].pkg.Methods + pkgs[i].pkg.Types*2
-		right := pkgs[j].pkg.Funcs + pkgs[j].pkg.Methods + pkgs[j].pkg.Types*2
-		if left != right {
-			return left > right
+	slices.SortFunc(pkgs, func(a, b rankedPackage) int {
+		left := a.pkg.Funcs + a.pkg.Methods + a.pkg.Types*2
+		right := b.pkg.Funcs + b.pkg.Methods + b.pkg.Types*2
+		if c := -cmp.Compare(left, right); c != 0 {
+			return c
 		}
-		return pkgs[i].path < pkgs[j].path
+		return cmp.Compare(a.path, b.path)
 	})
 	return pkgs
 }
@@ -443,11 +444,11 @@ func (idx *GoIndex) rankFiles(scoreFn func(GoFile) int, limit int) []GoFile {
 		}
 		scored = append(scored, scoredFile{file: file, score: score})
 	}
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
+	slices.SortFunc(scored, func(a, b scoredFile) int {
+		if c := -cmp.Compare(a.score, b.score); c != 0 {
+			return c
 		}
-		return scored[i].file.Path < scored[j].file.Path
+		return cmp.Compare(a.file.Path, b.file.Path)
 	})
 	if limit > 0 && len(scored) > limit {
 		scored = scored[:limit]
@@ -518,7 +519,7 @@ func extractImports(file *ast.File) []string {
 			imports = append(imports, path)
 		}
 	}
-	sort.Strings(imports)
+	slices.Sort(imports)
 	return imports
 }
 
