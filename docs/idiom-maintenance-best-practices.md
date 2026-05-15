@@ -23,6 +23,11 @@ Prefer executable contracts over prompt reminders.
   throughput tests for the implementation pipeline.
 - If a phase outcome is mechanically knowable, encode it in intake/preflight or
   the phase state machine. Prompt wording is secondary.
+- If a phase only needs to generate one bounded scratchpad artifact, prefer an
+  artifact-owned path (`idiom artifact --no-tools --output ...`) over asking an
+  implementation lane to call `write_file`. Record output/report paths and a
+  typed artifact state so no-write failures are diagnosable without transcript
+  reconstruction.
 
 ## Log-First Debugging
 
@@ -53,6 +58,8 @@ Prefer executable contracts over prompt reminders.
 
 - For a phase-contract bug, prefer one typed state transition plus a focused
   gate over scattered prompt text.
+- For generated scratchpad bugs, prefer host-owned artifact materialization plus
+  validation over another "remember to write the file" prompt.
 - For an observability bug, update the event/ledger/audit schema and tests
   before adding another prose diagnostic.
 - For an atom/spec-quality bug, fix intake, brief lint, or refine output

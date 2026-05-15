@@ -48,6 +48,7 @@ identified to date. Items marked **Shipped** are done; items marked
 | Item | Status | Notes |
 |---|---|---|
 | Smarter bug-title parser | **Shipped #71** — filters "no fix needed" / "all X verified" / "no compile issue" | Could go further: severity-weighted bug count |
+| Draft scratchpad artifact materialization | **Shipped 2026-05-15** — refine draft now routes through `idiom artifact --no-tools --mechanical-repair --output iter-N/draft.md` with `draft.artifact.jsonl`, `draft.report.json`, and typed `draft_state` metrics | Do not reintroduce `write_file` instructions in draft templates; use final-answer artifact closeout |
 | Review meta-brief: separate `## Verifications` from `## Bugs found` | **Not shipped** — Qwen mis-formats verifications as bugs because the template only has one section | One-line template change in `cmd/idiom/lanes/refine/review.md` |
 | Feed `idiom brief lint` output back to patcher as "Bug 0" | **Not shipped** — refine warns on lint failure but doesn't surface it to the next iter | Inject lint findings into the next patch meta-brief's "previous review" |
 | Differentiate WARN vs FAIL in lint check at finalize | **Not shipped** — currently any non-zero exit is just "WARN... continuing" | Parse lint output, fail-loud on FAIL items, warn on WARN |
@@ -63,7 +64,7 @@ identified to date. Items marked **Shipped** are done; items marked
 | Item | Status | Notes |
 |---|---|---|
 | Lane-aware completion gate semantics | **Real bug observed today** — refine patch step writes a doc file, gate demands `source_sanity` that doesn't apply to docs | Separate "doc-write" gate that accepts `git diff --check` or path-suffix-based logic |
-| Implement preamble "final action MUST be write_file" | **Shipped #60** — fixed review-phase wedges | |
+| Implement preamble "final action MUST be write_file" | **Shipped #60** — fixed implementation/review writer wedges; refine draft is now artifact-owned instead | Keep this out of draft artifact prompts |
 | `source_sanity` recognizes more file types | Currently Go-only; markdown/YAML/JSON should have their own minimal sanity | Audit gate-input classification |
 | Audit `--coder` flag vs plan-execute auto-route interactions | Make sure these don't fight | |
 | Stale-brief gate (commit + mtime aware) | **Shipped #61, #62** | |

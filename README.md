@@ -97,6 +97,9 @@ overlay, auto-routes plan-execute to the configured executor model,
 preloads a compact ranked `context_pack` for implement / plan-execute
 lanes, and forwards JSON events. Internal refine scratchpad meta-prompts
 keep their phase-specific evidence instead of receiving an extra repo map.
+The first refine draft is materialized through `idiom artifact --no-tools`
+so the model returns content and the harness writes `.idiom/refine/.../draft.md`;
+later review/patch phases keep their narrower scratchpad writer contracts.
 Pass `--no-context-pack` only when a caller has already supplied an
 equivalent packet. See
 [docs/lane-architecture.md](docs/lane-architecture.md) for the lane

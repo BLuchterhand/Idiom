@@ -29,6 +29,10 @@ The immediate failure class is now visible in audit output:
   target is a single new markdown deliverable with a recognized refine shape;
   it records the recovery through a synthetic `write_file` result so
   completion gates, logs, and audits see an actual changed path.
+- The refine draft phase now uses the generic artifact contract directly:
+  `idiom artifact --no-tools --mechanical-repair --output iter-N/draft.md`
+  materializes the model's final answer and records `draft.report.json`.
+  Draft prompts no longer ask the model to call `write_file`.
 
 That evidence points to three generic needs:
 
@@ -53,13 +57,16 @@ Source:
 
 ### What We Want
 
-Use a constrained editor phase for idiom refine patch/closeout work. Once the
-review has identified what must change, the model should not be acting as a
-general investigator. It should be in a narrow writer state:
+Use typed scratchpad phases for idiom refine work. The first draft is an
+artifact-generation state: the model returns a brief as final-answer content,
+and idiom writes it to the draft path. Patch/review closeout remains a narrow
+writer/reviewer state: once the review has identified what must change, the
+model should not be acting as a general investigator.
 
 - input: previous draft, review, lint findings, preloaded source evidence
-- output: one `write_file` for the scratchpad deliverable, or `<<QUESTION>>`
-  with a concrete blocker
+- output: draft phase produces a host-materialized artifact; patch/review
+  phases write their scratchpad deliverable or return `<<QUESTION>>` with a
+  concrete blocker
 - forbidden after closeout readiness: new source discovery, optional lookup
   repair, broad planning, prose-only final answer
 
@@ -67,13 +74,15 @@ general investigator. It should be in a narrow writer state:
 
 Short term:
 
-- Keep `write_file` as the concrete edit action for non-source scratchpad
-  deliverables.
+- Keep artifact-owned materialization for first-draft scratchpads. Do not route
+  draft creation through an implementation lane when the deliverable is a
+  single generated artifact.
+- Keep `write_file` as the concrete edit action for patch/review scratchpad
+  deliverables that still run through the implementation writer surface.
 - Treat refine scratchpad draft/review/patch phases as writer/reviewer
-  phases, not source-discovery phases: they may read required scratchpad
-  inputs, then must write the scratchpad deliverable or record missing source
-  facts inside it as `Source verification pending:` / `## Scope Correction
-  Required`.
+  phases, not source-discovery phases. They may use their phase-owned evidence,
+  then must produce the scratchpad artifact or record missing source facts
+  inside it as `Source verification pending:` / `## Scope Correction Required`.
 - After a no-write completion-gate rejection, reject non-write tools for that
   scratchpad deliverable until the file is written or the model reports a
   blocker.
@@ -352,6 +361,9 @@ Why it is likely effective:
 
 ### Immediate
 
+- Keep draft scratchpad generation on `idiom artifact --no-tools` with
+  `draft.artifact.jsonl`, `draft.report.json`, and per-iteration
+  `draft_state` metrics. Missing or trivial drafts are typed non-zero states.
 - Keep the scratchpad closeout guard: after a no-write completion-gate rejection
   for a non-source deliverable, reject non-write tools and require `write_file`
   or `<<QUESTION>>`.

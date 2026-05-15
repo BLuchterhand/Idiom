@@ -2,7 +2,7 @@
 
 **Status**: design sketch, not yet scheduled.
 **Owner**: TBD.
-**Last touched**: 2026-05-11.
+**Last touched**: 2026-05-15.
 
 Captures two threads that converge on the same north-star: idiom should be a generic local-LLM harness, not a Qwen3/Qwen-coder-bound one, and `idiom lane refine` + `idiom lane plan-execute` should form a closed brief→ship loop with no orchestrator hand-edits between them.
 
@@ -12,7 +12,7 @@ Sibling docs: `north-star-remediation.md`, `reusability-design.md`, `parity-task
 
 Two pressures point the same direction:
 
-1. **Generic-harness pressure.** The refine pipeline ships a brief on a Qwen3.6-35B-nothink backend today because that's what's wired. Projects with DeepSeek R1, GLM-4.6, future Qwens, or any reasoning-capable local model can't adopt refine without idiom recompiles. The role/pool abstractions in `backends.json` are 80% there; consumers (refine + pool routing) bypass them.
+1. **Generic-harness pressure.** The refine pipeline still falls back to Qwen3.6-35B routing constants today because that's what's wired. Draft materialization is now artifact-owned, and patch/review use request-level no-thinking where needed, but projects with DeepSeek R1, GLM-4.6, future Qwens, or any reasoning-capable local model still can't fully control refine roles without idiom config support. The role/pool abstractions in `backends.json` are 80% there; consumers (refine + pool routing) bypass them.
 
 2. **End-to-end qwen-parity pressure** (`FEATURE_REQUEST_END_TO_END_QWEN_PARITY.md`). Refine produces a brief; the orchestrator manually adds HARD PROHIBITIONS, inlines project traps, and runs `idiom brief lint` before dispatching through plan-execute. That ~10–20 min/atom hand-step is the parity gap.
 
@@ -24,7 +24,7 @@ Audited 2026-05-11 with `grep -rn 'qwen' --include='*.go' cmd/ internal/` filter
 
 | Layer | Site | Hardcoded value | Severity |
 |---|---|---|---|
-| Refine routing | `cmd/idiom/lane_refine.go:87-88` | `const refineDefaultPool = "qwen-35b-nothink"`, `const refineDefaultModel = "qwen3.6-35b-nothink"` | **High** — blocks non-Qwen adopters |
+| Refine routing | `cmd/idiom/lane_refine.go:96-97` | `const refineDefaultPool = "qwen-35b"`, `const refineDefaultModel = "qwen3.6-35b"` | **High** — blocks non-Qwen adopters |
 | Pool→model heuristic | `internal/runner/gate.go:155-175` (`PoolForModelAlias`) | String-match: contains "coder"/"nothink"/"35b"/"planner" → fixed pool name | **High** — naming-based, fragile |
 | Bootstrap defaults | `cmd/idiom/init.go:123-155`, `internal/config/config.go:271` | `qwen3.6-35b` baked into generated config | **Low** — projects override |
 | Chat presets | `internal/config/config.go:854-902` | 5 presets named `qwen3-*` | **Low** — presets are reference impls |
@@ -50,8 +50,8 @@ Three new optional fields. Existing configs keep working — every new field has
 
 ```json
 {
-  "alias": "qwen3.6-35b-nothink",
-  "pool": "qwen-35b-nothink",
+  "alias": "qwen3.6-35b",
+  "pool": "qwen-35b",
   "thinking": false,
   ...
 }
@@ -79,16 +79,16 @@ Fallback: if `thinking` is unset, current behavior — idiom passes `extra_args`
 ```json
 "proxy": {
   ...
-  "default_refine_draft":  "qwen3.6-35b-nothink",
-  "default_refine_review": "qwen3.6-35b-nothink",
-  "default_refine_patch":  "qwen3.6-35b-nothink"
+  "default_refine_draft":  "qwen3.6-35b",
+  "default_refine_review": "qwen3.6-35b",
+  "default_refine_patch":  "qwen3.6-35b"
 }
 ```
 
 Or, for projects where all three phases share a model:
 
 ```json
-"default_refine": "qwen3.6-35b-nothink"
+"default_refine": "qwen3.6-35b"
 ```
 
 `refinePhaseRouting(metaBriefPath)` resolution chain:

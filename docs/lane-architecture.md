@@ -525,6 +525,7 @@ selection, JSON event capture, and post-run telemetry — what
 | 2-3 files, tightly coupled (e.g. header + impl + test) | `implement` or `plan-execute` | either works; plan-execute is more deterministic |
 | 4+ files | `plan-execute` | atomic preflight and per-edit telemetry pay off |
 | Pure-add (new file, write_file shape) | `implement` | model holds the whole content in one turn |
+| Refine first-draft scratchpad | `refine` | internally uses `artifact --no-tools` so the harness writes `draft.md` from final-answer content |
 | Mirror-site updates (enum reference, name table, ordinal check) | `plan-execute` | preflight catches anchor mismatches before partial-apply |
 | Drafting a planner target packet | `atom-spec` | model writes the brief, no workspace touched |
 

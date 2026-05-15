@@ -1031,25 +1031,28 @@ func TestCanonicalPromptFilesDoNotEncourageNoopWrites(t *testing.T) {
 	}
 }
 
-func TestCanonicalRefinePromptsUseConditionalExpectedPathLanguage(t *testing.T) {
-	paths := []string{
-		filepath.Join("lanes", "refine", "draft.md"),
-		filepath.Join("lanes", "refine", "draft-markdown.md"),
-		filepath.Join("lanes", "refine", "review.md"),
-		filepath.Join("lanes", "refine", "patch.md"),
+func TestCanonicalRefinePromptsUseConditionalOutputLanguage(t *testing.T) {
+	paths := []struct {
+		path string
+		want string
+	}{
+		{filepath.Join("lanes", "refine", "draft.md"), "Artifact output path"},
+		{filepath.Join("lanes", "refine", "draft-markdown.md"), "Artifact output path"},
+		{filepath.Join("lanes", "refine", "review.md"), "Expected path"},
+		{filepath.Join("lanes", "refine", "patch.md"), "Expected path"},
 	}
-	for _, path := range paths {
-		body, err := os.ReadFile(path)
+	for _, tc := range paths {
+		body, err := os.ReadFile(tc.path)
 		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+			t.Fatalf("read %s: %v", tc.path, err)
 		}
 		prompt := string(body)
 		if strings.Contains(prompt, "Your only job") {
-			t.Fatalf("%s uses unconditional job wording that conflicts with blocker closeout:\n%s", path, prompt)
+			t.Fatalf("%s uses unconditional job wording that conflicts with blocker closeout:\n%s", tc.path, prompt)
 		}
-		for _, want := range []string{"Expected path", "`<<QUESTION>>:`"} {
+		for _, want := range []string{tc.want, "`<<QUESTION>>:`"} {
 			if !strings.Contains(prompt, want) {
-				t.Fatalf("%s missing conditional refine contract language %q:\n%s", path, want, prompt)
+				t.Fatalf("%s missing conditional refine contract language %q:\n%s", tc.path, want, prompt)
 			}
 		}
 	}

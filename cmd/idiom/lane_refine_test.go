@@ -55,6 +55,43 @@ func TestRefinePhaseRoutingUsesPrimary35BWithNoThinkingOverride(t *testing.T) {
 	}
 }
 
+func TestDefaultRefineDispatchRoutesDraftThroughArtifactCommand(t *testing.T) {
+	meta := filepath.Join("root", ".idiom", "refine", "atom", "iter-1", "meta-draft.md")
+	args := defaultRefineDispatchArgs("/bin/idiom", ".idiom/config.json", meta)
+	joined := strings.Join(args, "\x00")
+
+	for _, want := range []string{
+		"queue", "run", "--pool", "qwen-35b", "--label", "refine-draft-artifact",
+		"artifact", "--config", ".idiom/config.json", "--no-tools",
+		"--mechanical-repair", "--model", "qwen3.6-35b", "--prompt-file", meta,
+		"--output", filepath.Join("root", ".idiom", "refine", "atom", "iter-1", "draft.md"),
+		"--json-out", filepath.Join("root", ".idiom", "refine", "atom", "iter-1", "draft.artifact.jsonl"),
+		"--report-out", filepath.Join("root", ".idiom", "refine", "atom", "iter-1", "draft.report.json"),
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("draft dispatch args missing %q:\n%#v", want, args)
+		}
+	}
+	if strings.Contains(joined, "lane\x00implement") {
+		t.Fatalf("draft dispatch should not use implementation lane args:\n%#v", args)
+	}
+}
+
+func TestDefaultRefineDispatchKeepsPatchOnImplementLane(t *testing.T) {
+	meta := filepath.Join("root", ".idiom", "refine", "atom", "iter-2", "meta-patch.md")
+	args := defaultRefineDispatchArgs("/bin/idiom", ".idiom/config.json", meta)
+	joined := strings.Join(args, "\x00")
+
+	for _, want := range []string{"queue", "run", "--label", "refine", "lane", "implement", "--config", ".idiom/config.json", "--no-thinking", meta} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("patch dispatch args missing %q:\n%#v", want, args)
+		}
+	}
+	if strings.Contains(joined, "artifact") {
+		t.Fatalf("patch dispatch should stay on implementation lane, got:\n%#v", args)
+	}
+}
+
 // stripFencedBlocksForStub removes ```...``` code blocks from
 // meta-brief text so the stub's section-heading scanner doesn't
 // match headings inside example/skeleton fences. Mirrors what the
@@ -113,14 +150,10 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		}
 		// Find the output path the meta-brief targets. Resolution
 		// order, most authoritative first:
-		//   1. `- ` + "`path`" + `: ` + "`<X.md>`" line under
-		//      `## STOP AND WRITE NOW` — literal write_file argument
-		//      the meta-draft tells the model to use. New 2026-05-11
-		//      after the anchored template gained a two-path example
-		//      that placed `docs/research/inventory.md` BEFORE the
-		//      substituted DRAFT_PATH; without this preference the
-		//      fallback heuristic finds the example path first and
-		//      tests write to the wrong location.
+		//   1. `Path: `<X.md>` under `## Artifact Output` or
+		//      legacy `path`: `<X.md>` under `## STOP AND WRITE NOW`.
+		//      The draft phase is now artifact-owned, but patch/review
+		//      fixtures still use the legacy write-file prompt shape.
 		//   2. Row inside `## Files To Modify` (legacy).
 		//   3. Any other backtick-quoted `.md` outside the meta-brief
 		//      itself (last-resort fallback).
@@ -128,20 +161,30 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		var outPath, stopAndWritePath, filesToModifyPath, fallbackPath string
 		inFilesToModify := false
 		inStopAndWrite := false
+		inArtifactOutput := false
 		for _, line := range strings.Split(scanText, "\n") {
 			trimmed := strings.TrimSpace(line)
 			lower := strings.ToLower(trimmed)
+			if strings.HasPrefix(lower, "## artifact output") {
+				inArtifactOutput = true
+				inFilesToModify = false
+				inStopAndWrite = false
+				continue
+			}
 			if strings.HasPrefix(lower, "## files to modify") {
 				inFilesToModify = true
 				inStopAndWrite = false
+				inArtifactOutput = false
 				continue
 			}
 			if strings.HasPrefix(lower, "## stop and write now") {
 				inStopAndWrite = true
 				inFilesToModify = false
+				inArtifactOutput = false
 				continue
 			}
-			if (inFilesToModify || inStopAndWrite) && strings.HasPrefix(trimmed, "## ") {
+			if (inArtifactOutput || inFilesToModify || inStopAndWrite) && strings.HasPrefix(trimmed, "## ") {
+				inArtifactOutput = false
 				inFilesToModify = false
 				inStopAndWrite = false
 			}
@@ -159,7 +202,7 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 			if candidate == metaBriefPath || strings.HasSuffix(candidate, "/"+filepath.Base(metaBriefPath)) {
 				continue
 			}
-			if inStopAndWrite && stopAndWritePath == "" {
+			if (inArtifactOutput || inStopAndWrite) && stopAndWritePath == "" {
 				stopAndWritePath = candidate
 			}
 			if inFilesToModify && filesToModifyPath == "" {
@@ -276,6 +319,18 @@ func TestRunLaneRefineDoesNotAcceptStaleDraftOutput(t *testing.T) {
 	if !strings.Contains(stderr.String(), "cleared stale output") {
 		t.Fatalf("expected stale-output cleanup log, got: %s", stderr.String())
 	}
+	metricsPath := filepath.Join(refineStateDir(root, opts.Title), "iter-1", "metrics.json")
+	metricsBody, err := os.ReadFile(metricsPath)
+	if err != nil {
+		t.Fatalf("read metrics: %v", err)
+	}
+	var m refineIterMetrics
+	if err := json.Unmarshal(metricsBody, &m); err != nil {
+		t.Fatalf("unmarshal metrics: %v", err)
+	}
+	if m.DraftState != "missing" || m.Action != "failsoft-draft-missing" {
+		t.Fatalf("metrics should record typed missing draft state, got %#v", m)
+	}
 }
 
 func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
@@ -310,7 +365,7 @@ func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
 	}
 }
 
-func TestWriteRefineDraftMetaScopesRequiredEditPathsToScratchpad(t *testing.T) {
+func TestWriteRefineDraftMetaDoesNotLeakSpecRequiredEditPaths(t *testing.T) {
 	root := t.TempDir()
 	iterDir := filepath.Join(root, ".idiom", "refine", "atom", "iter-1")
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
@@ -346,11 +401,17 @@ Change the real implementation file.
 	}
 	wantDraft := ".idiom/refine/atom/iter-1/draft.md"
 	paths := app.RequiredEditPathsFromPrompt(string(body))
-	if len(paths) != 1 || paths[0] != wantDraft {
-		t.Fatalf("required edit paths leaked from embedded spec: got %#v, want [%q]\nmeta:\n%s", paths, wantDraft, body)
+	if len(paths) != 0 {
+		t.Fatalf("artifact draft prompt should not expose implementation required edit paths: got %#v\nmeta:\n%s", paths, body)
+	}
+	if !strings.Contains(string(body), "## Artifact Output") || !strings.Contains(string(body), "`"+wantDraft+"`") {
+		t.Fatalf("expected artifact output path %q in meta body:\n%s", wantDraft, body)
 	}
 	if !strings.Contains(string(body), "> ## Files To Modify") {
 		t.Fatalf("embedded spec should be quoted so its headings are inert, got:\n%s", body)
+	}
+	if strings.Contains(string(body), "write_file") {
+		t.Fatalf("artifact draft prompt must not ask for write_file, got:\n%s", body)
 	}
 }
 
@@ -709,20 +770,30 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 		var outPath, stopAndWritePath, filesToModifyPath, fallbackPath string
 		inFilesToModify := false
 		inStopAndWrite := false
+		inArtifactOutput := false
 		for _, line := range strings.Split(scanText, "\n") {
 			trimmed := strings.TrimSpace(line)
 			lower := strings.ToLower(trimmed)
+			if strings.HasPrefix(lower, "## artifact output") {
+				inArtifactOutput = true
+				inFilesToModify = false
+				inStopAndWrite = false
+				continue
+			}
 			if strings.HasPrefix(lower, "## files to modify") {
 				inFilesToModify = true
 				inStopAndWrite = false
+				inArtifactOutput = false
 				continue
 			}
 			if strings.HasPrefix(lower, "## stop and write now") {
 				inStopAndWrite = true
 				inFilesToModify = false
+				inArtifactOutput = false
 				continue
 			}
-			if (inFilesToModify || inStopAndWrite) && strings.HasPrefix(trimmed, "## ") {
+			if (inArtifactOutput || inFilesToModify || inStopAndWrite) && strings.HasPrefix(trimmed, "## ") {
+				inArtifactOutput = false
 				inFilesToModify = false
 				inStopAndWrite = false
 			}
@@ -733,7 +804,7 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 			if candidate == "" || candidate == metaBriefPath || strings.HasSuffix(candidate, "/"+filepath.Base(metaBriefPath)) {
 				continue
 			}
-			if inStopAndWrite && stopAndWritePath == "" {
+			if (inArtifactOutput || inStopAndWrite) && stopAndWritePath == "" {
 				stopAndWritePath = candidate
 			}
 			if inFilesToModify && filesToModifyPath == "" {
@@ -2252,7 +2323,7 @@ func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
 	if err := os.MkdirAll(briefOverlay, 0o755); err != nil {
 		t.Fatalf("mkdir brief overlay: %v", err)
 	}
-	overrideBody := "# {{TITLE}}\n\n## Custom-mode body marker\n\nSPEC: {{SPEC_BODY}}\n\nWrite to {{DRAFT_PATH}} via write_file.\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `{{DRAFT_PATH}}` | NEW FILE |\n"
+	overrideBody := "# {{TITLE}}\n\n## Custom-mode body marker\n\nSPEC: {{SPEC_BODY}}\n\nReturn the filled brief as the final answer for {{DRAFT_PATH}}.\n"
 	if err := os.WriteFile(filepath.Join(refineOverride, "draft-notebook.md"), []byte(overrideBody), 0o644); err != nil {
 		t.Fatalf("seed override: %v", err)
 	}
@@ -2440,7 +2511,7 @@ func TestResolveRefineDraftTemplateProjectOverrideWins(t *testing.T) {
 	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	overrideBody := "# {{TITLE}}\n\n## Custom mode body\n\n{{SPEC_BODY}}\n\nCall write_file with {{DRAFT_PATH}}.\n"
+	overrideBody := "# {{TITLE}}\n\n## Custom mode body\n\n{{SPEC_BODY}}\n\nReturn the final answer for {{DRAFT_PATH}}.\n"
 	overridePath := filepath.Join(overrideDir, "draft-notebook.md")
 	if err := os.WriteFile(overridePath, []byte(overrideBody), 0o644); err != nil {
 		t.Fatalf("seed override: %v", err)
@@ -2516,17 +2587,17 @@ func TestResolveRefineDraftTemplateMalformedOverrideRejected(t *testing.T) {
 	}{
 		{
 			name: "missing-draft-path",
-			body: "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nCall write_file please.\n",
+			body: "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nReturn final answer.\n",
 			want: "{{DRAFT_PATH}}",
 		},
 		{
 			name: "missing-spec-body",
-			body: "# {{TITLE}}\n\n## Body\n\nCall write_file at {{DRAFT_PATH}}.\n",
+			body: "# {{TITLE}}\n\n## Body\n\nReturn final answer for {{DRAFT_PATH}}.\n",
 			want: "{{SPEC_BODY}}",
 		},
 		{
 			name: "no-section-heading",
-			body: "{{TITLE}} {{SPEC_BODY}} {{DRAFT_PATH}} — call write_file.\n",
+			body: "{{TITLE}} {{SPEC_BODY}} {{DRAFT_PATH}} — return final answer.\n",
 			want: "section heading",
 		},
 	}
@@ -2547,14 +2618,13 @@ func TestResolveRefineDraftTemplateMalformedOverrideRejected(t *testing.T) {
 	}
 }
 
-// TestEnsureRefineDraftWriteClosureAppendsWhenMissing locks in the
-// UX choice from the 2026-05-11 review: project authors don't have
-// to remember to include a write_file closure in their override
-// templates. If missing, idiom auto-appends a canonical closure
-// (matching the embedded templates) so the dispatched-model
-// contract is uniform across modes. Templates that already include
-// their own write directive are left untouched.
-func TestEnsureRefineDraftWriteClosureAppendsWhenMissing(t *testing.T) {
+// TestEnsureRefineDraftArtifactClosureAppendsWhenMissing locks in
+// the artifact-owned draft contract: project authors don't have to
+// remember to include final-answer boilerplate in their override
+// templates. If missing, idiom auto-appends a canonical artifact
+// closure. Templates that already include their own final-answer
+// directive are left untouched.
+func TestEnsureRefineDraftArtifactClosureAppendsWhenMissing(t *testing.T) {
 	tests := []struct {
 		name           string
 		body           string
@@ -2563,24 +2633,24 @@ func TestEnsureRefineDraftWriteClosureAppendsWhenMissing(t *testing.T) {
 		mustNotContain string
 	}{
 		{
-			name:         "body-without-write-file",
+			name:         "body-without-artifact-closeout",
 			body:         "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nDescribe deliverable at {{DRAFT_PATH}}.\n",
 			wantAppended: true,
 		},
 		{
-			name:          "body-with-explicit-write-file",
-			body:          "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nCall write_file({{DRAFT_PATH}}).\n",
+			name:          "body-with-explicit-final-answer",
+			body:          "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nReturn the final answer for {{DRAFT_PATH}}.\n",
 			wantUntouched: true,
 		},
 		{
-			name:          "body-with-uppercase-WRITE_FILE",
-			body:          "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\nCall WRITE_FILE({{DRAFT_PATH}}).\n",
+			name:          "body-with-artifact-closeout-section",
+			body:          "# {{TITLE}}\n\n## Body\n\n{{SPEC_BODY}}\n\n## Artifact Closeout\n\nReturn only the brief for {{DRAFT_PATH}}.\n",
 			wantUntouched: true,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ensureRefineDraftWriteClosure(tc.body, nil, "test")
+			got := ensureRefineDraftArtifactClosure(tc.body, nil, "test")
 			if tc.wantUntouched && got != tc.body {
 				t.Fatalf("expected body untouched, got delta:\n%s", got)
 			}
@@ -2588,14 +2658,17 @@ func TestEnsureRefineDraftWriteClosureAppendsWhenMissing(t *testing.T) {
 				if got == tc.body {
 					t.Fatalf("expected closure appended, body unchanged")
 				}
-				if !strings.Contains(got, "## STOP AND WRITE NOW") {
-					t.Fatalf("expected canonical closure heading, got:\n%s", got)
+				if !strings.Contains(got, "## Artifact Closeout") {
+					t.Fatalf("expected canonical artifact closure heading, got:\n%s", got)
 				}
-				if !strings.Contains(got, "write_file") {
-					t.Fatalf("expected appended closure to mention write_file, got:\n%s", got)
+				if !strings.Contains(got, "final answer") {
+					t.Fatalf("expected appended closure to mention final answer, got:\n%s", got)
 				}
 				if !strings.Contains(got, "{{DRAFT_PATH}}") {
 					t.Fatalf("expected appended closure to reference {{DRAFT_PATH}} for later substitution, got:\n%s", got)
+				}
+				if strings.Contains(got, "write_file") {
+					t.Fatalf("artifact closure must not mention write_file, got:\n%s", got)
 				}
 			}
 		})
@@ -2607,12 +2680,13 @@ func TestRefineMetaTemplatesDoNotSuggestScratchpadShellChecks(t *testing.T) {
 		name      string
 		body      string
 		pathToken string
+		artifact  bool
 	}{
-		{name: "draft", body: refineDraftTemplate, pathToken: "{{DRAFT_PATH}}"},
-		{name: "draft-markdown", body: refineDraftMarkdownTemplate, pathToken: "{{DRAFT_PATH}}"},
+		{name: "draft", body: refineDraftTemplate, pathToken: "{{DRAFT_PATH}}", artifact: true},
+		{name: "draft-markdown", body: refineDraftMarkdownTemplate, pathToken: "{{DRAFT_PATH}}", artifact: true},
 		{name: "review", body: refineReviewTemplate, pathToken: "{{REVIEW_PATH}}"},
 		{name: "patch", body: refinePatchTemplate, pathToken: "{{NEW_DRAFT_PATH}}"},
-		{name: "override-closure", body: refineCanonicalWriteClosure, pathToken: "{{DRAFT_PATH}}"},
+		{name: "override-closure", body: refineCanonicalArtifactClosure, pathToken: "{{DRAFT_PATH}}", artifact: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2620,7 +2694,14 @@ func TestRefineMetaTemplatesDoNotSuggestScratchpadShellChecks(t *testing.T) {
 			if strings.Contains(tc.body, scratchpadCheck) {
 				t.Fatalf("template must not suggest shell-checking scratchpad writes with %q:\n%s", scratchpadCheck, tc.body)
 			}
-			if !strings.Contains(tc.body, "The successful `write_file` result is the completion proof") {
+			if tc.artifact {
+				if strings.Contains(tc.body, "write_file") {
+					t.Fatalf("artifact draft template must not ask for write_file, got:\n%s", tc.body)
+				}
+				if !strings.Contains(tc.body, "The artifact command writing") {
+					t.Fatalf("artifact template should name artifact command completion proof, got:\n%s", tc.body)
+				}
+			} else if !strings.Contains(tc.body, "The successful `write_file` result is the completion proof") {
 				t.Fatalf("template should tell the model write_file is the completion proof, got:\n%s", tc.body)
 			}
 		})
@@ -2705,20 +2786,20 @@ func TestRefinePatchTemplateClosesSourceUncertaintyIntoDraft(t *testing.T) {
 	}
 }
 
-// TestRunLaneRefineAutoAppendsClosureToOverrideWithoutWriteFile
+// TestRunLaneRefineAutoAppendsArtifactClosureToOverride
 // verifies the auto-append behavior is wired end-to-end: a project
-// override that omits write_file in its body produces a meta-draft
-// containing the canonical closure with the destination path
+// override that omits artifact closeout in its body produces a meta-draft
+// containing the canonical artifact closure with the destination path
 // substituted in.
-func TestRunLaneRefineAutoAppendsClosureToOverrideWithoutWriteFile(t *testing.T) {
+func TestRunLaneRefineAutoAppendsArtifactClosureToOverride(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
 	root := t.TempDir()
 	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
 	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// Note: NO write_file mention. Author focused on the body.
-	overrideBody := "# {{TITLE}}\n\n## Notebook deliverable\n\nSPEC: {{SPEC_BODY}}\n\nWrite the experiment at {{DRAFT_PATH}}.\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `{{DRAFT_PATH}}` | NEW FILE |\n"
+	// Note: no artifact closeout. Author focused on the body.
+	overrideBody := "# {{TITLE}}\n\n## Notebook deliverable\n\nSPEC: {{SPEC_BODY}}\n\nDescribe the experiment at {{DRAFT_PATH}}.\n"
 	if err := os.WriteFile(filepath.Join(overrideDir, "draft-notebook.md"), []byte(overrideBody), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -2740,7 +2821,7 @@ func TestRunLaneRefineAutoAppendsClosureToOverrideWithoutWriteFile(t *testing.T)
 	})
 	var stderr bytes.Buffer
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
-	if !strings.Contains(stderr.String(), "no write_file directive; appending canonical closure") {
+	if !strings.Contains(stderr.String(), "no artifact closeout; appending canonical artifact closure") {
 		t.Fatalf("expected stderr to log auto-append, got: %s", stderr.String())
 	}
 	metaDraftPath := filepath.Join(refineStateDir(root, "closure-test"), "iter-1", "meta-draft.md")
@@ -2748,11 +2829,11 @@ func TestRunLaneRefineAutoAppendsClosureToOverrideWithoutWriteFile(t *testing.T)
 	if err != nil {
 		t.Fatalf("read meta-draft: %v", err)
 	}
-	if !strings.Contains(string(body), "## STOP AND WRITE NOW") {
-		t.Fatalf("expected canonical closure in substituted meta-draft, got:\n%s", body)
+	if !strings.Contains(string(body), "## Artifact Closeout") {
+		t.Fatalf("expected canonical artifact closure in substituted meta-draft, got:\n%s", body)
 	}
-	if !strings.Contains(string(body), "write_file") {
-		t.Fatalf("expected write_file in substituted meta-draft, got:\n%s", body)
+	if strings.Contains(string(body), "write_file") {
+		t.Fatalf("artifact meta-draft must not mention write_file, got:\n%s", body)
 	}
 	// The {{DRAFT_PATH}} in the closure must have been substituted
 	// with a real path during the standard substitution pipeline.
@@ -2772,7 +2853,7 @@ func TestRunLaneRefineUsesProjectOverrideTemplate(t *testing.T) {
 	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	overrideBody := "# {{TITLE}}\n\n## Notebook deliverable\n\nSPEC: {{SPEC_BODY}}\n\nCall write_file({{DRAFT_PATH}}) with the experiment.\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `{{DRAFT_PATH}}` | NEW FILE |\n"
+	overrideBody := "# {{TITLE}}\n\n## Notebook deliverable\n\nSPEC: {{SPEC_BODY}}\n\nReturn the final answer for {{DRAFT_PATH}} with the experiment.\n"
 	overridePath := filepath.Join(overrideDir, "draft-notebook.md")
 	if err := os.WriteFile(overridePath, []byte(overrideBody), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)

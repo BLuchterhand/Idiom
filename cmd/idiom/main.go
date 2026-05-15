@@ -1170,7 +1170,10 @@ func runServerOnly(cfg config.Config, opts runOptions) error {
 }
 
 func runServerOnlyWithTelemetry(cfg config.Config, opts runOptions) error {
-	client := llama.NewClient(cfg.BaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
+	if !cfg.LlamaServer.IsLaunchable() {
+		return fmt.Errorf("backend kind %q is hosted at %s; --server-only can only launch local llama/mlx backends", cfg.LlamaServer.Kind, cfg.LlamaServer.EndpointBaseURL())
+	}
+	client := llama.NewClientForServer(cfg.LlamaServer, 0)
 	controller := llama.NewServerController(cfg.LlamaServer, client)
 	logCLIPhase(opts.Telemetry, "server_starting", map[string]any{
 		"base_url": cfg.BaseURL(),

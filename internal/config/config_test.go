@@ -362,6 +362,50 @@ func TestLoadAcceptsMLXBackendWithoutPathResolution(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsHostedBackendsWithoutLocalLaunchFields(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "llama_server": {
+    "kind": "codex",
+    "model": "gpt-5-codex",
+    "reasoning_effort": "high"
+  },
+  "implementer": {
+    "kind": "zai",
+    "model": "glm-5.1",
+    "base_url": "https://api.z.ai/api/paas/v4",
+    "api_key_env": "ZAI_API_KEY"
+  },
+  "chat": {"preset": "custom", "max_tokens": 16}
+}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.LlamaServer.IsHosted() || !cfg.LlamaServer.IsOpenAIResponses() {
+		t.Fatalf("expected hosted codex planner, got %#v", cfg.LlamaServer)
+	}
+	if cfg.LlamaServer.Model != "gpt-5-codex" {
+		t.Fatalf("hosted model id should not be path-resolved, got %q", cfg.LlamaServer.Model)
+	}
+	if cfg.LlamaServer.EndpointBaseURL() != "https://api.openai.com" || cfg.LlamaServer.APIKeyEnvName() != "OPENAI_API_KEY" {
+		t.Fatalf("unexpected codex endpoint/auth defaults: base=%q env=%q", cfg.LlamaServer.EndpointBaseURL(), cfg.LlamaServer.APIKeyEnvName())
+	}
+	if cfg.Implementer == nil || !cfg.Implementer.IsZAI() {
+		t.Fatalf("expected hosted ZAI implementer, got %#v", cfg.Implementer)
+	}
+	if cfg.Implementer.EndpointBaseURL() != "https://api.z.ai/api/paas/v4" || cfg.Implementer.APIKeyEnvName() != "ZAI_API_KEY" {
+		t.Fatalf("unexpected ZAI endpoint/auth: base=%q env=%q", cfg.Implementer.EndpointBaseURL(), cfg.Implementer.APIKeyEnvName())
+	}
+	if cfg.ImplementerBaseURL() != "https://api.z.ai/api/paas/v4" {
+		t.Fatalf("unexpected hosted ImplementerBaseURL %q", cfg.ImplementerBaseURL())
+	}
+}
+
 func TestValidateRejectsUnknownBackendKind(t *testing.T) {
 	cfg := Default()
 	cfg.LlamaServer.Kind = "nope"

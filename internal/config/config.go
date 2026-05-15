@@ -30,7 +30,10 @@ type RouteClassifier struct {
 	Enabled             bool     `json:"enabled"`
 	AlwaysOn            bool     `json:"always_on,omitempty"`
 	BaseURL             string   `json:"base_url"`
+	APIKeyEnv           string   `json:"api_key_env,omitempty"`
 	Model               string   `json:"model"`
+	ReasoningEffort     string   `json:"reasoning_effort,omitempty"`
+	Verbosity           string   `json:"verbosity,omitempty"`
 	MaxTokens           int      `json:"max_tokens"`
 	TimeoutSeconds      int      `json:"timeout_seconds"`
 	StartTimeoutSeconds int      `json:"start_timeout_seconds"`
@@ -51,12 +54,20 @@ type RouteClassifier struct {
 // RouteClassifier's server fields. Used to hand the classifier off to
 // llama.NewServerController for on-demand launch.
 func (r RouteClassifier) LlamaServerSpec() LlamaServer {
+	model := r.ServerModel
+	if strings.TrimSpace(model) == "" {
+		model = r.Model
+	}
 	return LlamaServer{
 		Kind:            r.Kind,
 		Binary:          r.Binary,
 		Host:            r.Host,
 		Port:            r.Port,
-		Model:           r.ServerModel,
+		Model:           model,
+		BaseURL:         r.BaseURL,
+		APIKeyEnv:       r.APIKeyEnv,
+		ReasoningEffort: r.ReasoningEffort,
+		Verbosity:       r.Verbosity,
 		CtxSize:         r.CtxSize,
 		Threads:         r.Threads,
 		GPULayers:       r.GPULayers,
@@ -105,21 +116,29 @@ func (m MCPServer) IsStdio() bool {
 
 // Backend kinds accepted by LlamaServer.Kind.
 const (
-	BackendLlama = "llama"
-	BackendMLX   = "mlx"
+	BackendLlama           = "llama"
+	BackendMLX             = "mlx"
+	BackendMiniMax         = "minimax"
+	BackendOpenAIResponses = "openai_responses"
+	BackendCodex           = "codex"
+	BackendZAI             = "zai"
 )
 
-// LlamaServer describes a local inference backend the harness can launch and
-// talk to via an OpenAI-compatible HTTP API. Despite the name, two backend
-// kinds are supported: "llama" (llama.cpp's llama-server, the default) and
-// "mlx" (Apple MLX's mlx_lm.server on Apple Silicon). The llama-only fields
-// below (Jinja, FlashAttention, Reasoning*) are ignored for kind=mlx.
+// LlamaServer describes an inference backend the harness can talk to. The
+// historic name is retained because most call sites predate hosted providers.
+// Local backends ("llama" and "mlx") can be launched by the harness. Hosted
+// backends ("codex"/"openai_responses" and "zai") are client-only and use
+// API-key authentication from environment variables.
 type LlamaServer struct {
 	Kind            string   `json:"kind,omitempty"`
 	Binary          string   `json:"binary"`
 	Host            string   `json:"host"`
 	Port            int      `json:"port"`
 	Model           string   `json:"model"`
+	BaseURL         string   `json:"base_url,omitempty"`
+	APIKeyEnv       string   `json:"api_key_env,omitempty"`
+	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
+	Verbosity       string   `json:"verbosity,omitempty"`
 	CtxSize         int      `json:"ctx_size"`
 	Threads         int      `json:"threads"`
 	GPULayers       int      `json:"gpu_layers"`
@@ -136,6 +155,67 @@ type LlamaServer struct {
 // equivalent) rather than llama.cpp. Empty Kind defaults to llama.
 func (l LlamaServer) IsMLX() bool {
 	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendMLX)
+}
+
+func (l LlamaServer) IsOpenAIResponses() bool {
+	switch strings.ToLower(strings.TrimSpace(l.Kind)) {
+	case BackendOpenAIResponses, BackendCodex:
+		return true
+	default:
+		return false
+	}
+}
+
+func (l LlamaServer) IsZAI() bool {
+	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendZAI)
+}
+
+func (l LlamaServer) IsMiniMax() bool {
+	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendMiniMax)
+}
+
+func (l LlamaServer) IsHosted() bool {
+	return l.IsOpenAIResponses() || l.IsZAI() || l.IsMiniMax()
+}
+
+func (l LlamaServer) IsLaunchable() bool {
+	return !l.IsHosted()
+}
+
+func (l LlamaServer) UsesModelPath() bool {
+	return !l.IsMLX() && !l.IsHosted()
+}
+
+func (l LlamaServer) EndpointBaseURL() string {
+	if baseURL := strings.TrimRight(strings.TrimSpace(l.BaseURL), "/"); baseURL != "" {
+		return baseURL
+	}
+	switch {
+	case l.IsOpenAIResponses():
+		return "https://api.openai.com"
+	case l.IsZAI():
+		return "https://api.z.ai/api/paas/v4"
+	case l.IsMiniMax():
+		return "https://api.minimax.io/v1"
+	default:
+		return fmt.Sprintf("http://%s:%d", l.Host, l.Port)
+	}
+}
+
+func (l LlamaServer) APIKeyEnvName() string {
+	if env := strings.TrimSpace(l.APIKeyEnv); env != "" {
+		return env
+	}
+	switch {
+	case l.IsOpenAIResponses():
+		return "OPENAI_API_KEY"
+	case l.IsZAI():
+		return "ZAI_API_KEY"
+	case l.IsMiniMax():
+		return "MINIMAX_API_KEY"
+	default:
+		return ""
+	}
 }
 
 type Chat struct {
@@ -466,12 +546,12 @@ func (c Config) Validate() error {
 		if err := validateBackend("implementer", *c.Implementer); err != nil {
 			return err
 		}
-		if c.Implementer.Port == c.LlamaServer.Port && c.Implementer.Host == c.LlamaServer.Host {
+		if c.Implementer.IsLaunchable() && c.LlamaServer.IsLaunchable() && c.Implementer.Port == c.LlamaServer.Port && c.Implementer.Host == c.LlamaServer.Host {
 			return fmt.Errorf("implementer.port must differ from llama_server.port on the same host")
 		}
 	}
-	if k := strings.TrimSpace(c.RouteClassifier.Kind); k != "" && k != BackendLlama && k != BackendMLX {
-		return fmt.Errorf("route_classifier.kind must be one of llama, mlx (got %q)", c.RouteClassifier.Kind)
+	if k := strings.TrimSpace(c.RouteClassifier.Kind); k != "" && !isKnownBackendKind(k) {
+		return fmt.Errorf("route_classifier.kind must be one of %s (got %q)", backendKindList(), c.RouteClassifier.Kind)
 	}
 	if c.Chat.SaveDir == "" {
 		return fmt.Errorf("chat.save_dir is required")
@@ -577,7 +657,7 @@ func (m MCPServer) Validate() error {
 }
 
 func (c Config) BaseURL() string {
-	return fmt.Sprintf("http://%s:%d", c.LlamaServer.Host, c.LlamaServer.Port)
+	return c.LlamaServer.EndpointBaseURL()
 }
 
 // ImplementerBaseURL returns the HTTP URL for the implementer llama-server,
@@ -588,16 +668,16 @@ func (c Config) ImplementerBaseURL() string {
 	if c.Implementer == nil {
 		return ""
 	}
-	return fmt.Sprintf("http://%s:%d", c.Implementer.Host, c.Implementer.Port)
+	return c.Implementer.EndpointBaseURL()
 }
 
 func (c *Config) resolvePaths(baseDir string) {
-	if !c.LlamaServer.IsMLX() {
+	if c.LlamaServer.UsesModelPath() {
 		c.LlamaServer.Model = resolvePath(baseDir, c.LlamaServer.Model)
 	}
 	c.LlamaServer.LogFile = resolvePath(baseDir, c.LlamaServer.LogFile)
 	if c.Implementer != nil {
-		if !c.Implementer.IsMLX() {
+		if c.Implementer.UsesModelPath() {
 			c.Implementer.Model = resolvePath(baseDir, c.Implementer.Model)
 		}
 		c.Implementer.LogFile = resolvePath(baseDir, c.Implementer.LogFile)
@@ -633,6 +713,14 @@ func (c *Config) applyRuntimeDefaults() {
 	if c.Implementer != nil {
 		if c.Implementer.Kind == "" {
 			c.Implementer.Kind = BackendLlama
+		}
+		if c.Implementer.IsHosted() {
+			if c.Implementer.BaseURL == "" && c.LlamaServer.IsHosted() {
+				c.Implementer.BaseURL = c.LlamaServer.BaseURL
+			}
+			if c.Implementer.APIKeyEnv == "" && c.LlamaServer.IsHosted() {
+				c.Implementer.APIKeyEnv = c.LlamaServer.APIKeyEnv
+			}
 		}
 		if c.Implementer.Binary == "" {
 			c.Implementer.Binary = c.LlamaServer.Binary
@@ -986,12 +1074,26 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-// applyBackendRuntimeDefaults fills llama-specific defaults when the backend
-// kind is llama. For MLX backends, ctx_size / threads / reasoning flags are
-// left zero (mlx_lm.server has no equivalents), but generic fields like the
-// log file path still get defaulted. If parent is non-nil, llama reasoning
-// fields inherit from it when unset (used for the implementer block).
+func knownBackendKinds() []string {
+	return []string{BackendLlama, BackendMLX, BackendMiniMax, BackendOpenAIResponses, BackendCodex, BackendZAI}
+}
+
+func isKnownBackendKind(kind string) bool {
+	return containsString(knownBackendKinds(), strings.ToLower(strings.TrimSpace(kind)))
+}
+
+func backendKindList() string {
+	return strings.Join(knownBackendKinds(), ", ")
+}
+
+// applyBackendRuntimeDefaults fills launch/runtime defaults for local
+// backends. Hosted backends are client-only, so they do not get llama.cpp or
+// mlx_lm.server launch defaults. If parent is non-nil, llama reasoning fields
+// inherit from it when unset (used for the implementer block).
 func applyBackendRuntimeDefaults(b *LlamaServer, parent *LlamaServer, defaultLogFile string) {
+	if b.IsHosted() {
+		return
+	}
 	if b.LogFile == "" {
 		b.LogFile = defaultLogFile
 	}
@@ -1029,8 +1131,20 @@ func applyBackendRuntimeDefaults(b *LlamaServer, parent *LlamaServer, defaultLog
 
 func validateBackend(name string, b LlamaServer) error {
 	kind := strings.TrimSpace(b.Kind)
-	if kind != "" && kind != BackendLlama && kind != BackendMLX {
-		return fmt.Errorf("%s.kind must be one of llama, mlx (got %q)", name, b.Kind)
+	if kind != "" && !isKnownBackendKind(kind) {
+		return fmt.Errorf("%s.kind must be one of %s (got %q)", name, backendKindList(), b.Kind)
+	}
+	if b.IsHosted() {
+		if b.Model == "" {
+			return fmt.Errorf("%s.model is required", name)
+		}
+		if b.EndpointBaseURL() == "" {
+			return fmt.Errorf("%s.base_url is required", name)
+		}
+		if b.APIKeyEnvName() == "" {
+			return fmt.Errorf("%s.api_key_env is required", name)
+		}
+		return nil
 	}
 	if b.Binary == "" {
 		return fmt.Errorf("%s.binary is required", name)

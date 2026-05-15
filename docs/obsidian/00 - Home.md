@@ -21,55 +21,6 @@ approach a task, but the harness constrains what counts as valid work: scoped
 paths, permissions, typed artifacts, source evidence, verification, readiness,
 loop limits, and auditability.
 
-## Vault Map
-
-```mermaid
-flowchart TD
-    Home["00 - Home"]
-    System["01 - System Map"]
-    Pattern["02 - Deterministic Evidence-Based Development"]
-    Layers["03 - Architecture Layers"]
-    Lanes["04 - Runtime Lanes"]
-    Runner["05 - Runner Contracts and Control Rails"]
-    Tools["06 - Workspace Tools and Capability Routing"]
-    Memory["07 - Repository Memory and Context Graph"]
-    Packets["08 - Planning Packets and Handoff"]
-    Ready["09 - Verification Readiness and Completion"]
-    Audit["10 - Telemetry Audit Eval and Learning"]
-    Ops["11 - Local Model Operations"]
-    Sidecar["12 - Sidecar and External Integrations"]
-    Packages["13 - Package Guide"]
-    Playbooks["14 - Maintenance Playbooks"]
-    Glossary["15 - Glossary"]
-    OpsEvidence["16 - Operational Commands and Evidence Products"]
-    Privacy["17 - Security Privacy and Data Boundaries"]
-    Prompts["18 - Prompt Stack and Profiles"]
-    Operator["19 - CLI TUI and Operator Surface"]
-
-    Home --> System
-    Home --> Pattern
-    System --> Layers
-    System --> Lanes
-    Layers --> Runner
-    Layers --> Tools
-    Layers --> Memory
-    Lanes --> Packets
-    Lanes --> Ready
-    Runner --> Ready
-    Tools --> Memory
-    Ready --> Audit
-    Audit --> Playbooks
-    Ops --> OpsEvidence
-    Sidecar --> Privacy
-    Runner --> Prompts
-    Operator --> Lanes
-    Operator --> Tools
-    OpsEvidence --> Audit
-    Privacy --> Audit
-    Packages --> Playbooks
-    Glossary --> Home
-```
-
 ## What To Read First
 
 ### 10-Minute Director Read

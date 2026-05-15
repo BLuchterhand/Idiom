@@ -1,15 +1,16 @@
 # META — Draft brief (refine loop, iter 1)
 
-Expected path: call `write_file` to create `{{DRAFT_PATH}}` with the
-content described below. Read the spec, fill in the brackets, write
-the file. If the spec is too vague to draft from, stop with the
-specific `<<QUESTION>>:` blocker instead of writing guesswork.
+Artifact output path: `{{DRAFT_PATH}}`.
 
-## Files To Modify
+Read the spec and return the filled-in brief below as your final
+answer. Idiom writes that final answer to the artifact output path. If
+the spec is too vague to draft from, return the specific
+`<<QUESTION>>:` blocker instead of writing guesswork.
 
-| File | Change |
-|------|--------|
-| `{{DRAFT_PATH}}` | NEW FILE: refine scratchpad draft brief |
+## Artifact Output
+
+Path: `{{DRAFT_PATH}}`
+Contract: final-answer artifact; no tool calls, no file edits, no shell commands.
 
 ## Spec
 
@@ -25,7 +26,7 @@ specific `<<QUESTION>>:` blocker instead of writing guesswork.
 - Stay on the draft deliverable instead of doing source discovery in
   this phase. Ask only if the spec is too vague to draft from.
 
-## Write `{{DRAFT_PATH}}` with this exact shape
+## Return this exact artifact shape
 
 Replace each `<bracket placeholder>` with your text. Keep the
 section headings exactly as shown. The brief MUST contain every
@@ -78,32 +79,25 @@ lint will flag the duplicate at iter-N+1.
 
 ## Where you write THIS draft.md
 
-Your output file (refine's scratchpad for this iteration) is `{{DRAFT_PATH}}`. The
-future plan-execute lane writes wherever the harness-injected `## Files To Modify`
-block names — you never see or choose that path. Two different files, two different
-consumers, both harness-owned.
+Your output artifact (refine's scratchpad for this iteration) is
+`{{DRAFT_PATH}}`. The future plan-execute lane writes wherever the
+harness-injected `## Files To Modify` block names — you never see or
+choose that path. Two different files, two different consumers, both
+harness-owned.
 
-## STOP AND WRITE NOW
+## Artifact Closeout
 
 If the spec is too vague to write a brief from, surface `<<QUESTION>>:`
-with the specific gap now. Otherwise, your VERY NEXT TOOL CALL MUST be
-`write_file` with:
+with the specific gap now. Otherwise, return only the filled-in brief
+from "Return this exact artifact shape" above, with every `<bracket>`
+replaced and the section headings (including the
+`<!-- idiom:harness-deliverable-block -->` marker line) preserved verbatim.
 
-- `path`: `{{DRAFT_PATH}}`
-- `content`: the filled-in template from "Write `{{DRAFT_PATH}}` with
-  this exact shape" above, with every `<bracket>` replaced and the
-  section headings (including the `<!-- idiom:harness-deliverable-block -->`
-  marker line) preserved verbatim.
-
-Stay on the draft deliverable: write the file from the embedded spec
-and recorded gaps instead of doing source discovery in this phase.
-The file content goes inside the `write_file` call's `content`
-argument, not in a chat message. After `write_file` returns success,
-give a single-sentence final answer ("Done. Brief at
-`{{DRAFT_PATH}}`.") and stop.
+Stay on the draft deliverable: produce the brief from the embedded spec
+and recorded gaps instead of doing source discovery in this phase. Do
+not call tools, do not edit files, do not run shell commands, and do
+not wrap the brief in an outer code fence.
 
 ## Completion
 
-The successful `write_file` result is the completion proof. Do not run
-`test -f`, `git diff`, `shell`, or any other follow-up check for this
-scratchpad file.
+The artifact command writing `{{DRAFT_PATH}}` is the completion proof.

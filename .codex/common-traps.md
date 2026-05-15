@@ -22,6 +22,10 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Prompt reminders as contracts**: if a repeated failure is mechanically
   knowable, fix preflight, route metadata, runtime brief, tool schema, or a
   deterministic gate instead of adding another reminder.
+- **Generated scratchpads as implementation lanes**: if a phase needs one
+  generated markdown artifact and no workspace inspection, use `idiom artifact`
+  or an equivalent host-materialized artifact path. Do not ask the model to
+  create that scratchpad via `write_file` when the harness can own the write.
 - **Magic phrases in briefs**: do not make callers sprinkle prose strings to
   select harness behavior. Use command modes, route metadata, typed artifacts,
   or runtime brief fields.
@@ -95,6 +99,10 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Missing final-state telemetry**: terminal outcomes such as source-satisfied,
   stale, failed-refine, dirty-scope, no-edit-attempt, and verification-blocked
   should be typed events or ledger states, not only words in the transcript.
+- **Missing generated artifacts**: artifact-owned phases should report the
+  output path, report path, and typed state (`ready`, `missing`, `trivial`) in
+  durable metrics. A missing file is a contract outcome, not a normal model
+  success.
 - **No regression fixture**: every harness behavior fix should include a test
   for the bad behavior and at least one valid case that remains allowed.
 - **Privacy leaks in audit**: logs and audit outputs should keep bounded counts,

@@ -356,7 +356,9 @@ func (m *Model) Close() {
 	if !m.managedServer {
 		return
 	}
-	_ = m.controller.Stop(ctx)
+	if m.controller != nil {
+		_ = m.controller.Stop(ctx)
+	}
 }
 
 func (m *Model) chatOptions() llama.ChatOptions {
@@ -421,6 +423,11 @@ func samplingSummaryForOptions(opts llama.ChatOptions) string {
 // verbatim. Returning a basename for local MLX paths makes the server treat it
 // as a Hugging Face repo id.
 func resolveModelID(spec config.LlamaServer, reported string) string {
+	if spec.IsHosted() {
+		if name := strings.TrimSpace(spec.Model); name != "" {
+			return name
+		}
+	}
 	if spec.IsMLX() {
 		if name := strings.TrimSpace(spec.Model); name != "" {
 			return name
@@ -441,13 +448,18 @@ func (m *Model) bootstrap() {
 		go m.startImplementerAsync()
 	}
 
+	if m.plannerSpec.IsHosted() {
+		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, m.plannerSpec.Model)}
+		return
+	}
+
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
 		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, models[0].ID)}
 		return
 	}
 
-	if m.cfg.Chat.AutoStartServer {
+	if m.cfg.Chat.AutoStartServer && m.controller != nil {
 		m.startServerAsync()
 		return
 	}
@@ -672,6 +684,10 @@ func (m *Model) handleSlashCommand(raw string) bool {
 			m.status = "Usage: /server <start|stop|restart|status>"
 			return false
 		}
+		if m.controller == nil {
+			m.status = fmt.Sprintf("Backend %s is hosted at %s; local server controls are unavailable.", m.plannerSpec.Kind, m.plannerSpec.EndpointBaseURL())
+			return false
+		}
 		switch fields[1] {
 		case "start":
 			m.startServerAsync()
@@ -684,7 +700,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 			if m.serverUp {
 				state = "up"
 			}
-			m.status = fmt.Sprintf("Server %s on %s. Model: %s", state, m.cfg.BaseURL(), fallback(m.modelID, "unknown"))
+			m.status = fmt.Sprintf("Server %s on %s. Model: %s", state, m.plannerSpec.EndpointBaseURL(), fallback(m.modelID, "unknown"))
 		default:
 			m.status = "Usage: /server <start|stop|restart|status>"
 		}
@@ -754,6 +770,10 @@ func (m *Model) handleSlashCommand(raw string) bool {
 }
 
 func (m *Model) startServerAsync() {
+	if m.controller == nil {
+		m.status = fmt.Sprintf("Backend %s is hosted at %s; local server controls are unavailable.", m.plannerSpec.Kind, m.plannerSpec.EndpointBaseURL())
+		return
+	}
 	if m.bootingServer {
 		return
 	}
@@ -784,6 +804,10 @@ func (m *Model) startServerAsync() {
 }
 
 func (m *Model) stopServerAsync() {
+	if m.controller == nil {
+		m.status = fmt.Sprintf("Backend %s is hosted at %s; local server controls are unavailable.", m.plannerSpec.Kind, m.plannerSpec.EndpointBaseURL())
+		return
+	}
 	m.status = "Stopping llama-server."
 
 	go func() {
@@ -796,6 +820,10 @@ func (m *Model) stopServerAsync() {
 }
 
 func (m *Model) restartServerAsync() {
+	if m.controller == nil {
+		m.status = fmt.Sprintf("Backend %s is hosted at %s; local server controls are unavailable.", m.plannerSpec.Kind, m.plannerSpec.EndpointBaseURL())
+		return
+	}
 	m.bootingServer = true
 	m.status = "Restarting llama-server."
 

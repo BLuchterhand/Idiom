@@ -98,9 +98,9 @@ No anchors, no Verified Current State, no old_text/new_text. The deliverable IS 
 
 **Two-path disambiguation (Colony bug fix, 2026-05-11):** the markdown-deliverable mode introduces a known model-confusion source. The brief contains a `Deliverable Path` field naming where plan-execute will eventually write the inline content, AND refine itself writes the brief to `{{DRAFT_PATH}}`. Without explicit disambiguation in the meta-draft, models conflate the two — writing the inline content to the deliverable path instead of writing the brief to `{{DRAFT_PATH}}`, or writing nothing at all because they can't reconcile the two-path shape.
 
-The canonical `draft-markdown.md` template (commit follows) includes a "Where you write THIS draft.md" section right before the write step:
+The canonical `draft-markdown.md` template includes a "Where you write THIS draft.md" section right before artifact closeout:
 
-> Your output file (refine's scratchpad for this iteration) is `{{DRAFT_PATH}}`. This is unrelated to the brief's `Deliverable Path` field above. The downstream plan-execute lane will write `Inline content` to `Deliverable Path`; refine itself writes to `{{DRAFT_PATH}}`. Two different files, two different consumers.
+> Your output artifact (refine's scratchpad for this iteration) is `{{DRAFT_PATH}}`. This is unrelated to the brief's `Deliverable Path` field above. The downstream plan-execute lane will write `Inline content` to `Deliverable Path`; idiom writes the model's final answer to `{{DRAFT_PATH}}`. Two different files, two different consumers.
 
 **Implication for custom modes:** any project-extension mode whose brief shape includes a deliverable-path-style field (the brief names a target path that's distinct from where refine writes the brief itself) MUST include a similar two-path disambiguation block. The `TestMarkdownDraftTemplateClarifiesTwoPaths` test locks in the canonical template; custom-mode authors should mirror the wording. Documenting this here so the pattern doesn't have to be rediscovered per project.
 
@@ -150,11 +150,11 @@ Reject malformed override templates early. Required markers per template type:
 
 A missing placeholder is a hard error: `"override template draft-notebook.md is missing required placeholder {{DRAFT_PATH}}"`. Prevents the silent template-fragment-shipping failure mode.
 
-**Auto-append canonical write closure (UX choice, 2026-05-11):**
+**Auto-append canonical artifact closure (updated 2026-05-15):**
 
-The override validator does NOT check for `write_file` mention. Instead, if a project override template's body doesn't contain a `write_file` directive, idiom auto-appends a canonical closure (matching the embedded templates' "STOP AND WRITE NOW" section) with the destination path substituted in. The substitution happens through the normal pipeline.
+The override validator does NOT check for `write_file` mention. Draft generation is now artifact-owned: if a project override template's body doesn't contain an artifact/final-answer closeout, idiom auto-appends a canonical `## Artifact Closeout` section with the destination path substituted in. The substitution happens through the normal pipeline, then the default draft dispatcher runs `idiom artifact --no-tools --mechanical-repair --output <iter>/draft.md --json-out <iter>/draft.artifact.jsonl --report-out <iter>/draft.report.json`.
 
-Rationale: project authors should focus on the body content of their custom mode (what the model writes). Closure boilerplate is harness concern. The author can override the closure by including their own `write_file` instruction (e.g. `submit_plan` instead) — auto-append only fires when truly missing. A one-line stderr message logs each auto-append so users know what idiom did.
+Rationale: project authors should focus on the body content of their custom mode (what the model returns). Closure boilerplate and file materialization are harness concerns. The author can override the closure by including their own final-answer/artifact instructions; auto-append only fires when truly missing. A one-line stderr message logs each auto-append so users know what idiom did. Project overrides should not ask the draft model to call `write_file`; patch/review templates that intentionally run through the writer surface still use their existing scratchpad write contract.
 
 **Directory layout:**
 
@@ -301,7 +301,7 @@ Existing tests in `cmd/idiom/lane_refine_test.go` need updates for §2.1 (exit c
 - **Q2 bug-fix**: `refineSourceExtensions` extended with `.sh`/`.bash`/`.zsh`/`.fish`/`.sql`/`.psql`/`.plsql`/`.proto`/`.tf`/`.hcl`/`.bicep`. Specs citing `lane_postflight.sh:296`-style anchors now correctly route to anchored mode.
 - **Q4 failsoft semantics**: only `ship-as-is` returns exit 0. Failsoft / diverging / no-improvement / max-iters-exhausted all save the best draft AND exit non-zero, with a `> WARNING:` blockquote prepended to the artifact pointing at `.idiom/refine/<title>/iter-N/{review.md,metrics.json}` for findings. Preserves debugging signal while preventing auto-pipe-to-plan-execute.
 - **Q3 taxonomy**: canonical 4 tags shipped (`test-code`, `multi-file`, `markdown-deliverable`, `generic`). Project-specific tags (`save-load`, `c++-system`, etc.) live in overlay traps' `applies_to` fields.
-- **UX auto-append**: override templates without an explicit `write_file` directive get the canonical closure appended at substitution time. Project authors focus on body content; harness handles closure boilerplate.
+- **Artifact-owned draft auto-append**: override templates without an explicit final-answer/artifact closeout get the canonical `## Artifact Closeout` appended at substitution time. Project authors focus on body content; the harness writes the returned artifact to `draft.md` and records the artifact report.
 
 Each step ships independently and provides standalone value.
 

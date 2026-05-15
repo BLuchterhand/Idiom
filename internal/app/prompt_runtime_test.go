@@ -89,6 +89,23 @@ func TestSystemPromptSkipsQwenOverlayForGenericFamily(t *testing.T) {
 	}
 }
 
+func TestSystemPromptUsesResolvedPlannerSpecForModelOverlay(t *testing.T) {
+	model := &Model{
+		cfg: config.Config{
+			LlamaServer: config.LlamaServer{Model: "/models/Qwen3-Coder-30B"},
+			Chat:        config.Chat{ModelFamily: "auto"},
+		},
+		plannerSpec:   config.LlamaServer{Kind: "zai", Model: "glm-5.1"},
+		promptStack:   promptstack.Stack{Text: "Base behavior"},
+		agentModeName: "build",
+	}
+
+	prompt := model.systemPrompt()
+	if strings.Contains(prompt, "model:qwen") {
+		t.Fatalf("resolved non-Qwen planner should suppress inherited config overlay, got:\n%s", prompt)
+	}
+}
+
 func TestSystemPromptCanForceQwenOverlayForModelAlias(t *testing.T) {
 	model := &Model{
 		cfg: config.Config{

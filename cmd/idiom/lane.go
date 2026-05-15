@@ -260,7 +260,10 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			ProjectRoot: opts.ProjectRoot,
 			Mode:        opts.RefineMode,
 		}
-		return runLaneRefine(refineOpts, defaultRefineDispatch, stdout, stderr)
+		dispatch := func(metaBriefPath string, stdout, stderr io.Writer) int {
+			return defaultRefineDispatchWithConfig(metaBriefPath, opts.ConfigPath, stdout, stderr)
+		}
+		return runLaneRefine(refineOpts, dispatch, stdout, stderr)
 	}
 	handled, code, atomReport := runLaneAtomIntakePreflight(opts, stdout, stderr)
 	if handled {

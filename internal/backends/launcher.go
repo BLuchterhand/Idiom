@@ -52,6 +52,9 @@ type LaunchResult struct {
 // non-zero so a launcher that doesn't recognize them isn't given
 // an unfamiliar flag.
 func BuildLaunchSpec(m Model) (LaunchSpec, error) {
+	if isHostedModelKind(m.Kind) {
+		return LaunchSpec{}, fmt.Errorf("backends: hosted model %q (kind=%s) cannot be launched locally", m.Alias, strings.TrimSpace(m.Kind))
+	}
 	if strings.TrimSpace(m.Binary) == "" {
 		return LaunchSpec{}, fmt.Errorf("backends: model %q has empty binary", m.Alias)
 	}
@@ -74,6 +77,15 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 	}
 	argv = append(argv, m.ExtraArgs...)
 	return LaunchSpec{Alias: m.Alias, Argv: argv, Port: m.Port}, nil
+}
+
+func isHostedModelKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "codex", "minimax", "openai_responses", "zai":
+		return true
+	default:
+		return false
+	}
 }
 
 // pidFilePath returns the canonical PID file path for an alias

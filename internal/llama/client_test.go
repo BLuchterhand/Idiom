@@ -233,12 +233,169 @@ func TestLlamaBackendKeepsNativeToolDefinitions(t *testing.T) {
 	}
 }
 
+func TestZAIBackendUsesHostedChatEndpointAuthAndThinking(t *testing.T) {
+	t.Setenv("ZAI_API_KEY", "zai-test-key")
+	enableThinking := false
+	var got map[string]any
+	var auth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		auth = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","reasoning_content":"hidden","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(BackendZAI).WithAPIKeyEnv("ZAI_API_KEY")
+	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "assistant", Content: "prior", ReasoningContent: "do not resend"}, {Role: "user", Content: "hi"}}, ChatOptions{
+		Model:          "glm-5.1",
+		Temperature:    1.0,
+		EnableThinking: &enableThinking,
+		MaxTokens:      128,
+		ToolChoice:     "auto",
+		Tools: []Tool{{
+			Type: "function",
+			Function: ToolFunction{
+				Name:       "read_file",
+				Parameters: json.RawMessage(`{"type":"object"}`),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+	if auth != "Bearer zai-test-key" {
+		t.Fatalf("expected bearer auth, got %q", auth)
+	}
+	if reply.Content != "ok" || reply.ReasoningContent != "hidden" || reply.Usage.TotalTokens != 5 {
+		t.Fatalf("unexpected reply: %#v", reply)
+	}
+	if got["model"] != "glm-5.1" || got["stream"] != false {
+		t.Fatalf("unexpected model/stream payload: %#v", got)
+	}
+	messages, ok := got["messages"].([]any)
+	if !ok || len(messages) != 2 {
+		t.Fatalf("expected messages in payload, got %#v", got["messages"])
+	}
+	if _, ok := messages[0].(map[string]any)["reasoning_content"]; ok {
+		t.Fatalf("hosted chat payload should not resend reasoning_content, got %#v", messages[0])
+	}
+	if _, ok := got["top_k"]; ok {
+		t.Fatalf("hosted ZAI payload should omit local top_k, got %#v", got)
+	}
+	if _, ok := got["chat_template_kwargs"]; ok {
+		t.Fatalf("hosted ZAI payload should omit chat_template_kwargs, got %#v", got)
+	}
+	thinking, ok := got["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("expected thinking disabled payload, got %#v", got["thinking"])
+	}
+	if tools, ok := got["tools"].([]any); !ok || len(tools) != 1 {
+		t.Fatalf("expected native tool definitions, got %#v", got["tools"])
+	}
+}
+
+func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+	var got map[string]any
+	var auth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		auth = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{
+			"output": [
+				{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Need the file."}]},
+				{"type":"function_call","call_id":"call_read","name":"read_file","arguments":"{\"path\":\"README.md\"}"}
+			],
+			"usage":{"input_tokens":11,"output_tokens":7,"total_tokens":18}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).
+		WithBackend(BackendCodex).
+		WithAPIKeyEnv("OPENAI_API_KEY").
+		WithReasoningEffort("high").
+		WithVerbosity("low")
+	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
+		{Role: "system", Content: "You are concise."},
+		{Role: "assistant", ToolCalls: []ToolCall{{
+			ID:   "call_prior",
+			Type: "function",
+			Function: ToolCallFunc{
+				Name:      "lookup",
+				Arguments: `{"query":"x"}`,
+			},
+		}}},
+		{Role: "tool", ToolCallID: "call_prior", Content: "prior output"},
+		{Role: "user", Content: "inspect readme"},
+	}, ChatOptions{
+		Model:      "gpt-5-codex",
+		MaxTokens:  64,
+		ToolChoice: "auto",
+		Tools: []Tool{{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "read_file",
+				Description: "Read a file",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+	if auth != "Bearer openai-test-key" {
+		t.Fatalf("expected bearer auth, got %q", auth)
+	}
+	if reply.Content != "Need the file." || len(reply.ToolCalls) != 1 || reply.ToolCalls[0].Function.Name != "read_file" {
+		t.Fatalf("unexpected responses reply: %#v", reply)
+	}
+	if reply.Usage.PromptTokens != 11 || reply.Usage.CompletionTokens != 7 || reply.Usage.TotalTokens != 18 {
+		t.Fatalf("unexpected usage: %#v", reply.Usage)
+	}
+	if got["model"] != "gpt-5-codex" || got["store"] != false || got["max_output_tokens"].(float64) != 64 {
+		t.Fatalf("unexpected responses payload basics: %#v", got)
+	}
+	reasoning, ok := got["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "high" {
+		t.Fatalf("expected reasoning effort, got %#v", got["reasoning"])
+	}
+	text, ok := got["text"].(map[string]any)
+	if !ok || text["verbosity"] != "low" {
+		t.Fatalf("expected text verbosity, got %#v", got["text"])
+	}
+	tools, ok := got["tools"].([]any)
+	if !ok || len(tools) != 1 || tools[0].(map[string]any)["name"] != "read_file" {
+		t.Fatalf("expected Responses function tools, got %#v", got["tools"])
+	}
+	input, ok := got["input"].([]any)
+	if !ok || len(input) != 4 {
+		t.Fatalf("expected converted input items, got %#v", got["input"])
+	}
+	if input[1].(map[string]any)["type"] != "function_call" || input[2].(map[string]any)["type"] != "function_call_output" {
+		t.Fatalf("expected function_call/function_call_output input items, got %#v", got["input"])
+	}
+}
+
 func TestBackendSupportsNativeTools(t *testing.T) {
 	if BackendSupportsNativeTools(BackendMLX) {
 		t.Fatal("MLX should use idiom textual JSON tools, not native tool parsing")
 	}
 	if !BackendSupportsNativeTools(BackendLlama) {
 		t.Fatal("llama backend should keep native tools")
+	}
+	if !BackendSupportsNativeTools(BackendCodex) || !BackendSupportsNativeTools(BackendZAI) {
+		t.Fatal("hosted backends should keep native tools")
 	}
 	if !NewClient("http://example.invalid", time.Second).WithBackend(BackendLlama).SupportsNativeTools() {
 		t.Fatal("llama client should report native tool support")
@@ -256,6 +413,14 @@ func TestWithBackendNormalizesValue(t *testing.T) {
 	c.WithBackend("MLX")
 	if c.Backend() != BackendMLX {
 		t.Fatalf("expected mlx after WithBackend(MLX), got %q", c.Backend())
+	}
+	c.WithBackend("codex")
+	if c.Backend() != BackendCodex {
+		t.Fatalf("expected codex after WithBackend(codex), got %q", c.Backend())
+	}
+	c.WithBackend("zai")
+	if c.Backend() != BackendZAI {
+		t.Fatalf("expected zai after WithBackend(zai), got %q", c.Backend())
 	}
 	c.WithBackend("unknown")
 	if c.Backend() != BackendLlama {

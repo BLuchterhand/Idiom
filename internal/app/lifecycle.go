@@ -31,10 +31,10 @@ import (
 // a working spec — the project's existing config.json fields fill the
 // rest.
 //
-// out.Model resolves in this priority order: the Model entry's
-// ModelPath (direct-mode file path), then the Model entry's Alias
-// (proxy-mode identifier — overrides any inherited path because the
-// alias is what the proxy routes by), then the inherited defaults.
+// out.Model resolves in this priority order: the Model entry's hosted/API
+// model id, then ModelPath (direct-mode file path), then the Model entry's
+// Alias (proxy-mode identifier — overrides any inherited path because the alias
+// is what the proxy routes by), then the inherited defaults.
 //
 // When backends.Model.Host is empty, the host falls back to defaults
 // or 127.0.0.1 — every shipped config uses 127.0.0.1 and a missing
@@ -55,7 +55,9 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 	if m.Port > 0 {
 		out.Port = m.Port
 	}
-	if mp := strings.TrimSpace(m.ModelPath); mp != "" {
+	if model := strings.TrimSpace(m.Model); model != "" {
+		out.Model = model
+	} else if mp := strings.TrimSpace(m.ModelPath); mp != "" {
 		out.Model = mp
 	} else if alias := strings.TrimSpace(m.Alias); alias != "" {
 		// Alias wins over an inherited model path. Proxy-fronted setups
@@ -64,6 +66,18 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 		// planner's model identifier to the proxy and route the request
 		// to the wrong backend.
 		out.Model = alias
+	}
+	if baseURL := strings.TrimSpace(m.BaseURL); baseURL != "" {
+		out.BaseURL = baseURL
+	}
+	if apiKeyEnv := strings.TrimSpace(m.APIKeyEnv); apiKeyEnv != "" {
+		out.APIKeyEnv = apiKeyEnv
+	}
+	if effort := strings.TrimSpace(m.ReasoningEffort); effort != "" {
+		out.ReasoningEffort = effort
+	}
+	if verbosity := strings.TrimSpace(m.Verbosity); verbosity != "" {
+		out.Verbosity = verbosity
 	}
 	if len(m.ExtraArgs) > 0 {
 		out.ExtraArgs = append([]string(nil), m.ExtraArgs...)
@@ -137,14 +151,14 @@ func explicitAliasCanOverrideRole(model backends.Model, role string) bool {
 // delegate_edit's direct-dispatch fallback gives identical behavior
 // without the extra round-trip.
 func sameLlamaTarget(a, b config.LlamaServer) bool {
-	return a.Host == b.Host && a.Port == b.Port && a.Model == b.Model && a.Kind == b.Kind
+	return a.EndpointBaseURL() == b.EndpointBaseURL() && a.Model == b.Model && strings.EqualFold(a.Kind, b.Kind) && a.APIKeyEnvName() == b.APIKeyEnvName()
 }
 
-// llamaServerBaseURL renders the http://host:port URL for a
-// LlamaServer spec. Centralised so the planner / implementer /
-// classifier wiring all build URLs the same way.
+// llamaServerBaseURL renders the endpoint URL for a LlamaServer spec.
+// Centralised so planner / implementer / classifier wiring all build URLs the
+// same way across local and hosted backends.
 func llamaServerBaseURL(spec config.LlamaServer) string {
-	return fmt.Sprintf("http://%s:%d", spec.Host, spec.Port)
+	return spec.EndpointBaseURL()
 }
 
 type serverStatusMsg struct {
@@ -231,8 +245,9 @@ func New(cfg config.Config) *Model {
 	}
 	if classifierBaseURL != "" {
 		timeout := time.Duration(cfg.RouteClassifier.TimeoutSeconds) * time.Second
-		summaryClient = llama.NewClient(classifierBaseURL, timeout).WithBackend(classifierSpec.Kind)
-		if cfg.RouteClassifier.AutoStartServer && classifierSpec.Binary != "" {
+		classifierSpec.BaseURL = classifierBaseURL
+		summaryClient = llama.NewClientForServer(classifierSpec, timeout)
+		if cfg.RouteClassifier.AutoStartServer && classifierSpec.IsLaunchable() && classifierSpec.Binary != "" {
 			summaryController = llama.NewServerController(classifierSpec, summaryClient)
 		}
 	}
@@ -240,15 +255,17 @@ func New(cfg config.Config) *Model {
 	var implementerClient *llama.Client
 	var implementerController *llama.ServerController
 	if implementerEnabled {
-		implementerClient = llama.NewClient(llamaServerBaseURL(executorSpec), callTimeout).WithBackend(executorSpec.Kind)
-		implementerController = llama.NewServerController(executorSpec, implementerClient)
+		implementerClient = llama.NewClientForServer(executorSpec, callTimeout)
+		if executorSpec.IsLaunchable() {
+			implementerController = llama.NewServerController(executorSpec, implementerClient)
+		}
 	}
 
 	m := &Model{
 		cfg:                   cfg,
 		plannerSpec:           plannerSpec,
 		executorSpec:          executorSpec,
-		client:                llama.NewClient(llamaServerBaseURL(plannerSpec), callTimeout).WithBackend(plannerSpec.Kind),
+		client:                llama.NewClientForServer(plannerSpec, callTimeout),
 		implementerClient:     implementerClient,
 		implementerController: implementerController,
 		summaryClient:         summaryClient,
@@ -262,7 +279,9 @@ func New(cfg config.Config) *Model {
 		traceMode:             traceDisplayCompact,
 		agentModeName:         strings.TrimSpace(cfg.Chat.AgentMode),
 	}
-	m.controller = llama.NewServerController(plannerSpec, m.client)
+	if plannerSpec.IsLaunchable() {
+		m.controller = llama.NewServerController(plannerSpec, m.client)
+	}
 	m.workspace = workspace.NewManager(cfg.Workspace)
 	if cfg.Chat.AttachInstructionFiles {
 		if candidates, explicit := instructionAttachmentCandidates(cfg.Chat); explicit {
@@ -530,7 +549,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.managedServer = m.managedServer || msg.owned
 			m.clearRuntimeErrorIfServerRelated()
 			if msg.running {
-				m.status = fmt.Sprintf("Server ready on %s. Model: %s", m.cfg.BaseURL(), msg.modelID)
+				m.status = fmt.Sprintf("Server ready on %s. Model: %s", m.plannerSpec.EndpointBaseURL(), msg.modelID)
 			} else {
 				m.status = "Server stopped."
 			}
@@ -601,6 +620,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) ensureServerReady(ctx context.Context) error {
+	if m.plannerSpec.IsHosted() {
+		m.serverUp = true
+		m.modelID = resolveModelID(m.plannerSpec, m.plannerSpec.Model)
+		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID})
+		return nil
+	}
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
 		m.serverUp = true
@@ -610,6 +635,9 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	}
 	if !m.cfg.Chat.AutoStartServer {
 		return fmt.Errorf("no llama server detected and chat.auto_start_server is false")
+	}
+	if m.controller == nil {
+		return fmt.Errorf("no launchable backend controller configured")
 	}
 	if err := m.controller.Start(ctx); err != nil {
 		m.logServerEvent(serverStatusMsg{err: err})
@@ -1006,9 +1034,10 @@ func (m *Model) composedSystemPrompt() (string, []promptstack.Source) {
 		return m.composedPrompt, append([]promptstack.Source(nil), m.composedPromptSources...)
 	}
 	mode := m.currentMode()
+	overlayModel := firstNonEmptyString(m.plannerSpec.Model, m.cfg.LlamaServer.Model)
 	stack := promptstack.AppendOverlays(
 		m.promptStack,
-		promptstack.ModelCompatibilityOverlays(m.cfg.Chat.ModelFamily, m.cfg.LlamaServer.Model),
+		promptstack.ModelCompatibilityOverlays(m.cfg.Chat.ModelFamily, overlayModel),
 	)
 	sources := append([]promptstack.Source(nil), stack.Sources...)
 	parts := make([]string, 0, 4)
@@ -1034,7 +1063,7 @@ func (m *Model) composedPromptKey() string {
 	return strings.Join([]string{
 		m.currentMode().Name,
 		strings.TrimSpace(m.cfg.Chat.ModelFamily),
-		strings.TrimSpace(m.cfg.LlamaServer.Model),
+		strings.TrimSpace(firstNonEmptyString(m.plannerSpec.Model, m.cfg.LlamaServer.Model)),
 	}, "\x00")
 }
 

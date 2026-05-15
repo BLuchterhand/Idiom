@@ -23,46 +23,6 @@ output into reviewable engineering work.
 The main architectural implication is that Idiom must make agent work
 observable and enforceable without hardcoding the model's strategy.
 
-## End-To-End Shape
-
-```mermaid
-flowchart LR
-    User["User or external agent"]
-    CLI["cmd/idiom CLI"]
-    TUI["internal/app TUI"]
-    Sidecar["Sidecar / MCP / tool schemas"]
-    Lanes["Lane orchestration"]
-    Prompt["Prompt stack and profiles"]
-    Runner["Runner loop"]
-    Contracts["Autonomy and readiness contracts"]
-    Tools["Workspace tool manager"]
-    Memory["Repository memory graph"]
-    Backend["Local model backend"]
-    Verify["Verification and source sanity"]
-    Telemetry["Telemetry, transcripts, audit"]
-    Eval["Eval and learning loop"]
-
-    User --> CLI
-    User --> TUI
-    User --> Sidecar
-    CLI --> Lanes
-    TUI --> Runner
-    Sidecar --> Tools
-    Lanes --> Prompt
-    Prompt --> Runner
-    Runner --> Contracts
-    Runner <--> Backend
-    Runner --> Tools
-    Tools --> Memory
-    Tools --> Verify
-    Runner --> Telemetry
-    Verify --> Telemetry
-    Telemetry --> Eval
-    Eval --> Prompt
-    Eval --> Memory
-    Eval --> Contracts
-```
-
 ## Major Systems
 
 | System | Primary package or docs | Responsibility |

@@ -28,6 +28,9 @@ type refineIterMetrics struct {
 	EndedAt            string `json:"ended_at,omitempty"`
 	DurationMS         int64  `json:"duration_ms,omitempty"`
 	DraftDispatchExit  int    `json:"draft_dispatch_exit"`
+	DraftPath          string `json:"draft_path,omitempty"`
+	DraftState         string `json:"draft_state,omitempty"` // pending | ready | missing | trivial:<reason>
+	ArtifactReportPath string `json:"artifact_report_path,omitempty"`
 	LintExit           int    `json:"lint_exit,omitempty"` // §2.3 — captured before review
 	ReviewDispatchExit int    `json:"review_dispatch_exit"`
 	Verdict            string `json:"verdict,omitempty"`
@@ -115,8 +118,8 @@ func inferRefinePhase(metaBriefPath string) string {
 // refinePhaseRouting picks pool + model for a refine subprocess
 // based on the phase inferred from the meta-brief filename. Review is
 // intentionally smaller to keep runaway prose contained if a model
-// ignores the write_file instruction; patch and draft need enough
-// room to emit the full corrected draft. Read/write discipline
+// ignores the scratchpad contract; patch and draft need enough room
+// to emit the full corrected draft. Read/write discipline
 // belongs in the phase prompt and runner readiness guidance, not in a
 // wrapper-local fixed tool-step ceiling that can mask stale specs as
 // "budget" failures.
@@ -133,29 +136,17 @@ func refinePhaseRouting(metaBriefPath string) (pool, model string, maxTokens int
 }
 
 func defaultRefineDispatch(metaBriefPath string, stdout, stderr io.Writer) int {
+	return defaultRefineDispatchWithConfig(metaBriefPath, "", stdout, stderr)
+}
+
+func defaultRefineDispatchWithConfig(metaBriefPath string, configPath string, stdout, stderr io.Writer) int {
 	binary, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: cannot locate idiom binary: %v\n", err)
 		return 2
 	}
-	pool, model, maxTokens := refinePhaseRouting(metaBriefPath)
-	// Route through the local queue daemon so concurrent refine
-	// sessions serialize access to whichever MLX backend the phase
-	// targets. `idiom queue run` exits non-zero with a clear
-	// "start the daemon" message if unreachable, which surfaces
-	// correctly to the caller via this function's exit code.
-	cmd := exec.Command(binary,
-		"queue", "run",
-		"--pool", pool,
-		"--label", "refine",
-		"--quiet",
-		"--",
-		binary, "lane", "implement", "--no-lint", "--json",
-		"--model", model,
-		"--no-thinking",
-		"--max-tokens", strconv.Itoa(maxTokens),
-		metaBriefPath,
-	)
+	args := defaultRefineDispatchArgs(binary, configPath, metaBriefPath)
+	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -165,6 +156,66 @@ func defaultRefineDispatch(metaBriefPath string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func defaultRefineDispatchArgs(binary, configPath, metaBriefPath string) []string {
+	configPath = defaultRefineConfigPath(configPath)
+	pool, model, maxTokens := refinePhaseRouting(metaBriefPath)
+	// Route through the local queue daemon so concurrent refine
+	// sessions serialize access to whichever MLX backend the phase
+	// targets. `idiom queue run` exits non-zero with a clear
+	// "start the daemon" message if unreachable, which surfaces
+	// correctly to the caller via this function's exit code.
+	if inferRefinePhase(metaBriefPath) == "draft" {
+		outputPath, jsonOut, reportOut := refineDraftArtifactPaths(metaBriefPath)
+		return []string{binary,
+			"queue", "run",
+			"--pool", pool,
+			"--label", "refine-draft-artifact",
+			"--quiet",
+			"--",
+			binary, "artifact",
+			"--config", configPath,
+			"--no-tools",
+			"--mechanical-repair",
+			"--model", model,
+			"--max-tokens", strconv.Itoa(maxTokens),
+			"--prompt-file", metaBriefPath,
+			"--output", outputPath,
+			"--json-out", jsonOut,
+			"--report-out", reportOut,
+		}
+	}
+	return []string{binary,
+		"queue", "run",
+		"--pool", pool,
+		"--label", "refine",
+		"--quiet",
+		"--",
+		binary, "lane", "implement", "--no-lint", "--json",
+		"--config", configPath,
+		"--model", model,
+		"--no-thinking",
+		"--max-tokens", strconv.Itoa(maxTokens),
+		metaBriefPath,
+	}
+}
+
+func defaultRefineConfigPath(configPath string) string {
+	if strings.TrimSpace(configPath) != "" {
+		return configPath
+	}
+	if envConfig := strings.TrimSpace(os.Getenv("IDIOM_CONFIG")); envConfig != "" {
+		return envConfig
+	}
+	return ".idiom/config.json"
+}
+
+func refineDraftArtifactPaths(metaBriefPath string) (outputPath, jsonOut, reportOut string) {
+	iterDir := filepath.Dir(metaBriefPath)
+	return filepath.Join(iterDir, "draft.md"),
+		filepath.Join(iterDir, "draft.artifact.jsonl"),
+		filepath.Join(iterDir, "draft.report.json")
 }
 
 func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, stderr io.Writer) int {
@@ -284,9 +335,13 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		metrics := refineIterMetrics{Iter: iter, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 		if iter == 1 {
 			metrics.Phase = "draft"
+			_, _, reportOut := refineDraftArtifactPaths(filepath.Join(iterDir, "meta-draft.md"))
+			metrics.ArtifactReportPath = refineWorkspaceRel(opts.ProjectRoot, reportOut)
 		} else {
 			metrics.Phase = "patch"
 		}
+		metrics.DraftPath = refineWorkspaceRel(opts.ProjectRoot, draftPath)
+		metrics.DraftState = "pending"
 		activeMetrics = &metrics
 		activeIterDir = iterDir
 
@@ -327,13 +382,16 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			}
 		}
 		if _, err := os.Stat(draftPath); err != nil {
+			metrics.DraftState = "missing"
 			fmt.Fprintf(stderr, "refine: iter %d produced no draft at %s: %v\n", iter, draftPath, err)
 			return failsoft(iter, "draft-missing", 1)
 		}
 		if trivial, reason := refineDraftIsTrivial(draftPath); trivial {
+			metrics.DraftState = "trivial:" + reason
 			fmt.Fprintf(stderr, "refine: iter %d produced a trivially-empty draft at %s (%s); treating as draft-missing\n", iter, draftPath, reason)
 			return failsoft(iter, "draft-trivial", 1)
 		}
+		metrics.DraftState = "ready"
 		lastDraftPath = draftPath
 
 		lintExit, lintOutput := captureRefineLintOutput(draftPath, iterDir, opts.ProjectRoot, mode, specDeliverableTargets, stderr)
@@ -472,7 +530,7 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 	}
 	if strings.HasPrefix(source, "project-override:") {
 		fmt.Fprintf(stderr, "refine: draft template = %s\n", source)
-		template = ensureRefineDraftWriteClosure(template, stderr, source)
+		template = ensureRefineDraftArtifactClosure(template, stderr, source)
 	}
 	// §6.1 Gap 6 (Colony harness-side fix): extract deliverable
 	// targets from the spec text and inline them as pre-filled context
@@ -492,7 +550,7 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 		"{{DELIVERABLE_TARGET}}", target,
 		"{{DELIVERABLE_TARGET_CONTEXT}}", deliverableContext,
 	).Replace(template)
-	body = ensureRefineMetaDraftWriteScope(body, refineWorkspaceRel(opts.ProjectRoot, draftPath))
+	body = ensureRefineDraftArtifactOutput(body, refineWorkspaceRel(opts.ProjectRoot, draftPath))
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
@@ -520,23 +578,23 @@ func refineQuotedSpecBody(specBody string) string {
 	return strings.Join(lines, "\n")
 }
 
-func ensureRefineMetaDraftWriteScope(body, draftPath string) string {
+func ensureRefineDraftArtifactOutput(body, draftPath string) string {
 	draftPath = strings.TrimSpace(draftPath)
 	if draftPath == "" {
 		return body
 	}
-	if strings.Contains(strings.ToLower(body), "## files to modify") && strings.Contains(body, "`"+draftPath+"`") {
+	if strings.Contains(strings.ToLower(body), "## artifact output") && strings.Contains(body, "`"+draftPath+"`") {
 		return body
 	}
-	block := refineMetaDraftWriteScopeBlock(draftPath)
+	block := refineDraftArtifactOutputBlock(draftPath)
 	if idx := strings.Index(body, "\n\n"); idx >= 0 {
 		return body[:idx] + "\n\n" + block + "\n\n" + body[idx+2:]
 	}
 	return strings.TrimRight(body, "\n") + "\n\n" + block + "\n"
 }
 
-func refineMetaDraftWriteScopeBlock(draftPath string) string {
-	return fmt.Sprintf("## Files To Modify\n\n| File | Change |\n|------|--------|\n| `%s` | NEW FILE: refine scratchpad draft brief |", draftPath)
+func refineDraftArtifactOutputBlock(draftPath string) string {
+	return fmt.Sprintf("## Artifact Output\n\nPath: `%s`\nContract: final-answer artifact; idiom writes the model's final answer to this scratchpad path.", draftPath)
 }
 
 // refineDeliverableContextBlock renders the substitution block that
@@ -1031,8 +1089,8 @@ func filesAreAllMarkdownDeliverables(files []string) bool {
 // refineDraftRequiredPlaceholders lists the substitution tokens a
 // project override draft template MUST contain. Missing any one means
 // the substituted body would be malformed (no destination path, no
-// content guidance) and the dispatched model would wedge. Better to
-// fail at template-load time than after a 90s draft phase.
+// content guidance) and the artifact draft would wedge. Better to fail
+// at template-load time than after a model call.
 var refineDraftRequiredPlaceholders = []string{"{{DRAFT_PATH}}", "{{SPEC_BODY}}", "{{TITLE}}"}
 
 // validateRefineDraftOverride enforces the §2.2.1 safety lint: every
@@ -1040,10 +1098,10 @@ var refineDraftRequiredPlaceholders = []string{"{{DRAFT_PATH}}", "{{SPEC_BODY}}"
 // pipeline will replace, OR the resulting meta-brief loses its
 // destination path / spec body / title. Also requires at least one
 // `## ` heading (a brief without sections won't lint-pass downstream
-// anyway). The write_file closure is NOT validated here — see
-// ensureRefineDraftWriteClosure: idiom auto-appends a canonical
-// write directive when missing so override authors can focus on the
-// body content without remembering closure boilerplate.
+// anyway). The artifact closeout is NOT validated here — see
+// ensureRefineDraftArtifactClosure: idiom auto-appends a canonical
+// final-answer directive when missing so override authors can focus on
+// the body content without remembering closure boilerplate.
 func validateRefineDraftOverride(body, path string) error {
 	for _, ph := range refineDraftRequiredPlaceholders {
 		if !strings.Contains(body, ph) {
@@ -1056,50 +1114,38 @@ func validateRefineDraftOverride(body, path string) error {
 	return nil
 }
 
-// refineCanonicalWriteClosure is the standard "STOP AND WRITE NOW"
-// block appended to override templates that don't include their own
-// write directive. Matches the canonical anchored/markdown templates'
-// closing section so the dispatched-model contract is consistent
-// across all modes — project authors write the body content; the
-// harness ensures closure. The {{DRAFT_PATH}} placeholder gets
-// substituted by the existing pipeline.
-const refineCanonicalWriteClosure = `
+// refineCanonicalArtifactClosure is the standard final-answer block
+// appended to override templates that don't include their own artifact
+// closeout. Draft generation is host-owned: the model returns the
+// completed brief as its final answer, and idiom writes that answer to
+// {{DRAFT_PATH}} through the artifact command.
+const refineCanonicalArtifactClosure = `
 
-## STOP AND WRITE NOW
+## Artifact Closeout
 
-Your VERY NEXT TOOL CALL MUST be ` + "`write_file`" + ` with:
-
-- ` + "`path`" + `: ` + "`{{DRAFT_PATH}}`" + `
-- ` + "`content`" + `: the filled-in brief above, with every ` + "`<bracket>`" + ` replaced.
-
-Stay on the draft deliverable: write the file from the embedded spec
-and recorded gaps instead of doing source discovery in this phase. The
-file content goes inside the ` + "`write_file`" + ` call's ` + "`content`" + ` argument, not in
-a chat message. After ` + "`write_file`" + ` returns success, give a single-sentence
-final answer and stop.
+Return only the filled-in brief as your final answer. Do not call tools,
+do not edit files, do not run shell commands, and do not wrap the brief
+in an outer code fence. Idiom writes your final answer to ` + "`{{DRAFT_PATH}}`" + `.
 
 ## Completion
 
-The successful ` + "`write_file`" + ` result is the completion proof. Do not run
-` + "`test -f`" + `, ` + "`git diff`" + `, ` + "`shell`" + `, or any other follow-up check for this
-scratchpad file.
+The artifact command writing ` + "`{{DRAFT_PATH}}`" + ` is the completion proof.
 `
 
-// ensureRefineDraftWriteClosure appends the canonical write-closure
-// block when the template body has no write_file directive. The
+// ensureRefineDraftArtifactClosure appends the canonical artifact
+// closeout when the template body has no final-answer directive. The
 // project-author UX line: drop a markdown file with body content,
-// idiom handles closure boilerplate uniformly. If the override
-// author wants different closure wording (e.g. submit_plan instead
-// of write_file), they include it in their template and the closure
-// is left untouched.
-func ensureRefineDraftWriteClosure(body string, stderr io.Writer, source string) string {
-	if strings.Contains(strings.ToLower(body), "write_file") {
+// idiom handles closure boilerplate uniformly. If the override author
+// already explains final-answer artifact output, leave it untouched.
+func ensureRefineDraftArtifactClosure(body string, stderr io.Writer, source string) string {
+	lower := strings.ToLower(body)
+	if strings.Contains(lower, "## artifact closeout") || strings.Contains(lower, "final answer") {
 		return body
 	}
 	if stderr != nil && source != "" {
-		fmt.Fprintf(stderr, "refine: %s has no write_file directive; appending canonical closure\n", source)
+		fmt.Fprintf(stderr, "refine: %s has no artifact closeout; appending canonical artifact closure\n", source)
 	}
-	trimmed := strings.TrimRight(body, "\n") + refineCanonicalWriteClosure
+	trimmed := strings.TrimRight(body, "\n") + refineCanonicalArtifactClosure
 	return trimmed
 }
 
@@ -2078,7 +2124,7 @@ func refineEvidenceLineText(line string) string {
 // never populate RuntimeBrief.RequiredEditPaths. Empty required-
 // edit-paths means the auto-salvage path (#86) skips with
 // `count=0, want 1`, and the lane wedges on the completion gate
-// when the model forgets to call write_file. Returns the input
+// when a writer path cannot materialize its scratchpad. Returns the input
 // unchanged when the relative computation fails (different drive,
 // projectRoot empty, etc.) so the substitution stays well-formed.
 func refineWorkspaceRel(projectRoot, p string) string {

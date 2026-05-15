@@ -89,6 +89,63 @@
         "default_coder": "qwen3-coder-30b",
         "default_classifier": "qwen3.6-27b"
       }
+    },
+    "glm-5.1": {
+      "_comment": "Hosted Z.ai GLM-5.1 profile. Set ZAI_API_KEY in the shell; do not store the key in this file. Local backend start/proxy commands do not apply to this hosted profile.",
+      "models": [
+        {
+          "alias": "glm-5.1",
+          "kind": "zai",
+          "model": "glm-5.1",
+          "base_url": "https://api.z.ai/api/coding/paas/v4",
+          "api_key_env": "ZAI_API_KEY",
+          "roles": ["planner", "executor", "classifier"]
+        }
+      ],
+      "proxy": {
+        "default_alias": "glm-5.1",
+        "default_planner": "glm-5.1",
+        "default_executor": "glm-5.1",
+        "default_coder": "glm-5.1",
+        "default_classifier": "glm-5.1"
+      }
+    },
+    "minimax-m2.7": {
+      "_comment": "Hosted MiniMax M2.7 implementer profile. Local Qwen 35B handles planner/classifier; MiniMax M2.7 serves as the hosted executor (implementer). Set MINIMAX_API_KEY in the shell; do not store the key in this file. `idiom backend start --profile minimax-m2.7` launches the local Qwen planner only; the hosted executor requires no local process.",
+      "models": [
+        {
+          "alias": "qwen3.6-35b",
+          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-mlx-4bit-ud",
+          "port": 47780,
+          "cache_size": 4,
+          "cache_bytes": 12884901888,
+          "max_tokens": 8192,
+          "extra_args": [
+            "--temp", "0.6",
+            "--top-p", "0.95",
+            "--top-k", "20",
+            "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}"
+          ],
+          "roles": ["planner", "classifier"]
+        },
+        {
+          "alias": "MiniMax-M2.7",
+          "kind": "minimax",
+          "model": "MiniMax-M2.7",
+          "base_url": "https://api.minimax.io/v1",
+          "api_key_env": "MINIMAX_API_KEY",
+          "roles": ["executor"]
+        }
+      ],
+      "proxy": {
+        "listen": 47680,
+        "default_alias": "qwen3.6-35b",
+        "default_planner": "qwen3.6-35b",
+        "default_executor": "MiniMax-M2.7",
+        "default_coder": "MiniMax-M2.7",
+        "default_classifier": "qwen3.6-35b"
+      }
     }
   }
 }
