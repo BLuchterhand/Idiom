@@ -40,7 +40,8 @@
     "max_model_calls": 40,
     "max_duration_seconds": 780,
     "request_timeout_seconds": 900,
-    "server_start_timeout_seconds": 240
+    "server_start_timeout_seconds": 240,
+    "implementation_dispatch": "plan_execute"
   },
   "route_classifier": {
     "enabled": false,

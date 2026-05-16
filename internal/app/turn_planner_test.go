@@ -3,8 +3,11 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -13,7 +16,9 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
+	"idiom/internal/workspace"
 )
 
 func TestFallbackTurnRouteRecognizesDebugLogs(t *testing.T) {
@@ -76,6 +81,16 @@ func TestFallbackTurnRouteRecognizesGDScriptEdits(t *testing.T) {
 	}
 }
 
+func TestFallbackTurnRouteRecognizesStartWorkingOnNamedDocAsDocsEdit(t *testing.T) {
+	plan := fallbackTurnRoute("can you please start working on docs/writer-route-decision-report-only-plan.md?", agent.BuildMode())
+	if plan.Family != "docs_edit" {
+		t.Fatalf("family = %q, want docs_edit", plan.Family)
+	}
+	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
 func TestCorrectTurnRoutePlanDowngradesImplementationLikeExplanationQuestion(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Explain how this harness uses sub-agents.", agent.BuildMode())
 	if plan.Family != "architecture" {
@@ -84,6 +99,232 @@ func TestCorrectTurnRoutePlanDowngradesImplementationLikeExplanationQuestion(t *
 	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
+}
+
+func TestRunPromptOnceDispatchesStartWorkingPlanDocToPlanExecute(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	planDoc := strings.Join([]string{
+		"# Plan",
+		"",
+		"## Expected File Scope",
+		"",
+		"| File | Purpose |",
+		"|---|---|",
+		"| target.txt | replace fixture text |",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(root, "docs", "plan.md"), []byte(planDoc), 0o644); err != nil {
+		t.Fatalf("write plan doc: %v", err)
+	}
+
+	var chatRequests atomic.Int64
+	var plannerPromptRequests atomic.Int64
+	var sawRequiredScope atomic.Bool
+	var sawReviewPrompt atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "mock-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read request: %v", err)
+			}
+			chatRequests.Add(1)
+			requestText := string(body)
+			reply := ""
+			switch {
+			case strings.Contains(requestText, "Allowed Repair Paths"):
+				if strings.Contains(requestText, `"enable_thinking":false`) {
+					t.Fatalf("review request should not inherit candidate-scope recovery thinking override:\n%s", requestText)
+				}
+				sawReviewPrompt.Store(true)
+				reply = "Decision: pass\n\nVerification Checklist:\n- target.txt contains the requested replacement.\n- No out-of-scope paths were changed.\n- Planner-owned build or test commands remain pending outside this mocked lane."
+			case strings.Contains(requestText, "Plan submitted with"):
+				reply = "Plan submitted."
+			default:
+				if strings.Contains(requestText, `"enable_thinking":false`) {
+					t.Fatalf("initial in-process plan-execute request forced thinking off:\n%s", requestText)
+				}
+				plannerPromptRequests.Add(1)
+				if !strings.Contains(requestText, "replace fixture text") {
+					t.Fatalf("planner request did not include referenced plan document body:\n%s", requestText)
+				}
+				for _, want := range []string{
+					"Required `submit_plan` coverage for this run",
+					"## Files to Modify",
+					"- target.txt",
+				} {
+					if !strings.Contains(requestText, want) {
+						t.Fatalf("planner request missing required edit-scope contract %q:\n%s", want, requestText)
+					}
+				}
+				for _, forbidden := range []string{
+					"Allowed `submit_plan` edit scope for this run",
+					"No required_edit_paths list is active",
+					"## Candidate Edit Scope From Target References",
+				} {
+					if strings.Contains(requestText, forbidden) {
+						t.Fatalf("planner request still used candidate-scope contract %q:\n%s", forbidden, requestText)
+					}
+				}
+				sawRequiredScope.Store(true)
+				reply = "<tool_call>\n" +
+					`{"tool":"submit_plan","rationale":"Update target.txt from the referenced plan document.","edits":[{"path":"target.txt","old_text":"old\n","new_text":"new\n","purpose":"replace the target fixture text"}]}`
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": reply},
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = server.URL
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	thinkingOn := true
+	cfg.Chat.EnableThinking = &thinkingOn
+	cfg.Chat.PreserveThinking = true
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.RunPromptOnce(context.Background(), "can you please start working on docs/plan.md?")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(got) != "new\n" {
+		t.Fatalf("target content = %q, want new line", string(got))
+	}
+	planArtifact := loadOnlyTimestampedPlanArtifactForTest(t, root)
+	if planArtifact.SchemaVersion != workspace.PlanArtifactSchemaVersion {
+		t.Fatalf("plan artifact schema = %q, want %q", planArtifact.SchemaVersion, workspace.PlanArtifactSchemaVersion)
+	}
+	if planArtifact.SessionID == "" {
+		t.Fatalf("plan artifact should carry the plan-execute session id")
+	}
+	if len(planArtifact.Edits) != 1 || planArtifact.Edits[0].Path != "target.txt" {
+		t.Fatalf("plan artifact edits = %#v, want one target.txt edit", planArtifact.Edits)
+	}
+	if !strings.Contains(answer, "plan-then-execute summary") {
+		t.Fatalf("expected plan-execute summary answer, got %q", answer)
+	}
+	if plannerPromptRequests.Load() != 1 {
+		t.Fatalf("expected one initial planner request, got %d", plannerPromptRequests.Load())
+	}
+	if !sawRequiredScope.Load() {
+		t.Fatalf("expected TUI plan-doc scope to become active required_edit_paths")
+	}
+	if !sawReviewPrompt.Load() {
+		t.Fatalf("expected review-repair prompt after executor phase")
+	}
+	if chatRequests.Load() < 2 {
+		t.Fatalf("expected planner and review chat requests, got %d", chatRequests.Load())
+	}
+}
+
+func loadOnlyTimestampedPlanArtifactForTest(t *testing.T, root string) workspace.PlanArtifact {
+	t.Helper()
+
+	paths, err := filepath.Glob(filepath.Join(root, ".idiom", "plans", "*.plan.json"))
+	if err != nil {
+		t.Fatalf("glob plan artifacts: %v", err)
+	}
+	var stamped []string
+	for _, path := range paths {
+		if filepath.Base(path) == "last.plan.json" {
+			continue
+		}
+		stamped = append(stamped, path)
+	}
+	if len(stamped) != 1 {
+		t.Fatalf("expected one timestamped plan artifact under .idiom/plans, got %d: %v", len(stamped), stamped)
+	}
+	artifact, err := workspace.LoadPlanArtifact(stamped[0])
+	if err != nil {
+		t.Fatalf("load plan artifact %s: %v", stamped[0], err)
+	}
+	return artifact
+}
+
+func TestComposeImplementationBriefPromotesPlanDocumentScopeToRequiredPaths(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	planDoc := strings.Join([]string{
+		"# Handoff",
+		"",
+		"## Files to Modify",
+		"",
+		"| File | Purpose |",
+		"|---|---|",
+		"| target.txt | Do the important thing |",
+		"",
+		"## Implementation Steps",
+		"",
+		"1. Preserve this body text for the planner.",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(root, "docs", "handoff.md"), []byte(planDoc), 0o644); err != nil {
+		t.Fatalf("write handoff: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	plan := promptExecutionPlan{
+		route:        turnRoutePlan{Family: "docs_edit"},
+		runtimeBrief: runtimeBriefForTest([]string{"docs/handoff.md"}),
+	}
+	brief := composeImplementationBrief("start working on docs/handoff.md", plan, cfg)
+	if !strings.Contains(brief, "## Files to Modify\n\n- target.txt") {
+		t.Fatalf("brief missing active required edit scope:\n%s", brief)
+	}
+	for _, want := range []string{
+		"## Referenced Plan Documents",
+		"### docs/handoff.md",
+		"> ## Files to Modify",
+		"> | target.txt | Do the important thing |",
+		"> 1. Preserve this body text for the planner.",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+	if got := requiredEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
+		t.Fatalf("plan document scope must become active required edit paths, got %#v\n%s", got, brief)
+	}
+}
+
+func runtimeBriefForTest(targetRefs []string) workerruntime.WorkerRuntimeBrief {
+	return workerruntime.WorkerRuntimeBrief{TargetRefs: targetRefs}
 }
 
 func TestCorrectTurnRoutePlanUpgradesVerificationOnlyWithEditIntent(t *testing.T) {

@@ -186,7 +186,11 @@ type Model struct {
 	plannerOwnedVerification      bool
 	maxTokensOverride             int
 	disableThinkingOverride       bool
+	planExecuteActive             bool
+	modelThinkingFloor            bool
+	modelSwapped                  bool
 	traceMode                     traceDisplayMode
+	planPhaseText                 string
 
 	workspaceOverviewInjected bool
 
@@ -196,6 +200,7 @@ type Model struct {
 	approvalSerial      sync.Mutex
 	approvalPending     *pendingApproval
 	detailPanelVisible  bool
+	modelPopup          modelPopupState
 	rollbackHistory     []rollbackEntry
 	instructionAttacher *agent.InstructionAttacher
 	mdRenderer          *glamour.TermRenderer
@@ -204,6 +209,9 @@ type Model struct {
 	messageRenderWidth  int
 	messageRenderHash   uint64
 	messageRenderMD     bool
+	perMsgRenderCache   []string
+	perMsgRenderHashes  []uint64
+	perMsgRenderLen     int
 
 	summaryClient     llama.LLMClient
 	summaryController *llama.ServerController
@@ -256,11 +264,31 @@ type toolTraceMsg struct {
 	running bool
 }
 
-// planRefreshMsg requests a re-render of the plan panel. Emitted after
-// any plan-mutating tool result (write success, task_ledger update,
-// write failure) so the user sees the updated plan without having to
-// toggle the tab or focus the panel.
 type planRefreshMsg struct{}
+
+type planPhaseMsg struct {
+	phase  string
+	detail string
+}
+
+func formatPlanPhaseText(phase, detail string) string {
+	label := ""
+	switch strings.TrimSpace(phase) {
+	case "planning":
+		label = "Planning"
+	case "executing":
+		label = "Executing"
+	case "reviewing":
+		label = "Reviewing"
+	default:
+		label = strings.Title(phase)
+	}
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return label + "..."
+	}
+	return label + ": " + detail
+}
 
 type traceDisplayMode string
 
@@ -318,6 +346,7 @@ func (m *Model) chatOptions() llama.ChatOptions {
 		EnableThinking:     enableThinking,
 		PreserveThinking:   preserveThinking,
 		ChatTemplateKwargs: chatTemplateKwargs,
+		ModelThinkingFloor: m.modelThinkingFloor,
 		MaxTokens:          m.cfg.Chat.MaxTokens,
 	}
 }
@@ -682,6 +711,9 @@ func (m *Model) invalidateMessageRenderCache() {
 	m.messageRenderWidth = 0
 	m.messageRenderHash = 0
 	m.messageRenderMD = false
+	m.perMsgRenderCache = nil
+	m.perMsgRenderHashes = nil
+	m.perMsgRenderLen = 0
 }
 
 func (m *Model) setHistoryPanelOpen(open bool) {

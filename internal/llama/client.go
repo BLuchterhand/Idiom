@@ -90,6 +90,7 @@ type ChatOptions struct {
 	// where server-start defaults normally own those knobs. llama.cpp always
 	// receives kwargs when present; MLX receives them only when this is true.
 	ChatTemplateKwargs bool
+	ModelThinkingFloor bool
 	MaxTokens          int
 	Tools              []Tool
 	ToolChoice         string

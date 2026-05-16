@@ -78,6 +78,62 @@ Add the required policy gate.
 	}
 }
 
+func TestParseToolRequestAcceptsQwenJSONToolCallEnvelope(t *testing.T) {
+	req, raw, ok, err := ParseToolRequest(`<tool_call>
+{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}
+</tool_call>`)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "read_file" || req.Path != "README.md" || req.StartLine != 1 || req.EndLine != 20 {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if raw != `{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}` {
+		t.Fatalf("unexpected raw payload: %q", raw)
+	}
+}
+
+func TestParseToolRequestAcceptsUnterminatedQwenJSONToolCallEnvelope(t *testing.T) {
+	req, raw, ok, err := ParseToolRequest(`<tool_call>
+{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}`)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "read_file" || req.Path != "README.md" || req.StartLine != 1 || req.EndLine != 20 {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if raw != `{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}` {
+		t.Fatalf("unexpected raw payload: %q", raw)
+	}
+}
+
+func TestParseToolRequestAcceptsQwenJSONNameArgumentsEnvelope(t *testing.T) {
+	req, raw, ok, err := ParseToolRequest(`<tool_call>
+{"name":"submit_plan","arguments":{"rationale":"Update target.","edits":[{"path":"target.txt","old_text":"old\n","new_text":"new\n","purpose":"replace target"}]}}
+</tool_call>`)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "submit_plan" || req.Rationale != "Update target." {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "target.txt" || req.Edits[0].OldText != "old\n" || req.Edits[0].NewText != "new\n" {
+		t.Fatalf("unexpected edits: %#v", req.Edits)
+	}
+	if !strings.Contains(raw, `"tool":"submit_plan"`) {
+		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
+	}
+}
+
 func TestParseToolRequestIgnoresProseQwenXMLFunctionReference(t *testing.T) {
 	_, _, ok, err := ParseToolRequest("Use `<function=submit_plan>` only inside a tool envelope.")
 	if err != nil || ok {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -10,11 +11,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"cmp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"idiom/internal/frontier/pathparse"
 )
 
 // refineIterMetrics captures observable per-iteration data and is
@@ -1262,6 +1264,9 @@ func extractDeliverableTargets(specBody, mode string) []string {
 	if targets := filterRefineFilePaths(extractFilesToModify(specBody)); len(targets) > 0 {
 		return targets
 	}
+	if targets := extractPlanFileScopeTargets(specBody); len(targets) > 0 {
+		return targets
+	}
 	if targets := extractScopeFileTargets(specBody); len(targets) > 0 {
 		return targets
 	}
@@ -1278,6 +1283,19 @@ func extractDeliverableTargets(specBody, mode string) []string {
 		targets = append(targets, path)
 	}
 	return normalizeRefineTargets(targets)
+}
+
+func extractPlanFileScopeTargets(specBody string) []string {
+	return filterRefineFilePaths(pathparse.MentionedWorkspacePathsUnderHeadings(
+		specBody,
+		"expected file scope",
+		"implementation file scope",
+		"file scope",
+		"files to modify",
+		"files to edit",
+		"write scope",
+		"edit scope",
+	))
 }
 
 func extractScopeFileTargets(specBody string) []string {
@@ -1538,10 +1556,36 @@ func pathLooksLikeFile(path string) bool {
 	if strings.HasPrefix(path, ".") {
 		return true
 	}
-	if filepath.Ext(path) != "" {
-		return true
+	if ext := filepath.Ext(path); ext != "" {
+		return refineKnownFileExtension(ext)
 	}
 	return refineKnownFileBasenames[path]
+}
+
+func refineKnownFileExtension(ext string) bool {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext == "" {
+		return false
+	}
+	for _, known := range refineSourceExtensions {
+		if ext == known {
+			return true
+		}
+	}
+	for _, known := range refineMarkdownExtensions {
+		if ext == known {
+			return true
+		}
+	}
+	switch ext {
+	case ".jsonl", ".mdx", ".markdown", ".html", ".htm", ".css", ".scss", ".sass",
+		".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+		".mod", ".sum", ".lock", ".ini", ".cfg", ".conf", ".env", ".ps1",
+		".gradle", ".properties", ".toml", ".xml", ".csv", ".tsv":
+		return true
+	default:
+		return false
+	}
 }
 
 // extensionMentioned reports whether `ext` (e.g. ".m") appears in

@@ -256,6 +256,7 @@ type Chat struct {
 	MaxDurationSeconds     int     `json:"max_duration_seconds"`
 	RequestTimeoutSeconds  int     `json:"request_timeout_seconds"`
 	ServerStartTimeoutSecs int     `json:"server_start_timeout_seconds"`
+	ImplementationDispatch string  `json:"implementation_dispatch,omitempty"`
 	// AgentMode selects which built-in agent profile drives the session.
 	// OpenCode-shaped: the user picks build/plan/general; the harness
 	// never classifies a prompt to pick one on their behalf. Empty falls

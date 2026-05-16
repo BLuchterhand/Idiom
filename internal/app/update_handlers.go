@@ -248,3 +248,13 @@ func (m *Model) handlePlanRefresh(msg planRefreshMsg) (tea.Cmd, bool) {
 	m.renderPlanPanelContent()
 	return nil, false
 }
+
+func (m *Model) handlePlanPhase(msg planPhaseMsg) (tea.Cmd, bool) {
+	if msg.phase == "complete" {
+		m.planPhaseText = ""
+	} else {
+		m.planPhaseText = formatPlanPhaseText(msg.phase, msg.detail)
+	}
+	m.renderMessages(false)
+	return nil, false
+}

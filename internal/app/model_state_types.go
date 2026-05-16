@@ -19,6 +19,8 @@ type planState struct {
 	overlayBody           string
 	autoShown             bool
 	submittedEdits        map[string]workspace.PlanEdit
+	cachedItemsContent    string
+	cachedItems           []planItemMeta
 }
 
 type sessionsState struct {
@@ -33,13 +35,13 @@ type sessionsState struct {
 }
 
 type historyState struct {
-	entries           []historyEntry
-	selected          int
-	expanded          bool
-	panelOpen         bool
-	focused           bool
-	viewport          viewport.Model
-	renderPending     bool
-	renderLast        time.Time
+	entries            []historyEntry
+	selected           int
+	expanded           bool
+	panelOpen          bool
+	focused            bool
+	viewport           viewport.Model
+	renderPending      bool
+	renderLast         time.Time
 	renderScrollBottom bool
 }

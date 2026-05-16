@@ -80,3 +80,16 @@ var (
 	planH2Style         = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).PaddingLeft(1)
 	planH3Style         = lipgloss.NewStyle().Bold(true).Foreground(colorText).PaddingLeft(1)
 )
+
+// Model picker popup.
+var (
+	popupTitleStyle         = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
+	popupHintStyle          = lipgloss.NewStyle().Foreground(colorDim).Padding(0, 1)
+	popupRoleActiveStyle    = lipgloss.NewStyle().Bold(true).Foreground(colorText).Background(colorMuted)
+	popupRoleInactiveStyle  = lipgloss.NewStyle().Foreground(colorDim)
+	popupModelActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	popupModelInactiveStyle = lipgloss.NewStyle().Foreground(colorText)
+	popupModelRowStyle      = lipgloss.NewStyle().Foreground(colorText)
+	popupDescStyle          = lipgloss.NewStyle().Foreground(colorDim)
+	popupBoxStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(1, 2)
+)

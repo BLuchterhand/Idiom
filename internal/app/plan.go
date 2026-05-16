@@ -193,7 +193,14 @@ func (m *Model) renderPlanPanelContent() {
 // Exposed as a helper for tests and key handlers so the parsing path
 // is shared between rendering and navigation.
 func (m *Model) currentPlanItems() []planItemMeta {
-	return parsePlanItems(m.loadPlanContent())
+	content := m.loadPlanContent()
+	if content == m.plan.cachedItemsContent && m.plan.cachedItems != nil {
+		return m.plan.cachedItems
+	}
+	items := parsePlanItems(content)
+	m.plan.cachedItemsContent = content
+	m.plan.cachedItems = items
+	return items
 }
 
 // openPlanDiffOverlay loads the diff entry referenced by the plan item

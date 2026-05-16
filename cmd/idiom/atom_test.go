@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -265,6 +266,30 @@ func TestAtomIntakeBlocksMissingScope(t *testing.T) {
 	}
 	if report.State != atomStateMissingScope {
 		t.Fatalf("state=%q, want %q report=%+v", report.State, atomStateMissingScope, report)
+	}
+}
+
+func TestAtomIntakeUsesExpectedFileScopeAndIgnoresDottedSymbolNonGoal(t *testing.T) {
+	root := t.TempDir()
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: implementation handoff\n\n## Expected File Scope\n\n| File | Purpose |\n|---|---|\n| `internal/writerroute/decision.go` | Domain type. |\n| `internal/app/prompt_routing.go` or new `internal/app/writer_route.go` | TUI event wiring. |\n\n## Non-Goals\n\n- Do not add `idiom.code_draft.v1` implementation.\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code != 0 {
+		t.Fatalf("expected dispatchable exit 0, got %d stderr=%s report=%+v", code, stderr, report)
+	}
+	if report.State != atomStateDispatchable {
+		t.Fatalf("state=%q, want %q report=%+v", report.State, atomStateDispatchable, report)
+	}
+	want := []string{
+		"internal/writerroute/decision.go",
+		"internal/app/prompt_routing.go",
+		"internal/app/writer_route.go",
+	}
+	if !reflect.DeepEqual(report.ScopePaths, want) {
+		t.Fatalf("scope paths=%#v, want %#v", report.ScopePaths, want)
+	}
+	if len(report.Invalid) != 0 {
+		t.Fatalf("unexpected invalid scope paths: %+v", report)
 	}
 }
 

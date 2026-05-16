@@ -496,6 +496,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case planPhaseMsg:
+		cmd, done := m.handlePlanPhase(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case nil:
 	default:
 	}
@@ -523,6 +531,12 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 		m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
 		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID})
 		return nil
+	}
+	if m.modelSwapped {
+		if err != nil {
+			return fmt.Errorf("swapped model %q is unavailable at %s: %w", m.modelID, m.plannerSpec.EndpointBaseURL(), err)
+		}
+		return fmt.Errorf("swapped model %q is unavailable at %s: no models reported", m.modelID, m.plannerSpec.EndpointBaseURL())
 	}
 	if !m.cfg.Chat.AutoStartServer {
 		return fmt.Errorf("no llama server detected and chat.auto_start_server is false")
@@ -719,9 +733,10 @@ func toolRequestTraceTarget(req workspace.ToolRequest) string {
 // Mode in New() and /mode) to block/ask per-tool; the Mode's StepCap has
 // already been folded into m.runner.MaxToolSteps.
 func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama.ChatMessage, opts llama.ChatOptions, plan promptExecutionPlan) (string, error) {
-	_ = plan
-	_ = prompt
 	mode := m.currentMode()
+	if shouldDispatchImplementationToPlanExecute(plan, mode, m.cfg) {
+		return m.runImplementationViaPlanExecute(ctx, prompt, plan)
+	}
 	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)
 	runner := &agent.Runner{
 		Client:              m.client,
@@ -775,7 +790,9 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		},
 		func(event agent.ToolRequestEvent) {
 			m.logToolRequest(event)
-			m.events <- toolTraceMsg{step: event.Step, text: formatToolRequestTrace(event), intent: toolRequestIntent(event), running: true}
+			if !m.planExecuteActive {
+				m.events <- toolTraceMsg{step: event.Step, text: formatToolRequestTrace(event), intent: toolRequestIntent(event), running: true}
+			}
 		},
 		func(event agent.ToolResultEvent) {
 			m.logToolResult(event)
@@ -789,7 +806,9 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 					m.setContextError("Prompt context failed: " + err.Error())
 				}
 			}
-			m.events <- toolTraceMsg{step: event.Step, text: workspace.FormatToolTrace(event.Result)}
+			if !m.planExecuteActive {
+				m.events <- toolTraceMsg{step: event.Step, text: workspace.FormatToolTrace(event.Result)}
+			}
 			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == "task_ledger" || event.Request.Tool == "submit_plan" {
 				m.events <- planRefreshMsg{}
 			}

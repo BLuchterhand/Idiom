@@ -88,7 +88,7 @@ refresh-queue-daemon:
 			echo "warning: $(QUEUE_LABEL) has active or waiting jobs; not restarting queue daemon" ;; \
 		*) \
 			if launchctl kickstart -k "$$domain/$(QUEUE_LABEL)" >/dev/null 2>&1; then \
-				for i in 1 2 3 4 5; do \
+				for i in 1 2 3 4 5 6 7 8 9 10; do \
 					"$(CANONICAL_APP)" queue ping --socket "$(QUEUE_SOCKET)" >/dev/null 2>&1 && break; \
 					sleep 1; \
 				done; \

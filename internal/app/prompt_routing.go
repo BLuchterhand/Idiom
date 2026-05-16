@@ -1178,7 +1178,7 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	contract := strings.TrimSpace(plan.runtimeBrief.Contract)
 	taskFamily := strings.TrimSpace(plan.runtimeBrief.TaskFamily)
 	readOnly := profile == "conversation_only" || profile == "read_only_workspace" || profile == "read_only_verification_shell"
-	if readOnly {
+	if readOnly && !opts.ModelThinkingFloor {
 		thinkingOff := false
 		opts.EnableThinking = &thinkingOff
 		opts.PreserveThinking = false
@@ -1191,7 +1191,11 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	_ = taskFamily
 	switch contract {
 	case "direct_answer":
-		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 1024)
+		if opts.ModelThinkingFloor {
+			opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 4096)
+		} else {
+			opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 1024)
+		}
 	case "grounded_explanation", "locate_targets":
 		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 1536)
 	case "review_findings", "architecture_assessment":

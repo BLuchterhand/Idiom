@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
 
 	"idiom/internal/agent"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/util"
@@ -359,6 +361,11 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "performance_review"}, mode)
 	case util.ContainsAny(words, " write test ", " add regression test ", " add a test "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "test_authoring"}, mode)
+	case hasWorkOnTargetIntent(words) && len(pathparse.MentionedWorkspacePaths(prompt)) > 0:
+		if routeNamedWorkspaceTargetAsDocsEdit(prompt, words) {
+			return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
+		}
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
 	case util.ContainsAny(words, " readme ", " docs ", " documentation ", " doc "):
 		if util.ContainsAny(words, " update ", " add ", " edit ", " write ", " change ") {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
@@ -500,6 +507,34 @@ func hasEditIntent(words string) bool {
 		" create ",
 		" patch ",
 	)
+}
+
+func hasWorkOnTargetIntent(words string) bool {
+	return util.ContainsAny(words,
+		" start working on ",
+		" start work on ",
+		" begin working on ",
+		" begin work on ",
+		" get started on ",
+		" work on ",
+		" working on ",
+	)
+}
+
+func routeNamedWorkspaceTargetAsDocsEdit(prompt string, words string) bool {
+	if util.ContainsAny(words, " docs ", " documentation ", " doc ", " readme ") {
+		return true
+	}
+	for _, path := range pathparse.MentionedWorkspacePaths(prompt) {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".md", ".mdx", ".markdown", ".rst", ".txt":
+			return true
+		}
+		if strings.EqualFold(filepath.Base(path), "README") {
+			return true
+		}
+	}
+	return false
 }
 
 func plannerWordText(prompt string) string {

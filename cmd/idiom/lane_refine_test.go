@@ -1704,8 +1704,6 @@ func TestRefineCanonicalTagsCoverAllClassifierEmissions(t *testing.T) {
 	}
 }
 
-
-
 // TestPersistRefineLintJSONWritesEnvelopeToIterDir locks in Colony
 // §8's recommendation: the full JSON envelope lands at
 // <iterDir>/lint.json for orchestrator inspection, separate from
@@ -1875,6 +1873,31 @@ Add ` + "`valence > 0.0f`" + ` handling and populate ` + "`EventClass`" + ` mapp
 		"native/src/simulation/ai/appraisal.cpp",
 		"native/src/core/constants/individuated_mood.h",
 		"native/tests/test_individuated_mood.cpp",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+	}
+}
+
+func TestExtractDeliverableTargetsPrefersExpectedFileScope(t *testing.T) {
+	spec := `# Plan
+
+## Expected File Scope
+
+| File | Purpose |
+| --- | --- |
+| ` + "`internal/writerroute/decision.go`" + ` | Domain type |
+| ` + "`internal/app/prompt_routing.go`" + ` or new ` + "`internal/app/writer_route.go`" + ` | TUI event wiring |
+
+## Non-Goals
+
+- Do not add ` + "`idiom.code_draft.v1`" + ` implementation.
+`
+	got := extractDeliverableTargets(spec, refineModeAnchored)
+	want := []string{
+		"internal/writerroute/decision.go",
+		"internal/app/prompt_routing.go",
+		"internal/app/writer_route.go",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)

@@ -114,7 +114,10 @@ func TestNativeToolBackendSkipsTextualToolProtocolPrompt(t *testing.T) {
 }
 
 func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt"},
+	}
 	got := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief)
 	if got.MaxTokens != 16384 {
 		t.Fatalf("plan-execute recovery must preserve submit_plan budget, got %d", got.MaxTokens)
@@ -515,6 +518,74 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 	}
 }
 
+func TestCompletionGateRecoveryPromptPointsCandidateScopeAtToolAction(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(nil)
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt for planner phase with candidate scope")
+	}
+	if hideReads {
+		t.Fatalf("candidate-scope recovery must keep reads visible so the planner can gather missing anchors")
+	}
+	for _, want := range []string{
+		"candidate/allowed scope",
+		"No required_edit_paths list is active",
+		"not the same prose",
+		"parser-readable action",
+		"Do not include analysis before or after",
+		"```tool",
+		`{"tool":"submit_plan"`,
+		`{"tool":"read_file"`,
+		"`submit_plan`",
+		"one bounded read/search on a candidate path",
+		"named missing edit-safety fact",
+		"source-satisfied",
+		"<<QUESTION>>",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("candidate-scope recovery prompt missing %q: %q", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "edit_file") || strings.Contains(prompt, "apply_patch") {
+		t.Fatalf("planner-phase recovery must not point at per-edit tools: %q", prompt)
+	}
+}
+
+func TestPlanExecuteCandidateScopeRecoveryDisablesThinking(t *testing.T) {
+	thinkingOn := true
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+		EnableThinking:     &thinkingOn,
+		PreserveThinking:   true,
+		ChatTemplateKwargs: false,
+		ModelThinkingFloor: false,
+		MaxTokens:          16384,
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	})
+
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("candidate-scope recovery should disable thinking, got %#v", opts.EnableThinking)
+	}
+	if opts.PreserveThinking {
+		t.Fatalf("candidate-scope recovery should not preserve hidden reasoning")
+	}
+	if !opts.ChatTemplateKwargs {
+		t.Fatalf("candidate-scope recovery should force request-level chat_template_kwargs")
+	}
+	if opts.MaxTokens != 2048 {
+		t.Fatalf("candidate-scope recovery MaxTokens = %d, want 2048", opts.MaxTokens)
+	}
+}
+
 func TestPlanThenExecuteVisibleBriefKeepsSubmitPlanContract(t *testing.T) {
 	brief := runnerVisibleBriefForToolSurface(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -614,6 +685,27 @@ func TestPlanThenExecuteMissingSubmitPlanGateNamesSubmitPlan(t *testing.T) {
 	}
 	if strings.Contains(got.Error, "no successful write tool result") {
 		t.Fatalf("planner-phase rejection must not use generic write-tool language: %#v", got)
+	}
+}
+
+func TestPlanThenExecuteMissingSubmitPlanGateWithoutRequiredPathsNamesCandidateScope(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	got, rejected := runner.mutationCompletionRejection("Done.", nil)
+	if !rejected {
+		t.Fatalf("planner phase without submit_plan must be rejected")
+	}
+	if !strings.Contains(got.Error, "candidate/allowed edit path") {
+		t.Fatalf("planner-phase rejection without required paths should name candidate scope, got %#v", got)
+	}
+	if strings.Contains(got.Error, "every required_edit_paths entry") {
+		t.Fatalf("planner-phase rejection without required paths should not imply required path coverage, got %#v", got)
 	}
 }
 

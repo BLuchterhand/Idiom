@@ -4091,7 +4091,7 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Plan-execute completion gate rejected final answer",
-			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names every required path and cites current-state evidence. Call `submit_plan` with one edit entry for every required_edit_paths entry, answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact path-specific blocker.",
+			Error:   planThenExecuteMissingSubmitPlanError(r.RuntimeBrief.RequiredEditPaths),
 		}, true
 	}
 	if len(changedPathsFromToolResults(results)) == 0 {
@@ -4563,6 +4563,13 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 	}
 }
 
+func planThenExecuteMissingSubmitPlanError(requiredEditPaths []string) string {
+	if len(requiredEditPaths) > 0 {
+		return "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names every required path and cites current-state evidence. Call `submit_plan` with one edit entry for every required_edit_paths entry, answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact path-specific blocker."
+	}
+	return "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names the relevant path(s) and cites current-state evidence. Call `submit_plan` for the needed candidate/allowed edit path(s), answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact blocker."
+}
+
 func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 	if r != nil && r.completionGateMutationRecoveryApplies(results) {
 		return 1
@@ -4623,6 +4630,17 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 	if missing := r.missingRequiredEditSnippets(results); len(missing) > 0 {
 		return fmt.Sprintf("The completion gate rejected a final answer while required edit snippet(s) are still missing: %s. Read/search tools are hidden for this turn. The available contract outcomes are snippet-backed write capability or <<QUESTION>> naming the exact blocker for each missing snippet; do not perform additional discovery.", strings.Join(missing, ", ")), true, true
 	}
+	if r.planThenExecutePlannerPhase() && len(r.RuntimeBrief.RequiredEditPaths) == 0 && successfulSubmitPlanResultCount(results) == 0 {
+		return strings.Join([]string{
+			"The completion gate rejected a final answer before the plan-submission contract (`submit_plan`) produced an artifact for candidate/allowed scope. No required_edit_paths list is active, so choose the needed candidate path(s) from the objective and target refs instead of treating the allowlist as coverage.",
+			"Your next visible message must be exactly one parser-readable action, not the same prose. Do not include analysis before or after the action.",
+			"If the brief already gives exact anchors, full new-file content, or enough replacement shape, use this shape:",
+			"```tool\n{\"tool\":\"submit_plan\",\"rationale\":\"why these candidate path edits satisfy the objective\",\"edits\":[{\"path\":\"candidate/path.go\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"purpose\":\"one sentence\"}]}\n```",
+			"If one edit-safety fact is missing, call one bounded read/search on a candidate path with a named missing edit-safety fact, for example:",
+			"```tool\n{\"tool\":\"read_file\",\"path\":\"candidate/path.go\",\"start_line\":1,\"end_line\":160,\"named_gap\":\"exact missing edit-safety fact\",\"why_not_answering\":\"need current source before submit_plan\"}\n```",
+			"The only non-tool closeouts are a visible answer starting exactly with `Decision: source-satisfied` plus current-state evidence for the relevant path(s), or `<<QUESTION>>:` naming the exact blocker. Do not call per-edit write tools.",
+		}, "\n\n"), false, true
+	}
 	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
 		if plannerOwnsVerification(r.RuntimeBrief) {
@@ -4641,6 +4659,16 @@ func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerrunti
 		return opts
 	}
 	if planThenExecutePlannerBrief(brief) {
+		if len(brief.RequiredEditPaths) == 0 {
+			thinkingOff := false
+			opts.EnableThinking = &thinkingOff
+			opts.PreserveThinking = false
+			opts.ChatTemplateKwargs = true
+			if opts.MaxTokens <= 0 || opts.MaxTokens > 2048 {
+				opts.MaxTokens = 2048
+			}
+			return opts
+		}
 		if opts.MaxTokens <= 0 {
 			opts.MaxTokens = 16384
 		}

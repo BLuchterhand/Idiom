@@ -31,11 +31,11 @@ import (
 
 var exploreBlockedTools = map[string]string{
 	"go_move_declarations": "moving declarations",
-	"mkdir":               "creating directories",
-	"edit_file":           "editing files",
-	"write_file":          "writing files",
-	"append_file":         "appending files",
-	"apply_patch":         "applying patches",
+	"mkdir":                "creating directories",
+	"edit_file":            "editing files",
+	"write_file":           "writing files",
+	"append_file":          "appending files",
+	"apply_patch":          "applying patches",
 }
 
 type Manager struct {
@@ -325,6 +325,20 @@ func (m *Manager) Root() string {
 
 func (m *Manager) CWD() string {
 	return m.cfg.CWD
+}
+
+func (m *Manager) SessionID() string {
+	if m == nil {
+		return ""
+	}
+	return m.cfg.SessionID
+}
+
+func (m *Manager) SetSessionID(sessionID string) {
+	if m == nil {
+		return
+	}
+	m.cfg.SessionID = strings.TrimSpace(sessionID)
 }
 
 func (m *Manager) Enabled() bool {
@@ -1684,12 +1698,19 @@ var (
 
 func extractQwenXMLToolPayload(text string) (string, bool, error) {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || !strings.Contains(trimmed, "<function=") {
+	if trimmed == "" || (!strings.Contains(trimmed, "<function=") && !strings.Contains(trimmed, "<tool_call>")) {
 		return "", false, nil
 	}
 	envelope, ok := trimQwenXMLToolEnvelope(trimmed)
 	if !ok {
 		return "", false, nil
+	}
+	if object, ok := extractFirstJSONObject(envelope); ok {
+		payload, err := normalizeQwenJSONToolPayload(object)
+		if err != nil {
+			return object, true, err
+		}
+		return payload, true, nil
 	}
 	match := qwenXMLFunctionPattern.FindStringSubmatch(envelope)
 	if len(match) != 3 {
@@ -1723,13 +1744,94 @@ func extractQwenXMLToolPayload(text string) (string, bool, error) {
 	return string(data), true, nil
 }
 
+func normalizeQwenJSONToolPayload(payload string) (string, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		return payload, err
+	}
+	if _, ok := fields["tool"]; ok {
+		return payload, nil
+	}
+	name := qwenJSONToolName(fields)
+	if name == "" {
+		return payload, nil
+	}
+	normalized := map[string]json.RawMessage{}
+	toolRaw, _ := json.Marshal(name)
+	normalized["tool"] = toolRaw
+	if args, ok, err := qwenJSONToolArguments(fields); err != nil {
+		return payload, err
+	} else if ok {
+		for key, value := range args {
+			if strings.TrimSpace(key) == "" || key == "tool" {
+				continue
+			}
+			normalized[key] = value
+		}
+	} else {
+		for key, value := range fields {
+			switch key {
+			case "name", "function", "tool", "arguments", "args":
+				continue
+			default:
+				normalized[key] = value
+			}
+		}
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return payload, err
+	}
+	return string(data), nil
+}
+
+func qwenJSONToolName(fields map[string]json.RawMessage) string {
+	for _, key := range []string{"name", "function"} {
+		raw, ok := fields[key]
+		if !ok {
+			continue
+		}
+		var name string
+		if err := json.Unmarshal(raw, &name); err == nil {
+			if name = strings.TrimSpace(name); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func qwenJSONToolArguments(fields map[string]json.RawMessage) (map[string]json.RawMessage, bool, error) {
+	for _, key := range []string{"arguments", "args"} {
+		raw, ok := fields[key]
+		if !ok {
+			continue
+		}
+		var args map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &args); err == nil {
+			return args, true, nil
+		}
+		var encoded string
+		if err := json.Unmarshal(raw, &encoded); err != nil {
+			return nil, true, fmt.Errorf("qwen JSON tool arguments must be an object or encoded JSON object")
+		}
+		encoded = strings.TrimSpace(encoded)
+		if encoded == "" {
+			return map[string]json.RawMessage{}, true, nil
+		}
+		if err := json.Unmarshal([]byte(encoded), &args); err != nil {
+			return nil, true, fmt.Errorf("qwen JSON tool arguments must decode to an object: %w", err)
+		}
+		return args, true, nil
+	}
+	return nil, false, nil
+}
+
 func trimQwenXMLToolEnvelope(text string) (string, bool) {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "<tool_call>") {
-		if !strings.HasSuffix(text, "</tool_call>") {
-			return text, true
-		}
-		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "<tool_call>"), "</tool_call>"))
+		text = strings.TrimSpace(strings.TrimPrefix(text, "<tool_call>"))
+		text = strings.TrimSpace(strings.TrimSuffix(text, "</tool_call>"))
 		return text, true
 	}
 	if strings.HasPrefix(text, "<function=") {

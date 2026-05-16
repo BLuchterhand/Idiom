@@ -73,6 +73,38 @@ func rollbackPathsForRequest(req workspace.ToolRequest) []string {
 	return nil
 }
 
+// recordRollbackSnapshotsForPaths captures pre-edit state for an explicit set
+// of workspace-relative paths, used when deterministic executor phases mutate
+// files outside the app runner's normal PreExecute hook.
+func (m *Model) recordRollbackSnapshotsForPaths(paths []string) {
+	if m == nil || m.workspace == nil || len(paths) == 0 {
+		return
+	}
+	root := m.workspace.CWD()
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		abs := path
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(root, abs)
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{path: abs, existed: false})
+			}
+			continue
+		}
+		m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{
+			path:     abs,
+			contents: append([]byte(nil), data...),
+			existed:  true,
+		})
+	}
+}
+
 // undoLast restores the most recent rollback entry. Returns a summary
 // suitable for the status line, or an error if there's nothing to undo
 // or the file can't be restored.

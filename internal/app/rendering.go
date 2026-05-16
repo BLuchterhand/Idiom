@@ -161,7 +161,12 @@ func (m *Model) renderMessages(forceBottom bool) {
 	}
 	if m.streaming {
 		label := assistantLabelStyle.Render("Qwen")
-		content := m.spinner.View() + " Qwen is working on your request" + m.workingDots()
+		content := m.spinner.View()
+		if m.planPhaseText != "" {
+			content += " " + m.planPhaseText
+		} else {
+			content += " Qwen is working on your request" + m.workingDots()
+		}
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
 		}
@@ -190,51 +195,90 @@ func (m *Model) renderedMessageBody() string {
 		}
 	}
 
+	if len(m.messages) == 0 {
+		m.perMsgRenderCache = nil
+		m.perMsgRenderHashes = nil
+		m.perMsgRenderLen = 0
+		m.messageRenderCache = ""
+		m.messageRenderWidth = width
+		m.messageRenderHash = hash
+		m.messageRenderMD = useMarkdown
+		return ""
+	}
+	if m.perMsgRenderLen > len(m.messages) || m.messageRenderWidth != width || m.messageRenderMD != useMarkdown {
+		m.perMsgRenderCache = nil
+		m.perMsgRenderHashes = nil
+		m.perMsgRenderLen = 0
+	}
+	if len(m.perMsgRenderCache) < len(m.messages) {
+		m.perMsgRenderCache = append(m.perMsgRenderCache, make([]string, len(m.messages)-len(m.perMsgRenderCache))...)
+	}
+	if len(m.perMsgRenderHashes) < len(m.messages) {
+		m.perMsgRenderHashes = append(m.perMsgRenderHashes, make([]uint64, len(m.messages)-len(m.perMsgRenderHashes))...)
+	}
+
 	msgBodyStyle := bodyStyle.Width(width)
 	var b strings.Builder
-	for _, msg := range m.messages {
-		var label string
-		useGlamour := false
-		content := strings.TrimSpace(msg.Content)
-		switch msg.Role {
-		case "user":
-			label = userLabelStyle.Render("You")
-		case "assistant":
-			label = assistantLabelStyle.Render("Qwen")
-			if content != "" {
-				useGlamour = true
-			}
-		case "tool":
-			toolName := "tool"
-			if idx := strings.Index(content, " | "); idx > 0 {
-				toolName = content[:idx]
-			} else if fields := strings.Fields(content); len(fields) > 0 {
-				toolName = fields[0]
-			}
-			label = toolLabelStyle.Render("▶ " + toolName)
-		default:
-			label = systemLabelStyle.Render(strings.Title(msg.Role))
+	for i, msg := range m.messages {
+		msgHash := messageRenderFingerprint([]llama.ChatMessage{msg})
+		if m.perMsgRenderCache[i] == "" || m.perMsgRenderHashes[i] != msgHash {
+			m.perMsgRenderCache[i] = m.renderSingleMessage(msg, msgBodyStyle)
+			m.perMsgRenderHashes[i] = msgHash
 		}
-		b.WriteString(label)
-		b.WriteString("\n")
-		if useGlamour && m.mdRenderer != nil {
-			rendered, err := m.mdRenderer.Render(content)
-			if err == nil {
-				b.WriteString(strings.TrimRight(rendered, "\n"))
-			} else {
-				b.WriteString(msgBodyStyle.Render(content))
-			}
-		} else {
-			b.WriteString(msgBodyStyle.Render(content))
+		b.WriteString(m.perMsgRenderCache[i])
+		if i < len(m.messages)-1 {
+			b.WriteString("\n\n")
 		}
-		b.WriteString("\n\n")
 	}
+	m.perMsgRenderCache = m.perMsgRenderCache[:len(m.messages)]
+	m.perMsgRenderHashes = m.perMsgRenderHashes[:len(m.messages)]
+	m.perMsgRenderLen = len(m.messages)
 
 	m.messageRenderCache = strings.TrimRight(b.String(), "\n")
 	m.messageRenderWidth = width
 	m.messageRenderHash = hash
 	m.messageRenderMD = useMarkdown
 	return m.messageRenderCache
+}
+
+func (m *Model) renderSingleMessage(msg llama.ChatMessage, msgBodyStyle lipgloss.Style) string {
+	var label string
+	useGlamour := false
+	content := strings.TrimSpace(msg.Content)
+	switch msg.Role {
+	case "user":
+		label = userLabelStyle.Render("You")
+	case "assistant":
+		label = assistantLabelStyle.Render("Qwen")
+		if content != "" {
+			useGlamour = true
+		}
+	case "tool":
+		toolName := "tool"
+		if idx := strings.Index(content, " | "); idx > 0 {
+			toolName = content[:idx]
+		} else if fields := strings.Fields(content); len(fields) > 0 {
+			toolName = fields[0]
+		}
+		label = toolLabelStyle.Render("▶ " + toolName)
+	default:
+		label = systemLabelStyle.Render(strings.Title(msg.Role))
+	}
+
+	var b strings.Builder
+	b.WriteString(label)
+	b.WriteString("\n")
+	if useGlamour && m.mdRenderer != nil {
+		rendered, err := m.mdRenderer.Render(content)
+		if err == nil {
+			b.WriteString(strings.TrimRight(rendered, "\n"))
+		} else {
+			b.WriteString(msgBodyStyle.Render(content))
+		}
+	} else {
+		b.WriteString(msgBodyStyle.Render(content))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func messageRenderFingerprint(messages []llama.ChatMessage) uint64 {
