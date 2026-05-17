@@ -249,6 +249,101 @@ func TestImplementationDispatchAtomAnchorsPreserveCompleteSourceLines(t *testing
 	}
 }
 
+func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"pkg/source.go", "pkg/source_test.go"} {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte("package pkg\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	doc := implementationDispatchPlanDocument{
+		Path: "docs/design.md",
+		Content: strings.Join([]string{
+			"# Design",
+			"",
+			"## Expected File Scope",
+			"",
+			"| File | Change |",
+			"|---|---|",
+			"| `pkg/source.go` | Add route decision source behavior. |",
+			"",
+			"## Implementation Steps",
+			"",
+			"6. Add tests.",
+			"",
+			"Minimum tests:",
+			"",
+			"- `pkg/source_test.go`: add `TestRouteDecisionShape`.",
+			"- `go test ./pkg`",
+		}, "\n"),
+		EditPaths:       []string{"pkg/source.go"},
+		TestObligations: []string{"`pkg/source_test.go`: add `TestRouteDecisionShape`.", "`go test ./pkg`"},
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	atoms, err := materializeImplementationDispatchPlanDocumentAtoms(cfg, []implementationDispatchPlanDocument{doc})
+	if err != nil {
+		t.Fatalf("materialize atoms: %v", err)
+	}
+	var testAtom implementationDispatchPlanDocument
+	for _, atom := range atoms {
+		if slices.Contains(atom.EditPaths, "pkg/source_test.go") {
+			testAtom = atom
+			break
+		}
+	}
+	if strings.TrimSpace(testAtom.Path) == "" {
+		t.Fatalf("expected test obligation to materialize a test atom, got %#v", atoms)
+	}
+	if !strings.Contains(testAtom.Content, "## Design Doc Test Obligations") ||
+		!strings.Contains(testAtom.Content, "TestRouteDecisionShape") ||
+		!strings.Contains(testAtom.Content, "go test ./pkg") {
+		t.Fatalf("materialized test atom missing design-doc test obligations:\n%s", testAtom.Content)
+	}
+}
+
+func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *testing.T) {
+	root := t.TempDir()
+	testPath := "pkg/source_test.go"
+	full := filepath.Join(root, filepath.FromSlash(testPath))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir source test: %v", err)
+	}
+	if err := os.WriteFile(full, []byte("package pkg\n\nvar routeDecisionHarness = true\n"), 0o644); err != nil {
+		t.Fatalf("write source test: %v", err)
+	}
+	doc := sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", testPath, "Add `routeDecisionHarness` coverage", []string{
+		"`pkg/source_test.go:1`: `package pkg`",
+		"`pkg/source_test.go:3`: `var routeDecisionHarness = true`",
+	})
+	doc.Content += "\n\n## Design Doc Test Obligations\n\n- `pkg/source_test.go`: add `TestRouteDecisionShape`.\n"
+	doc.TestObligations = implementationDispatchDesignDocTestObligations(doc.Content)
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	if records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+		t.Fatalf("source-satisfied must not close without matching test evidence: %#v", records)
+	}
+	if err := os.WriteFile(full, []byte("package pkg\n\nvar routeDecisionHarness = true\n\nfunc TestRouteDecisionShape(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("write source test with evidence: %v", err)
+	}
+	records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc})
+	if len(records) != 1 || len(records[0].TestEvidence) == 0 {
+		t.Fatalf("expected source-satisfied test evidence, got %#v", records)
+	}
+	message := humanImplementationDispatchSourceSatisfiedMessage(records)
+	if !strings.Contains(message, "Test obligations") || !strings.Contains(message, "TestRouteDecisionShape") {
+		t.Fatalf("source-satisfied message should report test obligations and evidence:\n%s", message)
+	}
+}
+
 func TestWriterRouteDecisionForPromptReportsPlanExecuteDispatch(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
@@ -1389,6 +1484,88 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 	}
 	if preflightCalls.Load() != 0 {
 		t.Fatalf("preflight should not run before source-satisfied short-circuit, got %d call(s)", preflightCalls.Load())
+	}
+}
+
+func TestRunImplementationPlanDocumentsSourceSatisfiedAtomMarksAtomComplete(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "events.go"), []byte(strings.Join([]string{
+		"package pkg",
+		"",
+		"func emitRoute(stdout any, fields map[string]any) {",
+		"	emitJSONEvent(stdout, \"writer_route_decision\", fields)",
+		"}",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write events: %v", err)
+	}
+
+	atomContent := strings.Join([]string{
+		"# design atom 001",
+		"",
+		"Status: pending",
+		"",
+		"<!-- idiom:design-doc-atom source=\"docs/design.md\" index=1 total=1 -->",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| pkg/events.go | Emit `writer_route_decision` for direct runs |",
+		"",
+		"## Verified Current State",
+		"",
+		"- Host current-state anchors captured before dispatch:",
+		"  - `pkg/events.go:4`: `emitJSONEvent(stdout, \"writer_route_decision\", fields)`",
+		"",
+		"## Required Behavior",
+		"",
+		"Source scope row:",
+		"",
+		"> | `pkg/events.go` | Emit `writer_route_decision` for direct runs |",
+		"",
+	}, "\n")
+	atomRel := ".idiom/atoms/design/atom-001.md"
+	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
+		t.Fatalf("mkdir atom dir: %v", err)
+	}
+	if err := os.WriteFile(atomAbs, []byte(atomContent), 0o644); err != nil {
+		t.Fatalf("write atom: %v", err)
+	}
+	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
+	if !ok {
+		t.Fatalf("atom doc should be readable")
+	}
+	cfg := config.Default()
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.MCP = nil
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.runImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationDispatchPlanDocument{doc})
+	if err != nil {
+		t.Fatalf("runImplementationPlanDocumentsViaPlanExecute: %v", err)
+	}
+	if !strings.Contains(answer, "Decision: source-satisfied") {
+		t.Fatalf("expected source-satisfied answer, got:\n%s", answer)
+	}
+	updatedBody, err := os.ReadFile(atomAbs)
+	if err != nil {
+		t.Fatalf("read updated atom: %v", err)
+	}
+	updated := string(updatedBody)
+	if !strings.Contains(updated, "Status: source-satisfied - do not dispatch") ||
+		!strings.Contains(updated, "## Result") ||
+		!strings.Contains(updated, "writer_route_decision") {
+		t.Fatalf("source-satisfied atom doc should be closed with result evidence:\n%s", updated)
 	}
 }
 
