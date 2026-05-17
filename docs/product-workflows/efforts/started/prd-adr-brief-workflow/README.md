@@ -6,7 +6,7 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0014-phase-1-product-status-view`
+- Last completed atom: `impl-0015-phase-1-workflow-state-transition-contract`
 - Active atom: none; next atom is ready to plan
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
@@ -27,9 +27,19 @@ This effort is the durable implementation state for delivering
   the read-only `idiom product status` view, then completed targeted reviewer
   fixes for validated workflow-state parsing, audit-failure exit behavior, and
   closeout-stable durable fixture tests. Codex review/verification passed.
-- Atom 15 workflow transition contract: next planned follow-up. It should add
-  pure `internal/productworkflow` transition/next-action contract coverage
-  before broader status/resume behavior is wired into CLI surfaces.
+- Atom 15 workflow transition contract: all TDD obligations satisfied. GLM
+  implemented pure `internal/productworkflow` transition/next-action contract
+  logic, then completed targeted reviewer fixes for deterministic action order,
+  status/state consistency blockers, and removal of the `init`-built transition
+  map. Codex review/verification passed.
+- Atom 16 scope closeout gate: next planned follow-up. It should add a pure
+  changed-path/scope gate in new package files before broader status/resume
+  behavior is wired into CLI surfaces.
+- Helper-agent injection for Atom 15: at user request on
+  2026-05-17T21:12:38Z, a side-conversation helper added
+  `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
+  changed-path/scope gate. This was not produced by the GLM implementor; the
+  orchestrator should preserve it during Atom 15 reconciliation.
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
@@ -74,6 +84,16 @@ atoms close.
   shared parser/CLI code or any repeated DS4 edit-quality failure.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
+- Codex-token conservation policy: preserve Codex for orchestration, review,
+  verification, reconciliation, and small surgical fixes. Use GLM for code
+  drafting on bounded atoms when its expected cleanup cost is lower than direct
+  Codex implementation. If an atom is tiny, highly coupled to durable state, or
+  GLM would require a long exploratory brief, Codex may implement directly only
+  after recording the fallback/exception reason.
+- Keep GLM briefs concise and patch-shaped to save Codex tokens: provide exact
+  files, contract, negative cases, forbidden edits, and stop condition; do not
+  paste broad repo context already available through context_pack or durable
+  docs unless it resolves a specific ambiguity.
 - Parallelization policy: run read-only investigation, context gathering, and
   verification in parallel where possible. Run multiple implementors in parallel
   only when their write sets are disjoint; shared parser, validator, CLI,
@@ -107,6 +127,10 @@ atoms close.
   the atom's expected and forbidden files before closeout. The scope gate is
   required because GLM has previously produced unrelated backend/config
   spillover that Codex had to remove manually.
+- Atom 15 helper-injected closeout requirement: `TDD-IMPL-0015-005` now makes
+  the changed-path/scope gate a blocking obligation before Atom 15 closeout.
+  Treat it as user-directed side-thread guidance, not implementor-generated
+  scope expansion.
 - Coverage quality policy: line coverage is not sufficient for product workflow
   atoms. Each atom that adds or changes artifact parsing, audit logic, status
   output, brief generation, or closeout behavior must include focused unit tests
@@ -172,7 +196,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan `impl-0015-phase-1-workflow-state-transition-contract` as a pure
-`internal/productworkflow` atom in new transition files. Keep it sequential with
-durable bookkeeping, but its code write set can avoid the shared product CLI and
-validator files touched by Atom 14.
+Plan `impl-0016-phase-1-atom-scope-closeout-gate` as a pure
+`internal/productworkflow` atom in new scope files. Keep it sequential with
+durable bookkeeping, but its code write set can avoid the shared transition,
+status, validator, and product CLI files touched by earlier atoms.
