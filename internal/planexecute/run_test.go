@@ -196,6 +196,26 @@ func TestRunResumeRejectsPromptMismatch(t *testing.T) {
 	}
 }
 
+func TestRunResumeRejectsMissingSession(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	var stdout, stderr bytes.Buffer
+
+	result := Run(cfg, Options{Prompt: "resume missing", Resume: "missing-session"}, func(config.Config, string, RunOptions, io.Writer) (string, error) {
+		t.Fatal("prompt runner should not be called for missing resume state")
+		return "", nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 1 {
+		t.Fatalf("expected missing resume to fail, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "does not exist") {
+		t.Fatalf("stderr should explain missing resume state, got %s", stderr.String())
+	}
+}
+
 func writeRunTestPlanViaSubmitPlan(t *testing.T, cfg config.Config, edits []workspace.PlanEdit, rationale string) {
 	t.Helper()
 	mgr := workspace.NewManager(cfg.Workspace)

@@ -1604,6 +1604,11 @@ type implementationDispatchSourceSatisfiedRecord struct {
 	TestEvidence    []string
 }
 
+type implementationDispatchTerminalAtomRecord struct {
+	DocumentPath string
+	Status       string
+}
+
 func implementationDispatchPlanDocumentsSourceSatisfied(cfg config.Config, planDocuments []implementationDispatchPlanDocument) []implementationDispatchSourceSatisfiedRecord {
 	root := implementationDispatchWorkspaceRoot(cfg)
 	if strings.TrimSpace(root) == "" {
@@ -1618,6 +1623,82 @@ func implementationDispatchPlanDocumentsSourceSatisfied(cfg config.Config, planD
 		records = append(records, record)
 	}
 	return records
+}
+
+func implementationDispatchPlanDocumentsTerminalAtoms(planDocuments []implementationDispatchPlanDocument) []implementationDispatchTerminalAtomRecord {
+	var records []implementationDispatchTerminalAtomRecord
+	for _, doc := range planDocuments {
+		status, ok := implementationDispatchPlanDocumentTerminalAtomStatus(doc)
+		if !ok {
+			return nil
+		}
+		records = append(records, implementationDispatchTerminalAtomRecord{
+			DocumentPath: doc.Path,
+			Status:       status,
+		})
+	}
+	return records
+}
+
+func implementationDispatchPlanDocumentTerminalAtomStatus(doc implementationDispatchPlanDocument) (string, bool) {
+	if !implementationDispatchIsAtomizedPlanDocumentPath(doc.Path) {
+		return "", false
+	}
+	status, ok := implementationDispatchAtomDocumentStatus(doc.Content)
+	if !ok {
+		return "", false
+	}
+	if implementationDispatchAtomStatusIsTerminal(status) {
+		return status, true
+	}
+	return "", false
+}
+
+func implementationDispatchAtomDocumentStatus(content string) (string, bool) {
+	for _, raw := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		line = strings.Trim(line, "* ")
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "status") {
+			continue
+		}
+		status := strings.Trim(strings.TrimSpace(parts[1]), "* ")
+		return status, strings.TrimSpace(status) != ""
+	}
+	return "", false
+}
+
+func implementationDispatchAtomStatusIsTerminal(status string) bool {
+	lower := strings.ToLower(strings.TrimSpace(status))
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "do not dispatch") ||
+		strings.Contains(lower, "source-satisfied") ||
+		strings.Contains(lower, "source satisfied") {
+		return true
+	}
+	switch implementationDispatchFirstStatusToken(lower) {
+	case "accepted", "complete", "completed", "closed":
+		return true
+	default:
+		return false
+	}
+}
+
+func implementationDispatchFirstStatusToken(status string) string {
+	for _, token := range strings.FieldsFunc(status, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '-' || r == '_' || r == ':' || r == ';' || r == ','
+	}) {
+		token = strings.TrimSpace(token)
+		if token != "" {
+			return token
+		}
+	}
+	return ""
 }
 
 func implementationDispatchPlanDocumentSourceSatisfied(root string, doc implementationDispatchPlanDocument) (implementationDispatchSourceSatisfiedRecord, bool) {
@@ -1990,7 +2071,7 @@ func implementationDispatchSourceSatisfiedTestEvidence(root string, doc implemen
 
 func implementationDispatchTestObligationEvidence(root string, atomPath string, obligation string) (string, bool) {
 	if implementationDispatchLineLooksLikeVerificationCommand(obligation) {
-		return fmt.Sprintf("verification command obligation tracked: `%s`", strings.Trim(strings.TrimSpace(obligation), "`")), true
+		return "", false
 	}
 	paths := implementationDispatchObligationConcretePaths(obligation, "")
 	if len(paths) == 0 {
@@ -2127,6 +2208,27 @@ func humanImplementationDispatchSourceSatisfiedMessage(records []implementationD
 	return strings.TrimSpace(b.String())
 }
 
+func humanImplementationDispatchTerminalAtomMessage(records []implementationDispatchTerminalAtomRecord) string {
+	var b strings.Builder
+	b.WriteString("Decision: source-satisfied\n\n")
+	b.WriteString("The referenced design-doc atom is already closed in the atom tracker; plan-execute was not dispatched.")
+	for _, record := range records {
+		path := strings.TrimSpace(record.DocumentPath)
+		if path == "" {
+			path = "(unknown atom)"
+		}
+		status := strings.TrimSpace(record.Status)
+		if status == "" {
+			status = "closed"
+		}
+		b.WriteString("\n- `")
+		b.WriteString(path)
+		b.WriteString("`: ")
+		b.WriteString(status)
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func humanImplementationDispatchPreflightSourceSatisfiedMessage(results []implementationDispatchPlanDocumentPreflightResult) string {
 	var b strings.Builder
 	b.WriteString("Decision: source-satisfied\n\n")
@@ -2179,6 +2281,12 @@ func implementationDispatchMarkPreflightSourceSatisfiedAtomDocuments(cfg config.
 func implementationDispatchMarkCompletedAtomDocument(cfg config.Config, doc implementationDispatchPlanDocument, answer string) {
 	root := implementationDispatchWorkspaceRoot(cfg)
 	if strings.TrimSpace(root) == "" {
+		return
+	}
+	if implementationDispatchAnswerLooksBlocked(answer) {
+		return
+	}
+	if len(implementationDispatchUnprovenVerificationCommands(doc, answer)) > 0 {
 		return
 	}
 	status := "completed"
@@ -2285,6 +2393,61 @@ func implementationDispatchCloseoutEvidenceFromAnswer(answer string) []string {
 	return evidence
 }
 
+func implementationDispatchUnprovenVerificationCommands(doc implementationDispatchPlanDocument, answer string) []string {
+	var pending []string
+	for _, obligation := range doc.TestObligations {
+		obligation = strings.TrimSpace(obligation)
+		if obligation == "" || !implementationDispatchLineLooksLikeVerificationCommand(obligation) {
+			continue
+		}
+		if implementationDispatchAnswerHasVerificationCommandEvidence(answer, obligation) {
+			continue
+		}
+		pending = appendUniqueBriefStrings(pending, strings.Trim(strings.TrimSpace(obligation), "`"))
+	}
+	return pending
+}
+
+func implementationDispatchAnswerHasVerificationCommandEvidence(answer string, command string) bool {
+	command = strings.ToLower(strings.Trim(strings.TrimSpace(command), "`"))
+	if command == "" {
+		return false
+	}
+	for _, raw := range strings.Split(answer, "\n") {
+		line := strings.ToLower(strings.TrimSpace(raw))
+		if !strings.Contains(line, command) {
+			continue
+		}
+		for _, marker := range []string{"pass", "passed", "success", "succeeded", "exit 0", "ok "} {
+			if strings.Contains(line, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func humanImplementationDispatchPendingVerificationCommandMessage(doc implementationDispatchPlanDocument, commands []string) string {
+	var b strings.Builder
+	b.WriteString("<<QUESTION>>: Design-doc verification command obligations remain unproven, so this atom was not marked complete.")
+	if strings.TrimSpace(doc.Path) != "" {
+		b.WriteString("\n\nAtom: `")
+		b.WriteString(strings.TrimSpace(doc.Path))
+		b.WriteString("`")
+	}
+	b.WriteString("\n\nPending verification commands:")
+	for _, command := range commands {
+		command = strings.TrimSpace(command)
+		if command == "" {
+			continue
+		}
+		b.WriteString("\n- `")
+		b.WriteString(command)
+		b.WriteString("`")
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func materializeImplementationDispatchPlanDocumentAtoms(cfg config.Config, planDocuments []implementationDispatchPlanDocument) ([]implementationDispatchPlanDocument, error) {
 	root := implementationDispatchWorkspaceRoot(cfg)
 	if strings.TrimSpace(root) == "" {
@@ -2311,12 +2474,18 @@ func materializeImplementationDispatchPlanDocumentAtoms(cfg config.Config, planD
 			return nil, err
 		}
 		for i, atom := range atoms {
+			atom = implementationDispatchPlanDocumentAtomWithWorkspaceShape(root, atom)
 			rel := filepath.ToSlash(filepath.Join(dirRel, fmt.Sprintf("atom-%03d.md", i+1)))
 			abs, ok := implementationDispatchWorkspaceFile(root, rel)
 			if !ok {
 				return nil, fmt.Errorf("atom output path is outside the workspace: %s", rel)
 			}
-			atom = implementationDispatchPlanDocumentAtomWithWorkspaceShape(root, atom)
+			if existing, ok := readImplementationDispatchPlanDocument(root, rel); ok &&
+				implementationDispatchPlanDocumentMatchesAtomPath(existing, atom.Path) &&
+				implementationDispatchPlanDocumentIsTerminalAtom(existing) {
+				atomDocuments = append(atomDocuments, existing)
+				continue
+			}
 			body := composeImplementationDispatchPlanDocumentAtom(doc, atom, i+1, len(atoms))
 			if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
 				return nil, err
@@ -2329,6 +2498,24 @@ func materializeImplementationDispatchPlanDocumentAtoms(cfg config.Config, planD
 		}
 	}
 	return atomDocuments, nil
+}
+
+func implementationDispatchPlanDocumentMatchesAtomPath(doc implementationDispatchPlanDocument, atomPath string) bool {
+	atomPath = strings.TrimSpace(atomPath)
+	if atomPath == "" {
+		return false
+	}
+	for _, path := range doc.EditPaths {
+		if strings.TrimSpace(path) == atomPath {
+			return true
+		}
+	}
+	return false
+}
+
+func implementationDispatchPlanDocumentIsTerminalAtom(doc implementationDispatchPlanDocument) bool {
+	_, ok := implementationDispatchPlanDocumentTerminalAtomStatus(doc)
+	return ok
 }
 
 func implementationDispatchPlanDocumentAtomWithWorkspaceShape(root string, atom implementationDispatchPlanDocumentAtom) implementationDispatchPlanDocumentAtom {
@@ -2782,6 +2969,10 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 
 func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationDispatchPlanDocument) (string, error) {
 	requiredPaths, allowedPaths := implementationDispatchEditScopeFromPlanDocuments(plan, planDocuments)
+	if closed := implementationDispatchPlanDocumentsTerminalAtoms(planDocuments); len(closed) == len(planDocuments) && len(closed) > 0 {
+		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d closed design-doc atom(s)", len(closed)))
+		return humanImplementationDispatchTerminalAtomMessage(closed), nil
+	}
 	if satisfied := implementationDispatchPlanDocumentsSourceSatisfied(m.cfg, planDocuments); len(satisfied) == len(planDocuments) && len(satisfied) > 0 {
 		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d already-satisfied design-doc atom(s)", len(satisfied)))
 		implementationDispatchMarkSourceSatisfiedAtomDocuments(m.cfg, satisfied)
@@ -2946,7 +3137,13 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 	}
 	m.logMessage("dispatch_atomize", fmt.Sprintf("dispatching %d materialized atom brief(s) through plan-execute", len(atomDocuments)))
 	var summaries []string
+	var skipped []implementationDispatchTerminalAtomRecord
 	for i, atomDoc := range atomDocuments {
+		if status, ok := implementationDispatchPlanDocumentTerminalAtomStatus(atomDoc); ok {
+			skipped = append(skipped, implementationDispatchTerminalAtomRecord{DocumentPath: atomDoc.Path, Status: status})
+			summaries = append(summaries, fmt.Sprintf("Atom %d/%d `%s` skipped: %s", i+1, len(atomDocuments), atomDoc.Path, status))
+			continue
+		}
 		atomPrompt := prompt
 		if len(atomDocuments) > 1 {
 			atomPrompt = fmt.Sprintf("%s\n\nDispatch atom %d/%d: %s", strings.TrimSpace(prompt), i+1, len(atomDocuments), atomDoc.Path)
@@ -2960,11 +3157,21 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 		if implementationDispatchAnswerLooksBlocked(answer) {
 			return answer, nil
 		}
+		if pendingCommands := implementationDispatchUnprovenVerificationCommands(atomDoc, answer); len(pendingCommands) > 0 {
+			return humanImplementationDispatchPendingVerificationCommandMessage(atomDoc, pendingCommands), nil
+		}
 		implementationDispatchMarkCompletedAtomDocument(m.cfg, atomDoc, answer)
 		summaries = append(summaries, fmt.Sprintf("Atom %d/%d `%s`:\n%s", i+1, len(atomDocuments), atomDoc.Path, strings.TrimSpace(answer)))
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Design document implementation completed through %d atom(s).", len(atomDocuments)))
+	if len(skipped) == len(atomDocuments) {
+		b.WriteString(fmt.Sprintf("Design document implementation already closed across %d atom(s).", len(atomDocuments)))
+	} else {
+		b.WriteString(fmt.Sprintf("Design document implementation completed through %d atom(s).", len(atomDocuments)-len(skipped)))
+		if len(skipped) > 0 {
+			b.WriteString(fmt.Sprintf(" Skipped %d already-closed atom(s).", len(skipped)))
+		}
+	}
 	if obligations := implementationDispatchTestObligationsFromDocuments(atomDocuments); len(obligations) > 0 {
 		b.WriteString("\n\nDesign-doc test obligations tracked:")
 		for _, obligation := range obligations {
@@ -2992,7 +3199,13 @@ func implementationDispatchAnswerLooksBlocked(answer string) bool {
 	if lower == "" {
 		return false
 	}
-	return strings.Contains(lower, "blocked dispatch") ||
+	return strings.HasPrefix(lower, "<<question>>") ||
+		strings.Contains(lower, "<<question>>") ||
+		strings.Contains(lower, "plan-execute could not produce a plan artifact") ||
+		strings.Contains(lower, "planner phase did not produce a plan artifact") ||
+		strings.Contains(lower, "planner phase reported a blocker") ||
+		strings.Contains(lower, "required edit paths still need a plan") ||
+		strings.Contains(lower, "blocked dispatch") ||
 		strings.Contains(lower, "blocked before the planner ran") ||
 		strings.Contains(lower, "automatic refine did not produce") ||
 		strings.Contains(lower, "still blocked by preflight")

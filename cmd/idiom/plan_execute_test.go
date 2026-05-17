@@ -1768,6 +1768,28 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainResumeRejectsMissingSession(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", "resume missing", "-resume", "missing-session"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) {
+			t.Fatal("prompt runner should not be called for missing resume state")
+			return "", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected missing resume to fail, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "does not exist") {
+		t.Fatalf("stderr should explain missing resume state, got %s", stderr.String())
+	}
+}
+
 func TestRunReviewRepairPhaseDegradesWhenReviewModelUnavailable(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {

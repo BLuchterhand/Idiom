@@ -41,6 +41,10 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			fmt.Fprintln(stderr, err)
 			return RunResult{ExitCode: 1}
 		}
+		if !found {
+			fmt.Fprintln(stderr, fmt.Errorf("plan-execute progress state %s does not exist", statePath))
+			return RunResult{ExitCode: 1, ResumeStatePath: statePath}
+		}
 		if found {
 			resumeState = &state
 			resumeStatePath = statePath

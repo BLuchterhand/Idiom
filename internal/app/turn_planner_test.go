@@ -308,6 +308,135 @@ func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t 
 	}
 }
 
+func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "pkg", "source.go")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	if err := os.WriteFile(sourcePath, []byte("package pkg\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	doc := implementationDispatchPlanDocument{
+		Path: "docs/design.md",
+		Content: strings.Join([]string{
+			"# Design",
+			"",
+			"## Expected File Scope",
+			"",
+			"| File | Change |",
+			"|---|---|",
+			"| `pkg/source.go` | Add source behavior. |",
+		}, "\n"),
+		EditPaths: []string{"pkg/source.go"},
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	atomRel := ".idiom/atoms/tui-docs-design/atom-001.md"
+	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
+		t.Fatalf("mkdir atom dir: %v", err)
+	}
+	existing := strings.Join([]string{
+		"# design atom 001",
+		"",
+		"Status: completed",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| pkg/source.go | Add source behavior. |",
+		"",
+		"## Result",
+		"",
+		"Status: completed",
+		"",
+		"Original closeout evidence.",
+		"",
+	}, "\n")
+	if err := os.WriteFile(atomAbs, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing atom: %v", err)
+	}
+
+	atoms, err := materializeImplementationDispatchPlanDocumentAtoms(cfg, []implementationDispatchPlanDocument{doc})
+	if err != nil {
+		t.Fatalf("materialize atoms: %v", err)
+	}
+	if len(atoms) != 1 || atoms[0].Path != atomRel {
+		t.Fatalf("expected existing atom to be returned, got %#v", atoms)
+	}
+	status, ok := implementationDispatchPlanDocumentTerminalAtomStatus(atoms[0])
+	if !ok || status != "completed" {
+		t.Fatalf("existing atom should stay terminal, status=%q ok=%v", status, ok)
+	}
+	updated, err := os.ReadFile(atomAbs)
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	if string(updated) != existing {
+		t.Fatalf("materialization overwrote terminal atom:\n%s", string(updated))
+	}
+}
+
+func TestRunAtomizedImplementationPlanDocumentsSkipsTerminalAtoms(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	atomRel := ".idiom/atoms/design/atom-001.md"
+	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
+		t.Fatalf("mkdir atom dir: %v", err)
+	}
+	body := strings.Join([]string{
+		"# design atom 001",
+		"",
+		"Status: completed",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| pkg/source.go | Add source behavior. |",
+		"",
+		"## Result",
+		"",
+		"Status: completed",
+		"",
+	}, "\n")
+	if err := os.WriteFile(atomAbs, []byte(body), 0o644); err != nil {
+		t.Fatalf("write atom: %v", err)
+	}
+	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
+	if !ok {
+		t.Fatalf("atom doc should be readable")
+	}
+	cfg := config.Default()
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.MCP = nil
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.runAtomizedImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationDispatchPlanDocument{doc})
+	if err != nil {
+		t.Fatalf("run atomized plan documents: %v", err)
+	}
+	if !strings.Contains(answer, "already closed") || !strings.Contains(answer, "skipped: completed") {
+		t.Fatalf("closed atom should be skipped without dispatch:\n%s", answer)
+	}
+	updated, err := os.ReadFile(atomAbs)
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	if string(updated) != body {
+		t.Fatalf("skipping terminal atom should not rewrite it:\n%s", string(updated))
+	}
+}
+
 func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *testing.T) {
 	root := t.TempDir()
 	testPath := "pkg/source_test.go"
@@ -341,6 +470,133 @@ func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *
 	message := humanImplementationDispatchSourceSatisfiedMessage(records)
 	if !strings.Contains(message, "Test obligations") || !strings.Contains(message, "TestRouteDecisionShape") {
 		t.Fatalf("source-satisfied message should report test obligations and evidence:\n%s", message)
+	}
+}
+
+func TestImplementationDispatchSourceSatisfiedRequiresVerificationCommandEvidence(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := "pkg/source.go"
+	full := filepath.Join(root, filepath.FromSlash(sourcePath))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	if err := os.WriteFile(full, []byte("package pkg\n\nfunc routeDecisionHarness() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	doc := sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", sourcePath, "Add `routeDecisionHarness` implementation", []string{
+		"`pkg/source.go:1`: `package pkg`",
+		"`pkg/source.go:3`: `func routeDecisionHarness() {}`",
+	})
+	doc.Content += "\n\n## Design Doc Test Obligations\n\n- `go test ./pkg`\n"
+	doc.TestObligations = implementationDispatchDesignDocTestObligations(doc.Content)
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	if records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+		t.Fatalf("source-satisfied must not treat an unrun verification command as evidence: %#v", records)
+	}
+}
+
+func TestImplementationDispatchBlockedQuestionDoesNotMarkAtomCompleted(t *testing.T) {
+	root := t.TempDir()
+	atomRel := ".idiom/atoms/design/atom-001.md"
+	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
+		t.Fatalf("mkdir atom dir: %v", err)
+	}
+	body := strings.Join([]string{
+		"# design atom 001",
+		"",
+		"Status: pending",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| pkg/source.go | Add source behavior. |",
+		"",
+	}, "\n")
+	if err := os.WriteFile(atomAbs, []byte(body), 0o644); err != nil {
+		t.Fatalf("write atom: %v", err)
+	}
+	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
+	if !ok {
+		t.Fatalf("atom doc should be readable")
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	answer := "<<QUESTION>>: Plan-execute could not produce a plan artifact.\n\nRequired edit paths still need a plan:\n- pkg/source.go"
+	if !implementationDispatchAnswerLooksBlocked(answer) {
+		t.Fatalf("question answer should be classified as blocked")
+	}
+	implementationDispatchMarkCompletedAtomDocument(cfg, doc, answer)
+	updated, err := os.ReadFile(atomAbs)
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	if strings.Contains(string(updated), "Status: completed") || strings.Contains(string(updated), "## Result") {
+		t.Fatalf("blocked question must not mark atom completed:\n%s", string(updated))
+	}
+}
+
+func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t *testing.T) {
+	root := t.TempDir()
+	atomRel := ".idiom/atoms/design/atom-001.md"
+	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
+		t.Fatalf("mkdir atom dir: %v", err)
+	}
+	body := strings.Join([]string{
+		"# design atom 001",
+		"",
+		"Status: pending",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| pkg/source.go | Add source behavior. |",
+		"",
+		"## Design Doc Test Obligations",
+		"",
+		"- `go test ./pkg`",
+		"",
+	}, "\n")
+	if err := os.WriteFile(atomAbs, []byte(body), 0o644); err != nil {
+		t.Fatalf("write atom: %v", err)
+	}
+	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
+	if !ok {
+		t.Fatalf("atom doc should be readable")
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	unprovenAnswer := "Decision: source-satisfied\n\n`pkg/source.go` already contains the requested source."
+	if pending := implementationDispatchUnprovenVerificationCommands(doc, unprovenAnswer); len(pending) != 1 {
+		t.Fatalf("expected pending command, got %#v", pending)
+	}
+	implementationDispatchMarkCompletedAtomDocument(cfg, doc, unprovenAnswer)
+	updated, err := os.ReadFile(atomAbs)
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	if strings.Contains(string(updated), "Status: completed") || strings.Contains(string(updated), "## Result") {
+		t.Fatalf("unproven command must not mark atom complete:\n%s", string(updated))
+	}
+
+	provenAnswer := "Completed source work.\n\nVerification: `go test ./pkg` passed with exit 0."
+	implementationDispatchMarkCompletedAtomDocument(cfg, doc, provenAnswer)
+	updated, err = os.ReadFile(atomAbs)
+	if err != nil {
+		t.Fatalf("read atom after proven answer: %v", err)
+	}
+	if !strings.Contains(string(updated), "Status: completed") || !strings.Contains(string(updated), "go test ./pkg") {
+		t.Fatalf("proven command should allow completion:\n%s", string(updated))
 	}
 }
 

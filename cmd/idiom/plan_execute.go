@@ -102,6 +102,10 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		if !found {
+			fmt.Fprintln(stderr, fmt.Errorf("plan-execute progress state %s does not exist", statePath))
+			return 1
+		}
 		if found {
 			resumeState = &state
 			resumeStatePath = statePath
