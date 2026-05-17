@@ -828,3 +828,202 @@ func require(errs *[]error, value string, message string) {
 		*errs = append(*errs, errors.New(message))
 	}
 }
+
+var allowedComplexityTiers = map[string]bool{
+	"C0": true, "C1": true, "C2": true, "C3": true, "C4": true,
+}
+
+func ParseImplementationReportJSON(data []byte) (ImplementationReport, error) {
+	var report ImplementationReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return ImplementationReport{}, fmt.Errorf("parse implementation report: %w", err)
+	}
+	if err := validateImplementationReport(report); err != nil {
+		return ImplementationReport{}, err
+	}
+	return report, nil
+}
+
+func ParseReviewReportJSON(data []byte) (ReviewReport, error) {
+	var report ReviewReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return ReviewReport{}, fmt.Errorf("parse review report: %w", err)
+	}
+	if err := validateReviewReport(report); err != nil {
+		return ReviewReport{}, err
+	}
+	return report, nil
+}
+
+func ParseInvestigationReportJSON(data []byte) (InvestigationReport, error) {
+	var report InvestigationReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return InvestigationReport{}, fmt.Errorf("parse investigation report: %w", err)
+	}
+	if err := validateInvestigationReport(report); err != nil {
+		return InvestigationReport{}, err
+	}
+	return report, nil
+}
+
+func validateImplementationReport(r ImplementationReport) error {
+	var errs []error
+	require(&errs, r.SchemaVersion, "implementation report missing schema_version")
+	require(&errs, r.TaskID, "implementation report missing task_id")
+	require(&errs, r.EffortID, "implementation report missing effort_id")
+	require(&errs, r.ImplementorID, "implementation report missing implementor_id")
+	require(&errs, r.Runtime, "implementation report missing runtime")
+	require(&errs, r.Model, "implementation report missing model")
+	require(&errs, r.ComplexityTier, "implementation report missing complexity_tier")
+	if r.ComplexityTier != "" && !allowedComplexityTiers[r.ComplexityTier] {
+		errs = append(errs, fmt.Errorf("implementation report invalid complexity_tier %q", r.ComplexityTier))
+	}
+	require(&errs, r.ScopeStatement, "implementation report missing scope_statement")
+	require(&errs, r.ReviewerID, "implementation report missing reviewer_id")
+	require(&errs, r.Verification.Status, "implementation report missing verification.status")
+	require(&errs, r.PrivacyNote, "implementation report missing privacy_note")
+	if r.OpenBlockers == nil {
+		errs = append(errs, errors.New("implementation report missing open_blockers (must be present, may be empty)"))
+	}
+	if r.Verification.Status != "" && r.Verification.Status != "pending" {
+		if len(r.Verification.Commands) == 0 {
+			errs = append(errs, fmt.Errorf("implementation report verification.status %q requires verification.commands", r.Verification.Status))
+		}
+	}
+	if r.CodeChanges && len(r.ChangedPaths) == 0 {
+		errs = append(errs, errors.New("implementation report code_changes is true but changed_paths is empty"))
+	}
+	if err := validateReportPrivacyNote(r.PrivacyNote); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func validateReviewReport(r ReviewReport) error {
+	var errs []error
+	require(&errs, r.SchemaVersion, "review report missing schema_version")
+	require(&errs, r.EffortID, "review report missing effort_id")
+	require(&errs, r.TaskID, "review report missing task_id")
+	require(&errs, r.Reviewer.AgentID, "review report missing reviewer.agent_id")
+	require(&errs, r.Reviewer.Model, "review report missing reviewer.model")
+	require(&errs, r.Reviewer.ReasoningEffort, "review report missing reviewer.reasoning_effort")
+	require(&errs, r.Status, "review report missing status")
+	if r.Status != "" && r.Status != "pending" {
+		require(&errs, r.ReviewedAt, "review report missing reviewed_at (required when status is not pending)")
+		if len(r.CommandsReviewed) == 0 {
+			errs = append(errs, errors.New("review report missing commands_reviewed (required when status is not pending)"))
+		}
+		if len(r.Checks) == 0 {
+			errs = append(errs, errors.New("review report missing checks (required when status is not pending)"))
+		}
+	}
+	if !r.Reviewer.IndependentFromImplementor {
+		errs = append(errs, errors.New("review report reviewer.independent_from_implementor must be true"))
+	}
+	return errors.Join(errs...)
+}
+
+func validateInvestigationReport(r InvestigationReport) error {
+	var errs []error
+	require(&errs, r.SchemaVersion, "investigation report missing schema_version")
+	require(&errs, r.EffortID, "investigation report missing effort_id")
+	require(&errs, r.TaskID, "investigation report missing task_id")
+	require(&errs, r.Status, "investigation report missing status")
+	if r.Status == "complete" {
+		require(&errs, r.CompletedAt, "investigation report missing completed_at (required when status is complete)")
+		require(&errs, r.NextValidAction, "investigation report missing next_valid_action (required when status is complete)")
+		if len(r.Scope) == 0 {
+			errs = append(errs, errors.New("investigation report missing scope (required when status is complete)"))
+		}
+		if len(r.Tests) == 0 {
+			errs = append(errs, errors.New("investigation report missing tests (required when status is complete)"))
+		}
+		if len(r.Coverage) == 0 {
+			errs = append(errs, errors.New("investigation report missing coverage (required when status is complete)"))
+		}
+		if len(r.Traceability) == 0 {
+			errs = append(errs, errors.New("investigation report missing traceability (required when status is complete)"))
+		}
+		if len(r.PrivacyAudit) == 0 {
+			errs = append(errs, errors.New("investigation report missing privacy_audit (required when status is complete)"))
+		}
+		if len(r.Blockers) > 0 {
+			errs = append(errs, errors.New("investigation report status is complete but blockers is non-empty"))
+		}
+	}
+	if len(r.PrivacyAudit) > 0 {
+		if err := validatePrivacyAudit(r.PrivacyAudit); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+var privacyAuditStoredTrue = []string{
+	"raw_prompts_stored",
+	"raw_transcripts_stored",
+	"file_bodies_stored",
+	"secrets_stored",
+	"customer_identifying_data_stored",
+}
+
+var privacyAuditNoFalse = []string{
+	"no_raw_prompts",
+	"no_raw_transcripts",
+	"no_file_bodies",
+	"no_secrets",
+	"no_customer_data",
+}
+
+func validatePrivacyAudit(audit map[string]any) error {
+	var errs []error
+	for _, key := range privacyAuditStoredTrue {
+		if val, ok := audit[key]; ok {
+			if b, _ := val.(bool); b {
+				errs = append(errs, fmt.Errorf("investigation report privacy_audit: %s must not be true", key))
+			}
+		}
+	}
+	for _, key := range privacyAuditNoFalse {
+		if val, ok := audit[key]; ok {
+			if b, _ := val.(bool); !b {
+				errs = append(errs, fmt.Errorf("investigation report privacy_audit: %s must not be false", key))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+var privacyForbiddenClaims = []string{
+	"raw_prompts_stored",
+	"raw_transcripts_stored",
+	"file_bodies_stored",
+	"secrets_stored",
+	"customer_identifying_data_stored",
+}
+
+func validateReportPrivacyNote(note string) error {
+	if note == "" {
+		return nil
+	}
+	lower := strings.ToLower(note)
+	for _, claim := range privacyForbiddenClaims {
+		if strings.Contains(lower, claim+": true") || strings.Contains(lower, claim+"\":true") {
+			return fmt.Errorf("implementation report privacy_note claims %s was stored", claim)
+		}
+	}
+	return nil
+}
+
+func ClassifyReportFileName(name string) (reportType string, known bool) {
+	if strings.HasSuffix(name, "-implementation.json") {
+		return "implementation", true
+	}
+	if strings.HasSuffix(name, "-review.json") {
+		return "review", true
+	}
+	if strings.HasSuffix(name, "-investigation.json") {
+		return "investigation", true
+	}
+	return "", false
+}

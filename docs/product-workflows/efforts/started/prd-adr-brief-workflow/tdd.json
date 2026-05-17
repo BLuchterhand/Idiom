@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0008b-phase-1-artifact-state-machine-enum",
+  "task_id": "impl-0009-phase-1-report-schema-linting",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,9 +19,10 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "artifact_state_enum_validation",
-      "prd_artifact_status_validation",
-      "adr_artifact_status_validation",
+      "implementation_report_schema_validation",
+      "review_report_schema_validation",
+      "investigation_report_schema_validation",
+      "report_privacy_metadata_validation",
       "product_workflow_lint_cli",
       "focused_go_tests",
       "full_go_tests",
@@ -33,45 +34,45 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0008B-001",
+      "id": "TDD-IMPL-0009-001",
       "type": "contract",
-      "behavior": "Artifact state validation accepts exactly draft, audited, accepted, blocked, and dispatched.",
+      "behavior": "Implementation report parser validates required identity, implementor, model, complexity, changed-path, verification, privacy, blocker, and reviewer fields.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0008B-002",
+      "id": "TDD-IMPL-0009-002",
       "type": "contract",
-      "behavior": "PRD front matter status rejects unknown artifact states and the current durable PRD fixture still passes.",
+      "behavior": "Review report parser validates reviewer independence, status, checks, reviewed_at, commands_reviewed, and required reviewer metadata.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0008B-003",
+      "id": "TDD-IMPL-0009-003",
       "type": "contract",
-      "behavior": "ADR index and ADR markdown statuses reject unknown artifact states and the current durable ADR fixtures still pass.",
+      "behavior": "Investigation report parser validates complete status, scope, tests, coverage, traceability, privacy audit, completed_at, next_valid_action, and blockers.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0008B-004",
+      "id": "TDD-IMPL-0009-004",
       "type": "acceptance",
-      "behavior": "Product workflow lint surfaces invalid PRD, ADR index, and ADR markdown artifact states as typed parse_error findings.",
+      "behavior": "Product workflow lint validates report schemas, emits parse_error for malformed implementation, review, and investigation reports, and still passes the current durable effort fixture.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0008B-005",
+      "id": "TDD-IMPL-0009-005",
       "type": "contract",
-      "behavior": "The validator does not reintroduce accepted_fixture or any other fixture-only status exception.",
+      "behavior": "Report schema validation rejects durable report privacy metadata that claims raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data were stored.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",

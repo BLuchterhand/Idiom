@@ -532,6 +532,140 @@ Test decision.
 	}
 }
 
+func TestProductLintRejectsMalformedImplementationReport(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "reports/impl-bad-implementation.json", `{"schema_version":""}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail on malformed implementation report, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "parse_error" && f.Path == "reports/impl-bad-implementation.json" && strings.Contains(f.Message, "missing task_id") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding for malformed implementation report, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintRejectsMalformedReviewReport(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "reports/impl-bad-review.json", `{"schema_version":"v1","reviewer":{"independent_from_implementor":false}}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail on malformed review report, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "parse_error" && f.Path == "reports/impl-bad-review.json" && strings.Contains(f.Message, "independent_from_implementor must be true") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error for review report independence, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintRejectsMalformedInvestigationReport(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "reports/impl-bad-investigation.json", `{"schema_version":"v1","status":"complete","blockers":["still_broken"]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail on malformed investigation report, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "parse_error" && f.Path == "reports/impl-bad-investigation.json" && strings.Contains(f.Message, "blockers is non-empty") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error for investigation with blockers, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintAcceptsUnknownReportJSON(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
+	writeTestFile(t, dir, "reports/test.json", `{"kind":"traceability_report"}`)
+	writeTestFile(t, dir, "reports/other.json", `{"kind":"unknown","valid":true}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass with unknown report JSON, got code=%d stdout=%s", code, stdout.String())
+	}
+}
+
+func TestProductLintPassesWithValidReportFixtures(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
+	writeTestFile(t, dir, "reports/test.json", "{}")
+	writeTestFile(t, dir, "reports/test-implementation.json", validTestImplementationReportJSON())
+	writeTestFile(t, dir, "reports/test-review.json", validTestReviewReportJSON())
+	writeTestFile(t, dir, "reports/test-investigation.json", validTestTestInvestigationReportJSON())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass with valid reports, got code=%d stdout=%s", code, stdout.String())
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -690,4 +824,63 @@ prd_refs:
 
 Test decision.
 `
+}
+
+func validTestImplementationReportJSON() string {
+	return `{
+		"schema_version":"idiom.implementation_report.v1.fixture",
+		"task_id":"impl-test",
+		"effort_id":"test-effort",
+		"implementor_id":"test-agent",
+		"runtime":"opencode",
+		"model":"test-model",
+		"completed_at":"2026-05-17T16:00:00Z",
+		"complexity_tier":"C1",
+		"scope_statement":"Test scope",
+		"code_changes":false,
+		"changed_paths":[],
+		"verification":{"run_by_implementor":false,"commands":[],"status":"pending"},
+		"privacy_note":"No raw prompts, raw transcripts, file bodies, secrets, or customer data stored.",
+		"open_blockers":["reviewer_pending"],
+		"reviewer_id":"test-reviewer"
+	}`
+}
+
+func validTestReviewReportJSON() string {
+	return `{
+		"schema_version":"idiom.review_report.v1.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"reviewer":{
+			"agent_id":"test-reviewer",
+			"model":"GPT-5.4",
+			"reasoning_effort":"medium",
+			"independent_from_implementor":true
+		},
+		"status":"pending",
+		"findings":[],
+		"checks":{},
+		"reviewed_at":"",
+		"commands_reviewed":[],
+		"created_at":"2026-05-17T16:00:00Z"
+	}`
+}
+
+func validTestTestInvestigationReportJSON() string {
+	return `{
+		"schema_version":"idiom.investigation_report.v1.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"status":"pending",
+		"created_at":"2026-05-17T16:00:00Z",
+		"scope":{"files":["a.go"]},
+		"tests":{"focused":"go test"},
+		"coverage":{"tier":"unit"},
+		"traceability":{"checked":false},
+		"privacy_audit":{"no_raw_prompts":true},
+		"reviewer_findings":[],
+		"blockers":["implementation_pending"],
+		"next_valid_action":"",
+		"completed_at":""
+	}`
 }

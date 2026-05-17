@@ -49,22 +49,7 @@
   },
   "reviewer_findings": [],
   "blockers": [
-    {
-      "id": "BLK-IMPL-0008-001",
-      "kind": "artifact_state_fixture_status_conflict",
-      "summary": "Phase 1 roadmap/TDD require artifact states exactly draft, audited, accepted, blocked, and dispatched, but current durable PRD and ADR fixtures use accepted_fixture while TDD also requires those current fixtures to pass.",
-      "conflicting_paths": [
-        "docs/obsidian/22 - Product Workflow ROADMAP.md",
-        "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
-        "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md",
-        "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/index.json",
-        "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"
-      ],
-      "resolution_options": [
-        "Migrate current durable fixture statuses from accepted_fixture to accepted and keep the enum exact.",
-        "Define an explicit .fixture schema exception and update the TDD scope so the exception is intentional."
-      ]
-    }
+    "BLK-IMPL-0008-001: artifact_state_fixture_status_conflict — Phase 1 roadmap/TDD require artifact states exactly draft, audited, accepted, blocked, and dispatched, but current durable PRD and ADR fixtures use accepted_fixture while TDD also requires those current fixtures to pass. Conflicting paths: docs/obsidian/22 - Product Workflow ROADMAP.md, tdd.json, prd.md, adrs/index.json, ADR-0001-durable-workflow-substrate.md. Resolution: migrate fixture statuses from accepted_fixture to accepted, or define an explicit .fixture schema exception."
   ],
   "next_valid_action": "resolve_artifact_state_fixture_status_conflict_before_implementation",
   "completed_at": "2026-05-17T17:47:10Z"

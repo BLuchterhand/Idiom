@@ -1328,6 +1328,513 @@ Test.
 	}
 }
 
+func TestValidImplementationReportPasses(t *testing.T) {
+	report := ImplementationReport{
+		SchemaVersion:  "idiom.implementation_report.v1",
+		TaskID:         "impl-0001",
+		EffortID:       "effort-1",
+		ImplementorID:  "agent-1",
+		Runtime:        "opencode",
+		Model:          "glm-5.1",
+		CompletedAt:    "2026-05-17T16:00:00Z",
+		ComplexityTier: "C1",
+		ScopeStatement: "Add report schema validation",
+		CodeChanges:    true,
+		ChangedPaths:   []string{"validate.go"},
+		Verification: VerificationState{
+			RunByImplementor: true,
+			Commands:         []string{"go test ./..."},
+			Status:           "passed",
+		},
+		PrivacyNote:  "No raw prompts, raw transcripts, file bodies, secrets, or customer data stored.",
+		OpenBlockers: []string{},
+		ReviewerID:   "reviewer-1",
+	}
+	if err := validateImplementationReport(report); err != nil {
+		t.Fatalf("expected valid implementation report to pass, got %v", err)
+	}
+}
+
+func TestInvalidImplementationReportMissingFieldsFailsClosed(t *testing.T) {
+	report := ImplementationReport{}
+	err := validateImplementationReport(report)
+	if err == nil {
+		t.Fatal("expected empty implementation report to fail")
+	}
+	for _, want := range []string{
+		"missing schema_version", "missing task_id", "missing effort_id",
+		"missing implementor_id", "missing runtime", "missing model",
+		"missing complexity_tier", "missing scope_statement", "missing reviewer_id",
+		"missing verification.status", "missing privacy_note",
+		"missing open_blockers",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestInvalidImplementationReportBadComplexityTierFailsClosed(t *testing.T) {
+	report := ImplementationReport{
+		SchemaVersion: "v1", TaskID: "t", EffortID: "e", ImplementorID: "i",
+		Runtime: "r", Model: "m", ComplexityTier: "C9", ScopeStatement: "s",
+		ReviewerID: "rev", Verification: VerificationState{Status: "pending"},
+		PrivacyNote: "safe", OpenBlockers: []string{},
+	}
+	err := validateImplementationReport(report)
+	if err == nil {
+		t.Fatal("expected invalid complexity_tier to fail")
+	}
+	if !strings.Contains(err.Error(), "invalid complexity_tier") {
+		t.Fatalf("expected complexity_tier error, got %v", err)
+	}
+}
+
+func TestInvalidImplementationReportVerificationNotPendingRequiresCommands(t *testing.T) {
+	report := ImplementationReport{
+		SchemaVersion: "v1", TaskID: "t", EffortID: "e", ImplementorID: "i",
+		Runtime: "r", Model: "m", ComplexityTier: "C1", ScopeStatement: "s",
+		ReviewerID: "rev", Verification: VerificationState{Status: "passed", Commands: nil},
+		PrivacyNote: "safe", OpenBlockers: []string{},
+	}
+	err := validateImplementationReport(report)
+	if err == nil {
+		t.Fatal("expected verification.commands required when status not pending")
+	}
+	if !strings.Contains(err.Error(), "requires verification.commands") {
+		t.Fatalf("expected verification.commands error, got %v", err)
+	}
+}
+
+func TestInvalidImplementationReportCodeChangesRequiresChangedPaths(t *testing.T) {
+	report := ImplementationReport{
+		SchemaVersion: "v1", TaskID: "t", EffortID: "e", ImplementorID: "i",
+		Runtime: "r", Model: "m", ComplexityTier: "C1", ScopeStatement: "s",
+		ReviewerID: "rev", CodeChanges: true, ChangedPaths: nil,
+		Verification: VerificationState{Status: "pending"},
+		PrivacyNote:  "safe", OpenBlockers: []string{},
+	}
+	err := validateImplementationReport(report)
+	if err == nil {
+		t.Fatal("expected changed_paths required when code_changes true")
+	}
+	if !strings.Contains(err.Error(), "changed_paths is empty") {
+		t.Fatalf("expected changed_paths error, got %v", err)
+	}
+}
+
+func TestInvalidImplementationReportPrivacyNoteClaimsStoredFailsClosed(t *testing.T) {
+	report := ImplementationReport{
+		SchemaVersion: "v1", TaskID: "t", EffortID: "e", ImplementorID: "i",
+		Runtime: "r", Model: "m", ComplexityTier: "C1", ScopeStatement: "s",
+		ReviewerID: "rev", Verification: VerificationState{Status: "pending"},
+		PrivacyNote: "raw_prompts_stored: true was recorded", OpenBlockers: []string{},
+	}
+	err := validateImplementationReport(report)
+	if err == nil {
+		t.Fatal("expected privacy note claiming raw_prompts_stored to fail")
+	}
+	if !strings.Contains(err.Error(), "raw_prompts_stored") {
+		t.Fatalf("expected privacy claim error, got %v", err)
+	}
+}
+
+func TestImplementationReportAllComplexityTiersAccepted(t *testing.T) {
+	for _, tier := range []string{"C0", "C1", "C2", "C3", "C4"} {
+		report := ImplementationReport{
+			SchemaVersion: "v1", TaskID: "t", EffortID: "e", ImplementorID: "i",
+			Runtime: "r", Model: "m", ComplexityTier: tier, ScopeStatement: "s",
+			ReviewerID: "rev", Verification: VerificationState{Status: "pending"},
+			PrivacyNote: "safe", OpenBlockers: []string{},
+		}
+		if err := validateImplementationReport(report); err != nil {
+			t.Fatalf("expected complexity_tier %q to pass, got %v", tier, err)
+		}
+	}
+}
+
+func TestValidReviewReportPasses(t *testing.T) {
+	report := ReviewReport{
+		SchemaVersion: "idiom.review_report.v1",
+		EffortID:      "effort-1",
+		TaskID:        "impl-0001",
+		Reviewer: ReviewerInfo{
+			AgentID:                    "reviewer-1",
+			Model:                      "GPT-5.4",
+			ReasoningEffort:            "medium",
+			IndependentFromImplementor: true,
+		},
+		Status:           "passed",
+		Findings:         []any{},
+		Checks:           map[string]any{"scope": "passed"},
+		ReviewedAt:       "2026-05-17T16:00:00Z",
+		CommandsReviewed: []string{"go test ./..."},
+		CreatedAt:        "2026-05-17T15:00:00Z",
+	}
+	if err := validateReviewReport(report); err != nil {
+		t.Fatalf("expected valid review report to pass, got %v", err)
+	}
+}
+
+func TestInvalidReviewReportMissingFieldsFailsClosed(t *testing.T) {
+	report := ReviewReport{}
+	err := validateReviewReport(report)
+	if err == nil {
+		t.Fatal("expected empty review report to fail")
+	}
+	for _, want := range []string{
+		"missing schema_version", "missing effort_id", "missing task_id",
+		"missing reviewer.agent_id", "missing reviewer.model",
+		"missing reviewer.reasoning_effort", "missing status",
+		"independent_from_implementor must be true",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestInvalidReviewReportNotIndependentFailsClosed(t *testing.T) {
+	report := ReviewReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "pending",
+		Reviewer: ReviewerInfo{
+			AgentID: "r", Model: "m", ReasoningEffort: "low",
+			IndependentFromImplementor: false,
+		},
+	}
+	err := validateReviewReport(report)
+	if err == nil {
+		t.Fatal("expected reviewer not independent to fail")
+	}
+	if !strings.Contains(err.Error(), "independent_from_implementor must be true") {
+		t.Fatalf("expected independence error, got %v", err)
+	}
+}
+
+func TestInvalidReviewReportNotPendingRequiresCloseoutFailsClosed(t *testing.T) {
+	report := ReviewReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "passed",
+		Reviewer: ReviewerInfo{
+			AgentID: "r", Model: "m", ReasoningEffort: "low",
+			IndependentFromImplementor: true,
+		},
+	}
+	err := validateReviewReport(report)
+	if err == nil {
+		t.Fatal("expected non-pending review without closeout to fail")
+	}
+	for _, want := range []string{"missing reviewed_at", "missing commands_reviewed", "missing checks"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestValidReviewReportPendingAcceptsIncompleteFields(t *testing.T) {
+	report := ReviewReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "pending",
+		Reviewer: ReviewerInfo{
+			AgentID: "r", Model: "m", ReasoningEffort: "low",
+			IndependentFromImplementor: true,
+		},
+	}
+	if err := validateReviewReport(report); err != nil {
+		t.Fatalf("expected pending review report to pass, got %v", err)
+	}
+}
+
+func TestValidInvestigationReportCompletePasses(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion:    "idiom.investigation_report.v1",
+		EffortID:         "effort-1",
+		TaskID:           "impl-0001",
+		Status:           "complete",
+		CreatedAt:        "2026-05-17T15:00:00Z",
+		Scope:            map[string]any{"files": []any{"a.go"}},
+		Tests:            map[string]any{"focused": "go test"},
+		Coverage:         map[string]any{"tier": "unit"},
+		Traceability:     map[string]any{"checked": true},
+		PrivacyAudit:     map[string]any{"no_raw_prompts": true},
+		ReviewerFindings: []any{},
+		Blockers:         []string{},
+		NextValidAction:  "close_atom",
+		CompletedAt:      "2026-05-17T16:00:00Z",
+	}
+	if err := validateInvestigationReport(report); err != nil {
+		t.Fatalf("expected valid complete investigation to pass, got %v", err)
+	}
+}
+
+func TestInvalidInvestigationReportMissingFieldsFailsClosed(t *testing.T) {
+	report := InvestigationReport{}
+	err := validateInvestigationReport(report)
+	if err == nil {
+		t.Fatal("expected empty investigation report to fail")
+	}
+	for _, want := range []string{"missing schema_version", "missing effort_id", "missing task_id", "missing status"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestInvalidInvestigationReportCompleteWithBlockersFailsClosed(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
+		CompletedAt: "2026-05-17T16:00:00Z", NextValidAction: "close",
+		Scope: map[string]any{"a": 1}, Tests: map[string]any{"a": 1},
+		Coverage: map[string]any{"a": 1}, Traceability: map[string]any{"a": 1},
+		PrivacyAudit: map[string]any{"a": 1},
+		Blockers:     []string{"still_broken"},
+	}
+	err := validateInvestigationReport(report)
+	if err == nil {
+		t.Fatal("expected complete investigation with blockers to fail")
+	}
+	if !strings.Contains(err.Error(), "blockers is non-empty") {
+		t.Fatalf("expected blockers error, got %v", err)
+	}
+}
+
+func TestInvalidInvestigationReportCompleteMissingCloseoutFieldsFailsClosed(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
+	}
+	err := validateInvestigationReport(report)
+	if err == nil {
+		t.Fatal("expected complete investigation without closeout to fail")
+	}
+	for _, want := range []string{
+		"missing completed_at", "missing next_valid_action",
+		"missing scope", "missing tests", "missing coverage",
+		"missing traceability", "missing privacy_audit",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestValidInvestigationReportPendingAcceptsIncompleteFields(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "pending",
+		CreatedAt: "2026-05-17T15:00:00Z",
+		Blockers:  []string{"implementation_pending"},
+	}
+	if err := validateInvestigationReport(report); err != nil {
+		t.Fatalf("expected pending investigation to pass, got %v", err)
+	}
+}
+
+func TestInvalidInvestigationReportPrivacyAuditRawPromptsStoredFailsClosed(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
+		CompletedAt: "2026-05-17T16:00:00Z", NextValidAction: "close",
+		Scope: map[string]any{"a": 1}, Tests: map[string]any{"a": 1},
+		Coverage: map[string]any{"a": 1}, Traceability: map[string]any{"a": 1},
+		PrivacyAudit: map[string]any{"raw_prompts_stored": true},
+		Blockers:     []string{},
+	}
+	err := validateInvestigationReport(report)
+	if err == nil {
+		t.Fatal("expected complete investigation without closeout to fail")
+	}
+	if !strings.Contains(err.Error(), "raw_prompts_stored must not be true") {
+		t.Fatalf("expected raw_prompts_stored error, got %v", err)
+	}
+}
+
+func TestInvalidInvestigationReportPrivacyAuditNoRawPromptsFalseFailsClosed(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
+		CompletedAt: "2026-05-17T16:00:00Z", NextValidAction: "close",
+		Scope: map[string]any{"a": 1}, Tests: map[string]any{"a": 1},
+		Coverage: map[string]any{"a": 1}, Traceability: map[string]any{"a": 1},
+		PrivacyAudit: map[string]any{"no_raw_prompts": false},
+		Blockers:     []string{},
+	}
+	err := validateInvestigationReport(report)
+	if err == nil {
+		t.Fatal("expected privacy_audit no_raw_prompts=false to fail")
+	}
+	if !strings.Contains(err.Error(), "no_raw_prompts must not be false") {
+		t.Fatalf("expected no_raw_prompts error, got %v", err)
+	}
+}
+
+func TestValidInvestigationReportPrivacyAuditNoFieldsTruePasses(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
+		CompletedAt: "2026-05-17T16:00:00Z", NextValidAction: "close",
+		Scope: map[string]any{"a": 1}, Tests: map[string]any{"a": 1},
+		Coverage: map[string]any{"a": 1}, Traceability: map[string]any{"a": 1},
+		PrivacyAudit: map[string]any{
+			"no_raw_prompts": true, "no_raw_transcripts": true,
+			"no_file_bodies": true, "no_secrets": true, "no_customer_data": true,
+		},
+		Blockers: []string{},
+	}
+	if err := validateInvestigationReport(report); err != nil {
+		t.Fatalf("expected valid privacy_audit with no_* fields true to pass, got %v", err)
+	}
+}
+
+func TestInvalidInvestigationReportPrivacyAuditAllStoredClaimsFailsClosed(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
+		CompletedAt: "2026-05-17T16:00:00Z", NextValidAction: "close",
+		Scope: map[string]any{"a": 1}, Tests: map[string]any{"a": 1},
+		Coverage: map[string]any{"a": 1}, Traceability: map[string]any{"a": 1},
+		PrivacyAudit: map[string]any{
+			"raw_prompts_stored": true, "raw_transcripts_stored": true,
+			"file_bodies_stored": true, "secrets_stored": true,
+			"customer_identifying_data_stored": true,
+		},
+		Blockers: []string{},
+	}
+	err := validateInvestigationReport(report)
+	if err == nil {
+		t.Fatal("expected all stored claims to fail")
+	}
+	for _, want := range []string{
+		"raw_prompts_stored must not be true",
+		"raw_transcripts_stored must not be true",
+		"file_bodies_stored must not be true",
+		"secrets_stored must not be true",
+		"customer_identifying_data_stored must not be true",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestInvalidInvestigationReportPrivacyAuditAllNoFieldsFalseFailsClosed(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
+		CompletedAt: "2026-05-17T16:00:00Z", NextValidAction: "close",
+		Scope: map[string]any{"a": 1}, Tests: map[string]any{"a": 1},
+		Coverage: map[string]any{"a": 1}, Traceability: map[string]any{"a": 1},
+		PrivacyAudit: map[string]any{
+			"no_raw_prompts": false, "no_raw_transcripts": false,
+			"no_file_bodies": false, "no_secrets": false, "no_customer_data": false,
+		},
+		Blockers: []string{},
+	}
+	err := validateInvestigationReport(report)
+	if err == nil {
+		t.Fatal("expected all no_* fields false to fail")
+	}
+	for _, want := range []string{
+		"no_raw_prompts must not be false",
+		"no_raw_transcripts must not be false",
+		"no_file_bodies must not be false",
+		"no_secrets must not be false",
+		"no_customer_data must not be false",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestValidInvestigationReportPrivacyAuditCheckedNoStoredClaimsPasses(t *testing.T) {
+	report := InvestigationReport{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
+		CompletedAt: "2026-05-17T16:00:00Z", NextValidAction: "close",
+		Scope: map[string]any{"a": 1}, Tests: map[string]any{"a": 1},
+		Coverage: map[string]any{"a": 1}, Traceability: map[string]any{"a": 1},
+		PrivacyAudit: map[string]any{"checked": true, "exposure_found": false},
+		Blockers:     []string{},
+	}
+	if err := validateInvestigationReport(report); err != nil {
+		t.Fatalf("expected privacy_audit with checked/exposure_found to pass, got %v", err)
+	}
+}
+
+func TestClassifyReportFileNameKnownSuffixes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		wantType  string
+		wantKnown bool
+	}{
+		{"impl-0001-implementation.json", "implementation", true},
+		{"impl-0001-review.json", "review", true},
+		{"impl-0001-investigation.json", "investigation", true},
+		{"unknown.json", "", false},
+		{"impl-0001-other.json", "", false},
+	} {
+		gotType, gotKnown := ClassifyReportFileName(tc.name)
+		if gotType != tc.wantType || gotKnown != tc.wantKnown {
+			t.Errorf("ClassifyReportFileName(%q) = (%q, %v), want (%q, %v)",
+				tc.name, gotType, gotKnown, tc.wantType, tc.wantKnown)
+		}
+	}
+}
+
+func TestDurableImplementationReportFixturesPassValidation(t *testing.T) {
+	root := repoRoot(t)
+	reportDir := filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports")
+	entries, err := os.ReadDir(reportDir)
+	if err != nil {
+		t.Fatalf("read reports dir: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "-implementation.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(reportDir, entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		if _, err := ParseImplementationReportJSON(data); err != nil {
+			t.Fatalf("expected %s to pass implementation report validation, got %v", entry.Name(), err)
+		}
+	}
+}
+
+func TestDurableReviewReportFixturesPassValidation(t *testing.T) {
+	root := repoRoot(t)
+	reportDir := filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports")
+	entries, err := os.ReadDir(reportDir)
+	if err != nil {
+		t.Fatalf("read reports dir: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "-review.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(reportDir, entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		if _, err := ParseReviewReportJSON(data); err != nil {
+			t.Fatalf("expected %s to pass review report validation, got %v", entry.Name(), err)
+		}
+	}
+}
+
+func TestDurableInvestigationReportFixturesPassValidation(t *testing.T) {
+	root := repoRoot(t)
+	reportDir := filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports")
+	entries, err := os.ReadDir(reportDir)
+	if err != nil {
+		t.Fatalf("read reports dir: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "-investigation.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(reportDir, entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		if _, err := ParseInvestigationReportJSON(data); err != nil {
+			t.Fatalf("expected %s to pass investigation report validation, got %v", entry.Name(), err)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

@@ -222,9 +222,27 @@ func lintEffortFolder(root string) productLintResult {
 				addFinding("read_error", relPath, readErr.Error())
 				continue
 			}
-			var raw json.RawMessage
-			if err := json.Unmarshal(data, &raw); err != nil {
-				addFinding("parse_error", relPath, fmt.Sprintf("invalid JSON: %v", err))
+			reportType, known := productworkflow.ClassifyReportFileName(entry.Name())
+			if !known {
+				var raw json.RawMessage
+				if err := json.Unmarshal(data, &raw); err != nil {
+					addFinding("parse_error", relPath, fmt.Sprintf("invalid JSON: %v", err))
+				}
+				continue
+			}
+			switch reportType {
+			case "implementation":
+				if _, err := productworkflow.ParseImplementationReportJSON(data); err != nil {
+					addFinding("parse_error", relPath, err.Error())
+				}
+			case "review":
+				if _, err := productworkflow.ParseReviewReportJSON(data); err != nil {
+					addFinding("parse_error", relPath, err.Error())
+				}
+			case "investigation":
+				if _, err := productworkflow.ParseInvestigationReportJSON(data); err != nil {
+					addFinding("parse_error", relPath, err.Error())
+				}
 			}
 		}
 	}

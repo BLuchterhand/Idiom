@@ -6,12 +6,13 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0008b-phase-1-artifact-state-machine-enum`
+- Last completed atom: `impl-0009-phase-1-report-schema-linting`
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `a50e069f87c91b84`
+- Context pack: `46c9f12bffb33bb3`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
+- Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
