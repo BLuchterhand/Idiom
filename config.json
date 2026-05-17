@@ -2,10 +2,10 @@
   "app_name": "Idiom",
   "llama_server": {
     "kind": "mlx",
-    "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+    "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
     "host": "127.0.0.1",
     "port": 47680,
-    "model": "/Users/ben/models/qwen3.6-35b-a3b-mlx-4bit-ud",
+    "model": "/Users/ben/models/qwen3.6-35b-a3b-jang-6m",
     "ctx_size": 262144,
     "log_file": "logs/mlx-server.log",
     "extra_args": [

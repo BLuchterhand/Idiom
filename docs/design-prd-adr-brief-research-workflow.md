@@ -4,7 +4,14 @@
 their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: cross-pillar design proposal, drafted 2026-05-15
+Status: cross-pillar design proposal, drafted 2026-05-15; reviewed
+2026-05-17
+
+Implementation state as of 2026-05-17: the lower-level context,
+architect-packet, artifact, brief-lint, atom-intake, lane, product-evidence,
+and release-evidence surfaces exist. The PRD/ADR/TDD product workflow and
+behavioral coverage pipeline described here are still proposed and should not be
+read as shipped CLI behavior.
 
 This document designs the upstream product and architecture workflow that turns
 research-backed product intent into dispatchable Idiom implementation briefs:
@@ -45,6 +52,8 @@ Idiom already has the lower half of the workflow:
 - `idiom atom intake` classifies non-dispatchable work before a model spends
   tokens.
 - `plan-execute` and `implement` consume briefs as Idiom's execution entrypoint.
+- `idiom product-evidence export` and `idiom release evidence` already provide
+  privacy-safe evidence bundles for product and release gate review.
 - `harness_audit`, telemetry, replay evals, SWE evals, and localization
   benchmarks already create the behavioral feedback surface needed to improve
   future packets and briefs.
@@ -59,8 +68,8 @@ That pipeline should:
 5. Convert desired behavior into test obligations before implementation.
 6. Generate one or more dispatchable briefs that satisfy existing Idiom lint and
    intake gates.
-7. Feed execution and audit outcomes back into future research, PRDs, ADRs, and
-   ranking.
+7. Feed execution, audit, product-evidence, and release-evidence outcomes back
+   into future research, PRDs, ADRs, TDD obligations, and ranking.
 
 Colony/Faultline is the useful reference project because it already shows the
 shape Idiom should generalize: spec-first orchestration, project-specific
@@ -131,6 +140,9 @@ brief is a bounded executor contract, not a miniature product process.
 - Do not make the harness choose the implementation strategy when a model can
   safely decide from packet-backed evidence.
 - Do not generalize Colony-specific game design rules into Idiom core.
+- Do not require the full behavioral coverage pipeline for every low-risk
+  artifact. Coverage gates are deterministic, but their required techniques are
+  tiered by artifact risk and ADR blast radius.
 
 ## Evidence Grounding
 
@@ -161,6 +173,12 @@ Verified Idiom facts on 2026-05-15:
   `internal/eval/localization_benchmark.go` define the current structure for
   measuring context localization quality, broad-read counts, zero-hit searches,
   candidate path waste, and competitive baselines.
+- `cmd/idiom/product_evidence.go` and `cmd/idiom/release_evidence.go` define the
+  current privacy-safe evidence exports used for product and release gate review.
+- `README.md` currently states that Idiom is used primarily as a headless runner
+  and that the Bubble Tea TUI still exists but is not the actively maintained
+  path. The workflow below must therefore define a TUI/operator contract before
+  it can be considered complete for interactive multi-session use.
 
 Verified Colony/Faultline reference patterns on 2026-05-15:
 
@@ -181,6 +199,21 @@ The inference from this evidence is that Idiom's generic opportunity is not a
 new chat mode. It is a durable upstream artifact pipeline that turns aligned
 research into traceable PRDs, ADRs, TDD obligations, and dispatch-ready briefs.
 
+## Current Implementation State
+
+The proposal should be read in two layers:
+
+| Layer | Current state | Implication |
+| --- | --- | --- |
+| Lower harness substrate | Implemented: context graph tools, architect packets, artifact generation, brief lint, atom intake, lane dispatch, plan-execute progress state, lane history, product evidence, release evidence, telemetry, and audit. | The workflow can be prototyped manually with current commands. |
+| Product workflow | Proposed: research profiles, evidence cards, PRD/ADR schemas, TDD obligation ledgers, risk-tiered coverage gate, traceability matrix, product workflow commands, and TUI operator surface. | Do not treat PRD/ADR/TDD artifacts as dispatch authority until schemas and gates exist. |
+
+For TUI users, the current implementation does not yet provide a first-class
+interactive product-workflow surface. Existing resume support can replay a prior
+conversation, and workspace workflow/task memory can auto-resume, but this design
+still needs an explicit operator-facing state model before it can claim graceful
+multi-session research and implementation for complex features.
+
 ## Core Vocabulary
 
 - **Researcher**: a bounded model pass, human pass, script, or external agent
@@ -200,7 +233,7 @@ research into traceable PRDs, ADRs, TDD obligations, and dispatch-ready briefs.
   `plan-execute`.
 - **Traceability matrix**: the graph linking evidence cards to PRD requirements,
   ADR decisions, TDD obligations, brief sections, execution results, and later
-  audit/eval findings.
+  audit/eval/product-evidence/release-evidence findings.
 
 ## Target Lifecycle
 
@@ -213,8 +246,9 @@ research into traceable PRDs, ADRs, TDD obligations, and dispatch-ready briefs.
 5. PRD audit
 6. ADR candidates
 7. ADR acceptance
-8. TDD obligation plan (with FMEA, HAZOP, PBT, decision tables)
-8a. Coverage gate (deterministic completeness check)
+8. TDD obligation plan (risk-tiered; may include FMEA, HAZOP, PBT, decision
+   tables, and mutation verification)
+8a. Coverage gate (deterministic, risk-tiered completeness check)
 9. Brief generation
 10. Brief lint and intake
 11. Lane dispatch
@@ -231,7 +265,7 @@ flowchart TD
     EvidenceLedger --> PRD["PRD<br/>requirements and outcomes"]
     PRD --> ADRs["ADR set<br/>material decisions"]
     ADRs --> TDD["TDD obligations<br/>tests, evals, audits"]
-    TDD --> CoverageGate["Coverage gate<br/>deterministic completeness check<br/>EARS, BDD, FMEA, HAZOP, PBT, mutation"]
+    TDD --> CoverageGate["Coverage gate<br/>deterministic risk-tier check<br/>required techniques depend on blast radius"]
     CoverageGate --> Briefs["Implementation briefs<br/>bounded executor contracts"]
     Briefs --> Gates["Lint and intake gates"]
     Gates --> Lanes["Idiom lanes<br/>implement or plan-execute"]
@@ -282,6 +316,8 @@ It should include:
 - budget tier
 - conflict policy
 - completion gates
+- requested durability level: local working artifact, source-controlled decision
+  record, or external evidence export
 
 The packet is host-authored. Researchers can report gaps or contradictions, but
 they should not silently change their own scope.
@@ -426,9 +462,12 @@ Acceptance gate checks:
 - alternatives are real, not straw men
 - consequences include failure modes and operational cost
 - validation requirements are concrete
+- coverage tier is declared and justified by blast radius
 - implementation scope is small enough for one or more briefs
 - the decision does not duplicate an existing accepted ADR
 - superseded ADRs are linked
+- acceptance metadata records approver role, timestamp, acceptance profile,
+  source packet/evidence snapshot, and any model-accepted low-risk exception
 
 ### 8. TDD Obligation Plan
 
@@ -441,6 +480,17 @@ obligation types and rules. The coverage doc defines the staged pipeline from
 ADR through EARS requirements, example mapping, BDD scenarios, Design by
 Contract, failure mode analysis (FMEA, HAZOP, FTA), state machine modeling,
 test suite generation, and mutation verification.
+
+The workflow is risk-tiered. The harness should force the smallest deterministic
+coverage contract that honestly matches the artifact risk:
+
+| Coverage tier | Applies to | Required before brief generation |
+| --- | --- | --- |
+| `documentation` | prose-only docs, examples, or non-normative notes | evidence references, acceptance check, privacy scan when durable, and `git diff --check` |
+| `local_low` | low-risk local code/config changes with no shared contract change | requirement/testability status, focused validation command, source sanity for source edits, and explicit blocker if automation is unavailable |
+| `behavior_standard` | user-visible behavior, shared helper behavior, or workflow behavior with bounded blast radius | EARS requirement, concrete examples or BDD scenarios, contract assertions for changed boundaries, regression/acceptance tests, and focused verification |
+| `contract_high` | harness contracts, permissions, state machines, protocol handling, privacy/security, queueing, audit, eval, or cross-session workflow state | EARS, BDD, Design by Contract, FMEA/HAZOP for high-risk failures, state/PBT obligations for invariants, decision/boundary coverage where applicable, mutation or an explicit unavailable-tool blocker |
+| `formal_optional` | protocol-critical or safety-critical contracts where model/harness ambiguity is still too high | all `contract_high` obligations plus optional formal model/checker artifacts when justified |
 
 TDD obligation types:
 
@@ -464,8 +514,10 @@ TDD obligation types:
 
 Rules:
 
-- Every high-priority PRD requirement needs at least one TDD obligation.
-- Every accepted ADR needs validation evidence or a documented blocker.
+- Every high-priority PRD requirement needs at least one validation obligation,
+  but obligation depth follows the selected coverage tier.
+- Every accepted ADR needs a declared coverage tier, validation evidence, or a
+  documented blocker.
 - Every implementation brief must carry exact validation commands or an explicit
   reason why validation is blocked.
 - For behavior bugs, the first preferred test is a regression fixture that
@@ -475,42 +527,51 @@ Rules:
   change.
 - Patch hygiene alone is not enough for source edits.
 - Tautological tests and placeholder assertions must fail lint/audit.
-- Every session invariant must have a property-based test obligation.
-- Every failure mode with FMEA RPN >= 21 must have a negative test obligation.
-- Every deviation with HAZOP severity >= 3 must have a deviation test
-  obligation.
-- Every multi-condition decision must have a decision table obligation.
-- Every numeric bound must have boundary value test obligations.
-- Mutation score for contract-level tests must be >= 80% before dispatch.
+- Session invariants in `contract_high` and `formal_optional` work must have
+  property-based or equivalent state-model obligations.
+- Failure modes with FMEA RPN >= 21 require negative-test obligations when the
+  selected tier includes FMEA.
+- HAZOP deviations with severity >= 3 require deviation-test obligations when
+  the selected tier includes HAZOP.
+- Multi-condition decisions require decision-table obligations when the selected
+  tier includes combinatorial coverage.
+- Numeric bounds require boundary-value obligations when the selected tier
+  includes boundary coverage.
+- Mutation score for contract-level tests defaults to >= 80% only when mutation
+  tooling is available and the selected tier requires mutation. Otherwise the
+  gate records an explicit unavailable-tool blocker or advisory.
 - Every execution incident must produce at least one post-mortem obligation.
 
 ### 8a. Coverage Gate
 
 Between the TDD obligation plan and brief generation, the workflow must pass a
 deterministic coverage gate. The gate is defined in
-[design-tdd-coverage.md](design-tdd-coverage.md). Summary of gate criteria:
+[design-tdd-coverage.md](design-tdd-coverage.md), but this workflow selects which
+criteria are blocking through the artifact's coverage tier:
 
-| Criterion | Threshold | Blocks On |
+| Criterion | Default threshold | Blocking tier |
 | --- | --- | --- |
-| EARS coverage | 100% of ADR consequences mapped | Unmapped consequence |
-| BDD scenario coverage | 100% of EARS requirements have scenarios | Requirement without scenario |
-| Contract coverage | 100% of BDD Then clauses mapped to postconditions | Unmapped assertion |
-| FMEA coverage | 100% of failure modes with RPN >= 21 have tests | Unmitigated high-risk failure |
-| HAZOP coverage | 100% of deviations with severity >= 3 have tests | Unmitigated deviation |
-| Decision table coverage | 100% of multi-condition decisions enumerated | Missing combination |
-| Boundary value coverage | 100% of numeric bounds tested at boundaries | Untested bound |
-| PBT coverage | 100% of session invariants have property-based tests | Untested invariant |
-| Mutation score | >= 80% for contract-level tests | Theatrical tests |
+| Evidence and acceptance coverage | 100% of requirements and artifacts cite evidence or labeled inference | all tiers |
+| EARS coverage | 100% of material ADR consequences mapped | `behavior_standard`, `contract_high`, `formal_optional` |
+| BDD/example coverage | 100% of EARS requirements have concrete examples or scenarios | `behavior_standard`, `contract_high`, `formal_optional` |
+| Contract coverage | 100% of BDD Then clauses mapped to postconditions for changed boundaries | `behavior_standard`, `contract_high`, `formal_optional` |
+| FMEA coverage | 100% of failure modes with RPN >= 21 have tests or blockers | `contract_high`, `formal_optional` |
+| HAZOP coverage | 100% of deviations with severity >= 3 have tests or blockers | `contract_high`, `formal_optional` |
+| Decision table coverage | 100% of required multi-condition decisions enumerated | `contract_high`, `formal_optional` when applicable |
+| Boundary value coverage | 100% of required numeric bounds tested at boundaries | `contract_high`, `formal_optional` when applicable |
+| PBT/state coverage | 100% of session invariants have PBT or equivalent state-model coverage | `contract_high`, `formal_optional` |
+| Mutation score | >= 80% for contract-level tests, or explicit unavailable-tool blocker | `contract_high`, `formal_optional` when mutation is configured |
 
 The coverage gate emits `coverage_gate_evaluated` events. A blocked gate
 returns the obligation plan to the relevant owner:
 
-- missing EARS or BDD coverage → step 4 (PRD revision)
-- missing failure mode or deviation coverage → step 8 (obligation plan
+- missing coverage tier -> step 6 or 7 (ADR revision)
+- missing evidence, EARS, or BDD coverage -> step 4 (PRD revision)
+- missing failure mode or deviation coverage -> step 8 (obligation plan
   revision with FMEA/HAZOP follow-up)
-- low mutation score → step 8 (obligation plan revision with test quality
+- low mutation score -> step 8 (obligation plan revision with test quality
   improvement)
-- missing property-based or decision table tests → step 8 (obligation plan
+- missing property-based or decision table tests -> step 8 (obligation plan
   revision)
 
 ### 9. Brief Generation
@@ -592,7 +653,283 @@ Outcomes feed back into:
 - regression suites
 - `harness_feedback`
 - context ranker learning
+- product-evidence and release-evidence exports
 - future researcher prompts and profile rules
+
+## TUI And Multi-Session Operator Experience
+
+The workflow can support comprehensive research and implementation of complex
+features only if the TUI is a view over typed workflow state, not the source of
+truth. Chat transcript replay is useful context, but it is not enough to safely
+continue a multi-stage product workflow after a pause, crash, compaction, or
+operator handoff.
+
+Current reality: Idiom's TUI exists, and session resume can replay prior
+conversation messages, while workspace workflow/task memory can auto-resume from
+persisted state. The README currently describes the TUI as not the actively
+maintained path. This design therefore requires a product-workflow TUI contract
+before claiming graceful interactive support.
+
+### Operator Mental Model
+
+A TUI user should see one work item as a durable state machine:
+
+```text
+research -> PRD -> ADRs -> TDD obligations -> coverage gate -> briefs
+-> dispatch -> verification/audit -> feedback
+```
+
+At any point, the TUI should show:
+
+- active `task_id`, title, artifact root, current phase, and terminal state if any
+- current context packet IDs, freshness, referenced paths, and unresolved gaps
+- accepted PRD/ADR/TDD artifact IDs and whether they are working or durable
+- selected coverage tier and open validation obligations
+- dispatchable briefs, blocked briefs, and exact blocker reasons
+- lane sessions already run, changed paths, verification status, and audit links
+- valid next actions and which actor owns each action: operator, model,
+  researcher, product workflow, brief lint, atom intake, lane, or reviewer
+
+The TUI must not ask the user to infer progress from chat prose. It should render
+the same typed state that product CLI commands and audit tools consume.
+
+### Workflow State Contract
+
+Each product workflow needs one effort folder with a small machine-readable state
+file in the working root and, after acceptance, in the durable root:
+
+- `.idiom/product/efforts/<status>/<effort-id>/workflow_state.json` for local
+  working state
+- `docs/product-workflows/efforts/<status>/<effort-id>/workflow_state.json` for
+  accepted durable state when the project chooses to commit the workflow
+
+Required fields:
+
+- schema version, `effort_id`, `task_id`, title, created/updated timestamps,
+  workspace fingerprint, state revision, and last event ID
+- current status bucket: `unstarted`, `started`, or `closed`
+- current phase and state: draft, blocked, ready, dispatched, verified,
+  source-satisfied, stale-needs-refresh, complete, or abandoned
+- artifact IDs and paths for evidence ledger, PRD, ADRs, TDD ledger, briefs,
+  product-evidence export, release-evidence bundle, and lane reports
+- artifact hashes, durability level, and promotion status for accepted artifacts
+- context packet IDs, freshness state, referenced paths, unresolved packet gaps,
+  and refresh policy
+- open questions, open obligations, blockers, owner, and next valid actions
+- coverage tier, gate results, and blocking/advisory criteria
+- session IDs for TUI, artifact, lane, plan-execute, review-repair, telemetry,
+  and audit records
+- current folder path, previous folder paths, and last status migration event
+- last reconciliation timestamp and any state/artifact mismatch blockers
+- privacy/redaction status and fields excluded from durable artifacts
+
+Conversation logs, telemetry, and lane history become linked evidence records.
+They are not the canonical state because replaying prose can reintroduce stale
+anchors, forgotten blockers, or accidental prompt authority.
+
+### Effort Hosting And Status Browsing
+
+Design docs and generated artifacts should be hosted as effort folders. The
+coarse folder status is for human browsing; the stable `effort_id` is the
+identity used in references, events, and evidence.
+
+Working effort folders live under:
+
+- `.idiom/product/efforts/unstarted/<effort-id>/...`
+- `.idiom/product/efforts/started/<effort-id>/...`
+- `.idiom/product/efforts/closed/<effort-id>/...`
+
+Accepted durable effort folders live under:
+
+- `docs/product-workflows/efforts/unstarted/<effort-id>/...`
+- `docs/product-workflows/efforts/started/<effort-id>/...`
+- `docs/product-workflows/efforts/closed/<effort-id>/...`
+
+Each effort folder should contain the whole reviewable packet for one design doc
+or product effort:
+
+- `design.md` or `source_design_ref.json` for the original design document or
+  initiating request
+- `workflow_state.json`
+- `events.jsonl`
+- `evidence/`
+- `prd.md`
+- `adrs/`
+- `tdd.json`
+- `briefs/`
+- `reports/`
+- `README.md` as a compact human index
+
+Status migration rules:
+
+- `unstarted`: the effort is captured for review, but no research, PRD, TDD, or
+  implementation lane has started.
+- `started`: any researcher, artifact generation, coverage gate, brief, lane, or
+  dispatch work has begun.
+- `closed`: the effort is complete, source-satisfied, abandoned, superseded, or
+  intentionally blocked with an accepted terminal reason.
+
+Moving an effort between status folders must be an application-level transition:
+update `workflow_state.json`, append a status migration event, move the folder,
+and update the effort index atomically. Index files such as
+`.idiom/product/efforts/index.json` and
+`docs/product-workflows/efforts/index.json` should map each stable `effort_id` to
+its current status folder and record prior paths. Internal links inside the
+effort folder should be relative so the folder can move without rewriting every
+artifact.
+
+### End-To-End Wiring Contract
+
+The user experience is complete only if the CLI and TUI are two presenters over
+the same application workflow:
+
+```text
+operator intent -> create/open effort -> render status
+-> advance one action -> write artifacts/evidence -> reconcile state
+-> render next status
+```
+
+Required wiring:
+
+- **Effort resolution**: a prompt, CLI argument, or TUI action resolves exactly
+  one `effort_id`, working folder, and optional durable folder. Ambiguous names,
+  moved folders, or missing state files become typed blockers before any model
+  run.
+- **Shared use cases**: TUI actions and future `idiom product status`,
+  `continue`, `promote`, and `close` commands call the same application use
+  cases. The TUI must not directly mutate workflow files, atom docs, or lane
+  state.
+- **Atomic transitions**: every action loads the latest `workflow_state.json`,
+  validates schema/version/freshness, checks for concurrent updates, runs one
+  application use case, writes artifacts, appends an event, and then writes the
+  next state snapshot. A crash between artifact write and state write must be
+  recoverable by reconciliation.
+- **Reconciliation adapters**: lane history, plan-execute progress state, atom
+  tracker docs, telemetry, product-evidence exports, and release-evidence bundles
+  are read through adapters. Reconciliation updates workflow state with bounded
+  IDs, relative paths, hashes, statuses, and blockers; it does not paste raw
+  transcript or file bodies into state.
+- **Shared view model**: CLI status output and TUI panels should render the same
+  application view model: status bucket, phase, freshness, artifacts, blockers,
+  next actions, owner, verification state, and audit/evidence links.
+- **No hidden continuation**: if the next action would use stale context,
+  unresolved conflicts, a dirty artifact, missing verification evidence, or a
+  state/index mismatch, the UI shows the blocker and the specific repair action
+  instead of dispatching.
+
+### Context Management
+
+For long feature work, context should be graceful by construction:
+
+- Research phases use evidence cards and context handles instead of raw source
+  bodies.
+- PRD/ADR/TDD phases use compact artifact summaries and traceability IDs.
+- Brief generation receives the current context packet plus exact anchors needed
+  for dispatch; it should not ask the executor to rediscover planner-owned facts.
+- Implementation lanes receive one bounded brief and a compact auto-preloaded
+  `context_pack`; they verify exact anchors before writes.
+- Resume loads workflow state, not a full raw transcript. The next model turn
+  should see only the active phase summary, accepted artifacts, open obligations,
+  current packet freshness, and one exact next decision boundary.
+- If freshness is stale, the valid next action is refresh/rebase or block; the
+  TUI should not continue execution against stale load-bearing evidence.
+
+This keeps complex work from becoming a single ever-growing prompt. The harness
+owns compression into artifacts, packets, and workflow-state summaries; the
+model owns strategy inside the current safe phase.
+
+### Execute And Continue Semantics
+
+The operator needs explicit continuation verbs:
+
+| Action | Meaning | Required state |
+| --- | --- | --- |
+| Start research | Build research packet and gather evidence | intake accepted |
+| Continue research | Run only researchers with open evidence gaps | research blocked or incomplete |
+| Draft/refresh PRD | Synthesize requirements from current evidence ledger | evidence ledger ready |
+| Accept ADR | Mark a decision durable with acceptance metadata | ADR audit passed |
+| Build TDD plan | Generate/update obligations for accepted requirements/ADRs | PRD/ADR accepted |
+| Run coverage gate | Evaluate required criteria for the declared coverage tier | TDD ledger ready |
+| Generate briefs | Produce bounded dispatch briefs | coverage gate passed or documented blocker |
+| Dispatch brief | Run `implement` or `plan-execute` | brief lint and atom intake passed |
+| Continue execution | Resume lane/review-repair from saved progress state | incomplete resumable lane state |
+| Close workflow | Mark complete, source-satisfied, abandoned, or blocked | no open dispatch/verification obligations, or explicit blocker |
+
+Each continuation should be idempotent: rerunning it either advances one typed
+state, reports no-op/source-satisfied, or returns a typed blocker. A TUI "resume"
+button should therefore choose from workflow-state next actions, not merely
+restart the last prompt.
+
+### User Journey Coverage
+
+The design must cover these journeys end to end:
+
+1. A user captures a design doc or rough request but does not start work. Idiom
+   creates an `unstarted` effort folder with the source design doc, state file,
+   and index entry.
+2. A user starts work from the TUI or CLI. Idiom migrates the effort folder to
+   `started`, gathers initial evidence, and renders the first safe next action.
+3. A user exits after research or PRD drafting. On return, the TUI loads workflow
+   state, reconciles artifacts and evidence, and shows decisions, gaps, and the
+   next valid action without requiring transcript review.
+4. A user continues after a blocker. The blocker names owner, missing evidence,
+   repair action, and the command or UI action that will retry only the blocked
+   phase.
+5. A user dispatches implementation. The workflow records the brief, lane or
+   plan-execute session ID, changed paths, verification evidence, and atom
+   closeout status before offering follow-up actions.
+6. A user switches between CLI and TUI. Both surfaces reconcile and render the
+   same workflow state, so work started in one can be inspected or continued in
+   the other.
+7. A user closes the effort. Idiom requires no open dispatch or verification
+   obligations, records the terminal reason, migrates the folder to `closed`, and
+   keeps the effort browsable by status and stable ID.
+8. A user accepts artifacts for team use. Promotion copies accepted artifacts to
+   the durable status folder with hashes and acceptance metadata, then records
+   the promotion in workflow state and product/release evidence links.
+
+### First-Run Reliability Standard
+
+Users should expect the first run to be safe, understandable, and recoverable.
+They should not expect flawless autonomous completion for arbitrary complex
+features on the first try. For complex work, a typed blocker, stale-context
+warning, missing-obligation report, or required human acceptance step is a
+successful product outcome when it prevents unsafe dispatch.
+
+The first-run promise is:
+
+- happy-path fixtures can be captured, started, linted, given TDD obligations,
+  browsed by status, and resumed without manual file spelunking
+- unsupported or incomplete real efforts fail closed with a typed blocker and a
+  next valid action
+- no accepted artifact is silently treated as durable while it only exists under
+  `.idiom/`
+- no TUI action dispatches implementation from stale state, missing TDD
+  obligations, dirty artifacts, or unresolved reconciliation mismatch
+- rerunning the same command or TUI action is idempotent: it advances one valid
+  state, reports no-op/source-satisfied, or repeats the same typed blocker
+- the user can inspect what happened through the effort folder, status view,
+  event log, and evidence links without reading raw transcripts
+
+This is the right reliability bar for a local agent harness: deterministic
+contracts around uncertain model work, not a claim that the model always gets
+complex research and implementation right on the first attempt.
+
+### Completion Bar
+
+The design is complete for TUI users only when a user can close the app after
+research, reopen later, and see:
+
+- what has been decided
+- what evidence is fresh or stale
+- which obligations remain open
+- which briefs are dispatchable or blocked
+- what command/session produced each artifact
+- the next safe action without rereading the transcript
+
+Until that operator contract exists, the workflow is suitable for headless/manual
+composition and design fixtures, but not yet a fully graceful TUI experience for
+complex multi-state feature work.
 
 ## Researcher Model
 
@@ -688,12 +1025,40 @@ Researcher output contract:
 
 ## Artifact Schemas
 
+Durability rule: `.idiom/` is local harness state and is ignored in normal
+worktrees. Product workflow commands may write drafts, event logs, and reports
+under `.idiom/product/efforts/<status>/<effort-id>/...`, but accepted PRDs,
+accepted ADRs, dispatch-ready TDD ledgers, and approved briefs must be promoted
+to a source-controlled or caller-configured durable artifact root before they
+become team decision records.
+
+For this repository, the default tracked root should be:
+
+- `docs/product-workflows/efforts/<status>/<effort-id>/...`
+
+Promotion from the working root to the durable root should preserve artifact IDs,
+source hashes, report paths, and acceptance metadata so a reviewer can trace the
+accepted artifact back to the local generation/audit run without committing raw
+prompt bodies or file bodies.
+
+In the schema examples below:
+
+- `<working-effort-root>` means
+  `.idiom/product/efforts/<status>/<effort-id>`
+- `<durable-effort-root>` means
+  `docs/product-workflows/efforts/<status>/<effort-id>`
+
 ### PRD
 
-Recommended durable locations:
+Working locations:
 
-- `.idiom/product/<task-id>/prd.md`
-- `.idiom/product/<task-id>/prd.report.json`
+- `<working-effort-root>/prd.md`
+- `<working-effort-root>/reports/prd.report.json`
+
+Accepted durable locations:
+
+- `<durable-effort-root>/prd.md`
+- `<durable-effort-root>/reports/prd.report.json`
 
 PRD front matter:
 
@@ -705,6 +1070,9 @@ task_id: example
 evidence_ledger: evidence.jsonl
 research_run_id: research-abc123
 created_at: 2026-05-15T00:00:00Z
+durability: working
+accepted_at:
+accepted_by:
 ```
 
 Requirement shape:
@@ -721,10 +1089,15 @@ open_questions: []
 
 ### ADR
 
-Recommended durable locations:
+Working locations:
 
-- `.idiom/product/<task-id>/adrs/ADR-0001-title.md`
-- `.idiom/product/<task-id>/adrs/index.json`
+- `<working-effort-root>/adrs/ADR-0001-title.md`
+- `<working-effort-root>/adrs/index.json`
+
+Accepted durable locations:
+
+- `<durable-effort-root>/adrs/ADR-0001-title.md`
+- `<durable-effort-root>/adrs/index.json`
 
 ADR front matter:
 
@@ -735,6 +1108,10 @@ status: proposed
 prd_refs: ["REQ-001"]
 evidence_refs: ["card-north-star-001", "card-technical-004"]
 tdd_obligations: ["TDD-003"]
+coverage_tier: contract_high
+accepted_at:
+accepted_by:
+acceptance_profile:
 ```
 
 ADR body:
@@ -751,9 +1128,13 @@ ADR body:
 
 ### TDD Obligation Ledger
 
-Recommended durable location:
+Working location:
 
-- `.idiom/product/<task-id>/tdd.json`
+- `<working-effort-root>/tdd.json`
+
+Accepted durable location:
+
+- `<durable-effort-root>/tdd.json`
 
 The obligation ledger schema v2 includes coverage metadata for gate evaluation.
 The full schema is specified in
@@ -781,6 +1162,7 @@ Example v2 obligation with coverage metadata:
 ```json
 {
   "schema_version": "idiom.tdd_obligations.v2",
+  "coverage_tier": "contract_high",
   "coverage": {
     "ears_total": 5,
     "ears_mapped": 5,
@@ -815,9 +1197,13 @@ Example v2 obligation with coverage metadata:
 
 ### Brief
 
-Recommended durable location:
+Working location:
 
-- `.idiom/product/<task-id>/briefs/<atom-id>.md`
+- `<working-effort-root>/briefs/<atom-id>.md`
+
+Accepted durable location:
+
+- `<durable-effort-root>/briefs/<atom-id>.md`
 
 The brief should use the existing source-touching sections already expected by
 `idiom brief lint`:
@@ -850,8 +1236,14 @@ New domain concepts:
 - requirement
 - ADR
 - TDD obligation
+- coverage tier
 - traceability matrix
+- effort folder
+- effort status bucket
 - artifact state
+- artifact durability state
+- workflow state
+- product/release evidence link
 
 These types should be framework-free and persistence-ignorant.
 
@@ -859,6 +1251,9 @@ These types should be framework-free and persistence-ignorant.
 
 Use cases:
 
+- `CreateOrOpenProductWorkflow`
+- `RenderProductWorkflowStatus`
+- `AdvanceProductWorkflow`
 - `BuildResearchPacket`
 - `RunResearcher`
 - `MergeResearchEvidence`
@@ -867,16 +1262,34 @@ Use cases:
 - `DraftADRs`
 - `AuditADR`
 - `BuildTDDObligations`
+- `EvaluateCoverageGate`
 - `GenerateImplementationBriefs`
 - `AuditTraceability`
+- `MigrateEffortStatus`
+- `PromoteAcceptedArtifacts`
+- `LinkExecutionEvidence`
+- `ReconcileWorkflowState`
+- `ResumeProductWorkflow`
+- `CloseProductWorkflow`
 
 Ports:
 
 - local context capability port
 - model artifact generation port
-- artifact store port
+- working artifact store port
+- durable artifact store port
+- workflow state store port
+- workflow event store port
+- effort index store port
+- workflow lock or compare-and-swap port
+- atom tracker reader port
+- lane history reader port
+- plan-execute progress reader port
+- telemetry reader port
 - clock and ID generator
 - audit/event sink
+- product-evidence export port
+- release-evidence bundle port
 - optional external research port
 
 ### Interface Adapters
@@ -884,6 +1297,8 @@ Ports:
 Adapters:
 
 - CLI commands
+- TUI workflow presenter
+- CLI workflow status presenter
 - Markdown front matter parser
 - JSON artifact encoder/decoder
 - existing `architect` packet renderer
@@ -895,7 +1310,9 @@ Adapters:
 
 Infrastructure owns:
 
-- filesystem artifact store under `.idiom/product/`
+- working filesystem artifact store under `.idiom/product/efforts/`
+- accepted durable artifact store under the configured source-controlled root
+- atomic workflow state, status migration, and event writes
 - telemetry JSONL writes
 - model runner invocation through `idiom artifact`
 - optional web/MCP/external research adapters
@@ -912,50 +1329,62 @@ need a stable contract.
 ### Manual Workflow With Current Tools
 
 ```bash
+WORKING_EFFORT_ROOT=.idiom/product/efforts/started/<effort-id>
+
 idiom tool context_pack --input '{"task":"<task>","mode":"plan","limit":12}'
 
 idiom architect packet \
   --schema planning_v2 \
   --task-file /tmp/task.md \
   --context-view .idiom/comprehension/views/<pack_id>.json \
-  --output .idiom/product/<task>/packet.json
+  --output "$WORKING_EFFORT_ROOT/packet.json"
 
 idiom architect plan \
-  --packet .idiom/product/<task>/packet.json \
-  --output .idiom/product/<task>/prd.prompt.md
+  --packet "$WORKING_EFFORT_ROOT/packet.json" \
+  --output "$WORKING_EFFORT_ROOT/prd.prompt.md"
 
 idiom artifact \
-  --prompt-file .idiom/product/<task>/prd.prompt.md \
-  --output .idiom/product/<task>/prd.md \
-  --json-out .idiom/product/<task>/prd.events.jsonl \
-  --report-out .idiom/product/<task>/prd.report.json \
+  --prompt-file "$WORKING_EFFORT_ROOT/prd.prompt.md" \
+  --output "$WORKING_EFFORT_ROOT/prd.md" \
+  --json-out "$WORKING_EFFORT_ROOT/events/prd.events.jsonl" \
+  --report-out "$WORKING_EFFORT_ROOT/reports/prd.report.json" \
   --no-tools \
   --mechanical-repair
 
 idiom architect brief \
-  --packet .idiom/product/<task>/packet.json \
-  --prior-file .idiom/product/<task>/approved-plan.md \
-  --output .idiom/product/<task>/brief.prompt.md
+  --packet "$WORKING_EFFORT_ROOT/packet.json" \
+  --prior-file "$WORKING_EFFORT_ROOT/approved-plan.md" \
+  --output "$WORKING_EFFORT_ROOT/brief.prompt.md"
 
-idiom brief lint .idiom/product/<task>/briefs/<atom>.md
-idiom atom intake --spec .idiom/product/<task>/briefs/<atom>.md --project-root . --json
-idiom lane plan-execute --title <atom> .idiom/product/<task>/briefs/<atom>.md
+idiom brief lint "$WORKING_EFFORT_ROOT/briefs/<atom>.md"
+idiom atom intake --spec "$WORKING_EFFORT_ROOT/briefs/<atom>.md" --project-root . --json
+idiom lane plan-execute --title <atom> "$WORKING_EFFORT_ROOT/briefs/<atom>.md"
 ```
 
 This is intentionally imperfect for PRD/ADR authoring, but it proves the first
-version can reuse current packet, artifact, brief, and lane surfaces.
+version can reuse current packet, artifact, brief, and lane surfaces. Artifacts
+created under `.idiom/product/efforts` are local working artifacts; accepted
+decision records must be promoted to the durable root before they count as team
+records.
 
 ### Future Command Set
 
 Add a product workflow command family only after schemas stabilize:
 
 ```bash
-idiom product research --task-file task.md --profile idiom-prd --output-dir .idiom/product/<task>
-idiom product prd --evidence .idiom/product/<task>/evidence.jsonl --output .idiom/product/<task>/prd.md
-idiom product adr --prd .idiom/product/<task>/prd.md --output-dir .idiom/product/<task>/adrs
-idiom product tdd --prd .idiom/product/<task>/prd.md --adrs .idiom/product/<task>/adrs --output .idiom/product/<task>/tdd.json
-idiom product brief --prd .idiom/product/<task>/prd.md --adrs .idiom/product/<task>/adrs --tdd .idiom/product/<task>/tdd.json --output-dir .idiom/product/<task>/briefs
-idiom product audit --dir .idiom/product/<task>
+idiom product capture --design-doc docs/plan.md --status unstarted
+idiom product list --status unstarted
+idiom product start --effort <effort-id>
+idiom product research --effort <effort-id> --profile idiom-prd
+idiom product prd --effort <effort-id>
+idiom product adr --effort <effort-id>
+idiom product tdd --effort <effort-id>
+idiom product brief --effort <effort-id>
+idiom product audit --effort <effort-id>
+idiom product status --effort <effort-id>
+idiom product continue --effort <effort-id>
+idiom product close --effort <effort-id> --reason complete
+idiom product promote --effort <effort-id> --durable-root docs/product-workflows/efforts
 ```
 
 `idiom product brief` should call or reuse `idiom brief lint` rather than
@@ -1004,9 +1433,12 @@ For implementation briefs that change behavior:
 4. Run the focused test and source-sanity.
 5. Run broader verification when the changed contract or dependency surface
    justifies it.
-6. Run property-based tests for affected invariants.
-7. Run mutation testing for the changed contract surface.
-8. Check coverage gate: are all new failure modes tested?
+6. Run property-based tests for affected invariants when the selected coverage
+   tier requires state/PBT coverage.
+7. Run mutation testing for the changed contract surface when the selected tier
+   requires mutation and tooling is available.
+8. Check coverage gate: are all tier-required behaviors and failure modes
+   covered or explicitly blocked?
 9. Feed results into the artifact ledger.
 
 For harness behavior bugs, the expected default is:
@@ -1080,8 +1512,8 @@ stateDiagram-v2
     TDDAudit --> TDDBlocked: missing behavior obligation
     TDDBlocked --> TDDAudit: add test, eval, audit, or blocker
     TDDAudit --> CoverageGate: obligations ready
-    CoverageGate --> CoverageBlocked: incomplete coverage
-    CoverageBlocked --> TDDAudit: add FMEA, HAZOP, PBT, or mutation obligations
+    CoverageGate --> CoverageBlocked: incomplete tier-required coverage
+    CoverageBlocked --> TDDAudit: add required obligations or explicit blockers
     CoverageGate --> BriefLint: coverage gate passes
     BriefLint --> BriefBlocked: lint failure or stale anchors
     BriefBlocked --> Draft: revise brief or refresh context
@@ -1093,7 +1525,7 @@ stateDiagram-v2
     Dispatched --> Verified: required verification passes
     Dispatched --> ExecutionBlocked: verification or contract failure
     ExecutionBlocked --> Draft: repair upstream artifact
-    Verified --> Feedback: audit and learning linked
+    Verified --> Feedback: audit, product evidence, and learning linked
     Feedback --> [*]
 ```
 
@@ -1103,7 +1535,7 @@ stateDiagram-v2
 | PRD audit | product workflow | unsupported requirement, hidden blocker, missing metric |
 | ADR audit | product workflow | missing decision, weak alternatives, no validation |
 | TDD audit | product workflow | high-priority requirement without test obligation |
-| coverage gate | product workflow | incomplete EARS, BDD, FMEA, HAZOP, PBT, decision table, or mutation coverage |
+| coverage gate | product workflow | incomplete tier-required evidence, EARS, BDD, contract, FMEA, HAZOP, PBT, decision table, boundary, or mutation coverage |
 | context freshness | comprehension | stale or missing local evidence needed for edit |
 | plan audit | architect | unsupported paths, handles, validation, placeholders |
 | brief lint | brief preflight | malformed brief, vague anchors, prompt magic |
@@ -1119,6 +1551,8 @@ dispatchable.
 New events should connect upstream decisions to downstream outcomes:
 
 - `research_packet_created`
+- `effort_captured`
+- `effort_status_migrated`
 - `researcher_started`
 - `researcher_completed`
 - `evidence_card_recorded`
@@ -1133,8 +1567,11 @@ New events should connect upstream decisions to downstream outcomes:
 - `brief_linted`
 - `product_artifact_dispatch_ready`
 - `product_artifact_blocked`
+- `workflow_state_updated`
 - `brief_dispatched`
 - `execution_result_linked`
+- `product_evidence_linked`
+- `release_evidence_linked`
 
 Every event should carry stable IDs and privacy-safe metadata:
 
@@ -1149,6 +1586,8 @@ Every event should carry stable IDs and privacy-safe metadata:
 - command IDs
 - session IDs
 - redacted error class
+- product-evidence export IDs and release-evidence bundle IDs, when relevant
+- effort status bucket and effort folder path, when relevant
 
 Avoid raw prompts, full transcripts, file bodies, secrets, and customer
 identifying information in durable audit artifacts.
@@ -1162,10 +1601,18 @@ Product workflow quality:
 - high-priority requirements with TDD obligations
 - ADRs with alternatives and consequences
 - unresolved conflicts per PRD
+- accepted artifacts promoted from working root to durable root
+- workflows resumable without raw transcript replay
+- efforts browsable by `unstarted`, `started`, and `closed` status
+- effort status migrations with stable ID preservation
+- workflows resumed successfully after crash, TUI restart, or CLI/TUI handoff
+- reconciliation mismatches found before dispatch
 - time from intake to dispatch-ready brief
 
 Coverage quality (see [design-tdd-coverage.md](design-tdd-coverage.md)):
 
+- coverage tier distribution
+- tier-required coverage pass rate
 - EARS coverage percentage (ADR consequences mapped)
 - BDD scenario coverage percentage (EARS requirements with scenarios)
 - FMEA mitigation rate (failure modes with RPN >= 21 that have tests)
@@ -1174,6 +1621,13 @@ Coverage quality (see [design-tdd-coverage.md](design-tdd-coverage.md)):
 - multi-condition decisions with decision table enumeration
 - contract-level mutation score
 - coverage gate first-pass rate
+
+Product/release evidence quality:
+
+- PRD/ADR/TDD/brief artifacts linked to product-evidence export IDs
+- release-evidence bundles linked to workflow state and dispatch outcomes
+- release gate linkage status for product workflow outputs
+- privacy-safe export rate and forbidden-field blocker count
 
 Brief quality:
 
@@ -1217,15 +1671,31 @@ Harness learning:
 - Use current `context_pack`, `architect packet`, `artifact`, `brief lint`, and
   `atom intake` commands manually.
 - Document the minimum traceability matrix.
+- Document the minimum `workflow_state.json` shape and promotion path from
+  `.idiom/product/efforts/<status>/<effort-id>` to
+  `docs/product-workflows/efforts/<status>/<effort-id>`.
+- Document the effort folder layout and `unstarted` / `started` / `closed`
+  browse buckets.
+- Add one happy-path fixture that demonstrates capture -> start -> TDD obligation
+  lint -> status browse -> close without relying on transcript replay.
 
 ### Phase 1: Artifact Schemas And Linters
 
 - Add schema structs and validators for research cards, PRDs, ADRs, and TDD
-  obligations.
+  obligations, workflow state, artifact durability, and coverage tiers.
+- Add effort folder, status bucket, status migration, and effort index schemas.
+- Add the shared workflow status view model and state-transition contract used by
+  both CLI and TUI presenters.
+- Add state revision, event ID, artifact hash, and reconciliation mismatch fields
+  to `workflow_state.json`.
 - Add deterministic audit commands that do not require a model.
-- Keep storage local and diffable.
+- Keep working storage local and ignored; keep accepted storage local,
+  source-controlled, and diffable.
 - Add tests for unsupported claims, unresolved conflicts, missing TDD
   obligations, stale context references, and invalid privacy fields.
+- Add first-run failure fixtures for missing state, stale context,
+  reconciliation mismatch, and missing TDD obligations; each must return a typed
+  blocker with one next valid action.
 
 ### Phase 2: Research Profiles
 
@@ -1250,6 +1720,7 @@ Harness learning:
 - Connect TDD obligations to brief Tests and Acceptance sections.
 - Add regression fixtures for generated brief failures.
 - Add TDD obligation schema v2 with coverage metadata.
+- Add coverage tier selection and deterministic tier justification checks.
 - Add seven new obligation types: `property_based`, `fmea_negative`,
   `hazop_deviation`, `decision_table`, `boundary_value`, `mutation_score`,
   `post_mortem`.
@@ -1266,11 +1737,32 @@ Harness learning:
 ### Phase 5: Execution Feedback Loop
 
 - Link lane events back to PRD requirements, ADRs, and TDD obligations.
+- Link product-evidence export IDs and release-evidence bundle IDs back to
+  workflow state.
+- Add reconciliation from lane history, plan-execute progress state, atom tracker
+  docs, telemetry, and evidence exports back into workflow state.
 - Add product workflow metrics to `harness_audit` or a dedicated audit command.
 - Promote verified context and test outcomes into ranker learning only through
   deterministic evidence adapters.
 
-### Phase 6: Sidecar And External Agent Use
+### Phase 6: TUI Operator And Continuation Surface
+
+- Render workflow state, context freshness, open obligations, blockers, and next
+  valid actions in the TUI.
+- Support start/continue/promote/dispatch/close actions from typed workflow
+  state rather than transcript replay alone.
+- Browse efforts by `unstarted`, `started`, and `closed` status while preserving
+  stable effort IDs across folder migrations.
+- Route TUI actions through the same `CreateOrOpenProductWorkflow`,
+  `RenderProductWorkflowStatus`, `AdvanceProductWorkflow`, and
+  `ReconcileWorkflowState` use cases as the CLI.
+- Add CLI/TUI handoff fixtures proving a workflow started in one surface can be
+  inspected, reconciled, and continued in the other without hidden transcript
+  context.
+- Add tests or replay fixtures proving a workflow can pause and resume across
+  research, PRD/ADR, TDD, brief generation, dispatch, and verification states.
+
+### Phase 7: Sidecar And External Agent Use
 
 - Expose read-only product workflow commands through `idiom tool` and MCP when
   schemas are stable.
@@ -1283,12 +1775,19 @@ Harness learning:
 | Risk | Mitigation |
 | --- | --- |
 | Artifact bloat | Use evidence cards and context handles; keep raw source out of PRDs/ADRs except short anchors. |
+| Ignored artifacts mistaken for durable records | Treat `.idiom/product` as working state only; promote accepted artifacts to a tracked durable root with IDs, hashes, and acceptance metadata. |
 | Researcher consensus theater | Preserve conflicts and force ADR resolution instead of averaging recommendations. |
 | Prompt drift | Put durable gates in schemas and audits; prompts only explain how to satisfy them. |
 | Colony overfitting | Keep Colony references in profiles/examples, not core code. |
-| Test theater | Reject tautological assertions and require behavior-linked obligations. Use mutation testing to verify tests actually constrain behavior. |
-| Coverage obligation explosion | Require FMEA RPN >= 21 and HAZOP severity >= 3 as thresholds for mandatory tests; lower thresholds are advisory. Tier requirements by ADR blast radius. |
+| Test theater | Reject tautological assertions and require behavior-linked obligations. Use mutation testing for tier-required contract tests when tooling is available. |
+| Coverage obligation explosion | Select a coverage tier by ADR blast radius. Require FMEA RPN >= 21 and HAZOP severity >= 3 only when the tier includes those techniques; lower thresholds are advisory. |
+| Coverage under-blocking | Require every artifact to declare and justify its coverage tier; high-risk contract boundaries default to `contract_high` unless an accepted ADR lowers the tier. |
 | Stale local evidence | Carry freshness fields and block dispatch when stale evidence is load-bearing. |
+| TUI transcript mistaken for workflow state | Persist workflow state separately and render it in the TUI; conversation logs are evidence links, not continuation authority. |
+| Split-brain CLI/TUI state | Make CLI and TUI share application use cases, state revisions, reconciliation adapters, and a common status view model. |
+| Status folder path churn | Use stable effort IDs and effort indexes as identity; keep intra-folder links relative so status migration does not break artifacts. |
+| Crash after artifact write | Reconcile state from artifact hashes, event IDs, lane history, atom tracker docs, and progress state before offering the next action. |
+| "Works first try" overpromise | Define first-run success as safe happy-path fixture completion or a typed blocker with next action, not guaranteed autonomous completion for arbitrary complex work. |
 | Local model capacity | Run researchers sequentially by default; use queue admission for parallel lanes. |
 | Privacy leaks | Store IDs, paths, hashes, counts, and statuses; redact prompts, transcripts, secrets, and file bodies. |
 | Too many commands | Start with manual composition and add CLI verbs only after repeated usage proves the contract. |
@@ -1308,10 +1807,12 @@ Harness learning:
    bloating every packet?
 6. Which localization benchmark metrics should be mandatory before ranker
    learning consumes product workflow outcomes?
-7. Should coverage gate requirements be tiered by ADR blast radius (full
-   pipeline for high-impact, EARS + BDD + contract tests for low-impact)?
+7. What exact default thresholds should each coverage tier use after the first
+   design fixtures produce real pass/fail data?
 8. What is the minimum mutation score threshold before dispatch, and should it
    vary by obligation type?
+9. Which TUI continuation actions should ship first: status/read-only resume,
+   artifact promotion, or dispatch continuation?
 
 ## Acceptance Criteria For The Effort
 
@@ -1320,16 +1821,31 @@ The feature is useful when a team can:
 - define a researcher roster for a task
 - produce a PRD whose requirements cite evidence
 - accept ADRs for material decisions
-- generate TDD obligations before implementation, including failure mode,
-  deviation, property-based, and mutation obligations
-- pass the coverage gate: EARS, BDD, FMEA, HAZOP, PBT, decision table, and
-  mutation coverage all meet threshold
+- generate tier-appropriate TDD obligations before implementation, including
+  failure mode, deviation, property-based, and mutation obligations when the
+  selected tier requires them
+- pass the risk-tiered coverage gate, with all tier-required criteria met or
+  explicitly blocked
 - generate one or more briefs that pass `idiom brief lint`
 - block stale/source-satisfied/non-dispatchable/under-covered work before model
   dispatch
+- host each design doc or effort in a single folder containing its artifacts
+- browse efforts by `unstarted`, `started`, and `closed` status
+- migrate effort folders between status buckets while preserving stable effort IDs
+  and index references
+- promote accepted artifacts from `.idiom/product/efforts` into a durable tracked
+  root
+- use the same workflow status and continuation behavior from CLI and TUI
+- reconcile workflow state from artifacts, atom docs, lane history, telemetry,
+  and plan-execute progress before dispatch
+- complete the happy-path first-run fixture or return a typed blocker with a
+  concrete next action for unsupported real work
 - trace execution results back to PRD requirements, ADR decisions, and tests
 - trace every execution incident to a coverage gap and forward to a new
   obligation
+- link product-evidence exports and release-evidence bundles to the workflow
+- resume complex TUI/operator work from workflow state without rereading raw
+  transcripts
 - audit the workflow without reading raw transcripts
 - improve future context ranking or brief quality from verified outcomes
 - measure spec compliance independently of functional correctness

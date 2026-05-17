@@ -74,6 +74,27 @@ backend processes. Backend readiness belongs in local operations evidence and
 should be reported as pass, degraded, or blocked rather than hidden in a failed
 model call.
 
+## Plan-Execute Progress State
+
+Direct `idiom plan-execute` writes a durable progress state for each session
+under `.idiom/plan-execute/sessions/<session-id>.json`. The state records the
+schema version, session ID, prompt hash, prompt file, phase, status, required
+and allowed edit paths, plan path, `pack_id`, changed paths, executor evidence,
+source-sanity checks, and review-repair status.
+
+Relevant JSON events include:
+
+- `idiom.plan_execute.resume_state_saved`
+- `idiom.plan_execute.resume_state_loaded`
+- `idiom.plan_execute.writer_route_decision`
+- `idiom.plan_execute.required_edit_paths_resolved`
+
+`idiom plan-execute --resume <session-id>` is intentionally strict. It fails if
+the progress file does not exist, if the supplied prompt or prompt file does not
+match the saved prompt hash, or if the saved phase/status is not
+review-resumable. This prevents an operator typo from silently starting a fresh
+run and losing the state needed to review or repair prior work.
+
 ## Brief Lint
 
 `idiom brief lint <brief.md>` runs deterministic pre-dispatch checks on
@@ -167,6 +188,38 @@ Operational evidence products should answer:
 
 They should not tell the model or reviewer what strategy to choose next except
 where a typed invariant blocks progress.
+
+## TUI And Prompt Dispatch Evidence
+
+TUI/prompt implementation dispatch is observable through debug logs and the
+materialized atom docs it writes. Important evidence paths include:
+
+- `.idiom/atoms/<title>/atom-NNN.md` for generated atom briefs and local
+  persisted closeout status.
+- `.idiom/refine/<title>/accepted.md` for refined dispatchable briefs.
+- `logs/conversations/*.jsonl` for `dispatch_atomize`, `dispatch_refine`, and
+  `dispatch_source_satisfied` messages.
+- `logs/telemetry/*.jsonl` for command/process lifecycle evidence.
+
+The local persisted atom status is the operator-facing state for "what remains
+to do" when the same design doc is run again. Closed atoms should be skipped;
+pending atoms should be refined, preflighted, and dispatched; blockers should
+remain visible instead of being marked complete.
+
+## Product Workflow Effort Evidence
+
+The proposed product workflow should store each design doc or product effort as
+one effort folder under a status bucket:
+
+- `.idiom/product/efforts/unstarted/<effort-id>/...`
+- `.idiom/product/efforts/started/<effort-id>/...`
+- `.idiom/product/efforts/closed/<effort-id>/...`
+
+Accepted artifacts can be promoted to matching durable folders under
+`docs/product-workflows/efforts/<status>/<effort-id>/...`. Effort indexes should
+map stable effort IDs to their current status folder and prior paths. Evidence
+products should cite effort IDs, status buckets, relative paths, hashes, and
+promotion status rather than relying on the current folder path as identity.
 
 ## Related Notes
 

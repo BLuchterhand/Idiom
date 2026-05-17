@@ -93,6 +93,32 @@ is genuinely prompt comprehension rather than missing enforcement.
 6. Run lane-focused tests and broader runner/workspace tests if tool profiles or
    readiness behavior changed.
 
+## Debugging Design-Doc Dispatch
+
+Use this when a TUI or prompt-mode turn tries to implement a design doc through
+plan-execute.
+
+1. Check whether `chat.implementation_dispatch` is `plan_execute`, writes are
+   enabled, and the turn is in build mode.
+2. Resolve the referenced markdown path exactly. Ambiguous basenames should
+   block before model dispatch.
+3. Inspect `.idiom/atoms/<title>/atom-NNN.md` for existing terminal status.
+   Completed, accepted, closed, source-satisfied, and `do not dispatch` atoms
+   should be skipped, not overwritten.
+4. Run or inspect atom intake and brief lint output for stale scope, dirty
+   paths, missing exact anchors, invalid edit shape, and single-purpose
+   decomposition failures.
+5. If refine produced `.idiom/refine/<title>/accepted.md`, preflight that
+   accepted brief before dispatching it.
+6. Treat `Decision: source-satisfied` as valid only with per-path evidence and
+   any required test evidence.
+7. Treat listed verification commands as pending obligations until a successful
+   command result is cited.
+8. Keep `<<QUESTION>>` answers and planner-blocked answers as blockers. Do not
+   mark the atom complete.
+9. Add regression coverage for the exact failure shape before another live run
+   if the same blocker repeats.
+
 ## Changing Prompts
 
 1. Identify the exact behavior gap from logs, evals, or tests.

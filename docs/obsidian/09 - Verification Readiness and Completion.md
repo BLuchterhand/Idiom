@@ -20,6 +20,11 @@ For source edits, Idiom expects source-aware verification such as focused tests,
 builds, `source_sanity`, or a clear blocker explaining why verification could
 not run.
 
+A required verification command written in a brief or atom is an obligation, not
+evidence. It becomes evidence only when the run records that the command
+succeeded, such as a final answer line that cites the command and a pass,
+success, `exit 0`, or `ok` result.
+
 ## Verification Ladder
 
 ```mermaid
@@ -120,6 +125,31 @@ Completion does not always mean successful edits. A blocker is valid when:
 - The task cannot safely proceed without user input or environment change.
 - The final answer does not pretend the requested work is complete.
 - The blocker is recorded in a form audit can diagnose.
+
+For design-doc atom dispatch, blocker-shaped answers are never atom completion.
+Answers containing `<<QUESTION>>`, missing plan-artifact messages, planner
+blockers, or required-path plan blockers leave the atom open.
+
+## Design-Doc Atom Closeout
+
+Design-doc atom closeout has an extra readiness layer because the atom doc is
+also a local persisted work tracker.
+
+An atom can be marked `completed` only when:
+
+- The plan-execute answer is not a blocker.
+- Required source edits or no-op source-satisfied evidence are present.
+- Required verification commands are proven successful.
+- Required design-doc test obligations have matching source or test evidence.
+
+An atom can be marked `source-satisfied - do not dispatch` only when current
+source already satisfies the target path and required test evidence is present.
+The harness should not create whitespace or placeholder edits merely to satisfy
+a write-shaped contract.
+
+If verification commands remain unproven, the closeout should be a typed
+`<<QUESTION>>` naming the pending commands. The atom doc should remain pending
+so a later rerun can continue from the correct state.
 
 ## Documentation And Diagrams As Verification Aids
 

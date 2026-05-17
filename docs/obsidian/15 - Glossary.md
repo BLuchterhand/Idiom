@@ -17,6 +17,19 @@ A structured output used by a workflow. Examples include atom specs,
 `submit_plan` artifacts, architect packets, phase evidence, and review-repair
 reports.
 
+## Effort Folder
+
+A folder that contains one design doc or product effort plus its state,
+evidence, PRD/ADR/TDD artifacts, briefs, reports, and events. Product workflow
+effort folders are browsed under `unstarted`, `started`, or `closed` status
+buckets, but the stable identity is the effort ID.
+
+## Atom Tracker Doc
+
+A materialized markdown atom under `.idiom/atoms/<title>/atom-NNN.md`. It is a
+dispatchable slice of a design doc plus local persisted status and result
+evidence.
+
 ## Autonomy Contract
 
 The runtime contract that describes model permissions, tool capabilities, path
@@ -106,6 +119,18 @@ tools, schemas, memory, verification, and audit systems.
 
 A source-aware diagnostics or syntax sanity route for checking code changes
 beyond patch hygiene. It is separate from focused tests and builds.
+
+## Source-Satisfied
+
+A valid no-op closeout state when current source already contains the requested
+behavior. It requires per-path evidence and any required test evidence; it must
+not be simulated with placeholder edits.
+
+## Terminal Atom
+
+An atom tracker doc whose status says the work should not be dispatched again.
+Current terminal statuses include completed, complete, accepted, closed,
+source-satisfied, source satisfied, and statuses containing `do not dispatch`.
 
 ## Tool Profile
 

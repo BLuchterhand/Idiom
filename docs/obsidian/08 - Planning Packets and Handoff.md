@@ -24,6 +24,7 @@ dispatchable scopes, freshness, and verification.
 | Phase evidence | Record of execution and verification phases | No by itself |
 | Source edits | Actual mutation | Yes |
 | Review-repair report | Acceptance, repair, or blocker evidence | Sometimes, if repair is performed |
+| Atom tracker doc | Materialized design-doc atom and closeout state | No by itself |
 
 ## Plan-Execute Handoff
 
@@ -100,6 +101,45 @@ dispatch:
 
 These states prevent a lane from executing stale or ambiguous plans.
 
+Atom tracker docs also use terminal status lines to prevent reruns from doing
+completed work again. Current terminal statuses are:
+
+- `completed`
+- `complete`
+- `accepted`
+- `closed`
+- `source-satisfied`
+- `source satisfied`
+- any status containing `do not dispatch`
+
+Terminal atom docs should be preserved when a design doc is materialized again
+and skipped during atomized dispatch.
+
+## Design-Doc Atom Materialization
+
+The TUI/prompt implementation dispatch path can turn a referenced design doc
+into plan-execute atoms. The harness owns this transformation so the model does
+not have to infer workflow state from free-form prose.
+
+Materialized atoms are written under `.idiom/atoms/<title>/atom-NNN.md` and
+include:
+
+- A single file or bounded source scope.
+- The source design-doc path.
+- Exact current-state anchors for existing files.
+- `NEW FILE` wording for missing paths.
+- Extracted design-doc test obligations.
+- A source-design-doc excerpt for traceability.
+
+If an atom file already exists for the same target path and carries a terminal
+status, materialization reuses that atom instead of overwriting its status or
+result evidence.
+
+The atom result section is the local persisted closeout record. Successful
+dispatch can write `Status: completed`. No-op closeout can write
+`Status: source-satisfied - do not dispatch`. Blockers and unproven
+verification commands leave the atom open.
+
 ## Packet ID Round Trip
 
 Plan-execute can pass a `pack_id` through:
@@ -158,6 +198,12 @@ allows a no-op closeout, close as `source-satisfied` with per-path evidence.
 Otherwise return a typed blocker explaining the missing contract or required
 user decision.
 
+For design-doc atoms, `source-satisfied` requires source evidence for the target
+path and, when the atom carries test obligations, matching test evidence. A test
+or build command listed in the atom is an obligation, not proof by itself; the
+closeout answer must cite a successful run before the atom can be marked
+complete or source-satisfied.
+
 ## Common Handoff Bugs
 
 - Planner produces generic steps with no anchors.
@@ -165,6 +211,10 @@ user decision.
 - Executor writes based on packet relevance instead of explicit scope.
 - Review finds a problem but produces a contradictory success state.
 - Phase evidence records a command but not the relevant path, role, or result.
+- A rerun overwrites a terminal atom and loses the prior closeout evidence.
+- A `<<QUESTION>>` blocker is interpreted as a completed atom.
+- A required verification command is treated as evidence merely because it is
+  listed in the design doc.
 
 The repair should usually strengthen the artifact schema, validation, or tests.
 

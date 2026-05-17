@@ -13,6 +13,11 @@ that still owns strategy.
 
 The canonical design is in [docs/lane-architecture.md](../lane-architecture.md).
 
+The CLI is the primary repeatable lane surface. The TUI and prompt-mode CLI use
+the same `RunPromptOnce` path, and when implementation dispatch is enabled they
+can hand referenced design docs to plan-execute rather than treating them as
+ordinary chat context.
+
 ## Lane Types
 
 | Lane | Purpose | Mutation | Primary contract |
@@ -84,6 +89,12 @@ The executor phase receives the structured plan and dispatches edits through
 controlled workspace execution. The lane then performs post-write source sanity,
 phase evidence capture, and review-repair gates.
 
+Direct `idiom plan-execute` persists durable progress state under
+`.idiom/plan-execute/sessions/<session-id>.json`. Resume is not transcript
+replay: `--resume` must point at an existing progress state, must match the
+same prompt or prompt file, and only continues states that are ready for
+review-repair.
+
 ```mermaid
 flowchart TD
     Brief["Task brief"]
@@ -112,6 +123,32 @@ flowchart TD
 It is useful when the user needs task decomposition, acceptance criteria, or
 handoff-ready specification before source edits.
 
+## TUI Design-Doc Dispatch
+
+When a TUI or prompt-mode implementation turn references a markdown design doc
+and `chat.implementation_dispatch` is `plan_execute`, the harness can convert
+that design doc into plan-execute work:
+
+- Ambiguous or unreadable document references become typed blockers before the
+  planner runs.
+- Atom intake and brief lint classify dispatchability, stale state, dirty
+  scope, source-satisfied state, and single-purpose failures before model
+  tokens are spent.
+- Broad design docs can be materialized into atom briefs under
+  `.idiom/atoms/<title>/atom-NNN.md`.
+- Materialized atoms carry exact current-state anchors for existing files and a
+  `NEW FILE` marker for missing paths.
+- Existing terminal atoms are preserved during materialization and skipped on
+  rerun.
+- Source-satisfied atoms close without placeholder edits only when source and
+  required test evidence support the claim.
+- Blockers and unproven verification obligations do not mark atom docs
+  complete.
+
+This keeps design-doc execution aligned with the lane contract: the model
+chooses strategy inside bounded phases, while the harness owns artifact shape,
+scope classification, terminal-state detection, and readiness gates.
+
 ## Deterministic Lane Guarantees
 
 Lanes should make these properties observable:
@@ -123,6 +160,8 @@ Lanes should make these properties observable:
 - Which obligations are still open.
 - Which verification command or source sanity check was run.
 - Which result is terminal.
+- Which generated atom docs remain pending, terminal, blocked, or
+  source-satisfied.
 
 ## Auxiliary Lane Commands And Status
 

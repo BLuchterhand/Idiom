@@ -6,8 +6,8 @@
       "models": [
         {
           "alias": "qwen3.6-35b",
-          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
-          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-mlx-4bit-ud",
+          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
+          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-jang-6m",
           "port": 47780,
           "cache_size": 4,
           "cache_bytes": 12884901888,
@@ -115,8 +115,8 @@
       "models": [
         {
           "alias": "qwen3.6-35b",
-          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
-          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-mlx-4bit-ud",
+          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
+          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-jang-6m",
           "port": 47780,
           "cache_size": 4,
           "cache_bytes": 12884901888,
