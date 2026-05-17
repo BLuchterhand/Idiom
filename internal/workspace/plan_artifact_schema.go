@@ -851,10 +851,12 @@ func sanitizePlanArtifactErrorDetail(value string) string {
 	}
 	lower := strings.ToLower(value)
 	switch {
+	case strings.Contains(lower, "requires one edit shape"):
+		return sanitizePlanArtifactVisibleText(value, 600)
 	case strings.Contains(lower, "path"):
 		return sanitizePlanArtifactVisibleText(value, 160)
 	case strings.Contains(lower, "old_text"):
-		return sanitizePlanArtifactVisibleText(value, 180)
+		return sanitizePlanArtifactVisibleText(value, 600)
 	default:
 		return sanitizePlanArtifactVisibleText(value, 160)
 	}

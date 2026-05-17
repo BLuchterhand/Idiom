@@ -1416,6 +1416,40 @@ func TestRefinePatchSourceEvidenceStaysCompactAndSkipsBoilerplate(t *testing.T) 
 	}
 }
 
+func TestRefinePatchSourceEvidencePreservesCompleteAnchorLines(t *testing.T) {
+	root := t.TempDir()
+	relPath := filepath.ToSlash(filepath.Join("internal", "writerroute", "decision.go"))
+	srcPath := filepath.Join(root, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	longLine := "func NewDecision(mode WriterMode, lane string, plannerModel string, executorModel string, reviewerModel string, classifierModel string, riskTier string, costTier string, scopeTier string, verificationOwner string, reviewPolicy string, requiredEditPaths []string, evidencePacketIDs []string, reasonCodes []string, escalationTriggers []string, userOverride bool, taskFamily string) Decision {"
+	if err := os.WriteFile(srcPath, []byte("package writerroute\n\n"+longLine+"\n\treturn Decision{}\n}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	prevDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "draft.md")
+	prevReview := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "review.md")
+	for _, path := range []string{prevDraft, prevReview} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	if err := os.WriteFile(prevDraft, []byte("Review NewDecision in internal/writerroute/decision.go.\n"), 0o644); err != nil {
+		t.Fatalf("write draft: %v", err)
+	}
+	if err := os.WriteFile(prevReview, []byte("Patch must use the complete NewDecision anchor from internal/writerroute/decision.go.\n"), 0o644); err != nil {
+		t.Fatalf("write review: %v", err)
+	}
+
+	evidence := refinePatchSourceEvidence(root, prevDraft, prevReview, "", []string{relPath})
+	if !strings.Contains(evidence, longLine) {
+		t.Fatalf("source evidence lost complete anchor line:\n%s", evidence)
+	}
+	if strings.Contains(evidence, "...") {
+		t.Fatalf("source evidence must not truncate actionable anchor lines:\n%s", evidence)
+	}
+}
+
 func TestRefinePatchSourceEvidencePrioritizesBoundaryAnchors(t *testing.T) {
 	root := t.TempDir()
 	relPath := filepath.ToSlash(filepath.Join("native", "src", "simulation", "creatures", "memory_helpers.cpp"))
@@ -2772,6 +2806,13 @@ func TestRefineDraftTemplatesUseEvidenceContractInsteadOfBudget(t *testing.T) {
 			for _, want := range []string{"## Draft phase evidence contract", "Use the embedded spec", "Source verification pending:", "Stay on the draft deliverable"} {
 				if !strings.Contains(tc.body, want) {
 					t.Fatalf("draft template should contain %q, got:\n%s", want, tc.body)
+				}
+			}
+			if tc.name == "draft" {
+				for _, want := range []string{"source-satisfied - do not dispatch", "old_text`/`new_text"} {
+					if !strings.Contains(tc.body, want) {
+						t.Fatalf("anchored draft template should contain %q, got:\n%s", want, tc.body)
+					}
 				}
 			}
 			for _, forbidden := range []string{"## Draft phase tool budget", "Zero source reads", "Zero searches", "Zero code-navigation calls", "Do not read files. Do not search."} {

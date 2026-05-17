@@ -23,9 +23,11 @@ import (
 	"idiom/internal/app"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/planexecute"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
+	"idiom/internal/writerroute"
 )
 
 // planExecuteOptions configures `idiom plan-execute`.
@@ -35,6 +37,7 @@ type planExecuteOptions struct {
 	PromptFile        string
 	Model             string
 	Resume            string
+	ReviewSessionID   string
 	JSONEvents        bool
 	DisableThinking   bool
 	MaxTokens         int
@@ -86,6 +89,24 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		cfg.LlamaServer.Model = opts.Model
 	}
 	cleanupStalePlanArtifacts(cfg.Workspace.Root, 7*24*time.Hour, stderr)
+	prompt, err := planExecutePrompt(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	var resumeState *planexecute.ProgressState
+	resumeStatePath := ""
+	if strings.TrimSpace(opts.Resume) != "" {
+		state, statePath, found, err := planexecute.TryLoadProgressState(cfg.Workspace.Root, opts.Resume)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if found {
+			resumeState = &state
+			resumeStatePath = statePath
+		}
+	}
 	// Capture session start time + a fresh session UUID so the
 	// executor phase only loads plan artifacts produced by THIS
 	// planner run. Without these guards, a planner failure (budget
@@ -97,10 +118,14 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// strict attribution.
 	sessionStart := time.Now().Add(-1 * time.Second)
 	sessionID := newPlanExecuteSessionID()
+	if resumeState != nil && strings.TrimSpace(resumeState.SessionID) != "" {
+		sessionID = resumeState.SessionID
+	}
 	cfg.Workspace.SessionID = sessionID
 	logCLIPhase(rec, "plan_execute_start", map[string]any{
 		"json_events": opts.JSONEvents,
 		"session_id":  sessionID,
+		"resume":      resumeState != nil,
 	})
 
 	// Queue gate: if a `idiom queue serve` daemon is reachable, acquire
@@ -113,11 +138,6 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	queueRelease := planExecuteAcquireQueueSlot(cfg, opts, sessionID, rec, stdout, stderr)
 	defer queueRelease()
 
-	prompt, err := planExecutePrompt(opts)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	requiredEditPaths := planExecuteRequiredEditPaths(opts, prompt)
 	promptRequiredEditPaths := app.RequiredEditPathsFromPrompt(prompt)
 	explicitRequiredEditPaths := planExecuteUniqueRequiredPaths([]string(opts.RequiredEditPaths))
@@ -132,6 +152,27 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		"prompt_count":        len(promptRequiredEditPaths),
 		"required_edit_paths": requiredEditPaths,
 	})
+	decision := buildCLIWriterRouteDecision(cfg, cliWriterRouteOptions{
+		Mode:              writerroute.ModePlanSubmission,
+		Lane:              "plan-execute",
+		TaskFamily:        agent.PlanThenExecutePlannerTaskFamily,
+		PlannerModel:      cfg.LlamaServer.Model,
+		ExecutorModel:     cfg.LlamaServer.Model,
+		ReviewerModel:     cfg.LlamaServer.Model,
+		RequiredEditPaths: requiredEditPaths,
+		ReasonCodes:       []string{"route.multi_file_plan_execute"},
+		VerificationOwner: "planner_owned",
+	})
+	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "writer_route_decision", decision.EventFields())
+	if resumeState != nil {
+		return runPlanExecuteResumeReviewRepair(cfg, opts, prompt, requiredEditPaths, *resumeState, resumeStatePath, stdout, stderr, promptRun, rec)
+	}
+
+	progress := planexecute.NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, nil, time.Now().UTC())
+	if _, err := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 
 	// Phase 1: planner. The planner runs as an implementation lane
 	// with the plan-then-execute system addendum that swaps per-edit
@@ -144,17 +185,64 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		plannerMaxTokens = opts.MaxTokens
 	}
 	answer := ""
-	if submitted, result, reason, editCount := planExecuteTryAutoExactPlan(cfg, prompt, requiredEditPaths); submitted {
-		answer = result.Summary
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_submitted", map[string]any{
-			"edits":  editCount,
-			"reason": reason,
+	executorRequiredEditPaths := requiredEditPaths
+	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, requiredEditPaths)
+	if autoExact.SourceSatisfied {
+		answer = planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths)
+		progress.Phase = planexecute.ProgressPhaseComplete
+		progress.Status = planexecute.ProgressStatusCompleted
+		_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_source_satisfied", map[string]any{
+			"edits":               autoExact.EditCount,
+			"applied":             autoExact.AppliedCount,
+			"required_edit_paths": requiredEditPaths,
+			"applied_paths":       autoExact.AppliedPaths,
+			"reason":              autoExact.Reason,
 		})
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
+			"required_edit_paths": requiredEditPaths,
+			"reason":              autoExact.Reason,
+		})
+		if !opts.JSONEvents {
+			fmt.Fprintln(stdout, answer)
+			fmt.Fprintln(stdout, "")
+			fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
+			fmt.Fprintln(stdout, "source-satisfied: executor skipped because every exact edit already matched the current workspace.")
+		}
+		return 0
+	}
+	if autoExact.Submitted {
+		answer = autoExact.Result.Summary
+		if len(autoExact.PendingPaths) > 0 {
+			executorRequiredEditPaths = autoExact.PendingPaths
+		}
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_submitted", map[string]any{
+			"edits":         autoExact.EditCount,
+			"applied":       autoExact.AppliedCount,
+			"pending":       autoExact.PendingCount,
+			"applied_paths": autoExact.AppliedPaths,
+			"pending_paths": autoExact.PendingPaths,
+			"reason":        autoExact.Reason,
+		})
+		if autoExact.AppliedCount > 0 {
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_partially_satisfied", map[string]any{
+				"applied":       autoExact.AppliedCount,
+				"pending":       autoExact.PendingCount,
+				"applied_paths": autoExact.AppliedPaths,
+				"pending_paths": autoExact.PendingPaths,
+			})
+		}
 	} else {
-		if strings.TrimSpace(reason) != "" {
+		if strings.TrimSpace(autoExact.Reason) != "" {
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_skipped", map[string]any{
-				"reason": reason,
-				"error":  result.Error,
+				"reason":        autoExact.Reason,
+				"error":         autoExact.Result.Error,
+				"applied":       autoExact.AppliedCount,
+				"pending":       autoExact.PendingCount,
+				"unknown":       autoExact.UnknownCount,
+				"applied_paths": autoExact.AppliedPaths,
+				"pending_paths": autoExact.PendingPaths,
+				"unknown_paths": autoExact.UnknownPaths,
 			})
 		}
 		answer, err = promptRun(cfg, plannerPrompt, runOptions{
@@ -182,6 +270,10 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			Telemetry:         rec,
 		}, stdout)
 		if err != nil {
+			progress.Status = planexecute.ProgressStatusFailed
+			progress.FailureKind = "planner_failed"
+			progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
+			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -192,6 +284,9 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	planPath, err := findLatestPlanArtifact(cfg.Workspace.Root, sessionStart, sessionID)
 	if err != nil {
 		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, requiredEditPaths) {
+			progress.Phase = planexecute.ProgressPhaseComplete
+			progress.Status = planexecute.ProgressStatusCompleted
+			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
 				"required_edit_paths": requiredEditPaths,
 				"reason":              "planner reported requested final state already present",
@@ -205,6 +300,10 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			return 0
 		}
 		if planExecuteAnswerDeclaresBlocker(answer) {
+			progress.Status = planexecute.ProgressStatusFailed
+			progress.FailureKind = planexecute.RunFailurePlannerBlocked
+			progress.FailureReason = planExecuteBlockerSummary(answer)
+			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_blocked", map[string]any{
 				"reason":  err.Error(),
 				"blocker": planExecuteBlockerSummary(answer),
@@ -225,6 +324,10 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		if !opts.JSONEvents {
 			fmt.Fprintln(stdout, answer)
 		}
+		progress.Status = planexecute.ProgressStatusFailed
+		progress.FailureKind = "plan_artifact_missing"
+		progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
+		_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 		return 1
 	}
 	plan, err := workspace.LoadPlanArtifact(planPath)
@@ -234,6 +337,10 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			"reason": err.Error(),
 		})
 		fmt.Fprintln(stderr, fmt.Errorf("read plan artifact %q: %w", planPath, err))
+		progress.Status = planexecute.ProgressStatusFailed
+		progress.FailureKind = "plan_artifact_invalid"
+		progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
+		_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 		return 1
 	}
 	if inheritedPackID := inheritPlanExecutePromptPackID(&plan, prompt); inheritedPackID != "" {
@@ -255,12 +362,52 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
 	reviewBaseline := captureReviewRepairBaseline(cfg.Workspace.Root, planChangedPaths(plan))
-	report, runErr := runExecutorPhase(cfg, plan, requiredEditPaths, opts.JSONEvents, stdout)
+	progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, toSharedReviewRepairBaseline(reviewBaseline))
+	if _, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	var progressSaveErr error
+	progressCallback := func(step, total int, path string, succeeded bool) {
+		progress.MarkEditProgress(step, total, path, succeeded)
+		if _, err := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil && progressSaveErr == nil {
+			progressSaveErr = err
+		}
+	}
+	report, runErr := runExecutorPhase(cfg, plan, executorRequiredEditPaths, opts.JSONEvents, stdout, progressCallback)
+	if runErr == nil && progressSaveErr != nil {
+		runErr = progressSaveErr
+	}
+	progress.MarkExecutorComplete(toSharedExecutorPhaseReport(report), runErr)
+	_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+	if err != nil && runErr == nil {
+		runErr = err
+	}
 	_ = sessionStart // findLatestPlanArtifact already filtered; keep referenced.
 	reviewReport := reviewRepairPhaseReport{Skipped: opts.SkipReviewRepair}
 	var reviewErr error
 	if runErr == nil && !opts.SkipReviewRepair {
-		reviewReport, reviewErr = runReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, opts, stdout, promptRun, rec)
+		reviewSessionID := newPlanExecuteSessionID()
+		progress.MarkReviewStarted(reviewSessionID)
+		_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+		if err != nil {
+			reviewErr = err
+		} else {
+			reviewOpts := opts
+			reviewOpts.ReviewSessionID = reviewSessionID
+			reviewReport, reviewErr = runReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, reviewOpts, stdout, promptRun, rec)
+		}
+		progress.MarkReviewComplete(toSharedReviewRepairPhaseReport(reviewReport), reviewErr)
+		_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+		if err != nil && reviewErr == nil {
+			reviewErr = err
+		}
+	} else if runErr == nil && opts.SkipReviewRepair {
+		progress.MarkSkippedReview()
+		_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+		if err != nil {
+			runErr = err
+		}
 	}
 	if !opts.JSONEvents {
 		fmt.Fprintln(stdout, "")
@@ -277,6 +424,217 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		return 1
 	}
 	return 0
+}
+
+func runPlanExecuteResumeReviewRepair(
+	cfg config.Config,
+	opts planExecuteOptions,
+	prompt string,
+	requiredEditPaths []string,
+	state planexecute.ProgressState,
+	statePath string,
+	stdout io.Writer,
+	stderr io.Writer,
+	promptRun promptRunner,
+	rec *telemetry.Recorder,
+) int {
+	sessionID := strings.TrimSpace(state.SessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(opts.Resume)
+	}
+	if !state.PromptMatches(prompt) {
+		fmt.Fprintln(stderr, fmt.Errorf("plan-execute resume state %s was created for a different prompt; pass the same --prompt or --prompt-file used by session %s", statePath, sessionID))
+		return 1
+	}
+	if !state.ReviewResumeReady() {
+		fmt.Fprintln(stderr, fmt.Errorf("plan-execute resume state %s is not review-resumable (phase=%s status=%s executor_status=%s)", statePath, state.Phase, state.Status, state.Executor.Status))
+		return 1
+	}
+	planPath := state.ResolvedPlanPath(cfg.Workspace.Root)
+	plan, err := workspace.LoadPlanArtifact(planPath)
+	if err != nil {
+		fmt.Fprintln(stderr, fmt.Errorf("read resumed plan artifact %q: %w", planPath, err))
+		return 1
+	}
+	if len(state.RequiredEditPaths) > 0 {
+		requiredEditPaths = append([]string(nil), state.RequiredEditPaths...)
+	}
+	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "resume_state_loaded", planexecute.ProgressStateEventFields(state, statePath))
+	reviewSessionID := newPlanExecuteSessionID()
+	state.MarkReviewStarted(reviewSessionID)
+	if _, err := savePlanExecuteProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	reviewOpts := opts
+	reviewOpts.ReviewSessionID = reviewSessionID
+	reviewBaseline := fromSharedReviewRepairBaseline(state.ReviewBaseline)
+	executorReport := fromSharedExecutorPhaseReport(state.ExecutorPhaseReport())
+	reviewReport, reviewErr := runReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, executorReport, reviewOpts, stdout, promptRun, rec)
+	state.MarkReviewComplete(toSharedReviewRepairPhaseReport(reviewReport), reviewErr)
+	_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved")
+	if err != nil && reviewErr == nil {
+		reviewErr = err
+	}
+	if !opts.JSONEvents {
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
+		fmt.Fprintln(stdout, executorReport)
+		fmt.Fprintln(stdout, reviewReport)
+	}
+	if reviewErr != nil {
+		fmt.Fprintln(stderr, reviewErr)
+		return 1
+	}
+	return 0
+}
+
+func savePlanExecuteProgressState(root string, state *planexecute.ProgressState, jsonEvents bool, stdout io.Writer, eventType string) (string, error) {
+	statePath, err := planexecute.SaveProgressState(root, state)
+	if err != nil {
+		return statePath, err
+	}
+	emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType, planexecute.ProgressStateEventFields(*state, statePath))
+	return statePath, nil
+}
+
+func toSharedReviewRepairBaseline(baseline reviewRepairBaseline) planexecute.ReviewRepairBaseline {
+	out := planexecute.ReviewRepairBaseline{Files: map[string]planexecute.ReviewRepairFileSnapshot{}}
+	for path, snapshot := range baseline.Files {
+		out.Files[path] = planexecute.ReviewRepairFileSnapshot{Before: snapshot.Before, Exists: snapshot.Exists}
+	}
+	return out
+}
+
+func fromSharedReviewRepairBaseline(baseline planexecute.ReviewRepairBaseline) reviewRepairBaseline {
+	out := reviewRepairBaseline{Files: map[string]reviewRepairFileSnapshot{}}
+	for path, snapshot := range baseline.Files {
+		out.Files[path] = reviewRepairFileSnapshot{Before: snapshot.Before, Exists: snapshot.Exists}
+	}
+	return out
+}
+
+func toSharedExecutorPhaseReport(report executorPhaseReport) planexecute.ExecutorPhaseReport {
+	return planexecute.ExecutorPhaseReport{
+		Total:        report.Total,
+		Succeeded:    report.Succeeded,
+		Failed:       report.Failed,
+		Failures:     append([]string(nil), report.Failures...),
+		SourceSanity: toSharedPhaseEvidenceChecks(report.SourceSanity),
+		Handoff:      toSharedExecutorHandoffPacket(report.Handoff),
+	}
+}
+
+func fromSharedExecutorPhaseReport(report planexecute.ExecutorPhaseReport) executorPhaseReport {
+	return executorPhaseReport{
+		Total:        report.Total,
+		Succeeded:    report.Succeeded,
+		Failed:       report.Failed,
+		Failures:     append([]string(nil), report.Failures...),
+		SourceSanity: fromSharedPhaseEvidenceChecks(report.SourceSanity),
+		Handoff:      fromSharedExecutorHandoffPacket(report.Handoff),
+	}
+}
+
+func toSharedPhaseEvidenceChecks(checks []phaseEvidenceCheck) []planexecute.PhaseEvidenceCheck {
+	out := make([]planexecute.PhaseEvidenceCheck, 0, len(checks))
+	for _, check := range checks {
+		out = append(out, planexecute.PhaseEvidenceCheck{
+			Kind:    check.Kind,
+			Path:    check.Path,
+			Status:  check.Status,
+			Summary: check.Summary,
+			Error:   check.Error,
+		})
+	}
+	return out
+}
+
+func fromSharedPhaseEvidenceChecks(checks []planexecute.PhaseEvidenceCheck) []phaseEvidenceCheck {
+	out := make([]phaseEvidenceCheck, 0, len(checks))
+	for _, check := range checks {
+		out = append(out, phaseEvidenceCheck{
+			Kind:    check.Kind,
+			Path:    check.Path,
+			Status:  check.Status,
+			Summary: check.Summary,
+			Error:   check.Error,
+		})
+	}
+	return out
+}
+
+func toSharedReviewRepairPhaseReport(report reviewRepairPhaseReport) planexecute.ReviewRepairPhaseReport {
+	return planexecute.ReviewRepairPhaseReport{
+		Skipped:        report.Skipped,
+		Status:         report.Status,
+		Repairs:        report.Repairs,
+		AutoRepairs:    report.AutoRepairs,
+		ReviewPlan:     report.ReviewPlan,
+		ChecklistFound: report.ChecklistFound,
+		ReasonClass:    report.ReasonClass,
+	}
+}
+
+func toSharedExecutorHandoffPacket(handoff executorHandoffPacket) planexecute.ExecutorHandoffPacket {
+	return planexecute.ExecutorHandoffPacket{
+		State:                   handoff.State,
+		Reason:                  handoff.Reason,
+		PlanID:                  handoff.PlanID,
+		HandoffID:               handoff.HandoffID,
+		HandoffStatus:           handoff.HandoffStatus,
+		ApprovalScopeID:         handoff.ApprovalScopeID,
+		ApprovalStatus:          handoff.ApprovalStatus,
+		ApprovalPermission:      handoff.ApprovalPermission,
+		PackID:                  handoff.PackID,
+		DeclaredPackID:          handoff.DeclaredPackID,
+		ArtifactPacketStatus:    handoff.ArtifactPacketStatus,
+		ArtifactPacketFreshness: handoff.ArtifactPacketFreshness,
+		IndexID:                 handoff.IndexID,
+		Fresh:                   handoff.Fresh,
+		CandidateFiles:          handoff.CandidateFiles,
+		CandidateSymbols:        handoff.CandidateSymbols,
+		Tests:                   handoff.Tests,
+		ApprovedPathCount:       handoff.ApprovedPathCount,
+		PendingPathCount:        handoff.PendingPathCount,
+	}
+}
+
+func fromSharedExecutorHandoffPacket(handoff planexecute.ExecutorHandoffPacket) executorHandoffPacket {
+	return executorHandoffPacket{
+		State:                   handoff.State,
+		Reason:                  handoff.Reason,
+		PlanID:                  handoff.PlanID,
+		HandoffID:               handoff.HandoffID,
+		HandoffStatus:           handoff.HandoffStatus,
+		ApprovalScopeID:         handoff.ApprovalScopeID,
+		ApprovalStatus:          handoff.ApprovalStatus,
+		ApprovalPermission:      handoff.ApprovalPermission,
+		PackID:                  handoff.PackID,
+		DeclaredPackID:          handoff.DeclaredPackID,
+		ArtifactPacketStatus:    handoff.ArtifactPacketStatus,
+		ArtifactPacketFreshness: handoff.ArtifactPacketFreshness,
+		IndexID:                 handoff.IndexID,
+		Fresh:                   handoff.Fresh,
+		CandidateFiles:          handoff.CandidateFiles,
+		CandidateSymbols:        handoff.CandidateSymbols,
+		Tests:                   handoff.Tests,
+		ApprovedPathCount:       handoff.ApprovedPathCount,
+		PendingPathCount:        handoff.PendingPathCount,
+	}
+}
+
+func truncatePlanExecuteProgressReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if len(reason) <= 2000 {
+		return reason
+	}
+	for i := range reason {
+		if i >= 2000 {
+			return strings.TrimSpace(reason[:i]) + fmt.Sprintf(" [truncated %d bytes]", len(reason)-i)
+		}
+	}
+	return reason
 }
 
 func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOptions, error) {
@@ -479,21 +837,129 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) (bool, workspace.ToolResult, string, int) {
+type planExecuteAutoExactPlanResult struct {
+	Submitted       bool
+	SourceSatisfied bool
+	Result          workspace.ToolResult
+	Reason          string
+	EditCount       int
+	AppliedCount    int
+	PendingCount    int
+	UnknownCount    int
+	AppliedPaths    []string
+	PendingPaths    []string
+	UnknownPaths    []string
+}
+
+func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) planExecuteAutoExactPlanResult {
 	edits, reason := planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, cfg.Workspace.Root)
 	if len(edits) == 0 {
-		return false, workspace.ToolResult{}, reason, 0
+		return planExecuteAutoExactPlanResult{Reason: reason}
+	}
+	classified := planExecuteClassifyAutoExactPlanEdits(cfg.Workspace.Root, edits)
+	if classified.UnknownCount > 0 {
+		classified.Reason = "exact-anchor progress unknown for required path(s): " + strings.Join(classified.UnknownPaths, ", ")
+		classified.EditCount = len(edits)
+		return classified
+	}
+	if classified.PendingCount == 0 {
+		classified.SourceSatisfied = true
+		classified.Reason = "all exact-anchor edits already match the current workspace"
+		classified.EditCount = len(edits)
+		return classified
 	}
 	mgr := workspace.NewManager(cfg.Workspace)
 	result := mgr.Execute(context.Background(), workspace.ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Deterministic exact-anchor plan synthesized from the Required Edits packet.",
-		Edits:     edits,
+		Edits:     planExecutePendingAutoExactEdits(cfg.Workspace.Root, edits),
 	})
+	classified.Result = result
 	if strings.TrimSpace(result.Error) != "" {
-		return false, result, "exact-anchor auto-plan rejected by submit_plan validation", len(edits)
+		classified.Reason = "exact-anchor auto-plan rejected by submit_plan validation"
+		classified.EditCount = classified.PendingCount
+		return classified
 	}
-	return true, result, "all required paths covered by parseable exact old_text/new_text pairs", len(edits)
+	classified.Submitted = true
+	classified.EditCount = classified.PendingCount
+	if classified.AppliedCount > 0 {
+		classified.Reason = "already-applied exact edits skipped; pending exact edits submitted"
+	} else {
+		classified.Reason = "all required paths covered by parseable exact old_text/new_text pairs"
+	}
+	return classified
+}
+
+func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEdit) planExecuteAutoExactPlanResult {
+	var result planExecuteAutoExactPlanResult
+	var appliedPaths []string
+	var pendingPaths []string
+	var unknownPaths []string
+	for _, edit := range edits {
+		status := planExecuteAutoExactEditStatus(root, edit)
+		path := normalizePlanExecutePath(edit.Path)
+		switch status {
+		case "applied":
+			result.AppliedCount++
+			appliedPaths = append(appliedPaths, path)
+		case "pending":
+			result.PendingCount++
+			pendingPaths = append(pendingPaths, path)
+		default:
+			result.UnknownCount++
+			unknownPaths = append(unknownPaths, path)
+		}
+	}
+	result.AppliedPaths = mergePlanExecutePaths(appliedPaths)
+	result.PendingPaths = mergePlanExecutePaths(pendingPaths)
+	result.UnknownPaths = mergePlanExecutePaths(unknownPaths)
+	return result
+}
+
+func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) []workspace.PlanEdit {
+	var pending []workspace.PlanEdit
+	for _, edit := range edits {
+		if planExecuteAutoExactEditStatus(root, edit) == "pending" {
+			pending = append(pending, edit)
+		}
+	}
+	return pending
+}
+
+func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
+	path := normalizePlanExecutePath(edit.Path)
+	if path == "" {
+		return "unknown"
+	}
+	fullPath := path
+	if !filepath.IsAbs(fullPath) {
+		fullPath = filepath.Join(strings.TrimSpace(root), filepath.FromSlash(path))
+	}
+	body, err := os.ReadFile(filepath.Clean(fullPath))
+	if err != nil {
+		if os.IsNotExist(err) && edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != "" {
+			return "pending"
+		}
+		return "unknown"
+	}
+	status, _ := submittedPlanEditStatus(string(body), edit)
+	return status
+}
+
+func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
+	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	var b strings.Builder
+	b.WriteString("Decision: source-satisfied\n")
+	b.WriteString("The exact-edit packet already matches the current workspace for every required edit path.")
+	if len(paths) > 0 {
+		b.WriteString("\n\nRequired edit paths:\n")
+		for _, path := range paths {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
@@ -506,16 +972,34 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 		return nil, "no required_edit_paths"
 	}
 	section := ""
-	for _, heading := range []string{"required edits", "edits to apply", "edits"} {
-		if candidate := atomMarkdownSectionByHeading(prompt, heading); strings.TrimSpace(candidate) != "" {
-			section = candidate
+	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
+		for _, heading := range []string{"required edits", "edits to apply", "edits"} {
+			if candidate := atomMarkdownSectionByHeading(candidatePrompt, heading); strings.TrimSpace(candidate) != "" {
+				section = candidate
+				break
+			}
+		}
+		if strings.TrimSpace(section) != "" {
 			break
 		}
 	}
 	if strings.TrimSpace(section) == "" {
-		return nil, "no exact-edit section"
+		return planExecuteImplicitNewFileBodyEdits(prompt, required, workspaceRoot)
 	}
 
+	edits, reason := planExecuteExactPlanEditsFromSection(section, required, workspaceRoot)
+	if len(edits) > 0 {
+		return edits, ""
+	}
+	if implicit, implicitReason := planExecuteImplicitNewFileBodyEdits(prompt, required, workspaceRoot); len(implicit) > 0 {
+		return implicit, ""
+	} else if strings.TrimSpace(implicitReason) != "" && reason == "no parseable exact old_text/new_text pairs" {
+		reason = reason + "; " + implicitReason
+	}
+	return nil, reason
+}
+
+func planExecuteExactPlanEditsFromSection(section string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
 	type pendingOldBlock struct {
 		paths []string
 		text  string
@@ -611,6 +1095,159 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 		return nil, "exact old_text/new_text pairs do not cover required path(s): " + strings.Join(missing, ", ")
 	}
 	return edits, ""
+}
+
+func planExecuteImplicitNewFileBodyEdits(prompt string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
+	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
+		section := atomMarkdownSectionByHeading(candidatePrompt, "required behavior")
+		if strings.TrimSpace(section) == "" {
+			continue
+		}
+		edits := planExecuteImplicitNewFileBodyEditsFromSection(section, required, workspaceRoot)
+		if len(edits) == 0 {
+			continue
+		}
+		if missing := planExecuteMissingEditPaths(required, edits); len(missing) > 0 {
+			return nil, "implicit new-file bodies do not cover required path(s): " + strings.Join(missing, ", ")
+		}
+		return edits, ""
+	}
+	return nil, "no exact-edit section"
+}
+
+func planExecuteImplicitNewFileBodyEditsFromSection(section string, required []string, workspaceRoot string) []workspace.PlanEdit {
+	var edits []workspace.PlanEdit
+	var recent []string
+	var current []string
+	var blockPaths []string
+	capture := false
+	fence := ""
+	for _, rawLine := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(rawLine)
+		if fence == "" {
+			if marker, _, ok := atomMarkdownFenceOpen(trimmed); ok {
+				fence = marker
+				current = nil
+				contextText := strings.Join(recent, "\n")
+				blockPaths = planExecuteImplicitBodyBoundPaths(recent, required)
+				capture = len(blockPaths) > 0 &&
+					planExecuteImplicitNewFileBodyContext(contextText) &&
+					planExecuteAllPathsMissing(workspaceRoot, blockPaths)
+				continue
+			}
+			if trimmed != "" {
+				recent = append(recent, trimmed)
+				if len(recent) > 8 {
+					recent = recent[len(recent)-8:]
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, fence) {
+			block := strings.TrimSpace(strings.Join(current, "\n"))
+			if capture {
+				for _, path := range blockPaths {
+					if planExecuteImplicitBodyLooksSafeForPath(path, block) {
+						edits = append(edits, workspace.PlanEdit{
+							Path:       path,
+							OldText:    "",
+							NewText:    block,
+							ReplaceAll: true,
+							Purpose:    "Create the full file body from the refined design-doc atom.",
+						})
+					}
+				}
+			}
+			fence = ""
+			current = nil
+			blockPaths = nil
+			capture = false
+			continue
+		}
+		current = append(current, rawLine)
+	}
+	return edits
+}
+
+func planExecuteImplicitBodyBoundPaths(recent []string, required []string) []string {
+	for i := len(recent) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(recent[i])
+		if len(pathparse.MentionedWorkspacePaths(line)) == 0 {
+			continue
+		}
+		return atomRequiredEditPathsFromLabel(line, required)
+	}
+	return atomRequiredEditPathsFromLabel(strings.Join(recent, "\n"), required)
+}
+
+func planExecuteAutoPlanScanTexts(prompt string) []string {
+	texts := []string{prompt}
+	unquoted := planExecuteUnquoteMarkdown(prompt)
+	if unquoted != prompt {
+		texts = append(texts, unquoted)
+	}
+	return texts
+}
+
+func planExecuteUnquoteMarkdown(text string) string {
+	lines := strings.Split(text, "\n")
+	changed := false
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, ">") {
+			continue
+		}
+		trimmed = strings.TrimPrefix(trimmed, ">")
+		if strings.HasPrefix(trimmed, " ") {
+			trimmed = strings.TrimPrefix(trimmed, " ")
+		}
+		lines[i] = trimmed
+		changed = true
+	}
+	if !changed {
+		return text
+	}
+	return strings.Join(lines, "\n")
+}
+
+func planExecuteImplicitNewFileBodyContext(contextText string) bool {
+	lower := strings.ToLower(contextText)
+	return strings.Contains(lower, "create ") ||
+		strings.Contains(lower, "new file") ||
+		strings.Contains(lower, "full file body") ||
+		strings.Contains(lower, "following content")
+}
+
+func planExecuteAllPathsMissing(workspaceRoot string, paths []string) bool {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot == "" || len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		path = normalizePlanExecutePath(path)
+		if path == "" {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(path))); err == nil {
+			return false
+		} else if !os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
+}
+
+func planExecuteImplicitBodyLooksSafeForPath(path string, body string) bool {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		return strings.HasPrefix(body, "package ")
+	default:
+		return true
+	}
 }
 
 func planExecuteInferPathsForOldText(workspaceRoot string, required []string, oldText string) []string {
@@ -1199,7 +1836,10 @@ func runReviewRepairPhase(
 		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
 	}
 	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
-	reviewSessionID := newPlanExecuteSessionID()
+	reviewSessionID := strings.TrimSpace(opts.ReviewSessionID)
+	if reviewSessionID == "" {
+		reviewSessionID = newPlanExecuteSessionID()
+	}
 	reviewCfg := cfg
 	reviewCfg.Workspace.SessionID = reviewSessionID
 	reviewStart := time.Now().Add(-1 * time.Second)
@@ -1934,11 +2574,11 @@ func truncatePlanExecuteText(text string, maxBytes int) string {
 // truth. Failure of one edit aborts the phase and surfaces the
 // specific failure so the caller (planner re-run, human, etc.) can
 // react.
-func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, jsonEvents bool, stdout io.Writer) (executorPhaseReport, error) {
-	return runExecutorPhaseScoped(cfg, plan, requiredEditPaths, nil, jsonEvents, stdout)
+func runExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, jsonEvents bool, stdout io.Writer, progress ...planexecute.EditProgressFunc) (executorPhaseReport, error) {
+	return runExecutorPhaseScoped(cfg, plan, requiredEditPaths, nil, jsonEvents, stdout, progress...)
 }
 
-func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, jsonEvents bool, stdout io.Writer) (executorPhaseReport, error) {
+func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, jsonEvents bool, stdout io.Writer, progress ...planexecute.EditProgressFunc) (executorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
 	report := executorPhaseReport{Total: len(plan.Edits)}
 	if len(plan.Edits) == 0 {
@@ -2071,6 +2711,9 @@ func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 		})
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  edit %d/%d %s ... %s\n", i+1, len(plan.Edits), edit.Path, executorEditOutcome(result))
+		}
+		if len(progress) > 0 && progress[0] != nil {
+			progress[0](i+1, len(plan.Edits), edit.Path, status == "ok")
 		}
 		if status == "failed" {
 			report.Failed++

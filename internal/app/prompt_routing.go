@@ -54,6 +54,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
 		m.logMessage("route_plan", summary)
 	}
+	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(prompt, plan))
 	reply, err := m.runAgentTurn(ctx, prompt, m.requestMessages(), chatOpts, plan)
 	if err != nil {
 		m.emitJSONError("run_failed", err.Error())

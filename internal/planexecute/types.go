@@ -46,6 +46,7 @@ type Options struct {
 	PromptFile               string
 	Model                    string
 	Resume                   string
+	ReviewSessionID          string
 	JSONEvents               bool
 	DisableThinking          bool
 	MaxTokens                int
@@ -106,12 +107,12 @@ func (r ExecutorPhaseReport) String() string {
 }
 
 type ReviewRepairFileSnapshot struct {
-	Before string
-	Exists bool
+	Before string `json:"before"`
+	Exists bool   `json:"exists"`
 }
 
 type ReviewRepairBaseline struct {
-	Files map[string]ReviewRepairFileSnapshot
+	Files map[string]ReviewRepairFileSnapshot `json:"files,omitempty"`
 }
 
 type PatchHygieneAutoRepairReport struct {

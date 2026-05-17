@@ -421,6 +421,11 @@ func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
+	if !strings.Contains(stdout.String(), `"type":"idiom.lane.writer_route_decision"`) ||
+		!strings.Contains(stdout.String(), `"writer_mode":"agentic_guarded"`) ||
+		!strings.Contains(stdout.String(), `"role_aliases"`) {
+		t.Fatalf("lane JSON should report writer route decision with role aliases, got %s", stdout.String())
+	}
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("rec.Close: %v", err)
 	}

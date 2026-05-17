@@ -3968,6 +3968,9 @@ func (r *Runner) completionGateRejection(reply string, results []workspace.ToolR
 	if result, rejected := r.mutationCompletionRejection(reply, results); rejected {
 		return result, true
 	}
+	if result, rejected := r.planThenExecuteReviewRepairCompletionRejection(reply, results); rejected {
+		return result, true
+	}
 	if result, rejected := r.readOnlyExplanationCompletionRejection(reply, results); rejected {
 		return result, true
 	}
@@ -4202,6 +4205,47 @@ func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []
 		}, true
 	}
 	return workspace.ToolResult{}, false
+}
+
+func (r *Runner) planThenExecuteReviewRepairCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if r == nil || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != PlanThenExecuteReviewRepairTaskFamily {
+		return workspace.ToolResult{}, false
+	}
+	if successfulSubmitPlanResultCount(results) > 0 {
+		return workspace.ToolResult{}, false
+	}
+	if planThenExecuteReviewRepairAnswerDeclaresBlocker(reply) {
+		return workspace.ToolResult{}, false
+	}
+	if planThenExecuteReviewRepairAnswerDeclaresPass(reply) && planThenExecuteReviewRepairTextHasChecklist(reply) {
+		return workspace.ToolResult{}, false
+	}
+	return workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Review-repair completion gate rejected final answer",
+		Error: strings.Join([]string{
+			"review-repair must close with exactly one of: a successful submit_plan corrective plan,",
+			"`Decision: pass` with a `Verification Checklist`,",
+			"or `<<QUESTION>>:` naming the exact blocker.",
+			"Do not stop with process narration or an intent to inspect.",
+		}, " "),
+	}, true
+}
+
+func planThenExecuteReviewRepairAnswerDeclaresPass(answer string) bool {
+	return strings.Contains(strings.ToLower(answer), "decision: pass")
+}
+
+func planThenExecuteReviewRepairTextHasChecklist(answer string) bool {
+	return strings.Contains(strings.ToLower(answer), "verification checklist")
+}
+
+func planThenExecuteReviewRepairAnswerDeclaresBlocker(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(trimmed, "<<QUESTION>>") ||
+		strings.Contains(trimmed, "\n<<QUESTION>>") ||
+		strings.Contains(lower, "decision: block")
 }
 
 func (r *Runner) mutationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {

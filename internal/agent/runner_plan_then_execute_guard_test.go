@@ -353,6 +353,41 @@ func TestPlanThenExecutePlannerToolGuardDoesNotAffectReviewRepair(t *testing.T) 
 	}
 }
 
+func TestReviewRepairCompletionGateRejectsNonDecisionFinalAnswer(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+		},
+	}
+	got, rejected := runner.completionGateRejection("Let me trace the actual implementation to verify the tests against real code.", nil, 1, nil, false)
+	if !rejected {
+		t.Fatal("review-repair must reject process narration as a final answer")
+	}
+	if got.Tool != "completion_gate" || !strings.Contains(got.Error, "Decision: pass") || !strings.Contains(got.Error, "submit_plan") {
+		t.Fatalf("review-repair rejection should name the valid closeout shapes, got %#v", got)
+	}
+}
+
+func TestReviewRepairCompletionGateAcceptsPassChecklistOrSubmittedPlan(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+		},
+	}
+	passAnswer := "Decision: pass\n\nVerification Checklist:\n- Required behavior is satisfied.\n- Scope safety checked."
+	if got, rejected := runner.completionGateRejection(passAnswer, nil, 1, nil, false); rejected {
+		t.Fatalf("review-repair pass checklist should be accepted, got %#v", got)
+	}
+	results := []workspace.ToolResult{{Tool: "submit_plan", Summary: "Plan submitted with 1 edit(s); the executor phase will dispatch them."}}
+	if got, rejected := runner.completionGateRejection("Plan submitted with 1 edit.", results, 2, nil, false); rejected {
+		t.Fatalf("review-repair submitted corrective plan should be accepted, got %#v", got)
+	}
+}
+
 func TestPlanThenExecuteWriteGuardInactiveOutsidePlannerPhase(t *testing.T) {
 	// Same edit_file call that gets rejected during the planner phase
 	// must pass through cleanly under any other lane shape.

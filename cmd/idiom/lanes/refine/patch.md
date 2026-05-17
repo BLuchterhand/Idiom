@@ -92,6 +92,13 @@ For each lint BLOCK:
 - Identify the named issue (unfilled placeholder, missing anchor,
   multi-action row, content fence with wrong language tag, etc.).
 - Edit the draft to resolve it.
+- For a prose-only mutation-site BLOCK, either replace the prose with
+  executable edit shape (`old_text`/`new_text` or
+  `start_line`/`end_line` plus replacement `content`) or, when the
+  pre-loaded source evidence already shows the requested final state,
+  close the draft as `Status: source-satisfied - do not dispatch` with
+  path-specific evidence. Do not keep an "insert after/update near"
+  instruction without exact edit shape.
 
 If a fix is unclear, contradictory, or depends on a write path outside
 the brief's scope, surface `<<QUESTION>>:` with the specific gap. Do

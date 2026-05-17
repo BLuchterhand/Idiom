@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,14 +37,28 @@ type implementationDispatchPlanDocumentPreflightResult struct {
 }
 
 type implementationDispatchPlanDocumentRefineResult struct {
-	OriginalPath string
-	OutputPath   string
-	OK           bool
-	ExitCode     int
-	Stdout       string
-	Stderr       string
-	Err          error
-	Document     implementationDispatchPlanDocument
+	OriginalPath          string
+	OutputPath            string
+	OK                    bool
+	ExitCode              int
+	Stdout                string
+	Stderr                string
+	Err                   error
+	Document              implementationDispatchPlanDocument
+	PostPreflightBlockers []implementationDispatchPlanDocumentPreflightResult
+}
+
+type implementationDispatchPlanDocumentResolutionBlocker struct {
+	Ref        string
+	Reason     string
+	Candidates []string
+}
+
+type implementationDispatchPlanDocumentAtom struct {
+	Path    string
+	Change  string
+	Excerpt string
+	Anchors []string
 }
 
 type implementationDispatchRecoveryDecision struct {
@@ -253,6 +268,10 @@ func defaultImplementationDispatchPlanDocumentPreflight(ctx context.Context, cfg
 		atomState, blockers := implementationDispatchAtomIntakeBlocker(atom)
 		result.AtomState = atomState
 		result.Blockers = append(result.Blockers, blockers...)
+		if implementationDispatchAtomStateIsSourceSatisfied(atomState) {
+			result.OK = false
+			return result
+		}
 	}
 
 	lint := runImplementationDispatchPreflightCommand(ctx, root, binary, "brief", "lint", abs, "--json")
@@ -311,6 +330,26 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 	result.Stderr = cmdResult.Stderr
 	result.Err = cmdResult.Err
 	if cmdResult.ExitCode != 0 {
+		candidate, candidatePath, blockers, ok := materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx, cfg, outRel)
+		if strings.TrimSpace(candidatePath) != "" {
+			result.OutputPath = candidatePath
+			result.Document = candidate
+		}
+		if len(blockers) > 0 {
+			result.PostPreflightBlockers = blockers
+		}
+		if ok {
+			result.OK = true
+			return result
+		}
+		if strings.TrimSpace(result.Document.Path) == "" {
+			if refined, ok := readImplementationDispatchPlanDocument(root, outRel); ok {
+				result.Document = refined
+			}
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = outRel
+		}
 		return result
 	}
 	refined, ok := readImplementationDispatchPlanDocument(root, outRel)
@@ -322,6 +361,72 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 	result.Document = refined
 	result.OK = true
 	return result
+}
+
+func materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx context.Context, cfg config.Config, acceptedRel string) (implementationDispatchPlanDocument, string, []implementationDispatchPlanDocumentPreflightResult, bool) {
+	root := implementationDispatchWorkspaceRoot(cfg)
+	if strings.TrimSpace(root) == "" {
+		return implementationDispatchPlanDocument{}, "", nil, false
+	}
+	acceptedAbs, ok := implementationDispatchWorkspaceFile(root, acceptedRel)
+	if !ok {
+		return implementationDispatchPlanDocument{}, "", nil, false
+	}
+	body, err := os.ReadFile(acceptedAbs)
+	if err != nil {
+		return implementationDispatchPlanDocument{}, "", nil, false
+	}
+	sanitized, changed := sanitizeImplementationDispatchNonzeroRefineAcceptedContent(string(body))
+	if !changed {
+		return implementationDispatchPlanDocument{}, "", nil, false
+	}
+	candidateRel := strings.TrimSuffix(acceptedRel, filepath.Ext(acceptedRel)) + ".dispatch" + filepath.Ext(acceptedRel)
+	candidateAbs, ok := implementationDispatchWorkspaceFile(root, candidateRel)
+	if !ok {
+		return implementationDispatchPlanDocument{}, "", nil, false
+	}
+	if err := os.WriteFile(candidateAbs, []byte(sanitized), 0o644); err != nil {
+		return implementationDispatchPlanDocument{}, "", nil, false
+	}
+	candidate, ok := readImplementationDispatchPlanDocument(root, candidateRel)
+	if !ok {
+		return implementationDispatchPlanDocument{}, "", nil, false
+	}
+	if blocked := preflightImplementationDispatchPlanDocuments(ctx, cfg, []implementationDispatchPlanDocument{candidate}); len(blocked) > 0 {
+		return candidate, candidateRel, blocked, false
+	}
+	return candidate, candidateRel, nil, true
+}
+
+func sanitizeImplementationDispatchNonzeroRefineAcceptedContent(content string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	changed := false
+	skippingLeadingWarning := true
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if skippingLeadingWarning {
+			if trimmed == "" {
+				if changed {
+					continue
+				}
+				out = append(out, line)
+				continue
+			}
+			if strings.HasPrefix(trimmed, "> WARNING: refine exited non-zero") {
+				changed = true
+				continue
+			}
+			skippingLeadingWarning = false
+		}
+		if strings.HasPrefix(trimmed, "<!-- idiom:refine-drafted") && !strings.Contains(trimmed, "reason=ship-as-is") {
+			out = append(out, "<!-- idiom:tui-refine-accepted-after-structural-preflight -->")
+			changed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.TrimLeft(strings.Join(out, "\n"), "\n"), changed
 }
 
 func implementationDispatchIdiomBinary() (string, error) {
@@ -403,7 +508,7 @@ func implementationDispatchAtomIntakeBlocker(cmd implementationDispatchPreflight
 		var parts []string
 		parts = append(parts, "atom intake state="+state)
 		if len(report.Reasons) > 0 {
-			parts = append(parts, truncateImplementationDispatchText(strings.Join(report.Reasons, "; "), 260))
+			parts = append(parts, strings.Join(report.Reasons, "; "))
 		}
 		if len(report.Dirty) > 0 {
 			parts = append(parts, "dirty paths: "+strings.Join(report.Dirty, ", "))
@@ -412,11 +517,16 @@ func implementationDispatchAtomIntakeBlocker(cmd implementationDispatchPreflight
 			parts = append(parts, "invalid paths: "+strings.Join(report.Invalid, ", "))
 		}
 		if len(report.NextActions) > 0 {
-			parts = append(parts, "next: "+truncateImplementationDispatchText(strings.Join(report.NextActions, "; "), 180))
+			parts = append(parts, "next: "+strings.Join(report.NextActions, "; "))
 		}
 		return state, []string{strings.Join(parts, " - ")}
 	}
 	return "", []string{"atom intake failed: " + implementationDispatchCompactCommandOutput(cmd)}
+}
+
+func implementationDispatchAtomStateIsSourceSatisfied(state string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(state))
+	return normalized == "source-satisfied" || normalized == "source satisfied"
 }
 
 type implementationDispatchBriefLintReport struct {
@@ -442,7 +552,7 @@ func implementationDispatchBriefLintBlockers(cmd implementationDispatchPreflight
 		if message == "" {
 			continue
 		}
-		blockers = append(blockers, "brief lint: "+truncateImplementationDispatchText(message, 280))
+		blockers = append(blockers, "brief lint: "+message)
 		if len(blockers) >= 4 {
 			break
 		}
@@ -467,7 +577,7 @@ func implementationDispatchBriefLintWarnings(cmd implementationDispatchPreflight
 		if message == "" {
 			continue
 		}
-		warnings = append(warnings, "brief lint: "+truncateImplementationDispatchText(message, 220))
+		warnings = append(warnings, "brief lint: "+message)
 		if len(warnings) >= 3 {
 			break
 		}
@@ -493,7 +603,7 @@ func implementationDispatchCompactCommandOutput(cmd implementationDispatchPrefli
 	}
 	combined := strings.TrimSpace(cmd.Stdout + "\n" + cmd.Stderr)
 	if combined != "" {
-		parts = append(parts, truncateImplementationDispatchText(collapseWhitespace(combined), 360))
+		parts = append(parts, collapseWhitespace(combined))
 	}
 	if len(parts) == 0 {
 		return "no diagnostic output"
@@ -527,6 +637,38 @@ func humanPlanDocumentPreflightBlockedMessage(results []implementationDispatchPl
 			b.WriteString("  - ")
 			b.WriteString(blocker)
 			b.WriteString("\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func humanPlanDocumentResolutionBlockedMessage(blockers []implementationDispatchPlanDocumentResolutionBlocker) string {
+	var b strings.Builder
+	b.WriteString("Plan-execute dispatch blocked before the planner ran.\n\n")
+	b.WriteString("The TUI must resolve referenced design documents into a concrete brief and edit scope before plan-execute. Resolve the document path, then retry.\n")
+	for _, blocker := range blockers {
+		ref := strings.TrimSpace(blocker.Ref)
+		if ref == "" {
+			ref = "(unknown design document)"
+		}
+		b.WriteString("\n")
+		b.WriteString("- `")
+		b.WriteString(ref)
+		b.WriteString("`")
+		switch strings.TrimSpace(blocker.Reason) {
+		case "ambiguous":
+			b.WriteString(": ambiguous shorthand matched multiple markdown files:")
+			for _, candidate := range blocker.Candidates {
+				candidate = strings.TrimSpace(candidate)
+				if candidate == "" {
+					continue
+				}
+				b.WriteString("\n  - `")
+				b.WriteString(candidate)
+				b.WriteString("`")
+			}
+		default:
+			b.WriteString(": no readable markdown design document matched this reference")
 		}
 	}
 	return strings.TrimSpace(b.String())
@@ -645,13 +787,13 @@ func humanPlanDocumentRefineFailedMessage(preflight []implementationDispatchPlan
 			b.WriteString(result.Err.Error())
 			b.WriteString(")")
 		}
-		diag := strings.TrimSpace(result.Stderr)
-		if diag == "" {
-			diag = strings.TrimSpace(result.Stdout)
-		}
-		if diag != "" {
+		for _, diag := range implementationDispatchRefineDiagnostics(result) {
+			diag = strings.TrimSpace(diag)
+			if diag == "" {
+				continue
+			}
 			b.WriteString("\n  - ")
-			b.WriteString(truncateImplementationDispatchText(collapseWhitespace(diag), 400))
+			b.WriteString(diag)
 		}
 	}
 	if len(preflight) > 0 {
@@ -668,6 +810,34 @@ func humanPlanDocumentRefineFailedMessage(preflight []implementationDispatchPlan
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func implementationDispatchRefineDiagnostics(result implementationDispatchPlanDocumentRefineResult) []string {
+	var diagnostics []string
+	for _, text := range []string{result.Stderr, result.Stdout} {
+		for _, line := range strings.Split(text, "\n") {
+			line = collapseWhitespace(strings.TrimSpace(line))
+			if line == "" {
+				continue
+			}
+			lower := strings.ToLower(line)
+			switch {
+			case strings.Contains(lower, "refine:"):
+				diagnostics = append(diagnostics, line)
+			case strings.Contains(lower, "brief lint:"):
+				diagnostics = append(diagnostics, line)
+			case strings.Contains(lower, "single-purpose decomposition failed"):
+				diagnostics = append(diagnostics, line)
+			case strings.Contains(lower, "exact-anchor specificity failed"):
+				diagnostics = append(diagnostics, line)
+			case strings.Contains(lower, "plan-execute new-file body missing"):
+				diagnostics = append(diagnostics, line)
+			case strings.Contains(lower, "accepted.md"):
+				diagnostics = append(diagnostics, line)
+			}
+		}
+	}
+	return appendUniqueBriefStrings(nil, diagnostics...)
 }
 
 func humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults []implementationDispatchPlanDocumentRefineResult, blocked []implementationDispatchPlanDocumentPreflightResult) string {
@@ -707,15 +877,20 @@ func implementationDispatchEditScope(prompt string, plan promptExecutionPlan, cf
 }
 
 func implementationDispatchEditScopeAndPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config) ([]string, []string, []implementationDispatchPlanDocument) {
+	requiredPaths, allowedPaths, planDocuments, _ := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+	return requiredPaths, allowedPaths, planDocuments
+}
+
+func implementationDispatchEditScopePlanDocumentsAndResolution(prompt string, plan promptExecutionPlan, cfg config.Config) ([]string, []string, []implementationDispatchPlanDocument, []implementationDispatchPlanDocumentResolutionBlocker) {
 	requiredPaths := appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...)
-	planDocuments := implementationDispatchPlanDocuments(prompt, plan, cfg)
+	planDocuments, blockers := implementationDispatchPlanDocumentsAndResolutionBlockers(prompt, plan, cfg)
 	for _, doc := range planDocuments {
 		requiredPaths = appendUniqueBriefStrings(requiredPaths, doc.EditPaths...)
 	}
 	if len(requiredPaths) > 0 {
-		return requiredPaths, nil, planDocuments
+		return requiredPaths, nil, planDocuments, blockers
 	}
-	return nil, nil, planDocuments
+	return nil, nil, planDocuments, blockers
 }
 
 func implementationDispatchPlanDocumentEditScope(prompt string, plan promptExecutionPlan, cfg config.Config) []string {
@@ -724,16 +899,25 @@ func implementationDispatchPlanDocumentEditScope(prompt string, plan promptExecu
 }
 
 func implementationDispatchPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config) []implementationDispatchPlanDocument {
+	docs, _ := implementationDispatchPlanDocumentsAndResolutionBlockers(prompt, plan, cfg)
+	return docs
+}
+
+func implementationDispatchPlanDocumentsAndResolutionBlockers(prompt string, plan promptExecutionPlan, cfg config.Config) ([]implementationDispatchPlanDocument, []implementationDispatchPlanDocumentResolutionBlocker) {
 	root := implementationDispatchWorkspaceRoot(cfg)
 	if strings.TrimSpace(root) == "" {
-		return nil
+		return nil, nil
 	}
-	refs := appendUniqueBriefStrings(nil, plan.runtimeBrief.TargetRefs...)
-	refs = appendUniqueBriefStrings(refs, pathparse.MentionedWorkspacePaths(prompt)...)
+	refs := implementationDispatchPlanDocumentRefs(prompt, plan)
 	var docs []implementationDispatchPlanDocument
+	var blockers []implementationDispatchPlanDocumentResolutionBlocker
+	blockUnresolvedPlanDocuments := implementationDispatchPromptRequiresResolvedPlanDocument(prompt, plan, refs)
 	for _, ref := range refs {
-		doc, ok := readImplementationDispatchPlanDocument(root, ref)
+		doc, candidates, ok := resolveImplementationDispatchPlanDocument(root, ref)
 		if !ok {
+			if blocker, blocked := implementationDispatchPlanDocumentResolutionBlockerForRef(ref, candidates, blockUnresolvedPlanDocuments); blocked {
+				blockers = append(blockers, blocker)
+			}
 			continue
 		}
 		duplicate := false
@@ -748,15 +932,157 @@ func implementationDispatchPlanDocuments(prompt string, plan promptExecutionPlan
 		}
 		docs = append(docs, doc)
 	}
-	return docs
+	return docs, blockers
+}
+
+func implementationDispatchPlanDocumentRefs(prompt string, plan promptExecutionPlan) []string {
+	refs := appendUniqueBriefStrings(nil, plan.runtimeBrief.TargetRefs...)
+	return appendUniqueBriefStrings(refs, pathparse.MentionedWorkspacePaths(prompt)...)
 }
 
 func implementationDispatchPlanDocumentPaths(root string, ref string) []string {
-	doc, ok := readImplementationDispatchPlanDocument(root, ref)
+	doc, _, ok := resolveImplementationDispatchPlanDocument(root, ref)
 	if !ok {
 		return nil
 	}
 	return doc.EditPaths
+}
+
+func resolveImplementationDispatchPlanDocument(root string, ref string) (implementationDispatchPlanDocument, []string, bool) {
+	normalized, ok := pathparse.NormalizeWorkspacePathToken(ref)
+	if !ok || !implementationDispatchLooksLikePlanDocument(normalized) {
+		return implementationDispatchPlanDocument{}, nil, false
+	}
+	if doc, ok := readImplementationDispatchPlanDocument(root, normalized); ok {
+		return doc, []string{doc.Path}, true
+	}
+	if !implementationDispatchCanResolvePlanDocumentBasename(normalized) {
+		return implementationDispatchPlanDocument{}, nil, false
+	}
+	candidates := implementationDispatchPlanDocumentBasenameMatches(root, filepath.Base(normalized))
+	if len(candidates) != 1 {
+		return implementationDispatchPlanDocument{}, candidates, false
+	}
+	doc, ok := readImplementationDispatchPlanDocument(root, candidates[0])
+	return doc, candidates, ok
+}
+
+func implementationDispatchCanResolvePlanDocumentBasename(ref string) bool {
+	ref = strings.TrimSpace(filepath.ToSlash(filepath.Clean(ref)))
+	if ref == "" || ref == "." || strings.Contains(ref, "/") {
+		return false
+	}
+	return implementationDispatchLooksLikePlanDocument(ref)
+}
+
+func implementationDispatchPlanDocumentBasenameMatches(root string, basename string) []string {
+	root = strings.TrimSpace(root)
+	basename = strings.TrimSpace(basename)
+	if root == "" || basename == "" || !implementationDispatchLooksLikePlanDocument(basename) {
+		return nil
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil
+	}
+	var matches []string
+	_ = filepath.WalkDir(rootAbs, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, relErr := filepath.Rel(rootAbs, path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if entry.IsDir() {
+			if rel != "." && implementationDispatchSkipPlanDocumentSearchDir(rel, entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() != basename || !entry.Type().IsRegular() {
+			return nil
+		}
+		if implementationDispatchIsRefineScratchpadPath(rel) {
+			return nil
+		}
+		if _, ok := readImplementationDispatchPlanDocument(root, rel); !ok {
+			return nil
+		}
+		matches = append(matches, rel)
+		return nil
+	})
+	sort.Strings(matches)
+	return matches
+}
+
+func implementationDispatchSkipPlanDocumentSearchDir(rel string, name string) bool {
+	switch strings.TrimSpace(name) {
+	case ".git", ".idiom", "node_modules", "vendor", "dist", "build", ".cache", ".direnv":
+		return true
+	default:
+		return false
+	}
+}
+
+func implementationDispatchPromptRequiresResolvedPlanDocument(prompt string, plan promptExecutionPlan, refs []string) bool {
+	if !isImplementationLikeFamily(plan.route.Family) {
+		return false
+	}
+	hasPlanDocumentRef := false
+	for _, ref := range refs {
+		normalized, ok := pathparse.NormalizeWorkspacePathToken(ref)
+		if ok && implementationDispatchLooksLikePlanDocument(normalized) {
+			hasPlanDocumentRef = true
+			break
+		}
+	}
+	if !hasPlanDocumentRef {
+		return false
+	}
+	words := plannerWordText(prompt)
+	for _, phrase := range []string{
+		" start working on ",
+		" start woring on ",
+		" start implementing ",
+		" begin working on ",
+		" begin implementing ",
+		" implement ",
+		" implementing ",
+		" implement from ",
+		" implement the plan ",
+		" implement this plan ",
+		" work from ",
+		" design doc ",
+		" design document ",
+		" plan doc ",
+		" plan document ",
+		" implementation handoff ",
+	} {
+		if strings.Contains(words, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func implementationDispatchPlanDocumentResolutionBlockerForRef(ref string, candidates []string, blockUnresolved bool) (implementationDispatchPlanDocumentResolutionBlocker, bool) {
+	normalized, ok := pathparse.NormalizeWorkspacePathToken(ref)
+	if !ok || !implementationDispatchLooksLikePlanDocument(normalized) || !blockUnresolved {
+		return implementationDispatchPlanDocumentResolutionBlocker{}, false
+	}
+	if len(candidates) > 1 {
+		return implementationDispatchPlanDocumentResolutionBlocker{
+			Ref:        normalized,
+			Reason:     "ambiguous",
+			Candidates: candidates,
+		}, true
+	}
+	return implementationDispatchPlanDocumentResolutionBlocker{
+		Ref:    normalized,
+		Reason: "missing",
+	}, true
 }
 
 func readImplementationDispatchPlanDocument(root string, ref string) (implementationDispatchPlanDocument, bool) {
@@ -788,16 +1114,7 @@ func readImplementationDispatchPlanDocument(root string, ref string) (implementa
 }
 
 func implementationDispatchPlanDocumentPathsFromText(text string, sourceRef string) []string {
-	headings := []string{
-		"expected file scope",
-		"implementation file scope",
-		"file scope",
-		"files to modify",
-		"files to edit",
-		"write scope",
-		"edit scope",
-	}
-	found := pathparse.MentionedWorkspacePathsUnderHeadings(text, headings...)
+	found := pathparse.MentionedWorkspacePathsUnderHeadings(text, implementationDispatchPlanDocumentScopeHeadings()...)
 	var paths []string
 	for _, candidate := range found {
 		path, ok := pathparse.NormalizeWorkspacePathToken(candidate)
@@ -807,6 +1124,724 @@ func implementationDispatchPlanDocumentPathsFromText(text string, sourceRef stri
 		paths = appendUniqueBriefStrings(paths, path)
 	}
 	return paths
+}
+
+func implementationDispatchPlanDocumentScopeHeadings() []string {
+	return []string{
+		"expected file scope",
+		"implementation file scope",
+		"file scope",
+		"files to modify",
+		"files to edit",
+		"write scope",
+		"edit scope",
+	}
+}
+
+func implementationDispatchPlanDocumentAtoms(doc implementationDispatchPlanDocument) []implementationDispatchPlanDocumentAtom {
+	if implementationDispatchIsAtomizedPlanDocumentPath(doc.Path) {
+		return nil
+	}
+	atoms := implementationDispatchPlanDocumentAtomsFromText(doc.Content, doc.Path)
+	if len(atoms) > 0 {
+		return atoms
+	}
+	for _, path := range doc.EditPaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		atoms = append(atoms, implementationDispatchPlanDocumentAtom{
+			Path:    path,
+			Change:  "Implement the source design document slice for this path.",
+			Excerpt: path,
+		})
+	}
+	return atoms
+}
+
+func implementationDispatchPlanDocumentAtomsFromText(text string, sourceRef string) []implementationDispatchPlanDocumentAtom {
+	headingSet := map[string]struct{}{}
+	for _, heading := range implementationDispatchPlanDocumentScopeHeadings() {
+		normalized := normalizeImplementationDispatchMarkdownHeading(heading)
+		if normalized != "" {
+			headingSet[normalized] = struct{}{}
+		}
+	}
+	var atoms []implementationDispatchPlanDocumentAtom
+	active := false
+	sawScopeLine := false
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		normalized := normalizeImplementationDispatchMarkdownHeading(line)
+		if _, ok := headingSet[normalized]; ok {
+			active = true
+			sawScopeLine = false
+			continue
+		}
+		if !active {
+			continue
+		}
+		if line == "" {
+			if sawScopeLine {
+				break
+			}
+			continue
+		}
+		if sawScopeLine && implementationDispatchLooksLikeMarkdownHeading(line) {
+			break
+		}
+		if cells, ok := implementationDispatchMarkdownTableCells(line); ok {
+			if len(cells) == 0 || implementationDispatchMarkdownTableSeparatorCell(cells[0]) {
+				continue
+			}
+			paths := pathparse.MentionedWorkspacePathsInMarkdownTableFirstCell(line)
+			if len(paths) == 0 {
+				continue
+			}
+			change := ""
+			if len(cells) > 1 {
+				change = strings.TrimSpace(cells[1])
+			}
+			sawScopeLine = true
+			for _, path := range paths {
+				path, ok := pathparse.NormalizeWorkspacePathToken(path)
+				if !ok || path == sourceRef || !implementationDispatchLooksLikeConcreteFile(path) {
+					continue
+				}
+				atoms = append(atoms, implementationDispatchPlanDocumentAtom{
+					Path:    path,
+					Change:  change,
+					Excerpt: strings.TrimSpace(line),
+				})
+			}
+			continue
+		}
+		paths := pathparse.MentionedWorkspacePaths(line)
+		if len(paths) == 0 {
+			continue
+		}
+		sawScopeLine = true
+		for _, path := range paths {
+			path, ok := pathparse.NormalizeWorkspacePathToken(path)
+			if !ok || path == sourceRef || !implementationDispatchLooksLikeConcreteFile(path) {
+				continue
+			}
+			atoms = append(atoms, implementationDispatchPlanDocumentAtom{
+				Path:    path,
+				Change:  strings.TrimSpace(line),
+				Excerpt: strings.TrimSpace(line),
+			})
+		}
+	}
+	return atoms
+}
+
+func implementationDispatchMarkdownTableCells(line string) ([]string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "|") || strings.Count(trimmed, "|") < 2 {
+		return nil, false
+	}
+	trimmed = strings.TrimPrefix(trimmed, "|")
+	trimmed = strings.TrimSuffix(trimmed, "|")
+	parts := strings.Split(trimmed, "|")
+	cells := make([]string, 0, len(parts))
+	for _, part := range parts {
+		cells = append(cells, strings.TrimSpace(part))
+	}
+	return cells, len(cells) > 0
+}
+
+func implementationDispatchMarkdownTableSeparatorCell(cell string) bool {
+	cell = strings.TrimSpace(cell)
+	if cell == "" {
+		return false
+	}
+	for _, r := range cell {
+		if r != '-' && r != ':' && r != ' ' {
+			return false
+		}
+	}
+	return strings.Contains(cell, "-")
+}
+
+func normalizeImplementationDispatchMarkdownHeading(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, "#*: `\"'")
+	value = strings.TrimSuffix(value, ":")
+	value = strings.ToLower(value)
+	value = strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func implementationDispatchLooksLikeMarkdownHeading(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "#") ||
+		(strings.HasPrefix(trimmed, "**") && strings.Contains(trimmed, "**")) ||
+		strings.HasSuffix(trimmed, ":")
+}
+
+func implementationDispatchCanAtomizePlanDocuments(planDocuments []implementationDispatchPlanDocument) bool {
+	for _, doc := range planDocuments {
+		if implementationDispatchIsAtomizedPlanDocumentPath(doc.Path) {
+			continue
+		}
+		if len(implementationDispatchPlanDocumentAtoms(doc)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func implementationDispatchPlanDocumentsShouldPreAtomize(planDocuments []implementationDispatchPlanDocument) bool {
+	for _, doc := range planDocuments {
+		if implementationDispatchIsAtomizedPlanDocumentPath(doc.Path) {
+			continue
+		}
+		atoms := implementationDispatchPlanDocumentAtoms(doc)
+		if len(atoms) < 8 {
+			continue
+		}
+		distinctFiles := map[string]struct{}{}
+		for _, atom := range atoms {
+			path := strings.TrimSpace(atom.Path)
+			if path != "" {
+				distinctFiles[path] = struct{}{}
+			}
+		}
+		if len(distinctFiles) >= 6 {
+			return true
+		}
+	}
+	return false
+}
+
+func implementationDispatchPreflightNeedsAtomization(results []implementationDispatchPlanDocumentPreflightResult) bool {
+	for _, result := range results {
+		diagnostics := strings.ToLower(strings.Join(append(append([]string{}, result.Blockers...), result.LintBlockers...), "\n"))
+		if strings.Contains(diagnostics, "single-purpose decomposition failed") ||
+			(strings.Contains(diagnostics, "decompose into") && strings.Contains(diagnostics, "sub-atoms")) {
+			return true
+		}
+	}
+	return false
+}
+
+type implementationDispatchSourceSatisfiedRecord struct {
+	DocumentPath string
+	EditPath     string
+	Evidence     []string
+}
+
+func implementationDispatchPlanDocumentsSourceSatisfied(cfg config.Config, planDocuments []implementationDispatchPlanDocument) []implementationDispatchSourceSatisfiedRecord {
+	root := implementationDispatchWorkspaceRoot(cfg)
+	if strings.TrimSpace(root) == "" {
+		return nil
+	}
+	var records []implementationDispatchSourceSatisfiedRecord
+	for _, doc := range planDocuments {
+		record, ok := implementationDispatchPlanDocumentSourceSatisfied(root, doc)
+		if !ok {
+			return nil
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func implementationDispatchPlanDocumentSourceSatisfied(root string, doc implementationDispatchPlanDocument) (implementationDispatchSourceSatisfiedRecord, bool) {
+	if !implementationDispatchIsAtomizedPlanDocumentPath(doc.Path) {
+		return implementationDispatchSourceSatisfiedRecord{}, false
+	}
+	atoms := implementationDispatchPlanDocumentAtomsFromText(doc.Content, doc.Path)
+	if len(atoms) != 1 {
+		return implementationDispatchSourceSatisfiedRecord{}, false
+	}
+	atom := atoms[0]
+	path := strings.TrimSpace(atom.Path)
+	if path == "" {
+		return implementationDispatchSourceSatisfiedRecord{}, false
+	}
+	abs, ok := implementationDispatchWorkspaceFile(root, path)
+	if !ok {
+		return implementationDispatchSourceSatisfiedRecord{}, false
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		return implementationDispatchSourceSatisfiedRecord{}, false
+	}
+	content := string(body)
+	scopeText := implementationDispatchSourceScopeRowText(doc.Content)
+	if strings.TrimSpace(scopeText) == "" {
+		scopeText = strings.Join([]string{atom.Change, atom.Excerpt}, " ")
+	}
+	if evidence := implementationDispatchSourceSatisfiedLiteralEvidence(path, content, scopeText, doc.Path); len(evidence) > 0 {
+		return implementationDispatchSourceSatisfiedRecord{
+			DocumentPath: doc.Path,
+			EditPath:     path,
+			Evidence:     evidence,
+		}, true
+	}
+	return implementationDispatchSourceSatisfiedRecord{}, false
+}
+
+func implementationDispatchSourceScopeRowText(content string) string {
+	lines := strings.Split(content, "\n")
+	for i, raw := range lines {
+		if normalizeImplementationDispatchMarkdownHeading(raw) != "source scope row" {
+			continue
+		}
+		var out []string
+		for _, line := range lines[i+1:] {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				if len(out) > 0 {
+					break
+				}
+				continue
+			}
+			if implementationDispatchLooksLikeMarkdownHeading(trimmed) {
+				break
+			}
+			out = append(out, strings.TrimSpace(strings.TrimPrefix(trimmed, ">")))
+		}
+		return strings.Join(out, "\n")
+	}
+	return ""
+}
+
+func implementationDispatchSourceSatisfiedLiteralEvidence(path string, content string, sourceText string, skipPaths ...string) []string {
+	literals := implementationDispatchBacktickLiterals(sourceText)
+	for _, literal := range literals {
+		literal = strings.TrimSpace(literal)
+		if literal == "" || implementationDispatchLiteralIsSkippedPath(literal, skipPaths...) {
+			continue
+		}
+		if evidence, ok := implementationDispatchLiteralSatisfiedEvidence(path, content, literal); ok {
+			return []string{evidence}
+		}
+	}
+	return nil
+}
+
+func implementationDispatchBacktickLiterals(text string) []string {
+	var literals []string
+	for {
+		start := strings.Index(text, "`")
+		if start < 0 {
+			break
+		}
+		text = text[start+1:]
+		end := strings.Index(text, "`")
+		if end < 0 {
+			break
+		}
+		literals = appendUniqueBriefStrings(literals, strings.TrimSpace(text[:end]))
+		text = text[end+1:]
+	}
+	return literals
+}
+
+func implementationDispatchLiteralIsSkippedPath(literal string, skipPaths ...string) bool {
+	normalizedLiteral, ok := pathparse.NormalizeWorkspacePathToken(literal)
+	if !ok {
+		return false
+	}
+	for _, skip := range skipPaths {
+		normalizedSkip, ok := pathparse.NormalizeWorkspacePathToken(skip)
+		if ok && normalizedLiteral == normalizedSkip {
+			return true
+		}
+	}
+	return implementationDispatchLooksLikeConcreteFile(normalizedLiteral)
+}
+
+func implementationDispatchLiteralSatisfiedEvidence(path string, content string, literal string) (string, bool) {
+	literal = strings.TrimSpace(literal)
+	if literal == "" {
+		return "", false
+	}
+	lowerContent := strings.ToLower(content)
+	lowerLiteral := strings.ToLower(literal)
+	if strings.Contains(lowerContent, lowerLiteral) {
+		return implementationDispatchLineEvidence(path, content, literal, fmt.Sprintf("current source contains `%s`", literal)), true
+	}
+	if strings.HasPrefix(lowerLiteral, "idiom.") && strings.Count(lowerLiteral, ".") >= 2 {
+		parts := strings.Split(lowerLiteral, ".")
+		prefix := strings.Join(parts[:len(parts)-1], ".") + "."
+		leaf := parts[len(parts)-1]
+		if leaf != "" && strings.Contains(lowerContent, leaf) && strings.Contains(lowerContent, prefix) {
+			return implementationDispatchLineEvidence(path, content, leaf, fmt.Sprintf("current source contains event leaf `%s` and namespace prefix `%s`", leaf, prefix)), true
+		}
+	}
+	return "", false
+}
+
+func implementationDispatchLineEvidence(path string, content string, needle string, description string) string {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	for i, line := range strings.Split(content, "\n") {
+		if strings.Contains(strings.ToLower(line), needle) {
+			return fmt.Sprintf("`%s:%d`: %s (`%s`)", path, i+1, description, strings.ReplaceAll(strings.TrimSpace(line), "`", "'"))
+		}
+	}
+	return fmt.Sprintf("`%s`: %s", path, description)
+}
+
+func implementationDispatchPreflightAllSourceSatisfied(results []implementationDispatchPlanDocumentPreflightResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, result := range results {
+		if !implementationDispatchAtomStateIsSourceSatisfied(result.AtomState) {
+			return false
+		}
+	}
+	return true
+}
+
+func humanImplementationDispatchSourceSatisfiedMessage(records []implementationDispatchSourceSatisfiedRecord) string {
+	var b strings.Builder
+	b.WriteString("Decision: source-satisfied\n\n")
+	b.WriteString("The referenced design-doc atom is already present in current source; plan-execute was not dispatched.")
+	for _, record := range records {
+		b.WriteString("\n- `")
+		b.WriteString(record.EditPath)
+		b.WriteString("`")
+		if strings.TrimSpace(record.DocumentPath) != "" {
+			b.WriteString(" from `")
+			b.WriteString(record.DocumentPath)
+			b.WriteString("`")
+		}
+		for _, evidence := range record.Evidence {
+			evidence = strings.TrimSpace(evidence)
+			if evidence == "" {
+				continue
+			}
+			b.WriteString("\n  - ")
+			b.WriteString(evidence)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func humanImplementationDispatchPreflightSourceSatisfiedMessage(results []implementationDispatchPlanDocumentPreflightResult) string {
+	var b strings.Builder
+	b.WriteString("Decision: source-satisfied\n\n")
+	b.WriteString("Atom intake classified the referenced brief as already satisfied; plan-execute was not dispatched.")
+	for _, result := range results {
+		path := strings.TrimSpace(result.Path)
+		if path == "" {
+			path = "(unknown brief)"
+		}
+		b.WriteString("\n- `")
+		b.WriteString(path)
+		b.WriteString("`")
+		for _, blocker := range result.Blockers {
+			blocker = strings.TrimSpace(blocker)
+			if blocker == "" {
+				continue
+			}
+			b.WriteString("\n  - ")
+			b.WriteString(blocker)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func materializeImplementationDispatchPlanDocumentAtoms(cfg config.Config, planDocuments []implementationDispatchPlanDocument) ([]implementationDispatchPlanDocument, error) {
+	root := implementationDispatchWorkspaceRoot(cfg)
+	if strings.TrimSpace(root) == "" {
+		return nil, fmt.Errorf("workspace root is unavailable")
+	}
+	var atomDocuments []implementationDispatchPlanDocument
+	for _, doc := range planDocuments {
+		if implementationDispatchIsAtomizedPlanDocumentPath(doc.Path) {
+			atomDocuments = append(atomDocuments, doc)
+			continue
+		}
+		atoms := implementationDispatchPlanDocumentAtoms(doc)
+		if len(atoms) == 0 {
+			atomDocuments = append(atomDocuments, doc)
+			continue
+		}
+		title := implementationDispatchRefineTitle(doc.Path)
+		dirRel := filepath.ToSlash(filepath.Join(".idiom", "atoms", title))
+		dirAbs, ok := implementationDispatchWorkspaceFile(root, dirRel)
+		if !ok {
+			return nil, fmt.Errorf("atom output path is outside the workspace: %s", dirRel)
+		}
+		if err := os.MkdirAll(dirAbs, 0o755); err != nil {
+			return nil, err
+		}
+		for i, atom := range atoms {
+			rel := filepath.ToSlash(filepath.Join(dirRel, fmt.Sprintf("atom-%03d.md", i+1)))
+			abs, ok := implementationDispatchWorkspaceFile(root, rel)
+			if !ok {
+				return nil, fmt.Errorf("atom output path is outside the workspace: %s", rel)
+			}
+			atom = implementationDispatchPlanDocumentAtomWithWorkspaceShape(root, atom)
+			body := composeImplementationDispatchPlanDocumentAtom(doc, atom, i+1, len(atoms))
+			if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
+				return nil, err
+			}
+			atomDoc, ok := readImplementationDispatchPlanDocument(root, rel)
+			if !ok {
+				return nil, fmt.Errorf("materialized atom was not readable: %s", rel)
+			}
+			atomDocuments = append(atomDocuments, atomDoc)
+		}
+	}
+	return atomDocuments, nil
+}
+
+func implementationDispatchPlanDocumentAtomWithWorkspaceShape(root string, atom implementationDispatchPlanDocumentAtom) implementationDispatchPlanDocumentAtom {
+	path := strings.TrimSpace(atom.Path)
+	if path == "" || implementationDispatchAtomChangeLooksLikeNewFile(atom.Change) {
+		return atom
+	}
+	abs, ok := implementationDispatchWorkspaceFile(root, path)
+	if !ok {
+		return atom
+	}
+	if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+		atom.Anchors = implementationDispatchPlanDocumentAtomCurrentStateAnchors(root, atom)
+		return atom
+	}
+	change := strings.TrimSpace(atom.Change)
+	if change == "" {
+		change = "create this file from the source design document slice"
+	}
+	atom.Change = "NEW FILE: " + change
+	return atom
+}
+
+func implementationDispatchPlanDocumentAtomCurrentStateAnchors(root string, atom implementationDispatchPlanDocumentAtom) []string {
+	path := strings.TrimSpace(atom.Path)
+	abs, ok := implementationDispatchWorkspaceFile(root, path)
+	if !ok {
+		return nil
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(body), "\n")
+	terms := implementationDispatchPlanDocumentAtomAnchorTerms(atom)
+	candidates := implementationDispatchPlanDocumentAtomAnchorCandidates(lines, terms)
+	if len(candidates) < 3 {
+		candidates = implementationDispatchAppendAtomAnchorFallbacks(candidates, implementationDispatchPlanDocumentAtomFallbackAnchorCandidates(lines), 3)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score != candidates[j].Score {
+			return candidates[i].Score > candidates[j].Score
+		}
+		return candidates[i].Line < candidates[j].Line
+	})
+	if len(candidates) > 3 {
+		candidates = candidates[:3]
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Line < candidates[j].Line
+	})
+	anchors := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		anchors = append(anchors, fmt.Sprintf("- `%s:%d`: `%s`", path, candidate.Line, strings.ReplaceAll(candidate.Text, "`", "'")))
+	}
+	return anchors
+}
+
+type implementationDispatchPlanDocumentAtomAnchorCandidate struct {
+	Line  int
+	Text  string
+	Score int
+}
+
+func implementationDispatchAppendAtomAnchorFallbacks(candidates []implementationDispatchPlanDocumentAtomAnchorCandidate, fallbacks []implementationDispatchPlanDocumentAtomAnchorCandidate, limit int) []implementationDispatchPlanDocumentAtomAnchorCandidate {
+	seen := map[int]struct{}{}
+	for _, candidate := range candidates {
+		seen[candidate.Line] = struct{}{}
+	}
+	for _, fallback := range fallbacks {
+		if len(candidates) >= limit {
+			break
+		}
+		if _, ok := seen[fallback.Line]; ok {
+			continue
+		}
+		candidates = append(candidates, fallback)
+		seen[fallback.Line] = struct{}{}
+	}
+	return candidates
+}
+
+func implementationDispatchPlanDocumentAtomAnchorCandidates(lines []string, terms map[string]struct{}) []implementationDispatchPlanDocumentAtomAnchorCandidate {
+	if len(terms) == 0 {
+		return nil
+	}
+	var candidates []implementationDispatchPlanDocumentAtomAnchorCandidate
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		score := 0
+		lower := strings.ToLower(trimmed)
+		for term := range terms {
+			if strings.Contains(lower, term) {
+				score++
+			}
+		}
+		if score == 0 {
+			continue
+		}
+		candidates = append(candidates, implementationDispatchPlanDocumentAtomAnchorCandidate{
+			Line:  i + 1,
+			Text:  implementationDispatchAnchorSnippet(trimmed),
+			Score: score,
+		})
+	}
+	return candidates
+}
+
+func implementationDispatchPlanDocumentAtomFallbackAnchorCandidates(lines []string) []implementationDispatchPlanDocumentAtomAnchorCandidate {
+	var candidates []implementationDispatchPlanDocumentAtomAnchorCandidate
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		candidates = append(candidates, implementationDispatchPlanDocumentAtomAnchorCandidate{
+			Line:  i + 1,
+			Text:  implementationDispatchAnchorSnippet(trimmed),
+			Score: 1,
+		})
+		if len(candidates) >= 3 {
+			return candidates
+		}
+	}
+	return candidates
+}
+
+func implementationDispatchPlanDocumentAtomAnchorTerms(atom implementationDispatchPlanDocumentAtom) map[string]struct{} {
+	text := strings.ToLower(strings.Join([]string{atom.Change, atom.Excerpt}, " "))
+	terms := map[string]struct{}{}
+	for _, raw := range strings.FieldsFunc(text, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_')
+	}) {
+		term := strings.Trim(raw, "_")
+		if len(term) < 3 || implementationDispatchIgnoredAnchorTerm(term) {
+			continue
+		}
+		terms[term] = struct{}{}
+	}
+	return terms
+}
+
+func implementationDispatchIgnoredAnchorTerm(term string) bool {
+	switch term {
+	case "the", "and", "for", "with", "this", "that", "from", "into", "file", "files", "path", "paths", "source", "design", "document", "doc", "scope", "slice", "atom", "edit", "edits", "modify", "change", "changes", "implementation", "implement":
+		return true
+	default:
+		return false
+	}
+}
+
+func implementationDispatchAnchorSnippet(text string) string {
+	return strings.TrimSpace(text)
+}
+
+func implementationDispatchAtomChangeLooksLikeNewFile(change string) bool {
+	lower := strings.ToLower(strings.TrimSpace(change))
+	if lower == "" {
+		return false
+	}
+	for _, prefix := range []string{
+		"new file:",
+		"new file target:",
+		"new-file target:",
+		"create file:",
+		"create new file:",
+		"add new file:",
+		"write a new",
+		"write new",
+		"produce a new",
+		"generate a new",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func composeImplementationDispatchPlanDocumentAtom(source implementationDispatchPlanDocument, atom implementationDispatchPlanDocumentAtom, index int, total int) string {
+	path := strings.TrimSpace(atom.Path)
+	change := strings.TrimSpace(atom.Change)
+	if change == "" {
+		change = "Implement this file's bounded slice from the source design document."
+	}
+	excerpt := strings.TrimSpace(atom.Excerpt)
+	if excerpt == "" {
+		excerpt = path
+	}
+	title := strings.TrimSuffix(filepath.Base(source.Path), filepath.Ext(source.Path))
+	if title == "" || title == "." {
+		title = "design-document"
+	}
+	var b strings.Builder
+	b.WriteString("# ")
+	b.WriteString(title)
+	b.WriteString(fmt.Sprintf(" atom %03d\n\n", index))
+	b.WriteString("Status: pending\n\n")
+	b.WriteString(fmt.Sprintf("<!-- idiom:design-doc-atom source=%q index=%d total=%d -->\n\n", source.Path, index, total))
+	b.WriteString("## Files To Modify\n\n")
+	b.WriteString("| File | Change |\n")
+	b.WriteString("|---|---|\n")
+	b.WriteString("| ")
+	b.WriteString(path)
+	b.WriteString(" | ")
+	b.WriteString(strings.ReplaceAll(change, "\n", " "))
+	b.WriteString(" |\n\n")
+	b.WriteString("## Verified Current State\n\n")
+	b.WriteString("- Source design document: `")
+	b.WriteString(source.Path)
+	b.WriteString("`.\n")
+	b.WriteString("- The source design document lists `")
+	b.WriteString(path)
+	b.WriteString("` in its implementation scope.\n")
+	if len(atom.Anchors) > 0 {
+		b.WriteString("- Host current-state anchors captured before dispatch:\n")
+		for _, anchor := range atom.Anchors {
+			b.WriteString("  ")
+			b.WriteString(anchor)
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString("## Required Behavior\n\n")
+	b.WriteString("Implement only this atom's bounded slice for `")
+	b.WriteString(path)
+	b.WriteString("`, preserving the source design document's intended behavior.\n\n")
+	b.WriteString("Source scope row:\n\n")
+	b.WriteString("> ")
+	b.WriteString(strings.ReplaceAll(excerpt, "\n", "\n> "))
+	b.WriteString("\n\n")
+	b.WriteString("Dispatch contract:\n\n")
+	b.WriteString("- If the Host current-state anchors already show this atom's requested final state, close the refined brief as `Status: source-satisfied - do not dispatch` and cite the exact path evidence; do not invent a no-op edit.\n")
+	b.WriteString("- If work remains for an existing file, state executable edit shape only: exact `old_text`/`new_text` blocks or `start_line`/`end_line` plus replacement `content`. Do not use prose-only mutation sites such as \"insert after\", \"append near\", or \"update around\" without that edit shape.\n")
+	b.WriteString("- If this is a new file, provide the full file body as `replace_all:true` with empty `old_text` and complete `new_text`.\n\n")
+	b.WriteString("## Acceptance\n\n")
+	b.WriteString("- The requested behavior is implemented for `")
+	b.WriteString(path)
+	b.WriteString("`.\n")
+	b.WriteString("- No files outside this atom's Files To Modify list are edited.\n\n")
+	b.WriteString("## Source Design Document\n\n")
+	b.WriteString("Reference only. This section preserves design intent; the active write scope remains this atom's Files To Modify list.\n\n")
+	b.WriteString(quoteImplementationDispatchReference(truncateImplementationDispatchText(source.Content, 30000)))
+	return b.String()
 }
 
 func implementationDispatchWorkspaceRoot(cfg config.Config) string {
@@ -877,6 +1912,11 @@ func implementationDispatchIsRefineScratchpadPath(path string) bool {
 	}
 	base := strings.ToLower(filepath.Base(normalized))
 	return strings.HasPrefix(base, "meta-") || base == "draft.md" || base == "review.md" || base == "patch.md"
+}
+
+func implementationDispatchIsAtomizedPlanDocumentPath(path string) bool {
+	normalized := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	return strings.HasPrefix(normalized, ".idiom/atoms/")
 }
 
 func implementationDispatchLooksLikeConcreteFile(path string) bool {
@@ -967,8 +2007,89 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 }
 
 func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan) (string, error) {
-	requiredPaths, allowedPaths, planDocuments := implementationDispatchEditScopeAndPlanDocuments(prompt, plan, m.cfg)
+	_, _, planDocuments, resolutionBlockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, m.cfg)
+	if len(resolutionBlockers) > 0 {
+		var refs []string
+		for _, blocker := range resolutionBlockers {
+			refs = append(refs, strings.TrimSpace(blocker.Ref))
+		}
+		m.logMessage("dispatch_preflight", fmt.Sprintf("blocked plan-execute dispatch for unresolved referenced design document(s): %s", strings.Join(refs, ", ")))
+		return humanPlanDocumentResolutionBlockedMessage(resolutionBlockers), nil
+	}
+	if implementationDispatchPlanDocumentsShouldPreAtomize(planDocuments) {
+		m.logMessage("dispatch_atomize", "referenced design document exceeds single-purpose dispatch limits; materializing atom briefs before plan-execute")
+		m.events <- infoMsg{text: "Materializing design document atoms before plan-execute..."}
+		atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
+		if err != nil {
+			return "", err
+		}
+		return m.runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx, prompt, plan, atomDocuments)
+	}
+	return m.runImplementationPlanDocumentsViaPlanExecute(ctx, prompt, plan, planDocuments)
+}
+
+func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationDispatchPlanDocument) (string, error) {
+	requiredPaths, allowedPaths := implementationDispatchEditScopeFromPlanDocuments(plan, planDocuments)
+	if satisfied := implementationDispatchPlanDocumentsSourceSatisfied(m.cfg, planDocuments); len(satisfied) == len(planDocuments) && len(satisfied) > 0 {
+		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d already-satisfied design-doc atom(s)", len(satisfied)))
+		return humanImplementationDispatchSourceSatisfiedMessage(satisfied), nil
+	}
+	if implementationDispatchPlanDocumentsNeedRefineBeforeDispatch(planDocuments) {
+		m.logMessage("dispatch_refine", "materialized design-doc atom requires refine before plan-execute")
+		m.events <- infoMsg{text: "Refining materialized design-doc atom before plan-execute..."}
+		var refineResults []implementationDispatchPlanDocumentRefineResult
+		refinedPlanDocuments := append([]implementationDispatchPlanDocument(nil), planDocuments...)
+		for _, doc := range planDocuments {
+			if !implementationDispatchPlanDocumentNeedsRefineBeforeDispatch(doc) {
+				continue
+			}
+			refined := implementationDispatchPlanDocumentRefineRunner(ctx, m.cfg, doc)
+			refineResults = append(refineResults, refined)
+			if !refined.OK {
+				if len(refined.PostPreflightBlockers) > 0 {
+					if implementationDispatchPreflightAllSourceSatisfied(refined.PostPreflightBlockers) {
+						m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom candidate classified %d atom(s) as source-satisfied", len(refined.PostPreflightBlockers)))
+						return humanImplementationDispatchPreflightSourceSatisfiedMessage(refined.PostPreflightBlockers), nil
+					}
+					m.logMessage("dispatch_refine", fmt.Sprintf("refined atom candidate still blocked by preflight for %s", strings.TrimSpace(refined.OutputPath)))
+					return humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refined.PostPreflightBlockers), nil
+				}
+				if implementationDispatchRefinedDocumentIsDispatchable(ctx, m.cfg, refined.Document) {
+					m.logMessage("dispatch_refine", fmt.Sprintf("using structurally dispatchable refined atom %s despite nonzero refine exit", strings.TrimSpace(refined.OutputPath)))
+					refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, doc.Path, refined.Document)
+					continue
+				}
+				m.logMessage("dispatch_refine", fmt.Sprintf("refine failed for %s (code=%d output=%s)", doc.Path, refined.ExitCode, strings.TrimSpace(refined.OutputPath)))
+				return humanPlanDocumentRefineFailedMessage(nil, refineResults), nil
+			}
+			m.logMessage("dispatch_refine", fmt.Sprintf("refined %s to %s", doc.Path, refined.OutputPath))
+			refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, doc.Path, refined.Document)
+		}
+		planDocuments = refinedPlanDocuments
+		requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(plan, planDocuments)
+		if refinedBlocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(refinedBlocked) > 0 {
+			if implementationDispatchPreflightAllSourceSatisfied(refinedBlocked) {
+				m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
+				return humanImplementationDispatchPreflightSourceSatisfiedMessage(refinedBlocked), nil
+			}
+			m.logMessage("dispatch_refine", "refined atom brief still blocked by preflight")
+			return humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refinedBlocked), nil
+		}
+	}
 	if blocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(blocked) > 0 {
+		if implementationDispatchPreflightAllSourceSatisfied(blocked) {
+			m.logMessage("dispatch_source_satisfied", fmt.Sprintf("preflight classified %d atom(s) as source-satisfied", len(blocked)))
+			return humanImplementationDispatchPreflightSourceSatisfiedMessage(blocked), nil
+		}
+		if implementationDispatchPreflightNeedsAtomization(blocked) && implementationDispatchCanAtomizePlanDocuments(planDocuments) {
+			m.logMessage("dispatch_atomize", "preflight requested sub-atoms; materializing atom briefs before plan-execute")
+			m.events <- infoMsg{text: "Materializing design document atoms before plan-execute..."}
+			atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
+			if err != nil {
+				return "", err
+			}
+			return m.runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx, prompt, plan, atomDocuments)
+		}
 		if implementationDispatchPreflightCanRefine(blocked) {
 			m.logMessage("dispatch_refine", "preflight found non-dispatchable plan document shape; running refine before plan-execute")
 			m.events <- infoMsg{text: "Refining referenced plan document before plan-execute..."}
@@ -991,6 +2112,19 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 				refined := implementationDispatchPlanDocumentRefineRunner(ctx, m.cfg, original)
 				refineResults = append(refineResults, refined)
 				if !refined.OK {
+					if len(refined.PostPreflightBlockers) > 0 {
+						if implementationDispatchPreflightAllSourceSatisfied(refined.PostPreflightBlockers) {
+							m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined candidate classified %d atom(s) as source-satisfied", len(refined.PostPreflightBlockers)))
+							return humanImplementationDispatchPreflightSourceSatisfiedMessage(refined.PostPreflightBlockers), nil
+						}
+						m.logMessage("dispatch_refine", fmt.Sprintf("refined candidate still blocked by preflight for %s", strings.TrimSpace(refined.OutputPath)))
+						return humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refined.PostPreflightBlockers), nil
+					}
+					if implementationDispatchRefinedDocumentIsDispatchable(ctx, m.cfg, refined.Document) {
+						m.logMessage("dispatch_refine", fmt.Sprintf("using structurally dispatchable refined brief %s despite nonzero refine exit", strings.TrimSpace(refined.OutputPath)))
+						refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, docPath, refined.Document)
+						continue
+					}
 					m.logMessage("dispatch_refine", fmt.Sprintf("refine failed for %s (code=%d output=%s)", docPath, refined.ExitCode, strings.TrimSpace(refined.OutputPath)))
 					return humanPlanDocumentRefineFailedMessage(blocked, refineResults), nil
 				}
@@ -1000,6 +2134,19 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 			planDocuments = refinedPlanDocuments
 			requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(plan, planDocuments)
 			if refinedBlocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(refinedBlocked) > 0 {
+				if implementationDispatchPreflightAllSourceSatisfied(refinedBlocked) {
+					m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
+					return humanImplementationDispatchPreflightSourceSatisfiedMessage(refinedBlocked), nil
+				}
+				if implementationDispatchPreflightNeedsAtomization(refinedBlocked) && implementationDispatchCanAtomizePlanDocuments(planDocuments) {
+					m.logMessage("dispatch_atomize", "refined brief still exceeds single-purpose limits; materializing atom briefs before plan-execute")
+					m.events <- infoMsg{text: "Materializing refined design document atoms before plan-execute..."}
+					atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
+					if err != nil {
+						return "", err
+					}
+					return m.runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx, prompt, plan, atomDocuments)
+				}
 				m.logMessage("dispatch_refine", "refined brief still blocked by preflight")
 				return humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refinedBlocked), nil
 			}
@@ -1012,6 +2159,72 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 			return humanPlanDocumentPreflightBlockedMessage(blocked), nil
 		}
 	}
+	return m.runSingleImplementationPlanExecute(ctx, prompt, plan, requiredPaths, allowedPaths, planDocuments)
+}
+
+func implementationDispatchPlanDocumentsNeedRefineBeforeDispatch(planDocuments []implementationDispatchPlanDocument) bool {
+	for _, doc := range planDocuments {
+		if implementationDispatchPlanDocumentNeedsRefineBeforeDispatch(doc) {
+			return true
+		}
+	}
+	return false
+}
+
+func implementationDispatchPlanDocumentNeedsRefineBeforeDispatch(doc implementationDispatchPlanDocument) bool {
+	return implementationDispatchIsAtomizedPlanDocumentPath(doc.Path)
+}
+
+func implementationDispatchRefinedDocumentIsDispatchable(ctx context.Context, cfg config.Config, doc implementationDispatchPlanDocument) bool {
+	if strings.TrimSpace(doc.Path) == "" || strings.TrimSpace(doc.Content) == "" {
+		return false
+	}
+	return len(preflightImplementationDispatchPlanDocuments(ctx, cfg, []implementationDispatchPlanDocument{doc})) == 0
+}
+
+func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, atomDocuments []implementationDispatchPlanDocument) (string, error) {
+	if len(atomDocuments) == 0 {
+		return "Plan-execute dispatch blocked before the planner ran.\n\nThe referenced design document needed sub-atoms, but no dispatchable atom briefs could be materialized.", nil
+	}
+	m.logMessage("dispatch_atomize", fmt.Sprintf("dispatching %d materialized atom brief(s) through plan-execute", len(atomDocuments)))
+	var summaries []string
+	for i, atomDoc := range atomDocuments {
+		atomPrompt := prompt
+		if len(atomDocuments) > 1 {
+			atomPrompt = fmt.Sprintf("%s\n\nDispatch atom %d/%d: %s", strings.TrimSpace(prompt), i+1, len(atomDocuments), atomDoc.Path)
+		}
+		atomPlan := plan
+		atomPlan.runtimeBrief.RequiredEditPaths = nil
+		answer, err := m.runImplementationPlanDocumentsViaPlanExecute(ctx, atomPrompt, atomPlan, []implementationDispatchPlanDocument{atomDoc})
+		if err != nil {
+			return "", err
+		}
+		if implementationDispatchAnswerLooksBlocked(answer) {
+			return answer, nil
+		}
+		summaries = append(summaries, fmt.Sprintf("Atom %d/%d `%s`:\n%s", i+1, len(atomDocuments), atomDoc.Path, strings.TrimSpace(answer)))
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Design document implementation completed through %d atom(s).", len(atomDocuments)))
+	for _, summary := range summaries {
+		b.WriteString("\n\n")
+		b.WriteString(summary)
+	}
+	return strings.TrimSpace(b.String()), nil
+}
+
+func implementationDispatchAnswerLooksBlocked(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "blocked dispatch") ||
+		strings.Contains(lower, "blocked before the planner ran") ||
+		strings.Contains(lower, "automatic refine did not produce") ||
+		strings.Contains(lower, "still blocked by preflight")
+}
+
+func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, requiredPaths []string, allowedPaths []string, planDocuments []implementationDispatchPlanDocument) (string, error) {
 	brief := composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
 	var contextPackLog bytes.Buffer
 	contextPackSection := planexecute.BuildPromptContextPackSection(m.cfg, planexecute.PromptContextPackOptions{
@@ -1063,8 +2276,8 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 	var outBuf, errBuf bytes.Buffer
 	result := planexecute.Run(m.cfg, opts, promptRun, nil, &outBuf, &errBuf)
 
-	m.logMessage("dispatch_result", fmt.Sprintf("plan-execute finished (code=%d session=%s stdout=%d stderr=%d)",
-		result.ExitCode, result.SessionID, outBuf.Len(), errBuf.Len()))
+	m.logMessage("dispatch_result", fmt.Sprintf("plan-execute finished (code=%d session=%s state=%s stdout=%d stderr=%d)",
+		result.ExitCode, result.SessionID, result.ResumeStatePath, outBuf.Len(), errBuf.Len()))
 
 	if result.ExitCode != 0 {
 		if result.FailureKind == planexecute.RunFailurePlannerBlocked {
@@ -1083,7 +2296,7 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 				return answer, err
 			}
 		}
-		return "", fmt.Errorf("plan-execute exited %d: %s", result.ExitCode, strings.TrimSpace(errBuf.String()))
+		return "", fmt.Errorf("plan-execute exited %d (session=%s state=%s): %s", result.ExitCode, result.SessionID, result.ResumeStatePath, strings.TrimSpace(errBuf.String()))
 	}
 
 	return strings.TrimSpace(outBuf.String()), nil
@@ -1119,8 +2332,8 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		m.events <- infoMsg{text: "Retrying plan-execute after planner recovery decision..."}
 		var retryOut, retryErr bytes.Buffer
 		retryResult := planexecute.Run(m.cfg, retryOptions, m.newPlanExecutePromptRunner(ctx), nil, &retryOut, &retryErr)
-		m.logMessage("dispatch_result", fmt.Sprintf("plan-execute retry finished (code=%d session=%s stdout=%d stderr=%d)",
-			retryResult.ExitCode, retryResult.SessionID, retryOut.Len(), retryErr.Len()))
+		m.logMessage("dispatch_result", fmt.Sprintf("plan-execute retry finished (code=%d session=%s state=%s stdout=%d stderr=%d)",
+			retryResult.ExitCode, retryResult.SessionID, retryResult.ResumeStatePath, retryOut.Len(), retryErr.Len()))
 		if retryResult.ExitCode == 0 {
 			return strings.TrimSpace(retryOut.String()), true, nil
 		}

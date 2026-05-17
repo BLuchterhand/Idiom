@@ -884,6 +884,39 @@ func TestSubmitPlanStructuredSchemaErrorsAreBoundedAndPrivate(t *testing.T) {
 	}
 }
 
+func TestPlanArtifactInvalidEditShapeErrorKeepsFullGuidance(t *testing.T) {
+	artifact := normalizePlanArtifactForSubmit(PlanArtifact{
+		SchemaVersion: PlanArtifactSchemaVersion,
+		PlanID:        "plan-invalid-shape",
+		Created:       "2026-05-17T00:00:00Z",
+		Task:          PlanArtifactTask{Summary: "invalid shape"},
+		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
+		Packet:        PlanArtifactPacket{Status: "not_provided"},
+		Paths:         PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
+		Evidence:      []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded evidence"}},
+		VerificationObligations: []PlanArtifactVerificationObligation{{
+			Kind:     "test",
+			Command:  "go test ./...",
+			Owner:    "planner",
+			Required: true,
+		}},
+		Approval: PlanArtifactApproval{Status: "implicit"},
+		Handoff:  PlanArtifactHandoff{ID: "handoff-invalid-shape", Status: "ready", Ready: true},
+		Edits:    []PlanEdit{{Path: "a.txt"}},
+	}, "session-1", "2026-05-17T00:00:00Z", "plan-invalid-shape", false)
+	err := ValidatePlanArtifact(artifact)
+	if err == nil {
+		t.Fatal("expected invalid edit shape error")
+	}
+	message := err.Error()
+	if strings.Contains(message, "[truncated]") {
+		t.Fatalf("invalid edit shape guidance should not be truncated, got %q", message)
+	}
+	if !strings.Contains(message, "replace_all=true with new_text and empty old_text") {
+		t.Fatalf("invalid edit shape guidance missing whole-file shape, got %q", message)
+	}
+}
+
 func TestLoadPlanArtifactAcceptsLegacyV1AndSynthesizesDurableFields(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "legacy.plan.json")

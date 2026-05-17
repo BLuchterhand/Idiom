@@ -72,7 +72,7 @@ func HasWorkspaceFileExtension(candidate string) bool {
 		".rs",
 		".java", ".kt", ".kts",
 		".sh", ".bash", ".zsh", ".fish", ".ps1",
-		".md", ".mdx", ".json", ".jsonl", ".yaml", ".yml", ".toml", ".xml", ".ini", ".cfg", ".conf", ".env", ".txt", ".csv", ".tsv":
+		".md", ".mdx", ".markdown", ".json", ".jsonl", ".yaml", ".yml", ".toml", ".xml", ".ini", ".cfg", ".conf", ".env", ".txt", ".csv", ".tsv":
 		return true
 	default:
 		return false

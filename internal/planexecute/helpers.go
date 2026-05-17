@@ -21,6 +21,7 @@ import (
 	"idiom/internal/agent"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/telemetry"
 	"idiom/internal/util"
 	"idiom/internal/workspace"
@@ -213,21 +214,129 @@ func planExecuteAllowedPathChecklist(allowedEditPaths []string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) (bool, workspace.ToolResult, string, int) {
+type planExecuteAutoExactPlanResult struct {
+	Submitted       bool
+	SourceSatisfied bool
+	Result          workspace.ToolResult
+	Reason          string
+	EditCount       int
+	AppliedCount    int
+	PendingCount    int
+	UnknownCount    int
+	AppliedPaths    []string
+	PendingPaths    []string
+	UnknownPaths    []string
+}
+
+func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) planExecuteAutoExactPlanResult {
 	edits, reason := planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, cfg.Workspace.Root)
 	if len(edits) == 0 {
-		return false, workspace.ToolResult{}, reason, 0
+		return planExecuteAutoExactPlanResult{Reason: reason}
+	}
+	classified := planExecuteClassifyAutoExactPlanEdits(cfg.Workspace.Root, edits)
+	if classified.UnknownCount > 0 {
+		classified.Reason = "exact-anchor progress unknown for required path(s): " + strings.Join(classified.UnknownPaths, ", ")
+		classified.EditCount = len(edits)
+		return classified
+	}
+	if classified.PendingCount == 0 {
+		classified.SourceSatisfied = true
+		classified.Reason = "all exact-anchor edits already match the current workspace"
+		classified.EditCount = len(edits)
+		return classified
 	}
 	mgr := workspace.NewManager(cfg.Workspace)
 	result := mgr.Execute(context.Background(), workspace.ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Deterministic exact-anchor plan synthesized from the Required Edits packet.",
-		Edits:     edits,
+		Edits:     planExecutePendingAutoExactEdits(cfg.Workspace.Root, edits),
 	})
+	classified.Result = result
 	if strings.TrimSpace(result.Error) != "" {
-		return false, result, "exact-anchor auto-plan rejected by submit_plan validation", len(edits)
+		classified.Reason = "exact-anchor auto-plan rejected by submit_plan validation"
+		classified.EditCount = classified.PendingCount
+		return classified
 	}
-	return true, result, "all required paths covered by parseable exact old_text/new_text pairs", len(edits)
+	classified.Submitted = true
+	classified.EditCount = classified.PendingCount
+	if classified.AppliedCount > 0 {
+		classified.Reason = "already-applied exact edits skipped; pending exact edits submitted"
+	} else {
+		classified.Reason = "all required paths covered by parseable exact old_text/new_text pairs"
+	}
+	return classified
+}
+
+func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEdit) planExecuteAutoExactPlanResult {
+	var result planExecuteAutoExactPlanResult
+	var appliedPaths []string
+	var pendingPaths []string
+	var unknownPaths []string
+	for _, edit := range edits {
+		status := planExecuteAutoExactEditStatus(root, edit)
+		path := normalizePlanExecutePath(edit.Path)
+		switch status {
+		case "applied":
+			result.AppliedCount++
+			appliedPaths = append(appliedPaths, path)
+		case "pending":
+			result.PendingCount++
+			pendingPaths = append(pendingPaths, path)
+		default:
+			result.UnknownCount++
+			unknownPaths = append(unknownPaths, path)
+		}
+	}
+	result.AppliedPaths = mergePlanExecutePaths(appliedPaths)
+	result.PendingPaths = mergePlanExecutePaths(pendingPaths)
+	result.UnknownPaths = mergePlanExecutePaths(unknownPaths)
+	return result
+}
+
+func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) []workspace.PlanEdit {
+	var pending []workspace.PlanEdit
+	for _, edit := range edits {
+		if planExecuteAutoExactEditStatus(root, edit) == "pending" {
+			pending = append(pending, edit)
+		}
+	}
+	return pending
+}
+
+func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
+	path := normalizePlanExecutePath(edit.Path)
+	if path == "" {
+		return "unknown"
+	}
+	fullPath := path
+	if !filepath.IsAbs(fullPath) {
+		fullPath = filepath.Join(strings.TrimSpace(root), filepath.FromSlash(path))
+	}
+	body, err := os.ReadFile(filepath.Clean(fullPath))
+	if err != nil {
+		if os.IsNotExist(err) && edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != "" {
+			return "pending"
+		}
+		return "unknown"
+	}
+	status, _ := submittedPlanEditStatus(string(body), edit)
+	return status
+}
+
+func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
+	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	var b strings.Builder
+	b.WriteString("Decision: source-satisfied\n")
+	b.WriteString("The exact-edit packet already matches the current workspace for every required edit path.")
+	if len(paths) > 0 {
+		b.WriteString("\n\nRequired edit paths:\n")
+		for _, path := range paths {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
@@ -240,16 +349,34 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 		return nil, "no required_edit_paths"
 	}
 	section := ""
-	for _, heading := range []string{"required edits", "edits to apply", "edits"} {
-		if candidate := atomMarkdownSectionByHeading(prompt, heading); strings.TrimSpace(candidate) != "" {
-			section = candidate
+	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
+		for _, heading := range []string{"required edits", "edits to apply", "edits"} {
+			if candidate := atomMarkdownSectionByHeading(candidatePrompt, heading); strings.TrimSpace(candidate) != "" {
+				section = candidate
+				break
+			}
+		}
+		if strings.TrimSpace(section) != "" {
 			break
 		}
 	}
 	if strings.TrimSpace(section) == "" {
-		return nil, "no exact-edit section"
+		return planExecuteImplicitNewFileBodyEdits(prompt, required, workspaceRoot)
 	}
 
+	edits, reason := planExecuteExactPlanEditsFromSection(section, required, workspaceRoot)
+	if len(edits) > 0 {
+		return edits, ""
+	}
+	if implicit, implicitReason := planExecuteImplicitNewFileBodyEdits(prompt, required, workspaceRoot); len(implicit) > 0 {
+		return implicit, ""
+	} else if strings.TrimSpace(implicitReason) != "" && reason == "no parseable exact old_text/new_text pairs" {
+		reason = reason + "; " + implicitReason
+	}
+	return nil, reason
+}
+
+func planExecuteExactPlanEditsFromSection(section string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
 	type pendingOldBlock struct {
 		paths []string
 		text  string
@@ -345,6 +472,159 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 		return nil, "exact old_text/new_text pairs do not cover required path(s): " + strings.Join(missing, ", ")
 	}
 	return edits, ""
+}
+
+func planExecuteImplicitNewFileBodyEdits(prompt string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
+	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
+		section := atomMarkdownSectionByHeading(candidatePrompt, "required behavior")
+		if strings.TrimSpace(section) == "" {
+			continue
+		}
+		edits := planExecuteImplicitNewFileBodyEditsFromSection(section, required, workspaceRoot)
+		if len(edits) == 0 {
+			continue
+		}
+		if missing := planExecuteMissingEditPaths(required, edits); len(missing) > 0 {
+			return nil, "implicit new-file bodies do not cover required path(s): " + strings.Join(missing, ", ")
+		}
+		return edits, ""
+	}
+	return nil, "no exact-edit section"
+}
+
+func planExecuteImplicitNewFileBodyEditsFromSection(section string, required []string, workspaceRoot string) []workspace.PlanEdit {
+	var edits []workspace.PlanEdit
+	var recent []string
+	var current []string
+	var blockPaths []string
+	capture := false
+	fence := ""
+	for _, rawLine := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(rawLine)
+		if fence == "" {
+			if marker, _, ok := atomMarkdownFenceOpen(trimmed); ok {
+				fence = marker
+				current = nil
+				contextText := strings.Join(recent, "\n")
+				blockPaths = planExecuteImplicitBodyBoundPaths(recent, required)
+				capture = len(blockPaths) > 0 &&
+					planExecuteImplicitNewFileBodyContext(contextText) &&
+					planExecuteAllPathsMissing(workspaceRoot, blockPaths)
+				continue
+			}
+			if trimmed != "" {
+				recent = append(recent, trimmed)
+				if len(recent) > 8 {
+					recent = recent[len(recent)-8:]
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, fence) {
+			block := strings.TrimSpace(strings.Join(current, "\n"))
+			if capture {
+				for _, path := range blockPaths {
+					if planExecuteImplicitBodyLooksSafeForPath(path, block) {
+						edits = append(edits, workspace.PlanEdit{
+							Path:       path,
+							OldText:    "",
+							NewText:    block,
+							ReplaceAll: true,
+							Purpose:    "Create the full file body from the refined design-doc atom.",
+						})
+					}
+				}
+			}
+			fence = ""
+			current = nil
+			blockPaths = nil
+			capture = false
+			continue
+		}
+		current = append(current, rawLine)
+	}
+	return edits
+}
+
+func planExecuteImplicitBodyBoundPaths(recent []string, required []string) []string {
+	for i := len(recent) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(recent[i])
+		if len(pathparse.MentionedWorkspacePaths(line)) == 0 {
+			continue
+		}
+		return atomRequiredEditPathsFromLabel(line, required)
+	}
+	return atomRequiredEditPathsFromLabel(strings.Join(recent, "\n"), required)
+}
+
+func planExecuteAutoPlanScanTexts(prompt string) []string {
+	texts := []string{prompt}
+	unquoted := planExecuteUnquoteMarkdown(prompt)
+	if unquoted != prompt {
+		texts = append(texts, unquoted)
+	}
+	return texts
+}
+
+func planExecuteUnquoteMarkdown(text string) string {
+	lines := strings.Split(text, "\n")
+	changed := false
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, ">") {
+			continue
+		}
+		trimmed = strings.TrimPrefix(trimmed, ">")
+		if strings.HasPrefix(trimmed, " ") {
+			trimmed = strings.TrimPrefix(trimmed, " ")
+		}
+		lines[i] = trimmed
+		changed = true
+	}
+	if !changed {
+		return text
+	}
+	return strings.Join(lines, "\n")
+}
+
+func planExecuteImplicitNewFileBodyContext(contextText string) bool {
+	lower := strings.ToLower(contextText)
+	return strings.Contains(lower, "create ") ||
+		strings.Contains(lower, "new file") ||
+		strings.Contains(lower, "full file body") ||
+		strings.Contains(lower, "following content")
+}
+
+func planExecuteAllPathsMissing(workspaceRoot string, paths []string) bool {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot == "" || len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		path = normalizePlanExecutePath(path)
+		if path == "" {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(path))); err == nil {
+			return false
+		} else if !os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
+}
+
+func planExecuteImplicitBodyLooksSafeForPath(path string, body string) bool {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		return strings.HasPrefix(body, "package ")
+	default:
+		return true
+	}
 }
 
 func planExecuteInferPathsForOldText(workspaceRoot string, required []string, oldText string) []string {
@@ -870,7 +1150,10 @@ func RunReviewRepairPhase(
 		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
 	}
 	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
-	reviewSessionID := newPlanExecuteSessionID()
+	reviewSessionID := strings.TrimSpace(opts.ReviewSessionID)
+	if reviewSessionID == "" {
+		reviewSessionID = newPlanExecuteSessionID()
+	}
 	reviewCfg := cfg
 	reviewCfg.Workspace.SessionID = reviewSessionID
 	reviewStart := time.Now().Add(-1 * time.Second)

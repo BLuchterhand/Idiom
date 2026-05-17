@@ -23,6 +23,15 @@ Contract: final-answer artifact; no tool calls, no file edits, no shell commands
 - If exact source evidence is missing or seems stale, record
   `Source verification pending:` in the draft. Review, lint, and
   patch phases are responsible for source-backed refinement.
+- If the spec's verified current-state anchors already show the
+  requested final state for every target path, write
+  `Status: source-satisfied - do not dispatch` immediately after the
+  H1 and cite the exact path evidence instead of inventing a no-op edit.
+- For existing source paths, the Required Behavior must use executable
+  edit shape: exact `old_text`/`new_text` blocks or
+  `start_line`/`end_line` plus replacement `content`. Never leave a
+  prose-only mutation site such as "insert after", "append near", or
+  "update around" without that edit shape.
 - Stay on the draft deliverable instead of doing source discovery in
   this phase. Ask only if the spec is too vague to draft from.
 
@@ -34,6 +43,8 @@ section below in this order:
 
 ```text
 # {{TITLE}}
+
+Status: <pending | source-satisfied - do not dispatch>
 
 ## Problem
 

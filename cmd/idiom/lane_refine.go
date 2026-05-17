@@ -2203,9 +2203,6 @@ func refineEvidenceLineShapeWeight(line string) int {
 func refineEvidenceLineText(line string) string {
 	text := strings.TrimSpace(line)
 	text = strings.ReplaceAll(text, "`", "'")
-	if len(text) > 180 {
-		text = strings.TrimSpace(text[:180]) + "..."
-	}
 	return text
 }
 

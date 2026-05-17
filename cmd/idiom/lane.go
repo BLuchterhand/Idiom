@@ -17,11 +17,13 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/agent"
 	"idiom/internal/app"
 	"idiom/internal/backends"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
+	"idiom/internal/writerroute"
 )
 
 // briefBodyStartMarker / briefBodyEndMarker bracket the project
@@ -323,6 +325,10 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	}
 
 	requiredEditPaths := laneForwardedRequiredEditPaths(opts, atomReport, stderr)
+	if opts.JSONEvents {
+		decision := buildLaneWriterRouteDecision(cfg, opts, requiredEditPaths)
+		emitLaneJSONEvent(stdout, "writer_route_decision", decision.EventFields())
+	}
 	forwardArgs := buildForwardedArgs(opts, composedPath, requiredEditPaths)
 	// Tee stdout so the post-analysis can scan the JSON event stream
 	// the subcommand emits. Without --json the subcommand still prints
@@ -1235,6 +1241,42 @@ func laneForwardedRequiredEditPaths(opts laneOptions, atomReport *atomIntakeRepo
 		paths = append(paths, atomReport.ScopePaths...)
 	}
 	return planExecuteUniqueRequiredPaths(paths)
+}
+
+func buildLaneWriterRouteDecision(cfg config.Config, opts laneOptions, requiredEditPaths []string) writerroute.Decision {
+	mode := writerroute.ModeAgenticGuarded
+	taskFamily := "implementation"
+	reason := "route.local_model_default"
+	verificationOwner := "executor"
+	if opts.Mode == "plan-execute" {
+		mode = writerroute.ModePlanSubmission
+		taskFamily = agent.PlanThenExecutePlannerTaskFamily
+		reason = "route.multi_file_plan_execute"
+		verificationOwner = "planner_owned"
+	} else if opts.PlannerOwnedVerification && !opts.AllowBuildTests {
+		verificationOwner = "planner_owned"
+	}
+	aliases := cliWriterRouteRoleAliases(opts.ProjectRoot, opts.BackendProfile)
+	plannerModel := ""
+	executorModel := ""
+	switch opts.Mode {
+	case "plan-execute":
+		plannerModel = strings.TrimSpace(opts.Model)
+	case "implement":
+		executorModel = strings.TrimSpace(opts.Model)
+	}
+	return buildCLIWriterRouteDecision(cfg, cliWriterRouteOptions{
+		Mode:              mode,
+		Lane:              opts.Mode,
+		TaskFamily:        taskFamily,
+		PlannerModel:      plannerModel,
+		ExecutorModel:     executorModel,
+		ReviewerModel:     executorModel,
+		RequiredEditPaths: requiredEditPaths,
+		ReasonCodes:       []string{reason},
+		VerificationOwner: verificationOwner,
+		RoleAliases:       aliases,
+	})
 }
 
 // buildForwardedArgs constructs the args the lane wrapper hands to

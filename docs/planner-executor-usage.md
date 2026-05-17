@@ -288,7 +288,7 @@ Flags (mirror `idiom implement`):
 | `--prompt` | | inline prompt |
 | `--prompt-file` | | read prompt from a file |
 | `--model` | | override `llama_server.model` |
-| `--resume` | | resume a prior session |
+| `--resume` | | resume a prior session's review-repair state when available |
 | `--json` | `false` | emit structured JSONL events to stdout |
 
 ### What gets written
@@ -297,6 +297,11 @@ Flags (mirror `idiom implement`):
   plan artifact (canonical source of truth).
 - `<repo_root>/.idiom/plans/last.plan.json` — rolling pointer to the
   most recent plan, useful for `cat` / scripting.
+- `<repo_root>/.idiom/plan-execute/sessions/<session>.json` — local
+  progress state for the lane. It records prompt hash, plan path,
+  executor baseline, per-edit progress, executor evidence, and
+  review-repair status so the review phase can be rerun without
+  re-planning or reapplying executor edits.
 
 Plan artifact shape:
 
@@ -391,12 +396,37 @@ specific failure and exits non-zero. The plan artifact remains under
 `.idiom/plans/` for inspection. To resume after a fix, re-run the
 planner so it computes a fresh plan against the current workspace.
 
+Before calling the planner, `plan-execute` also checks parseable
+exact-edit packets against the current workspace. If every exact edit
+is already applied, it emits `auto_exact_plan_source_satisfied` and
+`source_satisfied` and exits successfully without a model call. If
+some exact edits are already applied and the remaining edits are still
+pending, it submits only the pending edits and reports
+`auto_exact_plan_partially_satisfied`. If the current source matches
+neither the old nor new text for an edit, the state is treated as
+unknown and normal planner reasoning takes over.
+
+If the executor completed but review-repair failed, crashed, or
+degraded, rerun only the review process with the same prompt or
+prompt file:
+
+```bash
+idiom plan-execute --prompt-file path/to/brief.md --resume <session_id>
+```
+
+The resume path loads `.idiom/plan-execute/sessions/<session_id>.json`,
+checks that the prompt hash matches, restores the executor baseline
+diff, and runs a new review-repair pass. It does not rerun the
+planner and does not reapply the executor edits.
+
 ### Files
 
 - `internal/workspace/submit_plan.go` — `submit_plan` workspace
   tool, `PlanEdit` / `PlanArtifact` types, `LoadPlanArtifact`,
   validation, schema versioning.
 - `internal/workspace/submit_plan_test.go` — 5 tests.
+- `internal/planexecute/progress.go` — durable plan-execute progress
+  state and review-repair resume contract.
 - `cmd/idiom/plan_execute.go` — CLI subcommand, planner-phase
   system addendum, latest-artifact lookup, executor phase dispatch,
   post-write source sanity, and action-capable review-repair gate.

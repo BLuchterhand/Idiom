@@ -13,6 +13,7 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/runner"
 	"idiom/internal/telemetry"
+	"idiom/internal/writerroute"
 )
 
 type implementOptions struct {
@@ -63,6 +64,14 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 		"session_id":  cfg.Workspace.SessionID,
 		"local_ops":   localOpsTelemetryFields(cfg, "implement"),
 	})
+	decision := buildCLIWriterRouteDecision(cfg, cliWriterRouteOptions{
+		Mode:              writerroute.ModeAgenticGuarded,
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		ReasonCodes:       []string{"route.local_model_default"},
+		VerificationOwner: implementWriterRouteVerificationOwner(opts),
+	})
+	emitImplementJSONEvent(stdout, opts.JSONEvents, "writer_route_decision", decision.EventFields())
 
 	// Queue gate: same opportunistic acquire pattern as plan-execute.
 	// When the queue daemon is up, concurrent `idiom implement` runs
@@ -93,6 +102,13 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 		fmt.Fprintln(stdout, answer)
 	}
 	return 0
+}
+
+func implementWriterRouteVerificationOwner(opts implementOptions) string {
+	if opts.PlannerOwnedVerification && !opts.AllowBuildTests {
+		return "planner_owned"
+	}
+	return "executor"
 }
 
 // implementAcquireQueueSlot mirrors planExecuteAcquireQueueSlot —

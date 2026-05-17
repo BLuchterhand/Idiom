@@ -16,6 +16,7 @@ import (
 	"idiom/internal/app"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
+	"idiom/internal/planexecute"
 	"idiom/internal/workspace"
 )
 
@@ -173,6 +174,81 @@ func TestPlanExecuteExactPlanEditsDefaultsUnlabeledBlocksToSoleRequiredPath(t *t
 	}
 }
 
+func TestPlanExecuteExactPlanEditsParsesBlockquotedRequiredBehaviorNewFileBody(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "writerroute"), 0o755); err != nil {
+		t.Fatalf("mkdir writerroute: %v", err)
+	}
+	prompt := strings.Join([]string{
+		"## Referenced Plan Documents",
+		"",
+		"> ## Files To Modify",
+		">",
+		"> | File | Change |",
+		"> |---|---|",
+		"> | `internal/writerroute/decision.go` | NEW FILE: add route decision type |",
+		">",
+		"> ## Required Behavior",
+		">",
+		"> 1. Create `internal/writerroute/decision.go` with the following content:",
+		">",
+		"> ```text",
+		"> package writerroute",
+		">",
+		"> const SchemaVersion = \"idiom.writer_route.v1\"",
+		"> ```",
+	}, "\n")
+
+	edits, reason := planExecuteExactPlanEditsForWorkspace(prompt, []string{"internal/writerroute/decision.go"}, root)
+	if reason != "" {
+		t.Fatalf("unexpected parse skip reason: %s", reason)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected one implicit new-file edit, got %#v", edits)
+	}
+	if edits[0].Path != "internal/writerroute/decision.go" || !edits[0].ReplaceAll || edits[0].OldText != "" {
+		t.Fatalf("unexpected implicit new-file edit: %#v", edits[0])
+	}
+}
+
+func TestPlanExecuteExactPlanEditsBindsImplicitBodyToNearestPathMention(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "writerroute"), 0o755); err != nil {
+		t.Fatalf("mkdir writerroute: %v", err)
+	}
+	prompt := strings.Join([]string{
+		"## Referenced Plan Documents",
+		"",
+		"> ## Required Behavior",
+		">",
+		"> 1. Create `internal/writerroute/decision.go` with the following content:",
+		">",
+		"> ```text",
+		"> package writerroute",
+		">",
+		"> const SchemaVersion = \"idiom.writer_route.v1\"",
+		"> ```",
+		">",
+		"> 2. Create `internal/writerroute/decision_test.go` with tests:",
+		">",
+		"> ```text",
+		"> package writerroute",
+		">",
+		"> import \"testing\"",
+		"> ```",
+	}, "\n")
+	edits, reason := planExecuteExactPlanEditsForWorkspace(prompt, []string{"internal/writerroute/decision.go"}, root)
+	if reason != "" {
+		t.Fatalf("unexpected parse skip reason: %s", reason)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected one implicit new-file edit, got %#v", edits)
+	}
+	if strings.Contains(edits[0].NewText, "testing") {
+		t.Fatalf("implicit body parser captured out-of-scope test block: %q", edits[0].NewText)
+	}
+}
+
 func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
@@ -221,6 +297,49 @@ func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "auto_exact_plan_submitted") {
 		t.Fatalf("auto exact plan event missing from stdout=%s", stdout.String())
+	}
+}
+
+func TestRunPlanExecuteMainAutoExactPlanSourceSatisfiedSkipsPlannerModel(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("new a\n"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	prompt := "## Files To Modify\n\n" +
+		"| File | Change |\n" +
+		"|---|---|\n" +
+		"| `a.txt` | Update a. |\n\n" +
+		"## Required Edits\n\n" +
+		"In `a.txt`, replace the text.\n\n" +
+		"old_text:\n\n```text\nold a\n```\n\n" +
+		"new_text:\n\n```text\nnew a\n```\n"
+	var stdout, stderr bytes.Buffer
+	modelCalled := false
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			modelCalled = true
+			return "", fmt.Errorf("planner model should not be called for source-satisfied exact-anchor packets")
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("source-satisfied exact plan should pass, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if modelCalled {
+		t.Fatal("planner model was called despite source-satisfied exact-anchor packet")
+	}
+	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new a\n" {
+		t.Fatalf("a.txt = %q", got)
+	}
+	for _, want := range []string{"writer_route_decision", "auto_exact_plan_source_satisfied", "source_satisfied"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected stdout to contain %q, got %s", want, stdout.String())
+		}
 	}
 }
 
@@ -1519,6 +1638,83 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 	}
 	if strings.Contains(gotPrompt, "The plan-submission capability must cover every brief-required edit once") {
 		t.Fatalf("review-repair prompt must not include planner-phase submit_plan closeout addendum:\n%s", gotPrompt)
+	}
+}
+
+func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	prompt := "Make a.txt say new."
+	var firstStdout, firstStderr bytes.Buffer
+	plannerSessionID := ""
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt},
+		&firstStdout,
+		&firstStderr,
+		func(cfg config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			switch opts.TaskFamily {
+			case agent.PlanThenExecutePlannerTaskFamily:
+				plannerSessionID = cfg.Workspace.SessionID
+				writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+					SchemaVersion: workspace.PlanArtifactSchemaVersion,
+					Created:       time.Now().UTC().Format(time.RFC3339Nano),
+					SessionID:     cfg.Workspace.SessionID,
+					Rationale:     "change a.txt",
+					Edits: []workspace.PlanEdit{
+						{Path: "a.txt", OldText: "old\n", NewText: "new\n", Purpose: "apply requested text"},
+					},
+				})
+				return "submitted plan", nil
+			case agent.PlanThenExecuteReviewRepairTaskFamily:
+				return "Decision: pass\nNo checklist.", nil
+			default:
+				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+				return "", nil
+			}
+		},
+	)
+	if code != 1 {
+		t.Fatalf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String())
+	}
+	state, _, err := planexecute.LoadProgressState(root, plannerSessionID)
+	if err != nil {
+		t.Fatalf("load progress state: %v", err)
+	}
+	if state.Phase != planexecute.ProgressPhaseReviewRepair || state.Status != planexecute.ProgressStatusFailed {
+		t.Fatalf("expected failed review state, got phase=%s status=%s", state.Phase, state.Status)
+	}
+
+	var resumedStdout, resumedStderr bytes.Buffer
+	reviewCalls := 0
+	resumedPrompt := ""
+	code = runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt, "-resume", plannerSessionID},
+		&resumedStdout,
+		&resumedStderr,
+		func(_ config.Config, prompt string, opts runOptions, _ io.Writer) (string, error) {
+			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+				t.Fatalf("resume should run review-repair only, got task family %q", opts.TaskFamily)
+			}
+			reviewCalls++
+			resumedPrompt = prompt
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: a.txt changed from old to new.\n- Scope safety: no corrective edit needed.", nil
+		},
+	)
+	if code != 0 {
+		t.Fatalf("resume should pass review, got %d stdout=%s stderr=%s", code, resumedStdout.String(), resumedStderr.String())
+	}
+	if reviewCalls != 1 {
+		t.Fatalf("resume should call review once, got %d", reviewCalls)
+	}
+	if !strings.Contains(resumedPrompt, "-old") || !strings.Contains(resumedPrompt, "+new") {
+		t.Fatalf("resumed review prompt should restore executor baseline diff, got:\n%s", resumedPrompt)
+	}
+	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new\n" {
+		t.Fatalf("resume should not reapply executor edits, got %q", got)
 	}
 }
 

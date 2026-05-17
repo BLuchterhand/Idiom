@@ -150,6 +150,10 @@ func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 	if !strings.Contains(stdout.String(), `"type":"final"`) || strings.Contains(stdout.String(), "ok\n") && !strings.Contains(stdout.String(), `"content":"ok"`) {
 		t.Fatalf("JSON mode should only emit runner JSONL, got %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), `"type":"idiom.implement.writer_route_decision"`) ||
+		!strings.Contains(stdout.String(), `"writer_mode":"agentic_guarded"`) {
+		t.Fatalf("implement JSON should report writer route decision, got %q", stdout.String())
+	}
 }
 
 func TestRunImplementMainRejectsMissingPrompt(t *testing.T) {
