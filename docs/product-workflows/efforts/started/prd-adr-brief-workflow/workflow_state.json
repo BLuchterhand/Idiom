@@ -1,0 +1,80 @@
+{
+  "schema_version": "idiom.product_workflow_state.v0.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0001-phase-0-durable-workflow-substrate",
+  "title": "PRD/ADR/Brief Research Workflow",
+  "created_at": "2026-05-17T15:20:00Z",
+  "updated_at": "2026-05-17T15:42:00Z",
+  "state_revision": 3,
+  "last_event_id": "evt-0011",
+  "workspace_fingerprint": "idiom@85af477",
+  "status_bucket": "started",
+  "current_phase": "phase-0-design-fixtures",
+  "current_state": "verified",
+  "artifact_paths": {
+    "evidence_ledger": "evidence/evidence.jsonl",
+    "traceability_matrix": "evidence/traceability_matrix.json",
+    "prd": "prd.md",
+    "adrs": "adrs/",
+    "adr_index": "adrs/index.json",
+    "tdd_ledger": "tdd.json",
+    "briefs": "briefs/",
+    "reports": "reports/",
+    "implementation_ledger": "implementation_ledger.jsonl",
+    "events": "events.jsonl",
+    "source_design_ref": "source_design_ref.json",
+    "readme": "README.md"
+  },
+  "context": {
+    "context_pack_id": "03dd97ee30a4e3d7",
+    "freshness_state": "current",
+    "referenced_paths": [
+      "docs/design-prd-adr-brief-research-workflow.md",
+      "docs/design-tdd-coverage.md",
+      "docs/obsidian/22 - Product Workflow ROADMAP.md",
+      "README.md"
+    ],
+    "unresolved_gaps": [
+      {
+        "kind": "implementor_timeout",
+        "description": "OpenCode GLM attached-server run produced partial artifacts but did not return closeout; Codex completed missing C0 fixture files with a recorded fallback exception."
+      }
+    ],
+    "refresh_policy": "on_demand"
+  },
+  "coverage": {
+    "coverage_tier": "documentation",
+    "gate_results": [
+      {
+        "gate": "documentation_fixture_validation",
+        "status": "passed",
+        "checked_at": "2026-05-17T15:40:00Z"
+      }
+    ],
+    "blocking_criteria": [],
+    "advisory_criteria": []
+  },
+  "open_obligations": [],
+  "open_questions": [],
+  "blockers": [],
+  "privacy": {
+    "redaction_status": "applied",
+    "fields_excluded": [
+      "raw_prompts",
+      "raw_transcripts",
+      "file_bodies",
+      "secrets",
+      "customer_identifying_data"
+    ]
+  },
+  "session_ids": {},
+  "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
+  "prior_folder_paths": [],
+  "last_reconciliation_at": "2026-05-17T15:42:00Z",
+  "reconciliation_mismatch": false,
+  "next_valid_actions": [
+    "plan_phase_1_schema_validator_atom",
+    "close_effort_if_abandoned"
+  ],
+  "durability_level": "source_controlled"
+}

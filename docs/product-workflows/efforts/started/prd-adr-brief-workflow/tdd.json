@@ -1,0 +1,75 @@
+{
+  "schema_version": "idiom.tdd_obligations.v2.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0001-phase-0-durable-workflow-substrate",
+  "coverage_tier": "documentation",
+  "coverage": {
+    "ears_total": 0,
+    "ears_mapped": 0,
+    "bdd_total": 0,
+    "bdd_with_concrete_data": 0,
+    "fmea_modes_total": 0,
+    "fmea_modes_mitigated": 0,
+    "hazop_deviations_total": 0,
+    "hazop_deviations_tested": 0,
+    "invariants_total": 0,
+    "invariants_with_pbt": 0,
+    "decision_tables_total": 0,
+    "decision_tables_enumerated": 0,
+    "mutation_score": null,
+    "mutation_min_score": 80,
+    "gates_passed": [
+      "documentation_fixture_validation",
+      "privacy_marker_scan",
+      "diff_hygiene"
+    ],
+    "gates_blocked": []
+  },
+  "obligations": [
+    {
+      "id": "TDD-IMPL-0001-001",
+      "type": "acceptance",
+      "behavior": "Evidence references in fixtures cite real source paths that exist in the repository.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/evidence/evidence.jsonl",
+      "command": "python3 -c \"import json,sys; [json.loads(l) for l in open(sys.argv[1])]\" evidence/evidence.jsonl",
+      "required_before": "effort_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0001-002",
+      "type": "acceptance",
+      "behavior": "All JSON and JSONL fixture files parse without error.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
+      "command": "python3 -m json.tool docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json && python3 -c \"import json,sys; [json.loads(l) for l in open(sys.argv[1])]\" docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
+      "required_before": "effort_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0001-003",
+      "type": "manual",
+      "behavior": "Privacy scan: no raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data in durable artifacts.",
+      "owner": "implementor",
+      "command": "manual privacy scan recorded in reports/impl-0001-investigation.json",
+      "required_before": "effort_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0001-004",
+      "type": "source_sanity",
+      "behavior": "Git diff hygiene: no whitespace errors, no trailing carriage returns.",
+      "owner": "git",
+      "command": "git diff --check",
+      "required_before": "effort_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0001-005",
+      "type": "acceptance",
+      "behavior": "No Go source, prompts, runtime code, or existing design docs were modified.",
+      "owner": "reviewer",
+      "command": "git diff --name-only | grep -v '^docs/product-workflows/' | grep -v '^testdata/product-workflows/' || echo 'scope correct'",
+      "required_before": "effort_close",
+      "status": "satisfied"
+    }
+  ]
+}

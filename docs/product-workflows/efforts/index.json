@@ -1,0 +1,17 @@
+{
+  "schema_version": "idiom.effort_index.v1",
+  "updated_at": "2026-05-17T15:20:00Z",
+  "efforts": [
+    {
+      "effort_id": "prd-adr-brief-workflow",
+      "title": "PRD/ADR/Brief Research Workflow",
+      "status_bucket": "started",
+      "current_phase": "phase-0-design-fixtures",
+      "current_state": "verified",
+      "folder_path": "started/prd-adr-brief-workflow",
+      "task_id": "impl-0001-phase-0-durable-workflow-substrate",
+      "created_at": "2026-05-17T15:20:00Z",
+      "prior_paths": []
+    }
+  ]
+}

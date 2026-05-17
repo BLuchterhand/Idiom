@@ -1,0 +1,56 @@
+{
+  "schema_version": "idiom.traceability_matrix.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0001-phase-0-durable-workflow-substrate",
+  "created_at": "2026-05-17T15:20:00Z",
+  "matrix": [
+    {
+      "evidence_card": "EV-001",
+      "prd_requirement": "REQ-IMPL-0001",
+      "adr": "ADR-0001",
+      "tdd_obligation": "TDD-IMPL-0001-001",
+      "brief": "briefs/impl-0001-phase-0-durable-workflow-substrate.md",
+      "report": "reports/impl-0001-implementation.json"
+    },
+    {
+      "evidence_card": "EV-002",
+      "prd_requirement": "REQ-IMPL-0001",
+      "adr": "ADR-0001",
+      "tdd_obligation": "TDD-IMPL-0001-002",
+      "brief": "briefs/impl-0001-phase-0-durable-workflow-substrate.md",
+      "report": "reports/impl-0001-implementation.json"
+    },
+    {
+      "evidence_card": "EV-003",
+      "prd_requirement": "REQ-IMPL-0001",
+      "adr": "ADR-0001",
+      "tdd_obligation": "TDD-IMPL-0001-002",
+      "brief": "briefs/impl-0001-phase-0-durable-workflow-substrate.md",
+      "report": "reports/impl-0001-implementation.json"
+    },
+    {
+      "evidence_card": "EV-004",
+      "prd_requirement": "REQ-IMPL-0001",
+      "adr": "ADR-0001",
+      "tdd_obligation": "TDD-IMPL-0001-005",
+      "brief": "briefs/impl-0001-phase-0-durable-workflow-substrate.md",
+      "report": "reports/impl-0001-implementation.json"
+    },
+    {
+      "evidence_card": "EV-005",
+      "prd_requirement": "REQ-IMPL-0001",
+      "adr": "ADR-0001",
+      "tdd_obligation": "TDD-IMPL-0001-004",
+      "brief": "briefs/impl-0001-phase-0-durable-workflow-substrate.md",
+      "report": "reports/impl-0001-implementation.json"
+    },
+    {
+      "evidence_card": "EV-006",
+      "prd_requirement": "REQ-IMPL-0001",
+      "adr": "ADR-0001",
+      "tdd_obligation": "TDD-IMPL-0001-001",
+      "brief": "briefs/impl-0001-phase-0-durable-workflow-substrate.md",
+      "report": "reports/impl-0001-implementation.json"
+    }
+  ]
+}

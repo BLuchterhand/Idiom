@@ -1,0 +1,43 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0001-phase-0-durable-workflow-substrate",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "opencode-glm-impl-0001",
+  "runtime": "opencode",
+  "model": "zai-coding-plan/glm-5.1",
+  "completed_at": "2026-05-17T15:20:00Z",
+  "complexity_tier": "C0",
+  "scope_statement": "Create durable Phase 0 implementation workflow substrate fixtures. No code changes.",
+  "code_changes": false,
+  "changed_paths": [
+    "docs/product-workflows/efforts/index.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/source_design_ref.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/evidence/evidence.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/evidence/traceability_matrix.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/index.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/briefs/impl-0001-phase-0-durable-workflow-substrate.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0001-implementation.json",
+    "testdata/product-workflows/prd-adr-brief-workflow/README.md"
+  ],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [
+      "python3 -m json.tool <each JSON file>",
+      "python3 json.loads per line <each JSONL file>",
+      "git diff --check"
+    ],
+    "status": "pending_reviewer"
+  },
+  "privacy_note": "No raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data were included in any artifact. All artifacts contain only IDs, paths, hashes, counts, statuses, and schema-compliant metadata.",
+  "open_blockers": [
+    "reviewer_pending"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0001"
+}

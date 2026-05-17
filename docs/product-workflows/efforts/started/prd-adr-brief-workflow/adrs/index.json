@@ -1,0 +1,15 @@
+{
+  "schema_version": "idiom.adr_index.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "adrs": [
+    {
+      "adr_id": "ADR-0001",
+      "title": "Seed Tracked Durable Effort Folder Before Code Implementation",
+      "status": "accepted_fixture",
+      "path": "ADR-0001-durable-workflow-substrate.md",
+      "coverage_tier": "documentation",
+      "prd_refs": ["REQ-IMPL-0001"],
+      "created_at": "2026-05-17T15:20:00Z"
+    }
+  ]
+}
