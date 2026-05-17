@@ -560,41 +560,101 @@ func TestScopeGateSourceSanityPurity(t *testing.T) {
 }
 
 func TestValidateLedgerCoverageDetectsUnderReporting(t *testing.T) {
-	ledger := []string{"cmd/foo.go", "internal/bar.go"}
-	git := []string{"cmd/foo.go", "internal/bar.go", "docs/baz.md"}
-	findings := ValidateLedgerCoverage(ledger, git)
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go", "internal/bar.go"}},
+	}
+	git := []string{"cmd/foo.go", "internal/bar.go", "docs/effort/baz.md"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
 	}
 	if findings[0].Code != "ledger_under_reports_path" {
 		t.Fatalf("expected ledger_under_reports_path, got %s", findings[0].Code)
 	}
-	if !strings.Contains(findings[0].Path, "docs/baz.md") {
-		t.Fatalf("expected path docs/baz.md, got %s", findings[0].Path)
+	if !strings.Contains(findings[0].Path, "docs/effort/baz.md") {
+		t.Fatalf("expected path docs/effort/baz.md, got %s", findings[0].Path)
 	}
 }
 
 func TestValidateLedgerCoveragePassesWhenComplete(t *testing.T) {
-	ledger := []string{"cmd/foo.go", "internal/bar.go", "docs/baz.md"}
-	git := []string{"cmd/foo.go", "internal/bar.go", "docs/baz.md"}
-	findings := ValidateLedgerCoverage(ledger, git)
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go", "internal/bar.go", "docs/effort/baz.md"}},
+	}
+	git := []string{"cmd/foo.go", "internal/bar.go", "docs/effort/baz.md"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings, got %d: %#v", len(findings), findings)
 	}
 }
 
 func TestValidateLedgerCoveragePassesWhenLedgerOverReports(t *testing.T) {
-	ledger := []string{"cmd/foo.go", "internal/bar.go", "extra.go"}
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go", "internal/bar.go", "extra.go"}},
+	}
 	git := []string{"cmd/foo.go", "internal/bar.go"}
-	findings := ValidateLedgerCoverage(ledger, git)
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings when ledger over-reports, got %d", len(findings))
 	}
 }
 
 func TestValidateLedgerCoverageEmptyGitReturnsEmpty(t *testing.T) {
-	findings := ValidateLedgerCoverage([]string{"cmd/foo.go"}, nil)
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go"}},
+	}
+	findings := ValidateLedgerCoverage(atoms, nil, "docs/effort")
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings with empty git paths, got %d", len(findings))
+	}
+}
+
+func TestValidateLedgerCoverageDetectsEmptyChangedPaths(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: nil},
+	}
+	findings := ValidateLedgerCoverage(atoms, nil, "docs/effort")
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "atom_empty_changed_paths" {
+		t.Fatalf("expected atom_empty_changed_paths, got %s", findings[0].Code)
+	}
+}
+
+func TestValidateLedgerCoverageIgnoresUnrelatedGitPaths(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"docs/effort/readme.md"}},
+	}
+	git := []string{"docs/effort/readme.md", "unrelated/package.go"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
+	var underReport []LedgerCoverageFinding
+	for _, f := range findings {
+		if f.Code == "ledger_under_reports_path" {
+			underReport = append(underReport, f)
+		}
+	}
+	if len(underReport) != 0 {
+		t.Fatalf("expected 0 under-report findings for unrelated path, got %d: %#v", len(underReport), underReport)
+	}
+}
+
+func TestValidateLedgerCoverageMultipleAtomsUnion(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go"}},
+		{TaskID: "impl-002", ChangedPaths: []string{"docs/effort/readme.md"}},
+	}
+	git := []string{"cmd/foo.go", "docs/effort/readme.md", "docs/effort/extra.md"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
+	var underReport []LedgerCoverageFinding
+	for _, f := range findings {
+		if f.Code == "ledger_under_reports_path" {
+			underReport = append(underReport, f)
+		}
+	}
+	if len(underReport) != 1 {
+		t.Fatalf("expected 1 under-report finding for extra.md, got %d: %#v", len(underReport), underReport)
+	}
+	if !strings.Contains(underReport[0].Path, "docs/effort/extra.md") {
+		t.Fatalf("expected finding for docs/effort/extra.md, got %s", underReport[0].Path)
 	}
 }

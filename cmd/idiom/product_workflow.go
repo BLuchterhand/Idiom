@@ -432,16 +432,20 @@ func lintEffortFolder(root string) productLintResult {
 		}
 	}
 
-	var allLedgerPaths []string
+	var atoms []productworkflow.AtomCoverageCheck
 	for _, rec := range parsedLedger {
 		if rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded" {
-			allLedgerPaths = append(allLedgerPaths, rec.ChangedPaths...)
+			atoms = append(atoms, productworkflow.AtomCoverageCheck{
+				TaskID:       rec.TaskID,
+				ChangedPaths: rec.ChangedPaths,
+			})
 		}
 	}
-	if len(allLedgerPaths) > 0 {
+	if len(atoms) > 0 {
 		gitPaths := gitChangedPaths(root)
 		if len(gitPaths) > 0 {
-			coverageFindings := productworkflow.ValidateLedgerCoverage(allLedgerPaths, gitPaths)
+			rel, _ := filepath.Rel(findGitRepoRoot(root), root)
+			coverageFindings := productworkflow.ValidateLedgerCoverage(atoms, gitPaths, rel)
 			for _, f := range coverageFindings {
 				addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
 			}
@@ -767,12 +771,24 @@ func gitChangedPaths(effortRoot string) []string {
 	if err != nil {
 		return nil
 	}
-	out, err := exec.Command("git", "-C", repoRoot, "diff", "--name-only", "HEAD~1", "HEAD", "--", rel).Output()
+	out, err := exec.Command("git", "-C", repoRoot, "log", "--reverse", "--format=%H", "--", rel).Output()
 	if err != nil {
 		return nil
 	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return nil
+	}
+	firstCommit := lines[0]
+	diffOut, err := exec.Command("git", "-C", repoRoot, "diff", "--name-only", firstCommit+"^", "HEAD").Output()
+	if err != nil {
+		diffOut, err = exec.Command("git", "-C", repoRoot, "diff", "--name-only", firstCommit, "HEAD").Output()
+		if err != nil {
+			return nil
+		}
+	}
 	var paths []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(string(diffOut)), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			paths = append(paths, line)

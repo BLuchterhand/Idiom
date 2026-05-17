@@ -20,22 +20,46 @@ type LedgerCoverageFinding struct {
 	Message string `json:"message"`
 }
 
-func ValidateLedgerCoverage(ledgerChangedPaths []string, commitChangedPaths []string) []LedgerCoverageFinding {
+type AtomCoverageCheck struct {
+	TaskID       string
+	ChangedPaths []string
+}
+
+func ValidateLedgerCoverage(atoms []AtomCoverageCheck, commitChangedPaths []string, effortRootPrefix string) []LedgerCoverageFinding {
 	var findings []LedgerCoverageFinding
-	ledgerSet := make(map[string]struct{}, len(ledgerChangedPaths))
-	for _, p := range ledgerChangedPaths {
-		ledgerSet[normalizePath(p)] = struct{}{}
-	}
-	for _, p := range commitChangedPaths {
-		norm := normalizePath(p)
-		if _, ok := ledgerSet[norm]; !ok {
+
+	unionSet := make(map[string]struct{})
+	for _, atom := range atoms {
+		if len(atom.ChangedPaths) == 0 {
 			findings = append(findings, LedgerCoverageFinding{
-				Code:    "ledger_under_reports_path",
-				Path:    norm,
-				Message: "commit changed " + norm + " but implementation ledger does not record it",
+				Code:    "atom_empty_changed_paths",
+				Path:    "",
+				Message: "atom " + atom.TaskID + " has empty changed_paths",
 			})
+			continue
+		}
+		for _, p := range atom.ChangedPaths {
+			unionSet[normalizePath(p)] = struct{}{}
 		}
 	}
+
+	effortPrefix := normalizePath(effortRootPrefix)
+
+	for _, p := range commitChangedPaths {
+		norm := normalizePath(p)
+		relevant := (effortPrefix != "" && strings.HasPrefix(norm, effortPrefix+"/")) ||
+			(effortPrefix != "" && norm == effortPrefix)
+		if relevant {
+			if _, ok := unionSet[norm]; !ok {
+				findings = append(findings, LedgerCoverageFinding{
+					Code:    "ledger_under_reports_path",
+					Path:    norm,
+					Message: "commit changed " + norm + " but no atom in the implementation ledger records it",
+				})
+			}
+		}
+	}
+
 	return findings
 }
 
