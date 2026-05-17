@@ -1342,6 +1342,151 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 	}
 }
 
+func TestImplementationDispatchSourceSatisfiedUsesCurrentStateAnchorConcepts(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"internal/writerroute/decision.go": strings.Join([]string{
+			"package writerroute",
+			"",
+			"// SchemaVersion is the current version of the WriterRouteDecision schema.",
+			"const SchemaVersion = \"idiom.writer_route.v1\"",
+			"",
+			"type Decision struct {",
+			"	RouteID string",
+			"}",
+			"",
+			"func (d *Decision) EventFields() map[string]interface{} {",
+			"	return nil",
+			"}",
+			"",
+		}, "\n"),
+		"internal/writerroute/decision_test.go": strings.Join([]string{
+			"package writerroute",
+			"",
+			"// TestWriterRouteDecision_NormalizationAndStableID verifies string normalization,",
+			"func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {}",
+			"",
+			"// TestWriterRouteDecision_EventFields verifies the EventFields mapping and defaults.",
+			"",
+		}, "\n"),
+		"internal/app/writer_route.go": strings.Join([]string{
+			"package app",
+			"",
+			"func (m *Model) writerRouteDecisionForPrompt() writerroute.Decision {",
+			"	return writerroute.NewDecisionFromParams(writerroute.DecisionParams{})",
+			"}",
+			"",
+			"func (m *Model) emitWriterRouteDecision(decision writerroute.Decision) {",
+			"	fields[\"type\"] = \"writer_route_decision\"",
+			"}",
+			"",
+		}, "\n"),
+		"internal/app/implementation_dispatch.go": strings.Join([]string{
+			"package app",
+			"",
+			"func shouldDispatchImplementationToPlanExecute() bool { return false }",
+			"func appendImplementationDispatchPlanDocuments() {}",
+			"",
+		}, "\n"),
+	}
+	for path, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	docs := []implementationDispatchPlanDocument{
+		sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", "internal/writerroute/decision.go", "Domain type, normalization, stable ID, event fields", []string{
+			"`internal/writerroute/decision.go:3`: `// SchemaVersion is the current version of the WriterRouteDecision schema.`",
+			"`internal/writerroute/decision.go:6`: `type Decision struct {`",
+			"`internal/writerroute/decision.go:10`: `func (d *Decision) EventFields() map[string]interface{} {`",
+		}),
+		sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-002.md", "internal/writerroute/decision_test.go", "Unit tests for normalization, stable ID, JSON/event fields", []string{
+			"`internal/writerroute/decision_test.go:3`: `// TestWriterRouteDecision_NormalizationAndStableID verifies string normalization,`",
+			"`internal/writerroute/decision_test.go:4`: `func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {}`",
+			"`internal/writerroute/decision_test.go:6`: `// TestWriterRouteDecision_EventFields verifies the EventFields mapping and defaults.`",
+		}),
+		sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-007.md", "internal/app/writer_route.go", "Build and emit TUI route decision after `buildPromptExecutionPlan`", []string{
+			"`internal/app/writer_route.go:3`: `func (m *Model) writerRouteDecisionForPrompt() writerroute.Decision {`",
+			"`internal/app/writer_route.go:4`: `return writerroute.NewDecisionFromParams(writerroute.DecisionParams{})`",
+			"`internal/app/writer_route.go:7`: `func (m *Model) emitWriterRouteDecision(decision writerroute.Decision) {`",
+		}),
+		sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-008.md", "internal/app/implementation_dispatch.go", "If needed, pass or annotate dispatch route without changing behavior", []string{
+			"`internal/app/implementation_dispatch.go:3`: `func shouldDispatchImplementationToPlanExecute() bool { return false }`",
+		}),
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, docs)
+	if len(records) != len(docs) {
+		t.Fatalf("records = %#v, want one source-satisfied record per atom", records)
+	}
+	for _, record := range records {
+		if record.EditPath == "" || len(record.Evidence) == 0 {
+			t.Fatalf("record should carry path evidence: %#v", record)
+		}
+	}
+}
+
+func TestImplementationDispatchSourceSatisfiedDoesNotTreatFallbackAnchorsAsDone(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "a.go"), []byte("package pkg\n\nconst A = \"old\"\n"), 0o644); err != nil {
+		t.Fatalf("write pkg/a.go: %v", err)
+	}
+	doc := sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", "pkg/a.go", "Replace A's fixture value with new", []string{
+		"`pkg/a.go:1`: `package pkg`",
+		"`pkg/a.go:3`: `const A = \"old\"`",
+	})
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	if records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+		t.Fatalf("fallback/current old anchors must not source-satisfy pending work: %#v", records)
+	}
+}
+
+func sourceSatisfiedAtomDoc(docPath string, editPath string, change string, anchors []string) implementationDispatchPlanDocument {
+	var b strings.Builder
+	b.WriteString("# Atom\n\n")
+	b.WriteString("Status: pending\n\n")
+	b.WriteString("<!-- idiom:design-doc-atom source=\"docs/design.md\" index=1 total=1 -->\n\n")
+	b.WriteString("## Files To Modify\n\n")
+	b.WriteString("| File | Change |\n|---|---|\n")
+	b.WriteString("| ")
+	b.WriteString(editPath)
+	b.WriteString(" | ")
+	b.WriteString(change)
+	b.WriteString(" |\n\n")
+	b.WriteString("## Verified Current State\n\n")
+	b.WriteString("- Host current-state anchors captured before dispatch:\n")
+	for _, anchor := range anchors {
+		b.WriteString("  - ")
+		b.WriteString(anchor)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n## Required Behavior\n\n")
+	b.WriteString("Source scope row:\n\n")
+	b.WriteString("> | `")
+	b.WriteString(editPath)
+	b.WriteString("` | ")
+	b.WriteString(change)
+	b.WriteString(" |\n")
+	return implementationDispatchPlanDocument{
+		Path:      docPath,
+		Content:   b.String(),
+		EditPaths: []string{editPath},
+	}
+}
+
 func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {

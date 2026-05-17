@@ -1385,6 +1385,13 @@ func implementationDispatchPlanDocumentSourceSatisfied(root string, doc implemen
 			Evidence:     evidence,
 		}, true
 	}
+	if evidence := implementationDispatchSourceSatisfiedAnchorEvidence(path, content, scopeText, doc.Content); len(evidence) > 0 {
+		return implementationDispatchSourceSatisfiedRecord{
+			DocumentPath: doc.Path,
+			EditPath:     path,
+			Evidence:     evidence,
+		}, true
+	}
 	return implementationDispatchSourceSatisfiedRecord{}, false
 }
 
@@ -1488,6 +1495,196 @@ func implementationDispatchLineEvidence(path string, content string, needle stri
 		}
 	}
 	return fmt.Sprintf("`%s`: %s", path, description)
+}
+
+type implementationDispatchCurrentStateAnchor struct {
+	Path string
+	Line int
+	Text string
+}
+
+func implementationDispatchSourceSatisfiedAnchorEvidence(path string, content string, scopeText string, docContent string) []string {
+	anchors := implementationDispatchCurrentStateAnchorsForPath(docContent, path, content)
+	if len(anchors) == 0 {
+		return nil
+	}
+	if implementationDispatchScopeRowIsOptional(scopeText) {
+		return []string{fmt.Sprintf("`%s`: source scope is optional (`If needed`) and current-state anchors are present; no required edit shape remains", path)}
+	}
+	sourceTerms := implementationDispatchSatisfactionTermSet(implementationDispatchStripWorkspacePathLiterals(scopeText))
+	if len(sourceTerms) == 0 {
+		return nil
+	}
+	covered := map[string]struct{}{}
+	var evidence []string
+	for _, anchor := range anchors {
+		anchorTerms := implementationDispatchSatisfactionTermSet(anchor.Text)
+		matched := false
+		for term := range sourceTerms {
+			if _, ok := anchorTerms[term]; ok {
+				covered[term] = struct{}{}
+				matched = true
+			}
+		}
+		if matched {
+			evidence = append(evidence, fmt.Sprintf("`%s:%d`: current-state anchor covers requested source-scope term(s) (`%s`)", anchor.Path, anchor.Line, strings.ReplaceAll(anchor.Text, "`", "'")))
+		}
+	}
+	if !implementationDispatchAnchorCoverageSatisfies(sourceTerms, covered) {
+		return nil
+	}
+	if len(evidence) > 3 {
+		evidence = evidence[:3]
+	}
+	return evidence
+}
+
+func implementationDispatchCurrentStateAnchorsForPath(docContent string, path string, currentContent string) []implementationDispatchCurrentStateAnchor {
+	var anchors []implementationDispatchCurrentStateAnchor
+	for _, line := range strings.Split(docContent, "\n") {
+		literals := implementationDispatchBacktickLiterals(line)
+		if len(literals) < 2 {
+			continue
+		}
+		anchorPath, anchorLine, ok := implementationDispatchParseCurrentStateAnchorRef(literals[0])
+		if !ok || anchorPath != path {
+			continue
+		}
+		text := strings.TrimSpace(literals[1])
+		if text == "" || !implementationDispatchAnchorTextStillCurrent(currentContent, anchorLine, text) {
+			continue
+		}
+		anchors = append(anchors, implementationDispatchCurrentStateAnchor{
+			Path: anchorPath,
+			Line: anchorLine,
+			Text: text,
+		})
+	}
+	return anchors
+}
+
+func implementationDispatchStripWorkspacePathLiterals(text string) string {
+	for _, literal := range implementationDispatchBacktickLiterals(text) {
+		normalized, ok := pathparse.NormalizeWorkspacePathToken(literal)
+		if !ok || !implementationDispatchLooksLikeConcreteFile(normalized) {
+			continue
+		}
+		text = strings.ReplaceAll(text, "`"+literal+"`", "")
+	}
+	return text
+}
+
+func implementationDispatchParseCurrentStateAnchorRef(ref string) (string, int, bool) {
+	ref = strings.TrimSpace(ref)
+	idx := strings.LastIndex(ref, ":")
+	if idx <= 0 || idx == len(ref)-1 {
+		return "", 0, false
+	}
+	path := strings.TrimSpace(ref[:idx])
+	lineText := strings.TrimSpace(ref[idx+1:])
+	line := 0
+	for _, r := range lineText {
+		if r < '0' || r > '9' {
+			return "", 0, false
+		}
+		line = line*10 + int(r-'0')
+	}
+	if line <= 0 {
+		return "", 0, false
+	}
+	normalized, ok := pathparse.NormalizeWorkspacePathToken(path)
+	if !ok {
+		return "", 0, false
+	}
+	return normalized, line, true
+}
+
+func implementationDispatchAnchorTextStillCurrent(content string, line int, text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	lines := strings.Split(content, "\n")
+	if line > 0 && line <= len(lines) && strings.TrimSpace(lines[line-1]) == text {
+		return true
+	}
+	return strings.Contains(content, text)
+}
+
+func implementationDispatchScopeRowIsOptional(scopeText string) bool {
+	lower := strings.ToLower(scopeText)
+	return strings.Contains(lower, "if needed") || strings.Contains(lower, "if necessary")
+}
+
+func implementationDispatchAnchorCoverageSatisfies(sourceTerms map[string]struct{}, covered map[string]struct{}) bool {
+	if len(covered) == 0 {
+		return false
+	}
+	requiredCoverage := 3
+	if len(sourceTerms) < requiredCoverage {
+		requiredCoverage = len(sourceTerms)
+	}
+	if requiredCoverage < 2 {
+		requiredCoverage = 2
+	}
+	return len(covered) >= requiredCoverage
+}
+
+func implementationDispatchSatisfactionTermSet(text string) map[string]struct{} {
+	terms := map[string]struct{}{}
+	for _, token := range implementationDispatchSatisfactionTokens(text) {
+		if implementationDispatchIgnoredSatisfactionTerm(token) {
+			continue
+		}
+		terms[token] = struct{}{}
+	}
+	return terms
+}
+
+func implementationDispatchSatisfactionTokens(text string) []string {
+	var tokens []string
+	var current []rune
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		token := strings.ToLower(string(current))
+		tokens = append(tokens, token)
+		current = current[:0]
+	}
+	for _, r := range text {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			if len(current) > 0 {
+				last := current[len(current)-1]
+				if last >= 'a' && last <= 'z' {
+					flush()
+				}
+			}
+			current = append(current, r)
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			current = append(current, r)
+		default:
+			flush()
+		}
+	}
+	flush()
+	return tokens
+}
+
+func implementationDispatchIgnoredSatisfactionTerm(term string) bool {
+	if len(term) < 3 && term != "id" {
+		return true
+	}
+	if implementationDispatchIgnoredAnchorTerm(term) {
+		return true
+	}
+	switch term {
+	case "add", "already", "around", "after", "before", "build", "current", "existing", "needed", "needs", "new", "only", "preserving", "provided", "requested", "runs", "row", "state", "without":
+		return true
+	default:
+		return false
+	}
 }
 
 func implementationDispatchPreflightAllSourceSatisfied(results []implementationDispatchPlanDocumentPreflightResult) bool {
