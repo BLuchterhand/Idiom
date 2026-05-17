@@ -1,15 +1,15 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0017-phase-1-scope-gate-lint-integration",
+  "task_id": "impl-0018-phase-2-research-profile-storage",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T21:53:00Z",
-  "state_revision": 52,
-  "last_event_id": "evt-0153",
-  "workspace_fingerprint": "idiom@902956a+impl-0017",
+  "updated_at": "2026-05-17T22:12:00Z",
+  "state_revision": 59,
+  "last_event_id": "evt-0160",
+  "workspace_fingerprint": "idiom@6ffa133",
   "status_bucket": "started",
-  "current_phase": "phase-1-schemas-and-deterministic-linters",
+  "current_phase": "phase-2-research-profiles",
   "current_state": "closed",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
@@ -23,10 +23,11 @@
     "implementation_ledger": "implementation_ledger.jsonl",
     "events": "events.jsonl",
     "source_design_ref": "source_design_ref.json",
-    "readme": "README.md"
+    "readme": "README.md",
+    "research_profiles": ".idiom/research/profiles/"
   },
   "context": {
-    "context_pack_id": "f2979e7ab4e39b49",
+    "context_pack_id": "1997ef6140265b3d",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -34,14 +35,15 @@
       "docs/obsidian/22 - Product Workflow ROADMAP.md",
       "cmd/idiom/product_workflow.go",
       "cmd/idiom/product_workflow_test.go",
-      "internal/productworkflow/scope.go",
+      "internal/productworkflow/research_profile_store.go",
+      "internal/productworkflow/research_profile_store_test.go",
       "internal/productworkflow/types.go",
       "internal/productworkflow/validate.go"
     ],
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack f2979e7ab4e39b49 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow scope gate lint wiring."
+        "description": "Context pack 1997ef6140265b3d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow research profile storage."
       }
     ],
     "refresh_policy": "on_demand"
@@ -50,54 +52,54 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "scope_gate_lint_forbidden_path",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "gate": "profile_store_discovers_sorted_valid_profiles",
+        "status": "pending",
+        "checked_at": ""
       },
       {
-        "gate": "scope_gate_lint_forbidden_pattern",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "gate": "profile_store_rejects_invalid_profiles",
+        "status": "pending",
+        "checked_at": ""
       },
       {
-        "gate": "scope_gate_lint_unexpected_path",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "gate": "profile_store_rejects_path_traversal",
+        "status": "pending",
+        "checked_at": ""
       },
       {
-        "gate": "scope_gate_lint_missing_expected",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "gate": "product_research_json_surface",
+        "status": "pending",
+        "checked_at": ""
       },
       {
-        "gate": "durable_fixture_scope_gate_pass",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "gate": "no_committed_idiom_research_state",
+        "status": "pending",
+        "checked_at": ""
       },
       {
         "gate": "focused_go_tests",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "status": "pending",
+        "checked_at": ""
       },
       {
         "gate": "full_go_tests",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "status": "pending",
+        "checked_at": ""
       },
       {
         "gate": "durable_json_jsonl_validation",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "status": "pending",
+        "checked_at": ""
       },
       {
         "gate": "privacy_secret_scan",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "status": "pending",
+        "checked_at": ""
       },
       {
         "gate": "diff_whitespace_check",
-        "status": "passed",
-        "checked_at": "2026-05-17T21:53:00Z"
+        "status": "pending",
+        "checked_at": ""
       }
     ],
     "blocking_criteria": [],
@@ -139,10 +141,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T21:53:00Z",
+  "last_reconciliation_at": "2026-05-17T22:12:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_next_design_doc_atom",
+    "plan_phase_2_research_execution_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],

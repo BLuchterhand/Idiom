@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0017-phase-1-scope-gate-lint-integration`
-- Active atom: none; plan the next atom from Phase 1/Phase 2 design-doc scope
+- Last completed atom: `impl-0018-phase-2-research-profile-storage`
+- Active atom: none; plan next Phase 2 atom
 - Status bucket: `started`
-- Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `f2979e7ab4e39b49`
+- Current phase: `phase-2-research-profiles`
+- Context pack: `1997ef6140265b3d`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -40,6 +40,11 @@ This effort is the durable implementation state for delivering
   implementation ledger changed paths; Codex required a correction pass for
   deterministic task ordering and explicit historical closed-atom handling, then
   review/verification passed.
+- Atom 18 research profile storage: all TDD obligations satisfied. GLM implemented
+  deterministic profile discovery under `.idiom/research/profiles`, typed findings
+  for invalid/traversal/non-JSON entries, and a read-only `idiom product research`
+  JSON surface. No committed .idiom state, no model execution, no merge/evidence
+  surface changes. Codex review/verification passed.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -201,7 +206,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Run the GLM implementation pass for
-`impl-0017-phase-1-scope-gate-lint-integration`. Keep code changes in
-`cmd/idiom/product_workflow.go` and `cmd/idiom/product_workflow_test.go`;
-Codex owns durable closeout.
+Plan the next Phase 2 atom (research execution or model merge). The research
+profile storage substrate is now in place; future atoms should add researcher
+execution, evidence merge, conflict detection, and PRD synthesis using the
+stored profiles. Codex owns durable closeout.

@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0017-phase-1-scope-gate-lint-integration",
+  "task_id": "impl-0018-phase-2-research-profile-storage",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,54 +19,44 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned",
-      "scope_gate_lint_forbidden_path",
-      "scope_gate_lint_forbidden_pattern",
-      "scope_gate_lint_unexpected_path",
-      "scope_gate_lint_missing_expected",
-      "durable_fixture_scope_gate_pass",
-      "focused_go_tests",
-      "full_go_tests",
-      "durable_json_jsonl_validation",
-      "privacy_secret_scan",
-      "diff_whitespace_check"
+      "atom_planned"
     ],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0017-001",
+      "id": "TDD-IMPL-0018-001",
       "type": "contract",
-      "behavior": "Product workflow lint/audit applies planned atom scope to implementation_completed changed_paths and preserves durable fixture pass behavior.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "behavior": "Research profile storage discovers valid project-owned profiles under .idiom/research/profiles in deterministic order without requiring committed .idiom state.",
+      "owner": "internal/productworkflow/research_profile_store_test.go",
+      "command": "go test ./internal/productworkflow ./cmd/idiom",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0017-002",
+      "id": "TDD-IMPL-0018-002",
       "type": "fmea_negative",
-      "behavior": "Lint returns typed scope findings for forbidden exact paths, forbidden pattern paths, unexpected paths, and missing expected paths in implementation ledger closeout records.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "behavior": "Research profile storage returns typed findings for invalid profile JSON, unsupported non-JSON entries, and path traversal/profile ID escapes.",
+      "owner": "internal/productworkflow/research_profile_store_test.go",
+      "command": "go test ./internal/productworkflow ./cmd/idiom",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0017-003",
+      "id": "TDD-IMPL-0018-003",
       "type": "acceptance",
-      "behavior": "Product audit/status/lint remain consistent and valid JSON when scope gate findings are present or absent.",
+      "behavior": "idiom product research --project-root <path> --json lists research profile roles, merge policy, and typed findings with stable JSON and exit codes.",
       "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "command": "go test ./internal/productworkflow ./cmd/idiom",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0017-004",
+      "id": "TDD-IMPL-0018-004",
       "type": "source_sanity",
-      "behavior": "Scope gate lint wiring reuses internal/productworkflow EvaluateScopeGate without editing pure scope, transition, status, or validator package files.",
+      "behavior": "The atom does not add committed .idiom/research profile files and does not execute models, merge evidence, or modify product_evidence surfaces.",
       "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "command": "go test ./internal/productworkflow ./cmd/idiom",
       "required_before": "atom_close",
       "status": "satisfied"
     }

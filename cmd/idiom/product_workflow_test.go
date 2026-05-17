@@ -2340,3 +2340,82 @@ func TestProductAuditScopeGateFailingIncludesSection(t *testing.T) {
 		t.Fatalf("expected scope_gate_forbidden_path in scope_gate section, got %v", scopeSection.Findings)
 	}
 }
+
+func TestProductResearchJSONSurface(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, ".idiom", "research", "profiles")
+	if err := os.MkdirAll(profilesDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, "test.json"), []byte(validTestResearchProfileJSON()), 0o644); err != nil {
+		t.Fatalf("write profile: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	profiles, ok := result["profiles"].([]any)
+	if !ok {
+		t.Fatalf("expected profiles array, got %T", result["profiles"])
+	}
+	if len(profiles) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(profiles))
+	}
+	p := profiles[0].(map[string]any)
+	if p["name"] != "test-profile" {
+		t.Fatalf("expected name test-profile, got %v", p["name"])
+	}
+	if _, ok := p["researchers"]; !ok {
+		t.Fatal("expected researchers field")
+	}
+	if _, ok := p["merge_policy"]; !ok {
+		t.Fatal("expected merge_policy field")
+	}
+	if result["profile_count"].(float64) != 1 {
+		t.Fatalf("expected profile_count 1, got %v", result["profile_count"])
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok {
+		t.Fatalf("expected findings array, got %T", result["findings"])
+	}
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings, got %d", len(findings))
+	}
+}
+
+func TestProductResearchInvalidProfileReturnsExit1(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, ".idiom", "research", "profiles")
+	if err := os.MkdirAll(profilesDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, "bad.json"), []byte(`{not valid json`), 0o644); err != nil {
+		t.Fatalf("write profile: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d", code)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("expected at least one finding, got %v", result["findings"])
+	}
+}
+
+func TestProductResearchDefaultProjectRootSucceeds(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductMainWithTelemetry([]string{"research"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0 (defaults to current dir), got %d", code)
+	}
+}

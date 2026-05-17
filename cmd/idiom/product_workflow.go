@@ -39,6 +39,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductAudit(args[1:], stdout, stderr, rec)
 	case "status":
 		return runProductStatus(args[1:], stdout, stderr, rec)
+	case "research":
+		return runProductResearch(args[1:], stdout, stderr, rec)
 	case "-h", "--help", "help":
 		printProductUsage(stdout)
 		return 0
@@ -54,6 +56,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product lint --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--json]")
+	fmt.Fprintln(w, "  idiom product research --project-root <path> [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -673,4 +676,67 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 
 	return exitCode
+}
+
+func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product research", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var projectRoot string
+	var jsonOutput bool
+	fs.StringVar(&projectRoot, "project-root", ".", "path to the project root")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	result, err := productworkflow.DiscoverProfiles(projectRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product research: %v\n", err)
+		return 2
+	}
+	if jsonOutput {
+		type jsonOutput struct {
+			Profiles     []productworkflow.ResearchProfile `json:"profiles"`
+			Findings     []productworkflow.ProfileFinding  `json:"findings"`
+			ProfileCount int                               `json:"profile_count"`
+			FindingCount int                               `json:"finding_count"`
+		}
+		out := jsonOutput{
+			Profiles:     result.Profiles,
+			Findings:     result.Findings,
+			ProfileCount: len(result.Profiles),
+			FindingCount: len(result.Findings),
+		}
+		if result.Profiles == nil {
+			out.Profiles = []productworkflow.ResearchProfile{}
+		}
+		if result.Findings == nil {
+			out.Findings = []productworkflow.ProfileFinding{}
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			fmt.Fprintf(stderr, "product research: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintf(stdout, "product research: %d profiles found\n", len(result.Profiles))
+		for _, p := range result.Profiles {
+			fmt.Fprintf(stdout, "  %s (%s)\n", p.Name, p.ProfileID)
+		}
+		if len(result.Findings) > 0 {
+			fmt.Fprintf(stdout, "  %d findings:\n", len(result.Findings))
+			for _, f := range result.Findings {
+				fmt.Fprintf(stdout, "    [%s] %s: %s\n", f.Severity, f.File, f.Message)
+			}
+		}
+	}
+	for _, f := range result.Findings {
+		if f.Severity == "error" {
+			return 1
+		}
+	}
+	return 0
 }

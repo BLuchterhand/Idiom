@@ -1,0 +1,29 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0018-phase-2-research-profile-storage",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "opencode-glm-impl-0018",
+  "runtime": "opencode_task_agent",
+  "model": "zai-coding-plan/glm-5.1",
+  "completed_at": "2026-05-17T22:10:00Z",
+  "complexity_tier": "C2",
+  "scope_statement": "Add deterministic Phase 2 research profile storage/discovery and a read-only product research JSON surface without committing ignored .idiom state.",
+  "code_changes": true,
+  "changed_paths": [
+    "internal/productworkflow/research_profile_store.go",
+    "internal/productworkflow/research_profile_store_test.go",
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go"
+  ],
+  "verification": {
+    "run_by_implementor": true,
+    "commands": [
+      "go test ./internal/productworkflow -run TestDiscover -v -count=1",
+      "go test ./cmd/idiom -run TestProductResearch -v -count=1"
+    ],
+    "status": "passed"
+  },
+  "privacy_note": "No raw prompts, raw transcripts, file bodies, secrets, or customer data stored.",
+  "open_blockers": [],
+  "reviewer_id": "codex-gpt-review-impl-0018"
+}
