@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0013-phase-1-tdd-audit-hard-checks`
-- Active atom: none
+- Last completed atom: `impl-0014-phase-1-product-status-view`
+- Active atom: none; next atom is ready to plan
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `6f2eedae2f3443fd`
+- Context pack: `60bbfac1f97862cb`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -23,6 +23,13 @@ This effort is the durable implementation state for delivering
   before verification, then review/verification passed.
 - Atom 13 TDD audit hard checks: all TDD obligations satisfied. GLM implemented
   deterministic PRD-to-TDD cross-link checks; Codex review/verification passed.
+- Atom 14 product status view: all TDD obligations satisfied. GLM implemented
+  the read-only `idiom product status` view, then completed targeted reviewer
+  fixes for validated workflow-state parsing, audit-failure exit behavior, and
+  closeout-stable durable fixture tests. Codex review/verification passed.
+- Atom 15 workflow transition contract: next planned follow-up. It should add
+  pure `internal/productworkflow` transition/next-action contract coverage
+  before broader status/resume behavior is wired into CLI surfaces.
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
@@ -165,5 +172,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 1 schema or deterministic linter atom. Prefer GLM for shared
-parser/validator/CLI edits unless a smaller isolated atom is a good DS4 retry.
+Plan `impl-0015-phase-1-workflow-state-transition-contract` as a pure
+`internal/productworkflow` atom in new transition files. Keep it sequential with
+durable bookkeeping, but its code write set can avoid the shared product CLI and
+validator files touched by Atom 14.

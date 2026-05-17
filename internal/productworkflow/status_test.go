@@ -1,0 +1,344 @@
+package productworkflow
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestLoadProductStatusMissingWorkflowState(t *testing.T) {
+	dir := t.TempDir()
+	view, err := LoadProductStatus(dir, nil)
+	if err == nil {
+		t.Fatal("expected error for missing workflow_state.json")
+	}
+	if view.AuditStatus != "error" {
+		t.Fatalf("expected audit_status error, got %q", view.AuditStatus)
+	}
+	if len(view.Blockers) == 0 {
+		t.Fatal("expected at least one blocker")
+	}
+	if view.Blockers[0].Code != "missing_workflow_state" {
+		t.Fatalf("expected blocker code missing_workflow_state, got %q", view.Blockers[0].Code)
+	}
+}
+
+func TestLoadProductStatusInvalidWorkflowStateJSON(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestFile(t, dir, "workflow_state.json", `{not valid json`)
+	view, err := LoadProductStatus(dir, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid workflow_state.json")
+	}
+	if view.AuditStatus != "error" {
+		t.Fatalf("expected audit_status error, got %q", view.AuditStatus)
+	}
+	if len(view.Blockers) == 0 {
+		t.Fatal("expected at least one blocker")
+	}
+	if view.Blockers[0].Code != "invalid_workflow_state" {
+		t.Fatalf("expected blocker code invalid_workflow_state, got %q", view.Blockers[0].Code)
+	}
+
+	out, marshalErr := json.Marshal(view)
+	if marshalErr != nil {
+		t.Fatalf("error view must be valid JSON: %v", marshalErr)
+	}
+	var parsed map[string]any
+	if jsonErr := json.Unmarshal(out, &parsed); jsonErr != nil {
+		t.Fatalf("error view must round-trip as JSON: %v", jsonErr)
+	}
+}
+
+func TestLoadProductStatusSemanticInvalidWorkflowState(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestFile(t, dir, "workflow_state.json", `{"schema_version":"idiom.product_workflow_state.v0.fixture"}`)
+	view, err := LoadProductStatus(dir, nil)
+	if err == nil {
+		t.Fatal("expected error for semantically invalid workflow_state.json")
+	}
+	if view.AuditStatus != "error" {
+		t.Fatalf("expected audit_status error, got %q", view.AuditStatus)
+	}
+	if len(view.Blockers) == 0 {
+		t.Fatal("expected at least one blocker")
+	}
+	if view.Blockers[0].Code != "invalid_workflow_state" {
+		t.Fatalf("expected blocker code invalid_workflow_state, got %q", view.Blockers[0].Code)
+	}
+	out, marshalErr := json.Marshal(view)
+	if marshalErr != nil {
+		t.Fatalf("error view must be valid JSON: %v", marshalErr)
+	}
+	var parsed map[string]any
+	if jsonErr := json.Unmarshal(out, &parsed); jsonErr != nil {
+		t.Fatalf("error view must round-trip as JSON: %v", jsonErr)
+	}
+	blockers, ok := parsed["blockers"].([]any)
+	if !ok || len(blockers) == 0 {
+		t.Fatal("expected at least one blocker in JSON")
+	}
+	firstBlocker, ok := blockers[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected blocker to be a map")
+	}
+	if firstBlocker["code"] != "invalid_workflow_state" {
+		t.Fatalf("expected blocker code invalid_workflow_state, got %v", firstBlocker["code"])
+	}
+}
+
+func TestLoadProductStatusValidWorkflowState(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestFile(t, dir, "workflow_state.json", statusTestWorkflowStateJSON())
+	view, err := LoadProductStatus(dir, nil)
+	if err != nil {
+		t.Fatalf("expected no error for valid workflow state, got %v", err)
+	}
+	if view.EffortID != "test-effort" {
+		t.Fatalf("expected effort_id test-effort, got %q", view.EffortID)
+	}
+	if view.TaskID != "impl-test" {
+		t.Fatalf("expected task_id impl-test, got %q", view.TaskID)
+	}
+	if view.StatusBucket != "started" {
+		t.Fatalf("expected status_bucket started, got %q", view.StatusBucket)
+	}
+	if view.CurrentPhase != "phase-1" {
+		t.Fatalf("expected current_phase phase-1, got %q", view.CurrentPhase)
+	}
+	if view.CurrentState != "implementing" {
+		t.Fatalf("expected current_state implementing, got %q", view.CurrentState)
+	}
+	if view.ContextPackID != "pack" {
+		t.Fatalf("expected context_pack_id pack, got %q", view.ContextPackID)
+	}
+	if view.FreshnessState != "current" {
+		t.Fatalf("expected freshness_state current, got %q", view.FreshnessState)
+	}
+}
+
+func TestLoadProductStatusWithLintResultPass(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestFile(t, dir, "workflow_state.json", statusTestWorkflowStateJSON())
+	lint := &LintSummaryResult{
+		Status:       "pass",
+		CheckedFiles: []string{"workflow_state.json", "tdd.json"},
+		Findings:     []LintSummaryFinding{},
+	}
+	view, err := LoadProductStatus(dir, lint)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if view.AuditStatus != "pass" {
+		t.Fatalf("expected audit_status pass, got %q", view.AuditStatus)
+	}
+	if view.CheckedFileCount != 2 {
+		t.Fatalf("expected checked_file_count 2, got %d", view.CheckedFileCount)
+	}
+	if len(view.Sections) != 5 {
+		t.Fatalf("expected 5 sections, got %d", len(view.Sections))
+	}
+	for _, sec := range view.Sections {
+		if sec.Status != "pass" {
+			t.Fatalf("expected section %s to pass, got %q", sec.Name, sec.Status)
+		}
+	}
+}
+
+func TestLoadProductStatusWithLintResultFail(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestFile(t, dir, "workflow_state.json", statusTestWorkflowStateJSON())
+	lint := &LintSummaryResult{
+		Status:       "fail",
+		CheckedFiles: []string{"workflow_state.json", "tdd.json"},
+		Findings: []LintSummaryFinding{
+			{Code: "parse_error", Path: "tdd.json", Message: "bad"},
+			{Code: "parse_error", Path: "prd.md", Message: "bad prd"},
+		},
+	}
+	view, err := LoadProductStatus(dir, lint)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if view.AuditStatus != "fail" {
+		t.Fatalf("expected audit_status fail, got %q", view.AuditStatus)
+	}
+	if len(view.Findings) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(view.Findings))
+	}
+	tddSec := findStatusSection(t, view.Sections, "tdd")
+	if tddSec.Status != "fail" {
+		t.Fatalf("expected tdd section fail, got %q", tddSec.Status)
+	}
+	prdSec := findStatusSection(t, view.Sections, "prd")
+	if prdSec.Status != "fail" {
+		t.Fatalf("expected prd section fail, got %q", prdSec.Status)
+	}
+}
+
+func TestLoadProductStatusWithBlockers(t *testing.T) {
+	dir := t.TempDir()
+	ws := `{
+		"schema_version":"idiom.product_workflow_state.v0.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"title":"Test",
+		"status_bucket":"started",
+		"current_phase":"phase-1",
+		"current_state":"blocked",
+		"artifact_paths":{"events":"events.jsonl"},
+		"context":{"context_pack_id":"pack","freshness_state":"stale"},
+		"coverage":{"coverage_tier":"unit"},
+		"privacy":{"redaction_status":"applied"},
+		"folder_path":"docs/test",
+		"durability_level":"source_controlled",
+		"next_valid_actions":["resolve_blocker"],
+		"blockers":["missing_fixture","env_down"]
+	}`
+	writeStatusTestFile(t, dir, "workflow_state.json", ws)
+	view, err := LoadProductStatus(dir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(view.Blockers) != 2 {
+		t.Fatalf("expected 2 blockers, got %d", len(view.Blockers))
+	}
+	if view.Blockers[0].Code != "workflow_blocker" || view.Blockers[1].Code != "workflow_blocker" {
+		t.Fatalf("expected workflow_blocker codes, got %q and %q", view.Blockers[0].Code, view.Blockers[1].Code)
+	}
+}
+
+func TestLoadProductStatusOnDurableFixture(t *testing.T) {
+	root := statusRepoRoot(t)
+	absRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+
+	ws := loadDurableWorkflowState(t)
+	ctx, _ := ws["context"].(map[string]any)
+
+	view, err := LoadProductStatus(absRoot, nil)
+	if err != nil {
+		t.Fatalf("expected no error on durable fixture, got %v", err)
+	}
+	if view.EffortID != ws["effort_id"] {
+		t.Fatalf("expected effort_id %v, got %q", ws["effort_id"], view.EffortID)
+	}
+	if view.TaskID != ws["task_id"] {
+		t.Fatalf("expected task_id %v, got %q", ws["task_id"], view.TaskID)
+	}
+	if view.ContextPackID != ctx["context_pack_id"] {
+		t.Fatalf("expected context_pack_id %v, got %q", ctx["context_pack_id"], view.ContextPackID)
+	}
+	if view.StateRevision < 1 {
+		t.Fatalf("expected positive state_revision, got %d", view.StateRevision)
+	}
+	if view.LastEventID != ws["last_event_id"] {
+		t.Fatalf("expected last_event_id %v, got %q", ws["last_event_id"], view.LastEventID)
+	}
+	wsOO, _ := ws["open_obligations"].([]any)
+	if len(view.OpenObligations) != len(wsOO) {
+		t.Fatalf("expected %d open_obligations (matching workflow_state.json), got %d", len(wsOO), len(view.OpenObligations))
+	}
+	wsNVA, _ := ws["next_valid_actions"].([]any)
+	if len(view.NextValidActions) != len(wsNVA) {
+		t.Fatalf("expected %d next_valid_actions (matching workflow_state.json), got %d", len(wsNVA), len(view.NextValidActions))
+	}
+
+	out, marshalErr := json.Marshal(view)
+	if marshalErr != nil {
+		t.Fatalf("status view must be valid JSON: %v", marshalErr)
+	}
+	var parsed map[string]any
+	if jsonErr := json.Unmarshal(out, &parsed); jsonErr != nil {
+		t.Fatalf("status view must round-trip as JSON: %v", jsonErr)
+	}
+	requiredFields := []string{
+		"audit_status", "effort_root", "effort_id", "task_id",
+		"status_bucket", "current_phase", "current_state",
+		"state_revision", "last_event_id", "context_pack_id",
+		"freshness_state", "checked_file_count", "sections",
+		"blockers", "open_obligations", "next_valid_actions",
+	}
+	for _, field := range requiredFields {
+		if _, ok := parsed[field]; !ok {
+			t.Fatalf("expected field %q in JSON output", field)
+		}
+	}
+}
+
+func findStatusSection(t *testing.T, sections []StatusSection, name string) StatusSection {
+	t.Helper()
+	for _, s := range sections {
+		if s.Name == name {
+			return s
+		}
+	}
+	t.Fatalf("section %q not found", name)
+	return StatusSection{}
+}
+
+func statusRepoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		next := filepath.Dir(dir)
+		if next == dir {
+			t.Fatal("could not find repo root")
+		}
+		dir = next
+	}
+}
+
+func loadDurableWorkflowState(t *testing.T) map[string]any {
+	t.Helper()
+	root := statusRepoRoot(t)
+	wsPath := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow", "workflow_state.json")
+	data, err := os.ReadFile(wsPath)
+	if err != nil {
+		t.Fatalf("failed to read workflow_state.json: %v", err)
+	}
+	var ws map[string]any
+	if err := json.Unmarshal(data, &ws); err != nil {
+		t.Fatalf("failed to parse workflow_state.json: %v", err)
+	}
+	return ws
+}
+
+func writeStatusTestFile(t *testing.T, dir, relPath, content string) {
+	t.Helper()
+	fullPath := filepath.Join(dir, relPath)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(fullPath), err)
+	}
+	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", fullPath, err)
+	}
+}
+
+func statusTestWorkflowStateJSON() string {
+	return `{
+		"schema_version":"idiom.product_workflow_state.v0.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"title":"Test Effort",
+		"status_bucket":"started",
+		"current_phase":"phase-1",
+		"current_state":"implementing",
+		"state_revision":5,
+		"last_event_id":"evt-0042",
+		"artifact_paths":{"events":"events.jsonl"},
+		"context":{"context_pack_id":"pack","freshness_state":"current"},
+		"coverage":{"coverage_tier":"unit"},
+		"privacy":{"redaction_status":"applied"},
+		"folder_path":"docs/test",
+		"durability_level":"source_controlled",
+		"next_valid_actions":["complete"],
+		"open_obligations":["TDD-001"]
+	}`
+}

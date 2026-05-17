@@ -36,6 +36,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductLint(args[1:], stdout, stderr, rec)
 	case "audit":
 		return runProductAudit(args[1:], stdout, stderr, rec)
+	case "status":
+		return runProductStatus(args[1:], stdout, stderr, rec)
 	case "-h", "--help", "help":
 		printProductUsage(stdout)
 		return 0
@@ -50,6 +52,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  idiom product lint --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
+	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -416,23 +419,6 @@ type productAuditResult struct {
 	Findings     []productLintFinding  `json:"findings"`
 }
 
-func classifyAuditSection(relPath string) string {
-	switch {
-	case relPath == "prd.md":
-		return "prd"
-	case relPath == "adrs/index.json" || strings.HasPrefix(relPath, "adrs/"):
-		return "adr"
-	case relPath == "tdd.json":
-		return "tdd"
-	case relPath == "evidence/traceability_matrix.json":
-		return "traceability"
-	case strings.HasPrefix(relPath, "reports/"):
-		return "reports"
-	default:
-		return ""
-	}
-}
-
 func buildAuditResult(lintResult productLintResult) productAuditResult {
 	sectionMap := map[string]*productAuditSection{
 		"prd":          {Name: "prd", Status: "pass"},
@@ -442,7 +428,7 @@ func buildAuditResult(lintResult productLintResult) productAuditResult {
 		"reports":      {Name: "reports", Status: "pass"},
 	}
 	for _, f := range lintResult.Findings {
-		section := classifyAuditSection(f.Path)
+		section := productworkflow.ClassifySection(f.Path)
 		if section == "" {
 			continue
 		}
@@ -523,4 +509,111 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		return 1
 	}
 	return 0
+}
+
+func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product status", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var effortRoot string
+	var jsonOutput bool
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product status: --effort-root is required")
+		return 2
+	}
+	absRoot, err := filepath.Abs(effortRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product status: resolve effort root: %v\n", err)
+		return 2
+	}
+
+	var lintSummary *productworkflow.LintSummaryResult
+	lintResult := lintEffortFolder(absRoot)
+	lintSummary = &productworkflow.LintSummaryResult{
+		Status:       lintResult.Status,
+		CheckedFiles: lintResult.CheckedFiles,
+		Findings:     make([]productworkflow.LintSummaryFinding, len(lintResult.Findings)),
+	}
+	for i, f := range lintResult.Findings {
+		lintSummary.Findings[i] = productworkflow.LintSummaryFinding{
+			Code:    f.Code,
+			Path:    f.Path,
+			Message: f.Message,
+		}
+	}
+
+	view, wsErr := productworkflow.LoadProductStatus(absRoot, lintSummary)
+	exitCode := 0
+	if wsErr != nil {
+		exitCode = 1
+	}
+	if view.AuditStatus != "pass" {
+		exitCode = 1
+	}
+
+	logCLIPhase(rec, "product_status", map[string]any{
+		"audit_status":  view.AuditStatus,
+		"effort_id":     view.EffortID,
+		"current_state": view.CurrentState,
+	})
+
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(view); err != nil {
+			fmt.Fprintf(stderr, "product status: encode JSON: %v\n", err)
+			return 1
+		}
+		return exitCode
+	}
+
+	if wsErr != nil {
+		fmt.Fprintf(stdout, "product status: ERROR %s\n", absRoot)
+		for _, b := range view.Blockers {
+			fmt.Fprintf(stdout, "  [%s] %s\n", b.Code, b.Message)
+		}
+		return exitCode
+	}
+
+	auditLabel := "OK"
+	if view.AuditStatus != "pass" {
+		auditLabel = "FAILED"
+	}
+	fmt.Fprintf(stdout, "product status: %s %s\n", filepath.Base(absRoot), view.EffortID)
+	fmt.Fprintf(stdout, "  state: %s/%s  audit: %s\n", view.CurrentPhase, view.CurrentState, auditLabel)
+	if view.StateRevision > 0 {
+		fmt.Fprintf(stdout, "  revision: %d  last_event: %s\n", view.StateRevision, view.LastEventID)
+	}
+	fmt.Fprintf(stdout, "  context_pack: %s  freshness: %s\n", view.ContextPackID, view.FreshnessState)
+	if len(view.Blockers) > 0 {
+		fmt.Fprintf(stdout, "  blockers (%d):\n", len(view.Blockers))
+		for _, b := range view.Blockers {
+			fmt.Fprintf(stdout, "    [%s] %s\n", b.Code, b.Message)
+		}
+	}
+	if len(view.OpenObligations) > 0 {
+		fmt.Fprintf(stdout, "  open_obligations (%d): %s\n", len(view.OpenObligations), strings.Join(view.OpenObligations, ", "))
+	}
+	if len(view.NextValidActions) > 0 {
+		fmt.Fprintf(stdout, "  next_actions: %s\n", strings.Join(view.NextValidActions, ", "))
+	}
+	if view.CheckedFileCount > 0 {
+		fmt.Fprintf(stdout, "  files_checked: %d\n", view.CheckedFileCount)
+	}
+	for _, sec := range view.Sections {
+		fmt.Fprintf(stdout, "  %s: %s", sec.Name, sec.Status)
+		if sec.FindingCount > 0 {
+			fmt.Fprintf(stdout, " (%d findings)", sec.FindingCount)
+		}
+		fmt.Fprintln(stdout)
+	}
+
+	return exitCode
 }

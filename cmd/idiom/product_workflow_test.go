@@ -1619,6 +1619,188 @@ created_at: 2026-05-17T00:00:00Z
 	}
 }
 
+func TestProductStatusJSONOnDurableFixture(t *testing.T) {
+	root := repoRoot(t)
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+
+	ws := loadDurableFixtureWorkflowState(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected status to pass on durable fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["effort_id"] != ws["effort_id"] {
+		t.Fatalf("expected effort_id %v, got %v", ws["effort_id"], result["effort_id"])
+	}
+	if result["task_id"] != ws["task_id"] {
+		t.Fatalf("expected task_id %v, got %v", ws["task_id"], result["task_id"])
+	}
+	if result["current_state"] != ws["current_state"] {
+		t.Fatalf("expected current_state %v, got %v", ws["current_state"], result["current_state"])
+	}
+	ctx, _ := ws["context"].(map[string]any)
+	if result["context_pack_id"] != ctx["context_pack_id"] {
+		t.Fatalf("expected context_pack_id %v, got %v", ctx["context_pack_id"], result["context_pack_id"])
+	}
+	requiredFields := []string{
+		"audit_status", "effort_root", "effort_id", "task_id",
+		"status_bucket", "current_phase", "current_state",
+		"state_revision", "last_event_id", "context_pack_id",
+		"freshness_state", "checked_file_count", "sections",
+		"blockers", "open_obligations", "next_valid_actions",
+	}
+	for _, field := range requiredFields {
+		if _, ok := result[field]; !ok {
+			t.Fatalf("expected field %q in JSON output", field)
+		}
+	}
+}
+
+func TestProductStatusTextIncludesKeyFields(t *testing.T) {
+	root := repoRoot(t)
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+
+	ws := loadDurableFixtureWorkflowState(t)
+	currentState, _ := ws["current_state"].(string)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", effortRoot}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected status to pass on durable fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{"prd-adr-brief-workflow", currentState, "audit:", "next_actions:"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected text output to contain %q, got:\n%s", want, output)
+		}
+	}
+}
+
+func TestProductStatusMissingWorkflowStateExits1(t *testing.T) {
+	dir := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for missing workflow_state.json, got %d", code)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("JSON output should be valid even on error: %v\n%s", err, stdout.String())
+	}
+	if result["audit_status"] != "error" {
+		t.Fatalf("expected audit_status error, got %v", result["audit_status"])
+	}
+	blockers, ok := result["blockers"].([]any)
+	if !ok || len(blockers) == 0 {
+		t.Fatal("expected at least one blocker")
+	}
+}
+
+func TestProductStatusInvalidWorkflowStateExits1(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", `{not valid json`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for invalid workflow_state.json, got %d", code)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("JSON output must be valid even on parse error: %v\n%s", err, stdout.String())
+	}
+	if result["audit_status"] != "error" {
+		t.Fatalf("expected audit_status error, got %v", result["audit_status"])
+	}
+}
+
+func TestProductStatusSemanticInvalidWorkflowStateExits1(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", `{"schema_version":"idiom.product_workflow_state.v0.fixture"}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for semantically invalid workflow_state.json, got %d", code)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("JSON output must be valid even on validation error: %v\n%s", err, stdout.String())
+	}
+	if result["audit_status"] != "error" {
+		t.Fatalf("expected audit_status error, got %v", result["audit_status"])
+	}
+	blockers, ok := result["blockers"].([]any)
+	if !ok || len(blockers) == 0 {
+		t.Fatal("expected at least one blocker")
+	}
+	firstBlocker, ok := blockers[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected blocker to be a map")
+	}
+	if firstBlocker["code"] != "invalid_workflow_state" {
+		t.Fatalf("expected blocker code invalid_workflow_state, got %v", firstBlocker["code"])
+	}
+}
+
+func TestProductStatusUsageErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected code 2 for missing --effort-root, got %d", code)
+	}
+}
+
+func TestProductStatusHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"-h"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0 for -h, got %d", code)
+	}
+}
+
+func TestProductStatusTelemetryName(t *testing.T) {
+	name := commandTelemetryName([]string{"product", "status", "--effort-root", "."})
+	if name != "product:status" {
+		t.Fatalf("expected telemetry name product:status, got %q", name)
+	}
+}
+
+func TestProductStatusAuditFailReturnsCode1(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{not valid json`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 when audit_status != pass, got %d", code)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("JSON output must be valid even on audit fail: %v\n%s", err, stdout.String())
+	}
+	if result["audit_status"] != "fail" {
+		t.Fatalf("expected audit_status fail, got %v", result["audit_status"])
+	}
+}
+
+func TestProductStatusUsageIncludesStatus(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductMainWithTelemetry([]string{"--help"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0 for help, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "status") {
+		t.Fatalf("expected usage to mention status, got:\n%s", stdout.String())
+	}
+}
+
 func findAuditSection(t *testing.T, result productAuditResult, name string) productAuditSection {
 	t.Helper()
 	for _, sec := range result.Sections {
@@ -1662,6 +1844,21 @@ func repoRoot(t *testing.T) string {
 		}
 		dir = next
 	}
+}
+
+func loadDurableFixtureWorkflowState(t *testing.T) map[string]any {
+	t.Helper()
+	root := repoRoot(t)
+	wsPath := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow", "workflow_state.json")
+	data, err := os.ReadFile(wsPath)
+	if err != nil {
+		t.Fatalf("failed to read workflow_state.json: %v", err)
+	}
+	var ws map[string]any
+	if err := json.Unmarshal(data, &ws); err != nil {
+		t.Fatalf("failed to parse workflow_state.json: %v", err)
+	}
+	return ws
 }
 
 func writeTestFile(t *testing.T, dir, relPath, content string) {

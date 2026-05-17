@@ -1,16 +1,16 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0013-phase-1-tdd-audit-hard-checks",
+  "task_id": "impl-0014-phase-1-product-status-view",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T20:48:00Z",
+  "updated_at": "2026-05-17T20:58:00Z",
   "state_revision": 42,
-  "last_event_id": "evt-0125",
-  "workspace_fingerprint": "idiom@06853ab",
+  "last_event_id": "evt-0132",
+  "workspace_fingerprint": "idiom@pending-impl-0014",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
-  "current_state": "verified",
+  "current_state": "closed",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -26,7 +26,7 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "6f2eedae2f3443fd",
+    "context_pack_id": "60bbfac1f97862cb",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -50,7 +50,7 @@
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 6f2eedae2f3443fd reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to TDD audit hard-check scope."
+        "description": "Context pack 60bbfac1f97862cb reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product status view scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -59,49 +59,49 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "tdd_requirement_coverage_audit",
+        "gate": "product_status_json_view",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       },
       {
-        "gate": "tdd_workflow_known_id_audit",
+        "gate": "product_status_text_view",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       },
       {
-        "gate": "durable_tdd_fixture_passes",
+        "gate": "status_missing_state_blocker",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       },
       {
         "gate": "product_workflow_lint_cli",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       },
       {
         "gate": "focused_go_tests",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       },
       {
         "gate": "full_go_tests",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       },
       {
         "gate": "durable_json_jsonl_validation",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       },
       {
         "gate": "privacy_secret_scan",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       },
       {
         "gate": "diff_whitespace_check",
         "status": "passed",
-        "checked_at": "2026-05-17T20:31:00Z"
+        "checked_at": "2026-05-17T20:58:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -141,12 +141,12 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T20:48:00Z",
+  "last_reconciliation_at": "2026-05-17T20:58:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_next_phase_1_schema_or_deterministic_linter_atom",
-    "parallelize_read_only_investigation_when_possible",
-    "close_effort_if_abandoned"
+    "plan_impl_0015_workflow_state_transition_contract",
+    "track_deferred_parser_hardening_after_do_now_atoms",
+    "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],
   "durability_level": "source_controlled"
 }

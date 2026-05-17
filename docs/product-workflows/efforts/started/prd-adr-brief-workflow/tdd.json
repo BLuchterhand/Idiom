@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0013-phase-1-tdd-audit-hard-checks",
+  "task_id": "impl-0014-phase-1-product-status-view",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,9 +19,10 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "tdd_requirement_coverage_audit",
-      "tdd_workflow_known_id_audit",
-      "durable_tdd_fixture_passes",
+      "atom_planned",
+      "product_status_json_view",
+      "product_status_text_view",
+      "status_missing_state_blocker",
       "product_workflow_lint_cli",
       "focused_go_tests",
       "full_go_tests",
@@ -33,36 +34,36 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0013-001",
-      "type": "audit",
-      "behavior": "Product audit and lint fail closed when a must-priority PRD requirement lists a TDD obligation absent from current or historical workflow TDD IDs.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0013-002",
-      "type": "contract",
-      "behavior": "TDD cross-link validation treats current tdd.json obligations and historical implementation-ledger satisfied obligations as workflow-known TDD IDs.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0013-003",
-      "type": "audit",
-      "behavior": "TDD audit findings are classified under the TDD audit section with deterministic broken_link findings.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0013-004",
+      "id": "TDD-IMPL-0014-001",
       "type": "acceptance",
-      "behavior": "Current durable effort fixture passes both product audit and product lint after TDD hard checks are added.",
+      "behavior": "idiom product status --effort-root <path> --json returns a stable shared status view with effort id, task id, phase, state, audit status, checked file count, section summaries, blockers, open obligations, and next actions.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0014-002",
+      "type": "contract",
+      "behavior": "Product status non-JSON output is deterministic and includes effort id, state, audit status, blockers, and next valid actions.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0014-003",
+      "type": "audit",
+      "behavior": "Product status fails closed with a typed blocker when workflow_state.json is missing or invalid.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0014-004",
+      "type": "acceptance",
+      "behavior": "Current durable effort fixture status command passes and is consistent with product audit/lint.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
