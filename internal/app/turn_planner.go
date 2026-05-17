@@ -331,6 +331,9 @@ func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan) bo
 func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	lower := " " + strings.ToLower(strings.TrimSpace(prompt)) + " "
 	words := plannerWordText(prompt)
+	mentionedPaths := pathparse.MentionedWorkspacePaths(prompt)
+	namedPathWorkIntent := len(mentionedPaths) > 0 && hasNamedWorkspaceTargetWorkIntent(words)
+	namedPathOrEditIntent := namedPathWorkIntent || hasEditIntent(words)
 	switch {
 	case util.ContainsAny(words, " log ", " logs ", " jsonl ", " trace ") && util.ContainsAny(words, " fail ", " failed ", " error ", " why ", " latest ", " recent "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "debug_logs"}, mode)
@@ -361,31 +364,21 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "performance_review"}, mode)
 	case util.ContainsAny(words, " write test ", " add regression test ", " add a test "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "test_authoring"}, mode)
-	case hasWorkOnTargetIntent(words) && len(pathparse.MentionedWorkspacePaths(prompt)) > 0:
+	case util.ContainsAny(words, " readme ", " docs ", " documentation ", " doc ") && (namedPathOrEditIntent || util.ContainsAny(words, " write ", " writing ")):
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
+	case util.ContainsAny(lower, " config ", ".json", ".yaml", ".toml") && namedPathOrEditIntent:
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "config_edit"}, mode)
+	case strings.Contains(lower, ".gd") && namedPathOrEditIntent:
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "gdscript_edit"}, mode)
+	case util.ContainsAny(lower, " script ", ".sh", " shell ") && namedPathOrEditIntent:
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "script_edit"}, mode)
+	case util.ContainsAny(lower, " prompt ", " prompts ") && namedPathOrEditIntent:
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "prompt_edit_security"}, mode)
+	case namedPathWorkIntent:
 		if routeNamedWorkspaceTargetAsDocsEdit(prompt, words) {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
-	case util.ContainsAny(words, " readme ", " docs ", " documentation ", " doc "):
-		if util.ContainsAny(words, " update ", " add ", " edit ", " write ", " change ") {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
-		}
-	case util.ContainsAny(lower, " config ", ".json", ".yaml", ".toml"):
-		if util.ContainsAny(words, " update ", " edit ", " change ", " add ") {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "config_edit"}, mode)
-		}
-	case strings.Contains(lower, ".gd"):
-		if util.ContainsAny(words, " update ", " edit ", " change ", " add ", " fix ", " remove ", " delete ", " rename ", " replace ") {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "gdscript_edit"}, mode)
-		}
-	case util.ContainsAny(lower, " script ", ".sh", " shell "):
-		if util.ContainsAny(words, " update ", " edit ", " change ", " add ", " fix ") {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "script_edit"}, mode)
-		}
-	case util.ContainsAny(lower, " prompt ", " prompts "):
-		if util.ContainsAny(words, " update ", " edit ", " change ", " add ", " fix ") {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "prompt_edit_security"}, mode)
-		}
 	case hasEditIntent(words):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
 	}
@@ -493,19 +486,33 @@ func isExplanationOnlyCodeQuestion(words string) bool {
 func hasEditIntent(words string) bool {
 	return util.ContainsAny(words,
 		" fix ",
+		" fixing ",
 		" change ",
+		" changing ",
 		" update ",
+		" updating ",
 		" edit ",
+		" editing ",
 		" modify ",
+		" modifying ",
 		" add ",
+		" adding ",
 		" remove ",
+		" removing ",
 		" delete ",
+		" deleting ",
 		" implement ",
+		" implementing ",
 		" refactor ",
+		" refactoring ",
 		" rename ",
+		" renaming ",
 		" replace ",
+		" replacing ",
 		" create ",
+		" creating ",
 		" patch ",
+		" patching ",
 	)
 }
 
@@ -513,11 +520,41 @@ func hasWorkOnTargetIntent(words string) bool {
 	return util.ContainsAny(words,
 		" start working on ",
 		" start work on ",
+		" start implementing ",
 		" begin working on ",
 		" begin work on ",
+		" begin implementing ",
 		" get started on ",
 		" work on ",
 		" working on ",
+		" implement ",
+		" implementing ",
+	)
+}
+
+func hasNamedWorkspaceTargetWorkIntent(words string) bool {
+	if hasWorkOnTargetIntent(words) {
+		return true
+	}
+	return util.ContainsAny(words,
+		" start ",
+		" begin ",
+		" started ",
+		" work ",
+		" working ",
+		" woring ",
+		" implement ",
+		" implementing ",
+		" update ",
+		" edit ",
+		" change ",
+		" fix ",
+		" add ",
+		" create ",
+	) && util.ContainsAny(words,
+		" on ",
+		" in ",
+		" to ",
 	)
 }
 

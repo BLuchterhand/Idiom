@@ -1400,12 +1400,12 @@ func (r *Runner) Run(
 			default:
 				result = r.Workspace.Execute(ctx, req)
 			}
-			// Convert "file not found" errors on required_edit_paths
+			// Convert "file not found" probes on required_edit_paths
 			// into an actionable nudge that points the planner at the
 			// whole-file shape on submit_plan. Without this rewrite,
 			// the planner treats absent new-file paths as a blocker
 			// and gives up. See harness fix #7.
-			result = rewriteReadFileForPlannedNewFile(req, result, r.RuntimeBrief)
+			result = rewriteMissingRequiredNewFileProbe(req, result, r.RuntimeBrief)
 		}
 		recorder.activeToolCall = activeToolCall
 		recorder.recordWithOptions(stepNumber, req, result, "tool_result", runnerRecordOptions{
@@ -3956,6 +3956,9 @@ func closurePromptInvalidActions(scope string) []string {
 }
 
 func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
+	if result, rejected := r.unexecutedToolRequestCompletionRejection(reply); rejected {
+		return result, true
+	}
 	ledgerOwnedByMutationContract := r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) && len(r.RuntimeBrief.RequiredEditPaths) > 0
 	if !ledgerOwnedByMutationContract && taskLedger != nil {
 		if result, rejected := taskLedger.completionRejection(reply); rejected {
@@ -3993,6 +3996,147 @@ func (r *Runner) completionGateRejection(reply string, results []workspace.ToolR
 		Summary: summary,
 		Error:   errorText,
 	}, true
+}
+
+func (r *Runner) unexecutedToolRequestCompletionRejection(reply string) (workspace.ToolResult, bool) {
+	if !looksLikeUnexecutedToolRequestAnswer(reply) {
+		return workspace.ToolResult{}, false
+	}
+	return workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Unexecuted tool request rejected as final answer",
+		Error: strings.Join([]string{
+			"the reply is a workspace-tool request payload, not a final answer.",
+			"If a workspace lookup is needed, issue it as a parser-readable tool call with the `tool` field and wait for the result.",
+			"If no lookup is needed, answer the user in normal prose.",
+			"Do not stop with raw JSON.",
+		}, " "),
+	}, true
+}
+
+func looksLikeUnexecutedToolRequestAnswer(reply string) bool {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return false
+	}
+	start, end, ok := firstToolRequestShapedJSONObjectSpan(trimmed)
+	if !ok {
+		return false
+	}
+	outside := strings.TrimSpace(trimmed[:start] + "\n" + trimmed[end:])
+	outside = strings.Trim(outside, "` \t\r\n:")
+	if outside == "" {
+		return true
+	}
+	fields := strings.Fields(outside)
+	if len(fields) > 24 {
+		return false
+	}
+	lower := " " + strings.ToLower(outside) + " "
+	if util.ContainsAny(lower,
+		" let me ",
+		" i will ",
+		" i'll ",
+		" start by ",
+		" first ",
+		" understanding ",
+		" locating ",
+		" inspect ",
+		" checking ",
+		" call ",
+		" calling ",
+		" use ",
+	) {
+		return true
+	}
+	return false
+}
+
+func firstToolRequestShapedJSONObjectSpan(text string) (int, int, bool) {
+	for searchFrom := 0; searchFrom < len(text); {
+		relativeStart := strings.IndexByte(text[searchFrom:], '{')
+		if relativeStart < 0 {
+			return 0, 0, false
+		}
+		start := searchFrom + relativeStart
+		object, end, ok := extractJSONObjectAt(text, start)
+		if !ok {
+			return 0, 0, false
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(object), &fields); err == nil && toolRequestShapedJSONFields(fields) {
+			return start, end, true
+		}
+		searchFrom = start + 1
+	}
+	return 0, 0, false
+}
+
+func extractJSONObjectAt(text string, start int) (string, int, bool) {
+	if start < 0 || start >= len(text) || text[start] != '{' {
+		return "", 0, false
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case escaped:
+			escaped = false
+		case c == '\\' && inString:
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case !inString && c == '{':
+			depth++
+		case !inString && c == '}':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(text[start : i+1]), i + 1, true
+			}
+		}
+	}
+	return "", 0, false
+}
+
+func toolRequestShapedJSONFields(fields map[string]json.RawMessage) bool {
+	has := func(keys ...string) bool {
+		for _, key := range keys {
+			if _, ok := fields[key]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	if has("tool") {
+		return true
+	}
+	if has("task") && has("mode", "limit", "budget_tokens", "required_tests", "required_edit_paths", "forbidden_paths", "scope", "path") {
+		return true
+	}
+	if has("query") && has("resolution", "limit", "mode", "path", "language") {
+		return true
+	}
+	if has("command") && has("workdir", "timeout_ms", "yield_time_ms", "sandbox_permissions", "justification") {
+		return true
+	}
+	if has("agent") && has("message", "task", "items") {
+		return true
+	}
+	if has("todos") && has("task_id", "items") {
+		return true
+	}
+	if has("path") && has("old_text", "new_text", "replace_all") {
+		return true
+	}
+	if has("path") && has("start_line", "end_line", "pattern", "glob", "language", "content", "recursive", "include_source", "include_files", "refresh", "freshness_policy", "handle", "symbol") {
+		return true
+	}
+	if has("pattern") && has("path", "glob") {
+		return true
+	}
+	return false
 }
 
 func syntheticLegacyToolCall(step int, req workspace.ToolRequest, raw string) llama.ToolCall {
@@ -7373,6 +7517,8 @@ func (r *Runner) finalAnswerBlockerErrorText(reason string, answer string, resul
 		return base
 	case "user_visible_blocker":
 		return "the final answer was a <<QUESTION>>: blocker; surface the path-specific blocker reason for each unfinished required edit path."
+	case "unexecuted_tool_request_final_answer":
+		return "the final answer was an unexecuted workspace-tool request payload. Issue the lookup as a parser-readable tool call with the `tool` field, or answer in normal prose from the available evidence."
 	default:
 		return "the final answer did not satisfy the active blocker check; continue with concrete writes or a per-path blocker reason."
 	}
@@ -7391,6 +7537,9 @@ func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolR
 	}
 	if r != nil && r.planThenExecutePlannerPhase() && r.planThenExecuteSourceSatisfiedAnswerCovers(answer, results) {
 		return "", ""
+	}
+	if looksLikeUnexecutedToolRequestAnswer(answer) {
+		return "unexecuted_tool_request_final_answer", "unexecuted_tool_request_final_answer"
 	}
 	if r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) {
 		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
@@ -9089,22 +9238,22 @@ func isMissingPathListFailure(req workspace.ToolRequest, result workspace.ToolRe
 	return strings.Contains(errText, "no such file or directory") || strings.Contains(errText, "cannot find the path")
 }
 
-// rewriteReadFileForPlannedNewFile converts a "file not found" error
-// on a read_file targeting a required_edit_path into an actionable
-// nudge: the planner can create that file via submit_plan's whole-
-// file shape (replace_all=true with empty old_text + new_text=full
-// body). Without this rewrite the planner sees the bare "no such
-// file" error, treats it as a blocker, and gives up — exactly the
-// failure mode local Qwen hit on every Phase 7.1 dispatch attempt.
+// rewriteMissingRequiredNewFileProbe converts a "file not found" error
+// on a probe targeting a required_edit_path, or a missing parent dir of
+// required_edit_paths, into an actionable nudge: the planner can create
+// those files via submit_plan's whole-file shape (replace_all=true with
+// empty old_text + new_text=full body). Without this rewrite the planner
+// sees the bare "no such file" error, treats it as a blocker, and gives
+// up. That is the failure mode local Qwen hit on plan-execute dispatch.
 //
 // The rewrite preserves the result as an Error (so the planner can't
-// use it as evidence of an actual file body) but replaces the
-// message with one that names the right next step. We intentionally
-// do NOT convert to a successful no-op: a successful read of a
-// non-existent file would leak into downstream "did the planner read
-// this path" heuristics in misleading ways.
-func rewriteReadFileForPlannedNewFile(req workspace.ToolRequest, result workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) workspace.ToolResult {
-	if strings.TrimSpace(req.Tool) != "read_file" {
+// use it as evidence of an actual file body) but replaces the message
+// with one that names the right next step. We intentionally do NOT
+// convert to a successful no-op: a successful probe of a non-existent
+// path would leak into downstream "did the planner read this path"
+// heuristics in misleading ways.
+func rewriteMissingRequiredNewFileProbe(req workspace.ToolRequest, result workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) workspace.ToolResult {
+	if !missingRequiredNewFileProbeTool(req.Tool) {
 		return result
 	}
 	if strings.TrimSpace(result.Error) == "" {
@@ -9118,14 +9267,55 @@ func rewriteReadFileForPlannedNewFile(req workspace.ToolRequest, result workspac
 	if target == "" {
 		return result
 	}
-	for _, p := range brief.RequiredEditPaths {
-		if normalizeRunnerPath(p) == target {
-			result.Summary = "Required new-file path does not exist yet"
-			result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to read it. In submit_plan, include this edit shape: {\"path\":%q, \"replace_all\": true, \"old_text\": \"\", \"new_text\": \"<full file body>\", \"purpose\": \"...\"}. The brief must provide the full file body or an explicit replacement edit shape for missing source/test paths; if that evidence is absent, answer with <<QUESTION>> naming the missing body evidence. Large bodies are moved to artifact refs after submission.", target, target)
-			return result
+	matches := requiredNewFileProbeMatches(target, brief.RequiredEditPaths)
+	if len(matches) == 0 {
+		return result
+	}
+	if len(matches) == 1 && normalizeRunnerPath(matches[0]) == target {
+		result.Summary = "Required new-file path does not exist yet"
+		result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to inspect it. In submit_plan, include this edit shape: {\"path\":%q, \"replace_all\": true, \"old_text\": \"\", \"new_text\": \"<full file body>\", \"purpose\": \"...\"}. The brief must provide the full file body or an explicit replacement edit shape for missing source/test paths; if that evidence is absent, answer with <<QUESTION>> naming the missing body evidence. Large bodies are moved to artifact refs after submission.", target, target)
+		return result
+	}
+	result.Summary = "Required new-file directory does not exist yet"
+	result.Error = fmt.Sprintf("path %q is a missing parent for required_edit_paths: %s. These are NEW FILES you must create. Do NOT keep trying to inspect the missing directory. In submit_plan, include one replace_all edit per required new-file path with empty old_text and a full new_text body. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming that missing body evidence.", target, quotedRunnerStrings(matches))
+	return result
+}
+
+func missingRequiredNewFileProbeTool(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if tool == "read_file" || tool == "list_files" {
+		return true
+	}
+	return strings.HasSuffix(tool, "_file_outline")
+}
+
+func requiredNewFileProbeMatches(target string, requiredPaths []string) []string {
+	target = strings.Trim(strings.TrimSpace(normalizeRunnerPath(target)), "/")
+	if target == "" {
+		return nil
+	}
+	var matches []string
+	for _, p := range requiredPaths {
+		path := strings.Trim(strings.TrimSpace(normalizeRunnerPath(p)), "/")
+		if path == "" {
+			continue
+		}
+		if path == target || strings.HasPrefix(path, target+"/") || filepath.Dir(path) == target {
+			matches = appendUniqueRunnerStrings(matches, path)
 		}
 	}
-	return result
+	return matches
+}
+
+func appendUniqueRunnerStrings(values []string, additions ...string) []string {
+	for _, value := range additions {
+		value = strings.TrimSpace(value)
+		if value == "" || slices.Contains(values, value) {
+			continue
+		}
+		values = append(values, value)
+	}
+	return values
 }
 
 func changedPathsFromToolResults(results []workspace.ToolResult) map[string]struct{} {

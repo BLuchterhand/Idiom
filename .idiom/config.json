@@ -17,9 +17,9 @@
     "debug_log_mode": "redacted",
     "system_prompt": "",
     "system_prompt_files": [
-      "prompts/base.md"
+      "../prompts/base.md"
     ],
-    "profiles_dir": "prompts/profiles",
+    "profiles_dir": "../prompts/profiles",
     "default_profiles": ["coding"],
     "project_root": "",
     "project_prompt_files": [],

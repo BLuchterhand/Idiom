@@ -220,8 +220,10 @@ func looksLikeMarkdownHeading(line string) bool {
 // preamble. The markers are not present in non-lane prompts, so the
 // scan-everything fallback preserves behavior for chat / direct API.
 const (
-	briefBodyStartMarker = "<!-- IDIOM:BRIEF-BODY-START -->"
-	briefBodyEndMarker   = "<!-- IDIOM:BRIEF-BODY-END -->"
+	BriefBodyStartMarker = "<!-- IDIOM:BRIEF-BODY-START -->"
+	BriefBodyEndMarker   = "<!-- IDIOM:BRIEF-BODY-END -->"
+	briefBodyStartMarker = BriefBodyStartMarker
+	briefBodyEndMarker   = BriefBodyEndMarker
 )
 
 // ScopeToBriefBody returns the substring between the brief-body
@@ -241,6 +243,10 @@ func ScopeToBriefBody(text string) string {
 		return text
 	}
 	return text[bodyStart : bodyStart+end]
+}
+
+func WrapBriefBody(text string) string {
+	return BriefBodyStartMarker + "\n" + strings.TrimSpace(text) + "\n" + BriefBodyEndMarker
 }
 
 func MentionedWorkspacePaths(text string) []string {

@@ -786,6 +786,33 @@ func TestBriefLintAllowsAcceptanceCommandForDeclaredNewFileTarget(t *testing.T) 
 	}
 }
 
+func TestBriefLintAllowsAcceptanceCommandForDeclaredNewFilePackageDir(t *testing.T) {
+	script := briefPreflightTestDeps(t)
+	ws := makeWorkspace(t, map[string]string{})
+	brief := writeLintBrief(t, ws, withCanonicalSections("# Brief\n\n"+
+		"Routing: idiom plan-execute\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `internal/writerroute/decision.go` | NEW FILE: add writer route package. |\n\n"+
+		"## Verified Current State\n\n"+
+		"- `internal/writerroute/decision.go` is a new package file.\n\n"+
+		"## Required Behavior\n\n"+
+		"Create `internal/writerroute/decision.go` with an explicit replacement shape:\n\n"+
+		"```text\n"+
+		"{\"path\":\"internal/writerroute/decision.go\",\"replace_all\":true,\"old_text\":\"\",\"new_text\":\"package writerroute\\n\\nconst SchemaVersion = \\\"idiom.writer_route.v1\\\"\\n\",\"purpose\":\"Create the new writer route decision package.\"}\n"+
+		"```\n\n"+
+		"## Acceptance\n\n"+
+		"- `go test ./internal/writerroute`\n"))
+	exit, out := runPreflight(t, script, brief, ws)
+	if exit != 0 {
+		t.Fatalf("expected OK when command references declared new-file package dir, got exit=%d output=%s", exit, out)
+	}
+	if strings.Contains(out, "acceptance command references missing path") {
+		t.Fatalf("new-file package dir should satisfy command-path validation: %s", out)
+	}
+}
+
 func TestBriefLintIgnoresAbsoluteAcceptanceCommandPath(t *testing.T) {
 	script := briefPreflightTestDeps(t)
 	ws := makeWorkspace(t, map[string]string{

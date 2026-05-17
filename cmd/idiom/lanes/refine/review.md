@@ -1,11 +1,18 @@
-# META — Review brief (refine loop)
+# META - Review brief (refine loop)
 
-Expected path: call `write_file` to create `{{REVIEW_PATH}}` with a
-review of the drafted brief. **Read the brief ONCE, then write the
-review.** If the drafted brief is unreadable or too incomplete to
-review, stop with the specific `<<QUESTION>>:` blocker. The file IS
-the deliverable — a final-answer text containing the review WILL be
-rejected.
+Expected path: artifact output `{{REVIEW_PATH}}`.
+
+Artifact output path: `{{REVIEW_PATH}}`.
+
+Review the drafted brief and return the filled review as your final
+answer. Idiom writes that final answer to the artifact output path. If
+the drafted brief is unreadable or too incomplete to review, return the
+specific `<<QUESTION>>:` blocker instead of guesswork.
+
+## Artifact Output
+
+Path: `{{REVIEW_PATH}}`
+Contract: final-answer artifact; no tool calls, no file edits, no shell commands.
 
 ## Pre-loaded lint findings
 
@@ -19,13 +26,16 @@ section with a one-sentence rationale per warning).
 {{LINT_OUTPUT}}
 ```
 
-## Required reads (exactly 1)
+## Pre-loaded drafted brief
 
-1. Drafted brief: `{{DRAFT_PATH}}` (full read).
+Path: `{{DRAFT_PATH}}`
+
+{{DRAFT_BODY}}
 
 ## Review evidence discipline
 
-- **One `read_file`** of the drafted brief is required.
+- Use the pre-loaded drafted brief and lint output above as the complete
+  review evidence.
 - Do not perform source reads, discovery queries, broad orientation, or
   lookup repair from this scratchpad review phase.
 - Judge the draft from the drafted brief plus the pre-loaded lint output.
@@ -36,21 +46,14 @@ section with a one-sentence rationale per warning).
   pending:` note is not a bug by itself when the brief still gives a
   concrete edit shape and names the exact in-scope path/fact the
   implementation lane must confirm with one narrow read or discovery call.
-- After the required read, write the review. Stop with `<<QUESTION>>:`
-  only if the drafted brief is unreadable or too incomplete to review.
+- Return the review artifact. Stop with `<<QUESTION>>:` only if the
+  drafted brief is unreadable or too incomplete to review.
 
-## Required steps (in order)
-
-1. **Read** `{{DRAFT_PATH}}` (the drafted brief; full read).
-2. **`write_file`** to `{{REVIEW_PATH}}` with the content described
-   in "Write `{{REVIEW_PATH}}` with this exact shape" below.
-3. Single-sentence final answer ("Done. Review at `{{REVIEW_PATH}}`.").
-
-## Write `{{REVIEW_PATH}}` with this exact shape
+## Return `{{REVIEW_PATH}}` With This Exact Shape
 
 Replace each `<bracket placeholder>` with your text. Keep the
 section headings exactly as shown. If you find zero bugs, still
-emit the file with "Bugs found: none" and verdict "ship-as-is".
+emit the review with "Bugs found: none" and verdict "ship-as-is".
 
 ```text
 # Review of brief
@@ -81,9 +84,9 @@ phase consumes both this section and "Bugs found" as edit targets.>
 found" is empty AND (b) "Lint findings" contains no BLOCK entries.
 Any BLOCK forces at least `fix-bugs-then-ship`.
 
-## What to check (from the brief alone)
+## What To Check From The Brief Alone
 
-These bugs are detectable from the brief's own content — no source
+These bugs are detectable from the brief's own content, no source
 reads needed:
 
 - **Unfilled placeholders**: bracket tokens like `<short title>`,
@@ -105,7 +108,7 @@ reads needed:
 - **Self-contradictory**: the Problem says one thing and the
   Required Behavior does something different.
 
-## What to record as uncertainty
+## What To Record As Uncertainty
 
 These should be recorded in the review rather than checked through
 source discovery:
@@ -130,33 +133,18 @@ concrete write shape, requires a source path outside Files To Modify, or
 contradicts evidence already present in the draft/lint packet.
 
 If you don't have a specific reason to doubt an anchor, skip the caveat
-and write the review now.
+and return the review now.
 
-## Files To Modify
+## Artifact Closeout
 
-| File | Change |
-|------|--------|
-| `{{REVIEW_PATH}}` | NEW FILE: review of the drafted brief |
+If the drafted brief is unreadable, surface `<<QUESTION>>:` with the
+specific blocker. Otherwise, return only the filled-in review from
+"Return `{{REVIEW_PATH}}` With This Exact Shape" above, with every
+`<bracket>` replaced.
 
-## STOP AND WRITE NOW
-
-After the required read, write the review with:
-
-- `path`: `{{REVIEW_PATH}}`
-- `content`: the filled-in review from "Write `{{REVIEW_PATH}}` with
-  this exact shape" above, with every `<bracket>` replaced.
-
-Do NOT continue reading after the required draft read.
-Do NOT put the review content into a final-answer text — the gate
-will reject it. The deliverable IS the file. After `write_file`
-returns success, give the single-sentence final answer and stop.
-
-If you genuinely cannot write a review (e.g., the brief is
-unreadable), surface `<<QUESTION>>:` with the specific blocker —
-do NOT just stop or summarize without writing.
+Do not call tools, do not edit files, do not run shell commands, and do
+not wrap the review in an outer code fence.
 
 ## Completion
 
-The successful `write_file` result is the completion proof. Do not run
-`test -f`, `git diff`, `shell`, or any other follow-up check for this
-scratchpad file.
+The artifact command writing `{{REVIEW_PATH}}` is the completion proof.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -5885,6 +5886,76 @@ func TestRunnerEmitsBudgetLedgerForModelFinal(t *testing.T) {
 	}
 	if ledger.PromptTokens != 11 || ledger.CompletionTokens != 4 || ledger.TotalTokens != 15 {
 		t.Fatalf("expected token usage in budget ledger, got %#v", ledger)
+	}
+}
+
+func TestRunnerRejectsUnexecutedToolJSONAsFinalAnswer(t *testing.T) {
+	var requests int
+	var secondRequest string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if requests == 2 {
+			secondRequest = string(body)
+		}
+		reply := "The implementation needs to be rerouted; no workspace lookup has run."
+		if requests == 1 {
+			reply = "Let me start by understanding the task and locating the relevant code.\n\n" +
+				`{"task":"implement docs/writer-route-decision-report-only-plan.md","mode":"plan","limit":12}`
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: t.TempDir(),
+			CWD:  ".",
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "direct_answer",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "read_file", "search_content"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+	}
+
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "start implementing docs/writer-route-decision-report-only-plan.md"}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected retry after tool-shaped final answer rejection, got %d request(s)", requests)
+	}
+	if strings.Contains(answer, `"task":"implement docs/writer-route-decision-report-only-plan.md"`) {
+		t.Fatalf("runner accepted raw tool-shaped JSON as final answer: %q", answer)
+	}
+	if !strings.Contains(secondRequest, "Unexecuted tool request rejected as final answer") {
+		t.Fatalf("retry request did not include completion-gate rejection context:\n%s", secondRequest)
+	}
+}
+
+func TestUnexecutedToolJSONDetectionDoesNotRejectGenericJSON(t *testing.T) {
+	for _, reply := range []string{
+		`{"items":["one","two"]}`,
+		`{"command":"make build"}`,
+		`{"prompt":"Summarize this file"}`,
+	} {
+		if looksLikeUnexecutedToolRequestAnswer(reply) {
+			t.Fatalf("generic JSON should not be treated as an unexecuted tool request: %s", reply)
+		}
+	}
+	if !looksLikeUnexecutedToolRequestAnswer(`{"task":"implement docs/writer-route-decision-report-only-plan.md","mode":"plan","limit":12}`) {
+		t.Fatalf("context_pack-shaped JSON should still be rejected as an unexecuted tool request")
 	}
 }
 

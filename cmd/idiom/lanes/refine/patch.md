@@ -1,34 +1,48 @@
-# META — Patch brief (refine loop)
+# META - Patch brief (refine loop)
 
-Expected path: call `write_file` to create `{{NEW_DRAFT_PATH}}` with
-the previous draft modified to fix every bug AND every lint BLOCK,
-unless the two required inputs make a corrected draft impossible. Read
-the two required inputs, apply the fixes, write the result. If the
-corrected draft is impossible, stop with the specific `<<QUESTION>>:`
-blocker instead of writing guesswork.
+Expected path: artifact output `{{NEW_DRAFT_PATH}}`.
 
-## Pre-loaded lint findings (from previous draft)
+Artifact output path: `{{NEW_DRAFT_PATH}}`.
 
-The refine wrapper captured `idiom brief lint` output on the
-previous draft. Each BLOCK below is a required edit target — treat
-on equal footing with reviewer bugs. Each WARN is a recommended
-target unless the review explicitly waived it with rationale.
+Return a full corrected replacement draft as your final answer. Idiom
+writes that final answer to the artifact output path. Use the
+pre-loaded previous draft, review, lint output, and source evidence
+below. If a corrected draft is impossible, return the specific
+`<<QUESTION>>:` blocker instead of guesswork.
+
+## Artifact Output
+
+Path: `{{NEW_DRAFT_PATH}}`
+Contract: final-answer artifact; no tool calls, no file edits, no shell commands.
+
+## Pre-loaded lint findings from previous draft
+
+The refine wrapper captured `idiom brief lint` output on the previous
+draft. Each BLOCK below is a required edit target, treat on equal
+footing with reviewer bugs. Each WARN is a recommended target unless
+the review explicitly waived it with rationale.
 
 ```text
 {{LINT_OUTPUT}}
 ```
 
-## Required reads (exactly 2)
+## Pre-loaded previous draft
 
-1. Previous draft: `{{PREV_DRAFT_PATH}}` (full read).
-2. Review with bug list: `{{PREV_REVIEW_PATH}}` (full read).
+Path: `{{PREV_DRAFT_PATH}}`
 
-## Primary evidence paths (read-only)
+{{PREV_DRAFT_BODY}}
+
+## Pre-loaded review with bug list
+
+Path: `{{PREV_REVIEW_PATH}}`
+
+{{PREV_REVIEW_BODY}}
+
+## Primary evidence paths
 
 The paths below are the source paths the wrapper extracted from the
-spec or previous draft. They are the primary evidence paths and they
-remain read-only here: do not modify them from this scratchpad patch
-phase.
+spec or previous draft. They are read-only evidence for this scratchpad
+patch phase. Do not modify them from this phase.
 
 If a reviewer bug, lint finding, or symbol question requires a source
 path outside this list, treat that as missing scope evidence for the
@@ -42,7 +56,7 @@ draft. Do not inspect the outside path from this phase; write a
 The wrapper extracted compact exact-line evidence from the primary
 evidence paths using identifiers already named in the draft, review,
 and lint findings. Treat these as usable anchors. If they resolve the
-review/lint gaps, write the corrected draft now instead of re-reading
+review/lint gaps, return the corrected draft now instead of re-reading
 the same source facts.
 
 {{SOURCE_EVIDENCE}}
@@ -50,27 +64,25 @@ the same source facts.
 ## Source evidence closure
 
 This patch phase is a scratchpad writer phase, not a source discovery
-phase. After the two required scratchpad reads, write the corrected
-draft from the previous draft, review, lint output, and pre-loaded
-source evidence above.
+phase. Use the pre-loaded scratchpad and source evidence above to write
+the corrected draft.
 
 If a reviewer bug or lint BLOCK names a source fact that is not present
-in the draft or pre-loaded evidence — for example a missing old_text
+in the draft or pre-loaded evidence, for example a missing old_text
 anchor, function signature, enum value, type owner, or duplicate-test
-name check — do not reopen source discovery here. Record the remaining
+name check, do not reopen source discovery here. Record the remaining
 uncertainty in the corrected draft as `Source verification pending:` or
 add a `## Scope Correction Required` section naming the missing path or
 fact. Stop with `<<QUESTION>>:` only when the missing fact makes the
 corrected draft impossible to write even with that uncertainty recorded.
 
-## What to write
+## What To Return
 
-Take the previous draft and apply **both** (a) every fix listed in
-the review's "Bugs found" section AND (b) every BLOCK in the
-pre-loaded lint findings above. Preserve everything else from the
-previous draft — sections, anchors, OK content, structure. The
-output is the FULL corrected brief (not a diff), ready for
-re-review.
+Take the previous draft and apply both (a) every fix listed in the
+review's "Bugs found" section and (b) every BLOCK in the pre-loaded lint
+findings above. Preserve everything else from the previous draft:
+sections, anchors, OK content, and structure. The output is the full
+corrected brief, not a diff, ready for re-review.
 
 For each reviewer bug:
 - Read the bug's "how to fix" text in the review.
@@ -82,48 +94,25 @@ For each lint BLOCK:
 - Edit the draft to resolve it.
 
 If a fix is unclear, contradictory, or depends on a write path outside
-the brief's scope, surface `<<QUESTION>>:` with the specific gap — do
-NOT guess.
+the brief's scope, surface `<<QUESTION>>:` with the specific gap. Do
+not guess.
 
-Do NOT introduce new bugs not flagged by the review or lint (no
-"while you're at it" refactors).
+Do not introduce new bugs not flagged by the review or lint.
 
-## Required Edits
-
-Create `{{NEW_DRAFT_PATH}}` as a full corrected replacement draft.
-Do not modify the primary evidence paths. They exist only to supply exact
-anchors for the scratchpad draft.
-
-## Format constraints
+## Format Constraints
 
 - Same as the draft step: no outer ``` fence around the whole brief,
   use ` ```text ` for any inlined code (not ` ```go ` / etc.).
 - Preserve the brief's H1 title and section headings verbatim from
   the previous draft.
 
-## Files To Modify
+## Artifact Closeout
 
-| File | Change |
-|------|--------|
-| `{{NEW_DRAFT_PATH}}` | NEW FILE: corrected brief addressing review feedback |
-
-## STOP AND WRITE NOW
-
-Write the corrected draft after the two required reads. Do not perform
-source reads, discovery queries, broad orientation, dependency graphs,
-history, or lookup repair from this scratchpad phase. Write with:
-
-- `path`: `{{NEW_DRAFT_PATH}}`
-- `content`: the full corrected brief (previous draft body + all
-  review-flagged fixes applied).
-
-Do not put the corrected brief in a chat message — it goes inside
-`write_file`'s `content` argument. After `write_file` returns success,
-give a single-sentence final answer ("Done. Brief at
-`{{NEW_DRAFT_PATH}}`.") and stop.
+Return only the full corrected brief. Do not put a diff, summary, or
+tool request in the answer. Do not call tools, do not edit files, do
+not run shell commands, and do not wrap the brief in an outer code
+fence.
 
 ## Completion
 
-The successful `write_file` result is the completion proof. Do not run
-`test -f`, `git diff`, `shell`, or any other follow-up check for this
-scratchpad file.
+The artifact command writing `{{NEW_DRAFT_PATH}}` is the completion proof.

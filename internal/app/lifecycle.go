@@ -734,7 +734,7 @@ func toolRequestTraceTarget(req workspace.ToolRequest) string {
 // already been folded into m.runner.MaxToolSteps.
 func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama.ChatMessage, opts llama.ChatOptions, plan promptExecutionPlan) (string, error) {
 	mode := m.currentMode()
-	if shouldDispatchImplementationToPlanExecute(plan, mode, m.cfg) {
+	if shouldDispatchImplementationToPlanExecute(plan, mode, m.cfg, prompt) {
 		return m.runImplementationViaPlanExecute(ctx, prompt, plan)
 	}
 	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)

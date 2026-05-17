@@ -161,13 +161,15 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 		"# Plan-then-execute (planner phase)",
 		"",
 		"The plan-submission capability must cover every brief-required edit once; when no required path list is present, use the objective and candidate/target refs to assemble a bounded real edit plan. The executor dispatches the submitted edits after you stop.",
+		"Treat the brief body and any preloaded Context Pack below as the planner target packet.",
 		"",
 		"1. Per-edit write capabilities are blocked in the planner phase; the available write contract is `submit_plan`.",
 		"2. Each edit: `path` + ONE of: (`old_text`+`new_text`; empty `new_text` deletes `old_text` | `start_line`+`end_line`+non-empty `content` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. Prefer substring/range edits; large bodies are spilled to artifact refs after submit_plan.",
 		"3. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
-		"5. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief/evidence is contradicted and no safe plan can be assembled, stop with `<<QUESTION>>:`.",
-		"6. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
+		"5. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence are sufficient planning evidence. Re-read the target packet before any source read.",
+		"6. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
+		"7. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
 	}
 	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
 		lines = append(lines, "", checklist)
@@ -1452,6 +1454,30 @@ func reviewAnswerDeclaresPass(answer string) bool {
 func reviewAnswerDeclaresBlocker(answer string) bool {
 	lower := strings.ToLower(answer)
 	return strings.Contains(answer, "<<QUESTION>>") || strings.Contains(lower, "decision: block") || strings.Contains(lower, "blocker")
+}
+
+func planExecuteAnswerDeclaresBlocker(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	lower := strings.ToLower(answer)
+	return strings.Contains(answer, "<<QUESTION>>") ||
+		strings.Contains(lower, "decision: block") ||
+		strings.HasPrefix(lower, "blocker:") ||
+		strings.Contains(lower, "\nblocker:")
+}
+
+func planExecuteBlockerSummary(answer string) string {
+	for _, raw := range strings.Split(answer, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		const max = 240
+		if len(line) > max {
+			return line[:max] + "..."
+		}
+		return line
+	}
+	return "planner stopped with a blocker"
 }
 
 func reviewTextHasVerificationChecklist(text string) bool {

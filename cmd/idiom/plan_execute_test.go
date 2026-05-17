@@ -81,6 +81,8 @@ func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 	for _, want := range []string{
 		"new named edit-safety fact",
 		"Do not re-read for confidence",
+		"planner target packet",
+		"missing body evidence",
 		"`Decision: source-satisfied`",
 	} {
 		if !strings.Contains(addendum, want) {
@@ -443,6 +445,12 @@ func TestRunPlanExecuteMainDoesNotAutoSubmitRealQuestionBlocker(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "docs", "generated-note.txt")); !os.IsNotExist(err) {
 		t.Fatalf("auto-submit created a file despite a real blocker, stat err=%v", err)
 	}
+	if !strings.Contains(stderr.String(), "planner phase reported a blocker before submitting a plan") {
+		t.Fatalf("explicit blocker should be surfaced as planner_blocked, stderr=%s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
+		t.Fatalf("explicit blocker should not be masked as missing artifact, stderr=%s", stderr.String())
+	}
 }
 
 func TestRunPlanExecuteMainDoesNotTreatQuestionBlockerMentioningSourceSatisfiedAsCleanNoop(t *testing.T) {
@@ -460,10 +468,13 @@ func TestRunPlanExecuteMainDoesNotTreatQuestionBlockerMentioningSourceSatisfiedA
 	)
 
 	if code != 1 {
-		t.Fatalf("blocker that merely mentions source-satisfied must fail missing artifact, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+		t.Fatalf("blocker that merely mentions source-satisfied must fail typed blocker, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
-		t.Fatalf("expected missing-artifact failure for blocker, stderr=%s", stderr.String())
+	if !strings.Contains(stderr.String(), "planner phase reported a blocker before submitting a plan") {
+		t.Fatalf("expected typed planner blocker for blocker answer, stderr=%s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
+		t.Fatalf("blocker should not be masked as missing artifact, stderr=%s", stderr.String())
 	}
 	if strings.Contains(stdout.String(), "source-satisfied: executor skipped") {
 		t.Fatalf("blocker must not be reported as source-satisfied, stdout=%s", stdout.String())

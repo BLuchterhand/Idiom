@@ -1286,6 +1286,9 @@ def declared_newfile_target_paths(
             or has_substantial_new_file_body(text, file_path)
         ):
             targets.add(file_path)
+            parent = Path(file_path).parent
+            if str(parent) not in {"", "."}:
+                targets.add(parent.as_posix())
     return targets
 
 

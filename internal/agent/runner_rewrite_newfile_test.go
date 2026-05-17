@@ -19,7 +19,7 @@ func TestRewriteReadFileForPlannedNewFileFiresOnRequiredPath(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		RequiredEditPaths: []string{"cmd/idiom/init.go", "cmd/idiom/main.go"},
 	}
-	got := rewriteReadFileForPlannedNewFile(req, result, brief)
+	got := rewriteMissingRequiredNewFileProbe(req, result, brief)
 	if !strings.Contains(got.Error, "NEW FILE") {
 		t.Fatalf("rewrite should call out the new-file shape; got: %s", got.Error)
 	}
@@ -44,22 +44,49 @@ func TestRewriteReadFileForPlannedNewFileLeavesUnrelatedErrorsAlone(t *testing.T
 	brief := workerruntime.WorkerRuntimeBrief{
 		RequiredEditPaths: []string{"cmd/idiom/init.go"},
 	}
-	got := rewriteReadFileForPlannedNewFile(req, original, brief)
+	got := rewriteMissingRequiredNewFileProbe(req, original, brief)
 	if got.Error != original.Error {
 		t.Fatalf("error on unrelated path should pass through; got rewrite: %s", got.Error)
 	}
 }
 
-// TestRewriteReadFileForPlannedNewFileIgnoresNonReadFile verifies
-// the gate doesn't fire on other tools' errors — only read_file is
-// the path that triggers the new-file confusion.
-func TestRewriteReadFileForPlannedNewFileIgnoresNonReadFile(t *testing.T) {
+func TestRewriteMissingRequiredNewFileProbeFiresOnMissingParentOutline(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "go_file_outline", Path: "./internal/writerroute"}
+	original := workspace.ToolResult{Tool: "go_file_outline", Error: "open /repo/internal/writerroute: no such file or directory"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{
+			"internal/writerroute/decision.go",
+			"internal/writerroute/decision_test.go",
+			"internal/app/writer_route.go",
+		},
+	}
+	got := rewriteMissingRequiredNewFileProbe(req, original, brief)
+	for _, want := range []string{
+		"Required new-file directory does not exist yet",
+		"internal/writerroute/decision.go",
+		"internal/writerroute/decision_test.go",
+		"submit_plan",
+		"replace_all",
+		"Do NOT keep trying to inspect",
+	} {
+		if !strings.Contains(got.Summary+"\n"+got.Error, want) {
+			t.Fatalf("rewritten result missing %q:\n%#v", want, got)
+		}
+	}
+	if strings.Contains(got.Error, "internal/app/writer_route.go") {
+		t.Fatalf("rewrite should only list required paths under the missing probe target, got: %s", got.Error)
+	}
+}
+
+// TestRewriteMissingRequiredNewFileProbeIgnoresUnrelatedTools verifies
+// the gate doesn't fire on unrelated tools' errors.
+func TestRewriteMissingRequiredNewFileProbeIgnoresUnrelatedTools(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "search_content", Path: "cmd/idiom/init.go"}
 	original := workspace.ToolResult{Tool: "search_content", Error: "no such file"}
 	brief := workerruntime.WorkerRuntimeBrief{
 		RequiredEditPaths: []string{"cmd/idiom/init.go"},
 	}
-	got := rewriteReadFileForPlannedNewFile(req, original, brief)
+	got := rewriteMissingRequiredNewFileProbe(req, original, brief)
 	if got.Error != original.Error {
 		t.Fatalf("non-read_file tools should pass through; got: %s", got.Error)
 	}

@@ -37,7 +37,7 @@ func nonTrivialDraftBody(label string) string {
 		"## Acceptance\n\n- run tests\n"
 }
 
-func TestRefinePhaseRoutingUsesPrimary35BWithNoThinkingOverride(t *testing.T) {
+func TestRefinePhaseRoutingUsesPrimary35B(t *testing.T) {
 	pool, model, maxTokens := refinePhaseRouting(filepath.Join("iter-1", "meta-draft.md"))
 
 	if pool != "qwen-35b" || model != "qwen3.6-35b" {
@@ -78,18 +78,28 @@ func TestDefaultRefineDispatchRoutesDraftThroughArtifactCommand(t *testing.T) {
 	}
 }
 
-func TestDefaultRefineDispatchKeepsPatchOnImplementLane(t *testing.T) {
+func TestDefaultRefineDispatchRoutesPatchThroughArtifactCommand(t *testing.T) {
 	meta := filepath.Join("root", ".idiom", "refine", "atom", "iter-2", "meta-patch.md")
 	args := defaultRefineDispatchArgs("/bin/idiom", ".idiom/config.json", meta)
 	joined := strings.Join(args, "\x00")
 
-	for _, want := range []string{"queue", "run", "--label", "refine", "lane", "implement", "--config", ".idiom/config.json", "--no-thinking", meta} {
+	for _, want := range []string{
+		"queue", "run", "--pool", "qwen-35b", "--label", "refine-patch-artifact",
+		"artifact", "--config", ".idiom/config.json", "--no-tools",
+		"--mechanical-repair", "--model", "qwen3.6-35b", "--prompt-file", meta,
+		"--output", filepath.Join("root", ".idiom", "refine", "atom", "iter-2", "draft.md"),
+		"--json-out", filepath.Join("root", ".idiom", "refine", "atom", "iter-2", "patch.artifact.jsonl"),
+		"--report-out", filepath.Join("root", ".idiom", "refine", "atom", "iter-2", "patch.report.json"),
+	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("patch dispatch args missing %q:\n%#v", want, args)
 		}
 	}
-	if strings.Contains(joined, "artifact") {
-		t.Fatalf("patch dispatch should stay on implementation lane, got:\n%#v", args)
+	if strings.Contains(joined, "--no-thinking") {
+		t.Fatalf("patch dispatch should preserve model thinking config for local Qwen artifact generation:\n%#v", args)
+	}
+	if strings.Contains(joined, "lane\x00implement") {
+		t.Fatalf("patch dispatch should not depend on implementation-lane tool use, got:\n%#v", args)
 	}
 }
 
@@ -347,6 +357,9 @@ func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
 	metaPath := filepath.Join(iterDir, "meta-review.md")
 	draftPath := filepath.Join(iterDir, "draft.md")
 	reviewPath := filepath.Join(iterDir, "review.md")
+	if err := os.WriteFile(draftPath, []byte("# Drafted brief\n\n## Problem\n\nReview me.\n"), 0o644); err != nil {
+		t.Fatalf("write draft: %v", err)
+	}
 	if err := writeRefineReviewMeta(metaPath, draftPath, reviewPath, root, "(no findings)"); err != nil {
 		t.Fatalf("writeRefineReviewMeta: %v", err)
 	}
@@ -360,9 +373,10 @@ func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
 	if !strings.Contains(string(body), ".idiom/refine/atom/iter-1/review.md") {
 		t.Fatalf("expected workspace-relative review path in meta body:\n%s", body)
 	}
-	if !strings.Contains(string(body), "## Required reads (exactly 1)") ||
-		!strings.Contains(string(body), "Drafted brief: `.idiom/refine/atom/iter-1/draft.md`") {
-		t.Fatalf("expected review meta to expose drafted brief as a required read evidence path:\n%s", body)
+	if !strings.Contains(string(body), "## Pre-loaded drafted brief") ||
+		!strings.Contains(string(body), "Path: `.idiom/refine/atom/iter-1/draft.md`") ||
+		!strings.Contains(string(body), "> # Drafted brief") {
+		t.Fatalf("expected review meta to inline drafted brief as artifact evidence:\n%s", body)
 	}
 }
 
@@ -2082,7 +2096,7 @@ func TestRefineDeliverableContextBlockEmptyFallsBack(t *testing.T) {
 // table populated from the extracted target for anchored-edits mode.
 func TestRefineInjectDeliverableBlockAnchored(t *testing.T) {
 	body := []byte("# T\n\n## Problem\n\nspec.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Verified Current State\n\nbody\n")
-	out := refineInjectDeliverableBlock(body, "anchored", []string{"docs/research/x.md", "native/foo.cpp"}, io.Discard)
+	out := refineInjectDeliverableBlock(body, "anchored", []string{"docs/research/x.md", "native/foo.cpp"}, "", io.Discard)
 	got := string(out)
 	if strings.Contains(got, "<!-- idiom:harness-deliverable-block -->") {
 		t.Fatalf("marker should be replaced, got: %s", got)
@@ -2098,12 +2112,32 @@ func TestRefineInjectDeliverableBlockAnchored(t *testing.T) {
 	}
 }
 
+func TestRefineInjectDeliverableBlockAnchoredMarksMissingTargetsAsNewFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir existing target dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cmd", "idiom", "lane.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("seed existing target: %v", err)
+	}
+
+	body := []byte("# T\n\n## Problem\n\nspec.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Verified Current State\n\nbody\n")
+	out := refineInjectDeliverableBlock(body, "anchored", []string{"internal/writerroute/decision.go", "cmd/idiom/lane.go"}, root, io.Discard)
+	got := string(out)
+	if !strings.Contains(got, "| `internal/writerroute/decision.go` | NEW FILE: harness-injected target (extracted from spec) |") {
+		t.Fatalf("missing target should be injected as NEW FILE, got:\n%s", got)
+	}
+	if !strings.Contains(got, "| `cmd/idiom/lane.go` | MODIFY: harness-injected target (extracted from spec) |") {
+		t.Fatalf("existing target should be injected as MODIFY, got:\n%s", got)
+	}
+}
+
 // TestRefineInjectDeliverableBlockMarkdown verifies the harness
 // substitutes the marker with a canonical `## Deliverable` block
 // for markdown-deliverable mode.
 func TestRefineInjectDeliverableBlockMarkdown(t *testing.T) {
 	body := []byte("# T\n\n## Problem\n\nspec.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Inline content\n\nbody\n")
-	out := refineInjectDeliverableBlock(body, "markdown", []string{"docs/research/x.md"}, io.Discard)
+	out := refineInjectDeliverableBlock(body, "markdown", []string{"docs/research/x.md"}, "", io.Discard)
 	got := string(out)
 	if strings.Contains(got, "<!-- idiom:harness-deliverable-block -->") {
 		t.Fatalf("marker should be replaced, got: %s", got)
@@ -2122,7 +2156,7 @@ func TestRefineInjectDeliverableBlockMarkdown(t *testing.T) {
 // downstream).
 func TestRefineInjectDeliverableBlockSkipsWhenMarkerAbsent(t *testing.T) {
 	body := []byte("# T\n\n## Problem\n\nspec.\n\n## Files To Modify\n\n| a | b |\n")
-	out := refineInjectDeliverableBlock(body, "anchored", []string{"docs/research/x.md"}, io.Discard)
+	out := refineInjectDeliverableBlock(body, "anchored", []string{"docs/research/x.md"}, "", io.Discard)
 	if !bytes.Equal(body, out) {
 		t.Fatalf("body should be unchanged when marker absent, got: %s", string(out))
 	}
@@ -2134,7 +2168,7 @@ func TestRefineInjectDeliverableBlockSkipsWhenMarkerAbsent(t *testing.T) {
 // reviewer's structural check will catch.
 func TestRefineInjectDeliverableBlockSkipsWhenTargetEmpty(t *testing.T) {
 	body := []byte("# T\n\n## Problem\n\n<!-- idiom:harness-deliverable-block -->\n\n## X\n")
-	out := refineInjectDeliverableBlock(body, "anchored", nil, io.Discard)
+	out := refineInjectDeliverableBlock(body, "anchored", nil, "", io.Discard)
 	if !bytes.Equal(body, out) {
 		t.Fatalf("body should be unchanged when target empty, got: %s", string(out))
 	}
@@ -2701,8 +2735,8 @@ func TestRefineMetaTemplatesDoNotSuggestScratchpadShellChecks(t *testing.T) {
 	}{
 		{name: "draft", body: refineDraftTemplate, pathToken: "{{DRAFT_PATH}}", artifact: true},
 		{name: "draft-markdown", body: refineDraftMarkdownTemplate, pathToken: "{{DRAFT_PATH}}", artifact: true},
-		{name: "review", body: refineReviewTemplate, pathToken: "{{REVIEW_PATH}}"},
-		{name: "patch", body: refinePatchTemplate, pathToken: "{{NEW_DRAFT_PATH}}"},
+		{name: "review", body: refineReviewTemplate, pathToken: "{{REVIEW_PATH}}", artifact: true},
+		{name: "patch", body: refinePatchTemplate, pathToken: "{{NEW_DRAFT_PATH}}", artifact: true},
 		{name: "override-closure", body: refineCanonicalArtifactClosure, pathToken: "{{DRAFT_PATH}}", artifact: true},
 	}
 	for _, tc := range tests {
@@ -2752,12 +2786,13 @@ func TestRefineDraftTemplatesUseEvidenceContractInsteadOfBudget(t *testing.T) {
 func TestRefineReviewTemplateClosesSourceUncertaintyIntoReview(t *testing.T) {
 	for _, want := range []string{
 		"## Review evidence discipline",
+		"Use the pre-loaded drafted brief and lint output above",
 		"Do not perform source reads, discovery queries, broad orientation",
 		"record the uncertainty as a bug or OK caveat",
 		"A bounded `Source verification\n  pending:` note is not a bug by itself",
 		"Put bounded `Source verification pending:` entries in OK, not Bugs",
-		"## What to record as uncertainty",
-		"After the required read, write the review",
+		"## What To Record As Uncertainty",
+		"return the review now",
 	} {
 		if !strings.Contains(refineReviewTemplate, want) {
 			t.Fatalf("review template should contain %q, got:\n%s", want, refineReviewTemplate)
@@ -2783,8 +2818,8 @@ func TestRefinePatchTemplateClosesSourceUncertaintyIntoDraft(t *testing.T) {
 		"do not reopen source discovery here",
 		"Source verification pending:",
 		"## Scope Correction Required",
-		"Write the corrected draft after the two required reads",
-		"Do not perform\nsource reads, discovery queries",
+		"Use the pre-loaded scratchpad and source evidence above",
+		"Return only the full corrected brief",
 	} {
 		if !strings.Contains(refinePatchTemplate, want) {
 			t.Fatalf("patch template should contain %q, got:\n%s", want, refinePatchTemplate)

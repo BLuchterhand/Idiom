@@ -86,16 +86,14 @@ type laneRefineOptions struct {
 }
 
 // refineDispatchFn is the per-step dispatcher. Default impl shells
-// out to `idiom lane implement`; tests inject a fake.
+// out to artifact generation for scratchpad deliverables; tests
+// inject a fake.
 type refineDispatchFn func(metaBriefPath string, stdout, stderr io.Writer) int
 
-// Refine routes ALL phases to the primary 35B-A3B backend while
-// passing --no-thinking to the wrapped implement lane. Earlier
-// iterations used a second qwen3.6-35b-nothink MLX process because
-// mlx_lm.server did not accept request-level chat_template_kwargs.
-// Current mlx-lm honors enable_thinking=false per request, so refine
-// keeps the no-thinking behavior without loading duplicate 35B
-// weights. Same skeleton-first templates, same per-phase max_tokens.
+// Refine routes all phases to the primary 35B-A3B backend. The
+// wrapper now owns scratchpad materialization through artifact
+// commands, which avoids depending on local Qwen tool-call selection
+// for review and patch documents.
 const refineDefaultPool = "qwen-35b"
 const refineDefaultModel = "qwen3.6-35b"
 
@@ -189,18 +187,23 @@ func defaultRefineDispatchArgs(binary, configPath, metaBriefPath string) []strin
 			"--report-out", reportOut,
 		}
 	}
+	outputPath, jsonOut, reportOut := refineReviewPatchArtifactPaths(metaBriefPath)
 	return []string{binary,
 		"queue", "run",
 		"--pool", pool,
-		"--label", "refine",
+		"--label", "refine-" + inferRefinePhase(metaBriefPath) + "-artifact",
 		"--quiet",
 		"--",
-		binary, "lane", "implement", "--no-lint", "--json",
+		binary, "artifact",
 		"--config", configPath,
+		"--no-tools",
+		"--mechanical-repair",
 		"--model", model,
-		"--no-thinking",
 		"--max-tokens", strconv.Itoa(maxTokens),
-		metaBriefPath,
+		"--prompt-file", metaBriefPath,
+		"--output", outputPath,
+		"--json-out", jsonOut,
+		"--report-out", reportOut,
 	}
 }
 
@@ -219,6 +222,22 @@ func refineDraftArtifactPaths(metaBriefPath string) (outputPath, jsonOut, report
 	return filepath.Join(iterDir, "draft.md"),
 		filepath.Join(iterDir, "draft.artifact.jsonl"),
 		filepath.Join(iterDir, "draft.report.json")
+}
+
+func refineReviewPatchArtifactPaths(metaBriefPath string) (outputPath, jsonOut, reportOut string) {
+	iterDir := filepath.Dir(metaBriefPath)
+	switch inferRefinePhase(metaBriefPath) {
+	case "review":
+		return filepath.Join(iterDir, "review.md"),
+			filepath.Join(iterDir, "review.artifact.jsonl"),
+			filepath.Join(iterDir, "review.report.json")
+	case "patch":
+		return filepath.Join(iterDir, "draft.md"),
+			filepath.Join(iterDir, "patch.artifact.jsonl"),
+			filepath.Join(iterDir, "patch.report.json")
+	default:
+		return refineDraftArtifactPaths(metaBriefPath)
+	}
 }
 
 func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, stderr io.Writer) int {
@@ -648,7 +667,7 @@ const refineDeliverableMarker = "<!-- idiom:harness-deliverable-block -->"
 //     the lint catches the missing required sections downstream)
 //
 // Stderr-logs the substitution outcome for debugging.
-func refineInjectDeliverableBlock(body []byte, mode string, targets []string, stderr io.Writer) []byte {
+func refineInjectDeliverableBlock(body []byte, mode string, targets []string, projectRoot string, stderr io.Writer) []byte {
 	targets = normalizeRefineTargets(targets)
 	if len(targets) == 0 {
 		fmt.Fprintf(stderr, "refine: deliverable injection skipped (no target extracted from spec)\n")
@@ -658,7 +677,7 @@ func refineInjectDeliverableBlock(body []byte, mode string, targets []string, st
 		fmt.Fprintf(stderr, "refine: deliverable injection skipped (marker %q absent from draft — model may have authored its own block; lint will validate)\n", refineDeliverableMarker)
 		return body
 	}
-	block := refineRenderDeliverableBlock(mode, targets)
+	block := refineRenderDeliverableBlock(mode, targets, projectRoot)
 	if block == "" {
 		fmt.Fprintf(stderr, "refine: deliverable injection skipped (unknown mode %q)\n", mode)
 		return body
@@ -672,7 +691,7 @@ func refineInjectDeliverableBlock(body []byte, mode string, targets []string, st
 // the harness substitutes for the deliverable marker. Returns "" for
 // modes outside the canonical set so the caller can preserve the
 // marker as a visible defect rather than silently corrupt the brief.
-func refineRenderDeliverableBlock(mode string, targets []string) string {
+func refineRenderDeliverableBlock(mode string, targets []string, projectRoot string) string {
 	targets = normalizeRefineTargets(targets)
 	if len(targets) == 0 {
 		return ""
@@ -682,7 +701,11 @@ func refineRenderDeliverableBlock(mode string, targets []string) string {
 		var b strings.Builder
 		b.WriteString("## Files To Modify\n\n| File | Change |\n|------|--------|\n")
 		for _, target := range targets {
-			fmt.Fprintf(&b, "| `%s` | MODIFY: harness-injected target (extracted from spec) |\n", target)
+			action := "MODIFY: harness-injected target (extracted from spec)"
+			if refineTargetIsMissing(projectRoot, target) {
+				action = "NEW FILE: harness-injected target (extracted from spec)"
+			}
+			fmt.Fprintf(&b, "| `%s` | %s |\n", target, action)
 		}
 		return strings.TrimRight(b.String(), "\n")
 	case refineModeMarkdown:
@@ -690,6 +713,17 @@ func refineRenderDeliverableBlock(mode string, targets []string) string {
 	default:
 		return ""
 	}
+}
+
+func refineTargetIsMissing(projectRoot, target string) bool {
+	if strings.TrimSpace(projectRoot) == "" || strings.TrimSpace(target) == "" || filepath.IsAbs(target) {
+		return false
+	}
+	fullPath := filepath.Join(projectRoot, filepath.FromSlash(target))
+	if _, err := os.Stat(fullPath); err == nil {
+		return false
+	}
+	return true
 }
 
 // resolveRefineDraftTemplate walks the §2.2.1 resolution chain:
@@ -1619,11 +1653,16 @@ func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOut
 	if strings.TrimSpace(lintOutput) == "" {
 		lintOutput = "(no findings — lint pass was clean)"
 	}
+	draftBody, err := os.ReadFile(draftPath)
+	if err != nil {
+		return err
+	}
 	body := strings.NewReplacer(
 		"{{DRAFT_PATH}}", refineWorkspaceRel(projectRoot, draftPath),
 		"{{REVIEW_PATH}}", refineWorkspaceRel(projectRoot, reviewPath),
 		"{{PROJECT_ROOT}}", projectRoot,
 		"{{LINT_OUTPUT}}", lintOutput,
+		"{{DRAFT_BODY}}", refineQuotedSpecBody(string(draftBody)),
 	).Replace(refineReviewTemplate)
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
@@ -1673,7 +1712,7 @@ func captureRefineLintOutput(draftPath, persistDir, projectRoot, mode string, de
 // lint should judge: the model draft plus canonical deliverable block
 // injection. Project overlays are executor guidance, not deliverable
 // grammar, so they are appended only after linting.
-func refineLintInputPath(draftPath, _ string, mode string, deliverableTargets []string, stderr io.Writer) (string, func()) {
+func refineLintInputPath(draftPath, projectRoot string, mode string, deliverableTargets []string, stderr io.Writer) (string, func()) {
 	if strings.TrimSpace(mode) == "" && len(deliverableTargets) == 0 {
 		return draftPath, func() {}
 	}
@@ -1682,7 +1721,7 @@ func refineLintInputPath(draftPath, _ string, mode string, deliverableTargets []
 		fmt.Fprintf(stderr, "refine: WARN cannot render final-shape lint input from %s: %v (linting raw draft)\n", draftPath, err)
 		return draftPath, func() {}
 	}
-	body = refineInjectDeliverableBlock(body, mode, deliverableTargets, stderr)
+	body = refineInjectDeliverableBlock(body, mode, deliverableTargets, projectRoot, stderr)
 	tmpPath, cleanup, err := writeRefineTempBody(body, "idiom-refine-lint-*.md")
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: WARN cannot create final-shape lint input: %v (linting raw draft)\n", err)
@@ -1813,11 +1852,21 @@ func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath,
 	if strings.TrimSpace(lintOutput) == "" {
 		lintOutput = "(no findings — lint pass was clean on the previous draft)"
 	}
+	prevDraftBody, err := os.ReadFile(prevDraftPath)
+	if err != nil {
+		return err
+	}
+	prevReviewBody, err := os.ReadFile(prevReviewPath)
+	if err != nil {
+		return err
+	}
 	body := strings.NewReplacer(
 		"{{PREV_DRAFT_PATH}}", refineWorkspaceRel(projectRoot, prevDraftPath),
 		"{{PREV_REVIEW_PATH}}", refineWorkspaceRel(projectRoot, prevReviewPath),
 		"{{NEW_DRAFT_PATH}}", refineWorkspaceRel(projectRoot, newDraftPath),
 		"{{LINT_OUTPUT}}", lintOutput,
+		"{{PREV_DRAFT_BODY}}", refineQuotedSpecBody(string(prevDraftBody)),
+		"{{PREV_REVIEW_BODY}}", refineQuotedSpecBody(string(prevReviewBody)),
 		"{{EVIDENCE_PATHS}}", refineEvidencePathList(evidencePaths),
 		"{{SOURCE_EVIDENCE}}", refinePatchSourceEvidence(projectRoot, prevDraftPath, prevReviewPath, lintOutput, evidencePaths),
 	).Replace(refinePatchTemplate)
@@ -2422,7 +2471,7 @@ func finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title string, iter
 		fmt.Fprintf(stderr, "refine: cannot read final draft %s: %v\n", draftPath, err)
 		return 1
 	}
-	body = refineInjectDeliverableBlock(body, mode, deliverableTargets, stderr)
+	body = refineInjectDeliverableBlock(body, mode, deliverableTargets, projectRoot, stderr)
 	body = refineApplyProjectOverlay(body, projectRoot, stderr)
 	isShipAsIs := reason == "ship-as-is"
 	outputReason := reason

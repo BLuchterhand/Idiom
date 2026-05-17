@@ -23,7 +23,7 @@ import (
 	"idiom/internal/app"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
-	"idiom/internal/runner"
+	"idiom/internal/planexecute"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
@@ -110,7 +110,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// load — observed on 2026-05-10). The gate is best-effort: when no
 	// daemon is running, MaybeAcquire returns a no-op release function
 	// and we proceed un-gated, matching legacy behavior.
-	queueRelease := planExecuteAcquireQueueSlot(cfg, opts, sessionID, stdout, stderr)
+	queueRelease := planExecuteAcquireQueueSlot(cfg, opts, sessionID, rec, stdout, stderr)
 	defer queueRelease()
 
 	prompt, err := planExecutePrompt(opts)
@@ -203,6 +203,17 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 				fmt.Fprintln(stdout, "source-satisfied: executor skipped because the planner reported the requested final state already present in every required path.")
 			}
 			return 0
+		}
+		if planExecuteAnswerDeclaresBlocker(answer) {
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_blocked", map[string]any{
+				"reason":  err.Error(),
+				"blocker": planExecuteBlockerSummary(answer),
+			})
+			fmt.Fprintln(stderr, fmt.Errorf("planner phase reported a blocker before submitting a plan: %s", planExecuteBlockerSummary(answer)))
+			if !opts.JSONEvents {
+				fmt.Fprintln(stdout, answer)
+			}
+			return 1
 		}
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_missing", map[string]any{
 			"reason": err.Error(),
@@ -436,13 +447,15 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string) string {
 		"# Plan-then-execute (planner phase)",
 		"",
 		"The plan-submission capability must cover every brief-required edit once; the executor dispatches the submitted edits after you stop.",
+		"Treat the brief body and any preloaded Context Pack below as the planner target packet.",
 		"",
 		"1. Per-edit write capabilities are blocked in the planner phase; the available write contract is `submit_plan`.",
 		"2. Each edit: `path` + ONE of: (`old_text`+`new_text`; empty `new_text` deletes `old_text` | `start_line`+`end_line`+non-empty `content` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. Prefer substring/range edits; large bodies are spilled to artifact refs after submit_plan.",
 		"3. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
-		"5. Use source-read capability only for a new named edit-safety fact on a required path. Do not re-read for confidence; if the brief/evidence is contradicted and no safe plan can be assembled, stop with `<<QUESTION>>:`.",
-		"6. Submit as soon as you have anchors for every required path. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every required path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
+		"5. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence are sufficient planning evidence. Re-read the target packet before any source read.",
+		"6. Use source-read capability only for a new named edit-safety fact on a required path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
+		"7. Submit as soon as you have anchors for every required path. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every required path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
 	}
 	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
 		lines = append(lines, "", checklist)
@@ -681,40 +694,15 @@ func planExecuteMissingEditPaths(required []string, edits []workspace.PlanEdit) 
 // notBefore. The notBefore guard scopes the lookup to the current
 // session's planner output — without it, a planner failure silently
 // falls back to a stale artifact from an unrelated prior session.
-// planExecuteAcquireQueueSlot wraps runner.MaybeAcquire with the
-// project's pool-name resolution and the entry-point's session/label
-// context. Returns the release function unconditionally — callers
-// defer it without nil-checking. When the daemon isn't reachable, or
-// when acquire surfaces an error, we emit a JSON event for visibility
-// but proceed un-gated; this is the "opportunistic" contract so a
-// missing daemon never blocks dispatch.
-func planExecuteAcquireQueueSlot(cfg config.Config, opts planExecuteOptions, sessionID string, stdout io.Writer, stderr io.Writer) func() {
-	pool := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_POOL"))
-	if pool == "" {
-		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)
-	}
-	if pool == "" {
-		return func() {}
-	}
-	socket := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_SOCKET"))
-	label := strings.TrimSpace(opts.Resume)
-	if label == "" {
-		label = "plan-execute:" + sessionID
-	}
-	client := fmt.Sprintf("idiom-plan-execute/%d", os.Getpid())
-	release, err := runner.MaybeAcquire(context.Background(), socket, pool, label, client, stderr)
-	if err != nil {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "queue_acquire_failed", map[string]any{
-			"pool":   pool,
-			"reason": err.Error(),
-		})
-		return func() {}
-	}
-	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "queue_acquired", map[string]any{
-		"pool":  pool,
-		"label": label,
-	})
-	return release
+// planExecuteAcquireQueueSlot delegates to the shared plan-execute queue
+// admission helper so the CLI and TUI in-process paths keep the same
+// best-effort gate behavior.
+func planExecuteAcquireQueueSlot(cfg config.Config, opts planExecuteOptions, sessionID string, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) func() {
+	return planexecute.AcquireQueueSlot(cfg, planexecute.QueueAcquireOptions{
+		JSONEvents: opts.JSONEvents,
+		Resume:     opts.Resume,
+		SessionID:  sessionID,
+	}, rec, stdout, stderr)
 }
 
 // newPlanExecuteSessionID returns a fresh, unguessable session
@@ -1797,6 +1785,30 @@ func reviewAnswerDeclaresPass(answer string) bool {
 func reviewAnswerDeclaresBlocker(answer string) bool {
 	lower := strings.ToLower(answer)
 	return strings.Contains(answer, "<<QUESTION>>") || strings.Contains(lower, "decision: block") || strings.Contains(lower, "blocker")
+}
+
+func planExecuteAnswerDeclaresBlocker(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	lower := strings.ToLower(answer)
+	return strings.Contains(answer, "<<QUESTION>>") ||
+		strings.Contains(lower, "decision: block") ||
+		strings.HasPrefix(lower, "blocker:") ||
+		strings.Contains(lower, "\nblocker:")
+}
+
+func planExecuteBlockerSummary(answer string) string {
+	for _, raw := range strings.Split(answer, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		const max = 240
+		if len(line) > max {
+			return line[:max] + "..."
+		}
+		return line
+	}
+	return "planner stopped with a blocker"
 }
 
 func reviewTextHasVerificationChecklist(text string) bool {

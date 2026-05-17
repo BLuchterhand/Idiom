@@ -13,9 +13,14 @@ import (
 )
 
 type RunResult struct {
-	ExitCode  int
-	SessionID string
+	ExitCode      int
+	SessionID     string
+	FailureKind   string
+	FailureReason string
+	PlannerAnswer string
 }
+
+const RunFailurePlannerBlocked = "planner_blocked"
 
 func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) RunResult {
 	defer cleanupStalePlanArtifacts(cfg.Workspace.Root, 7*24*time.Hour, stderr)
@@ -30,6 +35,12 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"json_events": opts.JSONEvents,
 		"session_id":  sessionID,
 	})
+	queueRelease := AcquireQueueSlot(cfg, QueueAcquireOptions{
+		JSONEvents: opts.JSONEvents,
+		Resume:     opts.Resume,
+		SessionID:  sessionID,
+	}, rec, stdout, stderr)
+	defer queueRelease()
 
 	prompt, err := planExecutePrompt(opts)
 	if err != nil {
@@ -111,6 +122,23 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 				fmt.Fprintln(stdout, "source-satisfied: executor skipped because the planner reported the requested final state already present in every required path.")
 			}
 			return RunResult{ExitCode: 0, SessionID: sessionID}
+		}
+		if planExecuteAnswerDeclaresBlocker(answer) {
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_blocked", map[string]any{
+				"reason":  err.Error(),
+				"blocker": planExecuteBlockerSummary(answer),
+			})
+			fmt.Fprintln(stderr, fmt.Errorf("planner phase reported a blocker before submitting a plan: %s", planExecuteBlockerSummary(answer)))
+			if !opts.JSONEvents {
+				fmt.Fprintln(stdout, answer)
+			}
+			return RunResult{
+				ExitCode:      1,
+				SessionID:     sessionID,
+				FailureKind:   RunFailurePlannerBlocked,
+				FailureReason: planExecuteBlockerSummary(answer),
+				PlannerAnswer: answer,
+			}
 		}
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_missing", map[string]any{
 			"reason": err.Error(),
