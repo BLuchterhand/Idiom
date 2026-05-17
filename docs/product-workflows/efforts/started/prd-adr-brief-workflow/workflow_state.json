@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0015-phase-1-workflow-state-transition-contract",
+  "task_id": "impl-0016-phase-1-atom-scope-closeout-gate",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T21:18:00Z",
-  "state_revision": 44,
-  "last_event_id": "evt-0139",
-  "workspace_fingerprint": "idiom@pending-impl-0015",
+  "updated_at": "2026-05-17T21:31:00Z",
+  "state_revision": 46,
+  "last_event_id": "evt-0146",
+  "workspace_fingerprint": "idiom@pending-impl-0016",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
   "current_state": "closed",
@@ -26,24 +26,23 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "4a7c1caca78f20b7",
+    "context_pack_id": "db7676b4fe81f0f4",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
       "docs/design-tdd-coverage.md",
       "docs/obsidian/22 - Product Workflow ROADMAP.md",
       "internal/productworkflow/types.go",
-      "internal/productworkflow/status.go",
-      "internal/productworkflow/status_test.go",
-      "internal/productworkflow/validate.go",
-      "internal/productworkflow/validate_test.go",
+      "internal/productworkflow/scope.go",
+      "internal/productworkflow/scope_test.go",
       "internal/productworkflow/transition.go",
-      "internal/productworkflow/transition_test.go"
+      "internal/productworkflow/transition_test.go",
+      "internal/productworkflow/validate_test.go"
     ],
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 4a7c1caca78f20b7 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow transition contract scope."
+        "description": "Context pack db7676b4fe81f0f4 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow scope gate scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -52,49 +51,59 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "transition_table_contract",
+        "gate": "scope_expected_paths_pass",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
       },
       {
-        "gate": "invalid_transition_blockers",
+        "gate": "scope_forbidden_exact_blockers",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
       },
       {
-        "gate": "terminal_close_preconditions",
+        "gate": "scope_forbidden_pattern_blockers",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
       },
       {
-        "gate": "pure_transition_logic",
+        "gate": "scope_missing_expected_blockers",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
+      },
+      {
+        "gate": "scope_stable_normalized_order",
+        "status": "passed",
+        "checked_at": "2026-05-17T21:31:00Z"
+      },
+      {
+        "gate": "scope_pure_logic",
+        "status": "passed",
+        "checked_at": "2026-05-17T21:31:00Z"
       },
       {
         "gate": "focused_go_tests",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
       },
       {
         "gate": "full_go_tests",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
       },
       {
         "gate": "durable_json_jsonl_validation",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
       },
       {
         "gate": "privacy_secret_scan",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
       },
       {
         "gate": "diff_whitespace_check",
         "status": "passed",
-        "checked_at": "2026-05-17T21:18:00Z"
+        "checked_at": "2026-05-17T21:31:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -136,10 +145,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T21:18:00Z",
+  "last_reconciliation_at": "2026-05-17T21:31:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_impl_0016_phase_1_atom_scope_closeout_gate",
+    "plan_impl_0017_phase_1_scope_gate_cli_or_resume_integration",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],

@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0015-phase-1-workflow-state-transition-contract",
+  "task_id": "impl-0016-phase-1-atom-scope-closeout-gate",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -20,10 +20,12 @@
     "mutation_min_score": 80,
     "gates_passed": [
       "atom_planned",
-      "transition_table_contract",
-      "invalid_transition_blockers",
-      "terminal_close_preconditions",
-      "pure_transition_logic",
+      "scope_expected_paths_pass",
+      "scope_forbidden_exact_blockers",
+      "scope_forbidden_pattern_blockers",
+      "scope_missing_expected_blockers",
+      "scope_stable_normalized_order",
+      "scope_pure_logic",
       "focused_go_tests",
       "full_go_tests",
       "durable_json_jsonl_validation",
@@ -34,37 +36,37 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0015-001",
+      "id": "TDD-IMPL-0016-001",
       "type": "contract",
-      "behavior": "Product workflow transition logic exposes a deterministic transition table for workflow states, status buckets, and next-action ownership.",
-      "owner": "internal/productworkflow/transition_test.go",
+      "behavior": "Scope gate deterministically compares actual changed paths against expected files, allowed files, forbidden exact files, and forbidden glob patterns.",
+      "owner": "internal/productworkflow/scope_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0015-002",
+      "id": "TDD-IMPL-0016-002",
       "type": "fmea_negative",
-      "behavior": "Invalid state, status bucket, or requested action combinations return typed blockers instead of silently producing next actions.",
-      "owner": "internal/productworkflow/transition_test.go",
+      "behavior": "Scope gate returns typed blockers for forbidden path edits, unexpected path edits, and missing required changed paths.",
+      "owner": "internal/productworkflow/scope_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0015-003",
-      "type": "contract",
-      "behavior": "Terminal close transitions require no open blockers or obligations and require verification, review, and investigation gates to be passed.",
-      "owner": "internal/productworkflow/transition_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0015-004",
+      "id": "TDD-IMPL-0016-003",
       "type": "source_sanity",
-      "behavior": "Transition logic is pure package logic with no CLI, filesystem, subprocess, or telemetry dependency.",
-      "owner": "internal/productworkflow/transition_test.go",
+      "behavior": "Scope gate normalizes and reports paths in stable sorted order without reading git, filesystem, CLI args, telemetry, or durable state.",
+      "owner": "internal/productworkflow/scope_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0016-004",
+      "type": "acceptance",
+      "behavior": "Scope gate pass tests allow explicitly configured durable bookkeeping and report paths while still blocking forbidden implementation spillover.",
+      "owner": "internal/productworkflow/scope_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"

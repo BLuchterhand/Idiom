@@ -1,0 +1,43 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0016-phase-1-atom-scope-closeout-gate",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "opencode-glm-impl-0016",
+  "runtime": "opencode_attached_server",
+  "model": "zai-coding-plan/glm-5.1",
+  "completed_at": "2026-05-17T21:31:00Z",
+  "complexity_tier": "C1",
+  "scope_statement": "Pure product workflow atom scope gate: compare actual changed paths with expected, allowed, and forbidden atom scope without git, filesystem, CLI, or durable-state dependencies.",
+  "code_changes": true,
+  "changed_paths": [
+    "internal/productworkflow/scope.go",
+    "internal/productworkflow/scope_test.go",
+    "docs/product-workflows/efforts/index.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0016-implementation.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0016-review.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0016-investigation.json"
+  ],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [
+      "gofmt on touched Go files",
+      "go test ./internal/productworkflow",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "concrete credential-pattern privacy scan over durable effort artifacts",
+      "git diff --check"
+    ],
+    "status": "passed_after_codex_review"
+  },
+  "privacy_note": "No raw prompts, raw transcripts, file bodies, secrets, or customer data stored.",
+  "open_blockers": [],
+  "reviewer_id": "codex-gpt-review-impl-0016"
+}

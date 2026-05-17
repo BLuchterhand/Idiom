@@ -6,7 +6,7 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0015-phase-1-workflow-state-transition-contract`
+- Last completed atom: `impl-0016-phase-1-atom-scope-closeout-gate`
 - Active atom: none; next atom is ready to plan
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
@@ -32,9 +32,9 @@ This effort is the durable implementation state for delivering
   logic, then completed targeted reviewer fixes for deterministic action order,
   status/state consistency blockers, and removal of the `init`-built transition
   map. Codex review/verification passed.
-- Atom 16 scope closeout gate: next planned follow-up. It should add a pure
-  changed-path/scope gate in new package files before broader status/resume
-  behavior is wired into CLI surfaces.
+- Atom 16 scope closeout gate: all TDD obligations satisfied. GLM implemented
+  pure changed-path/scope gate logic in new package files; Codex
+  review/verification passed. The scope gate is not wired into CLI closeout yet.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -196,7 +196,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan `impl-0016-phase-1-atom-scope-closeout-gate` as a pure
-`internal/productworkflow` atom in new scope files. Keep it sequential with
-durable bookkeeping, but its code write set can avoid the shared transition,
-status, validator, and product CLI files touched by earlier atoms.
+Plan `impl-0017-phase-1-scope-gate-cli-or-resume-integration` to decide the
+smallest safe integration point for the scope gate, or pick the next Phase 1
+workflow substrate atom if CLI wiring would couple too many files.
