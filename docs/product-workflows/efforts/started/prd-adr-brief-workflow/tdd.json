@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0018-phase-2-research-profile-storage",
+  "task_id": "impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -25,40 +25,49 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0018-001",
+      "id": "TDD-IMPL-0019-001",
       "type": "contract",
-      "behavior": "Research profile storage discovers valid project-owned profiles under .idiom/research/profiles in deterministic order without requiring committed .idiom state.",
-      "owner": "internal/productworkflow/research_profile_store_test.go",
-      "command": "go test ./internal/productworkflow ./cmd/idiom",
+      "behavior": "ImplementationLedgerRecord gains an optional commit_hash field. ParseImplementationLedgerJSONL accepts (does not require) commit_hash on implementation_completed, fallback_completion, and partial_implementation_recorded records. The validator rejects commit_hash values that are not 40-char lowercase hex.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0018-002",
+      "id": "TDD-IMPL-0019-002",
+      "type": "contract",
+      "behavior": "ValidatePerAtomCoverage takes per-atom commit hashes and changed_paths, queries git log --name-only for each commit hash, and produces a ledger_under_reports_path finding for any git path not in that atom's changed_paths. This prevents piggybacking: atom B cannot rely on atom A's changed_paths to cover a shared file.",
+      "owner": "internal/productworkflow/scope_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0019-003",
       "type": "fmea_negative",
-      "behavior": "Research profile storage returns typed findings for invalid profile JSON, unsupported non-JSON entries, and path traversal/profile ID escapes.",
-      "owner": "internal/productworkflow/research_profile_store_test.go",
-      "command": "go test ./internal/productworkflow ./cmd/idiom",
+      "behavior": "ValidatePerAtomCoverage returns findings for atoms with commit_hash set but no git output (missing/invalid commit), atoms with empty changed_paths despite having a valid commit, and atoms whose changed_paths omits a path present in their commit diff. It does not flag atoms without commit_hash (backward compatible).",
+      "owner": "internal/productworkflow/scope_test.go",
+      "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0018-003",
+      "id": "TDD-IMPL-0019-004",
       "type": "acceptance",
-      "behavior": "idiom product research --project-root <path> --json lists research profile roles, merge policy, and typed findings with stable JSON and exit codes.",
+      "behavior": "product lint --effort-root calls ValidatePerAtomCoverage for atoms with commit_hash set, in addition to the existing ValidateLedgerCoverage union check. Lint fails if any atom's commit changed paths that its ledger changed_paths does not record. Lint continues to pass for atoms without commit_hash (backward compatible).",
       "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./internal/productworkflow ./cmd/idiom",
+      "command": "go test ./cmd/idiom",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0018-004",
+      "id": "TDD-IMPL-0019-005",
       "type": "source_sanity",
-      "behavior": "The atom does not add committed .idiom/research profile files and does not execute models, merge evidence, or modify product_evidence surfaces.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./internal/productworkflow ./cmd/idiom",
+      "behavior": "The atom does not add git, os, exec, or flag imports to scope.go. Pure validation logic stays in scope.go; git command execution stays in cmd/idiom/product_workflow.go.",
+      "owner": "internal/productworkflow/scope_test.go",
+      "command": "go test ./internal/productworkflow -run TestScopeGateSourceSanityPurity",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     }
   ]
 }

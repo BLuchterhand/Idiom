@@ -1,0 +1,6 @@
+{
+  "schema_version": "idiom.investigation_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes",
+  "status": "pending"
+}

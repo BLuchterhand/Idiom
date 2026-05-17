@@ -7,7 +7,7 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0018-phase-2-research-profile-storage`
-- Active atom: none; plan next Phase 2 atom
+- Active atom: `impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes`
 - Status bucket: `started`
 - Current phase: `phase-2-research-profiles`
 - Context pack: `1997ef6140265b3d`
@@ -45,6 +45,9 @@ This effort is the durable implementation state for delivering
   for invalid/traversal/non-JSON entries, and a read-only `idiom product research`
   JSON surface. No committed .idiom state, no model execution, no merge/evidence
   surface changes. Codex review/verification passed.
+- Atom 19 (planned): add commit_hash to implementation ledger records and per-atom
+  coverage validation to prevent piggybacking. Each atom's changed_paths will be
+  validated against its specific commit diff when commit_hash is present.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated

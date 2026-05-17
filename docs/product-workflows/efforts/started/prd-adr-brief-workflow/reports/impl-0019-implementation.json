@@ -1,0 +1,22 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "pending",
+  "runtime": "pending",
+  "model": "pending",
+  "completed_at": "",
+  "complexity_tier": "C2",
+  "scope_statement": "Add commit_hash field to implementation ledger records and per-atom coverage validation to prevent piggybacking",
+  "code_changes": false,
+  "changed_paths": [],
+  "verification": {
+    "status": "pending",
+    "commands": []
+  },
+  "privacy_note": "no raw prompts, transcripts, file bodies, secrets, or customer-identifying data stored",
+  "open_blockers": [
+    "implementation_pending"
+  ],
+  "reviewer_id": "pending"
+}
