@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0016-phase-1-atom-scope-closeout-gate",
+  "task_id": "impl-0017-phase-1-scope-gate-lint-integration",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -20,12 +20,11 @@
     "mutation_min_score": 80,
     "gates_passed": [
       "atom_planned",
-      "scope_expected_paths_pass",
-      "scope_forbidden_exact_blockers",
-      "scope_forbidden_pattern_blockers",
-      "scope_missing_expected_blockers",
-      "scope_stable_normalized_order",
-      "scope_pure_logic",
+      "scope_gate_lint_forbidden_path",
+      "scope_gate_lint_forbidden_pattern",
+      "scope_gate_lint_unexpected_path",
+      "scope_gate_lint_missing_expected",
+      "durable_fixture_scope_gate_pass",
       "focused_go_tests",
       "full_go_tests",
       "durable_json_jsonl_validation",
@@ -36,38 +35,38 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0016-001",
+      "id": "TDD-IMPL-0017-001",
       "type": "contract",
-      "behavior": "Scope gate deterministically compares actual changed paths against expected files, allowed files, forbidden exact files, and forbidden glob patterns.",
-      "owner": "internal/productworkflow/scope_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Product workflow lint/audit applies planned atom scope to implementation_completed changed_paths and preserves durable fixture pass behavior.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0016-002",
+      "id": "TDD-IMPL-0017-002",
       "type": "fmea_negative",
-      "behavior": "Scope gate returns typed blockers for forbidden path edits, unexpected path edits, and missing required changed paths.",
-      "owner": "internal/productworkflow/scope_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Lint returns typed scope findings for forbidden exact paths, forbidden pattern paths, unexpected paths, and missing expected paths in implementation ledger closeout records.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0016-003",
-      "type": "source_sanity",
-      "behavior": "Scope gate normalizes and reports paths in stable sorted order without reading git, filesystem, CLI args, telemetry, or durable state.",
-      "owner": "internal/productworkflow/scope_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0016-004",
+      "id": "TDD-IMPL-0017-003",
       "type": "acceptance",
-      "behavior": "Scope gate pass tests allow explicitly configured durable bookkeeping and report paths while still blocking forbidden implementation spillover.",
-      "owner": "internal/productworkflow/scope_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Product audit/status/lint remain consistent and valid JSON when scope gate findings are present or absent.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0017-004",
+      "type": "source_sanity",
+      "behavior": "Scope gate lint wiring reuses internal/productworkflow EvaluateScopeGate without editing pure scope, transition, status, or validator package files.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     }

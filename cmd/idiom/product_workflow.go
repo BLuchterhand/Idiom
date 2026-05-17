@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"idiom/internal/productworkflow"
@@ -376,6 +377,57 @@ func lintEffortFolder(root string) productLintResult {
 		}
 	}
 
+	{
+		plannedScopes := map[string]*productworkflow.AtomScope{}
+		closedTasks := map[string]bool{}
+		for _, rec := range parsedLedger {
+			switch rec.RecordType {
+			case "atom_planned":
+				if rec.Scope != nil {
+					plannedScopes[rec.TaskID] = rec.Scope
+				}
+			case "atom_closed":
+				closedTasks[rec.TaskID] = true
+			}
+		}
+		// Scope gate lint is a closeout-time guard for active/in-progress
+		// atoms; historical closed atoms were closed before this gate existed
+		// and remain covered by their recorded review/investigation.
+		taskPaths := map[string][]string{}
+		for _, rec := range parsedLedger {
+			if rec.RecordType != "implementation_completed" && rec.RecordType != "fallback_completion" {
+				continue
+			}
+			if closedTasks[rec.TaskID] {
+				continue
+			}
+			taskPaths[rec.TaskID] = append(taskPaths[rec.TaskID], rec.ChangedPaths...)
+		}
+		sortedTIDs := make([]string, 0, len(taskPaths))
+		for tid := range taskPaths {
+			sortedTIDs = append(sortedTIDs, tid)
+		}
+		sort.Strings(sortedTIDs)
+		for _, tid := range sortedTIDs {
+			paths := taskPaths[tid]
+			scope, ok := plannedScopes[tid]
+			if !ok || scope == nil || len(paths) == 0 {
+				continue
+			}
+			gateResult := productworkflow.EvaluateScopeGate(productworkflow.ScopeGateInput{
+				ExpectedFiles:      scope.ExpectedFiles,
+				AllowedFiles:       scope.AllowedFiles,
+				ForbiddenFiles:     scope.Forbidden,
+				ForbiddenPatterns:  scope.ForbiddenPatterns,
+				ActualChangedPaths: paths,
+			})
+			for _, b := range gateResult.Blockers {
+				msg := fmt.Sprintf("task %s scope_gate_%s: %s", tid, b.Code, b.Message)
+				addFinding("scope_gate_"+b.Code, "implementation_ledger.jsonl", msg)
+			}
+		}
+	}
+
 	if len(result.Findings) == 0 {
 		result.Status = "pass"
 	} else {
@@ -426,18 +478,23 @@ func buildAuditResult(lintResult productLintResult) productAuditResult {
 		"tdd":          {Name: "tdd", Status: "pass"},
 		"traceability": {Name: "traceability", Status: "pass"},
 		"reports":      {Name: "reports", Status: "pass"},
+		"scope_gate":   {Name: "scope_gate", Status: "pass"},
 	}
 	for _, f := range lintResult.Findings {
 		section := productworkflow.ClassifySection(f.Path)
 		if section == "" {
-			continue
+			if strings.HasPrefix(f.Code, "scope_gate_") {
+				section = "scope_gate"
+			} else {
+				continue
+			}
 		}
 		sec := sectionMap[section]
 		sec.Findings = append(sec.Findings, f)
 		sec.Status = "fail"
 	}
 	sections := make([]productAuditSection, 0, len(sectionMap))
-	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports"} {
+	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate"} {
 		sections = append(sections, *sectionMap[name])
 	}
 	status := "pass"

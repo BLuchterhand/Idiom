@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0016-phase-1-atom-scope-closeout-gate`
-- Active atom: none; next atom is ready to plan
+- Last completed atom: `impl-0017-phase-1-scope-gate-lint-integration`
+- Active atom: none; plan the next atom from Phase 1/Phase 2 design-doc scope
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `60bbfac1f97862cb`
+- Context pack: `f2979e7ab4e39b49`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -35,6 +35,11 @@ This effort is the durable implementation state for delivering
 - Atom 16 scope closeout gate: all TDD obligations satisfied. GLM implemented
   pure changed-path/scope gate logic in new package files; Codex
   review/verification passed. The scope gate is not wired into CLI closeout yet.
+- Atom 17 scope gate lint integration: all TDD obligations satisfied. GLM wired
+  `EvaluateScopeGate` into product workflow lint/audit for active closeout
+  implementation ledger changed paths; Codex required a correction pass for
+  deterministic task ordering and explicit historical closed-atom handling, then
+  review/verification passed.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -196,6 +201,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan `impl-0017-phase-1-scope-gate-cli-or-resume-integration` to decide the
-smallest safe integration point for the scope gate, or pick the next Phase 1
-workflow substrate atom if CLI wiring would couple too many files.
+Run the GLM implementation pass for
+`impl-0017-phase-1-scope-gate-lint-integration`. Keep code changes in
+`cmd/idiom/product_workflow.go` and `cmd/idiom/product_workflow_test.go`;
+Codex owns durable closeout.

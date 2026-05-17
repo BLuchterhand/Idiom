@@ -725,7 +725,7 @@ func TestProductAuditPassesOnDurableEffortFixture(t *testing.T) {
 	if len(result.CheckedFiles) == 0 {
 		t.Fatal("should have checked at least one file")
 	}
-	requiredSections := []string{"prd", "adr", "tdd", "traceability", "reports"}
+	requiredSections := []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate"}
 	if len(result.Sections) != len(requiredSections) {
 		t.Fatalf("expected %d sections, got %d", len(requiredSections), len(result.Sections))
 	}
@@ -755,7 +755,7 @@ func TestProductAuditJSONIncludesAllRequiredSections(t *testing.T) {
 	for _, sec := range result.Sections {
 		sectionNames[sec.Name] = true
 	}
-	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports"} {
+	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate"} {
 		if !sectionNames[name] {
 			t.Fatalf("expected section %q in audit result", name)
 		}
@@ -2101,4 +2101,242 @@ func validTestTestInvestigationReportJSON() string {
 		"next_valid_action":"",
 		"completed_at":""
 	}`
+}
+
+const scopeGatePlannedAtom = `{"record_type":"atom_planned","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["cmd/idiom/product_workflow.go"],"forbidden":["internal/productworkflow/scope.go"],"forbidden_patterns":["docs/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`
+
+func scopeGateLedgerForbiddenExactPathJSONL() string {
+	return scopeGatePlannedAtom + "\n" +
+		`{"record_type":"implementation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","changed_paths":["cmd/idiom/product_workflow.go","internal/productworkflow/scope.go"]}`
+}
+
+func scopeGateLedgerForbiddenPatternJSONL() string {
+	return scopeGatePlannedAtom + "\n" +
+		`{"record_type":"implementation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","changed_paths":["cmd/idiom/product_workflow.go","docs/design.md"]}`
+}
+
+func scopeGateLedgerUnexpectedPathJSONL() string {
+	return scopeGatePlannedAtom + "\n" +
+		`{"record_type":"implementation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","changed_paths":["cmd/idiom/product_workflow.go","internal/productworkflow/validate.go"]}`
+}
+
+func scopeGateLedgerMissingExpectedPathJSONL() string {
+	return `{"record_type":"atom_planned","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["cmd/idiom/product_workflow.go","cmd/idiom/main.go"],"forbidden":["internal/productworkflow/scope.go"],"forbidden_patterns":["docs/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}` + "\n" +
+		`{"record_type":"implementation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","changed_paths":["cmd/idiom/product_workflow.go"]}`
+}
+
+func scopeGateLedgerPassingJSONL() string {
+	return scopeGatePlannedAtom + "\n" +
+		`{"record_type":"implementation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","changed_paths":["cmd/idiom/product_workflow.go"]}`
+}
+
+func writeScopeGateEffort(t *testing.T, ledgerJSONL string) string {
+	t.Helper()
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "implementation_ledger.jsonl", ledgerJSONL)
+	return dir
+}
+
+func TestProductLintScopeGateFailsOnForbiddenPath(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerForbiddenExactPathJSONL())
+	result := lintEffortFolder(dir)
+	if result.Status != "fail" {
+		t.Fatalf("expected fail, got %q", result.Status)
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "scope_gate_forbidden_path" && strings.Contains(f.Message, "internal/productworkflow/scope.go") && strings.Contains(f.Message, "impl-scope-test") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected scope_gate_forbidden_path finding with task id and path, got %v", result.Findings)
+	}
+}
+
+func TestProductLintScopeGateFailsOnForbiddenPattern(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerForbiddenPatternJSONL())
+	result := lintEffortFolder(dir)
+	if result.Status != "fail" {
+		t.Fatalf("expected fail, got %q", result.Status)
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "scope_gate_forbidden_pattern" && strings.Contains(f.Message, "docs/design.md") && strings.Contains(f.Message, "docs/**") && strings.Contains(f.Message, "impl-scope-test") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected scope_gate_forbidden_pattern finding with task id, path, and pattern, got %v", result.Findings)
+	}
+}
+
+func TestProductLintScopeGateFailsOnUnexpectedPath(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerUnexpectedPathJSONL())
+	result := lintEffortFolder(dir)
+	if result.Status != "fail" {
+		t.Fatalf("expected fail, got %q", result.Status)
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "scope_gate_unexpected_path" && strings.Contains(f.Message, "internal/productworkflow/validate.go") && strings.Contains(f.Message, "impl-scope-test") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected scope_gate_unexpected_path finding with task id and path, got %v", result.Findings)
+	}
+}
+
+func TestProductLintScopeGateFailsOnMissingExpectedPath(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerMissingExpectedPathJSONL())
+	result := lintEffortFolder(dir)
+	if result.Status != "fail" {
+		t.Fatalf("expected fail, got %q", result.Status)
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "scope_gate_missing_expected_path" && strings.Contains(f.Message, "cmd/idiom/main.go") && strings.Contains(f.Message, "impl-scope-test") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected scope_gate_missing_expected_path finding with task id and path, got %v", result.Findings)
+	}
+}
+
+func TestProductLintScopeGatePassingLedgerPasses(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerPassingJSONL())
+	result := lintEffortFolder(dir)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass, got %q with findings %v", result.Status, result.Findings)
+	}
+	for _, f := range result.Findings {
+		if strings.HasPrefix(f.Code, "scope_gate_") {
+			t.Fatalf("unexpected scope gate finding: %v", f)
+		}
+	}
+}
+
+func TestProductLintScopeGateClosedAtomNotEnforced(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerForbiddenExactPathJSONL()+"\n"+
+		`{"record_type":"verification_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z"}`+"\n"+
+		`{"record_type":"review_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`+"\n"+
+		`{"record_type":"post_effort_investigation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`+"\n"+
+		`{"record_type":"atom_closed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":[]}`,
+	)
+	result := lintEffortFolder(dir)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass for closed atom (historical), got %q with findings %v", result.Status, result.Findings)
+	}
+	for _, f := range result.Findings {
+		if strings.HasPrefix(f.Code, "scope_gate_") {
+			t.Fatalf("scope gate should not be enforced for closed atoms: %v", f)
+		}
+	}
+}
+
+func TestProductLintScopeGateSkipsClosedAtomsButEnforcesActive(t *testing.T) {
+	closedAtomScope := `{"record_type":"atom_planned","task_id":"impl-closed","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["cmd/idiom/product_workflow.go"],"forbidden":["internal/productworkflow/scope.go"],"forbidden_patterns":["docs/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}` + "\n" +
+		`{"record_type":"implementation_completed","task_id":"impl-closed","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","changed_paths":["cmd/idiom/product_workflow.go","internal/productworkflow/scope.go"]}` + "\n" +
+		`{"record_type":"verification_completed","task_id":"impl-closed","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z"}` + "\n" +
+		`{"record_type":"review_completed","task_id":"impl-closed","effort_id":"test-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}` + "\n" +
+		`{"record_type":"post_effort_investigation_completed","task_id":"impl-closed","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}` + "\n" +
+		`{"record_type":"atom_closed","task_id":"impl-closed","effort_id":"test-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":[]}`
+	activeAtomScope := scopeGatePlannedAtom + "\n" +
+		`{"record_type":"implementation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:06:00Z","implementor_id":"impl","changed_paths":["cmd/idiom/product_workflow.go","internal/productworkflow/validate.go"]}`
+	dir := writeScopeGateEffort(t, closedAtomScope+"\n"+activeAtomScope)
+	result := lintEffortFolder(dir)
+	if result.Status != "fail" {
+		t.Fatalf("expected fail, got %q", result.Status)
+	}
+	closedEnforced := false
+	activeEnforced := false
+	for _, f := range result.Findings {
+		if strings.HasPrefix(f.Code, "scope_gate_") && strings.Contains(f.Message, "impl-closed") {
+			closedEnforced = true
+		}
+		if f.Code == "scope_gate_unexpected_path" && strings.Contains(f.Message, "impl-scope-test") {
+			activeEnforced = true
+		}
+	}
+	if closedEnforced {
+		t.Fatal("scope gate should not be enforced for closed atom impl-closed")
+	}
+	if !activeEnforced {
+		t.Fatalf("expected scope_gate_unexpected_path finding for active atom impl-scope-test, got %v", result.Findings)
+	}
+}
+
+func TestProductLintScopeGateJSONValidFailing(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerForbiddenExactPathJSONL())
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "fail" {
+		t.Fatalf("expected status fail, got %q", result.Status)
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "scope_gate_forbidden_path" {
+			found = true
+			if f.Path != "implementation_ledger.jsonl" {
+				t.Fatalf("expected finding path implementation_ledger.jsonl, got %q", f.Path)
+			}
+			if !strings.Contains(f.Message, "impl-scope-test") {
+				t.Fatalf("finding message should include task_id: %q", f.Message)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected scope_gate_forbidden_path finding, got %v", result.Findings)
+	}
+}
+
+func TestProductLintScopeGateJSONValidPassing(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerPassingJSONL())
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "pass" {
+		t.Fatalf("expected status pass, got %q", result.Status)
+	}
+}
+
+func TestProductAuditScopeGateFailingIncludesSection(t *testing.T) {
+	dir := writeScopeGateEffort(t, scopeGateLedgerForbiddenExactPathJSONL())
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	scopeSection := findAuditSection(t, result, "scope_gate")
+	if scopeSection.Status != "fail" {
+		t.Fatalf("expected scope_gate section to fail, got %q", scopeSection.Status)
+	}
+	found := false
+	for _, f := range scopeSection.Findings {
+		if f.Code == "scope_gate_forbidden_path" && strings.Contains(f.Message, "impl-scope-test") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected scope_gate_forbidden_path in scope_gate section, got %v", scopeSection.Findings)
+	}
 }

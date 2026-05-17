@@ -1,6 +1,6 @@
 {
   "schema_version": "idiom.effort_index.v1",
-  "updated_at": "2026-05-17T21:31:00Z",
+  "updated_at": "2026-05-17T21:53:00Z",
   "efforts": [
     {
       "effort_id": "prd-adr-brief-workflow",
@@ -9,7 +9,7 @@
       "current_phase": "phase-1-schemas-and-deterministic-linters",
       "current_state": "closed",
       "folder_path": "started/prd-adr-brief-workflow",
-      "task_id": "impl-0016-phase-1-atom-scope-closeout-gate",
+      "task_id": "impl-0017-phase-1-scope-gate-lint-integration",
       "created_at": "2026-05-17T15:20:00Z",
       "prior_paths": []
     }
