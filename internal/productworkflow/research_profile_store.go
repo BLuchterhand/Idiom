@@ -1,7 +1,6 @@
 package productworkflow
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,7 +41,9 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 			continue
 		}
 		name := entry.Name()
-		if strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
+		if strings.Contains(name, string(filepath.Separator)+".."+string(filepath.Separator)) ||
+			name == ".." || strings.HasPrefix(name, "../") ||
+			strings.HasSuffix(name, "/..") || strings.HasPrefix(name, "/") {
 			result.Findings = append(result.Findings, ProfileFinding{
 				Kind:     "path_traversal",
 				Message:  fmt.Sprintf("filename %q contains path traversal sequence", name),
@@ -70,29 +71,11 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 			})
 			continue
 		}
-		var profile ResearchProfile
-		if jsonErr := json.Unmarshal(data, &profile); jsonErr != nil {
+		profile, parseErr := ParseResearchProfileJSON(data)
+		if parseErr != nil {
 			result.Findings = append(result.Findings, ProfileFinding{
-				Kind:     "invalid_json",
-				Message:  fmt.Sprintf("invalid JSON in %q: %v", name, jsonErr),
-				File:     name,
-				Severity: "error",
-			})
-			continue
-		}
-		if strings.TrimSpace(profile.SchemaVersion) == "" || !strings.HasPrefix(profile.SchemaVersion, "idiom.research_profile.") {
-			result.Findings = append(result.Findings, ProfileFinding{
-				Kind:     "invalid_schema_version",
-				Message:  fmt.Sprintf("profile %q has missing or invalid schema_version %q", name, profile.SchemaVersion),
-				File:     name,
-				Severity: "error",
-			})
-			continue
-		}
-		if strings.TrimSpace(profile.Name) == "" {
-			result.Findings = append(result.Findings, ProfileFinding{
-				Kind:     "missing_name",
-				Message:  fmt.Sprintf("profile %q has empty name", name),
+				Kind:     "validation_error",
+				Message:  fmt.Sprintf("profile %q failed validation: %v", name, parseErr),
 				File:     name,
 				Severity: "error",
 			})

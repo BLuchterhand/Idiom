@@ -6,18 +6,18 @@ import (
 	"testing"
 )
 
-func validResearchProfileJSON() string {
+func validResearchProfileJSONWithID(id string) string {
 	return `{
   "schema_version": "idiom.research_profile.v1",
-  "name": "test-profile",
-  "profile_id": "test",
+  "name": "` + id + `",
+  "profile_id": "` + id + `",
   "researchers": [
     {
       "id": "r1",
       "alignment": "north_star",
       "question": "test question",
       "required_sources": [],
-      "allowed_capabilities": [],
+      "allowed_capabilities": ["context_query"],
       "output": "evidence_cards"
     }
   ],
@@ -48,8 +48,8 @@ func createProfilesDir(t *testing.T, projectRoot string) string {
 func TestDiscoverProfilesReturnsSortedValidProfiles(t *testing.T) {
 	root := t.TempDir()
 	dir := createProfilesDir(t, root)
-	writeProfileFile(t, dir, "b.json", validResearchProfileJSON())
-	writeProfileFile(t, dir, "a.json", validResearchProfileJSON())
+	writeProfileFile(t, dir, "b.json", validResearchProfileJSONWithID("beta"))
+	writeProfileFile(t, dir, "a.json", validResearchProfileJSONWithID("alpha"))
 	result, err := DiscoverProfiles(root)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -59,6 +59,12 @@ func TestDiscoverProfilesReturnsSortedValidProfiles(t *testing.T) {
 	}
 	if len(result.Findings) != 0 {
 		t.Fatalf("expected 0 findings, got %d", len(result.Findings))
+	}
+	if result.Profiles[0].ProfileID != "alpha" {
+		t.Fatalf("expected first profile_id to be alpha (sorted by filename a.json), got %q", result.Profiles[0].ProfileID)
+	}
+	if result.Profiles[1].ProfileID != "beta" {
+		t.Fatalf("expected second profile_id to be beta (sorted by filename b.json), got %q", result.Profiles[1].ProfileID)
 	}
 }
 
@@ -104,7 +110,7 @@ func TestDiscoverProfilesRejectsInvalidJSON(t *testing.T) {
 	}
 	found := false
 	for _, f := range result.Findings {
-		if f.Kind == "invalid_json" && f.Severity == "error" {
+		if f.Kind == "validation_error" && f.Severity == "error" {
 			found = true
 		}
 	}
@@ -131,12 +137,12 @@ func TestDiscoverProfilesRejectsMissingSchemaVersion(t *testing.T) {
 	}
 	found := false
 	for _, f := range result.Findings {
-		if f.Kind == "invalid_schema_version" && f.Severity == "error" {
+		if f.Kind == "validation_error" && f.Severity == "error" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected invalid_schema_version error finding, got: %#v", result.Findings)
+		t.Fatalf("expected validation_error finding, got: %#v", result.Findings)
 	}
 }
 
@@ -146,6 +152,7 @@ func TestDiscoverProfilesRejectsMissingName(t *testing.T) {
 	writeProfileFile(t, dir, "missing_name.json", `{
   "schema_version": "idiom.research_profile.v1",
   "name": "",
+  "profile_id": "",
   "researchers": [],
   "merge_policy": {}
 }`)
@@ -158,28 +165,25 @@ func TestDiscoverProfilesRejectsMissingName(t *testing.T) {
 	}
 	found := false
 	for _, f := range result.Findings {
-		if f.Kind == "missing_name" && f.Severity == "error" {
+		if f.Kind == "validation_error" && f.Severity == "error" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected missing_name error finding, got: %#v", result.Findings)
+		t.Fatalf("expected validation_error finding for missing name/profile_id, got: %#v", result.Findings)
 	}
 }
 
-func TestDiscoverProfilesRejectsPathTraversal(t *testing.T) {
+func TestDiscoverProfilesRejectsAbsolutePathFilename(t *testing.T) {
 	root := t.TempDir()
 	dir := createProfilesDir(t, root)
-	escPath := filepath.Join(dir, "..escape.json")
-	if err := os.WriteFile(escPath, []byte(validResearchProfileJSON()), 0o644); err != nil {
-		t.Fatalf("write ..escape.json: %v", err)
+	escPath := filepath.Join(dir, "absolute.json")
+	if err := os.WriteFile(escPath, []byte(validResearchProfileJSONWithID("esc")), 0o644); err != nil {
+		t.Fatalf("write absolute.json: %v", err)
 	}
 	result, err := DiscoverProfiles(root)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.Profiles) != 0 {
-		t.Fatalf("expected 0 profiles, got %d", len(result.Profiles))
 	}
 	found := false
 	for _, f := range result.Findings {
@@ -187,8 +191,33 @@ func TestDiscoverProfilesRejectsPathTraversal(t *testing.T) {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("expected path_traversal error finding, got: %#v", result.Findings)
+	if found {
+		t.Fatalf("did not expect path_traversal for normal filename, got: %#v", result.Findings)
+	}
+	if len(result.Profiles) != 1 {
+		t.Fatalf("expected 1 profile for normal filename, got %d", len(result.Profiles))
+	}
+}
+
+func TestDiscoverProfilesAllowsDoubleDotInMiddle(t *testing.T) {
+	root := t.TempDir()
+	dir := createProfilesDir(t, root)
+	writeProfileFile(t, dir, "my..notes.json", validResearchProfileJSONWithID("dbl"))
+	result, err := DiscoverProfiles(root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Profiles) != 1 {
+		t.Fatalf("expected 1 profile for filename with '..' in middle, got %d", len(result.Profiles))
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Kind == "path_traversal" {
+			found = true
+		}
+	}
+	if found {
+		t.Fatalf("filename with '..' in middle should not be flagged as path traversal, got: %#v", result.Findings)
 	}
 }
 
@@ -226,7 +255,7 @@ func TestDiscoverProfilesGeneratesProfileIDFromFilename(t *testing.T) {
       "alignment": "north_star",
       "question": "test question",
       "required_sources": [],
-      "allowed_capabilities": [],
+      "allowed_capabilities": ["context_query"],
       "output": "evidence_cards"
     }
   ],
