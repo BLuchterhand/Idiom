@@ -558,3 +558,43 @@ func TestScopeGateSourceSanityPurity(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateLedgerCoverageDetectsUnderReporting(t *testing.T) {
+	ledger := []string{"cmd/foo.go", "internal/bar.go"}
+	git := []string{"cmd/foo.go", "internal/bar.go", "docs/baz.md"}
+	findings := ValidateLedgerCoverage(ledger, git)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "ledger_under_reports_path" {
+		t.Fatalf("expected ledger_under_reports_path, got %s", findings[0].Code)
+	}
+	if !strings.Contains(findings[0].Path, "docs/baz.md") {
+		t.Fatalf("expected path docs/baz.md, got %s", findings[0].Path)
+	}
+}
+
+func TestValidateLedgerCoveragePassesWhenComplete(t *testing.T) {
+	ledger := []string{"cmd/foo.go", "internal/bar.go", "docs/baz.md"}
+	git := []string{"cmd/foo.go", "internal/bar.go", "docs/baz.md"}
+	findings := ValidateLedgerCoverage(ledger, git)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings, got %d: %#v", len(findings), findings)
+	}
+}
+
+func TestValidateLedgerCoveragePassesWhenLedgerOverReports(t *testing.T) {
+	ledger := []string{"cmd/foo.go", "internal/bar.go", "extra.go"}
+	git := []string{"cmd/foo.go", "internal/bar.go"}
+	findings := ValidateLedgerCoverage(ledger, git)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings when ledger over-reports, got %d", len(findings))
+	}
+}
+
+func TestValidateLedgerCoverageEmptyGitReturnsEmpty(t *testing.T) {
+	findings := ValidateLedgerCoverage([]string{"cmd/foo.go"}, nil)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings with empty git paths, got %d", len(findings))
+	}
+}

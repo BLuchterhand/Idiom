@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -431,6 +432,22 @@ func lintEffortFolder(root string) productLintResult {
 		}
 	}
 
+	var allLedgerPaths []string
+	for _, rec := range parsedLedger {
+		if rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded" {
+			allLedgerPaths = append(allLedgerPaths, rec.ChangedPaths...)
+		}
+	}
+	if len(allLedgerPaths) > 0 {
+		gitPaths := gitChangedPaths(root)
+		if len(gitPaths) > 0 {
+			coverageFindings := productworkflow.ValidateLedgerCoverage(allLedgerPaths, gitPaths)
+			for _, f := range coverageFindings {
+				addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
+			}
+		}
+	}
+
 	if len(result.Findings) == 0 {
 		result.Status = "pass"
 	} else {
@@ -739,4 +756,41 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 		}
 	}
 	return 0
+}
+
+func gitChangedPaths(effortRoot string) []string {
+	repoRoot := findGitRepoRoot(effortRoot)
+	if repoRoot == "" {
+		return nil
+	}
+	rel, err := filepath.Rel(repoRoot, effortRoot)
+	if err != nil {
+		return nil
+	}
+	out, err := exec.Command("git", "-C", repoRoot, "diff", "--name-only", "HEAD~1", "HEAD", "--", rel).Output()
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths
+}
+
+func findGitRepoRoot(start string) string {
+	dir := start
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }

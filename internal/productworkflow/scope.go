@@ -14,6 +14,31 @@ type ScopeGateInput struct {
 	ActualChangedPaths []string
 }
 
+type LedgerCoverageFinding struct {
+	Code    string `json:"code"`
+	Path    string `json:"path"`
+	Message string `json:"message"`
+}
+
+func ValidateLedgerCoverage(ledgerChangedPaths []string, commitChangedPaths []string) []LedgerCoverageFinding {
+	var findings []LedgerCoverageFinding
+	ledgerSet := make(map[string]struct{}, len(ledgerChangedPaths))
+	for _, p := range ledgerChangedPaths {
+		ledgerSet[normalizePath(p)] = struct{}{}
+	}
+	for _, p := range commitChangedPaths {
+		norm := normalizePath(p)
+		if _, ok := ledgerSet[norm]; !ok {
+			findings = append(findings, LedgerCoverageFinding{
+				Code:    "ledger_under_reports_path",
+				Path:    norm,
+				Message: "commit changed " + norm + " but implementation ledger does not record it",
+			})
+		}
+	}
+	return findings
+}
+
 type ScopeGateResult struct {
 	Status             string
 	Blockers           []ScopeGateBlocker
