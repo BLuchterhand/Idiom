@@ -95,6 +95,34 @@ func TestProductLintFailsOnInvalidImplementationLedgerCloseout(t *testing.T) {
 	}
 }
 
+func TestProductLintIncludesPRDAndADRInCheckedFiles(t *testing.T) {
+	root := repoRoot(t)
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	wantFiles := []string{"prd.md", "adrs/index.json", "adrs/ADR-0001-durable-workflow-substrate.md"}
+	for _, want := range wantFiles {
+		found := false
+		for _, f := range result.CheckedFiles {
+			if f == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected checked_files to include %q, got %v", want, result.CheckedFiles)
+		}
+	}
+}
+
 func TestProductLintTelemetryClassifiesAsProductLint(t *testing.T) {
 	name := commandTelemetryName([]string{"product", "lint", "--effort-root", "."})
 	if name != "product:lint" {

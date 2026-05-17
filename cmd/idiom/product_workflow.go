@@ -50,7 +50,8 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
-	fmt.Fprintln(w, "implementation_ledger.jsonl, and all JSON report files.")
+	fmt.Fprintln(w, "implementation_ledger.jsonl, prd.md, adrs/index.json, ADR markdown,")
+	fmt.Fprintln(w, "and all JSON report files.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Exit codes: 0 pass, 1 lint findings, 2 usage error.")
 }
@@ -154,6 +155,24 @@ func lintEffortFolder(root string) productLintResult {
 	checkFile("implementation_ledger.jsonl", func(data []byte) error {
 		_, err := productworkflow.ParseImplementationLedgerJSONL(data)
 		return err
+	})
+	checkFile("prd.md", func(data []byte) error {
+		_, err := productworkflow.ParsePRDMarkdown(data)
+		return err
+	})
+	checkFile("adrs/index.json", func(data []byte) error {
+		idx, err := productworkflow.ParseADRIndexJSON(data)
+		if err != nil {
+			return err
+		}
+		for _, entry := range idx.ADRs {
+			adrRelPath := filepath.Join("adrs", entry.Path)
+			checkFile(adrRelPath, func(adrData []byte) error {
+				_, adrErr := productworkflow.ParseADRMarkdown(adrData)
+				return adrErr
+			})
+		}
+		return nil
 	})
 
 	reportsDir := filepath.Join(root, "reports")

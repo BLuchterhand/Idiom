@@ -4,13 +4,13 @@
   "task_id": "impl-0004-phase-1-prd-adr-schema-validation",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T16:09:46Z",
-  "state_revision": 8,
-  "last_event_id": "evt-0030",
+  "updated_at": "2026-05-17T16:20:35Z",
+  "state_revision": 10,
+  "last_event_id": "evt-0037",
   "workspace_fingerprint": "idiom@91e143d",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
-  "current_state": "blocked_implementor_timeout",
+  "current_state": "verified",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -51,7 +51,7 @@
       },
       {
         "kind": "implementor_timeout",
-        "description": "OpenCode MiniMax attached-server run for impl-0004 timed out after 240 seconds without output or code edits; no speed improvement was observed against prior GLM timeouts."
+        "description": "OpenCode MiniMax attached-server run for impl-0004 timed out after 240 seconds without output or code edits; GLM retry with the 300 second cap produced partial code edits but timed out without closeout."
       }
     ],
     "refresh_policy": "on_demand"
@@ -61,8 +61,18 @@
     "gate_results": [
       {
         "gate": "prd_adr_schema_validation",
-        "status": "pending",
-        "checked_at": "2026-05-17T16:03:39Z"
+        "status": "passed",
+        "checked_at": "2026-05-17T16:20:35Z"
+      },
+      {
+        "gate": "product_workflow_lint_cli",
+        "status": "passed",
+        "checked_at": "2026-05-17T16:20:35Z"
+      },
+      {
+        "gate": "durable_artifact_validation",
+        "status": "passed",
+        "checked_at": "2026-05-17T16:20:35Z"
       }
     ],
     "blocking_criteria": [],
@@ -70,9 +80,7 @@
   },
   "open_obligations": [],
   "open_questions": [],
-  "blockers": [
-    "opencode_minimax_attached_server_timeout"
-  ],
+  "blockers": [],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -86,11 +94,10 @@
   "session_ids": {},
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T16:09:46Z",
+  "last_reconciliation_at": "2026-05-17T16:20:35Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "retry_phase_1_prd_adr_schema_atom_with_alternate_opencode_mode",
-    "fallback_complete_phase_1_prd_adr_schema_atom_after_recorded_exception",
+    "plan_phase_1_research_profile_and_evidence_card_schema_atom",
     "close_effort_if_abandoned"
   ],
   "durability_level": "source_controlled"

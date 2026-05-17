@@ -343,6 +343,241 @@ func validatePrivacyFlags(context string, privacy PrivacyState) error {
 	return errors.Join(errs...)
 }
 
+func ParsePRDMarkdown(data []byte) (PRDDocument, error) {
+	fields, body, err := parseFrontMatterRaw(data)
+	if err != nil {
+		return PRDDocument{}, fmt.Errorf("parse PRD: %w", err)
+	}
+	fm := PRDFrontMatter{
+		SchemaVersion: fields["schema_version"],
+		PRDID:         fields["prd_id"],
+		Status:        fields["status"],
+		TaskID:        fields["task_id"],
+		CreatedAt:     fields["created_at"],
+	}
+	doc := PRDDocument{FrontMatter: fm}
+	doc.Requirements = parsePRDRequirements(body)
+	if err := validatePRD(doc); err != nil {
+		return PRDDocument{}, err
+	}
+	return doc, nil
+}
+
+func ParseADRIndexJSON(data []byte) (ADRIndex, error) {
+	var idx ADRIndex
+	if err := json.Unmarshal(data, &idx); err != nil {
+		return ADRIndex{}, fmt.Errorf("parse ADR index: %w", err)
+	}
+	if err := validateADRIndex(idx); err != nil {
+		return ADRIndex{}, err
+	}
+	return idx, nil
+}
+
+func ParseADRMarkdown(data []byte) (ADRDocument, error) {
+	fields, body, err := parseFrontMatterRaw(data)
+	if err != nil {
+		return ADRDocument{}, fmt.Errorf("parse ADR: %w", err)
+	}
+	fm := ADRFrontMatter{
+		SchemaVersion: fields["schema_version"],
+		ADRID:         fields["adr_id"],
+		Status:        fields["status"],
+		PRDRefs:       parseFrontMatterList(fields, "prd_refs"),
+	}
+	doc := ADRDocument{FrontMatter: fm, HasDecision: strings.Contains(body, "## Decision")}
+	if err := validateADR(doc); err != nil {
+		return ADRDocument{}, err
+	}
+	return doc, nil
+}
+
+func parseFrontMatterRaw(data []byte) (map[string]string, string, error) {
+	text := string(data)
+	if !strings.HasPrefix(text, "---") {
+		return nil, "", errors.New("front matter delimiter --- not found at start")
+	}
+	end := strings.Index(text[3:], "---")
+	if end < 0 {
+		return nil, "", errors.New("closing front matter delimiter --- not found")
+	}
+	fmText := text[3 : end+3]
+	body := text[end+6:]
+	return parseYAMLFieldsMultiline(fmText), body, nil
+}
+
+func parseYAMLFieldsMultiline(text string) map[string]string {
+	result := map[string]string{}
+	lines := strings.Split(text, "\n")
+	var currentKey string
+	var listItems []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || trimmed == "---" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- ") && currentKey != "" {
+			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			listItems = append(listItems, item)
+			continue
+		}
+		if currentKey != "" && len(listItems) > 0 {
+			result[currentKey] = "[" + strings.Join(listItems, ", ") + "]"
+		}
+		currentKey = ""
+		listItems = nil
+		idx := strings.Index(trimmed, ":")
+		if idx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(trimmed[:idx])
+		val := strings.TrimSpace(trimmed[idx+1:])
+		if val == "" {
+			currentKey = key
+			continue
+		}
+		result[key] = val
+	}
+	if currentKey != "" && len(listItems) > 0 {
+		result[currentKey] = "[" + strings.Join(listItems, ", ") + "]"
+	}
+	return result
+}
+
+func parseFrontMatterList(fields map[string]string, key string) []string {
+	val := fields[key]
+	if val == "" {
+		return nil
+	}
+	val = strings.TrimSpace(val)
+	if !strings.HasPrefix(val, "[") || !strings.HasSuffix(val, "]") {
+		return nil
+	}
+	inner := strings.TrimSpace(val[1 : len(val)-1])
+	if inner == "" {
+		return nil
+	}
+	parts := strings.Split(inner, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.Trim(strings.TrimSpace(p), `"'`)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func parsePRDRequirements(body string) []PRDRequirement {
+	var reqs []PRDRequirement
+	lines := strings.Split(body, "\n")
+	var current *PRDRequirement
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- **id**:") {
+			if current != nil {
+				reqs = append(reqs, *current)
+			}
+			current = &PRDRequirement{}
+			current.ID = strings.TrimSpace(strings.TrimPrefix(trimmed, "- **id**:"))
+		} else if current != nil {
+			if strings.HasPrefix(trimmed, "- **priority**:") {
+				current.Priority = strings.TrimSpace(strings.TrimPrefix(trimmed, "- **priority**:"))
+			} else if strings.HasPrefix(trimmed, "- **statement**:") {
+				current.Statement = strings.TrimSpace(strings.TrimPrefix(trimmed, "- **statement**:"))
+			} else if strings.HasPrefix(trimmed, "- **evidence_refs**:") {
+				current.EvidenceRefs = parseInlineArray(trimmed, "- **evidence_refs**:")
+			} else if strings.HasPrefix(trimmed, "- **tdd_obligations**:") {
+				current.TDDObligations = parseInlineArray(trimmed, "- **tdd_obligations**:")
+			}
+		}
+	}
+	if current != nil {
+		reqs = append(reqs, *current)
+	}
+	return reqs
+}
+
+func parseInlineArray(line, prefix string) []string {
+	val := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	val = strings.TrimSpace(val)
+	if !strings.HasPrefix(val, "[") || !strings.HasSuffix(val, "]") {
+		return nil
+	}
+	inner := strings.TrimSpace(val[1 : len(val)-1])
+	if inner == "" {
+		return nil
+	}
+	parts := strings.Split(inner, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.Trim(strings.TrimSpace(p), `"'`)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+func validatePRD(doc PRDDocument) error {
+	var errs []error
+	require(&errs, doc.FrontMatter.SchemaVersion, "PRD front matter missing schema_version")
+	require(&errs, doc.FrontMatter.PRDID, "PRD front matter missing prd_id")
+	require(&errs, doc.FrontMatter.Status, "PRD front matter missing status")
+	require(&errs, doc.FrontMatter.TaskID, "PRD front matter missing task_id")
+	require(&errs, doc.FrontMatter.CreatedAt, "PRD front matter missing created_at")
+	if len(doc.Requirements) == 0 {
+		errs = append(errs, errors.New("PRD has no requirements"))
+	}
+	for i, req := range doc.Requirements {
+		prefix := fmt.Sprintf("PRD requirement %d (%s)", i, req.ID)
+		require(&errs, req.ID, prefix+" missing id")
+		if len(req.EvidenceRefs) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing evidence_refs", prefix))
+		}
+		if len(req.TDDObligations) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing tdd_obligations", prefix))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func validateADRIndex(idx ADRIndex) error {
+	var errs []error
+	require(&errs, idx.SchemaVersion, "ADR index missing schema_version")
+	require(&errs, idx.EffortID, "ADR index missing effort_id")
+	if len(idx.ADRs) == 0 {
+		errs = append(errs, errors.New("ADR index missing adrs"))
+	}
+	for i, entry := range idx.ADRs {
+		prefix := fmt.Sprintf("ADR index entry %d", i)
+		require(&errs, entry.ADRID, prefix+" missing adr_id")
+		require(&errs, entry.Status, prefix+" missing status")
+		require(&errs, entry.Path, prefix+" missing path")
+		if len(entry.PRDRefs) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing prd_refs", prefix))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func validateADR(doc ADRDocument) error {
+	var errs []error
+	require(&errs, doc.FrontMatter.SchemaVersion, "ADR front matter missing schema_version")
+	require(&errs, doc.FrontMatter.ADRID, "ADR front matter missing adr_id")
+	require(&errs, doc.FrontMatter.Status, "ADR front matter missing status")
+	if len(doc.FrontMatter.PRDRefs) == 0 {
+		errs = append(errs, errors.New("ADR front matter missing prd_refs"))
+	}
+	if !doc.HasDecision {
+		errs = append(errs, errors.New("ADR body missing ## Decision section"))
+	}
+	return errors.Join(errs...)
+}
+
 func require(errs *[]error, value string, message string) {
 	if strings.TrimSpace(value) == "" {
 		*errs = append(*errs, errors.New(message))

@@ -1,19 +1,40 @@
 # PRD/ADR/Brief Workflow Effort
 
-This effort is the durable Phase 0 fixture for implementing
+This effort is the durable implementation state for delivering
 `docs/design-prd-adr-brief-research-workflow.md`.
 
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Active atom: `impl-0001-phase-0-durable-workflow-substrate`
+- Active atom: `impl-0004-phase-1-prd-adr-schema-validation`
 - Status bucket: `started`
-- Current phase: `phase-0-design-fixtures`
-- Context pack: `03dd97ee30a4e3d7`
-- Coverage tier: `documentation`
+- Current phase: `phase-1-schemas-and-deterministic-linters`
+- Context pack: `4b2da4972df00d55`
+- Coverage tier: `unit`
 
-The workflow implementation is still proposed. These files are source-controlled
-fixtures and resumable implementation state, not shipped CLI behavior.
+The workflow implementation is in progress. These files are source-controlled
+fixtures and resumable implementation state; shipped behavior is limited to the
+committed product workflow validators and lint command until later atoms close.
+
+## Implementation Guidelines
+
+- Goal: deliver the full `docs/design-prd-adr-brief-research-workflow.md`
+  design through durable atoms until the effort can be closed as complete.
+- Codex orchestrates, verifies, reviews, investigates, records durable state, and
+  commits. OpenCode implementors make code changes by default.
+- Use OpenCode attached-server runs for implementor attempts, with a 5 minute
+  cap before declaring timeout evidence:
+  `OPENCODE_SERVER_URL=http://127.0.0.1:<port> ./scripts/run-opencode-glm.sh run --format default "<brief>"`.
+- Select the implementor model from observed stability, not preference. As of
+  `impl-0004`, GLM (`zai-coding-plan/glm-5.1`) is the most stable recorded
+  choice because it produced partial patches on prior atoms; MiniMax 2.7
+  highspeed (`minimax-coding-plan/MiniMax-M2.7-highspeed`) timed out after
+  240 seconds with no output or code edits.
+- Re-evaluate model stability after each atom and record the model, elapsed time,
+  timeout status, and patch completeness in the implementation report.
+- If an implementor times out or produces no usable closeout, record a
+  `fallback_exception` before any Codex code edits. Keep fallback edits inside
+  the planned atom scope and add compensating verification.
 
 ## Resume Path
 
@@ -34,12 +55,12 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 - `evidence/traceability_matrix.json`: evidence-to-brief links.
 - `prd.md`: fixture PRD for the Phase 0 substrate.
 - `adrs/`: fixture ADR set.
-- `tdd.json`: documentation-tier TDD obligations.
+- `tdd.json`: current atom TDD obligations.
 - `briefs/`: dispatch-shaped fixture brief.
 - `reports/`: implementation, review, and investigation reports.
 
 ## Next Valid Action
 
-After `impl-0001-phase-0-durable-workflow-substrate` is reviewed and its
-post-effort investigation is complete, the next valid action is to plan the
-Phase 1 schema/validator atom from this effort state.
+Retry `impl-0004-phase-1-prd-adr-schema-validation` with the updated 5 minute
+OpenCode cap and the most stable recorded implementor model, then complete the
+atom investigation and advance to the next Phase 1 schema/linters action.

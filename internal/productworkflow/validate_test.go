@@ -38,6 +38,233 @@ func TestParseCommittedPhase0Fixtures(t *testing.T) {
 	}
 }
 
+func TestParsePRDFixturePasses(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md"))
+	if err != nil {
+		t.Fatalf("read prd.md: %v", err)
+	}
+	doc, err := ParsePRDMarkdown(data)
+	if err != nil {
+		t.Fatalf("parse PRD fixture: %v", err)
+	}
+	if doc.FrontMatter.PRDID != "prd-impl-0001-phase-0" {
+		t.Fatalf("expected prd_id prd-impl-0001-phase-0, got %q", doc.FrontMatter.PRDID)
+	}
+	if len(doc.Requirements) == 0 {
+		t.Fatal("expected at least one requirement")
+	}
+	req := doc.Requirements[0]
+	if req.ID != "REQ-IMPL-0001" {
+		t.Fatalf("expected requirement ID REQ-IMPL-0001, got %q", req.ID)
+	}
+	if len(req.EvidenceRefs) == 0 {
+		t.Fatal("expected evidence_refs on requirement")
+	}
+	if len(req.TDDObligations) == 0 {
+		t.Fatal("expected tdd_obligations on requirement")
+	}
+}
+
+func TestParseADRIndexFixturePasses(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/index.json"))
+	if err != nil {
+		t.Fatalf("read ADR index: %v", err)
+	}
+	idx, err := ParseADRIndexJSON(data)
+	if err != nil {
+		t.Fatalf("parse ADR index fixture: %v", err)
+	}
+	if len(idx.ADRs) == 0 {
+		t.Fatal("expected at least one ADR entry")
+	}
+	if idx.ADRs[0].ADRID != "ADR-0001" {
+		t.Fatalf("expected ADR-0001, got %q", idx.ADRs[0].ADRID)
+	}
+}
+
+func TestParseADRMarkdownFixturePasses(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
+	if err != nil {
+		t.Fatalf("read ADR markdown: %v", err)
+	}
+	doc, err := ParseADRMarkdown(data)
+	if err != nil {
+		t.Fatalf("parse ADR fixture: %v", err)
+	}
+	if doc.FrontMatter.ADRID != "ADR-0001" {
+		t.Fatalf("expected adr_id ADR-0001, got %q", doc.FrontMatter.ADRID)
+	}
+	if !doc.HasDecision {
+		t.Fatal("expected HasDecision true")
+	}
+	if len(doc.FrontMatter.PRDRefs) == 0 {
+		t.Fatal("expected prd_refs in ADR front matter")
+	}
+}
+
+func TestInvalidPRDMissingEvidenceFailsClosed(t *testing.T) {
+	prd := `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: task-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **evidence_refs**: []
+- **tdd_obligations**: []
+`
+	_, err := ParsePRDMarkdown([]byte(prd))
+	if err == nil {
+		t.Fatal("expected PRD with empty evidence_refs to fail")
+	}
+	if !strings.Contains(err.Error(), "missing evidence_refs") {
+		t.Fatalf("expected evidence_refs error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing tdd_obligations") {
+		t.Fatalf("expected tdd_obligations error, got %v", err)
+	}
+}
+
+func TestInvalidPRDNoRequirementsFailsClosed(t *testing.T) {
+	prd := `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: task-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+`
+	_, err := ParsePRDMarkdown([]byte(prd))
+	if err == nil {
+		t.Fatal("expected PRD with no requirements to fail")
+	}
+	if !strings.Contains(err.Error(), "no requirements") {
+		t.Fatalf("expected no requirements error, got %v", err)
+	}
+}
+
+func TestInvalidPRDMissingFrontMatterFailsClosed(t *testing.T) {
+	prd := `---
+prd_id: prd-test
+status: draft
+task_id: task-test
+---
+
+# PRD: Test
+`
+	_, err := ParsePRDMarkdown([]byte(prd))
+	if err == nil {
+		t.Fatal("expected PRD missing schema_version/created_at to fail")
+	}
+	if !strings.Contains(err.Error(), "missing schema_version") {
+		t.Fatalf("expected schema_version error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing created_at") {
+		t.Fatalf("expected created_at error, got %v", err)
+	}
+}
+
+func TestInvalidADRMissingDecisionFailsClosed(t *testing.T) {
+	adr := `---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-TEST-001
+created_at: 2026-05-17T00:00:00Z
+---
+
+# ADR-TEST: Test
+`
+	_, err := ParseADRMarkdown([]byte(adr))
+	if err == nil {
+		t.Fatal("expected ADR missing Decision section to fail")
+	}
+	if !strings.Contains(err.Error(), "missing ## Decision section") {
+		t.Fatalf("expected Decision section error, got %v", err)
+	}
+}
+
+func TestInvalidADRMissingStatusFailsClosed(t *testing.T) {
+	adr := `---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+prd_refs:
+  - REQ-TEST-001
+---
+
+# ADR-TEST: Test
+
+## Decision
+`
+	_, err := ParseADRMarkdown([]byte(adr))
+	if err == nil {
+		t.Fatal("expected ADR missing status to fail")
+	}
+	if !strings.Contains(err.Error(), "missing status") {
+		t.Fatalf("expected status error, got %v", err)
+	}
+}
+
+func TestInvalidADRMissingPRDRefsFailsClosed(t *testing.T) {
+	adr := `---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+---
+
+# ADR-TEST: Test
+
+## Decision
+`
+	_, err := ParseADRMarkdown([]byte(adr))
+	if err == nil {
+		t.Fatal("expected ADR missing prd_refs to fail")
+	}
+	if !strings.Contains(err.Error(), "missing prd_refs") {
+		t.Fatalf("expected prd_refs error, got %v", err)
+	}
+}
+
+func TestInvalidADRIndexMissingIDPathStatusFailsClosed(t *testing.T) {
+	idx := `{"schema_version":"v1","effort_id":"test","adrs":[{"title":"test","prd_refs":["REQ-1"]}]}`
+	_, err := ParseADRIndexJSON([]byte(idx))
+	if err == nil {
+		t.Fatal("expected ADR index with missing fields to fail")
+	}
+	for _, want := range []string{"missing adr_id", "missing status", "missing path"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestInvalidADRIndexMissingPRDRefsFailsClosed(t *testing.T) {
+	idx := `{"schema_version":"v1","effort_id":"test","adrs":[{"adr_id":"ADR-1","title":"test","status":"accepted","path":"adr.md"}]}`
+	_, err := ParseADRIndexJSON([]byte(idx))
+	if err == nil {
+		t.Fatal("expected ADR index entry without prd_refs to fail")
+	}
+	if !strings.Contains(err.Error(), "missing prd_refs") {
+		t.Fatalf("expected prd_refs error, got %v", err)
+	}
+}
+
 func TestWorkflowStateFailsClosedForMissingRequiredFields(t *testing.T) {
 	data := []byte(`{
 		"schema_version":"idiom.product_workflow_state.v0.fixture",

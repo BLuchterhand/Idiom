@@ -18,7 +18,13 @@
     "decision_tables_enumerated": 0,
     "mutation_score": null,
     "mutation_min_score": 80,
-    "gates_passed": [],
+    "gates_passed": [
+      "go_test_productworkflow_and_cmd_idiom",
+      "product_workflow_lint_cli",
+      "durable_json_jsonl_validation",
+      "privacy_secret_pattern_scan",
+      "diff_hygiene"
+    ],
     "gates_blocked": []
   },
   "obligations": [
@@ -29,7 +35,7 @@
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0004-002",
@@ -38,7 +44,7 @@
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0004-003",
@@ -47,7 +53,7 @@
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0004-004",
@@ -56,7 +62,7 @@
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0004-005",
@@ -65,7 +71,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     }
   ]
 }

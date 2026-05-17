@@ -277,3 +277,52 @@ type InvestigationReport struct {
 	NextValidAction  string         `json:"next_valid_action"`
 	CompletedAt      string         `json:"completed_at"`
 }
+
+type PRDDocument struct {
+	FrontMatter  PRDFrontMatter
+	Requirements []PRDRequirement
+}
+
+type PRDFrontMatter struct {
+	SchemaVersion string
+	PRDID         string
+	Status        string
+	TaskID        string
+	CreatedAt     string
+}
+
+type PRDRequirement struct {
+	ID             string
+	Priority       string
+	Statement      string
+	EvidenceRefs   []string
+	TDDObligations []string
+}
+
+type ADRIndex struct {
+	SchemaVersion string          `json:"schema_version"`
+	EffortID      string          `json:"effort_id"`
+	ADRs          []ADRIndexEntry `json:"adrs"`
+}
+
+type ADRIndexEntry struct {
+	ADRID        string   `json:"adr_id"`
+	Title        string   `json:"title"`
+	Status       string   `json:"status"`
+	Path         string   `json:"path"`
+	CoverageTier string   `json:"coverage_tier"`
+	PRDRefs      []string `json:"prd_refs"`
+	CreatedAt    string   `json:"created_at"`
+}
+
+type ADRDocument struct {
+	FrontMatter ADRFrontMatter
+	HasDecision bool
+}
+
+type ADRFrontMatter struct {
+	SchemaVersion string
+	ADRID         string
+	Status        string
+	PRDRefs       []string
+}
