@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0012-phase-1-adr-audit-hard-checks`
+- Last completed atom: `impl-0013-phase-1-tdd-audit-hard-checks`
 - Active atom: none
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `886cd99700a9fe6c`
+- Context pack: `6f2eedae2f3443fd`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -21,6 +21,8 @@ This effort is the durable implementation state for delivering
 - Atom 12 ADR audit hard checks: all TDD obligations satisfied. GLM implemented
   the shared parser/CLI change; Codex removed unrelated backend/config spillover
   before verification, then review/verification passed.
+- Atom 13 TDD audit hard checks: all TDD obligations satisfied. GLM implemented
+  deterministic PRD-to-TDD cross-link checks; Codex review/verification passed.
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
@@ -35,7 +37,7 @@ atoms close.
   commits. Dedicated implementor lanes make code changes by default; current
   eligible lanes are GLM through OpenCode and bounded DS4 trials through Codex
   CLI.
-- Use OpenCode attached-server runs for implementor attempts, with a 10 minute
+- Use OpenCode attached-server runs for implementor attempts, with a 15 minute
   cap before declaring timeout evidence:
   `OPENCODE_SERVER_URL=http://127.0.0.1:<port> ./scripts/run-opencode-glm.sh run --format default "<brief>"`.
 - Select the implementor model from observed stability, not preference. As of
@@ -65,6 +67,10 @@ atoms close.
   shared parser/CLI code or any repeated DS4 edit-quality failure.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
+- Parallelization policy: run read-only investigation, context gathering, and
+  verification in parallel where possible. Run multiple implementors in parallel
+  only when their write sets are disjoint; shared parser, validator, CLI,
+  durable-state, or report files stay sequential.
 - Keep implementor briefs patch-shaped, not task-shaped: name the exact
   decision, exact files, expected diff shape, forbidden choices, tests, and stop
   condition. Pre-resolve product/spec conflicts in Codex before handoff instead

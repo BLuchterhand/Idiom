@@ -2803,6 +2803,57 @@ func TestADRCrossLinkValidationSkipsCheckForNilMaps(t *testing.T) {
 	}
 }
 
+func TestValidatePRDTDDObligationCrossLinksDetectsMissingMust(t *testing.T) {
+	reqs := []PRDRequirement{
+		{ID: "REQ-1", Priority: "must", TDDObligations: []string{"TDD-1", "TDD-MISSING"}},
+		{ID: "REQ-2", Priority: "should", TDDObligations: []string{"TDD-ALSO-MISSING"}},
+	}
+	errs := ValidatePRDTDDObligationCrossLinks(reqs, map[string]bool{"TDD-1": true})
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].RequirementID != "REQ-1" {
+		t.Fatalf("expected RequirementID REQ-1, got %q", errs[0].RequirementID)
+	}
+	if errs[0].TDDObligation != "TDD-MISSING" {
+		t.Fatalf("expected TDDObligation TDD-MISSING, got %q", errs[0].TDDObligation)
+	}
+	if !strings.Contains(errs[0].Message, "TDD-MISSING") {
+		t.Fatalf("expected message to mention TDD-MISSING, got %q", errs[0].Message)
+	}
+}
+
+func TestValidatePRDTDDObligationCrossLinksPassesWhenAllPresent(t *testing.T) {
+	reqs := []PRDRequirement{
+		{ID: "REQ-1", Priority: "must", TDDObligations: []string{"TDD-1", "TDD-2"}},
+	}
+	errs := ValidatePRDTDDObligationCrossLinks(reqs, map[string]bool{"TDD-1": true, "TDD-2": true})
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidatePRDTDDObligationCrossLinksSkipsNonMust(t *testing.T) {
+	reqs := []PRDRequirement{
+		{ID: "REQ-1", Priority: "should", TDDObligations: []string{"TDD-MISSING"}},
+		{ID: "REQ-2", Priority: "MUST", TDDObligations: []string{"TDD-1"}},
+	}
+	errs := ValidatePRDTDDObligationCrossLinks(reqs, map[string]bool{"TDD-1": true})
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors (should-priority skipped, MUST case-insensitive match), got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidatePRDTDDObligationCrossLinksNilMapSkipsCheck(t *testing.T) {
+	reqs := []PRDRequirement{
+		{ID: "REQ-1", Priority: "must", TDDObligations: []string{"TDD-MISSING"}},
+	}
+	errs := ValidatePRDTDDObligationCrossLinks(reqs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors with nil map, got %d: %v", len(errs), errs)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

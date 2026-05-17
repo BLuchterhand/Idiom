@@ -355,6 +355,24 @@ func lintEffortFolder(root string) productLintResult {
 		}
 	}
 
+	if parsedPRD != nil {
+		tddIDSet := make(map[string]bool)
+		if parsedTDD != nil {
+			for _, o := range parsedTDD.Obligations {
+				tddIDSet[o.ID] = true
+			}
+		}
+		for _, rec := range parsedLedger {
+			for _, id := range rec.TDDObligationsSatisfied {
+				tddIDSet[id] = true
+			}
+		}
+		prdTDDErrs := productworkflow.ValidatePRDTDDObligationCrossLinks(parsedPRD.Requirements, tddIDSet)
+		for _, le := range prdTDDErrs {
+			addFinding("broken_link", "tdd.json", le.Message)
+		}
+	}
+
 	if len(result.Findings) == 0 {
 		result.Status = "pass"
 	} else {

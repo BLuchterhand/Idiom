@@ -1,0 +1,56 @@
+{
+  "schema_version": "idiom.investigation_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0013-phase-1-tdd-audit-hard-checks",
+  "status": "complete",
+  "created_at": "2026-05-17T20:23:00Z",
+  "scope": {
+    "expected_files": [
+      "cmd/idiom/product_workflow.go",
+      "cmd/idiom/product_workflow_test.go",
+      "internal/productworkflow/validate.go",
+      "internal/productworkflow/validate_test.go",
+      "durable effort bookkeeping and reports"
+    ],
+    "forbidden_patterns": [
+      ".idiom/**",
+      "internal/app/**",
+      "internal/agent/**",
+      "prompts/**",
+      "cmd/idiom/product_evidence*",
+      "internal/backends/**",
+      "internal/config/**",
+      "internal/llama/**"
+    ]
+  },
+  "tests": {
+    "focused": "go test ./internal/productworkflow ./cmd/idiom",
+    "full_suite": "go test ./...",
+    "product_audit": "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "product_lint": "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "json_jsonl": "JSON/JSONL validation for durable workflow artifacts",
+    "privacy_scan": "concrete credential-pattern privacy scan over durable effort artifacts",
+    "whitespace": "git diff --check"
+  },
+  "coverage": {
+    "coverage_tier": "unit",
+    "tdd_obligations_total": 4,
+    "tdd_obligations_satisfied": 4
+  },
+  "traceability": {
+    "design_ref": "docs/design-prd-adr-brief-research-workflow.md TDD audit and high-priority requirement coverage",
+    "context_pack_id": "6f2eedae2f3443fd",
+    "depends_on": "impl-0012-phase-1-adr-audit-hard-checks"
+  },
+  "privacy_audit": {
+    "no_raw_prompts": true,
+    "no_raw_transcripts": true,
+    "no_file_bodies": true,
+    "no_secrets": true,
+    "no_customer_data": true
+  },
+  "reviewer_findings": [],
+  "blockers": [],
+  "next_valid_action": "plan_next_phase_1_schema_or_deterministic_linter_atom",
+  "completed_at": "2026-05-17T20:31:00Z"
+}

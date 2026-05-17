@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0012-phase-1-adr-audit-hard-checks",
+  "task_id": "impl-0013-phase-1-tdd-audit-hard-checks",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T20:19:00Z",
-  "state_revision": 36,
-  "last_event_id": "evt-0117",
-  "workspace_fingerprint": "idiom@4e3bc64",
+  "updated_at": "2026-05-17T20:31:00Z",
+  "state_revision": 38,
+  "last_event_id": "evt-0125",
+  "workspace_fingerprint": "idiom@06853ab",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
   "current_state": "verified",
@@ -26,7 +26,7 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "886cd99700a9fe6c",
+    "context_pack_id": "6f2eedae2f3443fd",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -50,7 +50,7 @@
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 886cd99700a9fe6c reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to ADR audit hard-check scope."
+        "description": "Context pack 6f2eedae2f3443fd reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to TDD audit hard-check scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -59,49 +59,49 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "adr_front_matter_and_sections_audit",
+        "gate": "tdd_requirement_coverage_audit",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       },
       {
-        "gate": "adr_reference_existence_audit",
+        "gate": "tdd_workflow_known_id_audit",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       },
       {
-        "gate": "durable_adr_fixture_passes",
+        "gate": "durable_tdd_fixture_passes",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       },
       {
         "gate": "product_workflow_lint_cli",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       },
       {
         "gate": "focused_go_tests",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       },
       {
         "gate": "full_go_tests",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       },
       {
         "gate": "durable_json_jsonl_validation",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       },
       {
         "gate": "privacy_secret_scan",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       },
       {
         "gate": "diff_whitespace_check",
         "status": "passed",
-        "checked_at": "2026-05-17T20:19:00Z"
+        "checked_at": "2026-05-17T20:31:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -135,7 +135,7 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T20:19:00Z",
+  "last_reconciliation_at": "2026-05-17T20:31:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
     "plan_next_phase_1_schema_or_deterministic_linter_atom",

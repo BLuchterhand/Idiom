@@ -1427,6 +1427,198 @@ None.
 	}
 }
 
+func TestProductLintFailsOnMissingMustPriorityPRDTDDObligation(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "prd.md", `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001", "TDD-MISSING"]
+- **open_questions**: []
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail on missing must-priority PRD TDD obligation, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "broken_link" && f.Path == "tdd.json" && strings.Contains(f.Message, "TDD-MISSING") && strings.Contains(f.Message, "REQ-TEST-001") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding for tdd.json mentioning TDD-MISSING, got: %#v", result.Findings)
+	}
+}
+
+func TestProductAuditFailsOnMissingMustPriorityPRDTDDObligation(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "prd.md", `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001", "TDD-MISSING"]
+- **open_questions**: []
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail on missing PRD TDD obligation, got code=%d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	tddSection := findAuditSection(t, result, "tdd")
+	if tddSection.Status != "fail" {
+		t.Fatalf("expected tdd section to fail, got %q", tddSection.Status)
+	}
+	found := false
+	for _, f := range tddSection.Findings {
+		if f.Code == "broken_link" && strings.Contains(f.Message, "TDD-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding in tdd section mentioning TDD-MISSING, got: %#v", tddSection.Findings)
+	}
+}
+
+func TestProductLintAcceptsHistoricalLedgerSatisfiedTDDObligationsForPRD(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", `{
+		"schema_version":"idiom.traceability_matrix.v1.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"created_at":"2026-05-17T16:00:00Z",
+		"matrix":[{
+			"evidence_card":"EV-001","prd_requirement":"REQ-TEST-001","adr":"ADR-001","tdd_obligation":"TDD-HIST-001","brief":"briefs/test.md","report":"reports/test.json"
+		}]
+	}`)
+	writeTestFile(t, dir, "implementation_ledger.jsonl", strings.Join([]string{
+		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
+		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl"}`,
+		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z","tdd_obligations_satisfied":["TDD-HIST-001"]}`,
+		`{"record_type":"review_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`,
+		`{"record_type":"post_effort_investigation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`,
+		`{"record_type":"atom_closed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":[]}`,
+	}, "\n"))
+	writeTestFile(t, dir, "prd.md", `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-HIST-001"]
+- **open_questions**: []
+`)
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass with historical TDD obligation in PRD, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestProductLintSkipsNonMustPriorityPRDTDDObligations(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "prd.md", `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: should
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-MISSING"]
+- **open_questions**: []
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass when non-must priority has missing TDD obligation, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func findAuditSection(t *testing.T, result productAuditResult, name string) productAuditSection {
 	t.Helper()
 	for _, sec := range result.Sections {

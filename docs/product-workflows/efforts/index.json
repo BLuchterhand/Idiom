@@ -1,6 +1,6 @@
 {
   "schema_version": "idiom.effort_index.v1",
-  "updated_at": "2026-05-17T20:19:00Z",
+  "updated_at": "2026-05-17T20:31:00Z",
   "efforts": [
     {
       "effort_id": "prd-adr-brief-workflow",
@@ -9,7 +9,7 @@
       "current_phase": "phase-1-schemas-and-deterministic-linters",
       "current_state": "verified",
       "folder_path": "started/prd-adr-brief-workflow",
-      "task_id": "impl-0012-phase-1-adr-audit-hard-checks",
+      "task_id": "impl-0013-phase-1-tdd-audit-hard-checks",
       "created_at": "2026-05-17T15:20:00Z",
       "prior_paths": []
     }

@@ -839,6 +839,37 @@ func ValidateADRCrossLinks(
 	return errs
 }
 
+type PRDTDDObligationLinkError struct {
+	RequirementID string
+	TDDObligation string
+	Message       string
+}
+
+func ValidatePRDTDDObligationCrossLinks(
+	requirements []PRDRequirement,
+	tddObligationIDs map[string]bool,
+) []PRDTDDObligationLinkError {
+	var errs []PRDTDDObligationLinkError
+	for _, req := range requirements {
+		if strings.ToLower(req.Priority) != "must" {
+			continue
+		}
+		for _, tddID := range req.TDDObligations {
+			if tddObligationIDs != nil && !tddObligationIDs[tddID] {
+				errs = append(errs, PRDTDDObligationLinkError{
+					RequirementID: req.ID,
+					TDDObligation: tddID,
+					Message: fmt.Sprintf(
+						"PRD must-priority requirement %s references TDD obligation %q not found in current or historical TDD obligation IDs",
+						req.ID, tddID,
+					),
+				})
+			}
+		}
+	}
+	return errs
+}
+
 type ParsedADR struct {
 	Doc     ADRDocument
 	RelPath string
