@@ -69,6 +69,38 @@ func TestRunPlanExecuteMainUsesDefaultPlannerTokenBudget(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", "plan this change", "-json"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "no plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.writer_route_decision")
+	if !ok {
+		t.Fatalf("missing direct plan-execute writer route event in %s", stdout.String())
+	}
+	if event["writer_mode"] != "plan_submission" || event["lane"] != "plan-execute" || event["verification_owner"] != "planner_owned" {
+		t.Fatalf("unexpected direct plan-execute route event: %#v", event)
+	}
+	if event["cost_tier"] != "local_first" || event["review_policy"] != "local_first" {
+		t.Fatalf("route event should carry local-first defaults: %#v", event)
+	}
+	if !jsonEventStringSliceContains(event["reason_codes"], "route.multi_file_plan_execute") {
+		t.Fatalf("direct plan-execute route should explain multi-file plan-execute dispatch: %#v", event)
+	}
+}
+
 func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 	addendum := planExecutePlannerSystemAddendum(nil)
 	for _, forbidden := range []string{
@@ -743,6 +775,24 @@ func planExecuteEventByType(events []map[string]any, eventType string) (map[stri
 		}
 	}
 	return nil, false
+}
+
+func jsonEventStringSliceContains(value any, want string) bool {
+	switch items := value.(type) {
+	case []any:
+		for _, item := range items {
+			if item == want {
+				return true
+			}
+		}
+	case []string:
+		for _, item := range items {
+			if item == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {

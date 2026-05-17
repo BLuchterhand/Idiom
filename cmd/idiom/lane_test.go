@@ -476,6 +476,33 @@ func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 	}
 }
 
+func TestRunLaneMainPlanExecuteJSONEmitsWriterRouteDecision(t *testing.T) {
+	root := t.TempDir()
+	briefPath := filepath.Join(root, "brief.md")
+	if err := os.WriteFile(briefPath, []byte("# Plan execute brief\n\nUpdate the route decision tests.\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	fake := &laneFakeRunner{}
+	code := runLaneMainTest(t, []string{"plan-execute", "--json", "--project-root", root, briefPath}, &stdout, &stderr, fake)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.lane.writer_route_decision")
+	if !ok {
+		t.Fatalf("missing lane writer route event in %s", stdout.String())
+	}
+	if event["writer_mode"] != "plan_submission" || event["lane"] != "plan-execute" || event["verification_owner"] != "planner_owned" {
+		t.Fatalf("unexpected plan-execute lane route event: %#v", event)
+	}
+	if !jsonEventStringSliceContains(event["reason_codes"], "route.multi_file_plan_execute") {
+		t.Fatalf("plan-execute lane route should explain multi-file plan-execute dispatch: %#v", event)
+	}
+}
+
 func TestRunLaneMainNoContextPackSkipsAutomaticContextPack(t *testing.T) {
 	briefPath := writeBrief(t, "# Routing atom\n\nFiles To Modify:\n- internal/app/prompt_routing.go\n")
 	var stdout, stderr bytes.Buffer

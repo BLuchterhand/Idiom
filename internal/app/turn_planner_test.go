@@ -283,6 +283,56 @@ func TestWriterRouteDecisionForPromptReportsPlanExecuteDispatch(t *testing.T) {
 	}
 }
 
+func TestWriterRouteDecisionForPromptReportsDirectImplementation(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = ""
+	cfg.LlamaServer.Model = "default-model"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"internal/app/writer_route.go"},
+		},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("modify internal/app/writer_route.go", plan)
+
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("unexpected direct implementation writer route decision: %#v", decision)
+	}
+	if decision.VerificationOwner != "executor" {
+		t.Fatalf("direct implementation verification owner = %q, want executor", decision.VerificationOwner)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
+		t.Fatalf("direct implementation reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
+func TestWriterRouteDecisionForPromptReportsReadOnlyRoute(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.PlanMode(),
+		route: turnRoutePlan{Family: "architecture"},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("explain the route decision design", plan)
+
+	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "plan" {
+		t.Fatalf("unexpected read-only writer route decision: %#v", decision)
+	}
+	if decision.VerificationOwner != "" {
+		t.Fatalf("read-only route should not claim verification ownership: %#v", decision)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.read_only_question") {
+		t.Fatalf("read-only route reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
 func TestImplementationDispatchRefineDiagnosticsDoNotTruncateActionableLine(t *testing.T) {
 	longBlocker := "exact-anchor specificity failed for required edit path(s): " + strings.Repeat("internal/pkg/path.go ", 40) + "Each required edit path must carry at least one `<path>:<line>` reference."
 	diagnostics := implementationDispatchRefineDiagnostics(implementationDispatchPlanDocumentRefineResult{

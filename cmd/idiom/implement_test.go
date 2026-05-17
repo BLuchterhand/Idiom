@@ -154,6 +154,17 @@ func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 		!strings.Contains(stdout.String(), `"writer_mode":"agentic_guarded"`) {
 		t.Fatalf("implement JSON should report writer route decision, got %q", stdout.String())
 	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.implement.writer_route_decision")
+	if !ok {
+		t.Fatalf("missing direct implement writer route event in %q", stdout.String())
+	}
+	if event["writer_mode"] != "agentic_guarded" || event["lane"] != "implement" || event["verification_owner"] != "executor" {
+		t.Fatalf("unexpected direct implement route event: %#v", event)
+	}
+	if !jsonEventStringSliceContains(event["reason_codes"], "route.local_model_default") {
+		t.Fatalf("direct implement route should explain local model default: %#v", event)
+	}
 }
 
 func TestRunImplementMainRejectsMissingPrompt(t *testing.T) {
