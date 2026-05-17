@@ -1,16 +1,16 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0007-phase-1-traceability-matrix-schema-links",
+  "task_id": "impl-0008-phase-1-artifact-state-machine-enum",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T17:16:28Z",
-  "state_revision": 20,
-  "last_event_id": "evt-0064",
-  "workspace_fingerprint": "idiom@923bc21",
+  "updated_at": "2026-05-17T17:47:10Z",
+  "state_revision": 22,
+  "last_event_id": "evt-0069",
+  "workspace_fingerprint": "idiom@afd476d",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
-  "current_state": "verified",
+  "current_state": "blocked",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -26,7 +26,7 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "b619d856e84f87e5",
+    "context_pack_id": "a74d31bd1db0853c",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -37,10 +37,10 @@
       "cmd/idiom/product_evidence.go",
       "internal/workspace/plan_artifact_schema.go",
       "internal/productworkflow/validate.go",
-      "cmd/idiom/main.go",
-      "cmd/idiom/brief.go",
       "internal/productworkflow/types.go",
       "internal/productworkflow/validate_test.go",
+      "cmd/idiom/main.go",
+      "cmd/idiom/brief.go",
       "cmd/idiom/product_workflow.go",
       "cmd/idiom/product_workflow_test.go",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md",
@@ -50,11 +50,15 @@
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack b619d856e84f87e5 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to traceability matrix schema and link validation scope."
+        "description": "Context pack a74d31bd1db0853c reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to artifact state enum validation scope."
       },
       {
         "kind": "implementor_timeout",
-        "description": "OpenCode MiniMax attached-server run for impl-0004 timed out after 240 seconds without output or code edits. OpenCode GLM impl-0007 produced a substantial partial patch but timed out after 600 seconds without textual closeout, requiring a recorded scoped fallback exception."
+        "description": "OpenCode MiniMax attached-server run for impl-0004 timed out after 240 seconds without output or code edits. OpenCode GLM impl-0007 produced a substantial partial patch but timed out after 600 seconds without textual closeout, requiring a recorded scoped fallback exception. The impl-0008 DS4 trial first errored after 364 seconds with no code changes, then retried with default output and timed out after 600 seconds with no persisted code changes."
+      },
+      {
+        "kind": "artifact_state_fixture_status_conflict",
+        "description": "Phase 1 roadmap/TDD require artifact states exactly draft, audited, accepted, blocked, and dispatched while current durable PRD and ADR fixtures use accepted_fixture and the TDD obligations require current durable fixtures to pass."
       }
     ],
     "refresh_policy": "on_demand"
@@ -63,27 +67,36 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "traceability_matrix_schema_validation",
-        "status": "passed",
-        "checked_at": "2026-05-17T17:16:28Z"
+        "gate": "artifact_state_enum_validation",
+        "status": "blocked",
+        "checked_at": "2026-05-17T17:47:10Z"
       },
       {
-        "gate": "traceability_cross_artifact_links",
-        "status": "passed",
-        "checked_at": "2026-05-17T17:16:28Z"
+        "gate": "prd_artifact_status_validation",
+        "status": "planned",
+        "checked_at": "2026-05-17T17:24:22Z"
+      },
+      {
+        "gate": "adr_artifact_status_validation",
+        "status": "planned",
+        "checked_at": "2026-05-17T17:24:22Z"
       },
       {
         "gate": "product_workflow_lint_cli",
-        "status": "passed",
-        "checked_at": "2026-05-17T17:16:28Z"
+        "status": "planned",
+        "checked_at": "2026-05-17T17:24:22Z"
       }
     ],
-    "blocking_criteria": [],
+    "blocking_criteria": [
+      "BLK-IMPL-0008-001 artifact_state_fixture_status_conflict: resolve whether current fixture statuses should migrate from accepted_fixture to accepted or whether .fixture schema versions should have an explicit exception before implementation proceeds."
+    ],
     "advisory_criteria": []
   },
   "open_obligations": [],
   "open_questions": [],
-  "blockers": [],
+  "blockers": [
+    "BLK-IMPL-0008-001 artifact_state_fixture_status_conflict: roadmap/TDD exact artifact-state enum conflicts with current durable fixture status value accepted_fixture."
+  ],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -94,13 +107,17 @@
       "customer_identifying_data"
     ]
   },
-  "session_ids": {},
+  "session_ids": {
+    "opencode_ds4_impl_0008_first": "ses_1c905fdd0ffe7e0x0gbSQ915b2",
+    "opencode_ds4_impl_0008_retry": "ses_1c8ff9d4fffemuXcYc1kBZaBAx"
+  },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T17:16:28Z",
-  "reconciliation_mismatch": false,
+  "last_reconciliation_at": "2026-05-17T17:47:10Z",
+  "reconciliation_mismatch": true,
   "next_valid_actions": [
-    "plan_phase_1_artifact_state_machine_enum_atom",
+    "resolve_artifact_state_fixture_status_conflict_before_implementation",
+    "then_run_stable_implementor_for_impl_0008",
     "close_effort_if_abandoned"
   ],
   "durability_level": "source_controlled"

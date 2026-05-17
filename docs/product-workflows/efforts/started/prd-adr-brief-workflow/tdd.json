@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0007-phase-1-traceability-matrix-schema-links",
+  "task_id": "impl-0008-phase-1-artifact-state-machine-enum",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -18,63 +18,54 @@
     "decision_tables_enumerated": 0,
     "mutation_score": null,
     "mutation_min_score": 80,
-    "gates_passed": [
-      "traceability_matrix_schema_validation",
-      "traceability_cross_artifact_links",
-      "product_workflow_lint_cli",
-      "focused_go_tests",
-      "full_go_tests",
-      "durable_json_jsonl_validation",
-      "privacy_secret_scan",
-      "diff_whitespace_check"
-    ],
+    "gates_passed": [],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0007-001",
-      "type": "acceptance",
-      "behavior": "Current durable traceability matrix fixture passes schema and cross-artifact link validation.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0007-002",
+      "id": "TDD-IMPL-0008-001",
       "type": "contract",
-      "behavior": "Traceability rows missing evidence, PRD, ADR, TDD, brief, or report links fail closed.",
+      "behavior": "Artifact state validation accepts exactly draft, audited, accepted, blocked, and dispatched for product workflow artifacts.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0007-003",
-      "type": "acceptance",
-      "behavior": "Product workflow lint validates traceability row references against evidence card IDs, PRD requirement IDs, ADR IDs, TDD obligation IDs, and existing brief/report paths.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0007-004",
+      "id": "TDD-IMPL-0008-002",
       "type": "contract",
-      "behavior": "Historical traceability rows can resolve TDD obligation IDs from implementation ledger verification records.",
+      "behavior": "PRD front matter status rejects unknown artifact states and current durable PRD fixtures still pass.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0007-005",
+      "id": "TDD-IMPL-0008-003",
+      "type": "contract",
+      "behavior": "ADR index and ADR markdown statuses reject unknown artifact states and current durable ADR fixtures still pass.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0008-004",
       "type": "acceptance",
-      "behavior": "Broken traceability links produce typed product lint findings.",
+      "behavior": "Product workflow lint surfaces invalid artifact states as typed parse_error findings without accepting malformed PRD or ADR artifacts.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0008-005",
+      "type": "manual",
+      "behavior": "The DS4 implementor trial records elapsed time, output mode, timeout status, locality evidence when available, and patch completeness in durable reports.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0008-implementation.json",
+      "command": "review reports/impl-0008-implementation.json",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

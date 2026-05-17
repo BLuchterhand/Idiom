@@ -6,11 +6,12 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Active atom: `impl-0007-phase-1-traceability-matrix-schema-links`
+- Active atom: `impl-0008-phase-1-artifact-state-machine-enum`
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `b619d856e84f87e5`
+- Context pack: `a74d31bd1db0853c`
 - Coverage tier: `unit`
+- Blocker: `BLK-IMPL-0008-001` artifact state fixture status conflict
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
@@ -30,6 +31,13 @@ committed product workflow validators and lint command until later atoms close.
   choice because it produced partial patches on prior atoms; MiniMax 2.7
   highspeed (`minimax-coding-plan/MiniMax-M2.7-highspeed`) timed out after
   240 seconds with no output or code edits.
+- `impl-0008` is a controlled DS4 trial using `ds4/deepseek-v4-flash` through
+  OpenCode attached-server execution. Record whether it is actually local if the
+  run surfaces process/locality evidence; otherwise treat locality as unverified.
+- DS4 trial result for `impl-0008`: the JSON/log run errored with
+  `Tool call not allowed while generating summary: read`; the default-output
+  retry hit the 10 minute cap with no persisted code changes. DS4 did surface a
+  real status-schema conflict in reasoning, but it did not produce a patch.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
 - Prefer observable OpenCode runs for future implementor attempts:
@@ -71,6 +79,9 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan `plan_phase_1_artifact_state_machine_enum_atom` with the 10 minute
-OpenCode cap, observable JSON/log streaming, and the most stable recorded
-implementor model, then commit and push after the atom closes.
+Resolve `BLK-IMPL-0008-001` before implementation: either migrate the current
+durable fixture statuses from `accepted_fixture` to the canonical `accepted`
+state, or explicitly define a `.fixture` schema exception and update the TDD
+scope. After that, run the stable implementor path for
+`impl-0008-phase-1-artifact-state-machine-enum`, then commit and push after the
+atom closes.
