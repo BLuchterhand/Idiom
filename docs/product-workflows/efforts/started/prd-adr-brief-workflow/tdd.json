@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0005-phase-1-research-profile-evidence-card-schema",
+  "task_id": "impl-0006-phase-1-tdd-obligation-ledger-v2-schema",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -30,45 +30,45 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0005-001",
+      "id": "TDD-IMPL-0006-001",
       "type": "acceptance",
-      "behavior": "Current durable evidence card JSONL passes stricter productworkflow evidence-card validation.",
+      "behavior": "Current durable idiom.tdd_obligations.v2 fixture passes coverage metadata validation.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0005-002",
+      "id": "TDD-IMPL-0006-002",
       "type": "contract",
-      "behavior": "Invalid evidence cards missing kind, source_handle, claim, researcher_id, timestamp, or evidence_refs fail closed.",
+      "behavior": "Invalid coverage counters, mapped totals greater than totals, and tested totals greater than totals fail closed.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0005-003",
+      "id": "TDD-IMPL-0006-003",
       "type": "acceptance",
-      "behavior": "Valid idiom.research_profile.v1 JSON parses through productworkflow validators.",
+      "behavior": "Valid obligation types and coverage tiers from the design docs are accepted.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0005-004",
+      "id": "TDD-IMPL-0006-004",
       "type": "contract",
-      "behavior": "Invalid research profiles missing profile identity, researcher role contracts, allowed capabilities, output schema, or merge policy fail closed.",
+      "behavior": "Unknown obligation types, unknown coverage tiers, and invalid mutation score bounds fail closed.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0005-005",
+      "id": "TDD-IMPL-0006-005",
       "type": "acceptance",
-      "behavior": "Product workflow lint continues checking evidence cards with the stricter schema and checks optional research profile artifacts when configured.",
+      "behavior": "Product workflow lint reports parse errors for invalid TDD ledger v2 coverage metadata.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",

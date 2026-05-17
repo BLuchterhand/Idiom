@@ -6,10 +6,10 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Active atom: `impl-0005-phase-1-research-profile-evidence-card-schema`
+- Active atom: `impl-0006-phase-1-tdd-obligation-ledger-v2-schema`
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `2c9d1639d167c588`
+- Context pack: `e9fa7d7629c88d2b`
 - Coverage tier: `unit`
 
 The workflow implementation is in progress. These files are source-controlled
@@ -67,7 +67,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Continue `impl-0005-phase-1-research-profile-evidence-card-schema` with the
-updated 10 minute OpenCode cap and the most stable recorded implementor model,
-then complete the atom investigation, commit, push, and advance to the next
-Phase 1 schema/linters action.
+Plan `impl-0007-phase-1-traceability-matrix-schema-links` with the 10 minute
+OpenCode cap and the most stable recorded implementor model, then commit and
+push after the atom closes.

@@ -1,6 +1,6 @@
 {
   "schema_version": "idiom.effort_index.v1",
-  "updated_at": "2026-05-17T16:38:03Z",
+  "updated_at": "2026-05-17T16:53:54Z",
   "efforts": [
     {
       "effort_id": "prd-adr-brief-workflow",
@@ -9,7 +9,7 @@
       "current_phase": "phase-1-schemas-and-deterministic-linters",
       "current_state": "verified",
       "folder_path": "started/prd-adr-brief-workflow",
-      "task_id": "impl-0005-phase-1-research-profile-evidence-card-schema",
+      "task_id": "impl-0006-phase-1-tdd-obligation-ledger-v2-schema",
       "created_at": "2026-05-17T15:20:00Z",
       "prior_paths": []
     }

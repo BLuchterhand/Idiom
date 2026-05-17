@@ -158,18 +158,46 @@ func validateWorkflowState(ws WorkflowState) error {
 	return errors.Join(errs...)
 }
 
+var allowedCoverageTiers = map[string]bool{
+	"documentation":     true,
+	"local_low":         true,
+	"behavior_standard": true,
+	"contract_high":     true,
+	"formal_optional":   true,
+	"unit":              true,
+}
+
+var allowedObligationTypes = map[string]bool{
+	"characterization": true,
+	"regression":       true,
+	"acceptance":       true,
+	"contract":         true,
+	"source_sanity":    true,
+	"eval":             true,
+	"audit":            true,
+	"property_based":   true,
+	"fmea_negative":    true,
+	"hazop_deviation":  true,
+	"decision_table":   true,
+	"boundary_value":   true,
+	"mutation_score":   true,
+	"post_mortem":      true,
+	"manual":           true,
+}
+
 func validateTDDLedger(ledger TDDLedger) error {
 	var errs []error
 	require(&errs, ledger.SchemaVersion, "tdd ledger missing schema_version")
 	require(&errs, ledger.EffortID, "tdd ledger missing effort_id")
 	require(&errs, ledger.TaskID, "tdd ledger missing task_id")
 	require(&errs, ledger.CoverageTier, "tdd ledger missing coverage_tier")
-	if ledger.Coverage.MutationMinScore <= 0 {
-		errs = append(errs, errors.New("tdd ledger missing positive mutation_min_score"))
+	if ledger.CoverageTier != "" && !allowedCoverageTiers[ledger.CoverageTier] {
+		errs = append(errs, fmt.Errorf("tdd ledger invalid coverage_tier %q", ledger.CoverageTier))
 	}
 	if len(ledger.Obligations) == 0 {
 		errs = append(errs, errors.New("tdd ledger missing obligations"))
 	}
+	errs = append(errs, validateTDDCoverage(ledger.Coverage)...)
 	for i, obligation := range ledger.Obligations {
 		prefix := fmt.Sprintf("tdd obligation %d", i)
 		require(&errs, obligation.ID, prefix+" missing id")
@@ -179,8 +207,76 @@ func validateTDDLedger(ledger TDDLedger) error {
 		require(&errs, obligation.Command, prefix+" missing command")
 		require(&errs, obligation.RequiredBefore, prefix+" missing required_before")
 		require(&errs, obligation.Status, prefix+" missing status")
+		if obligation.Type != "" && !allowedObligationTypes[obligation.Type] {
+			errs = append(errs, fmt.Errorf("%s invalid type %q", prefix, obligation.Type))
+		}
 	}
 	return errors.Join(errs...)
+}
+
+func validateTDDCoverage(coverage TDDCoverage) []error {
+	var errs []error
+	if coverage.MutationMinScore <= 0 {
+		errs = append(errs, errors.New("tdd ledger missing positive mutation_min_score"))
+	}
+	counters := []struct {
+		name  string
+		value int
+	}{
+		{"ears_total", coverage.EARSTotal},
+		{"ears_mapped", coverage.EARSMapped},
+		{"bdd_total", coverage.BDDTotal},
+		{"bdd_with_concrete_data", coverage.BDDWithConcreteData},
+		{"fmea_modes_total", coverage.FMEAModesTotal},
+		{"fmea_modes_mitigated", coverage.FMEAModesMitigated},
+		{"hazop_deviations_total", coverage.HAZOPDeviationsTotal},
+		{"hazop_deviations_tested", coverage.HAZOPDeviationsTested},
+		{"invariants_total", coverage.InvariantsTotal},
+		{"invariants_with_pbt", coverage.InvariantsWithPBT},
+		{"decision_tables_total", coverage.DecisionTablesTotal},
+		{"decision_tables_enumerated", coverage.DecisionTablesEnumerated},
+	}
+	for _, c := range counters {
+		if c.value < 0 {
+			errs = append(errs, fmt.Errorf("tdd ledger coverage.%s must be non-negative, got %d", c.name, c.value))
+		}
+	}
+	if coverage.EARSMapped > coverage.EARSTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.ears_mapped (%d) exceeds ears_total (%d)", coverage.EARSMapped, coverage.EARSTotal))
+	}
+	if coverage.BDDWithConcreteData > coverage.BDDTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.bdd_with_concrete_data (%d) exceeds bdd_total (%d)", coverage.BDDWithConcreteData, coverage.BDDTotal))
+	}
+	if coverage.FMEAModesMitigated > coverage.FMEAModesTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.fmea_modes_mitigated (%d) exceeds fmea_modes_total (%d)", coverage.FMEAModesMitigated, coverage.FMEAModesTotal))
+	}
+	if coverage.HAZOPDeviationsTested > coverage.HAZOPDeviationsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.hazop_deviations_tested (%d) exceeds hazop_deviations_total (%d)", coverage.HAZOPDeviationsTested, coverage.HAZOPDeviationsTotal))
+	}
+	if coverage.InvariantsWithPBT > coverage.InvariantsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.invariants_with_pbt (%d) exceeds invariants_total (%d)", coverage.InvariantsWithPBT, coverage.InvariantsTotal))
+	}
+	if coverage.DecisionTablesEnumerated > coverage.DecisionTablesTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.decision_tables_enumerated (%d) exceeds decision_tables_total (%d)", coverage.DecisionTablesEnumerated, coverage.DecisionTablesTotal))
+	}
+	if coverage.MutationScore != nil {
+		if *coverage.MutationScore < 0 || *coverage.MutationScore > 100 {
+			errs = append(errs, fmt.Errorf("tdd ledger coverage.mutation_score must be 0..100, got %.1f", *coverage.MutationScore))
+		}
+		if *coverage.MutationScore < float64(coverage.MutationMinScore) && !containsString(coverage.GatesBlocked, "mutation") {
+			errs = append(errs, fmt.Errorf("tdd ledger coverage.mutation_score (%.1f) below mutation_min_score (%d) without mutation in gates_blocked", *coverage.MutationScore, coverage.MutationMinScore))
+		}
+	}
+	return errs
+}
+
+func containsString(slice []string, target string) bool {
+	for _, s := range slice {
+		if s == target {
+			return true
+		}
+	}
+	return false
 }
 
 func validateEvidenceCard(card EvidenceCard, line int) error {

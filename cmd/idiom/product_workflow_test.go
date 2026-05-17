@@ -229,6 +229,73 @@ func TestProductLintRejectsInvalidResearchProfile(t *testing.T) {
 	}
 }
 
+func TestProductLintParseErrorOnInvalidTDDJSON(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+	writeTestFile(t, dir, "tdd.json", `{not valid json`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail on invalid tdd.json, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "parse_error" && f.Path == "tdd.json" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding for tdd.json, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+	writeTestFile(t, dir, "tdd.json", `{
+		"schema_version":"idiom.tdd_obligations.v2",
+		"effort_id":"test",
+		"task_id":"test",
+		"coverage_tier":"bogus_tier",
+		"coverage":{"mutation_min_score":80},
+		"obligations":[{"id":"TDD-1","type":"acceptance","behavior":"b","owner":"o","command":"c","required_before":"close","status":"pending"}]
+	}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail on invalid coverage_tier, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "parse_error" && f.Path == "tdd.json" && strings.Contains(f.Message, "invalid coverage_tier") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error for invalid coverage_tier, got: %#v", result.Findings)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

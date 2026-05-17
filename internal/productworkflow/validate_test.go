@@ -551,6 +551,310 @@ func TestInvalidResearchProfileNoResearchersFailsClosed(t *testing.T) {
 	}
 }
 
+func TestValidCurrentDurableTDDFixturePasses(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json"))
+	if err != nil {
+		t.Fatalf("read tdd.json: %v", err)
+	}
+	ledger, err := ParseTDDLedgerJSON(data)
+	if err != nil {
+		t.Fatalf("expected current durable tdd.json to pass, got %v", err)
+	}
+	if ledger.CoverageTier != "unit" {
+		t.Fatalf("expected coverage_tier unit, got %q", ledger.CoverageTier)
+	}
+	if ledger.Coverage.MutationMinScore != 80 {
+		t.Fatalf("expected mutation_min_score 80, got %d", ledger.Coverage.MutationMinScore)
+	}
+	if len(ledger.Obligations) == 0 {
+		t.Fatal("expected at least one obligation")
+	}
+}
+
+func TestValidContractHighTDDWithCoverageMetadataPasses(t *testing.T) {
+	score := 85.0
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			EARSTotal:                5,
+			EARSMapped:               5,
+			BDDTotal:                 5,
+			BDDWithConcreteData:      5,
+			FMEAModesTotal:           3,
+			FMEAModesMitigated:       3,
+			HAZOPDeviationsTotal:     2,
+			HAZOPDeviationsTested:    2,
+			InvariantsTotal:          1,
+			InvariantsWithPBT:        1,
+			DecisionTablesTotal:      1,
+			DecisionTablesEnumerated: 1,
+			MutationScore:            &score,
+			MutationMinScore:         80,
+			GatesPassed:              []string{"ears", "bdd", "fmea", "hazop"},
+			GatesBlocked:             []string{},
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+			{ID: "TDD-2", Type: "fmea_negative", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+			{ID: "TDD-3", Type: "property_based", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	if err := validateTDDLedger(ledger); err != nil {
+		t.Fatalf("expected valid contract_high TDD to pass, got %v", err)
+	}
+}
+
+func TestInvalidTDDNegativeCounterFailsClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "local_low",
+		Coverage: TDDCoverage{
+			EARSTotal:           -1,
+			BDDWithConcreteData: -2,
+			MutationMinScore:    80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected negative counters to fail")
+	}
+	if !strings.Contains(err.Error(), "ears_total must be non-negative") {
+		t.Fatalf("expected ears_total error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "bdd_with_concrete_data must be non-negative") {
+		t.Fatalf("expected bdd_with_concrete_data error, got %v", err)
+	}
+}
+
+func TestInvalidTDDMappedExceedsTotalFailsClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "behavior_standard",
+		Coverage: TDDCoverage{
+			EARSTotal:          3,
+			EARSMapped:         5,
+			FMEAModesTotal:     2,
+			FMEAModesMitigated: 4,
+			MutationMinScore:   80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected mapped>total to fail")
+	}
+	if !strings.Contains(err.Error(), "ears_mapped (5) exceeds ears_total (3)") {
+		t.Fatalf("expected ears_mapped exceeds error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "fmea_modes_mitigated (4) exceeds fmea_modes_total (2)") {
+		t.Fatalf("expected fmea_modes_mitigated exceeds error, got %v", err)
+	}
+}
+
+func TestInvalidTDDUnknownCoverageTierFailsClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "unknown_tier",
+		Coverage:      TDDCoverage{MutationMinScore: 80},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected unknown coverage_tier to fail")
+	}
+	if !strings.Contains(err.Error(), "invalid coverage_tier") {
+		t.Fatalf("expected coverage_tier error, got %v", err)
+	}
+}
+
+func TestInvalidTDDUnknownObligationTypeFailsClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "local_low",
+		Coverage:      TDDCoverage{MutationMinScore: 80},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "unknown_type", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected unknown obligation type to fail")
+	}
+	if !strings.Contains(err.Error(), "invalid type") {
+		t.Fatalf("expected invalid type error, got %v", err)
+	}
+}
+
+func TestInvalidTDDMutationScoreOutOfBoundsFailsClosed(t *testing.T) {
+	bad := 150.0
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			MutationScore:    &bad,
+			MutationMinScore: 80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected mutation_score out of bounds to fail")
+	}
+	if !strings.Contains(err.Error(), "mutation_score must be 0..100") {
+		t.Fatalf("expected mutation_score bounds error, got %v", err)
+	}
+}
+
+func TestInvalidTDDMutationScoreBelowMinWithoutGateBlockedFailsClosed(t *testing.T) {
+	low := 50.0
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			MutationScore:    &low,
+			MutationMinScore: 80,
+			GatesBlocked:     []string{},
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected mutation_score below min without gate block to fail")
+	}
+	if !strings.Contains(err.Error(), "below mutation_min_score") {
+		t.Fatalf("expected below min_score error, got %v", err)
+	}
+}
+
+func TestValidTDDMutationScoreBelowMinWithGateBlockedPasses(t *testing.T) {
+	low := 50.0
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			MutationScore:    &low,
+			MutationMinScore: 80,
+			GatesBlocked:     []string{"mutation"},
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	if err := validateTDDLedger(ledger); err != nil {
+		t.Fatalf("expected mutation score below min with gate blocked to pass, got %v", err)
+	}
+}
+
+func TestInvalidTDDNegativeMutationScoreFailsClosed(t *testing.T) {
+	neg := -5.0
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			MutationScore:    &neg,
+			MutationMinScore: 80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected negative mutation_score to fail")
+	}
+	if !strings.Contains(err.Error(), "mutation_score must be 0..100") {
+		t.Fatalf("expected mutation_score bounds error, got %v", err)
+	}
+}
+
+func TestInvalidTDDZeroMutationMinScoreFailsClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "local_low",
+		Coverage:      TDDCoverage{MutationMinScore: 0},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected zero mutation_min_score to fail")
+	}
+	if !strings.Contains(err.Error(), "missing positive mutation_min_score") {
+		t.Fatalf("expected mutation_min_score error, got %v", err)
+	}
+}
+
+func TestValidAllCoverageTiersAccepted(t *testing.T) {
+	for _, tier := range []string{"documentation", "local_low", "behavior_standard", "contract_high", "formal_optional", "unit"} {
+		ledger := TDDLedger{
+			SchemaVersion: "idiom.tdd_obligations.v2",
+			EffortID:      "test",
+			TaskID:        "test",
+			CoverageTier:  tier,
+			Coverage:      TDDCoverage{MutationMinScore: 80},
+			Obligations: []TDDObligation{
+				{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+			},
+		}
+		if err := validateTDDLedger(ledger); err != nil {
+			t.Fatalf("expected coverage_tier %q to pass, got %v", tier, err)
+		}
+	}
+}
+
+func TestValidAllObligationTypesAccepted(t *testing.T) {
+	types := []string{"characterization", "regression", "acceptance", "contract", "source_sanity", "eval", "audit", "property_based", "fmea_negative", "hazop_deviation", "decision_table", "boundary_value", "mutation_score", "post_mortem", "manual"}
+	for _, typ := range types {
+		ledger := TDDLedger{
+			SchemaVersion: "idiom.tdd_obligations.v2",
+			EffortID:      "test",
+			TaskID:        "test",
+			CoverageTier:  "contract_high",
+			Coverage:      TDDCoverage{MutationMinScore: 80},
+			Obligations: []TDDObligation{
+				{ID: "TDD-1", Type: typ, Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+			},
+		}
+		if err := validateTDDLedger(ledger); err != nil {
+			t.Fatalf("expected obligation type %q to pass, got %v", typ, err)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
