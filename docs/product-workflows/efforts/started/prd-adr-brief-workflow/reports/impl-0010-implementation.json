@@ -1,0 +1,43 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0010-phase-1-product-audit-command",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "opencode-glm-impl-0010",
+  "runtime": "opencode_attached_server",
+  "model": "zai-coding-plan/glm-5.1",
+  "completed_at": "2026-05-17T19:17:38Z",
+  "complexity_tier": "C1",
+  "scope_statement": "Patch-shaped product audit command atom: add deterministic product audit CLI sections derived from existing product workflow artifact validation.",
+  "code_changes": true,
+  "changed_paths": [
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go",
+    "docs/product-workflows/efforts/index.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0010-implementation.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0010-review.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0010-investigation.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md"
+  ],
+  "verification": {
+    "run_by_implementor": true,
+    "commands": [
+      "gofmt -l cmd/idiom/product_workflow.go cmd/idiom/product_workflow_test.go",
+      "go test ./cmd/idiom ./internal/productworkflow",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "concrete credential-pattern privacy scan over durable effort artifacts",
+      "git diff --check"
+    ],
+    "status": "passed"
+  },
+  "privacy_note": "No raw prompts, raw transcripts, file bodies, secrets, or customer data stored.",
+  "open_blockers": [],
+  "reviewer_id": "codex-gpt-review-impl-0010",
+  "implementation_summary": "Added runProductAudit command with --effort-root and --json flags. Reuses lintEffortFolder internally and classifies findings into prd, adr, tdd, traceability, and reports sections via classifyAuditSection and buildAuditResult. Human output includes per-section status summary. Updated usage text. Added 9 tests covering durable fixture pass, JSON section structure, parse_error surfacing in PRD/ADR/TDD sections, lint behavior preservation, usage/help/telemetry parity."
+}

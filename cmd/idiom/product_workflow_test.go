@@ -666,6 +666,239 @@ func TestProductLintPassesWithValidReportFixtures(t *testing.T) {
 	}
 }
 
+func TestProductAuditPassesOnDurableEffortFixture(t *testing.T) {
+	root := repoRoot(t)
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected audit to pass on durable effort fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "pass" {
+		t.Fatalf("expected status pass, got %q", result.Status)
+	}
+	if result.EffortRoot == "" {
+		t.Fatal("effort_root should be set")
+	}
+	if len(result.CheckedFiles) == 0 {
+		t.Fatal("should have checked at least one file")
+	}
+	requiredSections := []string{"prd", "adr", "tdd", "traceability", "reports"}
+	if len(result.Sections) != len(requiredSections) {
+		t.Fatalf("expected %d sections, got %d", len(requiredSections), len(result.Sections))
+	}
+	for i, name := range requiredSections {
+		if result.Sections[i].Name != name {
+			t.Fatalf("expected section %d to be %q, got %q", i, name, result.Sections[i].Name)
+		}
+		if result.Sections[i].Status != "pass" {
+			t.Fatalf("expected section %q to pass, got %q", name, result.Sections[i].Status)
+		}
+	}
+}
+
+func TestProductAuditJSONIncludesAllRequiredSections(t *testing.T) {
+	dir := writeValidTestEffort(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected audit to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	sectionNames := map[string]bool{}
+	for _, sec := range result.Sections {
+		sectionNames[sec.Name] = true
+	}
+	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports"} {
+		if !sectionNames[name] {
+			t.Fatalf("expected section %q in audit result", name)
+		}
+	}
+}
+
+func TestProductAuditSurfacesParseErrorInPRDSection(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "prd.md", `not valid prd`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail on invalid PRD, got code=%d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	prdSection := findAuditSection(t, result, "prd")
+	if prdSection.Status != "fail" {
+		t.Fatalf("expected prd section to fail, got %q", prdSection.Status)
+	}
+	found := false
+	for _, f := range prdSection.Findings {
+		if f.Code == "parse_error" && f.Path == "prd.md" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding in prd section, got: %#v", prdSection.Findings)
+	}
+}
+
+func TestProductAuditSurfacesParseErrorInADRSection(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/index.json", `not valid json`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail on invalid ADR index, got code=%d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	adrSection := findAuditSection(t, result, "adr")
+	if adrSection.Status != "fail" {
+		t.Fatalf("expected adr section to fail, got %q", adrSection.Status)
+	}
+	found := false
+	for _, f := range adrSection.Findings {
+		if f.Code == "parse_error" && f.Path == "adrs/index.json" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding in adr section, got: %#v", adrSection.Findings)
+	}
+}
+
+func TestProductAuditSurfacesParseErrorInTDDSection(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{not valid json`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail on invalid TDD, got code=%d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	tddSection := findAuditSection(t, result, "tdd")
+	if tddSection.Status != "fail" {
+		t.Fatalf("expected tdd section to fail, got %q", tddSection.Status)
+	}
+	found := false
+	for _, f := range tddSection.Findings {
+		if f.Code == "parse_error" && f.Path == "tdd.json" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding in tdd section, got: %#v", tddSection.Findings)
+	}
+}
+
+func TestProductAuditDoesNotChangeLintBehavior(t *testing.T) {
+	dir := writeValidTestEffort(t)
+
+	var lintStdout, lintStderr bytes.Buffer
+	lintCode := runProductLint([]string{"--effort-root", dir, "--json"}, &lintStdout, &lintStderr, nil)
+	var auditStdout, auditStderr bytes.Buffer
+	auditCode := runProductAudit([]string{"--effort-root", dir, "--json"}, &auditStdout, &auditStderr, nil)
+
+	if lintCode != 0 {
+		t.Fatalf("expected lint to pass, got code=%d stdout=%s", lintCode, lintStdout.String())
+	}
+	if auditCode != 0 {
+		t.Fatalf("expected audit to pass, got code=%d stdout=%s", auditCode, auditStdout.String())
+	}
+
+	var lintResult productLintResult
+	if err := json.Unmarshal(lintStdout.Bytes(), &lintResult); err != nil {
+		t.Fatalf("lint output should be valid JSON: %v", err)
+	}
+	var auditResult productAuditResult
+	if err := json.Unmarshal(auditStdout.Bytes(), &auditResult); err != nil {
+		t.Fatalf("audit output should be valid JSON: %v", err)
+	}
+
+	if lintResult.Status != auditResult.Status {
+		t.Fatalf("lint status %q != audit status %q", lintResult.Status, auditResult.Status)
+	}
+	if len(lintResult.Findings) != len(auditResult.Findings) {
+		t.Fatalf("lint findings count %d != audit findings count %d", len(lintResult.Findings), len(auditResult.Findings))
+	}
+
+	lintCode2 := runProductLint([]string{"--effort-root", dir, "--json"}, &lintStdout, &lintStderr, nil)
+	if lintCode != lintCode2 {
+		t.Fatalf("lint is not deterministic: first=%d second=%d", lintCode, lintCode2)
+	}
+}
+
+func TestProductAuditUsageMirrorsLint(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected code 2 for missing --effort-root, got %d", code)
+	}
+}
+
+func TestProductAuditHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"-h"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0 for -h, got %d", code)
+	}
+}
+
+func TestProductAuditTelemetryName(t *testing.T) {
+	name := commandTelemetryName([]string{"product", "audit", "--effort-root", "."})
+	if name != "product:audit" {
+		t.Fatalf("expected telemetry name product:audit, got %q", name)
+	}
+}
+
+func findAuditSection(t *testing.T, result productAuditResult, name string) productAuditSection {
+	t.Helper()
+	for _, sec := range result.Sections {
+		if sec.Name == name {
+			return sec
+		}
+	}
+	t.Fatalf("section %q not found", name)
+	return productAuditSection{}
+}
+
+func writeValidTestEffort(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
+	writeTestFile(t, dir, "reports/test.json", "{}")
+	return dir
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

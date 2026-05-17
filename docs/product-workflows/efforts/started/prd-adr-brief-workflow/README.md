@@ -6,24 +6,28 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0009-phase-1-report-schema-linting`
+- Last completed atom: `impl-0010-phase-1-product-audit-command`
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `46c9f12bffb33bb3`
+- Context pack: `276cc0795cefadd0`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
+- Atom 10 product audit command: all TDD obligations satisfied, 9 audit tests pass, product lint unchanged
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
-committed product workflow validators and lint command until later atoms close.
+committed product workflow validators plus lint and audit commands until later
+atoms close.
 
 ## Implementation Guidelines
 
 - Goal: deliver the full `docs/design-prd-adr-brief-research-workflow.md`
   design through durable atoms until the effort can be closed as complete.
 - Codex orchestrates, verifies, reviews, investigates, records durable state, and
-  commits. OpenCode implementors make code changes by default.
+  commits. Dedicated implementor lanes make code changes by default; current
+  eligible lanes are GLM through OpenCode and bounded DS4 trials through Codex
+  CLI.
 - Use OpenCode attached-server runs for implementor attempts, with a 10 minute
   cap before declaring timeout evidence:
   `OPENCODE_SERVER_URL=http://127.0.0.1:<port> ./scripts/run-opencode-glm.sh run --format default "<brief>"`.
@@ -39,6 +43,11 @@ committed product workflow validators and lint command until later atoms close.
   `Tool call not allowed while generating summary: read`; the default-output
   retry hit the 10 minute cap with no persisted code changes. DS4 did surface a
   real status-schema conflict in reasoning, but it did not produce a patch.
+- DS4 through Codex CLI is now available for bounded implementor trials:
+  `codex exec -p ds4 --cd /Users/ben/Documents/GitHub/idiom --sandbox danger-full-access -c approval_policy="never" --json "<brief>"`.
+  A smoke test on 2026-05-17 returned `DS4_CODEX_READY` via JSONL in about 98
+  seconds. Use it for the next small atom when the write set is clear; record
+  GLM as fallback if DS4 stalls, times out, or produces no usable patch.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
 - Keep implementor briefs patch-shaped, not task-shaped: name the exact
@@ -89,7 +98,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 1 schema or deterministic-linter atom from
-`docs/obsidian/22 - Product Workflow ROADMAP.md`. Continue using GLM 5.1 with a
-patch-shaped brief and only parallelize implementor lanes when write sets are
-disjoint.
+Plan the next Phase 1 schema or deterministic linter atom. Prefer a bounded
+DS4-through-Codex CLI implementor trial when the write set is clear; keep GLM 5.1
+as fallback if DS4 stalls, times out, or produces no usable patch.

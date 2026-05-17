@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0009-phase-1-report-schema-linting",
+  "task_id": "impl-0010-phase-1-product-audit-command",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,10 +19,9 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "implementation_report_schema_validation",
-      "review_report_schema_validation",
-      "investigation_report_schema_validation",
-      "report_privacy_metadata_validation",
+      "product_audit_command",
+      "prd_adr_tdd_audit_sections",
+      "audit_cli_failure_findings",
       "product_workflow_lint_cli",
       "focused_go_tests",
       "full_go_tests",
@@ -34,47 +33,38 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0009-001",
-      "type": "contract",
-      "behavior": "Implementation report parser validates required identity, implementor, model, complexity, changed-path, verification, privacy, blocker, and reviewer fields.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0009-002",
-      "type": "contract",
-      "behavior": "Review report parser validates reviewer independence, status, checks, reviewed_at, commands_reviewed, and required reviewer metadata.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0009-003",
-      "type": "contract",
-      "behavior": "Investigation report parser validates complete status, scope, tests, coverage, traceability, privacy audit, completed_at, next_valid_action, and blockers.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0009-004",
+      "id": "TDD-IMPL-0010-001",
       "type": "acceptance",
-      "behavior": "Product workflow lint validates report schemas, emits parse_error for malformed implementation, review, and investigation reports, and still passes the current durable effort fixture.",
+      "behavior": "Product audit command accepts --effort-root and --json, returns status, effort_root, checked_files, sections, and findings.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0010-002",
+      "type": "contract",
+      "behavior": "Product audit emits deterministic PRD, ADR, TDD, traceability, and report sections derived from existing artifact validation, without weakening product lint.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0009-005",
+      "id": "TDD-IMPL-0010-003",
       "type": "contract",
-      "behavior": "Report schema validation rejects durable report privacy metadata that claims raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data were stored.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Product audit surfaces invalid PRD, ADR, and TDD artifacts as typed findings under the corresponding audit sections.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0010-004",
+      "type": "acceptance",
+      "behavior": "Current durable effort fixture passes both product audit and product lint after the new command is added.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     }

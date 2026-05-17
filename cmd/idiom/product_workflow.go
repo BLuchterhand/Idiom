@@ -34,6 +34,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 	switch args[0] {
 	case "lint":
 		return runProductLint(args[1:], stdout, stderr, rec)
+	case "audit":
+		return runProductAudit(args[1:], stdout, stderr, rec)
 	case "-h", "--help", "help":
 		printProductUsage(stdout)
 		return 0
@@ -47,6 +49,7 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  idiom product lint --effort-root <path> [--json]")
+	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -325,4 +328,127 @@ func lintEffortFolder(root string) productLintResult {
 	}
 
 	return result
+}
+
+type productAuditSection struct {
+	Name     string               `json:"name"`
+	Status   string               `json:"status"`
+	Findings []productLintFinding `json:"findings"`
+}
+
+type productAuditResult struct {
+	Status       string                `json:"status"`
+	EffortRoot   string                `json:"effort_root"`
+	CheckedFiles []string              `json:"checked_files"`
+	Sections     []productAuditSection `json:"sections"`
+	Findings     []productLintFinding  `json:"findings"`
+}
+
+func classifyAuditSection(relPath string) string {
+	switch {
+	case relPath == "prd.md":
+		return "prd"
+	case relPath == "adrs/index.json" || strings.HasPrefix(relPath, "adrs/"):
+		return "adr"
+	case relPath == "tdd.json":
+		return "tdd"
+	case relPath == "evidence/traceability_matrix.json":
+		return "traceability"
+	case strings.HasPrefix(relPath, "reports/"):
+		return "reports"
+	default:
+		return ""
+	}
+}
+
+func buildAuditResult(lintResult productLintResult) productAuditResult {
+	sectionMap := map[string]*productAuditSection{
+		"prd":          {Name: "prd", Status: "pass"},
+		"adr":          {Name: "adr", Status: "pass"},
+		"tdd":          {Name: "tdd", Status: "pass"},
+		"traceability": {Name: "traceability", Status: "pass"},
+		"reports":      {Name: "reports", Status: "pass"},
+	}
+	for _, f := range lintResult.Findings {
+		section := classifyAuditSection(f.Path)
+		if section == "" {
+			continue
+		}
+		sec := sectionMap[section]
+		sec.Findings = append(sec.Findings, f)
+		sec.Status = "fail"
+	}
+	sections := make([]productAuditSection, 0, len(sectionMap))
+	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports"} {
+		sections = append(sections, *sectionMap[name])
+	}
+	status := "pass"
+	if lintResult.Status == "fail" {
+		status = "fail"
+	}
+	return productAuditResult{
+		Status:       status,
+		EffortRoot:   lintResult.EffortRoot,
+		CheckedFiles: lintResult.CheckedFiles,
+		Sections:     sections,
+		Findings:     lintResult.Findings,
+	}
+}
+
+func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product audit", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var effortRoot string
+	var jsonOutput bool
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product audit: --effort-root is required")
+		return 2
+	}
+	absRoot, err := filepath.Abs(effortRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product audit: resolve effort root: %v\n", err)
+		return 2
+	}
+	lintResult := lintEffortFolder(absRoot)
+	auditResult := buildAuditResult(lintResult)
+	logCLIPhase(rec, "product_audit", map[string]any{
+		"status":        auditResult.Status,
+		"finding_count": len(auditResult.Findings),
+	})
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(auditResult); err != nil {
+			fmt.Fprintf(stderr, "product audit: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		if auditResult.Status == "pass" {
+			fmt.Fprintf(stdout, "product audit: %s OK (%d files checked)\n", filepath.Base(absRoot), len(auditResult.CheckedFiles))
+		} else {
+			fmt.Fprintf(stdout, "product audit: %s FAILED (%d findings)\n", filepath.Base(absRoot), len(auditResult.Findings))
+			for _, f := range auditResult.Findings {
+				fmt.Fprintf(stdout, "  [%s] %s: %s\n", f.Code, f.Path, f.Message)
+			}
+		}
+		for _, sec := range auditResult.Sections {
+			fmt.Fprintf(stdout, "  %s: %s", sec.Name, sec.Status)
+			if len(sec.Findings) > 0 {
+				fmt.Fprintf(stdout, " (%d findings)", len(sec.Findings))
+			}
+			fmt.Fprintln(stdout)
+		}
+	}
+	if auditResult.Status != "pass" {
+		return 1
+	}
+	return 0
 }
