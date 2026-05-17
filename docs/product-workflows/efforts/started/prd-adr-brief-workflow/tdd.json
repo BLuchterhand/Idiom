@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0006-phase-1-tdd-obligation-ledger-v2-schema",
+  "task_id": "impl-0007-phase-1-traceability-matrix-schema-links",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,56 +19,58 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "go_test_productworkflow_and_cmd_idiom",
-      "go_test_all",
+      "traceability_matrix_schema_validation",
+      "traceability_cross_artifact_links",
       "product_workflow_lint_cli",
+      "focused_go_tests",
+      "full_go_tests",
       "durable_json_jsonl_validation",
-      "privacy_secret_pattern_scan",
-      "diff_hygiene"
+      "privacy_secret_scan",
+      "diff_whitespace_check"
     ],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0006-001",
+      "id": "TDD-IMPL-0007-001",
       "type": "acceptance",
-      "behavior": "Current durable idiom.tdd_obligations.v2 fixture passes coverage metadata validation.",
+      "behavior": "Current durable traceability matrix fixture passes schema and cross-artifact link validation.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0006-002",
+      "id": "TDD-IMPL-0007-002",
       "type": "contract",
-      "behavior": "Invalid coverage counters, mapped totals greater than totals, and tested totals greater than totals fail closed.",
+      "behavior": "Traceability rows missing evidence, PRD, ADR, TDD, brief, or report links fail closed.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0006-003",
+      "id": "TDD-IMPL-0007-003",
       "type": "acceptance",
-      "behavior": "Valid obligation types and coverage tiers from the design docs are accepted.",
+      "behavior": "Product workflow lint validates traceability row references against evidence card IDs, PRD requirement IDs, ADR IDs, TDD obligation IDs, and existing brief/report paths.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0006-004",
+      "id": "TDD-IMPL-0007-004",
       "type": "contract",
-      "behavior": "Unknown obligation types, unknown coverage tiers, and invalid mutation score bounds fail closed.",
+      "behavior": "Historical traceability rows can resolve TDD obligation IDs from implementation ledger verification records.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0006-005",
+      "id": "TDD-IMPL-0007-005",
       "type": "acceptance",
-      "behavior": "Product workflow lint reports parse errors for invalid TDD ledger v2 coverage metadata.",
+      "behavior": "Broken traceability links produce typed product lint findings.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",

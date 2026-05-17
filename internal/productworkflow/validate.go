@@ -710,6 +710,76 @@ func validateADR(doc ADRDocument) error {
 	return errors.Join(errs...)
 }
 
+type TraceabilityLinkError struct {
+	RowIndex int
+	Field    string
+	Value    string
+	Message  string
+}
+
+func ValidateTraceabilityCrossLinks(
+	matrix TraceabilityMatrix,
+	evidenceCardIDs map[string]bool,
+	prdRequirementIDs map[string]bool,
+	adrIDs map[string]bool,
+	tddObligationIDs map[string]bool,
+	briefPaths map[string]bool,
+	reportPaths map[string]bool,
+) []TraceabilityLinkError {
+	var errs []TraceabilityLinkError
+	for i, row := range matrix.Matrix {
+		if evidenceCardIDs != nil && !evidenceCardIDs[row.EvidenceCard] {
+			errs = append(errs, TraceabilityLinkError{
+				RowIndex: i,
+				Field:    "evidence_card",
+				Value:    row.EvidenceCard,
+				Message:  fmt.Sprintf("traceability row %d: evidence_card %q not found in evidence cards", i, row.EvidenceCard),
+			})
+		}
+		if prdRequirementIDs != nil && !prdRequirementIDs[row.PRDRequirement] {
+			errs = append(errs, TraceabilityLinkError{
+				RowIndex: i,
+				Field:    "prd_requirement",
+				Value:    row.PRDRequirement,
+				Message:  fmt.Sprintf("traceability row %d: prd_requirement %q not found in PRD requirements", i, row.PRDRequirement),
+			})
+		}
+		if adrIDs != nil && !adrIDs[row.ADR] {
+			errs = append(errs, TraceabilityLinkError{
+				RowIndex: i,
+				Field:    "adr",
+				Value:    row.ADR,
+				Message:  fmt.Sprintf("traceability row %d: adr %q not found in ADR index", i, row.ADR),
+			})
+		}
+		if tddObligationIDs != nil && !tddObligationIDs[row.TDDObligation] {
+			errs = append(errs, TraceabilityLinkError{
+				RowIndex: i,
+				Field:    "tdd_obligation",
+				Value:    row.TDDObligation,
+				Message:  fmt.Sprintf("traceability row %d: tdd_obligation %q not found in current or historical TDD obligations", i, row.TDDObligation),
+			})
+		}
+		if briefPaths != nil && !briefPaths[row.Brief] {
+			errs = append(errs, TraceabilityLinkError{
+				RowIndex: i,
+				Field:    "brief",
+				Value:    row.Brief,
+				Message:  fmt.Sprintf("traceability row %d: brief %q not found in briefs directory", i, row.Brief),
+			})
+		}
+		if reportPaths != nil && !reportPaths[row.Report] {
+			errs = append(errs, TraceabilityLinkError{
+				RowIndex: i,
+				Field:    "report",
+				Value:    row.Report,
+				Message:  fmt.Sprintf("traceability row %d: report %q not found in reports directory", i, row.Report),
+			})
+		}
+	}
+	return errs
+}
+
 func require(errs *[]error, value string, message string) {
 	if strings.TrimSpace(value) == "" {
 		*errs = append(*errs, errors.New(message))

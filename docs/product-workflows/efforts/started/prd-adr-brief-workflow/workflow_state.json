@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0006-phase-1-tdd-obligation-ledger-v2-schema",
+  "task_id": "impl-0007-phase-1-traceability-matrix-schema-links",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T16:53:54Z",
-  "state_revision": 17,
-  "last_event_id": "evt-0054",
-  "workspace_fingerprint": "idiom@c07022c",
+  "updated_at": "2026-05-17T17:16:28Z",
+  "state_revision": 20,
+  "last_event_id": "evt-0064",
+  "workspace_fingerprint": "idiom@923bc21",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
   "current_state": "verified",
@@ -26,7 +26,7 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "e9fa7d7629c88d2b",
+    "context_pack_id": "b619d856e84f87e5",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -50,11 +50,11 @@
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack e9fa7d7629c88d2b reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to TDD obligation ledger v2 schema validation scope."
+        "description": "Context pack b619d856e84f87e5 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to traceability matrix schema and link validation scope."
       },
       {
         "kind": "implementor_timeout",
-        "description": "OpenCode MiniMax attached-server run for impl-0004 timed out after 240 seconds without output or code edits; GLM retry with the 300 second cap produced partial code edits but timed out without closeout."
+        "description": "OpenCode MiniMax attached-server run for impl-0004 timed out after 240 seconds without output or code edits. OpenCode GLM impl-0007 produced a substantial partial patch but timed out after 600 seconds without textual closeout, requiring a recorded scoped fallback exception."
       }
     ],
     "refresh_policy": "on_demand"
@@ -63,19 +63,19 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "tdd_obligation_ledger_v2_schema_validation",
+        "gate": "traceability_matrix_schema_validation",
         "status": "passed",
-        "checked_at": "2026-05-17T16:53:54Z"
+        "checked_at": "2026-05-17T17:16:28Z"
       },
       {
-        "gate": "coverage_metadata_invariants",
+        "gate": "traceability_cross_artifact_links",
         "status": "passed",
-        "checked_at": "2026-05-17T16:53:54Z"
+        "checked_at": "2026-05-17T17:16:28Z"
       },
       {
         "gate": "product_workflow_lint_cli",
         "status": "passed",
-        "checked_at": "2026-05-17T16:53:54Z"
+        "checked_at": "2026-05-17T17:16:28Z"
       }
     ],
     "blocking_criteria": [],
@@ -97,10 +97,10 @@
   "session_ids": {},
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T16:53:54Z",
+  "last_reconciliation_at": "2026-05-17T17:16:28Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_1_traceability_matrix_schema_links_atom",
+    "plan_phase_1_artifact_state_machine_enum_atom",
     "close_effort_if_abandoned"
   ],
   "durability_level": "source_controlled"

@@ -176,6 +176,7 @@ type ImplementationLedgerRecord struct {
 	CodeChanges             bool                   `json:"code_changes,omitempty"`
 	VerificationCommandsRun []string               `json:"verification_commands_run,omitempty"`
 	VerificationStatus      string                 `json:"verification_status,omitempty"`
+	TDDObligationsSatisfied []string               `json:"tdd_obligations_satisfied,omitempty"`
 	Commands                []string               `json:"commands,omitempty"`
 	Status                  string                 `json:"status,omitempty"`
 	Model                   string                 `json:"model,omitempty"`

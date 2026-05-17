@@ -168,6 +168,7 @@ func TestProductLintChecksOptionalResearchProfileWhenConfigured(t *testing.T) {
 	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
 	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
 	writeTestFile(t, dir, "reports/test.json", "{}")
+	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
 	writeTestFile(t, dir, "research_profile.json", validTestResearchProfileJSON())
 
 	var stdout, stderr bytes.Buffer
@@ -296,6 +297,110 @@ func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {
 	}
 }
 
+func TestProductLintDetectsBrokenTraceabilityLinks(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", `{
+		"schema_version":"idiom.traceability_matrix.v1.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"created_at":"2026-05-17T16:00:00Z",
+		"matrix":[{
+			"evidence_card":"EV-MISSING","prd_requirement":"REQ-MISSING","adr":"ADR-MISSING","tdd_obligation":"TDD-MISSING","brief":"briefs/missing.md","report":"reports/missing.json"
+		}]
+	}`)
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail with broken links, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	wantFields := []string{"evidence_card", "prd_requirement", "adr", "tdd_obligation", "brief", "report"}
+	for _, field := range wantFields {
+		found := false
+		for _, f := range result.Findings {
+			if f.Code == "broken_link" && f.Path == "evidence/traceability_matrix.json" && strings.Contains(f.Message, field) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected broken_link finding for field %q, got: %#v", field, result.Findings)
+		}
+	}
+}
+
+func TestProductLintAcceptsHistoricalTDDObligationIDs(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", `{
+		"schema_version":"idiom.traceability_matrix.v1.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"created_at":"2026-05-17T16:00:00Z",
+		"matrix":[{
+			"evidence_card":"EV-001","prd_requirement":"REQ-TEST-001","adr":"ADR-001","tdd_obligation":"TDD-HIST-001","brief":"briefs/test.md","report":"reports/test.json"
+		}]
+	}`)
+	writeTestFile(t, dir, "implementation_ledger.jsonl", strings.Join([]string{
+		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
+		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl"}`,
+		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z","tdd_obligations_satisfied":["TDD-HIST-001"]}`,
+		`{"record_type":"review_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`,
+		`{"record_type":"post_effort_investigation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`,
+		`{"record_type":"atom_closed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":[]}`,
+	}, "\n"))
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass with historical TDD ID, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestProductLintTraceabilityMatrixInCheckedFiles(t *testing.T) {
+	root := repoRoot(t)
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.CheckedFiles {
+		if f == "evidence/traceability_matrix.json" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected evidence/traceability_matrix.json in checked_files, got %v", result.CheckedFiles)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -368,7 +473,7 @@ func validTestTraceabilityMatrixJSON() string {
 		"task_id":"impl-test",
 		"created_at":"2026-05-17T16:00:00Z",
 		"matrix":[{
-			"evidence_card":"EV-001","prd_requirement":"REQ-001","adr":"ADR-001","tdd_obligation":"TDD-001","brief":"briefs/test.md","report":"reports/test.json"
+			"evidence_card":"EV-001","prd_requirement":"REQ-TEST-001","adr":"ADR-001","tdd_obligation":"TDD-001","brief":"briefs/test.md","report":"reports/test.json"
 		}]
 	}`
 }

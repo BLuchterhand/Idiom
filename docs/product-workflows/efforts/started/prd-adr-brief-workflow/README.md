@@ -6,10 +6,10 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Active atom: `impl-0006-phase-1-tdd-obligation-ledger-v2-schema`
+- Active atom: `impl-0007-phase-1-traceability-matrix-schema-links`
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `e9fa7d7629c88d2b`
+- Context pack: `b619d856e84f87e5`
 - Coverage tier: `unit`
 
 The workflow implementation is in progress. These files are source-controlled
@@ -32,6 +32,10 @@ committed product workflow validators and lint command until later atoms close.
   240 seconds with no output or code edits.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
+- Prefer observable OpenCode runs for future implementor attempts:
+  `--format json --print-logs --log-level INFO` for raw event/log streaming, and
+  `--thinking` only when the provider supports it and the output remains safe to
+  exclude from durable reports.
 - Parallelize independent Codex-side reads, reviews, context preparation, and
   verification where this does not duplicate or conflict with a running
   implementor. Preserve sequential atom closeout: each atom still requires its
@@ -67,6 +71,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan `impl-0007-phase-1-traceability-matrix-schema-links` with the 10 minute
-OpenCode cap and the most stable recorded implementor model, then commit and
-push after the atom closes.
+Plan `plan_phase_1_artifact_state_machine_enum_atom` with the 10 minute
+OpenCode cap, observable JSON/log streaming, and the most stable recorded
+implementor model, then commit and push after the atom closes.

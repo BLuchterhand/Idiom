@@ -855,6 +855,276 @@ func TestValidAllObligationTypesAccepted(t *testing.T) {
 	}
 }
 
+func TestDurableTraceabilityMatrixPassesCrossLinkValidation(t *testing.T) {
+	root := repoRoot(t)
+	read := func(path string) []byte {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		return data
+	}
+	rel := "docs/product-workflows/efforts/started/prd-adr-brief-workflow"
+
+	matrixData := read(filepath.Join(rel, "evidence/traceability_matrix.json"))
+	matrix, err := ParseTraceabilityMatrixJSON(matrixData)
+	if err != nil {
+		t.Fatalf("parse traceability matrix: %v", err)
+	}
+
+	cardsData := read(filepath.Join(rel, "evidence/evidence.jsonl"))
+	cards, err := ParseEvidenceCardsJSONL(cardsData)
+	if err != nil {
+		t.Fatalf("parse evidence cards: %v", err)
+	}
+	evidenceIDs := map[string]bool{}
+	for _, c := range cards {
+		evidenceIDs[c.CardID] = true
+	}
+
+	prdData := read(filepath.Join(rel, "prd.md"))
+	prd, err := ParsePRDMarkdown(prdData)
+	if err != nil {
+		t.Fatalf("parse PRD: %v", err)
+	}
+	prdReqIDs := map[string]bool{}
+	for _, r := range prd.Requirements {
+		prdReqIDs[r.ID] = true
+	}
+
+	adrIdxData := read(filepath.Join(rel, "adrs/index.json"))
+	adrIdx, err := ParseADRIndexJSON(adrIdxData)
+	if err != nil {
+		t.Fatalf("parse ADR index: %v", err)
+	}
+	adrIDs := map[string]bool{}
+	for _, a := range adrIdx.ADRs {
+		adrIDs[a.ADRID] = true
+	}
+
+	tddData := read(filepath.Join(rel, "tdd.json"))
+	tdd, err := ParseTDDLedgerJSON(tddData)
+	if err != nil {
+		t.Fatalf("parse TDD: %v", err)
+	}
+	tddIDs := map[string]bool{}
+	for _, o := range tdd.Obligations {
+		tddIDs[o.ID] = true
+	}
+
+	ledgerData := read(filepath.Join(rel, "implementation_ledger.jsonl"))
+	ledger, err := ParseImplementationLedgerJSONL(ledgerData)
+	if err != nil {
+		t.Fatalf("parse implementation ledger: %v", err)
+	}
+	for _, rec := range ledger {
+		for _, id := range rec.TDDObligationsSatisfied {
+			tddIDs[id] = true
+		}
+	}
+
+	briefPaths := map[string]bool{}
+	briefsDir := filepath.Join(root, rel, "briefs")
+	if entries, err := os.ReadDir(briefsDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				briefPaths[filepath.Join("briefs", e.Name())] = true
+			}
+		}
+	}
+
+	reportPaths := map[string]bool{}
+	reportsDir := filepath.Join(root, rel, "reports")
+	if entries, err := os.ReadDir(reportsDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				reportPaths[filepath.Join("reports", e.Name())] = true
+			}
+		}
+	}
+
+	linkErrs := ValidateTraceabilityCrossLinks(matrix, evidenceIDs, prdReqIDs, adrIDs, tddIDs, briefPaths, reportPaths)
+	if len(linkErrs) != 0 {
+		for _, le := range linkErrs {
+			t.Errorf("unexpected broken link: row %d field %s value %q: %s", le.RowIndex, le.Field, le.Value, le.Message)
+		}
+		t.Fatalf("expected zero link errors, got %d", len(linkErrs))
+	}
+}
+
+func TestCrossLinkValidationDetectsBrokenEvidenceCard(t *testing.T) {
+	matrix := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "EV-MISSING", PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1", Brief: "briefs/a.md", Report: "reports/a.json"},
+		},
+	}
+	errs := ValidateTraceabilityCrossLinks(matrix,
+		map[string]bool{"EV-OK": true},
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"ADR-1": true},
+		map[string]bool{"TDD-1": true},
+		map[string]bool{"briefs/a.md": true},
+		map[string]bool{"reports/a.json": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "evidence_card" || !strings.Contains(errs[0].Message, "EV-MISSING") {
+		t.Fatalf("expected one evidence_card error, got %v", errs)
+	}
+}
+
+func TestCrossLinkValidationDetectsBrokenPRDRequirement(t *testing.T) {
+	matrix := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "EV-1", PRDRequirement: "REQ-MISSING", ADR: "ADR-1", TDDObligation: "TDD-1", Brief: "briefs/a.md", Report: "reports/a.json"},
+		},
+	}
+	errs := ValidateTraceabilityCrossLinks(matrix,
+		map[string]bool{"EV-1": true},
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"ADR-1": true},
+		map[string]bool{"TDD-1": true},
+		map[string]bool{"briefs/a.md": true},
+		map[string]bool{"reports/a.json": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "prd_requirement" {
+		t.Fatalf("expected one prd_requirement error, got %v", errs)
+	}
+}
+
+func TestCrossLinkValidationDetectsBrokenADR(t *testing.T) {
+	matrix := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "EV-1", PRDRequirement: "REQ-1", ADR: "ADR-MISSING", TDDObligation: "TDD-1", Brief: "briefs/a.md", Report: "reports/a.json"},
+		},
+	}
+	errs := ValidateTraceabilityCrossLinks(matrix,
+		map[string]bool{"EV-1": true},
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"ADR-1": true},
+		map[string]bool{"TDD-1": true},
+		map[string]bool{"briefs/a.md": true},
+		map[string]bool{"reports/a.json": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "adr" {
+		t.Fatalf("expected one adr error, got %v", errs)
+	}
+}
+
+func TestCrossLinkValidationDetectsBrokenTDDObligation(t *testing.T) {
+	matrix := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "EV-1", PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-MISSING", Brief: "briefs/a.md", Report: "reports/a.json"},
+		},
+	}
+	errs := ValidateTraceabilityCrossLinks(matrix,
+		map[string]bool{"EV-1": true},
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"ADR-1": true},
+		map[string]bool{"TDD-1": true},
+		map[string]bool{"briefs/a.md": true},
+		map[string]bool{"reports/a.json": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "tdd_obligation" {
+		t.Fatalf("expected one tdd_obligation error, got %v", errs)
+	}
+}
+
+func TestCrossLinkValidationAcceptsHistoricalTDDObligationIDs(t *testing.T) {
+	matrix := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "EV-1", PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-HIST-001", Brief: "briefs/a.md", Report: "reports/a.json"},
+		},
+	}
+	tddIDs := map[string]bool{"TDD-1": true, "TDD-HIST-001": true}
+	errs := ValidateTraceabilityCrossLinks(matrix,
+		map[string]bool{"EV-1": true},
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"ADR-1": true},
+		tddIDs,
+		map[string]bool{"briefs/a.md": true},
+		map[string]bool{"reports/a.json": true},
+	)
+	if len(errs) != 0 {
+		t.Fatalf("expected zero errors for historical TDD ID, got %v", errs)
+	}
+}
+
+func TestCrossLinkValidationDetectsBrokenBriefPath(t *testing.T) {
+	matrix := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "EV-1", PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1", Brief: "briefs/missing.md", Report: "reports/a.json"},
+		},
+	}
+	errs := ValidateTraceabilityCrossLinks(matrix,
+		map[string]bool{"EV-1": true},
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"ADR-1": true},
+		map[string]bool{"TDD-1": true},
+		map[string]bool{"briefs/a.md": true},
+		map[string]bool{"reports/a.json": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "brief" {
+		t.Fatalf("expected one brief error, got %v", errs)
+	}
+}
+
+func TestCrossLinkValidationDetectsBrokenReportPath(t *testing.T) {
+	matrix := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "EV-1", PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1", Brief: "briefs/a.md", Report: "reports/missing.json"},
+		},
+	}
+	errs := ValidateTraceabilityCrossLinks(matrix,
+		map[string]bool{"EV-1": true},
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"ADR-1": true},
+		map[string]bool{"TDD-1": true},
+		map[string]bool{"briefs/a.md": true},
+		map[string]bool{"reports/a.json": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "report" {
+		t.Fatalf("expected one report error, got %v", errs)
+	}
+}
+
+func TestCrossLinkValidationSkipsCheckForNilMaps(t *testing.T) {
+	matrix := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "EV-1", PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1", Brief: "briefs/a.md", Report: "reports/a.json"},
+		},
+	}
+	errs := ValidateTraceabilityCrossLinks(matrix, nil, nil, nil, nil, nil, nil)
+	if len(errs) != 0 {
+		t.Fatalf("expected zero errors when all maps nil (artifact parse failed), got %v", errs)
+	}
+}
+
+func TestTraceabilityRowMissingFieldsFailClosed(t *testing.T) {
+	m := TraceabilityMatrix{
+		SchemaVersion: "v1", EffortID: "e", TaskID: "t", CreatedAt: "now",
+		Matrix: []TraceabilityRow{
+			{EvidenceCard: "", PRDRequirement: "", ADR: "", TDDObligation: "", Brief: "", Report: ""},
+		},
+	}
+	err := validateTraceabilityMatrix(m)
+	if err == nil {
+		t.Fatal("expected empty row fields to fail")
+	}
+	for _, want := range []string{"missing evidence_card", "missing prd_requirement", "missing adr", "missing tdd_obligation", "missing brief", "missing report"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

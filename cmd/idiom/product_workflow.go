@@ -119,6 +119,13 @@ func lintEffortFolder(root string) productLintResult {
 			Message: message,
 		})
 	}
+	var parsedCards []productworkflow.EvidenceCard
+	var parsedMatrix *productworkflow.TraceabilityMatrix
+	var parsedPRD *productworkflow.PRDDocument
+	var parsedADRIndex *productworkflow.ADRIndex
+	var parsedTDD *productworkflow.TDDLedger
+	var parsedLedger []productworkflow.ImplementationLedgerRecord
+
 	checkFile := func(relPath string, validate func([]byte) error) {
 		fullPath := filepath.Join(root, relPath)
 		result.CheckedFiles = append(result.CheckedFiles, relPath)
@@ -141,27 +148,45 @@ func lintEffortFolder(root string) productLintResult {
 		return err
 	})
 	checkFile("tdd.json", func(data []byte) error {
-		_, err := productworkflow.ParseTDDLedgerJSON(data)
+		l, err := productworkflow.ParseTDDLedgerJSON(data)
+		if err == nil {
+			parsedTDD = &l
+		}
 		return err
 	})
 	checkFile("evidence/evidence.jsonl", func(data []byte) error {
-		_, err := productworkflow.ParseEvidenceCardsJSONL(data)
+		c, err := productworkflow.ParseEvidenceCardsJSONL(data)
+		if err == nil {
+			parsedCards = c
+		}
 		return err
 	})
 	checkFile("evidence/traceability_matrix.json", func(data []byte) error {
-		_, err := productworkflow.ParseTraceabilityMatrixJSON(data)
+		m, err := productworkflow.ParseTraceabilityMatrixJSON(data)
+		if err == nil {
+			parsedMatrix = &m
+		}
 		return err
 	})
 	checkFile("implementation_ledger.jsonl", func(data []byte) error {
-		_, err := productworkflow.ParseImplementationLedgerJSONL(data)
+		recs, err := productworkflow.ParseImplementationLedgerJSONL(data)
+		if err == nil {
+			parsedLedger = recs
+		}
 		return err
 	})
 	checkFile("prd.md", func(data []byte) error {
-		_, err := productworkflow.ParsePRDMarkdown(data)
+		d, err := productworkflow.ParsePRDMarkdown(data)
+		if err == nil {
+			parsedPRD = &d
+		}
 		return err
 	})
 	checkFile("adrs/index.json", func(data []byte) error {
 		idx, err := productworkflow.ParseADRIndexJSON(data)
+		if err == nil {
+			parsedADRIndex = &idx
+		}
 		if err != nil {
 			return err
 		}
@@ -175,6 +200,7 @@ func lintEffortFolder(root string) productLintResult {
 		return nil
 	})
 
+	reportPaths := map[string]bool{}
 	reportsDir := filepath.Join(root, "reports")
 	entries, err := os.ReadDir(reportsDir)
 	if err != nil {
@@ -190,6 +216,7 @@ func lintEffortFolder(root string) productLintResult {
 			}
 			relPath := filepath.Join("reports", entry.Name())
 			result.CheckedFiles = append(result.CheckedFiles, relPath)
+			reportPaths[relPath] = true
 			data, readErr := os.ReadFile(filepath.Join(reportsDir, entry.Name()))
 			if readErr != nil {
 				addFinding("read_error", relPath, readErr.Error())
@@ -199,6 +226,57 @@ func lintEffortFolder(root string) productLintResult {
 			if err := json.Unmarshal(data, &raw); err != nil {
 				addFinding("parse_error", relPath, fmt.Sprintf("invalid JSON: %v", err))
 			}
+		}
+	}
+
+	briefPaths := map[string]bool{}
+	briefsDir := filepath.Join(root, "briefs")
+	if briefEntries, briefErr := os.ReadDir(briefsDir); briefErr == nil {
+		for _, be := range briefEntries {
+			if !be.IsDir() {
+				briefPaths[filepath.Join("briefs", be.Name())] = true
+			}
+		}
+	}
+
+	if parsedMatrix != nil {
+		var evidenceIDs map[string]bool
+		if parsedCards != nil {
+			evidenceIDs = make(map[string]bool)
+			for _, c := range parsedCards {
+				evidenceIDs[c.CardID] = true
+			}
+		}
+		var prdReqIDs map[string]bool
+		if parsedPRD != nil {
+			prdReqIDs = make(map[string]bool)
+			for _, r := range parsedPRD.Requirements {
+				prdReqIDs[r.ID] = true
+			}
+		}
+		var adrIDSet map[string]bool
+		if parsedADRIndex != nil {
+			adrIDSet = make(map[string]bool)
+			for _, a := range parsedADRIndex.ADRs {
+				adrIDSet[a.ADRID] = true
+			}
+		}
+		tddIDSet := make(map[string]bool)
+		if parsedTDD != nil {
+			for _, o := range parsedTDD.Obligations {
+				tddIDSet[o.ID] = true
+			}
+		}
+		for _, rec := range parsedLedger {
+			for _, id := range rec.TDDObligationsSatisfied {
+				tddIDSet[id] = true
+			}
+		}
+		linkErrs := productworkflow.ValidateTraceabilityCrossLinks(
+			*parsedMatrix, evidenceIDs, prdReqIDs, adrIDSet, tddIDSet, briefPaths, reportPaths,
+		)
+		for _, le := range linkErrs {
+			addFinding("broken_link", "evidence/traceability_matrix.json", le.Message)
 		}
 	}
 
