@@ -167,6 +167,42 @@ Zero implementation code exists.
 
 ## TODO: Implementation Phases
 
+All implementation phases must be executed as long-lived implementation atoms.
+Each atom requires a complexity-tier assessment, OpenCode GLM 5.1 as the
+default implementation runtime, explicit fallback justification when another
+implementor is used, one dedicated implementor sub-agent, one distinct dedicated
+Codex/GPT reviewer sub-agent, required verification, and a post-effort
+investigation report before closeout. Persist atom state in the effort folder so
+work can resume across sessions without relying on raw transcript replay.
+
+### TODO: Long-Lived Implementation Operating Model
+
+- [ ] Implementation atom schema with `task_id`, phase, state, complexity tier,
+  blast radius, context pack ID, expected files, forbidden files, TDD
+  obligations, required tests, and blockers
+- [ ] Implementor assignment fields: agent ID, runtime, model, OpenCode command,
+  smoke-test status, and selection reason
+- [ ] Reviewer assignment fields: distinct agent ID, GPT model, reasoning
+  effort, selection reason, and reviewer independence check
+- [ ] Complexity tiers `C0` through `C4` with economic model/effort defaults
+  and upgrade/downgrade justification
+- [ ] Repository OpenCode default points at `zai-coding-plan/glm-5.1`, with
+  implementation dispatch invoking `opencode run --model
+  zai-coding-plan/glm-5.1` or `scripts/run-opencode-glm.sh`
+- [ ] Headless implementation smoke test uses the attached-server path:
+  `scripts/run-opencode-glm.sh serve` plus `OPENCODE_SERVER_URL=...`
+  `scripts/run-opencode-glm.sh run`
+- [ ] Closeout blocker when the OpenCode GLM smoke test fails and no explicit
+  fallback implementor exception is recorded
+- [ ] Append-only `implementation_ledger.jsonl` in each effort folder
+- [ ] Per-atom implementation, review, and post-effort investigation reports
+- [ ] Resume validation that loads workflow state, implementation ledger, latest
+  reports, event log, context freshness, and git status before choosing the next
+  action
+- [ ] Closeout blocker when model/effort selection is missing, implementor and
+  reviewer are the same actor, required verification is missing, or the
+  post-effort investigation is incomplete
+
 ### Phase 0: Design Fixtures (Current)
 
 - [x] PRD/ADR/brief workflow design doc
@@ -175,13 +211,20 @@ Zero implementation code exists.
 - [ ] Example PRD, ADR, TDD ledger, and brief fixture under `testdata`
 - [ ] Manual walkthrough using current `context_pack`, `architect packet`,
   `artifact`, `brief lint`, `atom intake`
+- [ ] Seed the implementation ledger with a `C0` documentation/fixture atom and
+  persist implementor/reviewer assignments, reports, and post-effort
+  investigation evidence
 
 ### Phase 1: Schemas and Deterministic Linters
 
 - [ ] Evidence card, PRD, ADR, TDD obligation v1 structs
+- [ ] Implementation atom, complexity tier, assignment, and investigation report
+  structs
 - [ ] PRD audit, ADR audit, TDD audit deterministic commands
 - [ ] Artifact storage under `.idiom/product/`
 - [ ] Tests for schema validation and gate logic
+- [ ] Tests for assignment independence, missing model/effort selection,
+  incomplete investigation report, and cross-session resume blockers
 
 ### Phase 2: Research Profiles
 

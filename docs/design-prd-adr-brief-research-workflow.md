@@ -1653,6 +1653,12 @@ Implementation quality:
 - verification blocked rate
 - review-repair rate
 - regression recurrence rate
+- implementation atoms with recorded complexity tier and model/effort
+  justification
+- implementation atoms with distinct implementor and reviewer agents
+- implementation atoms that can be resumed from workflow state without reading
+  raw transcripts
+- post-effort investigation reports completed before atom closeout
 
 Harness learning:
 
@@ -1660,6 +1666,150 @@ Harness learning:
 - `harness_feedback` items promoted to tests or docs
 - ranker learning events with verified provenance
 - replay/eval before-after improvement
+
+## Implementation Operating Model
+
+The implementation of this workflow is itself a long-lived product workflow.
+It must be run as a sequence of small implementation atoms that can pause and
+resume across sessions. The atom ledger is part of workflow state, not a chat
+memory convention.
+
+Every implementation atom must pass a staffing and complexity gate before work
+starts:
+
+1. Resolve the active `effort_id`, status folder, latest `workflow_state.json`,
+   implementation ledger, event log, and current git state.
+2. Run or reuse a fresh `context_pack` for the exact atom and record the
+   `pack_id`.
+3. Declare the atom's complexity tier, blast radius, expected files, forbidden
+   files, TDD obligations, required verification, and post-effort investigation
+   checklist.
+4. Select the cheapest sufficient implementor runtime and model. The default
+   implementor is OpenCode with `zai-coding-plan/glm-5.1`, invoked explicitly
+   with `opencode run --model zai-coding-plan/glm-5.1` or the repository
+   `scripts/run-opencode-glm.sh` wrapper so implementation does not drift to a
+   different OpenCode default model.
+   Headless automation should prefer an attached server path:
+   `scripts/run-opencode-glm.sh serve --hostname 127.0.0.1 --port <port>` and
+   `OPENCODE_SERVER_URL=http://127.0.0.1:<port> scripts/run-opencode-glm.sh run
+   <brief>`. The smoke report records whether the standalone or attached-server
+   path was used.
+5. Select the cheapest sufficient Codex/GPT reviewer model and reasoning
+   effort.
+6. Assign one dedicated OpenCode/GLM implementor sub-agent and one distinct
+   dedicated Codex/GPT reviewer sub-agent.
+7. Persist the assignments, model choices, reasoning-effort choices, session
+   IDs, OpenCode command, smoke-test status, and rationale before
+   implementation begins.
+
+If OpenCode/GLM implementor execution is unavailable, the atom is blocked unless
+an operator records an explicit exception and assigns a fallback implementor and
+an independent reviewer. The same actor must not both implement and approve an
+atom.
+
+Complexity tiers:
+
+| Tier | Applies to | Implementor | Reviewer |
+| --- | --- | --- | --- |
+| `C0` | prose docs, fixtures, examples, tiny mechanical updates | OpenCode `zai-coding-plan/glm-5.1`, low-risk prompt | `gpt-5.4-mini`, medium |
+| `C1` | schema structs, validators, focused unit tests, narrow adapters | OpenCode `zai-coding-plan/glm-5.1`, focused implementation prompt | `gpt-5.4`, medium |
+| `C2` | CLI commands, storage, status migration, reconciliation, deterministic audit logic | OpenCode `zai-coding-plan/glm-5.1`, implementation prompt with explicit tests | `gpt-5.4`, high |
+| `C3` | harness contracts, dispatch gates, telemetry, workflow state shared by CLI/TUI, TUI continuation state | OpenCode `zai-coding-plan/glm-5.1` with Codex orchestration checkpoints | `gpt-5.5`, high |
+| `C4` | privacy/security boundaries, protocol/state-machine correctness, data migrations, ambiguous behavioral failures | OpenCode `zai-coding-plan/glm-5.1` only after Codex `gpt-5.5` xhigh planning acceptance | `gpt-5.5`, xhigh plus human acceptance |
+
+The table is an economic default, not a license to under-scope risk. A task may
+upgrade the reviewer or require extra Codex orchestration checkpoints when
+evidence shows higher ambiguity, larger blast radius, weak tests, or
+privacy/security exposure. A downgrade or fallback from OpenCode/GLM is allowed
+only when the atom records why the cheaper or alternate implementor is still
+sufficient, which deterministic checks compensate for the downgrade, and why the
+standard OpenCode/GLM path was not used.
+
+Each atom must record a structured task entry:
+
+```json
+{
+  "schema_version": "idiom.product_implementation_atom.v1",
+  "effort_id": "effort-example",
+  "task_id": "impl-001",
+  "phase": "phase-1-schemas",
+  "state": "planned",
+  "complexity_tier": "C1",
+  "blast_radius": "new domain schemas and validators only",
+  "context_pack_id": "pack-id",
+  "implementor": {
+    "agent_id": "agent-impl-001",
+    "runtime": "opencode",
+    "model": "zai-coding-plan/glm-5.1",
+    "command": "OPENCODE_SERVER_URL=http://127.0.0.1:<port> scripts/run-opencode-glm.sh run",
+    "smoke_status": "passed",
+    "selection_reason": "default economical implementation runtime for focused schema and validator work"
+  },
+  "reviewer": {
+    "agent_id": "agent-review-001",
+    "model": "gpt-5.4",
+    "reasoning_effort": "medium",
+    "selection_reason": "independent review of schema boundaries and tests"
+  },
+  "expected_files": [],
+  "forbidden_files": [],
+  "tdd_obligations": [],
+  "required_tests": [],
+  "implementation_report": "reports/impl-001-implementation.json",
+  "review_report": "reports/impl-001-review.json",
+  "post_effort_investigation_report": "reports/impl-001-investigation.json",
+  "resume_notes": [],
+  "open_blockers": []
+}
+```
+
+The implementation ledger must be resumable. At minimum, the effort folder
+contains:
+
+- `implementation_ledger.jsonl` with one append-only task record per atom state
+  transition
+- `reports/<task-id>-implementation.json` from the implementor
+- `reports/<task-id>-review.json` from the reviewer
+- `reports/<task-id>-investigation.json` with the final post-effort
+  investigation
+- event links to any lane, artifact, telemetry, audit, product-evidence, or
+  release-evidence records used by the atom
+
+Session continuation rules:
+
+- A new session starts by reading `workflow_state.json`,
+  `implementation_ledger.jsonl`, the latest event log, the latest task reports,
+  and current `git status`.
+- The session may continue only the next valid atom action: plan, implement,
+  review, investigate, repair, block, or close.
+- An atom cannot start while an earlier atom is implemented but unreviewed,
+  review-blocked, missing its post-effort investigation, or missing required
+  verification evidence.
+- If the codebase changed since the atom's `context_pack_id`, the atom must
+  refresh context or record a stale-context blocker before dispatch.
+- Reviewer closeout must explicitly assess scope, tests, coverage tier,
+  traceability, privacy, auditability, generated events, and whether new
+  follow-up obligations are required.
+- The post-effort investigation must be complete before an atom can move to
+  `closed`, and the investigation must identify any carry-forward tasks for the
+  next session.
+
+Post-effort investigation is required after every atom, including documentation
+and fixture atoms. The investigation answers:
+
+- What changed, and are all changed paths inside the atom scope?
+- Which requirements, ADR decisions, TDD obligations, and coverage-gate
+  criteria did the atom satisfy?
+- Which tests, source-sanity checks, audits, and lint commands ran, and what
+  failed or was blocked?
+- Did the change duplicate authority between prompts, schemas, gates, telemetry,
+  or docs?
+- Did any artifact, event, report, or evidence export expose raw prompts, raw
+  transcript text, file bodies, secrets, or customer-identifying data?
+- Did the reviewer find open blockers, missing tests, stale context, weak model
+  selection, or follow-up obligations?
+- What exact state should the next session load, and what is the next valid
+  action?
 
 ## Rollout Plan
 
@@ -1670,6 +1820,9 @@ Harness learning:
   or docs evidence after the first implementation target is chosen.
 - Use current `context_pack`, `architect packet`, `artifact`, `brief lint`, and
   `atom intake` commands manually.
+- Create the long-lived implementation ledger for this workflow and seed it
+  with one `C0` documentation/fixture atom whose implementor, reviewer, model
+  effort, reports, and post-effort investigation are persisted.
 - Document the minimum traceability matrix.
 - Document the minimum `workflow_state.json` shape and promotion path from
   `.idiom/product/efforts/<status>/<effort-id>` to
@@ -1683,6 +1836,8 @@ Harness learning:
 
 - Add schema structs and validators for research cards, PRDs, ADRs, and TDD
   obligations, workflow state, artifact durability, and coverage tiers.
+- Add implementation atom schema, complexity tier enum, implementor/reviewer
+  assignment fields, and long-lived implementation ledger validation.
 - Add effort folder, status bucket, status migration, and effort index schemas.
 - Add the shared workflow status view model and state-transition contract used by
   both CLI and TUI presenters.
@@ -1693,6 +1848,9 @@ Harness learning:
   source-controlled, and diffable.
 - Add tests for unsupported claims, unresolved conflicts, missing TDD
   obligations, stale context references, and invalid privacy fields.
+- Add tests that block atom closeout when the implementor and reviewer are the
+  same actor, model/effort selection is missing, or post-effort investigation is
+  incomplete.
 - Add first-run failure fixtures for missing state, stale context,
   reconciliation mismatch, and missing TDD obligations; each must return a typed
   blocker with one next valid action.
@@ -1761,6 +1919,8 @@ Harness learning:
   context.
 - Add tests or replay fixtures proving a workflow can pause and resume across
   research, PRD/ADR, TDD, brief generation, dispatch, and verification states.
+- Add tests proving implementation atom assignments, reports, and post-effort
+  investigations survive session restart and expose the next valid action.
 
 ### Phase 7: Sidecar And External Agent Use
 
@@ -1789,6 +1949,9 @@ Harness learning:
 | Crash after artifact write | Reconcile state from artifact hashes, event IDs, lane history, atom tracker docs, and progress state before offering the next action. |
 | "Works first try" overpromise | Define first-run success as safe happy-path fixture completion or a typed blocker with next action, not guaranteed autonomous completion for arbitrary complex work. |
 | Local model capacity | Run researchers sequentially by default; use queue admission for parallel lanes. |
+| Long-lived implementation loses state between sessions | Persist implementation atom state, agent assignments, model/effort choices, reports, and next actions in the effort folder; treat raw transcripts as evidence links only. |
+| Over-spending on simple atoms | Require complexity-tier assessment and cheapest-sufficient GPT model/effort selection before every atom. |
+| Under-reviewing risky atoms | Require a dedicated reviewer sub-agent with equal or stronger model/effort than the implementor for `C2` and above, and human acceptance for `C4`. |
 | Privacy leaks | Store IDs, paths, hashes, counts, and statuses; redact prompts, transcripts, secrets, and file bodies. |
 | Too many commands | Start with manual composition and add CLI verbs only after repeated usage proves the contract. |
 | Harness overreach | Researchers recommend, PRDs frame, ADRs decide, briefs authorize; the runner only enforces contracts. |
@@ -1846,6 +2009,10 @@ The feature is useful when a team can:
 - link product-evidence exports and release-evidence bundles to the workflow
 - resume complex TUI/operator work from workflow state without rereading raw
   transcripts
+- resume this implementation effort across sessions from the implementation
+  ledger, with each atom carrying complexity tier, GPT model/effort selection,
+  dedicated implementor, dedicated reviewer, verification, and post-effort
+  investigation state
 - audit the workflow without reading raw transcripts
 - improve future context ranking or brief quality from verified outcomes
 - measure spec compliance independently of functional correctness
