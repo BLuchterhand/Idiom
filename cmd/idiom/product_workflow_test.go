@@ -401,6 +401,137 @@ func TestProductLintTraceabilityMatrixInCheckedFiles(t *testing.T) {
 	}
 }
 
+func TestProductLintRejectsInvalidPRDArtifactStatus(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: accepted_fixture
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+`)
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail with invalid PRD status, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "parse_error" && f.Path == "prd.md" && strings.Contains(f.Message, "accepted_fixture") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding for prd.md mentioning accepted_fixture, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintRejectsInvalidADRIndexArtifactStatus(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted_fixture","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"],"created_at":"2026-05-17T00:00:00Z"}]}`)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail with invalid ADR index status, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "parse_error" && f.Path == "adrs/index.json" && strings.Contains(f.Message, "accepted_fixture") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding for adrs/index.json mentioning accepted_fixture, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintRejectsInvalidADRMarkdownArtifactStatus(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted_fixture
+prd_refs:
+  - REQ-TEST-001
+---
+
+# ADR-001: Test
+
+## Decision
+
+Test decision.
+`)
+	writeTestFile(t, dir, "reports/test.json", "{}")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail with invalid ADR markdown status, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "parse_error" && f.Path == "adrs/ADR-001-test.md" && strings.Contains(f.Message, "accepted_fixture") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding for ADR markdown mentioning accepted_fixture, got: %#v", result.Findings)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

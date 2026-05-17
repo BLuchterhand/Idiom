@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0008a-phase-1-canonical-fixture-artifact-statuses",
+  "task_id": "impl-0008b-phase-1-artifact-state-machine-enum",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T18:12:17Z",
-  "state_revision": 25,
-  "last_event_id": "evt-0080",
-  "workspace_fingerprint": "idiom@b62fd5a",
+  "updated_at": "2026-05-17T18:29:40Z",
+  "state_revision": 28,
+  "last_event_id": "evt-0087",
+  "workspace_fingerprint": "idiom@3f42ef2",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
   "current_state": "verified",
@@ -26,7 +26,7 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "c9e4f705a786fcd8",
+    "context_pack_id": "a50e069f87c91b84",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -50,7 +50,7 @@
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack c9e4f705a786fcd8 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to canonical fixture artifact status migration scope."
+        "description": "Context pack a50e069f87c91b84 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to artifact state enum validation scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -59,24 +59,24 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "canonical_fixture_artifact_status_migration",
+        "gate": "artifact_state_enum_validation",
         "status": "passed",
-        "checked_at": "2026-05-17T18:09:28Z"
+        "checked_at": "2026-05-17T18:28:06Z"
       },
       {
-        "gate": "durable_prd_fixture_status_canonical",
+        "gate": "prd_artifact_status_validation",
         "status": "passed",
-        "checked_at": "2026-05-17T18:09:28Z"
+        "checked_at": "2026-05-17T18:28:06Z"
       },
       {
-        "gate": "durable_adr_fixture_status_canonical",
+        "gate": "adr_artifact_status_validation",
         "status": "passed",
-        "checked_at": "2026-05-17T18:09:28Z"
+        "checked_at": "2026-05-17T18:28:06Z"
       },
       {
         "gate": "product_workflow_lint_cli",
         "status": "passed",
-        "checked_at": "2026-05-17T18:09:28Z"
+        "checked_at": "2026-05-17T18:28:06Z"
       }
     ],
     "blocking_criteria": [],
@@ -98,14 +98,15 @@
   "session_ids": {
     "opencode_ds4_impl_0008_first": "ses_1c905fdd0ffe7e0x0gbSQ915b2",
     "opencode_ds4_impl_0008_retry": "ses_1c8ff9d4fffemuXcYc1kBZaBAx",
-    "opencode_glm_impl_0008a": "ses_1c8e3d7f4ffedA0ZvazZhbb5OG"
+    "opencode_glm_impl_0008a": "ses_1c8e3d7f4ffedA0ZvazZhbb5OG",
+    "opencode_glm_impl_0008b": "ses_1c8d686c4ffeZkVxJJWV2Woonj"
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T18:12:17Z",
+  "last_reconciliation_at": "2026-05-17T18:29:40Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_impl_0008b_phase_1_artifact_state_machine_enum",
+    "plan_next_phase_1_schema_or_state_machine_atom",
     "close_effort_if_abandoned"
   ],
   "durability_level": "source_controlled"

@@ -661,6 +661,11 @@ func validatePRD(doc PRDDocument) error {
 	require(&errs, doc.FrontMatter.Status, "PRD front matter missing status")
 	require(&errs, doc.FrontMatter.TaskID, "PRD front matter missing task_id")
 	require(&errs, doc.FrontMatter.CreatedAt, "PRD front matter missing created_at")
+	if doc.FrontMatter.Status != "" {
+		if err := ValidateArtifactState(doc.FrontMatter.Status); err != nil {
+			errs = append(errs, fmt.Errorf("PRD front matter: %w", err))
+		}
+	}
 	if len(doc.Requirements) == 0 {
 		errs = append(errs, errors.New("PRD has no requirements"))
 	}
@@ -688,6 +693,11 @@ func validateADRIndex(idx ADRIndex) error {
 		prefix := fmt.Sprintf("ADR index entry %d", i)
 		require(&errs, entry.ADRID, prefix+" missing adr_id")
 		require(&errs, entry.Status, prefix+" missing status")
+		if entry.Status != "" {
+			if err := ValidateArtifactState(entry.Status); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", prefix, err))
+			}
+		}
 		require(&errs, entry.Path, prefix+" missing path")
 		if len(entry.PRDRefs) == 0 {
 			errs = append(errs, fmt.Errorf("%s missing prd_refs", prefix))
@@ -701,6 +711,11 @@ func validateADR(doc ADRDocument) error {
 	require(&errs, doc.FrontMatter.SchemaVersion, "ADR front matter missing schema_version")
 	require(&errs, doc.FrontMatter.ADRID, "ADR front matter missing adr_id")
 	require(&errs, doc.FrontMatter.Status, "ADR front matter missing status")
+	if doc.FrontMatter.Status != "" {
+		if err := ValidateArtifactState(doc.FrontMatter.Status); err != nil {
+			errs = append(errs, fmt.Errorf("ADR front matter: %w", err))
+		}
+	}
 	if len(doc.FrontMatter.PRDRefs) == 0 {
 		errs = append(errs, errors.New("ADR front matter missing prd_refs"))
 	}
@@ -778,6 +793,34 @@ func ValidateTraceabilityCrossLinks(
 		}
 	}
 	return errs
+}
+
+type ArtifactState string
+
+const (
+	ArtifactStateDraft      ArtifactState = "draft"
+	ArtifactStateAudited    ArtifactState = "audited"
+	ArtifactStateAccepted   ArtifactState = "accepted"
+	ArtifactStateBlocked    ArtifactState = "blocked"
+	ArtifactStateDispatched ArtifactState = "dispatched"
+)
+
+var validArtifactStates = map[ArtifactState]bool{
+	ArtifactStateDraft:      true,
+	ArtifactStateAudited:    true,
+	ArtifactStateAccepted:   true,
+	ArtifactStateBlocked:    true,
+	ArtifactStateDispatched: true,
+}
+
+func ValidateArtifactState(status string) error {
+	if status == "" {
+		return errors.New("artifact status is empty")
+	}
+	if !validArtifactStates[ArtifactState(status)] {
+		return fmt.Errorf("invalid artifact status %q; valid states: draft, audited, accepted, blocked, dispatched", status)
+	}
+	return nil
 }
 
 func require(errs *[]error, value string, message string) {

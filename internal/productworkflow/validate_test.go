@@ -1,6 +1,7 @@
 package productworkflow
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1121,6 +1122,208 @@ func TestTraceabilityRowMissingFieldsFailClosed(t *testing.T) {
 	for _, want := range []string{"missing evidence_card", "missing prd_requirement", "missing adr", "missing tdd_obligation", "missing brief", "missing report"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestValidateArtifactStateAcceptsCanonicalStates(t *testing.T) {
+	for _, s := range []string{"draft", "audited", "accepted", "blocked", "dispatched"} {
+		if err := ValidateArtifactState(s); err != nil {
+			t.Fatalf("expected status %q to pass, got %v", s, err)
+		}
+	}
+}
+
+func TestValidateArtifactStateRejectsInvalidStates(t *testing.T) {
+	for _, s := range []string{"accepted_fixture", "unknown", "pending", "reviewed", "closed", "ACTIVE", ""} {
+		err := ValidateArtifactState(s)
+		if s == "" {
+			if err == nil {
+				t.Fatalf("expected empty status to fail")
+			}
+			if !strings.Contains(err.Error(), "empty") {
+				t.Fatalf("expected empty error, got %v", err)
+			}
+		} else {
+			if err == nil {
+				t.Fatalf("expected status %q to fail", s)
+			}
+			if !strings.Contains(err.Error(), s) {
+				t.Fatalf("expected error to mention %q, got %v", s, err)
+			}
+			if !strings.Contains(err.Error(), "valid states") {
+				t.Fatalf("expected error to mention valid states, got %v", err)
+			}
+		}
+	}
+}
+
+func TestValidateArtifactStateRejectsAcceptedFixtureExplicitly(t *testing.T) {
+	err := ValidateArtifactState("accepted_fixture")
+	if err == nil {
+		t.Fatal("expected accepted_fixture to be rejected")
+	}
+	if !strings.Contains(err.Error(), "accepted_fixture") {
+		t.Fatalf("expected error to mention accepted_fixture, got %v", err)
+	}
+}
+
+func TestInvalidPRDStatusFailsClosed(t *testing.T) {
+	prd := `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: accepted_fixture
+task_id: task-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+`
+	_, err := ParsePRDMarkdown([]byte(prd))
+	if err == nil {
+		t.Fatal("expected PRD with invalid status to fail")
+	}
+	if !strings.Contains(err.Error(), "accepted_fixture") {
+		t.Fatalf("expected error mentioning accepted_fixture, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "valid states") {
+		t.Fatalf("expected error mentioning valid states, got %v", err)
+	}
+}
+
+func TestDurablePRDFixtureStillPasses(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md"))
+	if err != nil {
+		t.Fatalf("read prd.md: %v", err)
+	}
+	if _, err := ParsePRDMarkdown(data); err != nil {
+		t.Fatalf("expected durable PRD fixture to pass, got %v", err)
+	}
+}
+
+func TestInvalidADRIndexStatusFailsClosed(t *testing.T) {
+	idx := `{"schema_version":"v1","effort_id":"test","adrs":[{"adr_id":"ADR-1","title":"Test","status":"accepted_fixture","path":"a.md","prd_refs":["REQ-1"]}]}`
+	_, err := ParseADRIndexJSON([]byte(idx))
+	if err == nil {
+		t.Fatal("expected ADR index with invalid status to fail")
+	}
+	if !strings.Contains(err.Error(), "accepted_fixture") {
+		t.Fatalf("expected error mentioning accepted_fixture, got %v", err)
+	}
+}
+
+func TestDurableADRIndexFixtureStillPasses(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/index.json"))
+	if err != nil {
+		t.Fatalf("read ADR index: %v", err)
+	}
+	if _, err := ParseADRIndexJSON(data); err != nil {
+		t.Fatalf("expected durable ADR index fixture to pass, got %v", err)
+	}
+}
+
+func TestInvalidADRMarkdownStatusFailsClosed(t *testing.T) {
+	adr := `---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted_fixture
+prd_refs:
+  - REQ-TEST-001
+---
+
+# ADR-TEST: Test
+
+## Decision
+
+Test.
+`
+	_, err := ParseADRMarkdown([]byte(adr))
+	if err == nil {
+		t.Fatal("expected ADR with invalid status to fail")
+	}
+	if !strings.Contains(err.Error(), "accepted_fixture") {
+		t.Fatalf("expected error mentioning accepted_fixture, got %v", err)
+	}
+}
+
+func TestDurableADRMarkdownFixtureStillPasses(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
+	if err != nil {
+		t.Fatalf("read ADR markdown: %v", err)
+	}
+	if _, err := ParseADRMarkdown(data); err != nil {
+		t.Fatalf("expected durable ADR markdown fixture to pass, got %v", err)
+	}
+}
+
+func TestPRDWithEachCanonicalStatusPasses(t *testing.T) {
+	for _, status := range []string{"draft", "audited", "accepted", "blocked", "dispatched"} {
+		prd := fmt.Sprintf(`---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: %s
+task_id: task-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+`, status)
+		if _, err := ParsePRDMarkdown([]byte(prd)); err != nil {
+			t.Fatalf("expected PRD status %q to pass, got %v", status, err)
+		}
+	}
+}
+
+func TestADRIndexWithEachCanonicalStatusPasses(t *testing.T) {
+	for _, status := range []string{"draft", "audited", "accepted", "blocked", "dispatched"} {
+		idx := fmt.Sprintf(`{"schema_version":"v1","effort_id":"test","adrs":[{"adr_id":"ADR-1","title":"Test","status":"%s","path":"a.md","prd_refs":["REQ-1"]}]}`, status)
+		if _, err := ParseADRIndexJSON([]byte(idx)); err != nil {
+			t.Fatalf("expected ADR index status %q to pass, got %v", status, err)
+		}
+	}
+}
+
+func TestADRMarkdownWithEachCanonicalStatusPasses(t *testing.T) {
+	for _, status := range []string{"draft", "audited", "accepted", "blocked", "dispatched"} {
+		adr := fmt.Sprintf(`---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: %s
+prd_refs:
+  - REQ-TEST-001
+---
+
+# ADR-TEST: Test
+
+## Decision
+
+Test.
+`, status)
+		if _, err := ParseADRMarkdown([]byte(adr)); err != nil {
+			t.Fatalf("expected ADR markdown status %q to pass, got %v", status, err)
 		}
 	}
 }

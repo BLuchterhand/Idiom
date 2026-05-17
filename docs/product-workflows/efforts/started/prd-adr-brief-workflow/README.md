@@ -6,12 +6,12 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Active atom: `impl-0008a-phase-1-canonical-fixture-artifact-statuses`
+- Last completed atom: `impl-0008b-phase-1-artifact-state-machine-enum`
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `a74d31bd1db0853c`
+- Context pack: `a50e069f87c91b84`
 - Coverage tier: `unit`
-- Blocker status: resolved for next atom by canonical fixture status migration
+- Blocker status: none open; fixture-status conflict resolved before Atom 8b
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
@@ -88,7 +88,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan `impl-0008b-phase-1-artifact-state-machine-enum` with GLM 5.1 using a
-patch-shaped brief. Atom 8a resolved the fixture-status conflict by preserving
-`.fixture` schema versions and migrating durable PRD/ADR artifact status values
-from `accepted_fixture` to canonical `accepted`.
+Plan the next Phase 1 schema or deterministic-linter atom from
+`docs/obsidian/22 - Product Workflow ROADMAP.md`. Continue using GLM 5.1 with a
+patch-shaped brief and only parallelize implementor lanes when write sets are
+disjoint.
