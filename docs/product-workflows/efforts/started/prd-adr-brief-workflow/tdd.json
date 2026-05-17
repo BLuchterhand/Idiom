@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0011-phase-1-prd-audit-hard-checks",
+  "task_id": "impl-0012-phase-1-adr-audit-hard-checks",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,9 +19,9 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "prd_requirement_fields_audit",
-      "prd_evidence_reference_existence",
-      "durable_prd_fixture_passes",
+      "adr_front_matter_and_sections_audit",
+      "adr_reference_existence_audit",
+      "durable_adr_fixture_passes",
       "product_workflow_lint_cli",
       "focused_go_tests",
       "full_go_tests",
@@ -33,36 +33,36 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0011-001",
+      "id": "TDD-IMPL-0012-001",
       "type": "contract",
-      "behavior": "PRD parser preserves priority, statement, owner_alignment, testability, metric, open_questions, evidence_refs, and tdd_obligations for each requirement.",
+      "behavior": "ADR parser preserves required front matter fields and body section presence for context, decision, alternatives, evidence, consequences, compatibility, TDD obligations, rollback, and open questions.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0011-002",
+      "id": "TDD-IMPL-0012-002",
       "type": "contract",
-      "behavior": "PRD validation fails closed when a requirement is missing priority, statement, owner_alignment, testability, open_questions, metric, evidence_refs, or tdd_obligations.",
+      "behavior": "ADR validation fails closed when required front matter fields or required body sections are missing.",
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0011-003",
+      "id": "TDD-IMPL-0012-003",
       "type": "audit",
-      "behavior": "Product audit and lint fail closed when a PRD requirement references an evidence card ID absent from the evidence ledger.",
+      "behavior": "Product audit and lint fail closed when ADR PRD refs, evidence refs, or TDD obligations reference IDs absent from the PRD, evidence ledger, current TDD ledger, or historical implementation ledger.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0011-004",
+      "id": "TDD-IMPL-0012-004",
       "type": "acceptance",
-      "behavior": "Current durable effort fixture passes both product audit and product lint after PRD hard checks are added.",
+      "behavior": "Current durable effort fixture passes both product audit and product lint after ADR hard checks are added.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",

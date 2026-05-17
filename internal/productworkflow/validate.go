@@ -512,12 +512,29 @@ func ParseADRMarkdown(data []byte) (ADRDocument, error) {
 		return ADRDocument{}, fmt.Errorf("parse ADR: %w", err)
 	}
 	fm := ADRFrontMatter{
-		SchemaVersion: fields["schema_version"],
-		ADRID:         fields["adr_id"],
-		Status:        fields["status"],
-		PRDRefs:       parseFrontMatterList(fields, "prd_refs"),
+		SchemaVersion:     fields["schema_version"],
+		ADRID:             fields["adr_id"],
+		Status:            fields["status"],
+		PRDRefs:           parseFrontMatterList(fields, "prd_refs"),
+		EvidenceRefs:      parseFrontMatterList(fields, "evidence_refs"),
+		TDDObligations:    parseFrontMatterList(fields, "tdd_obligations"),
+		CoverageTier:      fields["coverage_tier"],
+		AcceptedAt:        fields["accepted_at"],
+		AcceptedBy:        fields["accepted_by"],
+		AcceptanceProfile: fields["acceptance_profile"],
 	}
-	doc := ADRDocument{FrontMatter: fm, HasDecision: strings.Contains(body, "## Decision")}
+	sections := ADRSections{
+		HasContext:                   strings.Contains(body, "## Context"),
+		HasDecision:                  strings.Contains(body, "## Decision"),
+		HasAlternativesConsidered:    strings.Contains(body, "## Alternatives Considered") || strings.Contains(body, "## Alternatives"),
+		HasEvidence:                  strings.Contains(body, "## Evidence"),
+		HasConsequences:              strings.Contains(body, "## Consequences"),
+		HasCompatibilityAndMigration: strings.Contains(body, "## Compatibility and Migration") || strings.Contains(body, "## Compatibility"),
+		HasTDDObligations:            strings.Contains(body, "## TDD Obligations"),
+		HasRollback:                  strings.Contains(body, "## Rollback"),
+		HasOpenQuestions:             strings.Contains(body, "## Open Questions"),
+	}
+	doc := ADRDocument{FrontMatter: fm, Sections: sections}
 	if err := validateADR(doc); err != nil {
 		return ADRDocument{}, err
 	}
@@ -736,10 +753,95 @@ func validateADR(doc ADRDocument) error {
 	if len(doc.FrontMatter.PRDRefs) == 0 {
 		errs = append(errs, errors.New("ADR front matter missing prd_refs"))
 	}
-	if !doc.HasDecision {
+	if len(doc.FrontMatter.EvidenceRefs) == 0 {
+		errs = append(errs, errors.New("ADR front matter missing evidence_refs"))
+	}
+	if len(doc.FrontMatter.TDDObligations) == 0 {
+		errs = append(errs, errors.New("ADR front matter missing tdd_obligations"))
+	}
+	require(&errs, doc.FrontMatter.CoverageTier, "ADR front matter missing coverage_tier")
+	if !doc.Sections.HasContext {
+		errs = append(errs, errors.New("ADR body missing ## Context section"))
+	}
+	if !doc.Sections.HasDecision {
 		errs = append(errs, errors.New("ADR body missing ## Decision section"))
 	}
+	if !doc.Sections.HasAlternativesConsidered {
+		errs = append(errs, errors.New("ADR body missing ## Alternatives Considered (or Alternatives) section"))
+	}
+	if !doc.Sections.HasEvidence {
+		errs = append(errs, errors.New("ADR body missing ## Evidence section"))
+	}
+	if !doc.Sections.HasConsequences {
+		errs = append(errs, errors.New("ADR body missing ## Consequences section"))
+	}
+	if !doc.Sections.HasCompatibilityAndMigration {
+		errs = append(errs, errors.New("ADR body missing ## Compatibility and Migration (or Compatibility) section"))
+	}
+	if !doc.Sections.HasTDDObligations {
+		errs = append(errs, errors.New("ADR body missing ## TDD Obligations section"))
+	}
+	if !doc.Sections.HasRollback {
+		errs = append(errs, errors.New("ADR body missing ## Rollback section"))
+	}
+	if !doc.Sections.HasOpenQuestions {
+		errs = append(errs, errors.New("ADR body missing ## Open Questions section"))
+	}
 	return errors.Join(errs...)
+}
+
+type ADRCrossLinkError struct {
+	ADRPath string
+	Field   string
+	Value   string
+	Message string
+}
+
+func ValidateADRCrossLinks(
+	adrs []ParsedADR,
+	prdRequirementIDs map[string]bool,
+	evidenceCardIDs map[string]bool,
+	tddObligationIDs map[string]bool,
+) []ADRCrossLinkError {
+	var errs []ADRCrossLinkError
+	for _, a := range adrs {
+		for _, ref := range a.Doc.FrontMatter.PRDRefs {
+			if prdRequirementIDs != nil && !prdRequirementIDs[ref] {
+				errs = append(errs, ADRCrossLinkError{
+					ADRPath: a.RelPath,
+					Field:   "prd_refs",
+					Value:   ref,
+					Message: fmt.Sprintf("ADR %s: prd_ref %q not found in parsed PRD requirement IDs", a.RelPath, ref),
+				})
+			}
+		}
+		for _, ref := range a.Doc.FrontMatter.EvidenceRefs {
+			if evidenceCardIDs != nil && !evidenceCardIDs[ref] {
+				errs = append(errs, ADRCrossLinkError{
+					ADRPath: a.RelPath,
+					Field:   "evidence_refs",
+					Value:   ref,
+					Message: fmt.Sprintf("ADR %s: evidence_ref %q not found in parsed evidence card IDs", a.RelPath, ref),
+				})
+			}
+		}
+		for _, ref := range a.Doc.FrontMatter.TDDObligations {
+			if tddObligationIDs != nil && !tddObligationIDs[ref] {
+				errs = append(errs, ADRCrossLinkError{
+					ADRPath: a.RelPath,
+					Field:   "tdd_obligations",
+					Value:   ref,
+					Message: fmt.Sprintf("ADR %s: tdd_obligation %q not found in parsed TDD obligation IDs", a.RelPath, ref),
+				})
+			}
+		}
+	}
+	return errs
+}
+
+type ParsedADR struct {
+	Doc     ADRDocument
+	RelPath string
 }
 
 type TraceabilityLinkError struct {

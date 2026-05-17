@@ -346,12 +346,30 @@ type MergePolicy struct {
 
 type ADRDocument struct {
 	FrontMatter ADRFrontMatter
-	HasDecision bool
+	Sections    ADRSections
+}
+
+type ADRSections struct {
+	HasContext                   bool
+	HasDecision                  bool
+	HasAlternativesConsidered    bool
+	HasEvidence                  bool
+	HasConsequences              bool
+	HasCompatibilityAndMigration bool
+	HasTDDObligations            bool
+	HasRollback                  bool
+	HasOpenQuestions             bool
 }
 
 type ADRFrontMatter struct {
-	SchemaVersion string
-	ADRID         string
-	Status        string
-	PRDRefs       []string
+	SchemaVersion     string
+	ADRID             string
+	Status            string
+	PRDRefs           []string
+	EvidenceRefs      []string
+	TDDObligations    []string
+	CoverageTier      string
+	AcceptedAt        string
+	AcceptedBy        string
+	AcceptanceProfile string
 }

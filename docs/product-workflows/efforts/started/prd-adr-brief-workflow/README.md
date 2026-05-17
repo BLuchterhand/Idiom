@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0011-phase-1-prd-audit-hard-checks`
+- Last completed atom: `impl-0012-phase-1-adr-audit-hard-checks`
 - Active atom: none
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `73166760ef8a38a0`
+- Context pack: `886cd99700a9fe6c`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -18,6 +18,9 @@ This effort is the durable implementation state for delivering
 - Atom 11 PRD audit hard checks: all TDD obligations satisfied; DS4-through-Codex
   CLI was tried twice and fell back to GLM after serious patch-quality issues.
   GLM repaired/completed the atom, and Codex review/verification passed.
+- Atom 12 ADR audit hard checks: all TDD obligations satisfied. GLM implemented
+  the shared parser/CLI change; Codex removed unrelated backend/config spillover
+  before verification, then review/verification passed.
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
@@ -110,6 +113,5 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 1 schema or deterministic linter atom. Prefer parallel
-read-only investigation when possible, but keep code-writing lanes sequential
-when they share parser, validator, CLI, or durable-state files.
+Plan the next Phase 1 schema or deterministic linter atom. Prefer GLM for shared
+parser/validator/CLI edits unless a smaller isolated atom is a good DS4 retry.

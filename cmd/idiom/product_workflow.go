@@ -128,6 +128,7 @@ func lintEffortFolder(root string) productLintResult {
 	var parsedADRIndex *productworkflow.ADRIndex
 	var parsedTDD *productworkflow.TDDLedger
 	var parsedLedger []productworkflow.ImplementationLedgerRecord
+	var parsedADRs []productworkflow.ParsedADR
 
 	checkFile := func(relPath string, validate func([]byte) error) {
 		fullPath := filepath.Join(root, relPath)
@@ -187,17 +188,22 @@ func lintEffortFolder(root string) productLintResult {
 	})
 	checkFile("adrs/index.json", func(data []byte) error {
 		idx, err := productworkflow.ParseADRIndexJSON(data)
-		if err == nil {
-			parsedADRIndex = &idx
-		}
 		if err != nil {
 			return err
 		}
+		parsedADRIndex = &idx
 		for _, entry := range idx.ADRs {
 			adrRelPath := filepath.Join("adrs", entry.Path)
 			checkFile(adrRelPath, func(adrData []byte) error {
-				_, adrErr := productworkflow.ParseADRMarkdown(adrData)
-				return adrErr
+				adrDoc, adrErr := productworkflow.ParseADRMarkdown(adrData)
+				if adrErr != nil {
+					return adrErr
+				}
+				parsedADRs = append(parsedADRs, productworkflow.ParsedADR{
+					Doc:     adrDoc,
+					RelPath: adrRelPath,
+				})
+				return nil
 			})
 		}
 		return nil
@@ -314,6 +320,38 @@ func lintEffortFolder(root string) productLintResult {
 					))
 				}
 			}
+		}
+	}
+
+	if len(parsedADRs) > 0 {
+		var prdReqIDs map[string]bool
+		if parsedPRD != nil {
+			prdReqIDs = make(map[string]bool)
+			for _, r := range parsedPRD.Requirements {
+				prdReqIDs[r.ID] = true
+			}
+		}
+		var evidenceIDs map[string]bool
+		if parsedCards != nil {
+			evidenceIDs = make(map[string]bool)
+			for _, c := range parsedCards {
+				evidenceIDs[c.CardID] = true
+			}
+		}
+		tddIDSet := make(map[string]bool)
+		if parsedTDD != nil {
+			for _, o := range parsedTDD.Obligations {
+				tddIDSet[o.ID] = true
+			}
+		}
+		for _, rec := range parsedLedger {
+			for _, id := range rec.TDDObligationsSatisfied {
+				tddIDSet[id] = true
+			}
+		}
+		adrLinkErrs := productworkflow.ValidateADRCrossLinks(parsedADRs, prdReqIDs, evidenceIDs, tddIDSet)
+		for _, le := range adrLinkErrs {
+			addFinding("broken_link", le.ADRPath, le.Message)
 		}
 	}
 

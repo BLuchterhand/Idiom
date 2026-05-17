@@ -98,7 +98,7 @@ func TestParseADRMarkdownFixturePasses(t *testing.T) {
 	if doc.FrontMatter.ADRID != "ADR-0001" {
 		t.Fatalf("expected adr_id ADR-0001, got %q", doc.FrontMatter.ADRID)
 	}
-	if !doc.HasDecision {
+	if !doc.Sections.HasDecision {
 		t.Fatal("expected HasDecision true")
 	}
 	if len(doc.FrontMatter.PRDRefs) == 0 {
@@ -187,10 +187,19 @@ adr_id: ADR-TEST
 status: accepted
 prd_refs:
   - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
 created_at: 2026-05-17T00:00:00Z
 ---
 
 # ADR-TEST: Test
+
+## Context
+
+Test.
 `
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
@@ -207,11 +216,22 @@ schema_version: idiom.adr.v1
 adr_id: ADR-TEST
 prd_refs:
   - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
 ---
 
 # ADR-TEST: Test
 
+## Context
+
+Test.
+
 ## Decision
+
+Test.
 `
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
@@ -227,11 +247,22 @@ func TestInvalidADRMissingPRDRefsFailsClosed(t *testing.T) {
 schema_version: idiom.adr.v1
 adr_id: ADR-TEST
 status: accepted
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
 ---
 
 # ADR-TEST: Test
 
+## Context
+
+Test.
+
 ## Decision
+
+Test.
 `
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
@@ -1241,13 +1272,50 @@ adr_id: ADR-TEST
 status: accepted_fixture
 prd_refs:
   - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
 ---
 
 # ADR-TEST: Test
 
+## Context
+
+Test.
+
 ## Decision
 
 Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
 `
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
@@ -1318,13 +1386,50 @@ adr_id: ADR-TEST
 status: %s
 prd_refs:
   - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
 ---
 
 # ADR-TEST: Test
 
+## Context
+
+Test.
+
 ## Decision
 
 Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
 `, status)
 		if _, err := ParseADRMarkdown([]byte(adr)); err != nil {
 			t.Fatalf("expected ADR markdown status %q to pass, got %v", status, err)
@@ -2080,6 +2185,621 @@ created_at: 2026-05-17T00:00:00Z
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestADRParsesRequiredFrontMatterFields(t *testing.T) {
+	doc, err := ParseADRMarkdown([]byte(`---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-1
+evidence_refs:
+  - EV-1
+tdd_obligations:
+  - TDD-1
+coverage_tier: unit
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-agent
+acceptance_profile: test-profile
+---
+
+# ADR-TEST: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-1: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-1: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`))
+	if err != nil {
+		t.Fatalf("expected valid ADR to parse: %v", err)
+	}
+	fm := doc.FrontMatter
+	if fm.SchemaVersion != "idiom.adr.v1" {
+		t.Fatalf("expected schema_version idiom.adr.v1, got %q", fm.SchemaVersion)
+	}
+	if fm.ADRID != "ADR-TEST" {
+		t.Fatalf("expected adr_id ADR-TEST, got %q", fm.ADRID)
+	}
+	if fm.Status != "accepted" {
+		t.Fatalf("expected status accepted, got %q", fm.Status)
+	}
+	if len(fm.PRDRefs) != 1 || fm.PRDRefs[0] != "REQ-1" {
+		t.Fatalf("expected prd_refs [REQ-1], got %v", fm.PRDRefs)
+	}
+	if len(fm.EvidenceRefs) != 1 || fm.EvidenceRefs[0] != "EV-1" {
+		t.Fatalf("expected evidence_refs [EV-1], got %v", fm.EvidenceRefs)
+	}
+	if len(fm.TDDObligations) != 1 || fm.TDDObligations[0] != "TDD-1" {
+		t.Fatalf("expected tdd_obligations [TDD-1], got %v", fm.TDDObligations)
+	}
+	if fm.CoverageTier != "unit" {
+		t.Fatalf("expected coverage_tier unit, got %q", fm.CoverageTier)
+	}
+	if fm.AcceptedAt != "2026-05-17T00:00:00Z" {
+		t.Fatalf("expected accepted_at, got %q", fm.AcceptedAt)
+	}
+	if fm.AcceptedBy != "test-agent" {
+		t.Fatalf("expected accepted_by test-agent, got %q", fm.AcceptedBy)
+	}
+	if fm.AcceptanceProfile != "test-profile" {
+		t.Fatalf("expected acceptance_profile test-profile, got %q", fm.AcceptanceProfile)
+	}
+}
+
+func TestADRParsesBodySectionPresence(t *testing.T) {
+	doc, err := ParseADRMarkdown([]byte(`---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-1
+evidence_refs:
+  - EV-1
+tdd_obligations:
+  - TDD-1
+coverage_tier: unit
+---
+
+# ADR-TEST: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-1: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-1: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`))
+	if err != nil {
+		t.Fatalf("expected valid ADR: %v", err)
+	}
+	s := doc.Sections
+	if !s.HasContext {
+		t.Fatal("expected HasContext true")
+	}
+	if !s.HasDecision {
+		t.Fatal("expected HasDecision true")
+	}
+	if !s.HasAlternativesConsidered {
+		t.Fatal("expected HasAlternativesConsidered true")
+	}
+	if !s.HasEvidence {
+		t.Fatal("expected HasEvidence true")
+	}
+	if !s.HasConsequences {
+		t.Fatal("expected HasConsequences true")
+	}
+	if !s.HasCompatibilityAndMigration {
+		t.Fatal("expected HasCompatibilityAndMigration true")
+	}
+	if !s.HasTDDObligations {
+		t.Fatal("expected HasTDDObligations true")
+	}
+	if !s.HasRollback {
+		t.Fatal("expected HasRollback true")
+	}
+	if !s.HasOpenQuestions {
+		t.Fatal("expected HasOpenQuestions true")
+	}
+}
+
+func TestADRAcceptsShortSectionNames(t *testing.T) {
+	doc, err := ParseADRMarkdown([]byte(`---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-1
+evidence_refs:
+  - EV-1
+tdd_obligations:
+  - TDD-1
+coverage_tier: unit
+---
+
+# ADR-TEST: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives
+
+None.
+
+## Evidence
+
+- EV-1: Test.
+
+## Consequences
+
+None.
+
+## Compatibility
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-1: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`))
+	if err != nil {
+		t.Fatalf("expected valid ADR with short section names: %v", err)
+	}
+	if !doc.Sections.HasAlternativesConsidered {
+		t.Fatal("expected HasAlternativesConsidered true for ## Alternatives")
+	}
+	if !doc.Sections.HasCompatibilityAndMigration {
+		t.Fatal("expected HasCompatibilityAndMigration true for ## Compatibility")
+	}
+}
+
+func TestADRMissingRequiredFrontMatterFieldsFailsClosed(t *testing.T) {
+	cases := []struct {
+		name    string
+		adr     string
+		wantErr string
+	}{
+		{
+			"missing evidence_refs",
+			`---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-1
+tdd_obligations:
+  - TDD-1
+coverage_tier: unit
+---
+
+# ADR-TEST: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-1: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-1: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`,
+			"missing evidence_refs",
+		},
+		{
+			"missing tdd_obligations",
+			`---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-1
+evidence_refs:
+  - EV-1
+coverage_tier: unit
+---
+
+# ADR-TEST: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-1: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-1: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`,
+			"missing tdd_obligations",
+		},
+		{
+			"missing coverage_tier",
+			`---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-1
+evidence_refs:
+  - EV-1
+tdd_obligations:
+  - TDD-1
+---
+
+# ADR-TEST: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-1: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-1: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`,
+			"missing coverage_tier",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseADRMarkdown([]byte(tc.adr))
+			if err == nil {
+				t.Fatalf("expected ADR %s to fail", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestADRMissingRequiredBodySectionsFailsClosed(t *testing.T) {
+	sections := []struct {
+		name    string
+		remove  string
+		wantErr string
+	}{
+		{"missing context", "## Context\n\nTest.\n\n", "missing ## Context"},
+		{"missing decision", "## Decision\n\nTest.\n\n", "missing ## Decision"},
+		{"missing alternatives", "## Alternatives Considered\n\nNone.\n\n", "missing ## Alternatives Considered"},
+		{"missing evidence", "## Evidence\n\n- EV-1: Test.\n\n", "missing ## Evidence"},
+		{"missing consequences", "## Consequences\n\nNone.\n\n", "missing ## Consequences"},
+		{"missing compatibility", "## Compatibility and Migration\n\nCompatible.\n\n", "missing ## Compatibility and Migration"},
+		{"missing tdd obligations", "## TDD Obligations\n\n- TDD-1: Test.\n\n", "missing ## TDD Obligations"},
+		{"missing rollback", "## Rollback\n\nRevert.\n\n", "missing ## Rollback"},
+		{"missing open questions", "## Open Questions\n\nNone.\n", "missing ## Open Questions"},
+	}
+	fullBody := `## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-1: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-1: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`
+	for _, tc := range sections {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(fullBody, tc.remove, "", 1)
+			adr := fmt.Sprintf(`---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-1
+evidence_refs:
+  - EV-1
+tdd_obligations:
+  - TDD-1
+coverage_tier: unit
+---
+
+# ADR-TEST: Test
+
+%s`, body)
+			_, err := ParseADRMarkdown([]byte(adr))
+			if err == nil {
+				t.Fatalf("expected ADR %s to fail", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestADRCrossLinkValidationDetectsMissingPRDRef(t *testing.T) {
+	adrs := []ParsedADR{
+		{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					PRDRefs: []string{"REQ-MISSING"},
+				},
+			},
+			RelPath: "adrs/test.md",
+		},
+	}
+	errs := ValidateADRCrossLinks(adrs,
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"EV-1": true},
+		map[string]bool{"TDD-1": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "prd_refs" {
+		t.Fatalf("expected one prd_refs error, got %v", errs)
+	}
+	if !strings.Contains(errs[0].Message, "REQ-MISSING") {
+		t.Fatalf("expected REQ-MISSING in message, got %q", errs[0].Message)
+	}
+}
+
+func TestADRCrossLinkValidationDetectsMissingEvidenceRef(t *testing.T) {
+	adrs := []ParsedADR{
+		{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					EvidenceRefs: []string{"EV-MISSING"},
+				},
+			},
+			RelPath: "adrs/test.md",
+		},
+	}
+	errs := ValidateADRCrossLinks(adrs,
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"EV-1": true},
+		map[string]bool{"TDD-1": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "evidence_refs" {
+		t.Fatalf("expected one evidence_refs error, got %v", errs)
+	}
+	if !strings.Contains(errs[0].Message, "EV-MISSING") {
+		t.Fatalf("expected EV-MISSING in message, got %q", errs[0].Message)
+	}
+}
+
+func TestADRCrossLinkValidationDetectsMissingTDDObligation(t *testing.T) {
+	adrs := []ParsedADR{
+		{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					TDDObligations: []string{"TDD-MISSING"},
+				},
+			},
+			RelPath: "adrs/test.md",
+		},
+	}
+	errs := ValidateADRCrossLinks(adrs,
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"EV-1": true},
+		map[string]bool{"TDD-1": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "tdd_obligations" {
+		t.Fatalf("expected one tdd_obligations error, got %v", errs)
+	}
+	if !strings.Contains(errs[0].Message, "TDD-MISSING") {
+		t.Fatalf("expected TDD-MISSING in message, got %q", errs[0].Message)
+	}
+}
+
+func TestADRCrossLinkValidationPassesWhenAllRefsPresent(t *testing.T) {
+	adrs := []ParsedADR{
+		{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					PRDRefs:        []string{"REQ-1"},
+					EvidenceRefs:   []string{"EV-1"},
+					TDDObligations: []string{"TDD-1"},
+				},
+			},
+			RelPath: "adrs/test.md",
+		},
+	}
+	errs := ValidateADRCrossLinks(adrs,
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"EV-1": true},
+		map[string]bool{"TDD-1": true},
+	)
+	if len(errs) != 0 {
+		t.Fatalf("expected zero errors, got %v", errs)
+	}
+}
+
+func TestADRCrossLinkValidationSkipsCheckForNilMaps(t *testing.T) {
+	adrs := []ParsedADR{
+		{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					PRDRefs:        []string{"REQ-MISSING"},
+					EvidenceRefs:   []string{"EV-MISSING"},
+					TDDObligations: []string{"TDD-MISSING"},
+				},
+			},
+			RelPath: "adrs/test.md",
+		},
+	}
+	errs := ValidateADRCrossLinks(adrs, nil, nil, nil)
+	if len(errs) != 0 {
+		t.Fatalf("expected zero errors when all maps nil, got %v", errs)
 	}
 }
 

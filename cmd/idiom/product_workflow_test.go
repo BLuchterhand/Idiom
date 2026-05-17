@@ -501,13 +501,50 @@ adr_id: ADR-001
 status: accepted_fixture
 prd_refs:
   - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
 ---
 
 # ADR-001: Test
 
+## Context
+
+Test.
+
 ## Decision
 
 Test decision.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
 `)
 	writeTestFile(t, dir, "reports/test.json", "{}")
 
@@ -924,6 +961,472 @@ created_at: 2026-05-17T00:00:00Z
 	}
 }
 
+func TestProductLintDetectsADRWithMissingEvidenceRef(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted
+prd_refs:
+  - REQ-TEST-001
+evidence_refs:
+  - EV-001
+  - EV-MISSING
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
+---
+
+# ADR-001: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail with broken ADR evidence ref, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "broken_link" && strings.Contains(f.Path, "ADR-001") && strings.Contains(f.Message, "EV-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding for ADR evidence ref EV-MISSING, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintDetectsADRWithMissingTDDObligation(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted
+prd_refs:
+  - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+  - TDD-MISSING
+coverage_tier: unit
+---
+
+# ADR-001: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail with broken ADR TDD obligation ref, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "broken_link" && strings.Contains(f.Path, "ADR-001") && strings.Contains(f.Message, "TDD-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding for ADR TDD ref TDD-MISSING, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintDetectsADRWithMissingPRDRef(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted
+prd_refs:
+  - REQ-MISSING
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
+---
+
+# ADR-001: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail with broken ADR PRD ref, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "broken_link" && strings.Contains(f.Path, "ADR-001") && strings.Contains(f.Message, "REQ-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding for ADR PRD ref REQ-MISSING, got: %#v", result.Findings)
+	}
+}
+
+func TestProductAuditFailsOnADRMissingEvidenceRef(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted
+prd_refs:
+  - REQ-TEST-001
+evidence_refs:
+  - EV-001
+  - EV-MISSING
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
+---
+
+# ADR-001: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail with broken ADR evidence ref, got code=%d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	adrSection := findAuditSection(t, result, "adr")
+	if adrSection.Status != "fail" {
+		t.Fatalf("expected adr section to fail, got %q", adrSection.Status)
+	}
+	found := false
+	for _, f := range adrSection.Findings {
+		if f.Code == "broken_link" && strings.Contains(f.Message, "EV-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding in adr section mentioning EV-MISSING, got: %#v", adrSection.Findings)
+	}
+}
+
+func TestProductAuditFailsOnADRMissingTDDObligationRef(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted
+prd_refs:
+  - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+  - TDD-MISSING
+coverage_tier: unit
+---
+
+# ADR-001: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail with broken ADR TDD obligation ref, got code=%d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	adrSection := findAuditSection(t, result, "adr")
+	if adrSection.Status != "fail" {
+		t.Fatalf("expected adr section to fail, got %q", adrSection.Status)
+	}
+	found := false
+	for _, f := range adrSection.Findings {
+		if f.Code == "broken_link" && strings.Contains(f.Message, "TDD-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding in adr section mentioning TDD-MISSING, got: %#v", adrSection.Findings)
+	}
+}
+
+func TestProductAuditFailsOnADRMissingPRDRef(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted
+prd_refs:
+  - REQ-MISSING
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
+---
+
+# ADR-001: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail with broken ADR PRD ref, got code=%d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	adrSection := findAuditSection(t, result, "adr")
+	if adrSection.Status != "fail" {
+		t.Fatalf("expected adr section to fail, got %q", adrSection.Status)
+	}
+	found := false
+	for _, f := range adrSection.Findings {
+		if f.Code == "broken_link" && strings.Contains(f.Message, "REQ-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding in adr section mentioning REQ-MISSING, got: %#v", adrSection.Findings)
+	}
+}
+
 func findAuditSection(t *testing.T, result productAuditResult, name string) productAuditSection {
 	t.Helper()
 	for _, sec := range result.Sections {
@@ -1105,13 +1608,50 @@ adr_id: ADR-001
 status: accepted
 prd_refs:
   - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
 ---
 
 # ADR-001: Test
 
+## Context
+
+Test context.
+
 ## Decision
 
 Test decision.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-001: Test evidence.
+
+## Consequences
+
+Test consequences.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-001: Test obligation.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
 `
 }
 
