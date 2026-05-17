@@ -6,10 +6,10 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Active atom: `impl-0004-phase-1-prd-adr-schema-validation`
+- Active atom: `impl-0005-phase-1-research-profile-evidence-card-schema`
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `4b2da4972df00d55`
+- Context pack: `2c9d1639d167c588`
 - Coverage tier: `unit`
 
 The workflow implementation is in progress. These files are source-controlled
@@ -22,7 +22,7 @@ committed product workflow validators and lint command until later atoms close.
   design through durable atoms until the effort can be closed as complete.
 - Codex orchestrates, verifies, reviews, investigates, records durable state, and
   commits. OpenCode implementors make code changes by default.
-- Use OpenCode attached-server runs for implementor attempts, with a 5 minute
+- Use OpenCode attached-server runs for implementor attempts, with a 10 minute
   cap before declaring timeout evidence:
   `OPENCODE_SERVER_URL=http://127.0.0.1:<port> ./scripts/run-opencode-glm.sh run --format default "<brief>"`.
 - Select the implementor model from observed stability, not preference. As of
@@ -32,6 +32,12 @@ committed product workflow validators and lint command until later atoms close.
   240 seconds with no output or code edits.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
+- Parallelize independent Codex-side reads, reviews, context preparation, and
+  verification where this does not duplicate or conflict with a running
+  implementor. Preserve sequential atom closeout: each atom still requires its
+  own verification, review, investigation, commit, and push before the next atom
+  is treated as complete.
+- Commit and push after every atom completes.
 - If an implementor times out or produces no usable closeout, record a
   `fallback_exception` before any Codex code edits. Keep fallback edits inside
   the planned atom scope and add compensating verification.
@@ -61,6 +67,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Retry `impl-0004-phase-1-prd-adr-schema-validation` with the updated 5 minute
-OpenCode cap and the most stable recorded implementor model, then complete the
-atom investigation and advance to the next Phase 1 schema/linters action.
+Continue `impl-0005-phase-1-research-profile-evidence-card-schema` with the
+updated 10 minute OpenCode cap and the most stable recorded implementor model,
+then complete the atom investigation, commit, push, and advance to the next
+Phase 1 schema/linters action.

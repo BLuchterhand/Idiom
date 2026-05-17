@@ -365,6 +365,192 @@ func TestImplementationLedgerValidCloseoutAllowsFallbackCompletion(t *testing.T)
 	}
 }
 
+func TestParseEvidenceCardMissingRequiredFieldsFailsClosed(t *testing.T) {
+	card := `{"card_id":"EV-BAD","kind":"","source_handle":"","claim":"","confidence":"","freshness":"","evidence_refs":[],"researcher_id":"","timestamp":""}`
+	_, err := ParseEvidenceCardsJSONL([]byte(card))
+	if err == nil {
+		t.Fatal("expected evidence card missing required fields to fail")
+	}
+	for _, want := range []string{"missing kind", "missing source_handle", "missing claim", "missing confidence", "missing freshness", "missing researcher_id", "missing timestamp", "missing evidence_refs"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestValidResearchProfilePassesValidation(t *testing.T) {
+	profile := `{
+		"schema_version": "idiom.research_profile.v1",
+		"name": "idiom-prd-adr-brief",
+		"researchers": [
+			{
+				"id": "north_star",
+				"alignment": "north_star",
+				"question": "Does the proposal strengthen Idiom's evidence, contract, audit, or eval substrate?",
+				"required_sources": ["docs/idiom-strategic-thesis.md"],
+				"allowed_capabilities": ["query_context", "audit_behavior"],
+				"output": "evidence_cards"
+			},
+			{
+				"id": "technical",
+				"alignment": "technical",
+				"question": "Which code surfaces and contracts are implicated?",
+				"allowed_capabilities": ["localize_change", "query_context"],
+				"output": "evidence_cards"
+			}
+		],
+		"merge_policy": {
+			"conflicts": "preserve_until_adr",
+			"unsupported_claims": "block_prd_audit",
+			"stale_local_context": "refresh_or_mark_gap"
+		}
+	}`
+	p, err := ParseResearchProfileJSON([]byte(profile))
+	if err != nil {
+		t.Fatalf("expected valid research profile to pass, got %v", err)
+	}
+	if p.SchemaVersion != "idiom.research_profile.v1" {
+		t.Fatalf("expected schema_version idiom.research_profile.v1, got %q", p.SchemaVersion)
+	}
+	if len(p.Researchers) != 2 {
+		t.Fatalf("expected 2 researchers, got %d", len(p.Researchers))
+	}
+	if p.MergePolicy.Conflicts != "preserve_until_adr" {
+		t.Fatalf("expected merge_policy.conflicts preserve_until_adr, got %q", p.MergePolicy.Conflicts)
+	}
+}
+
+func TestResearchProfilePassesWithProfileIDInsteadOfName(t *testing.T) {
+	profile := `{
+		"schema_version": "idiom.research_profile.v1",
+		"profile_id": "rp-test-001",
+		"researchers": [
+			{
+				"id": "r1",
+				"alignment": "technical",
+				"question": "What changed?",
+				"allowed_capabilities": ["inspect_file"],
+				"output": "evidence_cards"
+			}
+		],
+		"merge_policy": {
+			"conflicts": "preserve_until_adr",
+			"unsupported_claims": "block_prd_audit",
+			"stale_local_context": "refresh_or_mark_gap"
+		}
+	}`
+	if _, err := ParseResearchProfileJSON([]byte(profile)); err != nil {
+		t.Fatalf("expected profile with profile_id to pass, got %v", err)
+	}
+}
+
+func TestInvalidResearchProfileMissingIdentityFailsClosed(t *testing.T) {
+	profile := `{
+		"schema_version": "idiom.research_profile.v1",
+		"researchers": [
+			{
+				"id": "r1",
+				"alignment": "technical",
+				"question": "Q",
+				"allowed_capabilities": ["inspect_file"],
+				"output": "evidence_cards"
+			}
+		],
+		"merge_policy": {
+			"conflicts": "c",
+			"unsupported_claims": "u",
+			"stale_local_context": "s"
+		}
+	}`
+	_, err := ParseResearchProfileJSON([]byte(profile))
+	if err == nil {
+		t.Fatal("expected profile missing name and profile_id to fail")
+	}
+	if !strings.Contains(err.Error(), "missing name or profile_id") {
+		t.Fatalf("expected identity error, got %v", err)
+	}
+}
+
+func TestInvalidResearchProfileMissingResearcherFieldsFailsClosed(t *testing.T) {
+	profile := `{
+		"schema_version": "idiom.research_profile.v1",
+		"name": "test",
+		"researchers": [
+			{
+				"id": "",
+				"alignment": "",
+				"question": "",
+				"allowed_capabilities": [],
+				"output": ""
+			}
+		],
+		"merge_policy": {
+			"conflicts": "c",
+			"unsupported_claims": "u",
+			"stale_local_context": "s"
+		}
+	}`
+	_, err := ParseResearchProfileJSON([]byte(profile))
+	if err == nil {
+		t.Fatal("expected profile with empty researcher fields to fail")
+	}
+	for _, want := range []string{"missing id", "missing alignment", "missing question", "missing allowed_capabilities", "missing output"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestInvalidResearchProfileMissingMergePolicyFailsClosed(t *testing.T) {
+	profile := `{
+		"schema_version": "idiom.research_profile.v1",
+		"name": "test",
+		"researchers": [
+			{
+				"id": "r1",
+				"alignment": "technical",
+				"question": "Q",
+				"allowed_capabilities": ["inspect_file"],
+				"output": "evidence_cards"
+			}
+		],
+		"merge_policy": {
+			"conflicts": "",
+			"unsupported_claims": "",
+			"stale_local_context": ""
+		}
+	}`
+	_, err := ParseResearchProfileJSON([]byte(profile))
+	if err == nil {
+		t.Fatal("expected profile with empty merge policy to fail")
+	}
+	for _, want := range []string{"missing merge_policy.conflicts", "missing merge_policy.unsupported_claims", "missing merge_policy.stale_local_context"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestInvalidResearchProfileNoResearchersFailsClosed(t *testing.T) {
+	profile := `{
+		"schema_version": "idiom.research_profile.v1",
+		"name": "test",
+		"researchers": [],
+		"merge_policy": {
+			"conflicts": "c",
+			"unsupported_claims": "u",
+			"stale_local_context": "s"
+		}
+	}`
+	_, err := ParseResearchProfileJSON([]byte(profile))
+	if err == nil {
+		t.Fatal("expected profile with no researchers to fail")
+	}
+	if !strings.Contains(err.Error(), "missing researchers") {
+		t.Fatalf("expected researchers error, got %v", err)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

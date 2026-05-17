@@ -374,6 +374,42 @@ func ParseADRIndexJSON(data []byte) (ADRIndex, error) {
 	return idx, nil
 }
 
+func ParseResearchProfileJSON(data []byte) (ResearchProfile, error) {
+	var profile ResearchProfile
+	if err := json.Unmarshal(data, &profile); err != nil {
+		return ResearchProfile{}, fmt.Errorf("parse research profile: %w", err)
+	}
+	if err := validateResearchProfile(profile); err != nil {
+		return ResearchProfile{}, err
+	}
+	return profile, nil
+}
+
+func validateResearchProfile(profile ResearchProfile) error {
+	var errs []error
+	require(&errs, profile.SchemaVersion, "research profile missing schema_version")
+	if strings.TrimSpace(profile.Name) == "" && strings.TrimSpace(profile.ProfileID) == "" {
+		errs = append(errs, errors.New("research profile missing name or profile_id"))
+	}
+	if len(profile.Researchers) == 0 {
+		errs = append(errs, errors.New("research profile missing researchers"))
+	}
+	for i, r := range profile.Researchers {
+		prefix := fmt.Sprintf("research profile researcher %d", i)
+		require(&errs, r.ID, prefix+" missing id")
+		require(&errs, r.Alignment, prefix+" missing alignment")
+		require(&errs, r.Question, prefix+" missing question")
+		if len(r.AllowedCapabilities) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing allowed_capabilities", prefix))
+		}
+		require(&errs, r.Output, prefix+" missing output")
+	}
+	require(&errs, profile.MergePolicy.Conflicts, "research profile missing merge_policy.conflicts")
+	require(&errs, profile.MergePolicy.UnsupportedClaims, "research profile missing merge_policy.unsupported_claims")
+	require(&errs, profile.MergePolicy.StaleLocalContext, "research profile missing merge_policy.stale_local_context")
+	return errors.Join(errs...)
+}
+
 func ParseADRMarkdown(data []byte) (ADRDocument, error) {
 	fields, body, err := parseFrontMatterRaw(data)
 	if err != nil {

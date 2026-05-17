@@ -156,6 +156,79 @@ func TestProductLintHelpFlags(t *testing.T) {
 	}
 }
 
+func TestProductLintChecksOptionalResearchProfileWhenConfigured(t *testing.T) {
+	dir := t.TempDir()
+	wsWithProfile := strings.ReplaceAll(validTestWorkflowStateJSON(), `"artifact_paths":{"events":"events.jsonl"}`, `"artifact_paths":{"events":"events.jsonl","research_profile":"research_profile.json"}`)
+	writeTestFile(t, dir, "workflow_state.json", wsWithProfile)
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+	writeTestFile(t, dir, "research_profile.json", validTestResearchProfileJSON())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass with valid research profile, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "pass" {
+		t.Fatalf("expected status pass, got %q: %#v", result.Status, result)
+	}
+	found := false
+	for _, f := range result.CheckedFiles {
+		if f == "research_profile.json" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected research_profile.json in checked_files, got %v", result.CheckedFiles)
+	}
+}
+
+func TestProductLintRejectsInvalidResearchProfile(t *testing.T) {
+	dir := t.TempDir()
+	wsWithProfile := strings.ReplaceAll(validTestWorkflowStateJSON(), `"artifact_paths":{"events":"events.jsonl"}`, `"artifact_paths":{"events":"events.jsonl","research_profile":"research_profile.json"}`)
+	writeTestFile(t, dir, "workflow_state.json", wsWithProfile)
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "reports/test.json", "{}")
+	writeTestFile(t, dir, "research_profile.json", `{"schema_version":"idiom.research_profile.v1","researchers":[],"merge_policy":{}}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail with invalid research profile, got code=%d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Path == "research_profile.json" && f.Code == "parse_error" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parse_error finding for research_profile.json, got: %#v", result.Findings)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -238,4 +311,80 @@ func invalidCloseoutLedgerJSONL() string {
 		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
 		`{"record_type":"atom_closed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":["review_pending"]}`,
 	}, "\n")
+}
+
+func validTestImplementationLedgerJSONL() string {
+	return strings.Join([]string{
+		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
+		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl"}`,
+		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z"}`,
+		`{"record_type":"review_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`,
+		`{"record_type":"post_effort_investigation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`,
+		`{"record_type":"atom_closed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":[]}`,
+	}, "\n")
+}
+
+func validTestResearchProfileJSON() string {
+	return `{
+		"schema_version": "idiom.research_profile.v1",
+		"name": "test-profile",
+		"researchers": [
+			{
+				"id": "r1",
+				"alignment": "technical",
+				"question": "What changed?",
+				"allowed_capabilities": ["query_context"],
+				"output": "evidence_cards"
+			}
+		],
+		"merge_policy": {
+			"conflicts": "preserve_until_adr",
+			"unsupported_claims": "block_prd_audit",
+			"stale_local_context": "refresh_or_mark_gap"
+		}
+	}`
+}
+
+func validTestPRDMarkdown() string {
+	return `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+`
+}
+
+func validTestADRIndexJSON() string {
+	return `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"],"created_at":"2026-05-17T00:00:00Z"}]}`
+}
+
+func validTestADRMarkdown() string {
+	return `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted
+prd_refs:
+  - REQ-TEST-001
+---
+
+# ADR-001: Test
+
+## Decision
+
+Test decision.
+`
 }

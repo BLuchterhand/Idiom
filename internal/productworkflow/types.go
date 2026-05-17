@@ -315,6 +315,29 @@ type ADRIndexEntry struct {
 	CreatedAt    string   `json:"created_at"`
 }
 
+type ResearchProfile struct {
+	SchemaVersion string       `json:"schema_version"`
+	Name          string       `json:"name"`
+	ProfileID     string       `json:"profile_id,omitempty"`
+	Researchers   []Researcher `json:"researchers"`
+	MergePolicy   MergePolicy  `json:"merge_policy"`
+}
+
+type Researcher struct {
+	ID                  string   `json:"id"`
+	Alignment           string   `json:"alignment"`
+	Question            string   `json:"question"`
+	RequiredSources     []string `json:"required_sources"`
+	AllowedCapabilities []string `json:"allowed_capabilities"`
+	Output              string   `json:"output"`
+}
+
+type MergePolicy struct {
+	Conflicts         string `json:"conflicts"`
+	UnsupportedClaims string `json:"unsupported_claims"`
+	StaleLocalContext string `json:"stale_local_context"`
+}
+
 type ADRDocument struct {
 	FrontMatter ADRFrontMatter
 	HasDecision bool

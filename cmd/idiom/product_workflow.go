@@ -207,5 +207,26 @@ func lintEffortFolder(root string) productLintResult {
 	} else {
 		result.Status = "fail"
 	}
+
+	wsData, wsErr := os.ReadFile(filepath.Join(root, "workflow_state.json"))
+	if wsErr == nil {
+		var ws struct {
+			ArtifactPaths map[string]string `json:"artifact_paths"`
+		}
+		if json.Unmarshal(wsData, &ws) == nil {
+			if rp, ok := ws.ArtifactPaths["research_profile"]; ok && rp != "" {
+				checkFile(rp, func(data []byte) error {
+					_, err := productworkflow.ParseResearchProfileJSON(data)
+					return err
+				})
+			}
+		}
+		if len(result.Findings) == 0 {
+			result.Status = "pass"
+		} else {
+			result.Status = "fail"
+		}
+	}
+
 	return result
 }
