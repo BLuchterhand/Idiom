@@ -1,0 +1,58 @@
+{
+  "schema_version": "idiom.product_post_effort_investigation.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0002-phase-1-product-workflow-json-schemas",
+  "status": "complete",
+  "created_at": "2026-05-17T15:40:22Z",
+  "scope": {
+    "changed_paths_checked": true,
+    "out_of_scope_changes": [],
+    "allowed_scope": "internal/productworkflow and durable Atom 2 workflow bookkeeping"
+  },
+  "tests": {
+    "commands": [
+      {
+        "command": "go test ./internal/productworkflow",
+        "status": "passed"
+      },
+      {
+        "command": "python3 JSON/JSONL validation for durable effort artifacts",
+        "status": "passed"
+      },
+      {
+        "command": "privacy secret-pattern scan over durable effort artifacts",
+        "status": "passed"
+      },
+      {
+        "command": "git diff --check",
+        "status": "passed"
+      }
+    ],
+    "blocked": []
+  },
+  "coverage": {
+    "tier": "unit",
+    "obligations_satisfied": [
+      "TDD-IMPL-0002-001",
+      "TDD-IMPL-0002-002",
+      "TDD-IMPL-0002-003",
+      "TDD-IMPL-0002-004"
+    ],
+    "obligations_open": []
+  },
+  "traceability": {
+    "checked": true,
+    "gaps": []
+  },
+  "privacy_audit": {
+    "checked": true,
+    "exposure_found": false,
+    "notes": [
+      "New validators reject raw prompt, transcript, file body, and secret exposure flags. Durable Atom 2 artifacts record command IDs, paths, counts, statuses, and summaries only."
+    ]
+  },
+  "reviewer_findings": [],
+  "blockers": [],
+  "next_valid_action": "plan_phase_1_cli_lint_command_atom",
+  "completed_at": "2026-05-17T15:45:10Z"
+}

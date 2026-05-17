@@ -1,15 +1,15 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0001-phase-0-durable-workflow-substrate",
+  "task_id": "impl-0002-phase-1-product-workflow-json-schemas",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T15:42:00Z",
-  "state_revision": 3,
-  "last_event_id": "evt-0011",
-  "workspace_fingerprint": "idiom@85af477",
+  "updated_at": "2026-05-17T15:47:36Z",
+  "state_revision": 5,
+  "last_event_id": "evt-0019",
+  "workspace_fingerprint": "idiom@213bc5c",
   "status_bucket": "started",
-  "current_phase": "phase-0-design-fixtures",
+  "current_phase": "phase-1-schemas-and-deterministic-linters",
   "current_state": "verified",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
@@ -26,29 +26,37 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "03dd97ee30a4e3d7",
+    "context_pack_id": "8c726257c2b6c0d3",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
       "docs/design-tdd-coverage.md",
       "docs/obsidian/22 - Product Workflow ROADMAP.md",
-      "README.md"
+      "README.md",
+      "cmd/idiom/atom.go",
+      "cmd/idiom/product_evidence.go",
+      "internal/workspace/plan_artifact_schema.go"
     ],
     "unresolved_gaps": [
       {
         "kind": "implementor_timeout",
-        "description": "OpenCode GLM attached-server run produced partial artifacts but did not return closeout; Codex completed missing C0 fixture files with a recorded fallback exception."
+        "description": "OpenCode GLM attached-server run for impl-0002 produced partial internal/productworkflow files but no tests, reports, or closeout before the 240 second timeout; Codex fallback is limited to the recorded C1 atom scope."
       }
     ],
     "refresh_policy": "on_demand"
   },
   "coverage": {
-    "coverage_tier": "documentation",
+    "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "documentation_fixture_validation",
+        "gate": "go_test_internal_productworkflow",
         "status": "passed",
-        "checked_at": "2026-05-17T15:40:00Z"
+        "checked_at": "2026-05-17T15:45:10Z"
+      },
+      {
+        "gate": "durable_artifact_validation",
+        "status": "passed",
+        "checked_at": "2026-05-17T15:47:36Z"
       }
     ],
     "blocking_criteria": [],
@@ -70,10 +78,10 @@
   "session_ids": {},
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T15:42:00Z",
+  "last_reconciliation_at": "2026-05-17T15:47:36Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_1_schema_validator_atom",
+    "plan_phase_1_cli_lint_command_atom",
     "close_effort_if_abandoned"
   ],
   "durability_level": "source_controlled"

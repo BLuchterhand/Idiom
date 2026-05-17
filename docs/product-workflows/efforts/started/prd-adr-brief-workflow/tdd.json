@@ -1,8 +1,8 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0001-phase-0-durable-workflow-substrate",
-  "coverage_tier": "documentation",
+  "task_id": "impl-0002-phase-1-product-workflow-json-schemas",
+  "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
     "ears_mapped": 0,
@@ -19,56 +19,57 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "documentation_fixture_validation",
-      "privacy_marker_scan",
+      "go_test_internal_productworkflow",
+      "durable_json_jsonl_validation",
+      "privacy_secret_pattern_scan",
       "diff_hygiene"
     ],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0001-001",
+      "id": "TDD-IMPL-0002-001",
       "type": "acceptance",
-      "behavior": "Evidence references in fixtures cite real source paths that exist in the repository.",
-      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/evidence/evidence.jsonl",
-      "command": "python3 -c \"import json,sys; [json.loads(l) for l in open(sys.argv[1])]\" evidence/evidence.jsonl",
-      "required_before": "effort_close",
+      "behavior": "Committed Phase 0 JSON and JSONL fixtures parse through productworkflow validators.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0001-002",
+      "id": "TDD-IMPL-0002-002",
       "type": "acceptance",
-      "behavior": "All JSON and JSONL fixture files parse without error.",
-      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
-      "command": "python3 -m json.tool docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json && python3 -c \"import json,sys; [json.loads(l) for l in open(sys.argv[1])]\" docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
-      "required_before": "effort_close",
+      "behavior": "Invalid workflow state missing required identifiers, state, folder path, or next action fails closed.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0001-003",
-      "type": "manual",
-      "behavior": "Privacy scan: no raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data in durable artifacts.",
-      "owner": "implementor",
-      "command": "manual privacy scan recorded in reports/impl-0001-investigation.json",
-      "required_before": "effort_close",
+      "id": "TDD-IMPL-0002-003",
+      "type": "contract",
+      "behavior": "Implementation atom closeout rejects missing model selection, missing runtime command, same implementor/reviewer, missing verification, missing review, missing investigation, or open blockers.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0001-004",
-      "type": "source_sanity",
-      "behavior": "Git diff hygiene: no whitespace errors, no trailing carriage returns.",
-      "owner": "git",
-      "command": "git diff --check",
-      "required_before": "effort_close",
+      "id": "TDD-IMPL-0002-004",
+      "type": "privacy",
+      "behavior": "Privacy flags reject raw prompts, raw transcripts, file bodies, or secrets stored in durable state.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0001-005",
+      "id": "TDD-IMPL-0002-005",
       "type": "acceptance",
-      "behavior": "No Go source, prompts, runtime code, or existing design docs were modified.",
-      "owner": "reviewer",
-      "command": "git diff --name-only | grep -v '^docs/product-workflows/' | grep -v '^testdata/product-workflows/' || echo 'scope correct'",
-      "required_before": "effort_close",
+      "behavior": "Durable workflow artifacts remain valid JSON/JSONL and privacy marker scan passes after Atom 2 updates.",
+      "owner": "codex-gpt-review-impl-0002",
+      "command": "python3 json/jsonl validation over docs/product-workflows effort files && python3 privacy secret-pattern scan && git diff --check",
+      "required_before": "atom_close",
       "status": "satisfied"
     }
   ]
