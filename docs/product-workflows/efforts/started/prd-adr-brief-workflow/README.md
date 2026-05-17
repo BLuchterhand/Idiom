@@ -93,6 +93,52 @@ atoms close.
 - If an implementor times out or produces no usable closeout, record a
   `fallback_exception` before any Codex code edits. Keep fallback edits inside
   the planned atom scope and add compensating verification.
+- Do-now follow-up after Atom 14: plan Atom 15 as workflow hardening. It should
+  make workflow-level audit/status failures visible so top-level failures cannot
+  be hidden behind all-pass artifact sections, and it should add an automated
+  changed-path/scope closeout gate that compares actual changed paths against
+  the atom's expected and forbidden files before closeout. The scope gate is
+  required because GLM has previously produced unrelated backend/config
+  spillover that Codex had to remove manually.
+- Coverage quality policy: line coverage is not sufficient for product workflow
+  atoms. Each atom that adds or changes artifact parsing, audit logic, status
+  output, brief generation, or closeout behavior must include focused unit tests
+  for the exact contract, one realistic human-authored fixture variant when
+  parsing markdown/YAML/JSON/JSONL or CLI-facing artifacts, at least one
+  negative fixture-level CLI test for the new failure mode, a durable fixture
+  pass test, and privacy/audit assertions when output includes reports, status
+  summaries, telemetry, evidence, or implementation history.
+- Parser and CLI tests must not only mirror the current fixture shape. Human
+  authored variants should cover reasonable formatting variation such as
+  reordered front matter, quoted strings or lists, multiline fields, comments,
+  blank lines, heading casing or accepted aliases, and unknown extra fields that
+  are either ignored or rejected explicitly.
+- Negative CLI tests should assert exit code, JSON shape, typed finding or
+  blocker code, and actionable non-JSON text when the command supports text
+  output. When a broad end-to-end product surface is not implemented yet, add the
+  smallest workflow-level test that exercises the user-visible command from an
+  effort folder and checks the next valid action.
+
+## Deferred Follow-ups
+
+These are not blockers for Atom 14 or Atom 15, but future orchestrators should
+preserve them until explicitly resolved:
+
+- Parser hardening: current PRD/ADR parsing is intentionally string-shaped and
+  fixture-oriented. Before accepting broader user-authored artifacts, add a
+  hardening atom that uses a structured YAML/Markdown parser or otherwise
+  tightens parsing around multiline fields, heading variants, quoted lists,
+  comments, and casing.
+- TDD reference authority: decide whether accepted PRD/ADR artifacts should cite
+  only current `tdd.json` obligations or all workflow-known historical TDD IDs
+  from the implementation ledger. Current audit behavior permits historical
+  satisfied IDs to keep durable fixtures valid; this should become an explicit
+  policy with tests.
+- Product completion roadmap: after Phase 1 hardening, continue the remaining
+  design-doc surfaces rather than treating lint/audit as the product endpoint:
+  research profiles, PRD/ADR generation, acceptance and supersession flow, brief
+  generation/lint/intake, coverage gate, execution feedback, and operator/TUI
+  surfaces.
 
 ## Resume Path
 

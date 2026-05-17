@@ -4,8 +4,8 @@
   "task_id": "impl-0013-phase-1-tdd-audit-hard-checks",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T20:31:00Z",
-  "state_revision": 38,
+  "updated_at": "2026-05-17T20:48:00Z",
+  "state_revision": 42,
   "last_event_id": "evt-0125",
   "workspace_fingerprint": "idiom@06853ab",
   "status_bucket": "started",
@@ -105,7 +105,13 @@
       }
     ],
     "blocking_criteria": [],
-    "advisory_criteria": []
+    "advisory_criteria": [
+      "Next do-now atom after impl-0014 should be impl-0015 workflow hardening: make workflow-level audit/status failures visible, and add an automated changed-path/scope closeout gate comparing actual changed paths with expected and forbidden atom scope.",
+      "Coverage quality policy: parser/audit/status/brief/closeout atoms require focused contract tests, one realistic human-authored fixture variant for artifact parsing, a negative fixture-level CLI test with typed finding or blocker assertions, durable fixture pass coverage, and privacy/audit assertions where outputs include reports/status/telemetry/evidence/history.",
+      "Deferred follow-up: harden PRD/ADR parsing before broader user-authored artifacts are accepted; current parsers are fixture-oriented and string-shaped.",
+      "Deferred follow-up: decide and encode TDD reference authority policy, current tdd.json only versus workflow-known historical implementation-ledger IDs.",
+      "Deferred follow-up: continue remaining design-doc product surfaces after Phase 1 hardening, including research profiles, generation, acceptance/supersession, brief dispatch, coverage gates, feedback, and operator surfaces."
+    ]
   },
   "open_obligations": [],
   "open_questions": [],
@@ -135,7 +141,7 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T20:31:00Z",
+  "last_reconciliation_at": "2026-05-17T20:48:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
     "plan_next_phase_1_schema_or_deterministic_linter_atom",
