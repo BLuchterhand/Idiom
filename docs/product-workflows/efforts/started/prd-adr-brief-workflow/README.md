@@ -6,12 +6,12 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Active atom: `impl-0008-phase-1-artifact-state-machine-enum`
+- Active atom: `impl-0008a-phase-1-canonical-fixture-artifact-statuses`
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
 - Context pack: `a74d31bd1db0853c`
 - Coverage tier: `unit`
-- Blocker: `BLK-IMPL-0008-001` artifact state fixture status conflict
+- Blocker status: resolved for next atom by canonical fixture status migration
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
@@ -40,6 +40,15 @@ committed product workflow validators and lint command until later atoms close.
   real status-schema conflict in reasoning, but it did not produce a patch.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
+- Keep implementor briefs patch-shaped, not task-shaped: name the exact
+  decision, exact files, expected diff shape, forbidden choices, tests, and stop
+  condition. Pre-resolve product/spec conflicts in Codex before handoff instead
+  of asking the implementor to discover and decide them while coding.
+- Prefer tiny implementation slices when a broader atom has coupled decisions.
+  For example, migrate fixture data first, then add enum validation, then wire
+  CLI failure behavior. Parallelize GLM implementors only when their write sets
+  are disjoint; otherwise run sequential patch-shaped briefs and parallelize
+  Codex-side context preparation, review, and verification.
 - Prefer observable OpenCode runs for future implementor attempts:
   `--format json --print-logs --log-level INFO` for raw event/log streaming, and
   `--thinking` only when the provider supports it and the output remains safe to
@@ -79,9 +88,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Resolve `BLK-IMPL-0008-001` before implementation: either migrate the current
-durable fixture statuses from `accepted_fixture` to the canonical `accepted`
-state, or explicitly define a `.fixture` schema exception and update the TDD
-scope. After that, run the stable implementor path for
-`impl-0008-phase-1-artifact-state-machine-enum`, then commit and push after the
-atom closes.
+Plan `impl-0008b-phase-1-artifact-state-machine-enum` with GLM 5.1 using a
+patch-shaped brief. Atom 8a resolved the fixture-status conflict by preserving
+`.fixture` schema versions and migrating durable PRD/ADR artifact status values
+from `accepted_fixture` to canonical `accepted`.

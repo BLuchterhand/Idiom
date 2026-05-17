@@ -5,7 +5,7 @@
     {
       "adr_id": "ADR-0001",
       "title": "Seed Tracked Durable Effort Folder Before Code Implementation",
-      "status": "accepted_fixture",
+      "status": "accepted",
       "path": "ADR-0001-durable-workflow-substrate.md",
       "coverage_tier": "documentation",
       "prd_refs": ["REQ-IMPL-0001"],

@@ -1,7 +1,7 @@
 ---
 schema_version: idiom.prd.v1.fixture
 prd_id: prd-impl-0001-phase-0
-status: accepted_fixture
+status: accepted
 task_id: impl-0001-phase-0-durable-workflow-substrate
 evidence_ledger: evidence/evidence.jsonl
 created_at: 2026-05-17T15:20:00Z

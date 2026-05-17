@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0008-phase-1-artifact-state-machine-enum",
+  "task_id": "impl-0008a-phase-1-canonical-fixture-artifact-statuses",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -18,54 +18,55 @@
     "decision_tables_enumerated": 0,
     "mutation_score": null,
     "mutation_min_score": 80,
-    "gates_passed": [],
+    "gates_passed": [
+      "canonical_fixture_artifact_status_migration",
+      "durable_prd_fixture_status_canonical",
+      "durable_adr_fixture_status_canonical",
+      "product_workflow_lint_cli",
+      "focused_go_tests",
+      "full_go_tests",
+      "durable_json_jsonl_validation",
+      "privacy_secret_scan",
+      "diff_whitespace_check"
+    ],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0008-001",
-      "type": "contract",
-      "behavior": "Artifact state validation accepts exactly draft, audited, accepted, blocked, and dispatched for product workflow artifacts.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "pending"
-    },
-    {
-      "id": "TDD-IMPL-0008-002",
-      "type": "contract",
-      "behavior": "PRD front matter status rejects unknown artifact states and current durable PRD fixtures still pass.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "pending"
-    },
-    {
-      "id": "TDD-IMPL-0008-003",
-      "type": "contract",
-      "behavior": "ADR index and ADR markdown statuses reject unknown artifact states and current durable ADR fixtures still pass.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
-      "required_before": "atom_close",
-      "status": "pending"
-    },
-    {
-      "id": "TDD-IMPL-0008-004",
+      "id": "TDD-IMPL-0008A-001",
       "type": "acceptance",
-      "behavior": "Product workflow lint surfaces invalid artifact states as typed parse_error findings without accepting malformed PRD or ADR artifacts.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "behavior": "Current durable PRD fixture uses canonical artifact status accepted while retaining its .fixture schema version.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md",
+      "command": "rg -n \"status: accepted_fixture\" docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0008-005",
-      "type": "manual",
-      "behavior": "The DS4 implementor trial records elapsed time, output mode, timeout status, locality evidence when available, and patch completeness in durable reports.",
-      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0008-implementation.json",
-      "command": "review reports/impl-0008-implementation.json",
+      "id": "TDD-IMPL-0008A-002",
+      "type": "acceptance",
+      "behavior": "Current durable ADR index and ADR markdown fixtures use canonical artifact status accepted while retaining .fixture schema versions.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/",
+      "command": "rg -n \"accepted_fixture\" docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0008A-003",
+      "type": "contract",
+      "behavior": "Product workflow lint passes on the migrated durable effort fixture.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./internal/productworkflow ./cmd/idiom",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0008A-004",
+      "type": "acceptance",
+      "behavior": "Durable loop instructions record patch-shaped briefs and disjoint-write-set parallelization policy for future GLM implementors.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
+      "command": "review README.md implementation guidelines",
+      "required_before": "atom_close",
+      "status": "satisfied"
     }
   ]
 }

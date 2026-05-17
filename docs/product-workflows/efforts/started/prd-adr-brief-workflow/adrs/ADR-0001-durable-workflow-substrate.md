@@ -1,7 +1,7 @@
 ---
 schema_version: idiom.adr.v1.fixture
 adr_id: ADR-0001
-status: accepted_fixture
+status: accepted
 prd_refs:
   - REQ-IMPL-0001
 evidence_refs:
