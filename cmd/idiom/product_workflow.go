@@ -301,6 +301,22 @@ func lintEffortFolder(root string) productLintResult {
 		}
 	}
 
+	if parsedPRD != nil && parsedCards != nil {
+		evidenceIDs := make(map[string]bool)
+		for _, c := range parsedCards {
+			evidenceIDs[c.CardID] = true
+		}
+		for _, req := range parsedPRD.Requirements {
+			for _, ref := range req.EvidenceRefs {
+				if !evidenceIDs[ref] {
+					addFinding("broken_link", "prd.md", fmt.Sprintf(
+						"PRD requirement %s references evidence card %q not found in evidence ledger", req.ID, ref,
+					))
+				}
+			}
+		}
+	}
+
 	if len(result.Findings) == 0 {
 		result.Status = "pass"
 	} else {

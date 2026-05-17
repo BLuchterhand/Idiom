@@ -624,6 +624,15 @@ func parsePRDRequirements(body string) []PRDRequirement {
 				current.EvidenceRefs = parseInlineArray(trimmed, "- **evidence_refs**:")
 			} else if strings.HasPrefix(trimmed, "- **tdd_obligations**:") {
 				current.TDDObligations = parseInlineArray(trimmed, "- **tdd_obligations**:")
+			} else if strings.HasPrefix(trimmed, "- **owner_alignment**:") {
+				current.OwnerAlignment = strings.TrimSpace(strings.TrimPrefix(trimmed, "- **owner_alignment**:"))
+			} else if strings.HasPrefix(trimmed, "- **testability**:") {
+				current.Testability = strings.TrimSpace(strings.TrimPrefix(trimmed, "- **testability**:"))
+			} else if strings.HasPrefix(trimmed, "- **metric**:") {
+				current.Metric = strings.TrimSpace(strings.TrimPrefix(trimmed, "- **metric**:"))
+			} else if strings.HasPrefix(trimmed, "- **open_questions**:") {
+				current.OpenQuestions = parseInlineArray(trimmed, "- **open_questions**:")
+				current.OpenQuestionsPresent = true
 			}
 		}
 	}
@@ -672,11 +681,19 @@ func validatePRD(doc PRDDocument) error {
 	for i, req := range doc.Requirements {
 		prefix := fmt.Sprintf("PRD requirement %d (%s)", i, req.ID)
 		require(&errs, req.ID, prefix+" missing id")
+		require(&errs, req.Priority, prefix+" missing priority")
+		require(&errs, req.Statement, prefix+" missing statement")
+		require(&errs, req.OwnerAlignment, prefix+" missing owner_alignment")
+		require(&errs, req.Testability, prefix+" missing testability")
+		require(&errs, req.Metric, prefix+" missing metric")
 		if len(req.EvidenceRefs) == 0 {
 			errs = append(errs, fmt.Errorf("%s missing evidence_refs", prefix))
 		}
 		if len(req.TDDObligations) == 0 {
 			errs = append(errs, fmt.Errorf("%s missing tdd_obligations", prefix))
+		}
+		if !req.OpenQuestionsPresent {
+			errs = append(errs, fmt.Errorf("%s missing open_questions", prefix))
 		}
 	}
 	return errors.Join(errs...)

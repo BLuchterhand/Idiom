@@ -872,6 +872,58 @@ func TestProductAuditTelemetryName(t *testing.T) {
 	}
 }
 
+func TestProductAuditFailsWithPRDBrokenLinkWhenEvidenceRefMissing(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "prd.md", `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001", "EV-MISSING"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail with broken PRD evidence ref, got code=%d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	prdSection := findAuditSection(t, result, "prd")
+	if prdSection.Status != "fail" {
+		t.Fatalf("expected prd section to fail, got %q", prdSection.Status)
+	}
+	found := false
+	for _, f := range prdSection.Findings {
+		if f.Code == "broken_link" && f.Path == "prd.md" && strings.Contains(f.Message, "EV-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected broken_link finding in prd section mentioning EV-MISSING, got: %#v", prdSection.Findings)
+	}
+}
+
 func findAuditSection(t *testing.T, result productAuditResult, name string) productAuditSection {
 	t.Helper()
 	for _, sec := range result.Sections {
@@ -1033,8 +1085,12 @@ created_at: 2026-05-17T00:00:00Z
 - **id**: REQ-TEST-001
 - **priority**: must
 - **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
 - **evidence_refs**: ["EV-001"]
 - **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
 `
 }
 

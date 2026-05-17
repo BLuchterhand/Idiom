@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0010-phase-1-product-audit-command",
+  "task_id": "impl-0011-phase-1-prd-audit-hard-checks",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,9 +19,9 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "product_audit_command",
-      "prd_adr_tdd_audit_sections",
-      "audit_cli_failure_findings",
+      "prd_requirement_fields_audit",
+      "prd_evidence_reference_existence",
+      "durable_prd_fixture_passes",
       "product_workflow_lint_cli",
       "focused_go_tests",
       "full_go_tests",
@@ -33,36 +33,36 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0010-001",
-      "type": "acceptance",
-      "behavior": "Product audit command accepts --effort-root and --json, returns status, effort_root, checked_files, sections, and findings.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom",
+      "id": "TDD-IMPL-0011-001",
+      "type": "contract",
+      "behavior": "PRD parser preserves priority, statement, owner_alignment, testability, metric, open_questions, evidence_refs, and tdd_obligations for each requirement.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0010-002",
+      "id": "TDD-IMPL-0011-002",
       "type": "contract",
-      "behavior": "Product audit emits deterministic PRD, ADR, TDD, traceability, and report sections derived from existing artifact validation, without weakening product lint.",
+      "behavior": "PRD validation fails closed when a requirement is missing priority, statement, owner_alignment, testability, open_questions, metric, evidence_refs, or tdd_obligations.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "satisfied"
+    },
+    {
+      "id": "TDD-IMPL-0011-003",
+      "type": "audit",
+      "behavior": "Product audit and lint fail closed when a PRD requirement references an evidence card ID absent from the evidence ledger.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0010-003",
-      "type": "contract",
-      "behavior": "Product audit surfaces invalid PRD, ADR, and TDD artifacts as typed findings under the corresponding audit sections.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0010-004",
+      "id": "TDD-IMPL-0011-004",
       "type": "acceptance",
-      "behavior": "Current durable effort fixture passes both product audit and product lint after the new command is added.",
+      "behavior": "Current durable effort fixture passes both product audit and product lint after PRD hard checks are added.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",

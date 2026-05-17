@@ -1288,8 +1288,12 @@ created_at: 2026-05-17T00:00:00Z
 - **id**: REQ-TEST-001
 - **priority**: must
 - **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%%
 - **evidence_refs**: ["EV-001"]
 - **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
 `, status)
 		if _, err := ParsePRDMarkdown([]byte(prd)); err != nil {
 			t.Fatalf("expected PRD status %q to pass, got %v", status, err)
@@ -1832,6 +1836,250 @@ func TestDurableInvestigationReportFixturesPassValidation(t *testing.T) {
 		if _, err := ParseInvestigationReportJSON(data); err != nil {
 			t.Fatalf("expected %s to pass investigation report validation, got %v", entry.Name(), err)
 		}
+	}
+}
+
+func TestValidPRDPreservesNewFields(t *testing.T) {
+	prd := `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`
+	doc, err := ParsePRDMarkdown([]byte(prd))
+	if err != nil {
+		t.Fatalf("expected valid PRD to pass, got %v", err)
+	}
+	if len(doc.Requirements) == 0 {
+		t.Fatal("expected at least one requirement")
+	}
+	req := doc.Requirements[0]
+	if req.OwnerAlignment != "team" {
+		t.Fatalf("expected OwnerAlignment team, got %q", req.OwnerAlignment)
+	}
+	if req.Testability != "automated" {
+		t.Fatalf("expected Testability automated, got %q", req.Testability)
+	}
+	if req.Metric != "coverage > 80%" {
+		t.Fatalf("expected Metric coverage > 80%%, got %q", req.Metric)
+	}
+	if !req.OpenQuestionsPresent {
+		t.Fatal("expected OpenQuestionsPresent true")
+	}
+	if req.OpenQuestions != nil {
+		t.Fatalf("expected empty OpenQuestions, got %v", req.OpenQuestions)
+	}
+}
+
+func TestMissingMetricFailsClosed(t *testing.T) {
+	prd := `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`
+	_, err := ParsePRDMarkdown([]byte(prd))
+	if err == nil {
+		t.Fatal("expected PRD missing metric to fail")
+	}
+	if !strings.Contains(err.Error(), "missing metric") {
+		t.Fatalf("expected missing metric error, got %v", err)
+	}
+}
+
+func TestMissingOpenQuestionsFieldFailsClosed(t *testing.T) {
+	prd := `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+`
+	_, err := ParsePRDMarkdown([]byte(prd))
+	if err == nil {
+		t.Fatal("expected PRD missing open_questions to fail")
+	}
+	if !strings.Contains(err.Error(), "missing open_questions") {
+		t.Fatalf("expected missing open_questions error, got %v", err)
+	}
+}
+
+func TestPRDMissingRequirementFieldsFailsClosed(t *testing.T) {
+	cases := []struct {
+		name    string
+		prd     string
+		wantErr string
+	}{
+		{
+			"missing priority",
+			`---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`,
+			"missing priority",
+		},
+		{
+			"missing statement",
+			`---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`,
+			"missing statement",
+		},
+		{
+			"missing owner_alignment",
+			`---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`,
+			"missing owner_alignment",
+		},
+		{
+			"missing testability",
+			`---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`,
+			"missing testability",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParsePRDMarkdown([]byte(tc.prd))
+			if err == nil {
+				t.Fatalf("expected PRD %s to fail", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 

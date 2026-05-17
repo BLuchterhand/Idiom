@@ -293,11 +293,16 @@ type PRDFrontMatter struct {
 }
 
 type PRDRequirement struct {
-	ID             string
-	Priority       string
-	Statement      string
-	EvidenceRefs   []string
-	TDDObligations []string
+	ID                   string
+	Priority             string
+	Statement            string
+	EvidenceRefs         []string
+	TDDObligations       []string
+	OwnerAlignment       string
+	Testability          string
+	Metric               string
+	OpenQuestions        []string
+	OpenQuestionsPresent bool
 }
 
 type ADRIndex struct {

@@ -6,14 +6,18 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0010-phase-1-product-audit-command`
+- Last completed atom: `impl-0011-phase-1-prd-audit-hard-checks`
+- Active atom: none
 - Status bucket: `started`
 - Current phase: `phase-1-schemas-and-deterministic-linters`
-- Context pack: `276cc0795cefadd0`
+- Context pack: `73166760ef8a38a0`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
 - Atom 10 product audit command: all TDD obligations satisfied, 9 audit tests pass, product lint unchanged
+- Atom 11 PRD audit hard checks: all TDD obligations satisfied; DS4-through-Codex
+  CLI was tried twice and fell back to GLM after serious patch-quality issues.
+  GLM repaired/completed the atom, and Codex review/verification passed.
 
 The workflow implementation is in progress. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
@@ -46,8 +50,16 @@ atoms close.
 - DS4 through Codex CLI is now available for bounded implementor trials:
   `codex exec -p ds4 --cd /Users/ben/Documents/GitHub/idiom --sandbox danger-full-access -c approval_policy="never" --json "<brief>"`.
   A smoke test on 2026-05-17 returned `DS4_CODEX_READY` via JSONL in about 98
-  seconds. Use it for the next small atom when the write set is clear; record
-  GLM as fallback if DS4 stalls, times out, or produces no usable patch.
+  seconds. Use it for the next bounded atom when the write set is clear, with a
+  30 minute timeout. Prefer DS4 unless review finds serious quality issues,
+  DS4 times out without a usable patch, or DS4 cannot run; GLM remains fallback.
+- DS4 Atom 11 result: direct Codex CLI passes produced partial patches, then the
+  second pass introduced malformed Go, used `git checkout --`, and used ad hoc
+  Python rewriting. This met the fallback threshold for serious quality issues;
+  GLM repaired/finished the atom. For the next atom, use the most stable lane for
+  the write scope: DS4 may be retried on a small bounded atom only with a
+  patch-shaped brief and 30 minute cap, while GLM should remain the fallback for
+  shared parser/CLI code or any repeated DS4 edit-quality failure.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
 - Keep implementor briefs patch-shaped, not task-shaped: name the exact
@@ -98,6 +110,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 1 schema or deterministic linter atom. Prefer a bounded
-DS4-through-Codex CLI implementor trial when the write set is clear; keep GLM 5.1
-as fallback if DS4 stalls, times out, or produces no usable patch.
+Plan the next Phase 1 schema or deterministic linter atom. Prefer parallel
+read-only investigation when possible, but keep code-writing lanes sequential
+when they share parser, validator, CLI, or durable-state files.
