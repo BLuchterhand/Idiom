@@ -109,6 +109,9 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 	if len(args) > 0 && args[0] == "local-ops" {
 		return runLocalOpsMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
+	if len(args) > 0 && args[0] == "product" {
+		return runProductMainWithTelemetry(args[1:], stdout, stderr, rec)
+	}
 	if len(args) > 0 && args[0] == "product-evidence" {
 		return runProductEvidenceMainWithTelemetry(args[1:], stdout, stderr, rec)
 	}
@@ -900,6 +903,11 @@ func commandTelemetryName(args []string) string {
 			return "local-ops:" + args[1]
 		}
 		return "local-ops"
+	case "product":
+		if len(args) > 1 {
+			return "product:" + args[1]
+		}
+		return "product"
 	case "product-evidence":
 		if len(args) > 1 {
 			return "product-evidence:" + args[1]

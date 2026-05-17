@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0002-phase-1-product-workflow-json-schemas",
+  "task_id": "impl-0003-phase-1-product-workflow-lint-command",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,55 +19,55 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "go_test_internal_productworkflow",
+      "go_test_cmd_idiom_and_productworkflow",
+      "product_workflow_lint_cli",
       "durable_json_jsonl_validation",
-      "privacy_secret_pattern_scan",
       "diff_hygiene"
     ],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0002-001",
+      "id": "TDD-IMPL-0003-001",
       "type": "acceptance",
-      "behavior": "Committed Phase 0 JSON and JSONL fixtures parse through productworkflow validators.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Product workflow lint command passes on the current durable effort folder and emits typed JSON when requested.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0002-002",
+      "id": "TDD-IMPL-0003-002",
       "type": "acceptance",
-      "behavior": "Invalid workflow state missing required identifiers, state, folder path, or next action fails closed.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Product workflow lint command fails with a typed finding when required durable files are missing.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0002-003",
+      "id": "TDD-IMPL-0003-003",
       "type": "contract",
-      "behavior": "Implementation atom closeout rejects missing model selection, missing runtime command, same implementor/reviewer, missing verification, missing review, missing investigation, or open blockers.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Product workflow lint command fails with a typed finding for an invalid implementation ledger closeout.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0002-004",
-      "type": "privacy",
-      "behavior": "Privacy flags reject raw prompts, raw transcripts, file bodies, or secrets stored in durable state.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
+      "id": "TDD-IMPL-0003-004",
+      "type": "telemetry",
+      "behavior": "Command telemetry classifies product workflow lint as product:lint.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom",
       "required_before": "atom_close",
       "status": "satisfied"
     },
     {
-      "id": "TDD-IMPL-0002-005",
+      "id": "TDD-IMPL-0003-005",
       "type": "acceptance",
-      "behavior": "Durable workflow artifacts remain valid JSON/JSONL and privacy marker scan passes after Atom 2 updates.",
-      "owner": "codex-gpt-review-impl-0002",
+      "behavior": "Durable workflow artifacts remain valid JSON/JSONL and privacy secret-pattern scan passes after Atom 3 updates.",
+      "owner": "codex-gpt-review-impl-0003",
       "command": "python3 json/jsonl validation over docs/product-workflows effort files && python3 privacy secret-pattern scan && git diff --check",
       "required_before": "atom_close",
       "status": "satisfied"

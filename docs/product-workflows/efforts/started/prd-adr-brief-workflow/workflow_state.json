@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0002-phase-1-product-workflow-json-schemas",
+  "task_id": "impl-0003-phase-1-product-workflow-lint-command",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T15:47:36Z",
-  "state_revision": 5,
-  "last_event_id": "evt-0019",
-  "workspace_fingerprint": "idiom@213bc5c",
+  "updated_at": "2026-05-17T15:59:45Z",
+  "state_revision": 7,
+  "last_event_id": "evt-0027",
+  "workspace_fingerprint": "idiom@f9b0774",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
   "current_state": "verified",
@@ -26,7 +26,7 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "8c726257c2b6c0d3",
+    "context_pack_id": "7bdea2873e269ecd",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -35,12 +35,19 @@
       "README.md",
       "cmd/idiom/atom.go",
       "cmd/idiom/product_evidence.go",
-      "internal/workspace/plan_artifact_schema.go"
+      "internal/workspace/plan_artifact_schema.go",
+      "internal/productworkflow/validate.go",
+      "cmd/idiom/main.go",
+      "cmd/idiom/brief.go"
     ],
     "unresolved_gaps": [
       {
+        "kind": "stale_runtime_trace",
+        "description": "Context pack 7bdea2873e269ecd reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to the product workflow CLI lint command scope."
+      },
+      {
         "kind": "implementor_timeout",
-        "description": "OpenCode GLM attached-server run for impl-0002 produced partial internal/productworkflow files but no tests, reports, or closeout before the 240 second timeout; Codex fallback is limited to the recorded C1 atom scope."
+        "description": "OpenCode GLM attached-server run for impl-0003 produced partial product lint command files but did not return closeout before the 240 second timeout; Codex fallback is limited to the recorded C1 atom scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -49,14 +56,19 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "go_test_internal_productworkflow",
+        "gate": "product_workflow_lint_cli",
         "status": "passed",
-        "checked_at": "2026-05-17T15:45:10Z"
+        "checked_at": "2026-05-17T15:59:45Z"
+      },
+      {
+        "gate": "go_test_cmd_idiom_and_productworkflow",
+        "status": "passed",
+        "checked_at": "2026-05-17T15:59:45Z"
       },
       {
         "gate": "durable_artifact_validation",
         "status": "passed",
-        "checked_at": "2026-05-17T15:47:36Z"
+        "checked_at": "2026-05-17T15:59:45Z"
       }
     ],
     "blocking_criteria": [],
@@ -78,10 +90,10 @@
   "session_ids": {},
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T15:47:36Z",
+  "last_reconciliation_at": "2026-05-17T15:59:45Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_1_cli_lint_command_atom",
+    "plan_phase_1_prd_adr_schema_atom",
     "close_effort_if_abandoned"
   ],
   "durability_level": "source_controlled"
