@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0003-phase-1-product-workflow-lint-command",
+  "task_id": "impl-0004-phase-1-prd-adr-schema-validation",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -18,59 +18,54 @@
     "decision_tables_enumerated": 0,
     "mutation_score": null,
     "mutation_min_score": 80,
-    "gates_passed": [
-      "go_test_cmd_idiom_and_productworkflow",
-      "product_workflow_lint_cli",
-      "durable_json_jsonl_validation",
-      "diff_hygiene"
-    ],
+    "gates_passed": [],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0003-001",
+      "id": "TDD-IMPL-0004-001",
       "type": "acceptance",
-      "behavior": "Product workflow lint command passes on the current durable effort folder and emits typed JSON when requested.",
+      "behavior": "Current durable PRD front matter and requirement sections parse through productworkflow validators.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0004-002",
+      "type": "acceptance",
+      "behavior": "Current durable ADR front matter, ADR index, and Nygard body sections parse through productworkflow validators.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0004-003",
+      "type": "contract",
+      "behavior": "Invalid PRD missing requirement evidence or TDD references fails closed.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0004-004",
+      "type": "contract",
+      "behavior": "Invalid ADR missing decision/status/PRD references fails closed.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0004-005",
+      "type": "acceptance",
+      "behavior": "Product workflow lint includes PRD, ADR index, and ADR markdown validation in its checked files.",
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom ./internal/productworkflow",
       "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0003-002",
-      "type": "acceptance",
-      "behavior": "Product workflow lint command fails with a typed finding when required durable files are missing.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0003-003",
-      "type": "contract",
-      "behavior": "Product workflow lint command fails with a typed finding for an invalid implementation ledger closeout.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0003-004",
-      "type": "telemetry",
-      "behavior": "Command telemetry classifies product workflow lint as product:lint.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0003-005",
-      "type": "acceptance",
-      "behavior": "Durable workflow artifacts remain valid JSON/JSONL and privacy secret-pattern scan passes after Atom 3 updates.",
-      "owner": "codex-gpt-review-impl-0003",
-      "command": "python3 json/jsonl validation over docs/product-workflows effort files && python3 privacy secret-pattern scan && git diff --check",
-      "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     }
   ]
 }

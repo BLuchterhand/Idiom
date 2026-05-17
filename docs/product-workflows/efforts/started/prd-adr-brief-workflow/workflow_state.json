@@ -1,16 +1,16 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0003-phase-1-product-workflow-lint-command",
+  "task_id": "impl-0004-phase-1-prd-adr-schema-validation",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T15:59:45Z",
-  "state_revision": 7,
-  "last_event_id": "evt-0027",
-  "workspace_fingerprint": "idiom@f9b0774",
+  "updated_at": "2026-05-17T16:09:46Z",
+  "state_revision": 8,
+  "last_event_id": "evt-0030",
+  "workspace_fingerprint": "idiom@91e143d",
   "status_bucket": "started",
   "current_phase": "phase-1-schemas-and-deterministic-linters",
-  "current_state": "verified",
+  "current_state": "blocked_implementor_timeout",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -26,7 +26,7 @@
     "readme": "README.md"
   },
   "context": {
-    "context_pack_id": "7bdea2873e269ecd",
+    "context_pack_id": "4b2da4972df00d55",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -38,16 +38,20 @@
       "internal/workspace/plan_artifact_schema.go",
       "internal/productworkflow/validate.go",
       "cmd/idiom/main.go",
-      "cmd/idiom/brief.go"
+      "cmd/idiom/brief.go",
+      "internal/productworkflow/types.go",
+      "internal/productworkflow/validate_test.go",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/index.json"
     ],
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 7bdea2873e269ecd reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to the product workflow CLI lint command scope."
+        "description": "Context pack 4b2da4972df00d55 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to PRD/ADR schema validation scope."
       },
       {
         "kind": "implementor_timeout",
-        "description": "OpenCode GLM attached-server run for impl-0003 produced partial product lint command files but did not return closeout before the 240 second timeout; Codex fallback is limited to the recorded C1 atom scope."
+        "description": "OpenCode MiniMax attached-server run for impl-0004 timed out after 240 seconds without output or code edits; no speed improvement was observed against prior GLM timeouts."
       }
     ],
     "refresh_policy": "on_demand"
@@ -56,19 +60,9 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "product_workflow_lint_cli",
-        "status": "passed",
-        "checked_at": "2026-05-17T15:59:45Z"
-      },
-      {
-        "gate": "go_test_cmd_idiom_and_productworkflow",
-        "status": "passed",
-        "checked_at": "2026-05-17T15:59:45Z"
-      },
-      {
-        "gate": "durable_artifact_validation",
-        "status": "passed",
-        "checked_at": "2026-05-17T15:59:45Z"
+        "gate": "prd_adr_schema_validation",
+        "status": "pending",
+        "checked_at": "2026-05-17T16:03:39Z"
       }
     ],
     "blocking_criteria": [],
@@ -76,7 +70,9 @@
   },
   "open_obligations": [],
   "open_questions": [],
-  "blockers": [],
+  "blockers": [
+    "opencode_minimax_attached_server_timeout"
+  ],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -90,10 +86,11 @@
   "session_ids": {},
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T15:59:45Z",
+  "last_reconciliation_at": "2026-05-17T16:09:46Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_1_prd_adr_schema_atom",
+    "retry_phase_1_prd_adr_schema_atom_with_alternate_opencode_mode",
+    "fallback_complete_phase_1_prd_adr_schema_atom_after_recorded_exception",
     "close_effort_if_abandoned"
   ],
   "durability_level": "source_controlled"
