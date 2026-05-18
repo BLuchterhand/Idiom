@@ -93,11 +93,6 @@
         "gate": "feedback_reconciliation_planned",
         "status": "passed",
         "checked_at": "2026-05-18T15:00:00Z"
-      },
-      {
-        "gate": "feedback_reconciliation_planned",
-        "status": "passed",
-        "checked_at": "2026-05-18T15:00:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -112,9 +107,8 @@
       "Phase 4 brief generation is complete: idiom product brief --render creates lint-verified implementation briefs from accepted PRD/ADR/TDD artifacts and a passing coverage gate without dispatching work or executing models.",
       "Deferred follow-up: make coverage gate reuse product lint/audit validators or run them as blocking preconditions before brief generation.",
       "Atom 29 complete: idiom product feedback links explicit lane/progress/evidence references into privacy-safe execution feedback summaries without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
-      "Atom 30 planned: reconcile verified feedback records into workflow-state artifact links and durable evidence references without dispatching lanes, promoting ranker learning, storing raw transcripts/file bodies, or mutating .idiom runtime state.",
-      "Next Phase 5 slice after feedback reconciliation: add product workflow metrics to audit surfaces.",
-      "Atom 30 planned: reconcile passing idiom product feedback summaries into deterministic workflow-state/evidence-link updates without dispatching lanes, mutating .idiom runtime state, generating evidence exports, or promoting ranker learning."
+      "Atom 30 planned: reconcile passing idiom product feedback summaries into deterministic workflow-state/evidence-link updates without dispatching lanes, mutating .idiom runtime state, generating evidence exports, or promoting ranker learning.",
+      "Next Phase 5 slice after feedback reconciliation: add product workflow metrics to audit surfaces."
     ]
   },
   "open_obligations": [
