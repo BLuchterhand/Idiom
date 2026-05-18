@@ -9,8 +9,7 @@ though it has also been tested successfully against GLM 5.1 and Minimax m2.7
 models. It is meant to be an agnostic harness for local and hosted models, but
 it has not yet been broadly validated across providers.
 
-CURRENT STATE: Idiom is used primarily as a headless runner. The TUI still
-exists, but it is not the actively maintained path and may be broken.
+CURRENT STATE: Idiom is used primarily as a headless runner. The TUI is now being brought up to speed but shouldn't be expected to properly function at 100%. Or probably at all, really.
 
 ## What it does
 
