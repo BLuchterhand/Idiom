@@ -2,12 +2,47 @@
   "schema_version": "idiom.investigation_report.v1.fixture",
   "effort_id": "prd-adr-brief-workflow",
   "task_id": "impl-0027-phase-4-coverage-gate-evaluator",
-  "status": "pending",
+  "status": "complete",
   "created_at": "2026-05-18T13:40:00Z",
-  "scope": {},
-  "tests": {},
-  "coverage": {},
-  "traceability": {},
+  "scope": {
+    "changed_paths": [
+      "cmd/idiom/product_workflow.go",
+      "cmd/idiom/product_workflow_test.go",
+      "internal/productworkflow/coverage_gate.go",
+      "internal/productworkflow/coverage_gate_test.go",
+      "internal/productworkflow/types.go"
+    ],
+    "forbidden_scope_touched": false,
+    "doc_parity_updated": true
+  },
+  "tests": {
+    "focused_productworkflow": "passed",
+    "focused_cli": "passed",
+    "package_pair": "passed",
+    "full_suite": "passed",
+    "product_lint": "passed",
+    "product_audit": "passed",
+    "json_jsonl_validation": "passed",
+    "privacy_secret_scan": "passed",
+    "diff_check": "passed"
+  },
+  "coverage": {
+    "coverage_gate_status": "pass",
+    "coverage_tier": "unit",
+    "required_criteria": [
+      "evidence_acceptance"
+    ],
+    "blockers": []
+  },
+  "traceability": {
+    "context_pack_id": "74ed3aa5e0b41587",
+    "tdd_obligations_satisfied": [
+      "TDD-IMPL-0027-001",
+      "TDD-IMPL-0027-002",
+      "TDD-IMPL-0027-003",
+      "TDD-IMPL-0027-004"
+    ]
+  },
   "privacy_audit": {
     "raw_prompts_stored": false,
     "transcripts_stored": false,
@@ -16,12 +51,7 @@
     "customer_identifying_data_stored": false
   },
   "reviewer_findings": [],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ],
-  "next_valid_action": "implement_phase_4_coverage_gate_atom",
-  "completed_at": ""
+  "blockers": [],
+  "next_valid_action": "plan_phase_4_brief_generator_atom",
+  "completed_at": "2026-05-18T13:55:00Z"
 }

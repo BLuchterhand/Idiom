@@ -6,10 +6,10 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0026-phase-4-tdd-obligation-synthesis-plan`
-- Active atom: `impl-0027-phase-4-coverage-gate-evaluator` planned
+- Last completed atom: `impl-0027-phase-4-coverage-gate-evaluator`
+- Active atom: none; next atom should plan Phase 4 brief generation
 - Status bucket: `started`
-- Current phase: `phase-4-coverage-gate`
+- Current phase: `phase-4-brief-generation`
 - Context pack: `74ed3aa5e0b41587`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
@@ -100,23 +100,27 @@ This effort is the durable implementation state for delivering
   suggested obligation type and command, blocks when an accepted ADR cannot map
   a requirement, and does not overwrite `tdd.json`, generate briefs, evaluate
   the coverage gate, execute models, or dispatch work.
-- Atom 27 is planned as the first Phase 4 coverage gate slice. It should add a
-  deterministic gate evaluator over existing PRD/ADR/TDD artifacts and coverage
-  metadata, reporting blocking criteria and typed findings by coverage tier. It
-  must not generate briefs, mutate product artifacts, execute models, run tests
-  on behalf of the user, or dispatch implementation work.
+- Atom 27: all TDD obligations satisfied. Added deterministic
+  `idiom product tdd --evaluate-coverage` evaluation over the accepted PRD,
+  accepted ADRs, TDD ledger, implementation ledger, and traceability matrix. The
+  gate reports tier-specific criteria and blockers, fails closed for unknown
+  PRD/ADR TDD obligation references, scopes historical obligation authority to
+  verified records for the current effort and PRD task, and does not generate
+  briefs, mutate artifacts, execute models, run tests on behalf of the user, or
+  dispatch work.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 26 closeout. These
+The workflow implementation remains in progress after Atom 27 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
-and plan-only TDD obligation synthesis. Coverage gates, brief generation,
-execution feedback loops, and operator surfaces remain later atoms.
+plan-only TDD obligation synthesis, and deterministic coverage-gate evaluation.
+Brief generation, execution feedback loops, and operator surfaces remain later
+atoms.
 
 ## Implementation Guidelines
 
@@ -293,6 +297,23 @@ preserve them until explicitly resolved:
   from the implementation ledger. Current audit behavior permits historical
   satisfied IDs to keep durable fixtures valid; this should become an explicit
   policy with tests.
+- Coverage gate strictness: the coverage gate must reuse the same traceability,
+  artifact-link, and acceptance validation authority as product lint/audit, or
+  run those validations as a blocking precondition. Do not let the coverage gate
+  become a weaker parallel checker that only verifies a subset of cross-links.
+- Supersession fixture and divergence policy: add a durable fixture with at
+  least two accepted ADRs in a supersession chain, and test that markdown front
+  matter, ADR index entries, audit output, and workflow status agree. Define
+  whether markdown or index metadata is authoritative when the two diverge, and
+  fail closed until that policy is encoded.
+- Obsidian parity gate: the manual parity rule above should become a lint/audit
+  obligation before effort closeout. It must catch stale status labels or stale
+  phase checkboxes in `docs/obsidian/20 - PRD ADR Brief Research Workflow
+  PROPOSAL.md` and `docs/obsidian/22 - Product Workflow ROADMAP.md`, or require
+  an explicit no-change rationale in the atom report.
+- Human-readable CLI coverage: each new operator-facing product command needs
+  tests for text output as well as JSON output, including actionable failure
+  text, next valid action, and typed blocker/finding identity.
 - Product completion roadmap: after Phase 1 hardening, continue the remaining
   design-doc surfaces rather than treating lint/audit as the product endpoint:
   research profiles, PRD/ADR generation, acceptance and supersession flow, brief
@@ -324,6 +345,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 3 atom for acceptance state and supersession links. Keep the
-slice deterministic and human-acceptance-first: add typed metadata validation and
-audit/reporting before any model-driven acceptance or artifact promotion.
+Plan the next Phase 4 atom for brief generation. Keep the slice deterministic:
+consume accepted PRD/ADR/TDD artifacts plus a passing coverage-gate result,
+produce a bounded brief artifact or preview, and do not dispatch work or execute
+models.

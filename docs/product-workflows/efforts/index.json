@@ -1,12 +1,12 @@
 {
   "schema_version": "idiom.effort_index.v1",
-  "updated_at": "2026-05-18T13:40:00Z",
+  "updated_at": "2026-05-18T13:55:00Z",
   "efforts": [
     {
       "effort_id": "prd-adr-brief-workflow",
       "title": "PRD/ADR/Brief Research Workflow",
       "status_bucket": "started",
-      "current_phase": "phase-4-coverage-gate",
+      "current_phase": "phase-4-brief-generation",
       "current_state": "planned",
       "folder_path": "started/prd-adr-brief-workflow",
       "task_id": "impl-0027-phase-4-coverage-gate-evaluator",

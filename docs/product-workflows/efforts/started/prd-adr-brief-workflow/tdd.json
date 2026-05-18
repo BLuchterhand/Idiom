@@ -20,7 +20,8 @@
     "mutation_min_score": 80,
     "gates_passed": [
       "atom_planned",
-      "tdd_obligation_synthesis_plan"
+      "tdd_obligation_synthesis_plan",
+      "coverage_gate_evaluator"
     ],
     "gates_blocked": []
   },
@@ -68,7 +69,7 @@
       "owner": "internal/productworkflow/coverage_gate_test.go",
       "command": "go test ./internal/productworkflow -run TestCoverageGate",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0027-002",
@@ -77,7 +78,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductTDDCoverageGate",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0027-003",
@@ -86,7 +87,7 @@
       "owner": "internal/productworkflow/coverage_gate_test.go",
       "command": "go test ./internal/productworkflow -run TestCoverageGate",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0027-004",
@@ -95,7 +96,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0027-review.json",
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     }
   ]
 }

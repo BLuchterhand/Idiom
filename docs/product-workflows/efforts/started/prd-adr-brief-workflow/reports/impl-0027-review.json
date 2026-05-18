@@ -8,10 +8,26 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
+  "status": "pass",
   "findings": [],
-  "checks": {},
-  "reviewed_at": "",
-  "commands_reviewed": [],
+  "checks": {
+    "discovery_used": true,
+    "focused_tests_passed": true,
+    "full_suite_passed": true,
+    "product_lint_audit_passed": true,
+    "durable_fixture_passed": true,
+    "privacy_safe_reports": true
+  },
+  "reviewed_at": "2026-05-18T13:55:00Z",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"re-review impl 0027 second follow-up coverage gate obligation scoping\",\"mode\":\"plan\",\"limit\":8}'",
+    "git diff --unified=80 -- cmd/idiom/product_workflow.go cmd/idiom/product_workflow_test.go internal/productworkflow/coverage_gate.go internal/productworkflow/coverage_gate_test.go internal/productworkflow/types.go",
+    "go test ./internal/productworkflow ./cmd/idiom"
+  ],
+  "prior_findings_resolved": [
+    "coverage_gate_now_blocks_unknown_prd_or_adr_tdd_obligation_ids",
+    "historical_tdd_obligation_authority_scoped_to_verification_completed_records_same_effort_and_current_prd_task",
+    "durable_fixture_pass_and_cross_task_contamination_regressions_added"
+  ],
   "created_at": "2026-05-18T13:40:00Z"
 }

@@ -87,7 +87,9 @@ obligation synthesis exist. The next Phase 4 slice is the coverage gate.
   required acceptance metadata for accepted artifacts
 - [x] TDD obligation audit: high-priority requirement coverage and current plus
   historical obligation reference checks
-- [ ] Coverage gate: 9-criterion threshold check (see below)
+- [x] Coverage gate: deterministic tiered threshold check (see below)
+  - [ ] Reuse product lint/audit traceability, acceptance, and supersession
+    validators, or run them as blocking coverage-gate preconditions
 - [ ] Brief generation: deterministic template filling from PRD/ADR/TDD
   artifacts, section ordering, ID injection
 
@@ -114,6 +116,8 @@ obligation synthesis exist. The next Phase 4 slice is the coverage gate.
   the evidence ledger plus parsed PRD without drafting or accepting ADRs
 - [x] `idiom product tdd --plan-obligations` — build a deterministic,
   plan-only obligation plan from accepted PRD requirements and accepted ADRs
+- [x] `idiom product tdd --evaluate-coverage` — evaluate tiered coverage
+  criteria from accepted PRD/ADR/TDD artifacts without generating briefs
 - [ ] `idiom product brief` — generate briefs from PRD + ADRs + TDD
 - [x] `idiom product lint` — validate durable effort artifacts and cross-links
 - [x] `idiom product audit` — sectioned audit over the product workflow directory
@@ -133,7 +137,8 @@ obligation synthesis exist. The next Phase 4 slice is the coverage gate.
 - [ ] Runtime telemetry events: `adr_drafted`, `adr_accepted`
 - [x] Durable event/report records for TDD obligation synthesis planning
 - [ ] Runtime telemetry event: `tdd_obligations_created`
-- [ ] `coverage_gate_evaluated`
+- [x] Durable coverage-gate evaluation evidence in implementation reports
+- [ ] Runtime telemetry event: `coverage_gate_evaluated`
 - [ ] `product_artifact_dispatch_ready`, `product_artifact_blocked`
 - [ ] `execution_result_linked`
 
@@ -266,6 +271,10 @@ audit evidence only unless a human explicitly re-authorizes them.
 - [x] PRD prompt renderer from evidence ledger
 - [x] ADR prompt renderer from PRD
 - [x] Acceptance state and supersession links
+- [ ] Durable two-ADR supersession fixture covering markdown front matter, ADR
+  index metadata, audit output, and workflow status
+- [ ] Explicit index-vs-markdown divergence policy for ADR supersession metadata,
+  with fail-closed tests until the authority rule is encoded
 - [ ] Human acceptance flow
 
 ### Phase 4: TDD Planner and Coverage Gate
@@ -276,7 +285,9 @@ audit evidence only unless a human explicitly re-authorizes them.
 - [ ] HAZOP guide-word applicator
 - [ ] Decision table and boundary value enumerators
 - [ ] PBT obligation schema
-- [ ] Coverage gate (9 criteria, 100% deterministic)
+- [x] Coverage gate evaluator (tiered criteria, deterministic)
+  - [ ] Gate fails when canonical lint/audit cross-link, acceptance, or
+    supersession validation fails
 - [ ] Brief generator with coverage gate dependency
 
 ### Phase 5: Mutation Testing and Verification
@@ -292,6 +303,10 @@ audit evidence only unless a human explicitly re-authorizes them.
 - [ ] Post-mortem obligation auto-generation
 - [ ] Incident → FMEA/HAZOP feedback
 - [ ] Coverage metric updates from outcomes
+- [ ] Obsidian parity lint/audit or closeout check for stale proposal/roadmap
+  status, with explicit no-change rationale support
+- [ ] Human-readable CLI output tests for each operator-facing product command,
+  including actionable failure text and next valid action
 
 ### Phase 7: Sidecar and External Agent Use
 

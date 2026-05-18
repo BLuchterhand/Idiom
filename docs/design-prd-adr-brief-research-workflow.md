@@ -574,6 +574,14 @@ returns the obligation plan to the relevant owner:
 - missing property-based or decision table tests -> step 8 (obligation plan
   revision)
 
+The coverage gate must share validation authority with product lint/audit rather
+than becoming a weaker parallel checker. Before it can pass, the gate must either
+reuse the artifact-link, traceability, acceptance, and supersession validators
+directly, or run the relevant product lint/audit checks as blocking preconditions
+and report their typed findings in the gate result. Coverage is not complete if a
+requirement, evidence card, ADR, TDD obligation, or brief section can pass the
+gate while failing the canonical cross-link validators.
+
 ### 9. Brief Generation
 
 Brief generation is the final compression step. It consumes the accepted PRD,
@@ -1660,6 +1668,8 @@ Implementation quality:
 - implementation atoms that can be resumed from workflow state without reading
   raw transcripts
 - post-effort investigation reports completed before atom closeout
+- Obsidian proposal/roadmap parity checked or justified before atom closeout
+- human-readable CLI output covered for each operator-facing command
 
 Harness learning:
 
@@ -1862,6 +1872,12 @@ and fixture atoms. The investigation answers:
 - Add PRD and ADR audits.
 - Add acceptance state and supersession links.
 - Keep human acceptance as default for material decisions.
+- Add a durable supersession fixture with at least two accepted ADRs in a chain.
+  The fixture must exercise markdown front matter, ADR index metadata, audit
+  output, and workflow status together.
+- Define and test the index-vs-markdown divergence policy for ADR supersession
+  metadata. Until encoded, divergence should fail closed instead of silently
+  choosing one source.
 
 ### Phase 4: TDD Planner And Brief Generator
 
@@ -1876,6 +1892,9 @@ and fixture atoms. The investigation answers:
   `hazop_deviation`, `decision_table`, `boundary_value`, `mutation_score`,
   `post_mortem`.
 - Add coverage gate between TDD audit and brief generation.
+- Make the coverage gate reuse or preflight product lint/audit traceability,
+  acceptance, and supersession validation, with typed findings carried through to
+  the gate result.
 - Coverage gate phases track the TDD coverage rollout plan in
   [design-tdd-coverage.md](design-tdd-coverage.md):
   - Phase 1: EARS and BDD coverage checks
@@ -1893,6 +1912,12 @@ and fixture atoms. The investigation answers:
 - Add reconciliation from lane history, plan-execute progress state, atom tracker
   docs, telemetry, and evidence exports back into workflow state.
 - Add product workflow metrics to `harness_audit` or a dedicated audit command.
+- Add an Obsidian parity check to product lint/audit or closeout reporting so
+  stale roadmap/proposal status is detected before effort closeout, or an
+  explicit no-change rationale is recorded.
+- Require every new operator-facing CLI command to test human-readable text
+  output as well as JSON output, including actionable failure text and the next
+  valid action.
 - Promote verified context and test outcomes into ranker learning only through
   deterministic evidence adapters.
 
@@ -1935,6 +1960,9 @@ and fixture atoms. The investigation answers:
 | Test theater | Reject tautological assertions and require behavior-linked obligations. Use mutation testing for tier-required contract tests when tooling is available. |
 | Coverage obligation explosion | Select a coverage tier by ADR blast radius. Require FMEA RPN >= 21 and HAZOP severity >= 3 only when the tier includes those techniques; lower thresholds are advisory. |
 | Coverage under-blocking | Require every artifact to declare and justify its coverage tier; high-risk contract boundaries default to `contract_high` unless an accepted ADR lowers the tier. |
+| Weak coverage gate authority | Make the coverage gate reuse product lint/audit validators or run them as blocking preconditions; do not duplicate partial traceability logic. |
+| ADR metadata split-brain | Define markdown-vs-index authority for supersession metadata and fail closed on divergence until the policy is encoded and tested. |
+| Stale external roadmap | Treat Obsidian roadmap/proposal parity as a closeout check or require an explicit no-change rationale in the atom report. |
 | Stale local evidence | Carry freshness fields and block dispatch when stale evidence is load-bearing. |
 | TUI transcript mistaken for workflow state | Persist workflow state separately and render it in the TUI; conversation logs are evidence links, not continuation authority. |
 | Split-brain CLI/TUI state | Make CLI and TUI share application use cases, state revisions, reconciliation adapters, and a common status view model. |
@@ -1977,11 +2005,15 @@ The feature is useful when a team can:
 - define a researcher roster for a task
 - produce a PRD whose requirements cite evidence
 - accept ADRs for material decisions
+- prove ADR supersession with a durable two-ADR fixture and fail closed on
+  index/markdown supersession divergence
 - generate tier-appropriate TDD obligations before implementation, including
   failure mode, deviation, property-based, and mutation obligations when the
   selected tier requires them
 - pass the risk-tiered coverage gate, with all tier-required criteria met or
   explicitly blocked
+- pass the coverage gate only after canonical lint/audit traceability,
+  acceptance, and supersession validations pass or are reported as blockers
 - generate one or more briefs that pass `idiom brief lint`
 - block stale/source-satisfied/non-dispatchable/under-covered work before model
   dispatch
@@ -2006,6 +2038,10 @@ The feature is useful when a team can:
   ledger, with each atom carrying complexity tier, GPT model/effort selection,
   dedicated implementor, dedicated reviewer, verification, and post-effort
   investigation state
+- keep Obsidian proposal/roadmap notes in parity with durable workflow state, or
+  record why a given atom did not need a docs update
+- cover both JSON and human-readable text output for operator-facing CLI
+  commands
 - audit the workflow without reading raw transcripts
 - improve future context ranking or brief quality from verified outcomes
 - measure spec compliance independently of functional correctness
