@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0036-phase-6-effort-browser-cli",
+  "task_id": "impl-0037-phase-6-status-migration-contract",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T21:25:00Z",
-  "state_revision": 109,
-  "last_event_id": "evt-0320",
-  "workspace_fingerprint": "idiom@244b6c5",
+  "updated_at": "2026-05-18T21:30:00Z",
+  "state_revision": 110,
+  "last_event_id": "evt-0323",
+  "workspace_fingerprint": "idiom@8c840cd",
   "status_bucket": "started",
   "current_phase": "phase-6-operator-continuation",
   "current_state": "planned",
@@ -42,10 +42,13 @@
     "impl_0035_investigation_report": "reports/impl-0035-investigation.json",
     "impl_0036_implementation_report": "reports/impl-0036-implementation.json",
     "impl_0036_review_report": "reports/impl-0036-review.json",
-    "impl_0036_investigation_report": "reports/impl-0036-investigation.json"
+    "impl_0036_investigation_report": "reports/impl-0036-investigation.json",
+    "impl_0037_implementation_report": "reports/impl-0037-implementation.json",
+    "impl_0037_review_report": "reports/impl-0037-review.json",
+    "impl_0037_investigation_report": "reports/impl-0037-investigation.json"
   },
   "context": {
-    "context_pack_id": "8daf2b7bf7efceb0",
+    "context_pack_id": "5636955570c7b36d",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -61,17 +64,16 @@
       "internal/productworkflow/execution_feedback_test.go",
       "internal/comprehension/ranker_learning.go",
       "internal/comprehension/ranker_learning_test.go",
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
       "internal/workspace/harness_audit.go",
       "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md",
       "docs/obsidian/22 - Product Workflow ROADMAP.md",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
-      "internal/productworkflow/status_test.go",
       "internal/productworkflow/efforts.go",
       "internal/productworkflow/efforts_test.go",
-      "docs/product-workflows/efforts/index.json"
+      "docs/product-workflows/efforts/index.json",
+      "internal/productworkflow/migration.go",
+      "internal/productworkflow/migration_test.go"
     ],
     "unresolved_gaps": [
       {
@@ -93,6 +95,10 @@
       {
         "kind": "stale_runtime_trace",
         "description": "Context pack 835deff0af50032a reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to Phase 6 operator status view-model planning scope."
+      },
+      {
+        "kind": "stale_runtime_trace",
+        "description": "Context pack 5636955570c7b36d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to status migration planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -204,6 +210,11 @@
         "gate": "effort_browser_cli",
         "status": "passed",
         "checked_at": "2026-05-18T21:25:00Z"
+      },
+      {
+        "gate": "status_migration_contract_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T21:30:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -230,9 +241,19 @@
       "Next design-doc slice: plan Phase 6 status-folder migration behavior through shared workflow use cases, preserving stable effort IDs and fail-closed continuation boundaries."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0037-001",
+    "TDD-IMPL-0037-002",
+    "TDD-IMPL-0037-003",
+    "TDD-IMPL-0037-004"
+  ],
   "open_questions": [],
-  "blockers": [],
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -261,7 +282,9 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_impl_0037_phase_6_status_migration_atom"
+    "run_impl_0037_status_migration_contract_worker",
+    "review_impl_0037_status_migration_contract_atom",
+    "verify_impl_0037_status_migration_contract"
   ],
   "durability_level": "source_controlled"
 }

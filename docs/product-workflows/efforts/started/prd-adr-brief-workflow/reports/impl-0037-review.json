@@ -1,0 +1,38 @@
+{
+  "schema_version": "idiom.review_report.v1.fixture",
+  "task_id": "impl-0037-phase-6-status-migration-contract",
+  "effort_id": "prd-adr-brief-workflow",
+  "reviewer": {
+    "agent_id": "codex-gpt-review-impl-0037",
+    "agent_path": null,
+    "model": "gpt-5.4",
+    "reasoning_effort": "medium",
+    "independent_from_implementor": true
+  },
+  "status": "pending",
+  "findings": [],
+  "checks": {
+    "stable_effort_id_preserved": "pending",
+    "index_and_workflow_state_plan": "pending",
+    "invalid_bucket_and_path_fail_closed": "pending",
+    "no_folder_move_or_dispatch": "pending",
+    "cli_json_and_text_contract_if_added": "pending"
+  },
+  "reviewed_at": "",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"phase 6 status folder migration effort index stable effort id product workflow started closed unstarted deterministic no dispatch\",\"mode\":\"plan\",\"limit\":12}'",
+    "idiom tool context_query --input '{\"query\":\"product workflow status migration effort index stable effort id folder_path prior_paths workflow_state status_bucket transition no dispatch\",\"resolution\":\"symbol\",\"limit\":12}'",
+    "go test ./internal/productworkflow -run TestProductStatusMigration -count=1",
+    "go test ./cmd/idiom -run 'TestProduct.*StatusMigration|TestProductEfforts' -count=1",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go test ./...",
+    "JSON/JSONL validation for durable workflow artifacts",
+    "privacy secret-pattern scan over durable effort artifacts",
+    "git diff --check"
+  ],
+  "residual_risk": "pending review",
+  "created_at": "2026-05-18T21:30:00Z"
+}

@@ -437,6 +437,42 @@
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0037-001",
+      "type": "contract",
+      "behavior": "The product workflow can produce a deterministic status-migration plan that preserves stable effort_id identity, computes source/target status folders, records prior paths, and updates workflow_state/index/event payloads without performing filesystem moves.",
+      "owner": "internal/productworkflow/migration_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductStatusMigration -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0037-002",
+      "type": "contract",
+      "behavior": "Status migration planning fails closed for invalid source or target status buckets, inconsistent current_state/status_bucket pairs, duplicate or missing effort index entries, and unsafe or traversal-prone folder paths.",
+      "owner": "internal/productworkflow/migration_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductStatusMigration -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0037-003",
+      "type": "acceptance",
+      "behavior": "If a CLI surface is added, it emits JSON and human-readable migration-plan output with parity for effort_id, source/target bucket, relative source/target paths, prior paths, planned event type, and typed blockers while remaining read-only.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run 'TestProduct.*StatusMigration|TestProductEfforts' -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0037-004",
+      "type": "audit",
+      "behavior": "The atom records C2 GPT Codex worker/reviewer selection, Idiom discovery evidence, focused/full verification, and privacy-safe durable reports without storing raw prompts, transcripts, file bodies, secrets, generated briefs, customer-identifying data, or TUI transcript bodies.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0037-review.json",
+      "command": "privacy secret-pattern scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

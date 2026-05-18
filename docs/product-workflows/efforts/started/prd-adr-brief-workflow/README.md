@@ -7,12 +7,12 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0036-phase-6-effort-browser-cli`
-- Active atom: next Phase 6 slice pending planning
+- Active atom: `impl-0037-phase-6-status-migration-contract`
 - Status bucket: `started`
 - Current phase: `phase-6-operator-continuation`
-- Context pack: `8daf2b7bf7efceb0`
+- Context pack: `5636955570c7b36d`
 - Coverage tier: `unit`
-- Blocker status: none for Atom 36; next Phase 6 slice planning pending
+- Blocker status: Atom 37 implementation, verification, review, and investigation pending
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
 - Atom 10 product audit command: all TDD obligations satisfied, 9 audit tests pass, product lint unchanged
 - Atom 11 PRD audit hard checks: all TDD obligations satisfied; DS4-through-Codex
@@ -205,13 +205,21 @@ This effort is the durable implementation state for delivering
   repair, full verification, independent GPT-5.4 review, and review repairs.
   No workflow mutation, status-folder migration, model execution, lane dispatch,
   or broad TUI behavior was added.
+- Atom 37 is planned as a C2 Phase 6 operator-continuation slice. It should add
+  deterministic status-migration planning contracts that preserve stable
+  `effort_id` identity across `unstarted`, `started`, and `closed` folders,
+  update workflow-state/index/event payloads, record prior paths, and fail
+  closed for invalid buckets or unsafe paths. Keep actual folder moves, lane
+  dispatch, model execution, `.idiom` runtime mutation, and broad TUI behavior
+  outside the atom.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 36 closeout. These
+The workflow implementation remains in progress after Atom 36 closeout and Atom
+37 planning. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
@@ -448,10 +456,8 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 6 atom, likely
-`impl-0037-phase-6-status-migration-contract`. Keep it focused on deterministic
-status-folder migration and effort-index preservation, or explicitly choose the
-smaller CLI/TUI handoff fixture if discovery shows migration is too wide for the
-next atom. Use Idiom discovery first, select the GPT Codex worker by complexity,
-and keep lane dispatch, model execution, `.idiom` runtime mutation, and broad
-TUI interaction behavior out of the slice.
+Run the planned C2 GPT Codex worker for
+`impl-0037-phase-6-status-migration-contract`. Keep the slice focused on
+deterministic status-migration planning contracts and stable effort-index
+preservation. Do not move effort folders, dispatch lanes, execute models, mutate
+`.idiom` runtime state, or add broad TUI interaction behavior in this atom.
