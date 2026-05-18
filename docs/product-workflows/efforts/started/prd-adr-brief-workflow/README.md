@@ -7,10 +7,10 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0032-phase-5-obsidian-parity-check`
-- Active atom: none; next valid action is `plan_phase_5_human_readable_cli_coverage_atom`
+- Active atom: `impl-0033-phase-5-human-readable-cli-coverage`
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
-- Context pack: `688124fae36b08eb`
+- Context pack: `7ba9bd95a3f2d29d`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -158,6 +158,13 @@ This effort is the durable implementation state for delivering
   post-closeout checklist drift, scoped repo/effort reads, and typed
   privacy-safe findings. Review repairs ensured explicit no-change rationale
   text is honored and ancestor-directory Obsidian files are not read.
+- Atom 33 is planned as the next Phase 5 execution-feedback slice. It should
+  harden human-readable output coverage for ready operator-facing product
+  commands, especially actionable failure text, typed finding/blocker identity,
+  and next-valid-action text where the JSON surface already exposes it. Keep
+  lane dispatch, model execution, `.idiom` runtime mutation, evidence export
+  generation, ranker-learning promotion, and raw prompt/transcript/file-body
+  output outside the atom.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -398,4 +405,8 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 5 human-readable CLI coverage atom. Keep the slice focused on operator-facing product command text output, actionable failure text, and next-valid-action coverage; keep lane dispatch, `.idiom` runtime mutation, evidence export generation, and ranker-learning promotion outside the atom.
+Start `impl-0033-phase-5-human-readable-cli-coverage` with the planned C2 GPT
+Codex worker. Keep the slice focused on operator-facing product command text
+output, actionable failure text, and next-valid-action coverage; keep lane
+dispatch, `.idiom` runtime mutation, evidence export generation, and
+ranker-learning promotion outside the atom.

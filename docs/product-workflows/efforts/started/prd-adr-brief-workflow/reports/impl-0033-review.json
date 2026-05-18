@@ -1,0 +1,26 @@
+{
+  "schema_version": "idiom.review_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0033-phase-5-human-readable-cli-coverage",
+  "reviewer": {
+    "agent_id": "codex-gpt-review-impl-0033",
+    "agent_path": null,
+    "model": "gpt-5.4",
+    "reasoning_effort": "medium",
+    "independent_from_implementor": true
+  },
+  "status": "pending",
+  "findings": [],
+  "checks": {
+    "human_readable_output_contract": "pending",
+    "actionable_failure_text": "pending",
+    "next_valid_action_text": "pending",
+    "authority_boundaries": "pending",
+    "no_dispatch_or_runtime_mutation": "pending",
+    "privacy_secret_marker_regression": "pending"
+  },
+  "reviewed_at": null,
+  "commands_reviewed": [],
+  "residual_risk": "Implementation pending.",
+  "created_at": "2026-05-18T16:50:00Z"
+}

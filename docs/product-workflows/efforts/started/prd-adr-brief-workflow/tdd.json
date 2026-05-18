@@ -285,6 +285,42 @@
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0033-001",
+      "type": "contract",
+      "behavior": "Ready product workflow commands have deterministic human-readable output coverage for pass and failure paths, including status labels, typed finding or blocker identity, and bounded next-valid-action text where the JSON surface exposes it.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProduct.*Text",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0033-002",
+      "type": "acceptance",
+      "behavior": "Operator-facing product text output for lint, audit, status, research, PRD, ADR, TDD, brief, and feedback surfaces remains actionable without requiring JSON parsing, and failure text names the next valid action or typed remediation anchor when available.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProduct.*NextAction",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0033-003",
+      "type": "contract",
+      "behavior": "Human-readable output coverage preserves authority boundaries and privacy: it reports summaries and typed identifiers only, and does not dispatch lanes, execute models, mutate .idiom runtime state, write evidence exports, promote ranker learning, or print raw prompts/transcripts/file bodies/secrets/generated brief bodies.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProduct.*Text",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0033-004",
+      "type": "audit",
+      "behavior": "The atom records GPT Codex implementor/reviewer selection, Idiom discovery evidence, focused text-output verification, and privacy-safe durable reports without storing raw prompts/transcripts/file bodies/secrets/generated brief bodies/customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0033-review.json",
+      "command": "privacy secret-value scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

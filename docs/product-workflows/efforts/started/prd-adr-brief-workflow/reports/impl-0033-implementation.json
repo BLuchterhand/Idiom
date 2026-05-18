@@ -1,0 +1,47 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0033-phase-5-human-readable-cli-coverage",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0033",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.3-codex",
+  "completed_at": null,
+  "complexity_tier": "C2",
+  "scope_statement": "Planned human-readable CLI coverage for ready product workflow commands, focusing on actionable failure text, typed finding or blocker identity, and next-valid-action text where available.",
+  "code_changes": false,
+  "changed_paths": [],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [
+      "idiom tool context_pack --input {\"task\":\"phase 5 human-readable CLI coverage operator-facing product commands actionable failure text next valid action coverage\",\"mode\":\"plan\",\"limit\":12}",
+      "idiom tool context_query --input {\"query\":\"product command human-readable text output actionable failure text next valid actions status lint audit research prd adr tdd brief feedback tests\",\"resolution\":\"symbol\",\"limit\":12}",
+      "go test ./cmd/idiom -run TestProduct.*Text -count=1",
+      "go test ./cmd/idiom -run TestProduct.*NextAction -count=1",
+      "go test ./internal/productworkflow -run TestNextActions -count=1",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "privacy secret-pattern scan over durable effort artifacts",
+      "git diff --check"
+    ],
+    "status": "implementation_pending"
+  },
+  "discovery_evidence": [
+    "context_pack:7ba9bd95a3f2d29d",
+    "context_query:product command human-readable text output actionable failure text next valid actions status lint audit research prd adr tdd brief feedback tests"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0033",
+  "commit_hash": null,
+  "planning_checkpoint_commit": null,
+  "privacy_note": "planning report stores only scope, model assignment, command names, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ]
+}

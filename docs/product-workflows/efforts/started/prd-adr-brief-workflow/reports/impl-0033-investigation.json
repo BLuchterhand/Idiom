@@ -1,0 +1,50 @@
+{
+  "schema_version": "idiom.investigation_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0033-phase-5-human-readable-cli-coverage",
+  "status": "blocked",
+  "created_at": "2026-05-18T16:50:00Z",
+  "completed_at": null,
+  "scope": {
+    "changed_paths": [],
+    "forbidden_paths_touched": [],
+    "human_readable_cli_coverage_updated": false,
+    "durable_state_mutation_during_command": false,
+    "dispatch_or_model_execution_added": false
+  },
+  "tests": {
+    "status": "pending",
+    "commands": []
+  },
+  "coverage": {
+    "tdd_obligations_satisfied": [],
+    "human_readable_cli_coverage_status": "pending"
+  },
+  "traceability": {
+    "context_pack_ids": [
+      "7ba9bd95a3f2d29d"
+    ],
+    "implementation_commit": null,
+    "product_lint_status": "pending",
+    "product_audit_status": "pending"
+  },
+  "privacy_audit": {
+    "raw_prompts_stored": false,
+    "transcripts_stored": false,
+    "file_bodies_stored": false,
+    "secrets_stored": false,
+    "customer_identifying_data_stored": false,
+    "generated_brief_bodies_stored_in_durable_reports": false,
+    "secret_pattern_scan_status": "pending"
+  },
+  "reviewer_findings": [],
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
+  "next_valid_action": "start_impl_0033_human_readable_cli_coverage",
+  "commit_hash": null,
+  "implementation_commit": null
+}

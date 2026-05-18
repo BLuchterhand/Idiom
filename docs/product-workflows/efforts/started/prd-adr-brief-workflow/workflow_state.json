@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0032-phase-5-obsidian-parity-check",
+  "task_id": "impl-0033-phase-5-human-readable-cli-coverage",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T16:35:00Z",
-  "state_revision": 97,
-  "last_event_id": "evt-0281",
-  "workspace_fingerprint": "idiom@6b2472c",
+  "updated_at": "2026-05-18T16:50:00Z",
+  "state_revision": 99,
+  "last_event_id": "evt-0283",
+  "workspace_fingerprint": "idiom@62ea6e7",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -33,7 +33,7 @@
     "release_evidence": "references/release_evidence_impl_0030.json"
   },
   "context": {
-    "context_pack_id": "688124fae36b08eb",
+    "context_pack_id": "7ba9bd95a3f2d29d",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -43,6 +43,8 @@
       "internal/productworkflow/status.go",
       "internal/productworkflow/transition.go",
       "internal/productworkflow/metrics.go",
+      "cmd/idiom/product_workflow.go",
+      "cmd/idiom/product_workflow_test.go",
       "internal/workspace/harness_audit.go",
       "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md",
       "docs/obsidian/22 - Product Workflow ROADMAP.md",
@@ -55,7 +57,7 @@
       },
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 688124fae36b08eb reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to Obsidian parity planning scope."
+        "description": "Context pack 7ba9bd95a3f2d29d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to human-readable CLI coverage planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -127,6 +129,11 @@
         "gate": "obsidian_parity_check",
         "status": "passed",
         "checked_at": "2026-05-18T16:35:00Z"
+      },
+      {
+        "gate": "human_readable_cli_coverage_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T16:50:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -144,10 +151,15 @@
       "Atom 30 complete: idiom product feedback reconciliation consumes passing feedback summaries and writes deterministic reconciled workflow-state output with bounded artifact/evidence links, while preserving dispatch, .idiom runtime mutation, evidence export generation, and ranker-learning boundaries.",
       "Atom 31 complete: product audit and product status expose deterministic product-workflow metrics for progress, gates, blockers, TDD, ledger, reports, artifacts, and evidence-link counts without dispatching lanes, mutating .idiom runtime state, writing evidence exports, promoting ranker learning, or enforcing Obsidian parity.",
       "Atom 32 complete: product lint/audit/status now include deterministic Obsidian parity checks for stale proposal/roadmap status, with an explicit no-change rationale path and fail-closed missing-note behavior.",
-      "Next Phase 5 slice after Obsidian parity: add human-readable CLI output coverage for operator-facing product commands."
+      "Atom 33 planned: add human-readable CLI coverage for operator-facing product workflow commands, especially actionable failure text, typed finding identity, and next-valid-action text."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0033-001",
+    "TDD-IMPL-0033-002",
+    "TDD-IMPL-0033-003",
+    "TDD-IMPL-0033-004"
+  ],
   "open_questions": [],
   "blockers": [],
   "privacy": {
@@ -178,7 +190,9 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_5_human_readable_cli_coverage_atom",
+    "start_impl_0033_human_readable_cli_coverage",
+    "run_c2_codex_gpt_worker_impl_0033",
+    "review_impl_0033_with_codex_gpt_review",
     "track_phase_5_ranker_learning_evidence_adapter_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
