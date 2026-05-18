@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0029-phase-5-execution-feedback-validator",
+  "task_id": "impl-0029-phase-5-execution-feedback-linker",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,

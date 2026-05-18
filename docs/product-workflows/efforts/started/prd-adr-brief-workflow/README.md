@@ -356,7 +356,9 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 4 atom for brief generation. Keep the slice deterministic:
-consume accepted PRD/ADR/TDD artifacts plus a passing coverage-gate result,
-produce a bounded brief artifact or preview, and do not dispatch work or execute
-models.
+Implement the Phase 5 execution-feedback linker atom. Keep the slice
+deterministic: link explicit lane/progress/evidence references into a
+privacy-safe workflow feedback summary with changed paths, verification status,
+brief lint and atom intake outcomes, TDD obligation references, and next valid
+actions. Do not dispatch lanes, mutate `.idiom` runtime state, write evidence
+exports, or promote ranker learning in this atom.

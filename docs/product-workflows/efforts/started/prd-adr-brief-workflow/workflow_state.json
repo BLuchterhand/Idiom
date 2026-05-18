@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0029-phase-5-execution-feedback-validator",
+  "task_id": "impl-0029-phase-5-execution-feedback-linker",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T14:36:00Z",
-  "state_revision": 83,
+  "updated_at": "2026-05-18T14:38:00Z",
+  "state_revision": 84,
   "last_event_id": "evt-0247",
-  "workspace_fingerprint": "idiom@a515c4a",
+  "workspace_fingerprint": "idiom@a6724dc",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -30,7 +30,7 @@
     "adr_prompt": "adrs/adr.prompt.md"
   },
   "context": {
-    "context_pack_id": "2249e5eafb7503fe",
+    "context_pack_id": "a68211353c1c7175",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -49,7 +49,7 @@
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 2249e5eafb7503fe reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to the Phase 5 execution-feedback validator planning scope."
+        "description": "Context pack a68211353c1c7175 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to the Phase 5 execution-feedback linker planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -83,7 +83,7 @@
         "checked_at": "2026-05-18T14:35:00Z"
       },
       {
-        "gate": "execution_feedback_validator_planned",
+        "gate": "execution_feedback_linker_planned",
         "status": "passed",
         "checked_at": "2026-05-18T14:35:00Z"
       }
@@ -99,7 +99,7 @@
       "Deferred follow-up: continue remaining design-doc product surfaces after Phase 1 hardening, including research profiles, generation, acceptance/supersession, brief dispatch, coverage gates, feedback, and operator surfaces.",
       "Phase 4 brief generation is complete: idiom product brief --render creates lint-verified implementation briefs from accepted PRD/ADR/TDD artifacts and a passing coverage gate without dispatching work or executing models.",
       "Deferred follow-up: make coverage gate reuse product lint/audit validators or run them as blocking preconditions before brief generation.",
-      "Atom 29 planned: add deterministic execution-feedback record validation before any state mutation or evidence export wiring."
+      "Atom 29 planned: add deterministic execution feedback linking from explicit lane/progress/evidence references into privacy-safe workflow feedback summaries before evidence export or ranker-learning promotion."
     ]
   },
   "open_obligations": [],
@@ -130,10 +130,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T14:35:00Z",
+  "last_reconciliation_at": "2026-05-18T14:38:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "implement_phase_5_execution_feedback_validator_atom",
+    "implement_phase_5_execution_feedback_linker_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"
