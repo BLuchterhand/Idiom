@@ -187,6 +187,10 @@ Other useful subcommands:
   recovery packets referenced from `workflow_state.artifact_paths`, validates
   recovery reconciliation artifacts before closing packets, and blocks normal
   workflow dispatch while a recovery packet is open.
+  Product and release evidence exports also include metadata-only recovery
+  rollups from `.idiom/recovery`, including failure-class, next-action,
+  reconciliation, open/recovered/blocked, blocker, and release-impact counts
+  without prompt, transcript, or file-body content.
   See [docs/sidecar-recipes.md](docs/sidecar-recipes.md) for external caller
   recipes covering shell/CI scripts, coding-agent harnesses, local/private-code
   users, and the replayed discovery-profile smoke transcript.
@@ -213,9 +217,9 @@ Other useful subcommands:
   clean fixture when you want the smoke to remove generated local context state.
 - `idiom product-evidence export --project-root .` — local P7.11 go/no-go
   evidence export. It summarizes activation, retained use, integration,
-  benchmark, audit, learning, release-gate linkage, and client-classification
-  coverage using IDs, hashes, counts, and statuses instead of prompt bodies,
-  file bodies, private paths, or secrets. See
+  benchmark, audit, learning, recovery, release-gate linkage, and
+  client-classification coverage using IDs, hashes, counts, and statuses
+  instead of prompt bodies, file bodies, private paths, or secrets. See
   [docs/product-evidence-export.md](docs/product-evidence-export.md).
 - `idiom release evidence --project-root . --output .idiom/release/bundle.json` —
   P9.1 release evidence bundle. It compares baseline/current command artifacts

@@ -3,7 +3,10 @@
 `idiom product-evidence export` writes a local P7.11 product-evidence report for
 go/no-go review. The export is evidence-only: it reports contracts, IDs,
 hashes, counts, statuses, class coverage, redaction status, limitations, and
-release-gate linkage. It does not prescribe the caller's next action.
+release-gate linkage. It also includes a metadata-only recovery rollup from
+local `.idiom/recovery` artifacts so review can see open, recovered, blocked,
+and malformed recovery state without loading raw prompts, transcripts, or file
+bodies. It does not prescribe the caller's next action.
 
 Generate a local export:
 
@@ -47,3 +50,8 @@ Privacy defaults:
   records when the P8.6 replay fixture is present and executable. The export
   includes proof IDs, counts, statuses, release-gate linkage, and metadata-only
   limitations, not raw protocol output or file bodies.
+- Recovery evidence is represented by counts, failure classes, next actions,
+  reconciliation counts, release-impact text, blockers, artifact IDs, and
+  aggregate hashes. Open packets downgrade the export to partial when it would
+  otherwise pass; malformed, missing, or stale recovery artifacts block the
+  export.

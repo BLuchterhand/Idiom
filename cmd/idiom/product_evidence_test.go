@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"idiom/internal/comprehension"
+	"idiom/internal/recovery"
 )
 
 func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing.T) {
@@ -118,6 +119,55 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 		}
 	}
 	assertP711CoverageForEveryClassification(t, reparsed.ClassCoverage, 1)
+}
+
+func TestProductEvidenceSummarizesRecoveryRollups(t *testing.T) {
+	root := t.TempDir()
+	packet := stageProductEvidenceRecoveryPacket(t, root, "open-recovery")
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	body, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal product evidence: %v", err)
+	}
+	if report.Recovery.Status != "partial" ||
+		report.Recovery.FailureRecordCount != 1 ||
+		report.Recovery.DecompositionPacketCount != 1 ||
+		report.Recovery.OpenPacketCount != 1 ||
+		report.Recovery.CandidateAtomCount != len(packet.CandidateAtoms) ||
+		report.Recovery.RemainingAtomCount != len(packet.CandidateAtoms) {
+		t.Fatalf("expected open recovery rollup, got %#v", report.Recovery)
+	}
+	if report.Recovery.RedactionStatus != "redacted" || !report.Recovery.MetadataOnly || report.Recovery.ForbiddenFieldCheck != "pass" {
+		t.Fatalf("recovery rollup should remain metadata-only/redacted, got %#v", report.Recovery)
+	}
+	if report.Recovery.FailureClasses[recovery.FailureClassExecutorEdit] != 1 ||
+		report.Recovery.NextActions[recovery.NextActionReviewDecomposition] != 1 {
+		t.Fatalf("recovery rollup missing failure class or next action: %#v", report.Recovery)
+	}
+	if ref := p711TestSourceRef(report.SourceReferences, "recovery_artifacts"); ref.Status != "present" {
+		t.Fatalf("recovery source reference missing: %#v", report.SourceReferences)
+	}
+	if strings.Contains(string(body), "executor failed while editing a private branch") {
+		t.Fatalf("product evidence leaked recovery failure summary: %s", string(body))
+	}
+}
+
+func TestProductEvidenceBlocksInvalidRecoveryEvidence(t *testing.T) {
+	root := t.TempDir()
+	packet := stageProductEvidenceRecoveryPacket(t, root, "stale-reconciliation")
+	reconciliationPath := filepath.Join(root, ".idiom", "recovery", packet.FailureID, "reconciliation.json")
+	if err := os.WriteFile(reconciliationPath, []byte(`{"schema_version":"wrong"}`), 0o644); err != nil {
+		t.Fatalf("write invalid reconciliation: %v", err)
+	}
+
+	report := buildProductEvidenceExportReport(root, laneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	if report.Status != "blocked" || report.Recovery.Status != "blocked" || report.Recovery.MalformedArtifactCount != 1 {
+		t.Fatalf("invalid recovery reconciliation should block product evidence, got status=%q recovery=%#v", report.Status, report.Recovery)
+	}
+	if !p711TestBlockerContains(report.Recovery.Blockers, "reconciliation_decode_failed") {
+		t.Fatalf("expected invalid reconciliation blocker, got %#v", report.Recovery.Blockers)
+	}
 }
 
 func TestP711ProductEvidenceKeepsActivationUsefulWithoutOverclaimingP96(t *testing.T) {
@@ -2523,6 +2573,66 @@ func p711TestBlockerContains(blockers []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func stageProductEvidenceRecoveryPacket(t *testing.T, root string, sessionID string) recovery.DecompositionPacket {
+	t.Helper()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         sessionID,
+		ProgressStatePath: ".idiom/plan-execute/" + sessionID + "/state.json",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "executor failed while editing a private branch",
+		RequiredEditPaths: []string{"internal/app/recovery_fixture.go"},
+		AllowedEditPaths:  []string{"internal/app/recovery_fixture.go"},
+		ChangedPaths:      []string{"internal/app/recovery_fixture.go"},
+		TotalEdits:        1,
+	}, now)
+	if err != nil {
+		t.Fatalf("write recovery failure record: %v", err)
+	}
+	packet, _, err := recovery.WriteDecompositionPacketForFailureRecord(root, record, now)
+	if err != nil {
+		t.Fatalf("write recovery packet: %v", err)
+	}
+	if len(packet.CandidateAtoms) == 0 {
+		t.Fatalf("expected candidate atom in recovery packet: %#v", packet)
+	}
+	return packet
+}
+
+func stageProductEvidenceRecoveredPacket(t *testing.T, root string, sessionID string) recovery.DecompositionPacket {
+	t.Helper()
+	packet := stageProductEvidenceRecoveryPacket(t, root, sessionID)
+	var completed []string
+	var commands []recovery.ReconciliationCommandResult
+	for _, atom := range packet.CandidateAtoms {
+		completed = append(completed, atom.ID)
+		for _, command := range atom.RequiredTests {
+			commands = append(commands, recovery.ReconciliationCommandResult{
+				Command:  command,
+				Status:   recovery.ReconciliationVerificationPass,
+				ExitCode: 0,
+			})
+		}
+	}
+	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
+		Now:              time.Date(2026, 5, 18, 12, 5, 0, 0, time.UTC),
+		CompletedAtomIDs: completed,
+		Verification: recovery.ReconciliationVerification{
+			Status:   recovery.ReconciliationVerificationPass,
+			Commands: commands,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build recovery reconciliation: %v", err)
+	}
+	if _, _, err := recovery.WriteReconciliation(root, reconciliation, ""); err != nil {
+		t.Fatalf("write recovery reconciliation: %v", err)
+	}
+	return packet
 }
 
 func assertP811IntegrationNeedsEvidence(t *testing.T, report productEvidenceExportReport) {

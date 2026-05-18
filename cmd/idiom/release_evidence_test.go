@@ -111,6 +111,47 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 	}
 }
 
+func TestReleaseEvidenceSummarizesOpenRecoveryRollup(t *testing.T) {
+	root := t.TempDir()
+	stageProductEvidenceRecoveryPacket(t, root, "release-open-recovery")
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot: root,
+		CurrentDir:  "current",
+	})
+	if report.Recovery.Status != "partial" ||
+		report.Recovery.OpenPacketCount != 1 ||
+		report.Recovery.CandidateAtomCount == 0 ||
+		report.Recovery.RemainingAtomCount == 0 {
+		t.Fatalf("expected open recovery rollup in release evidence, got %#v", report.Recovery)
+	}
+	if report.Status == "pass" || report.Status == "blocked" {
+		t.Fatalf("open recovery should be release-impact partial evidence, got status=%q blockers=%#v", report.Status, report.Blockers)
+	}
+	if !releaseEvidenceHasBlockerReason(report.Blockers, "recovery", "open recovery packets") {
+		t.Fatalf("release blockers should include open recovery impact, got %#v", report.Blockers)
+	}
+}
+
+func TestReleaseEvidenceRecoveredRollupDoesNotAddRecoveryBlocker(t *testing.T) {
+	root := t.TempDir()
+	stageProductEvidenceRecoveredPacket(t, root, "release-recovered")
+
+	report := buildReleaseEvidenceBundle(root, laneHistorySummary{Total: 1}, releaseEvidenceOptions{
+		ProjectRoot: root,
+		CurrentDir:  "current",
+	})
+	if report.Recovery.Status != "pass" ||
+		report.Recovery.RecoveredPacketCount != 1 ||
+		report.Recovery.OpenPacketCount != 0 ||
+		report.Recovery.RemainingAtomCount != 0 {
+		t.Fatalf("expected recovered recovery rollup in release evidence, got %#v", report.Recovery)
+	}
+	if releaseEvidenceHasBlocker(report.Blockers, "recovery") {
+		t.Fatalf("recovered packet should not add a release recovery blocker: %#v", report.Blockers)
+	}
+}
+
 func TestP911ReleaseEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)

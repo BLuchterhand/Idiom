@@ -15,10 +15,10 @@ packet, promote one candidate recovery atom into a normal brief after brief
 lint, atom intake, and recovery scope gates pass, and reconcile completed atoms
 back to the original packet. Promotion is deliberately not dispatch authority;
 the promoted brief still enters the usual lane workflow. Product/operator
-status and audit-watch now project recovery state from bounded artifacts and
-telemetry events. Remaining extensions are TUI presenters, deeper residual-work
-evidence, product/release evidence rollups, ranker learning inputs, and
-non-plan-execute adapters.
+status, audit-watch, product-evidence, and release-evidence now project
+recovery state from bounded artifacts and telemetry events. Remaining
+extensions are TUI presenters, deeper residual-work evidence, ranker learning
+inputs, and non-plan-execute adapters.
 
 Verified adjacent implementation:
 
@@ -62,10 +62,17 @@ Verified adjacent implementation:
   events as audit-watch triggers, summarizes failure classes, candidate atom
   counts, next valid actions, and artifact paths, and keeps the packet
   metadata-only.
+- `cmd/idiom/product_evidence.go` and `cmd/idiom/release_evidence.go`
+  summarize local `.idiom/recovery` artifacts with metadata-only counts,
+  failure classes, next actions, reconciliation counts, release impact, and
+  blockers. Open packets downgrade release readiness to partial evidence;
+  malformed, missing, or stale recovery artifacts block the export without
+  storing prompt, transcript, or file-body content.
 
 Those pieces now cover the operator-facing plan-execute loop. The remaining
-design work is to broaden adapters, add richer reconciliation evidence rollups,
-and keep the original failure visible without letting the model loop.
+design work is to broaden adapters, deepen residual-work evidence, feed
+deterministic recovered outcomes into learning, and keep the original failure
+visible without letting the model loop.
 
 ## Problem
 
@@ -312,7 +319,7 @@ not-applicable for a given failure class.
 | `harness_audit` and `harness_feedback` | Report recovery coverage, repeated failure classes, malformed recovery packets, loop risk, and gaps in tool/event correlation. |
 | `idiom audit watch` | Treat recovery failure-record and decomposition-packet events as first-class triggers; summarize failure classes, candidate atom counts, next valid actions, and artifact paths without raw transcripts. |
 | Product workflow commands | Link recovery packets through `workflow_state.artifact_paths.recovery_packet`; product status and operator status expose packet status, gates, required tests, product links, blockers, reconciliation counts, and a non-dispatchable recovery action while normal dispatch remains blocked until the packet is closed by a valid reconciliation artifact with passing required-test evidence. |
-| Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. |
+| Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. Landed for local `.idiom/recovery` artifacts with metadata-only rollups. |
 | `idiom ranker` | Accept only deterministic, verified recovery outcomes as learning input; record whether recovery improved localization or packet quality. |
 | Queue/backend/local-ops/doctor | Classify readiness, queue, backend, timeout, or capacity failures separately from implementation failures so decomposition does not hide environment problems. |
 | TUI/prompt dispatch | Render the same status and next-action model as CLI; do not infer recovery state from transcript prose. |
@@ -459,6 +466,10 @@ it moved into a recovery state, not like it vanished into a separate tool.
 - Status: product/operator status now projects recovery packets referenced from
   durable workflow state, and audit-watch packets now include a bounded
   `recovery` summary plus `failure_recovery` findings.
+- Status: product-evidence and release-evidence now include metadata-only
+  recovery rollups with open/recovered/blocked counts, failure classes,
+  next-action counts, reconciliation counts, release impact, and privacy-safe
+  artifact IDs.
 - Expose read-only failure records and packets through `idiom tool` and MCP.
 - Feed recurring failure classes into eval fixtures, harness audit, and ranker
   learning only through deterministic evidence adapters.

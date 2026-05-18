@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"cmp"
 	"slices"
 	"strconv"
 	"strings"
@@ -58,6 +58,7 @@ type releaseEvidenceBundle struct {
 	ActivationOnboarding releaseEvidenceActivationSection    `json:"activation_onboarding"`
 	SidecarIntegration   releaseEvidenceSidecarSection       `json:"sidecar_integration"`
 	ProductEvidence      releaseEvidenceProductSection       `json:"product_evidence"`
+	Recovery             productEvidenceRecovery             `json:"recovery"`
 	ClientReadiness      []releaseEvidenceClientReadiness    `json:"client_readiness"`
 	ReleaseReadiness     []releaseEvidenceGateReadiness      `json:"release_readiness"`
 	Blockers             []releaseEvidenceBlocker            `json:"blockers,omitempty"`
@@ -341,6 +342,8 @@ func runReleaseEvidence(args []string, stdout io.Writer, stderr io.Writer, rec *
 		"blocker_count":    len(report.Blockers),
 		"privacy_status":   report.Privacy.ForbiddenFieldCheck,
 		"product_status":   report.ProductEvidence.Status,
+		"recovery_status":  report.Recovery.Status,
+		"recovery_open":    report.Recovery.OpenPacketCount,
 		"sidecar_status":   report.SidecarIntegration.Status,
 		"benchmark_status": report.BenchmarkLocalOps.Status,
 	})
@@ -397,6 +400,7 @@ func buildReleaseEvidenceBundle(root string, laneSummary laneHistorySummary, opt
 			SourceReferences:   product.SourceReferences,
 			ReleaseGateLinkage: releaseGateLinkage,
 		},
+		Recovery:         product.Recovery,
 		ClientReadiness:  clientReadiness,
 		ReleaseReadiness: releaseReadinessFromProduct(releaseGateLinkage, clientReadiness, activation),
 		Limitations: []string{
@@ -754,6 +758,12 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 	if report.ProductEvidence.Status != "pass" {
 		blockers = append(blockers, releaseEvidenceBlocker{Section: "product_evidence", Reason: "product-evidence export is not complete", Evidence: report.ProductEvidence.Status})
 	}
+	switch report.Recovery.Status {
+	case "blocked":
+		blockers = append(blockers, releaseEvidenceBlocker{Section: "recovery", Reason: "recovery evidence is blocked by malformed, missing, or stale artifacts", Evidence: report.Recovery.ReleaseImpact})
+	case "partial":
+		blockers = append(blockers, releaseEvidenceBlocker{Section: "recovery", Reason: "open recovery packets remain release-impact evidence", Evidence: report.Recovery.ReleaseImpact})
+	}
 	for _, row := range report.ClientReadiness {
 		if len(row.MissingEvidence) > 0 {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "client_readiness", Reason: "classification required evidence missing", Evidence: row.Classification})
@@ -787,7 +797,7 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 }
 
 func releaseEvidenceStatus(report releaseEvidenceBundle) string {
-	if report.Privacy.ForbiddenFieldCheck != "pass" || report.ProductEvidence.Status == "blocked" {
+	if report.Privacy.ForbiddenFieldCheck != "pass" || report.ProductEvidence.Status == "blocked" || report.Recovery.Status == "blocked" {
 		return "blocked"
 	}
 	if len(report.Blockers) > 0 {

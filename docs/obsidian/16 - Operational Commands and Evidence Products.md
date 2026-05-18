@@ -116,6 +116,13 @@ artifact closes the blocker only when its packet digest, completed/remaining
 atom manifest, and required-test command results validate against the current
 packet.
 
+Product and release evidence exports also scan local `.idiom/recovery`
+artifacts. They report metadata-only recovery counts, failure classes, next
+actions, reconciliation counts, open/recovered/blocked packet counts,
+release-impact status, and blockers. Open packets make recovery visible as
+partial release-impact evidence; malformed, missing, or stale recovery artifacts
+block the export without loading raw prompts, transcripts, or file bodies.
+
 Relevant JSON events include:
 
 - `idiom.plan_execute.resume_state_saved`
@@ -179,7 +186,7 @@ candidate atom counts, next valid actions, sessions, and artifact paths.
 
 `idiom product-evidence export` writes a local go/no-go report for product
 review. It reports contracts, IDs, hashes, counts, statuses, class coverage,
-redaction status, limitations, and release-gate linkage.
+redaction status, limitations, recovery rollups, and release-gate linkage.
 
 It should not include:
 

@@ -35,6 +35,7 @@ type productEvidenceExportReport struct {
 	SignalCompleteness  p711SignalCompleteness     `json:"signal_completeness"`
 	Signals             []p711SignalSummary        `json:"signals"`
 	ClassCoverage       []p711ClassCoverage        `json:"class_coverage"`
+	Recovery            productEvidenceRecovery    `json:"recovery"`
 	SourceReferences    []p711SourceReference      `json:"source_references"`
 	ReleaseGateLinkage  []p711ReleaseGateLinkage   `json:"release_gate_linkage"`
 	Limitations         []string                   `json:"limitations,omitempty"`
@@ -242,6 +243,8 @@ func runProductEvidenceExport(args []string, stdout io.Writer, stderr io.Writer,
 		"raw_file_body_captured":        report.Privacy.RawFileBodyCaptured,
 		"transcript_bodies_loaded":      report.LaneHistory.TranscriptBodiesLoaded,
 		"lane_history_prompt_included":  report.LaneHistory.PromptBodiesIncluded,
+		"recovery_status":               report.Recovery.Status,
+		"recovery_open":                 report.Recovery.OpenPacketCount,
 	})
 	return 0
 }
@@ -260,10 +263,12 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 	learning, learningRef := loadP711LearningSummary(root)
 	competitive, competitiveRef := loadP910CompetitiveBenchmarkEvidence(root, opts.BenchmarkReport)
 	packaging, packagingRef := loadP912PackagingSupportThesis(root)
+	recoverySummary, recoveryRef := loadProductEvidenceRecovery(root)
 	signals := buildP711Signals(localOps, records, integration, security, learning)
 	classCoverage := buildP711ClassCoverage(demos, security, integration, records)
 	completeness := summarizeP711Signals(signals)
 	status := p711ExportStatus(completeness)
+	status = productEvidenceStatusWithRecovery(status, recoverySummary.Status)
 	privacy := productEvidencePrivacy{
 		RedactionStatus:        "redacted",
 		ForbiddenFieldCheck:    "pass",
@@ -334,9 +339,11 @@ func buildProductEvidenceExportReport(root string, summary laneHistorySummary, o
 			learningRef,
 			competitiveRef,
 			packagingRef,
+			recoveryRef,
 		},
 		ReleaseGateLinkage: buildP711ReleaseGateLinkage(signals, classCoverage, localOps, records, p99, p910CompetitiveBenchmarkGate(competitive, competitiveRef), p911, packaging, packagingRef),
-		Limitations:        productEvidenceExportLimitations(integration),
+		Recovery:           recoverySummary,
+		Limitations:        productEvidenceExportLimitations(integration, recoverySummary),
 		Metadata: map[string]any{
 			"generated_by": "idiom product-evidence export",
 		},
@@ -352,11 +359,29 @@ func productEvidenceAvailabilityGate(available bool) string {
 	return "not_available"
 }
 
-func productEvidenceExportLimitations(integration p711IntegrationProofSet) []string {
+func productEvidenceStatusWithRecovery(status string, recoveryStatus string) string {
+	switch recoveryStatus {
+	case "blocked":
+		return "blocked"
+	case "partial":
+		if status == "pass" {
+			return "partial"
+		}
+	}
+	return status
+}
+
+func productEvidenceExportLimitations(integration p711IntegrationProofSet, recovery productEvidenceRecovery) []string {
 	limitations := []string{
 		"export summarizes bounded local metadata only",
 		"prompt bodies, file bodies, and transcript bodies are not loaded",
 		"retained-use and adoption signals are not claimed unless validation records are supplied",
+	}
+	switch recovery.Status {
+	case "partial":
+		limitations = append(limitations, "open recovery packets are release-impact evidence until reconciliation closes them")
+	case "blocked":
+		limitations = append(limitations, "recovery artifacts are malformed or stale; release impact is blocked until recovery evidence is repaired")
 	}
 	if p711MCPStdioParityPresent(integration) {
 		return append(limitations, "MCP resources are metadata-only; resource file bodies are not exported")

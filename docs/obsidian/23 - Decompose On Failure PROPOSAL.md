@@ -16,10 +16,10 @@ tags:
 > `idiom recover inspect`, `status`, `decompose`, `promote`, and `reconcile`
 > provide the operator-facing loop. Read-only `recovery_inspect` and
 > `recovery_status` are also exposed through `idiom tool`/MCP with the normal
-> sidecar envelope. Product/operator status and audit-watch now project bounded
-> recovery state. Promotion writes a normal gated brief; reconciliation closes
-> the packet only after packet-digest, atom-manifest, and required-test
-> evidence validation.
+> sidecar envelope. Product/operator status, audit-watch, product-evidence, and
+> release-evidence now project bounded recovery state. Promotion writes a
+> normal gated brief; reconciliation closes the packet only after packet-digest,
+> atom-manifest, and required-test evidence validation.
 >
 > Source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
@@ -63,8 +63,11 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] `idiom recover reconcile` runs completed atoms' required tests, records
   completed recovery atoms, and preserves the original failure through a
   validated reconciliation artifact.
-- [ ] TUI projections, deeper residual-work evidence, and non-plan-execute
-  adapters are not yet complete.
+- [x] `idiom product-evidence export` and `idiom release evidence` summarize
+  local recovery artifacts with metadata-only failure-class, next-action,
+  open/recovered/blocked, reconciliation, blocker, and release-impact counts.
+- [ ] TUI projections, deeper residual-work evidence, ranker-learning inputs,
+  and non-plan-execute adapters are not yet complete.
 
 ## Target Lifecycle
 
@@ -114,6 +117,10 @@ flowchart TD
   dispatchability, and one next valid action.
 - Audit-watch review packets include bounded recovery summaries and
   `failure_recovery` findings without raw transcripts.
+- Product and release evidence exports include bounded recovery rollups and
+  downgrade open recovery to release-impact evidence; malformed or stale
+  recovery artifacts block without exporting raw prompts, transcripts, or file
+  bodies.
 - Write/promote/reconcile recovery actions stay out of the sidecar discovery
   profile until a dedicated write-authorization contract exists.
 
