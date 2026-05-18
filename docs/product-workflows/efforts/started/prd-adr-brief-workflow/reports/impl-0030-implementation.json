@@ -27,7 +27,7 @@
   ],
   "reviewer_id": "codex-gpt-review-impl-0030",
   "commit_hash": null,
-  "planning_checkpoint_commit": null,
+  "planning_checkpoint_commit": "450c01c42f67f236c660643da3418fefed87c2a2",
   "privacy_note": "report stores only scope, model assignment, command names, commit hashes, and blocker state; it must not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
   "open_blockers": [
     "implementation_pending",
