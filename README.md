@@ -152,9 +152,18 @@ Other useful subcommands:
 - `idiom backend start | stop | status | list | proxy` — manage local
   LLM runners.
 - `idiom recover inspect --session <id> [--json]` — inspect the recovery
-  failure record for a failed `plan-execute` session. Failed plan-execute runs
-  now write `.idiom/recovery/<failure-id>/failure.json` automatically; inspect
-  is read-only and does not decompose, promote, or dispatch follow-up work.
+  failure record and classified partial state for a failed `plan-execute`
+  session.
+- `idiom recover status --packet <packet.json> [--json]` — inspect candidate
+  recovery atoms, product links, gates, and the next valid action from a
+  decomposition packet.
+- `idiom recover decompose --session <id> [--output <packet.json>] [--json]`
+  and `idiom recover promote --packet <packet.json> --atom <id> --output
+  <brief.md>` — rebuild a recovery packet or promote one candidate atom into a
+  normal gated brief. Failed plan-execute runs automatically write both
+  `.idiom/recovery/<failure-id>/failure.json` and
+  `.idiom/recovery/<failure-id>/packet.json`; promotion still does not dispatch
+  follow-up work.
 - `idiom tool schemas` — export built-in workspace tool schemas plus
   profile, side-effect, and policy metadata as JSON.
 - `idiom tool <name> --input '<json>'` — run one workspace tool and print JSON

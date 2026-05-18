@@ -82,12 +82,25 @@ schema version, session ID, prompt hash, prompt file, phase, status, required
 and allowed edit paths, plan path, `pack_id`, changed paths, executor evidence,
 source-sanity checks, and review-repair status.
 
+When a saved progress state is `failed`, plan-execute also writes recovery
+artifacts under `.idiom/recovery/<failure-id>/`: `failure.json` for the
+classified failure record and `packet.json` for candidate recovery atoms.
+Operators inspect or promote these artifacts through:
+
+```bash
+idiom recover inspect --session <session-id> --json
+idiom recover status --packet .idiom/recovery/<failure-id>/packet.json --json
+idiom recover promote --packet .idiom/recovery/<failure-id>/packet.json --atom recovery-001 --output briefs/recovery-001.md
+```
+
 Relevant JSON events include:
 
 - `idiom.plan_execute.resume_state_saved`
 - `idiom.plan_execute.resume_state_loaded`
 - `idiom.plan_execute.writer_route_decision`
 - `idiom.plan_execute.required_edit_paths_resolved`
+- `idiom.plan_execute.recovery_failure_record_written`
+- `idiom.plan_execute.recovery_decomposition_packet_written`
 
 `idiom plan-execute --resume <session-id>` is intentionally strict. It fails if
 the progress file does not exist, if the supplied prompt or prompt file does not

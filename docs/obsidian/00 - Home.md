@@ -107,8 +107,9 @@ implemented.
   between human-approved ADR and implementation brief
 - [[22 - Product Workflow ROADMAP]] — what is done, what remains, and the
   implementation phase plan
-- [[23 - Decompose On Failure PROPOSAL]] — target recovery layer for converting
-  failed runs into classified evidence, smaller gated atoms, and reconciliation
+- [[23 - Decompose On Failure PROPOSAL]] — recovery layer for converting failed
+  plan-execute runs into classified evidence, decomposition packets, and gated
+  follow-up atoms, with reconciliation adapters still pending
 
 ## Core Sources
 

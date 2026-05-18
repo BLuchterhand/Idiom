@@ -393,8 +393,21 @@ exits non-zero. To re-plan, fix the blocker and re-run.
 If the executor phase fails on preflight, an edit, unsupported proof
 evidence, or post-write `source_sanity`, the orchestrator prints the
 specific failure and exits non-zero. The plan artifact remains under
-`.idiom/plans/` for inspection. To resume after a fix, re-run the
-planner so it computes a fresh plan against the current workspace.
+`.idiom/plans/` for inspection. Failed runs also write recovery artifacts:
+`.idiom/recovery/<failure-id>/failure.json` records the classified failure, and
+`.idiom/recovery/<failure-id>/packet.json` proposes bounded recovery atoms when
+the failure is decomposable. Use:
+
+```bash
+idiom recover inspect --session <session_id> --json
+idiom recover status --packet .idiom/recovery/<failure-id>/packet.json --json
+idiom recover promote --packet .idiom/recovery/<failure-id>/packet.json --atom recovery-001 --output briefs/recovery-001.md
+```
+
+Promotion runs the normal brief lint, atom intake, and recovery scope gates
+before writing a dispatchable brief. It does not dispatch the brief. To resume
+after a manual fix, re-run the planner so it computes a fresh plan against the
+current workspace.
 
 Before calling the planner, `plan-execute` also checks parseable
 exact-edit packets against the current workspace. If every exact edit

@@ -33,10 +33,12 @@ free-form implement the document. That dispatch path resolves the referenced
 markdown, preflights it, refines or atomizes when needed, and then executes
 dispatchable atoms through plan-execute.
 
-This is pre-dispatch decomposition. Idiom does not yet have the separate
-post-failure workflow described in [[23 - Decompose On Failure PROPOSAL]], which
-would turn a failed run into a durable failure record, classified failure shape,
-smaller recovery atoms, and reconciliation back to the original failed atom.
+This is pre-dispatch decomposition. The post-failure plan-execute loop described
+in [[23 - Decompose On Failure PROPOSAL]] now writes a durable failure record,
+classified failure shape, and decomposition packet automatically when a
+plan-execute session fails. The CLI surface is `idiom recover inspect`,
+`idiom recover status`, `idiom recover decompose`, and `idiom recover promote`.
+Reconciliation back to the original failed atom remains a follow-up adapter.
 
 ## Operator Surface Map
 

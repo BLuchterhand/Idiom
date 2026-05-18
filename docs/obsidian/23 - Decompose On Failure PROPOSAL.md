@@ -10,13 +10,12 @@ tags:
 
 # PROPOSAL: Decompose On Failure
 
-> **Status: TARGET DESIGN WITH FIRST SLICE LANDED** — Idiom has
-> pre-dispatch atomization/refine behavior, one planner-blocked
-> retry-or-surface path, and automatic failed `plan-execute` recovery records
-> inspectable through `idiom recover inspect`. It does not yet have the full
-> workflow that turns classified failure evidence into smaller gated recovery
-> atoms and reconciliation back to the original failed atom. The reviewed target
-> namespace is `idiom recover`.
+> **Status: PLAN-EXECUTE LOOP LANDED** — Idiom has pre-dispatch
+> atomization/refine behavior, one planner-blocked retry-or-surface path, and
+> automatic failed `plan-execute` recovery records plus decomposition packets.
+> `idiom recover inspect`, `status`, `decompose`, and `promote` provide the
+> operator-facing loop. Promotion writes a normal gated brief; it does not
+> dispatch or reconcile the original failure automatically yet.
 >
 > Source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
@@ -43,10 +42,15 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] `idiom recover inspect --session <id>` provides read-only JSON/text
   inspection of failure records.
 - [x] Planner-blocked recovery can choose one retry or surface to the human.
-- [ ] Failed runs are not yet converted into durable decomposition packets.
-- [ ] Smaller recovery atoms are not yet synthesized from failure evidence.
-- [ ] Recovery atoms are not yet promoted through a dedicated gate and linked
-  back to the original failure.
+- [x] Failed plan-execute runs write
+  `.idiom/recovery/<failure-id>/packet.json` automatically.
+- [x] Smaller candidate recovery atoms are synthesized from required and
+  changed path evidence.
+- [x] `idiom recover promote` writes a candidate atom brief only after brief
+  lint, atom intake, and scope gates pass.
+- [ ] Recovery success is not yet reconciled back to the original failure.
+- [ ] TUI, `idiom tool`/MCP, audit-watch, and non-plan-execute adapters are
+  not yet complete.
 
 ## Target Lifecycle
 

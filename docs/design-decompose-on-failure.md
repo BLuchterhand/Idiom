@@ -7,15 +7,15 @@ memory, freshness, contracts, audit, and evals.**
 Status: cross-pillar target design, drafted 2026-05-18; reviewed for
 north-star/tool parity 2026-05-18
 
-Implementation state as of 2026-05-18: Idiom has adjacent recovery behavior,
-but not a complete decompose-on-failure workflow. Current behavior can atomize a
-broad referenced design document before dispatch, refine a non-dispatchable
-brief before dispatch, skip source-satisfied atoms, and make one
-planner-blocked retry-or-surface decision. The first implementation slice also
-persists failed `plan-execute` sessions as recovery failure records and exposes
-read-only `idiom recover inspect` / `idiom recover status` inspection. It does
-not yet synthesize smaller follow-up atoms from the failure evidence, gate those
-atoms, or resume through the new atoms.
+Implementation state as of 2026-05-18: the plan-execute recovery loop is now
+shipped for the first supported failure source. Failed `plan-execute` runs
+automatically persist a privacy-safe failure record and a decomposition packet.
+Operators can inspect the failed session, inspect packet status, rebuild the
+packet, and promote one candidate recovery atom into a normal brief after brief
+lint, atom intake, and recovery scope gates pass. Promotion is deliberately not
+dispatch authority; the promoted brief still enters the usual lane workflow.
+Remaining extensions are product-ledger reconciliation, TUI presenters,
+sidecar read-only tools, audit-watch summaries, and non-plan-execute adapters.
 
 Verified adjacent implementation:
 
@@ -31,15 +31,19 @@ Verified adjacent implementation:
   `planner_blocked`, `planner_failed`, and `plan_artifact_missing` into durable
   progress state.
 - `cmd/idiom/plan_execute.go` and `internal/planexecute/run.go` now write
-  `.idiom/recovery/<failure-id>/failure.json` automatically whenever a
+  `.idiom/recovery/<failure-id>/failure.json` and
+  `.idiom/recovery/<failure-id>/packet.json` automatically whenever a
   `plan-execute` progress state is saved with `status:"failed"`.
 - `cmd/idiom/recover.go` exposes read-only inspection for those records, with a
   legacy fallback that can derive the same report from failed progress state
   without mutating the workspace.
+- `cmd/idiom/recover_packet.go` implements `recover decompose`, packet-based
+  `recover status`, and `recover promote`. Promotion writes a brief only after
+  brief lint, atom intake, and scope gates pass.
 
-Those pieces are useful, but only the failure-record layer has landed. The
-remaining decompose-on-failure layer must still turn a failed run into smaller,
-auditable work without hiding the failure or letting the model loop.
+Those pieces now cover the operator-facing plan-execute loop. The remaining
+design work is to broaden adapters and close reconciliation surfaces without
+hiding the original failure or letting the model loop.
 
 ## Problem
 
@@ -169,12 +173,12 @@ The first durable schema can be small and JSON-first:
 
 ```json
 {
-  "schema_version": "idiom.failure_decomposition.v1",
-  "failure_id": "fail-20260518-001",
+  "schema_version": "idiom.recovery.decomposition_packet.v1",
+  "packet_id": "packet-plan-execute-session-001",
+  "failure_id": "plan-execute-session-001",
   "source_run": {
     "lane": "plan-execute",
-    "session_id": "plan-...",
-    "atom_id": "impl-0042",
+    "session_id": "session-001",
     "progress_state_path": ".idiom/plan-execute/.../state.json"
   },
   "failure": {
@@ -186,14 +190,20 @@ The first durable schema can be small and JSON-first:
     ]
   },
   "partial_state": {
-    "dirty": true,
+    "dirty_status": "dirty_in_scope",
     "changed_paths": ["internal/app/foo.go", "internal/app/foo_test.go"],
     "scope_status": "in_scope"
+  },
+  "product_links": {
+    "prd_paths": ["docs/product-workflows/efforts/open/example/prd.md"],
+    "adr_paths": ["docs/product-workflows/efforts/open/example/adr-001.md"],
+    "tdd_paths": ["docs/product-workflows/efforts/open/example/tdd.md"],
+    "ledger_paths": ["docs/product-workflows/efforts/open/example/implementation-ledger.jsonl"]
   },
   "residual_work": [
     {
       "id": "residual-001",
-      "required_paths": ["internal/app/foo.go"],
+      "paths": ["internal/app/foo.go"],
       "reason": "failing assertion points at parser branch not isolated by original atom"
     }
   ],
@@ -232,14 +242,17 @@ Required behavior:
 
 - `inspect` reads only durable logs, progress state, plan artifacts, telemetry,
   and git status. It does not run models or mutate files.
-- `decompose` writes a decomposition packet and optional candidate brief drafts.
-  It may use `context_pack`, `context_trace_pack`, `context_impact`, and test
-  output adapters to localize residual work.
+- Failed plan-execute saves automatically write a failure record and default
+  decomposition packet. `decompose` rebuilds that packet explicitly when an
+  operator wants a different output path or current partial-state evidence.
+  Future adapters may use `context_pack`, `context_trace_pack`,
+  `context_impact`, and test output to localize residual work more deeply.
 - `promote` converts one candidate atom into a normal dispatchable brief only
-  after required gates pass.
-- Product workflow integrations should link decomposition packets back to PRD
+  after required gates pass. It writes the brief and stops; it does not dispatch
+  or mark the original failure recovered.
+- Product workflow integrations link decomposition packets back to PRD
   requirements, ADR decisions, TDD obligations, and implementation ledger
-  records.
+  records when those paths are present in source-run or evidence paths.
 - Every subcommand must support JSON and human-readable output, include a
   `next_valid_action`, and keep usage errors structured when `--json` is set.
 
