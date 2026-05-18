@@ -4,7 +4,8 @@
 their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: cross-pillar target design, drafted 2026-05-18
+Status: cross-pillar target design, drafted 2026-05-18; reviewed for
+north-star/tool parity 2026-05-18
 
 Implementation state as of 2026-05-18: Idiom has adjacent recovery behavior,
 but not a complete decompose-on-failure workflow. Current behavior can atomize a
@@ -78,6 +79,8 @@ packet that says:
    contexts through the same underlying contracts.
 8. Feed recurring failure shapes into audit, eval, ranker learning, and future
    context-packet generation.
+9. Preserve model-harness parity: expose a recovery capability menu and
+   observable state, not language-specific tool advice or hidden rerouting.
 
 ## Non-Goals
 
@@ -208,13 +211,15 @@ accepted or promoted into normal atom/brief artifacts.
 
 ## Command Surfaces
 
-The command namespace is an open question, but the capability should be
-cross-lane. A working CLI shape:
+Use `idiom recover` as the operator-facing namespace. This keeps the user
+experience action-oriented and cross-lane without overloading `audit`,
+`product`, or `lane` with a feature that spans all of them.
 
 ```bash
-idiom failure inspect --session <id> --json
-idiom failure decompose --session <id> --output .idiom/failures/<id>/packet.json --json
-idiom failure promote --packet .idiom/failures/<id>/packet.json --atom recovery-001 --output briefs/recovery-001.md
+idiom recover inspect --session <id> --json
+idiom recover decompose --session <id> --output .idiom/recovery/<id>/packet.json --json
+idiom recover promote --packet .idiom/recovery/<id>/packet.json --atom recovery-001 --output briefs/recovery-001.md
+idiom recover status --packet .idiom/recovery/<id>/packet.json --json
 ```
 
 Required behavior:
@@ -229,6 +234,90 @@ Required behavior:
 - Product workflow integrations should link decomposition packets back to PRD
   requirements, ADR decisions, TDD obligations, and implementation ledger
   records.
+- Every subcommand must support JSON and human-readable output, include a
+  `next_valid_action`, and keep usage errors structured when `--json` is set.
+
+## Tool And Command Parity Contract
+
+Decompose-on-failure should not create a parallel workflow. It should reuse the
+existing surfaces as evidence sources, gates, or presenters. Each surface below
+must either participate through a typed adapter or be explicitly marked
+not-applicable for a given failure class.
+
+| Surface | Parity requirement |
+| --- | --- |
+| `idiom plan-execute` | Read progress state, plan artifacts, required/allowed paths, changed paths, source-sanity evidence, review-repair status, and failure kinds such as `planner_blocked` or `plan_artifact_missing`. |
+| `idiom implement` and `idiom lane` | Capture lane history, command lifecycle, queue/backend readiness, stdout JSONL events, changed-path evidence, and stop reasons. |
+| `idiom architect` | Reuse packet, budget, plan-audit, prompt, and brief artifacts when a failure came from planning/handoff quality rather than execution. |
+| `idiom artifact` | Use only as an optional schema-bound drafting mechanism for candidate recovery prose; artifact output is not authority until recovery gates promote it. |
+| `idiom atom intake` | Reuse dispatchability, terminal, source-satisfied, stale, dirty, invalid-scope, and missing-scope classifications for promoted recovery atoms. |
+| `idiom brief lint` | Reuse single-purpose, atom-size, anchor, exact-edit, and acceptance-command checks before any recovery atom can dispatch. |
+| `idiom lane postflight` | Reuse diff QC for partial edits, out-of-scope changes, and reviewable patch evidence. |
+| `task` and `task_ledger` tools | Publish recovery state as operator-visible work items when the caller uses task-ledger workflows; do not let task prose override failure classes or gates. |
+| `idiom context *` and graph tools | Use `context_pack`, `context_trace_pack`, `context_impact`, `context_query`, and `context_status` as residual-work evidence and freshness gates. |
+| Language-aware tools | Treat Go/C++/Python/TypeScript/Rust/Java symbol, diagnostic, call, and reference tools as adapters behind capabilities such as `source_sanity`, `find_callers`, `diagnose_path`, or `impact`. Do not make recovery packets tell the model to choose a language-specific strategy. |
+| Workspace read/search tools | Use `read_file`, `search_content`, `file_stats`, `source_sanity`, and related tools for bounded evidence only; copied file bodies must not be stored in durable recovery artifacts. |
+| Workspace mutation/delegation tools | Treat `edit_file`, `write_file`, `append_file`, `apply_patch`, `mkdir`, and `delegate_edit` as lane-owned execution capabilities. Recovery may cite their failures, but promotion does not grant direct write authority outside the selected lane contract. |
+| `git_status` and `git_diff` | Classify partial state, changed paths, dirty ownership, and scope before retry, promotion, or dispatch. |
+| Shell and verification commands | Store command, exit code, bounded output refs, failing test names, and timestamps; do not store raw private output by default. |
+| `harness_audit` and `harness_feedback` | Report recovery coverage, repeated failure classes, malformed recovery packets, loop risk, and gaps in tool/event correlation. |
+| `idiom audit watch` | Treat repeated failure classes and recovery-packet creation as audit triggers; write review packets without raw transcripts. |
+| Product workflow commands | Link recovery packets to effort ID, PRD requirement IDs, ADR IDs, TDD obligations, implementation ledger records, status buckets, and product lint/audit/status next actions. |
+| Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. |
+| `idiom ranker` | Accept only deterministic, verified recovery outcomes as learning input; record whether recovery improved localization or packet quality. |
+| Queue/backend/local-ops/doctor | Classify readiness, queue, backend, timeout, or capacity failures separately from implementation failures so decomposition does not hide environment problems. |
+| TUI/prompt dispatch | Render the same status and next-action model as CLI; do not infer recovery state from transcript prose. |
+| `idiom tool` and MCP | Expose read-only recovery inspection with the same sidecar envelope and profile rules as other tools; keep write/promote actions outside discovery profile. |
+
+The initial sidecar/tool shape should be:
+
+- `recovery_inspect`: read-only, allowed in the `discovery` profile, returns a
+  failure record and sidecar envelope.
+- `recovery_status`: read-only, allowed in the `discovery` profile, returns
+  packet status, gates, blockers, and next valid actions.
+- `recovery_decompose`: default profile only, writes local `.idiom/recovery`
+  artifacts and returns a sidecar envelope with artifact paths and hashes.
+- `recovery_promote`: CLI-only until a write-authorization contract exists for
+  sidecar/MCP callers.
+
+This mirrors the current sidecar rule: read-only evidence is available through
+the discovery profile, while artifact-writing and promotion stay behind a
+stronger local contract.
+
+## North-Star Alignment Review
+
+The design aligns with the decisioning north star only if these invariants hold:
+
+- The model owns recovery strategy inside a bounded candidate atom, but the
+  harness owns failure classification, retry budget, promotion gates, and
+  completion claims.
+- Recovery packets describe capabilities and evidence gaps. They do not tell
+  the model which language-specific tool to call next unless a hard invariant
+  requires a specific host action.
+- A same-scope retry requires changed conditions: refreshed evidence, narrower
+  scope, repaired brief shape, changed backend readiness, or an explicit human
+  answer.
+- Decomposition is not a success claim. The original failed run remains visible
+  after all recovery atoms pass.
+- Every failure path ends in one observable next action: inspect partial diff,
+  refresh stale evidence, review decomposition, promote one recovery atom,
+  retry once, or ask a human.
+
+## Clean Architecture Ownership
+
+Implement this as a use-case boundary, not as CLI glue:
+
+| Layer | Ownership |
+| --- | --- |
+| Domain | Failure classes, failure records, residual-work records, decomposition packets, recovery atom references, retry-budget invariants, privacy invariants. |
+| Application | `InspectFailure`, `ClassifyFailure`, `BuildDecompositionPacket`, `PromoteRecoveryAtom`, `ReconcileRecovery`, and `RenderRecoveryStatus` use cases. |
+| Interface adapters | CLI presenters, TUI view models, `idiom tool`/MCP presenters, product workflow adapters, audit-watch adapters, JSON/text mappers. |
+| Infrastructure | Filesystem readers/writers, telemetry/log readers, plan-execute progress readers, git adapters, shell/test-output capture, context graph adapters, queue/backend/local-ops adapters. |
+
+Inner recovery policy must not import CLI flags, Bubble Tea types, MCP transport
+types, raw filesystem paths outside request models, or product workflow storage
+details. Outer adapters translate those details into plain request/response
+models.
 
 ## TUI And Sidecar Contract
 
@@ -244,6 +333,11 @@ hidden background loop:
 Sidecar consumers should get the same read-only failure record and
 decomposition packet through `idiom tool`/MCP before any write-capable recovery
 surface is exposed.
+
+The user-visible experience should match existing product workflow status
+surfaces: a concise status header, typed blockers, gates, evidence links,
+dispatchability, and a single next valid action. A failed lane should feel like
+it moved into a recovery state, not like it vanished into a separate tool.
 
 ## Authority Boundaries
 
@@ -318,16 +412,14 @@ surface is exposed.
 
 ## Open Questions
 
-1. Should the command live under `idiom failure`, `idiom lane recover`, or
-   `idiom audit`?
-2. Which failure classes should allow one same-scope retry before decomposition?
-3. Should decomposition packet promotion require human approval by default, or
+1. Which failure classes should allow one same-scope retry before decomposition?
+2. Should decomposition packet promotion require human approval by default, or
    only for scope-changing packets?
-4. How should recovery atoms interact with product workflow implementation
+3. How should recovery atoms interact with product workflow implementation
    ledgers and status buckets?
-5. What is the minimum test evidence needed before a verification failure can be
+4. What is the minimum test evidence needed before a verification failure can be
    split by failing package or symbol?
-6. Should failed runs in ignored `.idiom/` storage be promotable to durable
+5. Should failed runs in ignored `.idiom/` storage be promotable to durable
    source-controlled evidence, and who decides that?
 
 ## Acceptance Criteria
@@ -346,6 +438,12 @@ The feature is useful when a team can:
 - preserve the original failed run in audit output after recovery succeeds
 - expose the same read-only failure/decomposition state to CLI, TUI, and
   sidecar consumers
+- prove read-only parity for `idiom tool` and MCP through sidecar-envelope
+  fixtures, while keeping write/promote actions out of the discovery profile
+- report recovery evidence in harness audit, audit watch, product evidence,
+  release evidence, and ranker-learning summaries without raw prompt,
+  transcript, or file-body leakage
+- keep CLI/TUI/product workflow status output consistent: typed blockers, gates,
+  evidence links, dispatchability, and one next valid action
 - convert repeated failure classes into eval/audit fixtures instead of adding
   another prompt reminder
-

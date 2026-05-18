@@ -14,7 +14,7 @@ tags:
 > and one planner-blocked retry-or-surface path, but it does not yet have a
 > durable workflow that turns a failed run into classified failure evidence,
 > smaller gated recovery atoms, and reconciliation back to the original failed
-> atom.
+> atom. The reviewed target namespace is `idiom recover`.
 >
 > Source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
@@ -82,6 +82,38 @@ flowchart TD
 - Candidate atoms must pass normal brief lint, atom intake, scope, and product
   workflow gates before dispatch.
 - The original failure remains immutable and linked after recovery succeeds.
+- CLI, TUI, product workflow, `idiom tool`, and MCP expose the same read-only
+  recovery status model: typed blockers, gates, evidence links,
+  dispatchability, and one next valid action.
+- Write/promote recovery actions stay out of the sidecar discovery profile until
+  a dedicated write-authorization contract exists.
+
+## Tool Parity
+
+Recovery should reuse existing surfaces instead of inventing parallel checks:
+
+| Surface | Role |
+| --- | --- |
+| `plan-execute`, `implement`, `lane` | source failure records, progress state, events, changed paths |
+| `architect`, `artifact` | planning/handoff evidence and optional schema-bound drafting, not authority |
+| `brief lint`, `atom intake`, `lane postflight` | promotion gates for recovery atoms |
+| `task`, `task_ledger` | operator-visible recovery work items without overriding gates |
+| `context_*`, discovery, language tools | capability-backed residual-work evidence |
+| workspace read/search/mutation/delegation tools | bounded evidence for reads; mutation remains lane-owned authority |
+| `git_status`, `git_diff`, verification commands | partial-state and test-failure evidence |
+| `harness_audit`, `audit watch`, evals | recurring failure and recovery coverage |
+| product workflow, product evidence, release evidence | effort linkage and external review summaries |
+| TUI, `idiom tool`, MCP | shared presenter/read-only status parity |
+
+## North-Star Fit
+
+- The harness owns failure classification, retry budgets, gate enforcement, and
+  completion claims.
+- The model may propose recovery atom content only inside a host-owned schema.
+- Recovery packets describe capabilities and evidence gaps, not
+  language-specific tool strategies.
+- Same-scope retry requires changed conditions; otherwise the next action is
+  decomposition or a human-visible blocker.
 
 ## Related Notes
 
@@ -91,4 +123,3 @@ flowchart TD
 - [[09 - Verification Readiness and Completion]]
 - [[10 - Telemetry Audit Eval and Learning]]
 - [[19 - CLI TUI and Operator Surface]]
-
