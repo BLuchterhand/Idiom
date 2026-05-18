@@ -2,9 +2,9 @@
   "schema_version": "idiom.investigation_report.v1.fixture",
   "effort_id": "prd-adr-brief-workflow",
   "task_id": "impl-0036-phase-6-effort-browser-cli",
-  "status": "blocked",
+  "status": "complete",
   "created_at": "2026-05-18T21:05:00Z",
-  "completed_at": "",
+  "completed_at": "2026-05-18T21:25:00Z",
   "scope": {
     "expected_paths": [
       "internal/productworkflow/efforts.go",
@@ -32,11 +32,27 @@
     "status_folder_migration_added": false
   },
   "tests": {
-    "status": "pending",
-    "commands": []
+    "status": "passed",
+    "commands": [
+      "idiom tool context_pack --input '{\"task\":\"phase 6 product workflow efforts browser CLI list search status bucket unstarted started closed read-only\",\"mode\":\"plan\",\"limit\":12}'",
+      "idiom tool context_query --input '{\"query\":\"product workflow efforts index status bucket workflow_state list efforts CLI read only malformed state findings\",\"resolution\":\"symbol\",\"limit\":12}'",
+      "go test ./internal/productworkflow -run TestProductEffortsBrowser -count=1",
+      "go test ./cmd/idiom -run 'TestProductEfforts' -count=1",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --json",
+      "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --status started",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "privacy secret-pattern scan over durable effort artifacts",
+      "git diff --check"
+    ]
   },
   "coverage": {
-    "tdd_obligations_pending": [
+    "tdd_obligations_pending": [],
+    "tdd_obligations_satisfied": [
       "TDD-IMPL-0036-001",
       "TDD-IMPL-0036-002",
       "TDD-IMPL-0036-003",
@@ -47,10 +63,11 @@
     "context_pack_ids": [
       "8daf2b7bf7efceb0"
     ],
-    "implementation_commit": "",
-    "product_lint_status": "pending",
-    "product_audit_status": "pending",
-    "product_status_status": "pending"
+    "implementation_commit": "244b6c56ae2e7ebcbccf09af2520cb581ba6a8c3",
+    "product_lint_status": "passed",
+    "product_audit_status": "passed",
+    "product_status_status": "passed",
+    "product_efforts_status": "passed"
   },
   "privacy_audit": {
     "raw_prompts_stored": false,
@@ -60,12 +77,27 @@
     "customer_identifying_data_stored": false,
     "tui_transcript_bodies_stored": false
   },
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ],
-  "next_valid_action": "run_impl_0036_effort_browser_cli_worker",
-  "commit_hash": ""
+  "blockers": [],
+  "next_valid_action": "plan_impl_0037_phase_6_status_migration_atom",
+  "commit_hash": "244b6c56ae2e7ebcbccf09af2520cb581ba6a8c3",
+  "review": {
+    "status": "pass_after_repair",
+    "reviewer": "codex-gpt-review-impl-0036",
+    "agent_path": "019e3c18-acbb-7760-b1fe-3cb35c2c1c25",
+    "repair_commit": "244b6c56ae2e7ebcbccf09af2520cb581ba6a8c3",
+    "findings": [
+      "High invalid current_state malformed-state gap fixed",
+      "Medium stray positional argument usage gap fixed",
+      "Medium text title parity gap fixed"
+    ]
+  },
+  "worker_closeout": {
+    "status": "shutdown_before_final_report",
+    "agent_path": "019e3c0e-e7f6-7a33-b63b-fc1112d9662f"
+  },
+  "findings": [
+    "Effort browser shipped as a read-only CLI/model surface over durable effort status buckets.",
+    "No status-folder migration, lane dispatch, model execution, .idiom runtime mutation, or broad TUI behavior was added.",
+    "Next Phase 6 slice should plan status migration/index preservation or TUI presenter wiring from the shared operator status view."
+  ]
 }

@@ -36,7 +36,8 @@
       "ranker_learning_evidence_adapter",
       "operator_status_view_model_planned",
       "operator_status_view_model",
-      "effort_browser_cli_planned"
+      "effort_browser_cli_planned",
+      "effort_browser_cli"
     ],
     "gates_blocked": []
   },
@@ -408,7 +409,7 @@
       "owner": "internal/productworkflow/efforts_test.go",
       "command": "go test ./internal/productworkflow -run TestProductEffortsBrowser -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0036-002",
@@ -417,7 +418,7 @@
       "owner": "internal/productworkflow/efforts_test.go",
       "command": "go test ./internal/productworkflow -run TestProductEffortsBrowser -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0036-003",
@@ -426,7 +427,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run 'TestProductEfforts' -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0036-004",
@@ -435,7 +436,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0036-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     }
   ]
 }

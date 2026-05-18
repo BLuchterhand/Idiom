@@ -6,13 +6,13 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0035-phase-6-operator-status-view-model`
-- Active atom: `impl-0036-phase-6-effort-browser-cli`
+- Last completed atom: `impl-0036-phase-6-effort-browser-cli`
+- Active atom: next Phase 6 slice pending planning
 - Status bucket: `started`
 - Current phase: `phase-6-operator-continuation`
-- Context pack: `835deff0af50032a`
+- Context pack: `8daf2b7bf7efceb0`
 - Coverage tier: `unit`
-- Blocker status: Atom 36 implementation, verification, review, and investigation pending
+- Blocker status: none for Atom 36; next Phase 6 slice planning pending
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
 - Atom 10 product audit command: all TDD obligations satisfied, 9 audit tests pass, product lint unchanged
 - Atom 11 PRD audit hard checks: all TDD obligations satisfied; DS4-through-Codex
@@ -196,14 +196,22 @@ This effort is the durable implementation state for delivering
   query filters, JSON/text parity, typed malformed-state findings, and no
   workflow mutation, status-folder migration, model execution, lane dispatch, or
   broad TUI behavior.
+- Atom 36: all TDD obligations satisfied. Added read-only `idiom product
+  efforts` browsing over durable `unstarted`, `started`, and `closed` effort
+  buckets. The surface supports status and query filters, deterministic JSON and
+  human-readable output, typed malformed-state findings, semantic state
+  validation, and read-only behavior. The GPT Codex worker produced the initial
+  scoped patch but shut down before final report; Codex orchestration completed
+  repair, full verification, independent GPT-5.4 review, and review repairs.
+  No workflow mutation, status-folder migration, model execution, lane dispatch,
+  or broad TUI behavior was added.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 35 closeout and Atom
-36 planning. These
+The workflow implementation remains in progress after Atom 36 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
@@ -212,9 +220,10 @@ lint-verified brief generation, read-only execution feedback linking,
 deterministic feedback reconciliation into bounded workflow-state/evidence-link
 output, product-workflow metrics in product audit/status, Obsidian parity
 checks, human-readable product CLI next-action coverage, ranker-learning
-evidence adapter tracking, and a shared CLI-ready operator status view model.
-The active slice continues Phase 6 with read-only effort browsing by status
-bucket before broader TUI interactions or status-folder migration.
+evidence adapter tracking, a shared CLI-ready operator status view model, and a
+read-only product effort browser by status bucket. The next slice should
+continue Phase 6 with status-folder migration or CLI/TUI handoff behavior.
+through shared workflow use cases.
 
 ## Implementation Guidelines
 
@@ -439,10 +448,10 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Run the planned C2 GPT Codex worker for
-`impl-0036-phase-6-effort-browser-cli`. Keep the slice focused on a read-only
-`idiom product efforts` browser/search surface over
-`docs/product-workflows/efforts/{unstarted,started,closed}` with status and query
-filters, JSON/text parity, typed malformed-state findings, and no workflow
-mutation, folder migration, model execution, lane dispatch, or broad TUI
-interaction changes.
+Plan the next Phase 6 atom, likely
+`impl-0037-phase-6-status-migration-contract`. Keep it focused on deterministic
+status-folder migration and effort-index preservation, or explicitly choose the
+smaller CLI/TUI handoff fixture if discovery shows migration is too wide for the
+next atom. Use Idiom discovery first, select the GPT Codex worker by complexity,
+and keep lane dispatch, model execution, `.idiom` runtime mutation, and broad
+TUI interaction behavior out of the slice.
