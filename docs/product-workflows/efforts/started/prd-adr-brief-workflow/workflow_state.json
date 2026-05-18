@@ -4,10 +4,10 @@
   "task_id": "impl-0035-phase-6-operator-status-view-model",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T20:36:00Z",
-  "state_revision": 105,
-  "last_event_id": "evt-0303",
-  "workspace_fingerprint": "idiom@1ce3045",
+  "updated_at": "2026-05-18T20:55:00Z",
+  "state_revision": 106,
+  "last_event_id": "evt-0309",
+  "workspace_fingerprint": "idiom@04fc1b5",
   "status_bucket": "started",
   "current_phase": "phase-6-operator-continuation",
   "current_state": "planned",
@@ -183,6 +183,11 @@
         "gate": "operator_status_view_model_planned",
         "status": "passed",
         "checked_at": "2026-05-18T20:35:00Z"
+      },
+      {
+        "gate": "operator_status_view_model",
+        "status": "passed",
+        "checked_at": "2026-05-18T20:55:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -203,22 +208,13 @@
       "Atom 33 complete: product lint/audit/status JSON and human-readable outputs expose deterministic status labels, typed finding or blocker identities, and actionable next-valid-action text; audit-fail status output now prioritizes live remediation over stale workflow-state progression.",
       "Atom 34 complete: idiom product feedback --ranker-learning-evidence-summary adapts verified execution feedback into bounded ranker-learning request-shaped evidence without promoting ranker weights, dispatching lanes, mutating .idiom runtime state, writing evidence exports, or storing raw content.",
       "Next design-doc slice: plan the Phase 6 operator status and continuation surface so CLI/TUI can present the same durable workflow state and valid next actions.",
-      "Atom 35 planned: add a shared read-only operator status view model for CLI/TUI continuation, including typed next actions with owners and blockers, without dispatching lanes, executing models, mutating .idiom runtime state, or adding broad TUI interactions."
+      "Atom 35 complete: product status exposes a shared read-only operator view behind --operator-view with typed next actions, owners, blockers, freshness, metrics, and artifact paths; default status JSON/text remains stable and no lane dispatch, model execution, .idiom runtime mutation, status-folder migration, or broad TUI behavior was added.",
+      "Next design-doc slice: plan impl-0036 for browsing product workflow efforts by status bucket using a read-only CLI surface, before broader status-folder migration or TUI effort-browser work."
     ]
   },
-  "open_obligations": [
-    "TDD-IMPL-0035-001",
-    "TDD-IMPL-0035-002",
-    "TDD-IMPL-0035-003",
-    "TDD-IMPL-0035-004"
-  ],
+  "open_obligations": [],
   "open_questions": [],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ],
+  "blockers": [],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -247,9 +243,7 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "run_impl_0035_operator_status_view_model_worker",
-    "review_impl_0035_operator_status_view_model_atom",
-    "verify_impl_0035_operator_status_view_model_no_dispatch"
+    "plan_impl_0036_phase_6_effort_browser_atom"
   ],
   "durability_level": "source_controlled"
 }

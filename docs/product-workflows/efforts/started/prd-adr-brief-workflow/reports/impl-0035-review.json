@@ -9,30 +9,33 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
-  "findings": [],
+  "status": "pass_after_repair",
+  "findings": [
+    "P0 build break fixed: operator next_valid_actions renders typed actions without string joining",
+    "P1 default status JSON/text operator leakage fixed: operator view is isolated behind --operator-view",
+    "P2 default text negative coverage added for continuation_actions absence"
+  ],
   "checks": {
-    "shared_operator_view_model": "pending",
-    "typed_next_actions_and_owners": "pending",
-    "cli_json_and_text_output": "pending",
-    "no_dispatch_or_runtime_mutation": "pending",
-    "privacy_secret_marker_regression": "pending"
+    "shared_operator_view_model": "passed",
+    "typed_next_actions_and_owners": "passed",
+    "cli_json_and_text_output": "passed",
+    "no_dispatch_or_runtime_mutation": "passed",
+    "privacy_secret_marker_regression": "passed"
   },
-  "reviewed_at": "",
+  "reviewed_at": "2026-05-18T20:55:00Z",
   "commands_reviewed": [
-    "idiom tool context_pack --input '{\"task\":\"phase 6 operator status continuation surface durable workflow state next valid actions CLI TUI no dispatch\",\"mode\":\"plan\",\"limit\":12}'",
-    "idiom tool context_query --input '{\"query\":\"shared product workflow operator view model status next valid actions CLI TUI continuation no dispatch\",\"resolution\":\"symbol\",\"limit\":12}'",
+    "idiom tool context_pack --input '{\"task\":\"impl-0035-phase-6-operator-status-view-model\",\"mode\":\"plan\",\"limit\":8}'",
     "go test ./internal/productworkflow -run TestProductOperatorStatusView -count=1",
     "go test ./cmd/idiom -run 'TestProductStatus.*Operator|TestProductOperatorStatus' -count=1",
     "go test ./internal/productworkflow ./cmd/idiom",
+    "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --operator-view --json",
     "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
-    "go test ./...",
-    "JSON/JSONL validation for durable workflow artifacts",
-    "privacy secret-pattern scan over durable effort artifacts",
-    "git diff --check"
+    "git diff --check",
+    "go test ./..."
   ],
-  "residual_risk": "pending review",
-  "created_at": "2026-05-18T20:35:00Z"
+  "residual_risk": "Future TUI presenters still need a dedicated integration atom; this atom added the shared read-only view model and CLI output only.",
+  "created_at": "2026-05-18T20:35:00Z",
+  "repair_commit": "04fc1b5c1d07a61fa285178b2ccf805b5dcacee7"
 }
