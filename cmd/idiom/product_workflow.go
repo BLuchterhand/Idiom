@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"idiom/internal/productworkflow"
 	"idiom/internal/telemetry"
@@ -31,6 +32,27 @@ type productLintResult struct {
 	NextValidAction string               `json:"next_valid_action"`
 }
 
+type productStatusMigrationResult struct {
+	Status             string                                          `json:"status"`
+	Mode               string                                          `json:"mode"`
+	EffortRoot         string                                          `json:"effort_root"`
+	EffortsRoot        string                                          `json:"efforts_root,omitempty"`
+	EffortID           string                                          `json:"effort_id"`
+	SourceStatusBucket string                                          `json:"source_status_bucket"`
+	TargetStatusBucket string                                          `json:"target_status_bucket"`
+	SourceFolderPath   string                                          `json:"source_folder_path"`
+	TargetFolderPath   string                                          `json:"target_folder_path"`
+	PriorFolderPaths   []string                                        `json:"prior_folder_paths"`
+	PriorIndexPaths    []string                                        `json:"prior_index_paths"`
+	Event              productworkflow.ProductStatusMigrationEvent     `json:"event"`
+	EventID            string                                          `json:"event_id"`
+	StateRevision      int                                             `json:"state_revision"`
+	LastEventID        string                                          `json:"last_event_id"`
+	Blockers           []productworkflow.ProductStatusMigrationBlocker `json:"blockers"`
+	Findings           []productworkflow.ProductStatusMigrationBlocker `json:"findings"`
+	NextValidAction    string                                          `json:"next_valid_action"`
+}
+
 func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 {
 		printProductUsage(stderr)
@@ -45,6 +67,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductEfforts(args[1:], stdout, stderr, rec)
 	case "status":
 		return runProductStatus(args[1:], stdout, stderr, rec)
+	case "status-migration":
+		return runProductStatusMigration(args[1:], stdout, stderr, rec)
 	case "research":
 		return runProductResearch(args[1:], stdout, stderr, rec)
 	case "prd":
@@ -73,6 +97,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product efforts [--root docs/product-workflows/efforts] [--status unstarted|started|closed|all] [--query <text>] [--json]")
 	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--operator-view] [--json]")
+	fmt.Fprintln(w, "  idiom product status-migration --effort-root <path> [--efforts-root <path>] --target-status <bucket> (--plan|--apply) [--target-current-state <state>] [--updated-at <timestamp>] [--event-id <id>] [--workspace-fingerprint <value>] [--expected-revision <n>] [--expected-source-status <bucket>] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --plan-runs [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --merge-evidence [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
@@ -886,6 +911,159 @@ func printProductEfforts(w io.Writer, result productworkflow.ProductEffortsResul
 		fmt.Fprintf(w, "  findings (%d):\n", len(result.Findings))
 		for _, finding := range result.Findings {
 			fmt.Fprintf(w, "    [%s] %s: %s\n", finding.ID, finding.Path, finding.Message)
+		}
+	}
+	fmt.Fprintf(w, "  next: %s\n", result.NextValidAction)
+}
+
+func runProductStatusMigration(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product status-migration", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var effortRoot string
+	var effortsRoot string
+	var targetStatus string
+	var targetCurrentState string
+	var updatedAt string
+	var eventID string
+	var workspaceFingerprint string
+	var expectedRevision int
+	var expectedSourceStatus string
+	var planMode bool
+	var applyMode bool
+	var jsonOutput bool
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the selected effort folder")
+	fs.StringVar(&effortsRoot, "efforts-root", "", "optional override for the efforts root")
+	fs.StringVar(&targetStatus, "target-status", "", "destination status bucket: unstarted, started, or closed")
+	fs.StringVar(&targetCurrentState, "target-current-state", "", "override the destination current_state")
+	fs.StringVar(&updatedAt, "updated-at", "", "updated_at timestamp recorded in workflow_state and index.json")
+	fs.StringVar(&eventID, "event-id", "", "event id recorded for the migration")
+	fs.StringVar(&workspaceFingerprint, "workspace-fingerprint", "", "optional replacement workspace fingerprint")
+	fs.IntVar(&expectedRevision, "expected-revision", -1, "expected current workflow_state revision before apply")
+	fs.StringVar(&expectedSourceStatus, "expected-source-status", "", "expected current source status bucket before apply")
+	fs.BoolVar(&planMode, "plan", false, "compute a read-only status migration plan")
+	fs.BoolVar(&applyMode, "apply", false, "move the effort folder and update workflow_state, events, and index")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintf(stderr, "product status-migration: unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
+		return 2
+	}
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product status-migration: --effort-root is required")
+		return 2
+	}
+	if strings.TrimSpace(targetStatus) == "" {
+		fmt.Fprintln(stderr, "product status-migration: --target-status is required")
+		return 2
+	}
+	if planMode == applyMode {
+		fmt.Fprintln(stderr, "product status-migration: choose exactly one of --plan or --apply")
+		return 2
+	}
+	now := time.Now().UTC()
+	if strings.TrimSpace(updatedAt) == "" {
+		updatedAt = now.Format(time.RFC3339Nano)
+	}
+	if strings.TrimSpace(eventID) == "" {
+		eventID = fmt.Sprintf("evt-status-migration-%d", now.UnixNano())
+	}
+	if strings.TrimSpace(workspaceFingerprint) == "" {
+		workspaceFingerprint = "idiom product status-migration CLI"
+	}
+
+	opts := productworkflow.ProductStatusMigrationApplyOptions{
+		EffortRoot:                 effortRoot,
+		EffortsRoot:                effortsRoot,
+		TargetStatusBucket:         targetStatus,
+		TargetCurrentState:         targetCurrentState,
+		UpdatedAt:                  updatedAt,
+		MigrationEventID:           eventID,
+		WorkspaceFingerprint:       workspaceFingerprint,
+		ExpectedStateRevision:      expectedRevision,
+		ExpectedSourceStatusBucket: expectedSourceStatus,
+	}
+
+	var plan productworkflow.ProductStatusMigrationPlan
+	modeLabel := "PLAN"
+	logMode := "plan"
+	if planMode {
+		plan = productworkflow.PlanProductStatusMigrationFromEffortRoot(opts)
+	} else {
+		plan = productworkflow.ApplyProductStatusMigration(opts)
+		modeLabel = "APPLY"
+		logMode = "apply"
+	}
+	logCLIPhase(rec, "product_status_migration", map[string]any{
+		"status":        plan.Status,
+		"mode":          logMode,
+		"effort_id":     plan.EffortID,
+		"blocker_count": len(plan.Blockers),
+		"target_status": plan.TargetStatusBucket,
+	})
+
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(plan); encErr != nil {
+			fmt.Fprintf(stderr, "product status-migration: encode JSON: %v\n", encErr)
+			return 1
+		}
+	} else {
+		printProductStatusMigration(stdout, modeLabel, plan)
+	}
+
+	return productStatusMigrationExitCode(plan)
+}
+
+func productStatusMigrationExitCode(result productworkflow.ProductStatusMigrationPlan) int {
+	if result.Status == "planned" || result.Status == "applied" {
+		return 0
+	}
+	for _, blocker := range result.Blockers {
+		switch blocker.Code {
+		case "missing_effort_root", "unsafe_effort_root", "unsafe_efforts_root":
+			return 2
+		}
+	}
+	return 1
+}
+
+func printProductStatusMigration(w io.Writer, mode string, result productworkflow.ProductStatusMigrationPlan) {
+	fmt.Fprintf(w, "product status-migration: %s %s\n", mode, strings.ToUpper(result.Status))
+	if result.EffortID != "" {
+		fmt.Fprintf(w, "  effort_id: %s\n", result.EffortID)
+	}
+	if result.SourceStatusBucket != "" || result.TargetStatusBucket != "" {
+		fmt.Fprintf(w, "  buckets: %s -> %s\n", result.SourceStatusBucket, result.TargetStatusBucket)
+	}
+	if result.SourceFolderPath != "" || result.TargetFolderPath != "" {
+		fmt.Fprintf(w, "  paths: %s -> %s\n", result.SourceFolderPath, result.TargetFolderPath)
+	}
+	if result.Event.Event != "" || result.Event.EventID != "" {
+		fmt.Fprintf(w, "  event: %s id=%s\n", result.Event.Event, result.Event.EventID)
+	}
+	if result.Event.Details.StateRevision > 0 {
+		fmt.Fprintf(w, "  state_revision: %d\n", result.Event.Details.StateRevision)
+	}
+	if len(result.PriorFolderPaths) > 0 {
+		fmt.Fprintf(w, "  prior_folder_paths: %s\n", strings.Join(result.PriorFolderPaths, ", "))
+	}
+	if len(result.PriorIndexPaths) > 0 {
+		fmt.Fprintf(w, "  prior_index_paths: %s\n", strings.Join(result.PriorIndexPaths, ", "))
+	}
+	if len(result.Blockers) > 0 {
+		fmt.Fprintf(w, "  blockers (%d):\n", len(result.Blockers))
+		for _, blocker := range result.Blockers {
+			if blocker.Path != "" {
+				fmt.Fprintf(w, "    [%s] %s: %s\n", blocker.Code, blocker.Path, blocker.Message)
+			} else {
+				fmt.Fprintf(w, "    [%s] %s\n", blocker.Code, blocker.Message)
+			}
 		}
 	}
 	fmt.Fprintf(w, "  next: %s\n", result.NextValidAction)

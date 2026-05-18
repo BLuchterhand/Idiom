@@ -2899,6 +2899,128 @@ func TestProductEffortsUsageErrorsAreTyped(t *testing.T) {
 	}
 }
 
+func TestProductStatusMigrationApplyJSONPlanIsReadOnly(t *testing.T) {
+	effortsRoot, effortRoot := writeProductStatusMigrationCLIFixture(t, "started", "reviewing")
+	beforeWorkflow, err := os.ReadFile(filepath.Join(effortRoot, "workflow_state.json"))
+	if err != nil {
+		t.Fatalf("read workflow_state.json before plan: %v", err)
+	}
+	beforeEvents, err := os.ReadFile(filepath.Join(effortRoot, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl before plan: %v", err)
+	}
+	beforeIndex, err := os.ReadFile(filepath.Join(effortsRoot, "index.json"))
+	if err != nil {
+		t.Fatalf("read index.json before plan: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatusMigration([]string{"--effort-root", effortRoot, "--target-status", "closed", "--plan", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected plan success, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productworkflow.ProductStatusMigrationPlan
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("plan output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "planned" {
+		t.Fatalf("expected planned CLI result, got %#v", result)
+	}
+	if result.SourceFolderPath != "started/test-effort" || result.TargetFolderPath != "closed/test-effort" {
+		t.Fatalf("unexpected CLI plan paths: %#v", result)
+	}
+	if result.Event.EventID == "" || result.Event.Details.StateRevision != 8 {
+		t.Fatalf("expected CLI plan event and revision, got %#v", result)
+	}
+
+	afterWorkflow, err := os.ReadFile(filepath.Join(effortRoot, "workflow_state.json"))
+	if err != nil {
+		t.Fatalf("read workflow_state.json after plan: %v", err)
+	}
+	afterEvents, err := os.ReadFile(filepath.Join(effortRoot, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl after plan: %v", err)
+	}
+	afterIndex, err := os.ReadFile(filepath.Join(effortsRoot, "index.json"))
+	if err != nil {
+		t.Fatalf("read index.json after plan: %v", err)
+	}
+	if string(beforeWorkflow) != string(afterWorkflow) {
+		t.Fatal("CLI plan must not mutate workflow_state.json")
+	}
+	if string(beforeEvents) != string(afterEvents) {
+		t.Fatal("CLI plan must not mutate events.jsonl")
+	}
+	if string(beforeIndex) != string(afterIndex) {
+		t.Fatal("CLI plan must not mutate index.json")
+	}
+}
+
+func TestProductStatusMigrationApplyJSONApplyMovesEffort(t *testing.T) {
+	effortsRoot, effortRoot := writeProductStatusMigrationCLIFixture(t, "started", "reviewing")
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatusMigration([]string{
+		"--effort-root", effortRoot,
+		"--target-status", "closed",
+		"--apply",
+		"--expected-revision", "7",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected apply success, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var result productworkflow.ProductStatusMigrationPlan
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("apply output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "applied" {
+		t.Fatalf("expected applied CLI result, got %#v", result)
+	}
+	if result.Event.Event != "status_migration_applied" || result.Event.EventID == "" {
+		t.Fatalf("unexpected CLI apply event payload: %#v", result.Event)
+	}
+	targetRoot := filepath.Join(effortsRoot, "closed", "test-effort")
+	if _, err := os.Stat(effortRoot); !os.IsNotExist(err) {
+		t.Fatalf("expected CLI apply to move source effort folder, stat err=%v", err)
+	}
+	workflowData, err := os.ReadFile(filepath.Join(targetRoot, "workflow_state.json"))
+	if err != nil {
+		t.Fatalf("read migrated workflow_state.json: %v", err)
+	}
+	ws, err := productworkflow.ParseWorkflowStateJSON(workflowData)
+	if err != nil {
+		t.Fatalf("parse migrated workflow_state.json: %v", err)
+	}
+	if ws.StatusBucket != "closed" || ws.CurrentState != "closed" || ws.StateRevision != 8 {
+		t.Fatalf("unexpected migrated workflow state: %#v", ws)
+	}
+	if ws.LastEventID != result.Event.EventID {
+		t.Fatalf("expected workflow_state last_event_id %q, got %q", result.Event.EventID, ws.LastEventID)
+	}
+}
+
+func TestProductStatusMigrationApplyUsageErrorsAreTyped(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductStatusMigration([]string{
+		"--effort-root", filepath.Join("..", "efforts", "started", "test-effort"),
+		"--target-status", "closed",
+		"--plan",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected unsafe traversal root to return code 2, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productworkflow.ProductStatusMigrationPlan
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("usage error output should still be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "blocked" || len(result.Blockers) != 1 || result.Blockers[0].Code != "unsafe_effort_root" {
+		t.Fatalf("expected unsafe_effort_root blocker, got %#v", result)
+	}
+}
+
 func TestProductStatusUsageErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runProductStatus([]string{}, &stdout, &stderr, nil)
@@ -3007,6 +3129,17 @@ func writeValidTestEffort(t *testing.T) string {
 	return dir
 }
 
+func writeProductStatusMigrationCLIFixture(t *testing.T, bucket, state string) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	effortsRoot := filepath.Join(root, "docs", "product-workflows", "efforts")
+	effortRoot := filepath.Join(effortsRoot, bucket, "test-effort")
+	writeTestFile(t, effortRoot, "workflow_state.json", productStatusMigrationCLIWorkflowState(bucket, state))
+	writeTestFile(t, effortRoot, "events.jsonl", `{"event":"workflow_state_created","event_id":"evt-0001","effort_id":"test-effort"}`+"\n")
+	writeTestFile(t, effortsRoot, "index.json", productStatusMigrationCLIEffortIndex(bucket, state))
+	return effortsRoot, effortRoot
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -3090,6 +3223,53 @@ func productEffortsCLIWorkflowState(effortID, title, bucket, state, folderName s
 		"folder_path":"docs/product-workflows/efforts/` + bucket + `/` + folderName + `",
 		"next_valid_actions":["submit_for_verification"],
 		"durability_level":"source_controlled"
+	}`
+}
+
+func productStatusMigrationCLIWorkflowState(bucket, state string) string {
+	return `{
+		"schema_version":"idiom.product_workflow_state.v0.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"title":"Test Effort",
+		"created_at":"2026-05-18T21:00:00Z",
+		"updated_at":"2026-05-18T21:00:00Z",
+		"state_revision":7,
+		"last_event_id":"evt-007",
+		"workspace_fingerprint":"idiom@test",
+		"status_bucket":"` + bucket + `",
+		"current_phase":"phase-test",
+		"current_state":"` + state + `",
+		"artifact_paths":{"events":"events.jsonl"},
+		"context":{"context_pack_id":"pack","freshness_state":"current","referenced_paths":[],"unresolved_gaps":[],"refresh_policy":"on_demand"},
+		"coverage":{"coverage_tier":"unit","gate_results":[],"blocking_criteria":[],"advisory_criteria":[]},
+		"open_obligations":[],
+		"open_questions":[],
+		"blockers":[],
+		"privacy":{"redaction_status":"applied","fields_excluded":[]},
+		"session_ids":{"codex":"session-1"},
+		"folder_path":"docs/product-workflows/efforts/` + bucket + `/test-effort",
+		"prior_folder_paths":[],
+		"next_valid_actions":["complete"],
+		"durability_level":"source_controlled"
+	}`
+}
+
+func productStatusMigrationCLIEffortIndex(bucket, state string) string {
+	return `{
+		"schema_version":"idiom.effort_index.v1",
+		"updated_at":"2026-05-18T21:00:00Z",
+		"efforts":[{
+			"effort_id":"test-effort",
+			"title":"Test Effort",
+			"status_bucket":"` + bucket + `",
+			"current_phase":"phase-test",
+			"current_state":"` + state + `",
+			"folder_path":"` + bucket + `/test-effort",
+			"task_id":"impl-test",
+			"created_at":"2026-05-18T21:00:00Z",
+			"prior_paths":[]
+		}]
 	}`
 }
 

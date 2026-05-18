@@ -7,23 +7,10 @@
   "completed_at": "",
   "scope": {
     "expected_paths": [
-      "internal/productworkflow/migration.go",
-      "internal/productworkflow/migration_test.go",
       "internal/productworkflow/migration_apply.go",
       "internal/productworkflow/migration_apply_test.go",
-      "internal/productworkflow/efforts.go",
-      "internal/productworkflow/efforts_test.go",
       "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
-      "docs/product-workflows/efforts/index.json",
-      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
-      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
-      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
-      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
-      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
-      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0038-implementation.json",
-      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0038-review.json",
-      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0038-investigation.json"
+      "cmd/idiom/product_workflow_test.go"
     ],
     "forbidden_paths": [
       "internal/app/**",

@@ -44,5 +44,11 @@
     "verification_pending",
     "review_pending",
     "investigation_pending"
+  ],
+  "scope_expected_paths": [
+    "internal/productworkflow/migration_apply.go",
+    "internal/productworkflow/migration_apply_test.go",
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go"
   ]
 }
