@@ -91,6 +91,9 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 	if len(stale) == 0 {
 		return result
 	}
+	if HasObsidianNoChangeRationale(ws.TaskID, investigations) {
+		return result
+	}
 	result.Findings = append(result.Findings, stale...)
 	return result
 }

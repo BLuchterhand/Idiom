@@ -883,7 +883,7 @@ func TestProductObsidianParityFailsClosedWithoutGitRoot(t *testing.T) {
 	}
 }
 
-func TestProductObsidianParityDoesNotMaskStaleStatusWithNoChangeRationale(t *testing.T) {
+func TestProductObsidianParityAllowsNoChangeRationale(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	writeTestFile(t, dir, ".git/HEAD", "ref: refs/heads/main\n")
 	writeTestFile(t, dir, "workflow_state.json", `{
@@ -922,18 +922,65 @@ func TestProductObsidianParityDoesNotMaskStaleStatusWithNoChangeRationale(t *tes
 	}`)
 
 	result := lintEffortFolder(dir)
-	if result.Status != "fail" {
-		t.Fatalf("expected lint fail, got %q", result.Status)
+	for _, finding := range result.Findings {
+		if strings.HasPrefix(finding.Code, "obsidian_") {
+			t.Fatalf("expected no obsidian findings with no-change rationale, got %#v", finding)
+		}
+	}
+}
+
+func TestProductStatusObsidianParityFailureSections(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, ".git/HEAD", "ref: refs/heads/main\n")
+	writeTestFile(t, dir, "workflow_state.json", `{
+		"schema_version":"idiom.product_workflow_state.v0.fixture",
+		"effort_id":"prd-adr-brief-workflow",
+		"task_id":"impl-0032-phase-5-obsidian-parity-check",
+		"title":"Test Effort",
+		"status_bucket":"started",
+		"current_phase":"phase-5-execution-feedback",
+		"current_state":"planned",
+		"artifact_paths":{"events":"events.jsonl"},
+		"context":{"context_pack_id":"pack","freshness_state":"current"},
+		"coverage":{"coverage_tier":"unit"},
+		"privacy":{"redaction_status":"applied"},
+		"folder_path":"docs/test",
+		"durability_level":"source_controlled",
+		"next_valid_actions":["complete"]
+	}`)
+	writeTestFile(t, dir, "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md", "> **Status: NOT STARTED**")
+	writeTestFile(t, dir, "docs/obsidian/22 - Product Workflow ROADMAP.md", "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	writeTestFile(t, dir, "reports/impl-0032-investigation.json", validTestTestInvestigationReportJSON())
+
+	var jsonStdout, jsonStderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+	if code != 1 {
+		t.Fatalf("expected status JSON to fail on Obsidian parity, got code=%d stdout=%s stderr=%s", code, jsonStdout.String(), jsonStderr.String())
+	}
+	var view productworkflow.ProductStatusView
+	if err := json.Unmarshal(jsonStdout.Bytes(), &view); err != nil {
+		t.Fatalf("status output should be valid JSON: %v\n%s", err, jsonStdout.String())
 	}
 	found := false
-	for _, finding := range result.Findings {
-		if finding.Code == "obsidian_stale_status" {
+	for _, sec := range view.Sections {
+		if sec.Name == "obsidian" {
 			found = true
-			break
+			if sec.Status != "fail" || sec.FindingCount == 0 {
+				t.Fatalf("expected failing obsidian section, got %#v", sec)
+			}
 		}
 	}
 	if !found {
-		t.Fatalf("expected obsidian_stale_status finding, got %#v", result.Findings)
+		t.Fatalf("expected obsidian section in status JSON, got %#v", view.Sections)
+	}
+
+	var textStdout, textStderr bytes.Buffer
+	code = runProductStatus([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+	if code != 1 {
+		t.Fatalf("expected status text to fail on Obsidian parity, got code=%d stdout=%s stderr=%s", code, textStdout.String(), textStderr.String())
+	}
+	if !strings.Contains(textStdout.String(), "obsidian: fail") || !strings.Contains(textStdout.String(), "findings") {
+		t.Fatalf("expected text output to include failing obsidian section, got:\n%s", textStdout.String())
 	}
 }
 

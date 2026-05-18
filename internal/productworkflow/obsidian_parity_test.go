@@ -23,7 +23,7 @@ func TestObsidianParityDetectsStaleStatusWithoutRationale(t *testing.T) {
 	}
 }
 
-func TestObsidianParityDoesNotMaskStaleStatusWithNoChangeRationale(t *testing.T) {
+func TestObsidianParityAllowsNoChangeRationale(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, ObsidianProposalPath), "> **Status: NOT STARTED**")
 	mustWrite(t, filepath.Join(root, ObsidianRoadmapPath), "## IN PROGRESS: PRD/ADR/Brief Workflow")
@@ -39,8 +39,8 @@ func TestObsidianParityDoesNotMaskStaleStatusWithNoChangeRationale(t *testing.T)
 		},
 	}
 	got := EvaluateObsidianParity(root, ws, nil, []InvestigationReport{investigation})
-	if len(got.Findings) == 0 {
-		t.Fatal("expected stale status finding even with no-change rationale")
+	if len(got.Findings) != 0 {
+		t.Fatalf("expected no findings with no-change rationale, got %#v", got.Findings)
 	}
 }
 
