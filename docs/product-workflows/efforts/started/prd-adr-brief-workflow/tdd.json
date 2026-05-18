@@ -19,13 +19,20 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned"
+      "atom_planned",
+      "prd_draft_prompt_rendering",
+      "prd_draft_command_recipe",
+      "product_prd_render_prompt_json_surface",
+      "product_prd_render_prompt_no_model_or_artifact_writes",
+      "focused_go_tests",
+      "full_go_tests",
+      "durable_json_jsonl_validation",
+      "privacy_secret_scan",
+      "diff_whitespace_check",
+      "review_passed",
+      "atom_closed"
     ],
-    "gates_blocked": [
-      "implementation_pending",
-      "verification_pending",
-      "review_pending"
-    ]
+    "gates_blocked": []
   },
   "obligations": [
     {
@@ -35,7 +42,7 @@
       "owner": "internal/productworkflow/prd_draft_prompts_test.go",
       "command": "go test ./internal/productworkflow -run TestPRDDraftPrompt",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0023-002",
@@ -44,7 +51,7 @@
       "owner": "internal/productworkflow/prd_draft_prompts_test.go",
       "command": "go test ./internal/productworkflow -run TestPRDDraftPrompt",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0023-003",
@@ -53,7 +60,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductPRDRenderPrompt",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0023-004",
@@ -62,7 +69,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0023-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     }
   ]
 }

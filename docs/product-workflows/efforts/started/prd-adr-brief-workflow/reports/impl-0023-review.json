@@ -8,10 +8,31 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
+  "status": "pass",
   "findings": [],
-  "checks": {},
-  "reviewed_at": "",
-  "commands_reviewed": [],
-  "created_at": "2026-05-18T12:15:00Z"
+  "checks": {
+    "discovery_first_review": "Reviewer used Idiom discovery before localized patch review.",
+    "cli_surface": "product prd --render-prompt requires effort root, reads the evidence ledger, and writes only the configured prompt file on pass.",
+    "prompt_plan_contract": "Planning and prompt rendering are deterministic, model-free, evidence-ledger backed, and do not include rendered prompt bodies in JSON metadata.",
+    "fail_closed_boundaries": "Missing or invalid evidence, traversal paths, prompt target symlinks, and prompt ancestor symlink escapes block before prompt writes.",
+    "no_model_execution_or_artifact_writes": "The CLI emits an idiom artifact --no-tools command recipe but does not execute it or write PRD, ADR, traceability, event, report, or evidence artifacts.",
+    "durable_privacy": "Durable reports and workflow state exclude rendered prompt bodies, raw transcripts, file bodies, secrets, and customer-identifying data.",
+    "post_review_gap_closure": "After review, orchestrator added explicit tests that JSON output omits rendered prompt text and that symlinked prompt ancestors are rejected.",
+    "verdict": "pass"
+  },
+  "reviewed_at": "2026-05-18T12:24:00Z",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"review impl 0023 prd draft prompt rendering from evidence ledger\",\"mode\":\"plan\",\"limit\":12}'",
+    "git diff -- cmd/idiom/product_workflow.go internal/productworkflow/types.go internal/productworkflow/prd_draft_prompts.go",
+    "git diff -- cmd/idiom/product_workflow_test.go internal/productworkflow/prd_draft_prompts_test.go",
+    "go test ./internal/productworkflow -run TestPRDDraftPrompt",
+    "go test ./cmd/idiom -run TestProductPRDRenderPrompt",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "git diff --check"
+  ],
+  "created_at": "2026-05-18T12:15:00Z",
+  "decision": "pass",
+  "residual_risks": []
 }

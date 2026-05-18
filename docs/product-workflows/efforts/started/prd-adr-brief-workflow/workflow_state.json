@@ -4,13 +4,13 @@
   "task_id": "impl-0023-phase-3-prd-draft-prompt-rendering",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T12:15:00Z",
-  "state_revision": 70,
-  "last_event_id": "evt-0198",
-  "workspace_fingerprint": "idiom@28596f6",
+  "updated_at": "2026-05-18T12:25:00Z",
+  "state_revision": 71,
+  "last_event_id": "evt-0204",
+  "workspace_fingerprint": "idiom@51e3849",
   "status_bucket": "started",
   "current_phase": "phase-3-prd-adr-generation",
-  "current_state": "implementing",
+  "current_state": "planned",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -69,13 +69,48 @@
       },
       {
         "gate": "prd_draft_prompt_rendering",
-        "status": "pending",
-        "checked_at": "2026-05-18T12:15:00Z"
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
+      },
+      {
+        "gate": "prd_draft_command_recipe",
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
       },
       {
         "gate": "product_prd_render_prompt_json_surface",
-        "status": "pending",
-        "checked_at": "2026-05-18T12:15:00Z"
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
+      },
+      {
+        "gate": "product_prd_render_prompt_no_model_or_artifact_writes",
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
+      },
+      {
+        "gate": "focused_go_tests",
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
+      },
+      {
+        "gate": "full_go_tests",
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
+      },
+      {
+        "gate": "durable_json_jsonl_validation",
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
+      },
+      {
+        "gate": "privacy_secret_scan",
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
+      },
+      {
+        "gate": "diff_whitespace_check",
+        "status": "passed",
+        "checked_at": "2026-05-18T12:25:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -89,12 +124,7 @@
       "Deferred follow-up: continue remaining design-doc product surfaces after Phase 1 hardening, including research profiles, generation, acceptance/supersession, brief dispatch, coverage gates, feedback, and operator surfaces."
     ]
   },
-  "open_obligations": [
-    "TDD-IMPL-0023-001",
-    "TDD-IMPL-0023-002",
-    "TDD-IMPL-0023-003",
-    "TDD-IMPL-0023-004"
-  ],
+  "open_obligations": [],
   "open_questions": [],
   "blockers": [],
   "privacy": {
@@ -122,12 +152,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T12:15:00Z",
+  "last_reconciliation_at": "2026-05-18T12:25:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "implement_impl_0023_prd_draft_prompt_rendering",
-    "verify_impl_0023_prd_draft_prompt_rendering",
-    "review_impl_0023_prd_draft_prompt_rendering",
+    "plan_phase_3_adr_draft_prompt_rendering_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],
