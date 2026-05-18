@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0027-phase-4-coverage-gate-evaluator",
+  "task_id": "impl-0028-phase-4-brief-generator",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T13:55:00Z",
-  "state_revision": 79,
-  "last_event_id": "evt-0236",
-  "workspace_fingerprint": "idiom@ba6e1a2",
+  "updated_at": "2026-05-18T14:05:00Z",
+  "state_revision": 80,
+  "last_event_id": "evt-0238",
+  "workspace_fingerprint": "idiom@d879ab6",
   "status_bucket": "started",
   "current_phase": "phase-4-brief-generation",
   "current_state": "planned",
@@ -30,7 +30,7 @@
       "adr_prompt": "adrs/adr.prompt.md"
   },
   "context": {
-    "context_pack_id": "74ed3aa5e0b41587",
+    "context_pack_id": "6c2f728f391c0488",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -50,6 +50,10 @@
       "internal/productworkflow/prd_draft_prompts_test.go",
       "internal/productworkflow/tdd_obligation_plans.go",
       "internal/productworkflow/tdd_obligation_plans_test.go",
+      "internal/productworkflow/coverage_gate.go",
+      "internal/productworkflow/coverage_gate_test.go",
+      "internal/productworkflow/brief_generation.go",
+      "internal/productworkflow/brief_generation_test.go",
       "internal/productworkflow/types.go",
       "internal/productworkflow/validate.go",
       "internal/productworkflow/validate_test.go",
@@ -91,6 +95,7 @@
       "Coverage quality policy: parser/audit/status/brief/closeout atoms require focused contract tests, one realistic human-authored fixture variant for artifact parsing, a negative fixture-level CLI test with typed finding or blocker assertions, durable fixture pass coverage, and privacy/audit assertions where outputs include reports/status/telemetry/evidence/history.",
       "Deferred follow-up: harden PRD/ADR parsing before broader user-authored artifacts are accepted; current parsers are fixture-oriented and string-shaped.",
       "Deferred follow-up: decide and encode TDD reference authority policy, current tdd.json only versus workflow-known historical implementation-ledger IDs.",
+      "Deferred follow-up: make coverage gate reuse product lint/audit validators or run them as blocking preconditions before brief generation.",
       "Deferred follow-up: continue remaining design-doc product surfaces after Phase 1 hardening, including research profiles, generation, acceptance/supersession, brief dispatch, coverage gates, feedback, and operator surfaces."
     ]
   },
@@ -125,7 +130,7 @@
   "last_reconciliation_at": "2026-05-18T13:55:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_4_brief_generator_atom",
+    "implement_phase_4_brief_generator_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"

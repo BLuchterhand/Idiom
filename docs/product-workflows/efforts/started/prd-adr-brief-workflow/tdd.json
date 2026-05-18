@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0027-phase-4-coverage-gate-evaluator",
+  "task_id": "impl-0028-phase-4-brief-generator",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -97,6 +97,42 @@
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0028-001",
+      "type": "contract",
+      "behavior": "Brief generation deterministically renders a bounded implementation brief from accepted PRD requirements, accepted ADR decisions, current TDD obligations, traceability evidence, and a passing coverage-gate evaluation, including required brief-lint sections and stable artifact references.",
+      "owner": "internal/productworkflow/brief_generation_test.go",
+      "command": "go test ./internal/productworkflow -run TestBriefGeneration",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0028-002",
+      "type": "acceptance",
+      "behavior": "idiom product brief --render reads the durable effort, fails closed when required artifacts are missing or the coverage gate is blocked, supports JSON output and human-readable text output, and writes only the requested brief path without dispatching work or executing models.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProductBriefRender",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0028-003",
+      "type": "contract",
+      "behavior": "Generated briefs use the existing idiom brief lint contract rather than duplicating dispatch lint logic; the CLI verifies or reports lint blockers before claiming a generated brief is dispatch-ready.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProductBriefRender",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0028-004",
+      "type": "audit",
+      "behavior": "The atom records GPT Codex implementor/reviewer selection, Idiom discovery evidence, brief-generation verification, Obsidian parity, and privacy-safe durable reports without storing raw prompts/transcripts/file bodies/secrets or generated brief bodies.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0028-review.json",
+      "command": "privacy secret-value scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

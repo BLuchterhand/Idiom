@@ -1,0 +1,17 @@
+{
+  "schema_version": "idiom.review_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0028-phase-4-brief-generator",
+  "reviewer": {
+    "agent_id": "codex-gpt-review-impl-0028",
+    "model": "GPT-5.4",
+    "reasoning_effort": "medium",
+    "independent_from_implementor": true
+  },
+  "status": "pending",
+  "findings": [],
+  "checks": {},
+  "reviewed_at": "",
+  "commands_reviewed": [],
+  "created_at": "2026-05-18T14:05:00Z"
+}

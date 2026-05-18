@@ -7,10 +7,10 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0027-phase-4-coverage-gate-evaluator`
-- Active atom: none; next atom should plan Phase 4 brief generation
+- Active atom: `impl-0028-phase-4-brief-generator` planned
 - Status bucket: `started`
 - Current phase: `phase-4-brief-generation`
-- Context pack: `74ed3aa5e0b41587`
+- Context pack: `6c2f728f391c0488`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -108,6 +108,12 @@ This effort is the durable implementation state for delivering
   verified records for the current effort and PRD task, and does not generate
   briefs, mutate artifacts, execute models, run tests on behalf of the user, or
   dispatch work.
+- Atom 28 is planned as the Phase 4 brief generation slice. It should add a
+  deterministic `idiom product brief --render` surface that consumes accepted
+  PRD/ADR/TDD artifacts plus a passing coverage-gate evaluation, emits or writes
+  a brief with existing `idiom brief lint` sections, verifies or reports brief
+  lint blockers, covers JSON and human-readable output, and does not dispatch
+  work or execute models.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
