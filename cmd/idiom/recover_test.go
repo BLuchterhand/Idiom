@@ -266,6 +266,193 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	}
 }
 
+func TestRecoverDecomposeRejectsOutsideOutputPath(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	writeRecoverFailedPlanExecuteRecord(t, root, "recover-session-decompose-outside", []string{"allowed.go"})
+
+	outsidePath := filepath.Join(root, "..", "outside-packet.json")
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-outside", "--output", outsidePath, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover decompose should reject outside output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverDecomposeReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recovery.NextActionInspectFailure {
+		t.Fatalf("unexpected outside output report: %#v", report)
+	}
+	if _, err := os.Stat(outsidePath); !os.IsNotExist(err) {
+		t.Fatalf("outside output should not be written, stat err=%v", err)
+	}
+}
+
+func TestRecoverDecomposeRejectsProtectedOutputPath(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	writeRecoverFailedPlanExecuteRecord(t, root, "recover-session-decompose-protected", []string{"allowed.go"})
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config before: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-protected", "--output", "config.json", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover decompose should reject protected output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverDecomposeReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "protected") || report.NextAction != recovery.NextActionInspectFailure {
+		t.Fatalf("unexpected protected output report: %#v", report)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("protected config output should not be overwritten")
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runRecoverMain([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-protected", "--output", "Config.JSON", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover decompose should reject case-variant protected output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	report = recoverDecomposeReport{}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode case-variant report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "protected") {
+		t.Fatalf("unexpected case-variant protected output report: %#v", report)
+	}
+}
+
+func TestRecoverDecomposeRejectsRecoveryControlArtifactOutput(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	sessionID := "recover-session-decompose-control-artifact"
+	writeRecoverFailedPlanExecuteRecord(t, root, sessionID, []string{"allowed.go"})
+	failureID := recovery.PlanExecuteFailureID(sessionID)
+
+	outputPath := filepath.ToSlash(filepath.Join(".idiom", "recovery", failureID, "failure.json"))
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"decompose", "--config", configPath, "--session", sessionID, "--output", outputPath, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover decompose should reject control artifact output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverDecomposeReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "control artifact") {
+		t.Fatalf("unexpected control artifact report: %#v", report)
+	}
+	if _, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, sessionID); err != nil || !found {
+		t.Fatalf("failure record should remain readable, found=%v err=%v", found, err)
+	}
+}
+
+func TestRecoverDecomposeRejectsSymlinkedOutputParent(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	writeRecoverFailedPlanExecuteRecord(t, root, "recover-session-decompose-symlink", []string{"allowed.go"})
+	outsideDir := t.TempDir()
+	if err := os.Symlink(outsideDir, filepath.Join(root, "link-out")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-symlink", "--output", "link-out/packet.json", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover decompose should reject symlinked output parent, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverDecomposeReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "symlinked directories") {
+		t.Fatalf("unexpected symlink output report: %#v", report)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "packet.json")); !os.IsNotExist(err) {
+		t.Fatalf("symlink target output should not be written, stat err=%v", err)
+	}
+}
+
+func TestRecoverDecomposeRejectsSymlinkedDefaultOutputParent(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	sessionID := "recover-session-decompose-default-symlink"
+	writeRecoverFailedPlanExecuteRecord(t, root, sessionID, []string{"allowed.go"})
+	failureID := recovery.PlanExecuteFailureID(sessionID)
+	recoveryDir := filepath.Join(root, ".idiom", "recovery")
+	outsideRecoveryDir := filepath.Join(t.TempDir(), "recovery")
+	if err := os.Rename(recoveryDir, outsideRecoveryDir); err != nil {
+		t.Fatalf("move recovery dir outside workspace: %v", err)
+	}
+	if err := os.Symlink(outsideRecoveryDir, recoveryDir); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"decompose", "--config", configPath, "--session", sessionID, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover decompose should reject symlinked default output parent, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverDecomposeReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "symlinked directories") {
+		t.Fatalf("unexpected symlink default output report: %#v", report)
+	}
+	if _, err := os.Stat(filepath.Join(outsideRecoveryDir, failureID, "packet.json")); !os.IsNotExist(err) {
+		t.Fatalf("symlink default target output should not be written, stat err=%v", err)
+	}
+}
+
+func TestRecoverDecomposeRejectsPreexistingTempSymlink(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	sessionID := "recover-session-decompose-temp-symlink"
+	writeRecoverFailedPlanExecuteRecord(t, root, sessionID, []string{"allowed.go"})
+	failureID := recovery.PlanExecuteFailureID(sessionID)
+	packetPath := filepath.Join(root, ".idiom", "recovery", failureID, "packet.json")
+	controlPath := filepath.Join(root, ".idiom", "recovery", failureID, "failure.json")
+	before, err := os.ReadFile(controlPath)
+	if err != nil {
+		t.Fatalf("read failure record before: %v", err)
+	}
+	if err := os.Symlink(controlPath, packetPath+".tmp"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"decompose", "--config", configPath, "--session", sessionID, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover decompose should reject preexisting temp symlink, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverDecomposeReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "write recovery decomposition packet") {
+		t.Fatalf("unexpected temp symlink report: %#v", report)
+	}
+	after, err := os.ReadFile(controlPath)
+	if err != nil {
+		t.Fatalf("read failure record after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("failure record should not be overwritten through temp symlink")
+	}
+}
+
 func TestRecoverReconcileMergesCompletedAtoms(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
@@ -562,6 +749,21 @@ func writeRecoverTestPackage(t *testing.T, root string, dir string) {
 	body := []byte("package " + pkg + "\n\nfunc Value() int { return 1 }\n")
 	if err := os.WriteFile(filepath.Join(fullDir, pkg+".go"), body, 0o644); err != nil {
 		t.Fatalf("write test package: %v", err)
+	}
+}
+
+func writeRecoverFailedPlanExecuteRecord(t *testing.T, root string, sessionID string, requiredPaths []string) {
+	t.Helper()
+	state := planexecute.NewProgressState(sessionID, "make a change", "", requiredPaths, nil, time.Now().UTC())
+	state.Status = planexecute.ProgressStatusFailed
+	state.FailureKind = "executor_failed"
+	state.FailureReason = "edit failed"
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("save progress: %v", err)
+	}
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC()); err != nil {
+		t.Fatalf("write recovery record: %v", err)
 	}
 }
 

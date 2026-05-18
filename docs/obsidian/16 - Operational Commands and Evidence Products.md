@@ -103,8 +103,12 @@ idiom tool recovery_status --profile discovery --input '{"packet_path":".idiom/r
 ```
 
 `recovery_decompose` writes local `.idiom/recovery` artifacts, so it is exposed
-only through the default tool profile. `recovery_promote` and
-`recovery_reconcile` remain CLI-only.
+only through the default tool profile and rejects output paths that leave the
+workspace or traverse symlinked directories. CLI `recover decompose --output`
+also rejects protected paths such as `.git`, `logs`, `.env`, and
+`config.json`, plus recovery control artifacts such as `failure.json` and
+`reconciliation.json`. `recovery_promote` and `recovery_reconcile` remain
+CLI-only.
 
 Product workflow status can surface recovery packets when durable
 `workflow_state.json` includes `artifact_paths.recovery_packet`. The shared

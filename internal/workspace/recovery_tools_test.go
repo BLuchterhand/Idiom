@@ -78,6 +78,142 @@ func TestRecoveryToolsInspectDecomposeAndStatus(t *testing.T) {
 	}
 }
 
+func TestRecoveryDecomposeToolRejectsSymlinkedOutputPath(t *testing.T) {
+	root := t.TempDir()
+	writeRecoveryWorkspaceFile(t, root, "internal/app/foo.go", "package app\n")
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         "sid-symlink-output",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "exact edit did not apply",
+		RequiredEditPaths: []string{"internal/app/foo.go"},
+		AllowedEditPaths:  []string{"internal/app/foo.go"},
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("write failure record: %v", err)
+	}
+	outsideDir := t.TempDir()
+	if err := os.Symlink(outsideDir, filepath.Join(root, ".idiom", "recovery", "link-out")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	decompose := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "recovery_decompose",
+		SessionID:  "sid-symlink-output",
+		OutputPath: ".idiom/recovery/link-out/packet.json",
+	})
+	if decompose.Error == "" || !strings.Contains(decompose.Error, "symlinked directories") {
+		t.Fatalf("expected symlinked output rejection, got error=%q output=%s", decompose.Error, decompose.Output)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "packet.json")); !os.IsNotExist(err) {
+		t.Fatalf("symlink target output should not be written, stat err=%v", err)
+	}
+}
+
+func TestRecoveryDecomposeToolRejectsSymlinkedDefaultOutputPath(t *testing.T) {
+	root := t.TempDir()
+	writeRecoveryWorkspaceFile(t, root, "internal/app/foo.go", "package app\n")
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         "sid-default-symlink-output",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "exact edit did not apply",
+		RequiredEditPaths: []string{"internal/app/foo.go"},
+		AllowedEditPaths:  []string{"internal/app/foo.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write failure record: %v", err)
+	}
+	recoveryDir := filepath.Join(root, ".idiom", "recovery")
+	outsideRecoveryDir := filepath.Join(t.TempDir(), "recovery")
+	if err := os.Rename(recoveryDir, outsideRecoveryDir); err != nil {
+		t.Fatalf("move recovery dir outside workspace: %v", err)
+	}
+	if err := os.Symlink(outsideRecoveryDir, recoveryDir); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	decompose := mgr.Execute(context.Background(), ToolRequest{Tool: "recovery_decompose", SessionID: "sid-default-symlink-output"})
+	if decompose.Error == "" || !strings.Contains(decompose.Error, "symlinked directories") {
+		t.Fatalf("expected symlinked default output rejection, got error=%q output=%s", decompose.Error, decompose.Output)
+	}
+	if _, err := os.Stat(filepath.Join(outsideRecoveryDir, record.FailureID, "packet.json")); !os.IsNotExist(err) {
+		t.Fatalf("symlink default target output should not be written, stat err=%v", err)
+	}
+}
+
+func TestRecoveryDecomposeToolRejectsControlArtifactOutputPath(t *testing.T) {
+	root := t.TempDir()
+	writeRecoveryWorkspaceFile(t, root, "internal/app/foo.go", "package app\n")
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         "sid-control-artifact-output",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "exact edit did not apply",
+		RequiredEditPaths: []string{"internal/app/foo.go"},
+		AllowedEditPaths:  []string{"internal/app/foo.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write failure record: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	decompose := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "recovery_decompose",
+		SessionID:  "sid-control-artifact-output",
+		OutputPath: filepath.ToSlash(filepath.Join(".idiom", "recovery", record.FailureID, "failure.json")),
+	})
+	if decompose.Error == "" || !strings.Contains(decompose.Error, "control artifact") {
+		t.Fatalf("expected control artifact rejection, got error=%q output=%s", decompose.Error, decompose.Output)
+	}
+	if _, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, "sid-control-artifact-output"); err != nil || !found {
+		t.Fatalf("failure record should remain readable, found=%v err=%v", found, err)
+	}
+}
+
+func TestRecoveryDecomposeToolRejectsPreexistingTempSymlink(t *testing.T) {
+	root := t.TempDir()
+	writeRecoveryWorkspaceFile(t, root, "internal/app/foo.go", "package app\n")
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         "sid-temp-symlink-output",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "exact edit did not apply",
+		RequiredEditPaths: []string{"internal/app/foo.go"},
+		AllowedEditPaths:  []string{"internal/app/foo.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write failure record: %v", err)
+	}
+	packetPath := filepath.Join(root, ".idiom", "recovery", record.FailureID, "packet.json")
+	controlPath := filepath.Join(root, ".idiom", "recovery", record.FailureID, "failure.json")
+	before, err := os.ReadFile(controlPath)
+	if err != nil {
+		t.Fatalf("read failure record before: %v", err)
+	}
+	if err := os.Symlink(controlPath, packetPath+".tmp"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	decompose := mgr.Execute(context.Background(), ToolRequest{Tool: "recovery_decompose", SessionID: "sid-temp-symlink-output"})
+	if decompose.Error == "" || !strings.Contains(decompose.Error, "write recovery decomposition packet") {
+		t.Fatalf("expected temp symlink rejection, got error=%q output=%s", decompose.Error, decompose.Output)
+	}
+	after, err := os.ReadFile(controlPath)
+	if err != nil {
+		t.Fatalf("read failure record after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("failure record should not be overwritten through temp symlink")
+	}
+}
+
 func TestRecoveryStatusToolReflectsReconciliation(t *testing.T) {
 	root := t.TempDir()
 	writeRecoveryWorkspaceFile(t, root, "internal/app/foo.go", "package app\n")

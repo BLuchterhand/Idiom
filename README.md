@@ -158,7 +158,11 @@ Other useful subcommands:
   recovery atoms, product links, gates, and the next valid action from a
   decomposition packet.
 - `idiom recover decompose --session <id> [--output <packet.json>] [--json]`
-  — rebuild a recovery packet from a failed plan-execute session.
+  — rebuild a recovery packet from a failed plan-execute session. Custom
+  output paths must stay under the workspace root, avoid protected paths such
+  as `.git`, `logs`, `.env`, and `config.json`, avoid recovery control
+  artifacts such as `failure.json` and `reconciliation.json`, and must not
+  traverse symlinked directories.
 - `idiom recover promote --packet <packet.json> --atom <id> --output
   <brief.md>` — promote one candidate atom into a normal gated brief.
 - `idiom recover reconcile --packet <packet.json> --completed <atom-id>[,<atom-id>...] [--json]`
@@ -181,7 +185,8 @@ Other useful subcommands:
   integrations.
   Recovery state is available through `recovery_inspect` and `recovery_status`
   in the discovery profile; `recovery_decompose` writes local recovery artifacts
-  and therefore requires the default profile. `recovery_promote` and
+  under `.idiom/recovery`, rejects symlinked output parents, and therefore
+  requires the default profile. `recovery_promote` and
   `recovery_reconcile` remain first-party `idiom recover` commands. Product
   operator status also surfaces
   recovery packets referenced from `workflow_state.artifact_paths`, validates

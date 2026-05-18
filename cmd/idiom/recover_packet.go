@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -154,7 +155,11 @@ func buildRecoverDecomposeReport(root string, opts recoverDecomposeOptions) (rec
 	if err != nil {
 		return recoverDecomposeReport{}, err
 	}
-	_, relPath, err := recovery.WriteDecompositionPacket(root, packet, opts.OutputPath)
+	outputPath, _, err := resolveRecoveryDecompositionOutputPath(root, packet.FailureID, opts.OutputPath)
+	if err != nil {
+		return recoverDecomposeReport{}, err
+	}
+	_, relPath, err := recovery.WriteDecompositionPacket(root, packet, outputPath)
 	if err != nil {
 		return recoverDecomposeReport{}, err
 	}
@@ -796,6 +801,43 @@ func resolveRecoveryPath(root string, path string) string {
 	return filepath.Join(root, path)
 }
 
+func resolveRecoveryDecompositionOutputPath(root string, failureID string, outputPath string) (string, string, error) {
+	outputPath = strings.TrimSpace(outputPath)
+	fullPath := outputPath
+	if outputPath == "" {
+		var err error
+		fullPath, _, err = recovery.DecompositionPacketPath(root, failureID, "")
+		if err != nil {
+			return "", "", err
+		}
+	} else if !filepath.IsAbs(fullPath) {
+		fullPath = filepath.Join(root, fullPath)
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve recovery decomposition output path: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("recovery decomposition output path must stay under workspace root")
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if isProtectedRecoveryReconciliationOutputPath(rel) {
+		return "", "", fmt.Errorf("recovery decomposition output path is protected: %s", rel)
+	}
+	if isRecoveryControlArtifactPath(rel) {
+		return "", "", fmt.Errorf("recovery decomposition output path would overwrite a recovery control artifact: %s", rel)
+	}
+	if hasRecoverySymlinkAncestor(absRoot, absPath) {
+		return "", "", fmt.Errorf("recovery decomposition output path must not traverse symlinked directories")
+	}
+	return absPath, rel, nil
+}
+
 func tryLoadRecoveryReconciliationForStatus(root string, packetPath string, packet recovery.DecompositionPacket) (recovery.Reconciliation, string, bool, error) {
 	if siblingPath, siblingRel, ok := defaultRecoveryReconciliationSiblingPath(root, packetPath); ok {
 		reconciliation, _, found, err := recovery.TryLoadReconciliation(siblingPath)
@@ -932,19 +974,20 @@ func isProtectedRecoveryReconciliationOutputPath(rel string) bool {
 	if rel == "" || rel == "." {
 		return true
 	}
-	if rel == ".idiom" || strings.HasPrefix(rel, ".idiom/") {
-		return rel != ".idiom/recovery" && !strings.HasPrefix(rel, ".idiom/recovery/")
+	canonical := strings.ToLower(rel)
+	if canonical == ".idiom" || strings.HasPrefix(canonical, ".idiom/") {
+		return canonical != ".idiom/recovery" && !strings.HasPrefix(canonical, ".idiom/recovery/")
 	}
 	protectedPrefixes := []string{
 		".git/",
 		"logs/",
 	}
 	for _, prefix := range protectedPrefixes {
-		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
+		if canonical == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(canonical, prefix) {
 			return true
 		}
 	}
-	switch rel {
+	switch canonical {
 	case ".env", "config.json":
 		return true
 	}
@@ -956,21 +999,39 @@ func isProtectedPromotionOutputPath(rel string) bool {
 	if rel == "" || rel == "." {
 		return true
 	}
+	canonical := strings.ToLower(rel)
 	protectedPrefixes := []string{
 		".git/",
 		".idiom/",
 		"logs/",
 	}
 	for _, prefix := range protectedPrefixes {
-		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
+		if canonical == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(canonical, prefix) {
 			return true
 		}
 	}
-	switch rel {
+	switch canonical {
 	case ".env", "config.json":
 		return true
 	}
 	return false
+}
+
+func isRecoveryControlArtifactPath(rel string) bool {
+	rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
+	canonical := strings.ToLower(rel)
+	if canonical == "" || canonical == "." {
+		return true
+	}
+	if canonical != ".idiom/recovery" && !strings.HasPrefix(canonical, ".idiom/recovery/") {
+		return false
+	}
+	switch path.Base(canonical) {
+	case "failure.json", "reconciliation.json":
+		return true
+	default:
+		return false
+	}
 }
 
 func recoverReconciliationFindingMessages(findings []recovery.ReconciliationValidationFinding) string {

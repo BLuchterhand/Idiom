@@ -158,7 +158,7 @@ func WriteDecompositionPacket(root string, packet DecompositionPacket, outputPat
 		return "", "", fmt.Errorf("marshal recovery decomposition packet: %w", err)
 	}
 	tmpPath := fullPath + ".tmp"
-	if err := os.WriteFile(tmpPath, append(body, '\n'), 0o600); err != nil {
+	if err := writeRecoveryTempFileExclusive(tmpPath, append(body, '\n')); err != nil {
 		return "", "", fmt.Errorf("write recovery decomposition packet: %w", err)
 	}
 	if err := os.Rename(tmpPath, fullPath); err != nil {

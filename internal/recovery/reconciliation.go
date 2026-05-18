@@ -319,7 +319,7 @@ func WriteReconciliation(root string, reconciliation Reconciliation, outputPath 
 		return "", "", fmt.Errorf("marshal recovery reconciliation: %w", err)
 	}
 	tmpPath := fullPath + ".tmp"
-	if err := os.WriteFile(tmpPath, append(body, '\n'), 0o600); err != nil {
+	if err := writeRecoveryTempFileExclusive(tmpPath, append(body, '\n')); err != nil {
 		return "", "", fmt.Errorf("write recovery reconciliation: %w", err)
 	}
 	if err := os.Rename(tmpPath, fullPath); err != nil {

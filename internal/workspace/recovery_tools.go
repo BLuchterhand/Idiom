@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -153,7 +154,7 @@ func (m *Manager) recoveryDecompose(ctx context.Context, req ToolRequest) ToolRe
 	if !found {
 		return ToolResult{Tool: "recovery_decompose", Summary: "Recovery failure record not found", Error: "recovery failure record not found"}
 	}
-	outputPath, err := m.recoveryDecomposeOutputPath(req.OutputPath)
+	outputPath, err := m.recoveryDecomposeOutputPath(record.FailureID, req.OutputPath)
 	if err != nil {
 		return ToolResult{Tool: "recovery_decompose", Summary: "Recovery decomposition rejected", Error: err.Error()}
 	}
@@ -229,21 +230,42 @@ func (m *Manager) recoveryPacketPathForRequest(req ToolRequest) (string, error) 
 	return fullPath, err
 }
 
-func (m *Manager) recoveryDecomposeOutputPath(path string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", nil
+func (m *Manager) recoveryDecomposeOutputPath(failureID string, outputPath string) (string, error) {
+	outputPath = strings.TrimSpace(outputPath)
+	fullPath := outputPath
+	if outputPath == "" {
+		var err error
+		fullPath, _, err = recovery.DecompositionPacketPath(m.cfg.Root, failureID, "")
+		if err != nil {
+			return "", err
+		}
+	} else {
+		var err error
+		fullPath, err = m.workspaceContainedPath(outputPath)
+		if err != nil {
+			return "", err
+		}
 	}
-	fullPath, err := m.workspaceContainedPath(path)
+	fullPath, err := filepath.Abs(fullPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve recovery output path: %w", err)
 	}
-	rel, err := filepath.Rel(m.cfg.Root, fullPath)
+	absRoot, err := filepath.Abs(m.cfg.Root)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, fullPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve recovery output path: %w", err)
 	}
 	rel = filepath.ToSlash(filepath.Clean(rel))
 	if rel == ".idiom/recovery" || strings.HasPrefix(rel, ".idiom/recovery/") {
+		if isWorkspaceRecoveryControlArtifactPath(rel) {
+			return "", fmt.Errorf("recovery_decompose output_path would overwrite a recovery control artifact")
+		}
+		if workspacePathHasSymlinkAncestor(m.cfg.Root, fullPath) {
+			return "", fmt.Errorf("recovery_decompose output_path must not traverse symlinked directories")
+		}
 		return rel, nil
 	}
 	return "", fmt.Errorf("recovery_decompose output_path must stay under .idiom/recovery")
@@ -271,6 +293,62 @@ func (m *Manager) workspaceContainedPath(path string) (string, error) {
 		return "", fmt.Errorf("path must stay under workspace root")
 	}
 	return absPath, nil
+}
+
+func workspacePathHasSymlinkAncestor(root string, path string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return true
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return true
+	}
+	absRoot = filepath.Clean(absRoot)
+	absPath = filepath.Clean(absPath)
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return true
+	}
+	parentRel := filepath.Dir(rel)
+	if parentRel == "." {
+		return false
+	}
+	current := absRoot
+	for _, part := range strings.Split(parentRel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return false
+		}
+		if err != nil {
+			return true
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func isWorkspaceRecoveryControlArtifactPath(rel string) bool {
+	rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
+	canonical := strings.ToLower(rel)
+	if canonical == "" || canonical == "." {
+		return true
+	}
+	if canonical != ".idiom/recovery" && !strings.HasPrefix(canonical, ".idiom/recovery/") {
+		return false
+	}
+	switch path.Base(canonical) {
+	case "failure.json", "reconciliation.json":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Manager) recoveryPartialState(ctx context.Context, record recovery.FailureRecord) recovery.PartialState {

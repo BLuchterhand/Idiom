@@ -55,6 +55,10 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] `idiom tool --profile discovery recovery_inspect` and `recovery_status`
   expose the read-only recovery state; `recovery_decompose` stays out of the
   discovery profile because it writes artifacts.
+- [x] `recover decompose --output` is workspace-contained, protected-path
+  checked, and symlink-ancestor checked before writing packets; the sidecar
+  `recovery_decompose` writer keeps output under `.idiom/recovery` and rejects
+  symlinked output parents or recovery control artifact targets.
 - [x] `idiom product status --operator-view` surfaces recovery packets from
   `workflow_state.artifact_paths.recovery_packet` and blocks normal dispatch
   while recovery is open.

@@ -275,6 +275,10 @@ Required behavior:
 - Failed plan-execute saves automatically write a failure record and default
   decomposition packet. `decompose` rebuilds that packet explicitly when an
   operator wants a different output path or current partial-state evidence.
+  Custom CLI output paths are workspace-contained, protected-path checked, and
+  symlink-ancestor checked before any packet write occurs; packet writes cannot
+  target recovery control artifacts such as `failure.json` or
+  `reconciliation.json`.
   Future adapters may use `context_pack`, `context_trace_pack`,
   `context_impact`, and test output to localize residual work more deeply.
 - `promote` converts one candidate atom into a normal dispatchable brief only
@@ -332,7 +336,8 @@ The initial sidecar/tool shape should be:
 - `recovery_status`: read-only, allowed in the `discovery` profile, returns
   packet status, gates, blockers, and next valid actions.
 - `recovery_decompose`: default profile only, writes local `.idiom/recovery`
-  artifacts and returns a sidecar envelope with artifact paths and hashes.
+  artifacts, rejects symlinked output parents, and returns a sidecar envelope
+  with artifact paths and hashes.
 - `recovery_promote` and `recovery_reconcile`: CLI-only until a
   write-authorization contract exists for sidecar/MCP callers.
 

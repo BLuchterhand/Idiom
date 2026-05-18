@@ -1,7 +1,9 @@
 package recovery
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -94,6 +96,48 @@ func TestWriteAndLoadDecompositionPacket(t *testing.T) {
 	}
 	if loaded.PacketID != packet.PacketID || loaded.FailureID != packet.FailureID {
 		t.Fatalf("loaded packet mismatch: %#v", loaded)
+	}
+}
+
+func TestWriteDecompositionPacketRejectsExistingTempSymlink(t *testing.T) {
+	root := t.TempDir()
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-temp-symlink",
+		FailureKind:       "executor_failed",
+		RequiredEditPaths: []string{"a.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	fullPath, _, err := DecompositionPacketPath(root, record.FailureID, "")
+	if err != nil {
+		t.Fatalf("DecompositionPacketPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("mkdir packet dir: %v", err)
+	}
+	controlPath := filepath.Join(filepath.Dir(fullPath), "failure.json")
+	before := []byte("failure record must not be overwritten\n")
+	if err := os.WriteFile(controlPath, before, 0o600); err != nil {
+		t.Fatalf("write control artifact: %v", err)
+	}
+	if err := os.Symlink(controlPath, fullPath+".tmp"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, _, err := WriteDecompositionPacket(root, packet, ""); err == nil || !strings.Contains(err.Error(), "write recovery decomposition packet") {
+		t.Fatalf("expected temp symlink write rejection, got %v", err)
+	}
+	after, err := os.ReadFile(controlPath)
+	if err != nil {
+		t.Fatalf("read control artifact: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("control artifact should not be overwritten")
 	}
 }
 

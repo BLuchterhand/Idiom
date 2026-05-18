@@ -257,7 +257,7 @@ func WritePlanExecuteFailureRecord(root string, input PlanExecuteFailureInput, n
 		return FailureRecord{}, "", fmt.Errorf("marshal recovery failure record: %w", err)
 	}
 	tmpPath := fullPath + ".tmp"
-	if err := os.WriteFile(tmpPath, append(body, '\n'), 0o600); err != nil {
+	if err := writeRecoveryTempFileExclusive(tmpPath, append(body, '\n')); err != nil {
 		return FailureRecord{}, "", fmt.Errorf("write recovery failure record: %w", err)
 	}
 	if err := os.Rename(tmpPath, fullPath); err != nil {
