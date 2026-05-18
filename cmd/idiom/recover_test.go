@@ -163,6 +163,75 @@ func TestRunRecoverInspectClassifiesOutOfScopeDirtyWorkspace(t *testing.T) {
 	}
 }
 
+func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package allowed\n"), 0o644); err != nil {
+		t.Fatalf("write scoped source: %v", err)
+	}
+	state := planexecute.NewProgressState("recover-session-4", "make a change", "", []string{"allowed.go"}, nil, time.Now().UTC())
+	state.Status = planexecute.ProgressStatusFailed
+	state.FailureKind = "executor_failed"
+	state.FailureReason = "edit failed"
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("save progress: %v", err)
+	}
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC()); err != nil {
+		t.Fatalf("write recovery record: %v", err)
+	}
+
+	var decomposeOut, decomposeErr bytes.Buffer
+	code := runRecoverMain([]string{"decompose", "--config", configPath, "--session", state.SessionID, "--output", "packet.json", "--json"}, &decomposeOut, &decomposeErr)
+	if code != 0 {
+		t.Fatalf("recover decompose exit=%d stdout=%s stderr=%s", code, decomposeOut.String(), decomposeErr.String())
+	}
+	var decomposeReport recoverDecomposeReport
+	if err := json.Unmarshal(decomposeOut.Bytes(), &decomposeReport); err != nil {
+		t.Fatalf("decode decompose report: %v\n%s", err, decomposeOut.String())
+	}
+	if decomposeReport.Status != "ready" || decomposeReport.PacketPath != "packet.json" {
+		t.Fatalf("unexpected decompose report: %#v", decomposeReport)
+	}
+	if len(decomposeReport.CandidateAtoms) != 1 || decomposeReport.CandidateAtoms[0].ID != "recovery-001" {
+		t.Fatalf("unexpected candidate atoms: %#v", decomposeReport.CandidateAtoms)
+	}
+
+	var statusOut, statusErr bytes.Buffer
+	code = runRecoverMain([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &statusOut, &statusErr)
+	if code != 0 {
+		t.Fatalf("recover status exit=%d stdout=%s stderr=%s", code, statusOut.String(), statusErr.String())
+	}
+	var statusReport recoverStatusReport
+	if err := json.Unmarshal(statusOut.Bytes(), &statusReport); err != nil {
+		t.Fatalf("decode status report: %v\n%s", err, statusOut.String())
+	}
+	if statusReport.Status != "ready" || statusReport.NextAction != recovery.NextActionReviewDecomposition {
+		t.Fatalf("unexpected status report: %#v", statusReport)
+	}
+
+	var promoteOut, promoteErr bytes.Buffer
+	code = runRecoverMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", "briefs/recovery-001.md", "--json"}, &promoteOut, &promoteErr)
+	if code != 0 {
+		t.Fatalf("recover promote exit=%d stdout=%s stderr=%s", code, promoteOut.String(), promoteErr.String())
+	}
+	var promoteReport recoverPromoteReport
+	if err := json.Unmarshal(promoteOut.Bytes(), &promoteReport); err != nil {
+		t.Fatalf("decode promote report: %v\n%s", err, promoteOut.String())
+	}
+	if promoteReport.Status != "promoted" || promoteReport.NextAction != "dispatch_atom" {
+		t.Fatalf("unexpected promote report: %#v", promoteReport)
+	}
+	if _, err := os.Stat(filepath.Join(root, "briefs", "recovery-001.md")); err != nil {
+		t.Fatalf("promotion output missing: %v", err)
+	}
+	for _, gate := range promoteReport.Gates {
+		if gate.Status != "pass" {
+			t.Fatalf("gate did not pass: %#v report=%#v", gate, promoteReport)
+		}
+	}
+}
+
 func initRecoverTestGitRepo(t *testing.T, root string) {
 	t.Helper()
 	cmd := exec.Command("git", "-C", root, "init")

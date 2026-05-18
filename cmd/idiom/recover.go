@@ -55,8 +55,14 @@ func runRecoverMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
-	case "inspect", "status":
+	case "inspect":
 		return runRecoverInspectMain(args[1:], stdout, stderr)
+	case "decompose":
+		return runRecoverDecomposeMain(args[1:], stdout, stderr)
+	case "promote":
+		return runRecoverPromoteMain(args[1:], stdout, stderr)
+	case "status":
+		return runRecoverStatusMain(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		printRecoverUsage(stdout)
 		return 0
@@ -70,7 +76,9 @@ func runRecoverMain(args []string, stdout io.Writer, stderr io.Writer) int {
 func printRecoverUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  idiom recover inspect --session <id> [--config <config.json>] [--json]")
-	fmt.Fprintln(w, "  idiom recover status --session <id> [--config <config.json>] [--json]")
+	fmt.Fprintln(w, "  idiom recover decompose --session <id> [--config <config.json>] [--output <packet.json>] [--json]")
+	fmt.Fprintln(w, "  idiom recover promote --packet <packet.json> --atom <id> --output <brief.md> [--config <config.json>] [--json] [--allow-dirty]")
+	fmt.Fprintln(w, "  idiom recover status --packet <packet.json> [--config <config.json>] [--json]")
 }
 
 func runRecoverInspectMain(args []string, stdout io.Writer, stderr io.Writer) int {
