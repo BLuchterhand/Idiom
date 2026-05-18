@@ -118,6 +118,16 @@ func TestProductStatusMigrationApplyFailsClosedWithoutPartialMutation(t *testing
 			want:   []string{"stale_workflow_state_revision"},
 		},
 		{
+			name:   "missing expected revision",
+			mutate: func(t *testing.T, fixture *migrationApplyFixture) {},
+			options: func(fixture *migrationApplyFixture) ProductStatusMigrationApplyOptions {
+				opts := fixture.options("closed")
+				opts.ExpectedStateRevision = -1
+				return opts
+			},
+			want: []string{"missing_expected_revision"},
+		},
+		{
 			name: "existing target folder",
 			mutate: func(t *testing.T, fixture *migrationApplyFixture) {
 				if err := os.MkdirAll(fixture.targetRoot, 0o755); err != nil {
@@ -168,6 +178,53 @@ func TestProductStatusMigrationApplyFailsClosedWithoutPartialMutation(t *testing
 				return opts
 			},
 			want: []string{"effort_root_outside_efforts_root"},
+		},
+		{
+			name: "symlinked effort root",
+			mutate: func(t *testing.T, fixture *migrationApplyFixture) {
+				externalRoot := filepath.Join(fixture.root, "external-effort")
+				if err := os.Rename(fixture.sourceRoot, externalRoot); err != nil {
+					t.Fatalf("move source root outside efforts tree: %v", err)
+				}
+				if err := os.MkdirAll(filepath.Dir(fixture.sourceRoot), 0o755); err != nil {
+					t.Fatalf("restore source parent: %v", err)
+				}
+				if err := os.Symlink(externalRoot, fixture.sourceRoot); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			},
+			options: func(fixture *migrationApplyFixture) ProductStatusMigrationApplyOptions {
+				opts := fixture.options("closed")
+				opts.ExpectedStateRevision = 7
+				return opts
+			},
+			want: []string{"unsafe_effort_root_symlink"},
+		},
+		{
+			name: "symlinked events file",
+			mutate: func(t *testing.T, fixture *migrationApplyFixture) {
+				eventsPath := filepath.Join(fixture.sourceRoot, "events.jsonl")
+				externalEventsPath := filepath.Join(fixture.root, "external-events.jsonl")
+				eventsBytes, err := os.ReadFile(eventsPath)
+				if err != nil {
+					t.Fatalf("read events file: %v", err)
+				}
+				if err := os.WriteFile(externalEventsPath, eventsBytes, 0o644); err != nil {
+					t.Fatalf("write external events file: %v", err)
+				}
+				if err := os.Remove(eventsPath); err != nil {
+					t.Fatalf("remove events file: %v", err)
+				}
+				if err := os.Symlink(externalEventsPath, eventsPath); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			},
+			options: func(fixture *migrationApplyFixture) ProductStatusMigrationApplyOptions {
+				opts := fixture.options("closed")
+				opts.ExpectedStateRevision = 7
+				return opts
+			},
+			want: []string{"unsafe_events_file_symlink"},
 		},
 		{
 			name: "mismatched index workflow state",
@@ -233,6 +290,64 @@ func TestProductStatusMigrationApplyFailsClosedWithoutPartialMutation(t *testing
 	}
 }
 
+func TestProductStatusMigrationApplyRejectsSymlinkedEffortRoot(t *testing.T) {
+	fixture := newMigrationApplyFixture(t)
+	externalRoot := filepath.Join(fixture.root, "external-effort")
+	if err := os.Rename(fixture.sourceRoot, externalRoot); err != nil {
+		t.Fatalf("move fixture source to external root: %v", err)
+	}
+	if err := os.Symlink(externalRoot, fixture.sourceRoot); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	externalBefore := snapshotMigrationApplyTree(t, externalRoot)
+
+	opts := fixture.options("closed")
+	opts.ExpectedStateRevision = 7
+	result := ApplyProductStatusMigration(opts)
+	if result.Status != "blocked" || !migrationTestHasBlocker(result, "unsafe_effort_root_symlink") {
+		t.Fatalf("expected unsafe_effort_root_symlink blocker, got %#v", result)
+	}
+	if linkTarget, err := os.Readlink(fixture.sourceRoot); err != nil || linkTarget != externalRoot {
+		t.Fatalf("expected source symlink to remain untouched, target=%q err=%v", linkTarget, err)
+	}
+	if _, err := os.Stat(fixture.targetRoot); !os.IsNotExist(err) {
+		t.Fatalf("expected target folder not to be created, stat err=%v", err)
+	}
+	externalAfter := snapshotMigrationApplyTree(t, externalRoot)
+	if !reflect.DeepEqual(externalBefore, externalAfter) {
+		t.Fatalf("expected symlinked external effort to remain unchanged, before=%#v after=%#v", externalBefore, externalAfter)
+	}
+}
+
+func TestProductStatusMigrationApplyRollsBackAfterFolderRenameFailure(t *testing.T) {
+	fixture := newMigrationApplyFixture(t)
+	before := snapshotMigrationApplyTree(t, fixture.root)
+	originalHook := productStatusMigrationAfterFolderRenameHook
+	productStatusMigrationAfterFolderRenameHook = func() error {
+		return os.ErrPermission
+	}
+	t.Cleanup(func() {
+		productStatusMigrationAfterFolderRenameHook = originalHook
+	})
+
+	opts := fixture.options("closed")
+	opts.ExpectedStateRevision = 7
+	result := ApplyProductStatusMigration(opts)
+	if result.Status != "blocked" || !migrationTestHasBlocker(result, "status_migration_apply_error") {
+		t.Fatalf("expected rollback-backed apply error, got %#v", result)
+	}
+	if _, err := os.Stat(fixture.sourceRoot); err != nil {
+		t.Fatalf("expected source effort restored after rollback: %v", err)
+	}
+	if _, err := os.Stat(fixture.targetRoot); !os.IsNotExist(err) {
+		t.Fatalf("expected target effort removed after rollback, stat err=%v", err)
+	}
+	after := snapshotMigrationApplyTree(t, fixture.root)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("expected rollback to restore tree, before=%#v after=%#v", before, after)
+	}
+}
+
 type migrationApplyFixture struct {
 	root             string
 	effortsRoot      string
@@ -294,6 +409,14 @@ func snapshotMigrationApplyTree(t *testing.T, root string) map[string]string {
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			snapshot[filepath.ToSlash(rel)] = "SYMLINK->" + target
+			return nil
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {

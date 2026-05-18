@@ -3002,22 +3002,77 @@ func TestProductStatusMigrationApplyJSONApplyMovesEffort(t *testing.T) {
 }
 
 func TestProductStatusMigrationApplyUsageErrorsAreTyped(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := runProductStatusMigration([]string{
-		"--effort-root", filepath.Join("..", "efforts", "started", "test-effort"),
-		"--target-status", "closed",
-		"--plan",
-		"--json",
-	}, &stdout, &stderr, nil)
-	if code != 2 {
-		t.Fatalf("expected unsafe traversal root to return code 2, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "unsafe traversal effort root",
+			args: []string{
+				"--effort-root", filepath.Join("..", "efforts", "started", "test-effort"),
+				"--target-status", "closed",
+				"--plan",
+				"--json",
+			},
+			want: "unsafe_effort_root",
+		},
+		{
+			name: "missing effort root",
+			args: []string{
+				"--target-status", "closed",
+				"--plan",
+				"--json",
+			},
+			want: "missing_effort_root",
+		},
+		{
+			name: "missing target status",
+			args: []string{
+				"--effort-root", filepath.Join("started", "test-effort"),
+				"--plan",
+				"--json",
+			},
+			want: "missing_target_status",
+		},
+		{
+			name: "mode conflict",
+			args: []string{
+				"--effort-root", filepath.Join("started", "test-effort"),
+				"--target-status", "closed",
+				"--plan",
+				"--apply",
+				"--json",
+			},
+			want: "invalid_migration_mode",
+		},
+		{
+			name: "apply missing expected revision",
+			args: []string{
+				"--effort-root", filepath.Join("started", "test-effort"),
+				"--target-status", "closed",
+				"--apply",
+				"--json",
+			},
+			want: "missing_expected_revision",
+		},
 	}
-	var result productworkflow.ProductStatusMigrationPlan
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		t.Fatalf("usage error output should still be valid JSON: %v\n%s", err, stdout.String())
-	}
-	if result.Status != "blocked" || len(result.Blockers) != 1 || result.Blockers[0].Code != "unsafe_effort_root" {
-		t.Fatalf("expected unsafe_effort_root blocker, got %#v", result)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := runProductStatusMigration(tc.args, &stdout, &stderr, nil)
+			if code != 2 {
+				t.Fatalf("expected typed usage error code 2, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			var result productworkflow.ProductStatusMigrationPlan
+			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+				t.Fatalf("usage error output should still be valid JSON: %v\n%s", err, stdout.String())
+			}
+			if result.Status != "blocked" || len(result.Blockers) != 1 || result.Blockers[0].Code != tc.want {
+				t.Fatalf("expected %s blocker, got %#v", tc.want, result)
+			}
+		})
 	}
 }
 

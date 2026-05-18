@@ -929,20 +929,19 @@ func runProductStatusMigration(args []string, stdout io.Writer, stderr io.Writer
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "product status-migration: unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
-		return 2
+		return writeProductStatusMigrationUsageError(stdout, stderr, jsonOutput, "unexpected_arguments", "arguments", fmt.Sprintf("unexpected arguments: %s", strings.Join(fs.Args(), " ")), targetStatus)
 	}
 	if strings.TrimSpace(effortRoot) == "" {
-		fmt.Fprintln(stderr, "product status-migration: --effort-root is required")
-		return 2
+		return writeProductStatusMigrationUsageError(stdout, stderr, jsonOutput, "missing_effort_root", "effort_root", "--effort-root is required", targetStatus)
 	}
 	if strings.TrimSpace(targetStatus) == "" {
-		fmt.Fprintln(stderr, "product status-migration: --target-status is required")
-		return 2
+		return writeProductStatusMigrationUsageError(stdout, stderr, jsonOutput, "missing_target_status", "target_status", "--target-status is required", targetStatus)
 	}
 	if planMode == applyMode {
-		fmt.Fprintln(stderr, "product status-migration: choose exactly one of --plan or --apply")
-		return 2
+		return writeProductStatusMigrationUsageError(stdout, stderr, jsonOutput, "invalid_migration_mode", "mode", "choose exactly one of --plan or --apply", targetStatus)
+	}
+	if applyMode && expectedRevision < 0 {
+		return writeProductStatusMigrationUsageError(stdout, stderr, jsonOutput, "missing_expected_revision", "expected_revision", "--apply requires --expected-revision", targetStatus)
 	}
 	now := time.Now().UTC()
 	if strings.TrimSpace(updatedAt) == "" {
@@ -997,6 +996,34 @@ func runProductStatusMigration(args []string, stdout io.Writer, stderr io.Writer
 	}
 
 	return productStatusMigrationExitCode(plan)
+}
+
+func writeProductStatusMigrationUsageError(stdout io.Writer, stderr io.Writer, jsonOutput bool, code, path, message, targetStatus string) int {
+	if jsonOutput {
+		result := productStatusMigrationUsageResult(code, path, message, targetStatus)
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(stderr, "product status-migration: encode JSON: %v\n", err)
+			return 1
+		}
+		return 2
+	}
+	fmt.Fprintf(stderr, "product status-migration: %s\n", message)
+	return 2
+}
+
+func productStatusMigrationUsageResult(code, path, message, targetStatus string) productworkflow.ProductStatusMigrationPlan {
+	return productworkflow.ProductStatusMigrationPlan{
+		Status:             "blocked",
+		TargetStatusBucket: strings.ToLower(strings.TrimSpace(targetStatus)),
+		Blockers: []productworkflow.ProductStatusMigrationBlocker{{
+			Code:    code,
+			Path:    path,
+			Message: message,
+		}},
+		NextValidAction: "fix status-migration arguments and rerun the command",
+	}
 }
 
 func productStatusMigrationExitCode(result productworkflow.ProductStatusMigrationPlan) int {
