@@ -5,22 +5,41 @@
   "implementor_id": "codex-gpt-worker-impl-0026",
   "runtime": "codex_subagent",
   "model": "gpt-5.3-codex",
-  "completed_at": "",
+  "completed_at": "2026-05-18T13:32:00Z",
   "complexity_tier": "C2",
   "scope_statement": "Add deterministic, plan-only TDD obligation synthesis from accepted PRD requirements and accepted ADRs without writing tdd.json, generating briefs, evaluating coverage gates, executing models, or dispatching work.",
-  "code_changes": false,
-  "changed_paths": [],
-  "verification": {
-    "run_by_implementor": false,
-    "commands": [],
-    "status": "pending"
-  },
-  "privacy_note": "pending report stores only scope, GPT Codex assignment, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
-  "open_blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
+  "code_changes": true,
+  "changed_paths": [
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go",
+    "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md",
+    "docs/obsidian/22 - Product Workflow ROADMAP.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
+    "internal/productworkflow/tdd_obligation_plans.go",
+    "internal/productworkflow/tdd_obligation_plans_test.go",
+    "internal/productworkflow/types.go"
   ],
+  "verification": {
+    "run_by_implementor": true,
+    "commands": [
+      "idiom tool context_pack --input '{\"task\":\"phase 4 TDD obligation synthesis from accepted PRD ADR context packets product workflow\",\"mode\":\"plan\",\"limit\":12}'",
+      "idiom tool context_query --input '{\"query\":\"TDD obligation synthesis PRD ADR accepted requirements coverage tier product workflow tdd.json obligations\",\"resolution\":\"symbol\"}'",
+      "idiom tool context_zoom --input '{\"handle\":\"symbol://internal/productworkflow/types.go#TDDObligation\",\"resolution\":\"symbol\"}'",
+      "go test ./internal/productworkflow -run TestTDDObligationPlan",
+      "go test ./cmd/idiom -run TestProductTDDPlanObligations",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product tdd --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --plan-obligations --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "JSON/JSONL validation for durable impl-0026 artifacts",
+      "privacy secret-value scan over durable impl-0026 artifacts",
+      "git diff --check",
+      "go test ./..."
+    ],
+    "status": "passed"
+  },
+  "privacy_note": "durable reports and workflow state store only scope, paths, command names, typed findings, counts, and review outcomes; they do not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
+  "open_blockers": [],
   "reviewer_id": "codex-gpt-review-impl-0026"
 }

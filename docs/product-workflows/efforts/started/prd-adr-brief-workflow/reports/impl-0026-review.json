@@ -8,10 +8,27 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
+  "status": "passed",
   "findings": [],
-  "checks": {},
-  "reviewed_at": "",
-  "commands_reviewed": [],
+  "checks": {
+    "plan_only_contract": "pass",
+    "coverage_tier_mapping": "pass after repair",
+    "all_accepted_prd_requirements_planned": "pass after repair",
+    "durable_fixture_command": "pass",
+    "obsidian_parity_scope": "pass"
+  },
+  "reviewed_at": "2026-05-18T13:32:00Z",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"review impl 0026 TDD obligation synthesis plan product workflow\",\"mode\":\"plan\",\"limit\":8}'",
+    "idiom tool context_zoom --input '{\"handle\":\"symbol://internal/productworkflow/tdd_obligation_plans.go#PlanTDDObligations\",\"resolution\":\"symbol\"}'",
+    "idiom tool context_pack --input '{\"task\":\"re-review impl 0026 TDD obligation synthesis repair findings product workflow\",\"mode\":\"plan\",\"limit\":6}'",
+    "go test ./internal/productworkflow -run TestTDDObligationPlan -count=1",
+    "go test ./cmd/idiom -run TestProductTDDPlanObligations -count=1",
+    "go run ./cmd/idiom product tdd --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --plan-obligations --json"
+  ],
+  "prior_findings_resolved": [
+    "documentation-tier command mapping now emits audit/git diff --check instead of broad go test",
+    "planner now synthesizes all accepted PRD requirements with non-empty IDs, not only must-priority requirements"
+  ],
   "created_at": "2026-05-18T13:15:00Z"
 }

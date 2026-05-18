@@ -59,10 +59,10 @@ The design doc exists at
 [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md).
 See [[20 - PRD ADR Brief Research Workflow PROPOSAL]] for the Obsidian summary.
 Implementation is active and source-controlled through the durable effort folder.
-As of Atom 25, deterministic schemas, product lint/audit/status, research
+As of Atom 26, deterministic schemas, product lint/audit/status, research
 profile planning/merge/prompt rendering, PRD/ADR prompt rendering, acceptance
-metadata validation, and ADR supersession link validation exist. Atom 26 is
-planned as the first Phase 4 TDD obligation synthesis slice.
+metadata validation, ADR supersession link validation, and plan-only TDD
+obligation synthesis exist. The next Phase 4 slice is the coverage gate.
 
 ### Schemas and Types
 
@@ -112,7 +112,8 @@ planned as the first Phase 4 TDD obligation synthesis slice.
   the evidence ledger without drafting or accepting the PRD
 - [x] `idiom product adr --render-prompt` — render deterministic ADR prompt from
   the evidence ledger plus parsed PRD without drafting or accepting ADRs
-- [ ] `idiom product tdd` — build TDD obligations from PRD + ADRs
+- [x] `idiom product tdd --plan-obligations` — build a deterministic,
+  plan-only obligation plan from accepted PRD requirements and accepted ADRs
 - [ ] `idiom product brief` — generate briefs from PRD + ADRs + TDD
 - [x] `idiom product lint` — validate durable effort artifacts and cross-links
 - [x] `idiom product audit` — sectioned audit over the product workflow directory
@@ -130,7 +131,8 @@ planned as the first Phase 4 TDD obligation synthesis slice.
   `evidence_conflict_recorded`
 - [ ] Runtime telemetry events: `prd_drafted`, `prd_audited`
 - [ ] Runtime telemetry events: `adr_drafted`, `adr_accepted`
-- [ ] `tdd_obligations_created`
+- [x] Durable event/report records for TDD obligation synthesis planning
+- [ ] Runtime telemetry event: `tdd_obligations_created`
 - [ ] `coverage_gate_evaluated`
 - [ ] `product_artifact_dispatch_ready`, `product_artifact_blocked`
 - [ ] `execution_result_linked`
@@ -268,7 +270,7 @@ audit evidence only unless a human explicitly re-authorizes them.
 
 ### Phase 4: TDD Planner and Coverage Gate
 
-- [ ] Deterministic TDD obligation synthesis plan from accepted PRD/ADR artifacts
+- [x] Deterministic TDD obligation synthesis plan from accepted PRD/ADR artifacts
 - [ ] EARS template parser and validator
 - [ ] FMEA template and RPN scorer
 - [ ] HAZOP guide-word applicator

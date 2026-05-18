@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0025-phase-3-acceptance-state-and-supersession-links`
-- Active atom: `impl-0026-phase-4-tdd-obligation-synthesis-plan` planned
+- Last completed atom: `impl-0026-phase-4-tdd-obligation-synthesis-plan`
+- Active atom: none; next atom should plan the Phase 4 coverage gate slice
 - Status bucket: `started`
-- Current phase: `phase-4-tdd-obligation-synthesis`
-- Context pack: `c9a474b8604dd293`
+- Current phase: `phase-4-coverage-gate`
+- Context pack: `341cfce94f353ee2`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -93,21 +93,25 @@ This effort is the durable implementation state for delivering
   non-reciprocal links through product lint/audit. No model acceptance command,
   auto-accept path, promotion path, TUI/operator behavior, or execution path was
   added.
-- Atom 26 is planned as the first Phase 4 TDD obligation synthesis slice. It
-  should add a deterministic, plan-only TDD obligation synthesis surface from
-  accepted PRD requirements and accepted ADRs, using current context/test
-  evidence summaries where available. It must not overwrite `tdd.json`, generate
-  briefs, evaluate the coverage gate, execute models, or dispatch work.
+- Atom 26: all TDD obligations satisfied. Added the deterministic, plan-only
+  `idiom product tdd --plan-obligations` surface from accepted PRD requirements
+  and accepted ADRs. It emits JSON plan metadata and typed findings, preserves
+  PRD/ADR/evidence/TDD references, maps the repository's coverage tiers to
+  suggested obligation type and command, blocks when an accepted ADR cannot map
+  a requirement, and does not overwrite `tdd.json`, generate briefs, evaluate
+  the coverage gate, execute models, or dispatch work.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 22 closeout. These files are source-controlled
-fixtures and resumable implementation state; shipped behavior is limited to the
-committed product workflow validators plus lint and audit commands until later
-atoms close.
+The workflow implementation remains in progress after Atom 26 closeout. These
+files are source-controlled fixtures and resumable implementation state; shipped
+behavior includes deterministic product lint/audit/status, research planning and
+prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
+and plan-only TDD obligation synthesis. Coverage gates, brief generation,
+execution feedback loops, and operator surfaces remain later atoms.
 
 ## Implementation Guidelines
 

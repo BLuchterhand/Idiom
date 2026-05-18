@@ -4,12 +4,12 @@
   "task_id": "impl-0026-phase-4-tdd-obligation-synthesis-plan",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T13:15:00Z",
-  "state_revision": 76,
-  "last_event_id": "evt-0222",
-  "workspace_fingerprint": "idiom@2d95589",
+  "updated_at": "2026-05-18T13:32:00Z",
+  "state_revision": 77,
+  "last_event_id": "evt-0228",
+  "workspace_fingerprint": "idiom@b93270c",
   "status_bucket": "started",
-  "current_phase": "phase-4-tdd-obligation-synthesis",
+  "current_phase": "phase-4-coverage-gate",
   "current_state": "planned",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
@@ -74,8 +74,8 @@
       },
       {
         "gate": "tdd_obligation_synthesis_plan",
-        "status": "pending",
-        "checked_at": "2026-05-18T13:15:00Z"
+        "status": "passed",
+        "checked_at": "2026-05-18T13:32:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -117,10 +117,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T13:15:00Z",
+  "last_reconciliation_at": "2026-05-18T13:32:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "implement_phase_4_tdd_obligation_synthesis_atom",
+    "plan_phase_4_coverage_gate_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],
