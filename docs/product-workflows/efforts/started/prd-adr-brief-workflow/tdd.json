@@ -19,7 +19,18 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned"
+      "atom_planned",
+      "research_run_plan_from_profile",
+      "research_run_plan_rejects_unsafe_ids",
+      "product_research_plan_runs_json_surface",
+      "product_research_plan_runs_profile_selection",
+      "focused_go_tests",
+      "full_go_tests",
+      "durable_json_jsonl_validation",
+      "privacy_secret_scan",
+      "diff_whitespace_check",
+      "review_passed",
+      "atom_closed"
     ],
     "gates_blocked": []
   },
@@ -31,16 +42,16 @@
       "owner": "internal/productworkflow/research_runs_test.go",
       "command": "go test ./internal/productworkflow -run TestResearchRunPlan",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0021-002",
       "type": "fmea_negative",
       "behavior": "Research run planning fails closed with typed findings when profile or researcher identifiers cannot produce safe deterministic effort-relative output paths.",
       "owner": "internal/productworkflow/research_runs_test.go",
-      "command": "go test ./internal/productworkflow -run TestResearchRunPlanRejects",
+      "command": "go test ./internal/productworkflow -run TestResearchRunPlan",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0021-003",
@@ -49,7 +60,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductResearchPlanRuns",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0021-004",
@@ -58,7 +69,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0021-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     }
   ]
 }

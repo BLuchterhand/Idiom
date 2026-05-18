@@ -5,7 +5,7 @@
   "implementor_id": "codex-gpt-worker-impl-0021",
   "runtime": "codex_subagent",
   "model": "gpt-5.3-codex",
-  "completed_at": "",
+  "completed_at": "2026-05-18T11:46:00Z",
   "complexity_tier": "C2",
   "scope_statement": "Add deterministic research run planning from stored profiles without running models, writing researcher outputs, or drafting PRDs.",
   "code_changes": true,
@@ -26,17 +26,26 @@
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0021-investigation.json"
   ],
   "verification": {
-    "run_by_implementor": false,
-    "commands": [],
-    "status": "pending"
+    "run_by_implementor": true,
+    "commands": [
+      "idiom tool context_pack --input '{\"task\":\"continue prd adr brief workflow after impl 0020 choose next design doc atom\",\"mode\":\"plan\",\"limit\":12}'",
+      "idiom tool context_query --input '{\"query\":\"product research command selected profile merge evidence helper research profile store output paths\",\"resolution\":\"symbol\"}'",
+      "idiom tool context_pack --input '{\"task\":\"repair impl 0021 plan runs merge evidence mutual exclusion\",\"mode\":\"plan\",\"limit\":8}'",
+      "idiom tool context_pack --input '{\"task\":\"verify impl 0021 research run planning fail closed behavior\",\"mode\":\"plan\",\"limit\":6}'",
+      "go test ./internal/productworkflow -run 'TestResearchRun'",
+      "go test ./cmd/idiom -run 'TestProductResearchPlanRuns|TestProductResearchMergeEvidence'",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "JSON/JSONL validation for durable impl-0021 artifacts",
+      "privacy secret-pattern scan over durable impl-0021 artifacts",
+      "git diff --check && git diff --cached --check",
+      "go test ./..."
+    ],
+    "status": "passed_full_suite_and_product_gates"
   },
   "privacy_note": "no raw prompts, transcripts, file bodies, secrets, or customer-identifying data stored",
-  "open_blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "post_effort_investigation_pending",
-    "commit_and_push_pending"
-  ],
-  "reviewer_id": "codex-gpt-review-impl-0021"
+  "open_blockers": [],
+  "reviewer_id": "codex-gpt-review-impl-0021",
+  "checkpoint_commit_hash": "be094e3eb945a270af31ba9632bf820aa115e5b2"
 }

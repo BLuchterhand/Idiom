@@ -6,8 +6,8 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0020-phase-2-research-evidence-merge-from-profile-runs`
-- Active atom: `impl-0021-phase-2-research-run-plan-from-profiles`
+- Last completed atom: `impl-0021-phase-2-research-run-plan-from-profiles`
+- Active atom: none planned; next action is to plan the next Phase 2 atom or advance phase
 - Status bucket: `started`
 - Current phase: `phase-2-research-profiles`
 - Context pack: `2da56cd96a95bc0c`
@@ -55,17 +55,20 @@ This effort is the durable implementation state for delivering
   without running models or committing `.idiom` runtime state. Single-profile
   efforts can omit `--profile`; multi-profile efforts must pass it so merge
   policy selection is explicit.
-- Atom 21 (active): add a deterministic research run planning surface from
-  stored profiles. This should turn selected profile researcher rosters into
-  stable run specs and output paths without running models, calling
-  `idiom artifact`, writing researcher outputs, or drafting PRDs.
+- Atom 21: all TDD obligations satisfied. Added the deterministic research run
+  planning surface from stored profiles. This turns selected profile researcher
+  rosters into stable run specs and output paths without running models, calling
+  `idiom artifact`, writing researcher outputs, drafting PRDs, or writing the
+  evidence ledger. The plan surface is mutually exclusive with evidence merge,
+  requires explicit profile selection for multi-profile efforts, and fails closed
+  on unsafe profile or researcher identifiers.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 20 closeout. These files are source-controlled
+The workflow implementation remains in progress after Atom 21 closeout. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
 committed product workflow validators plus lint and audit commands until later
 atoms close.
@@ -218,7 +221,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Implement Atom 21: deterministic research run planning from stored profiles.
-Profile storage and evidence merge are in place; this atom should add the
-model-free run plan contract before any later atom executes researchers or
-generates PRDs. Codex owns durable closeout.
+Plan the next Phase 2 atom or advance phase. Profile storage, deterministic
+research run planning, and evidence merge are in place; the next atom should
+close the remaining design-doc gap before any later workflow is treated as
+fully delivered.
