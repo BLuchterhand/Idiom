@@ -1031,7 +1031,7 @@ func productStatusMigrationUsageResult(code, path, message, targetStatus string)
 
 func productStatusMigrationArgsRequestJSON(args []string) bool {
 	for _, arg := range args {
-		if arg == "--json" || arg == "-json" {
+		if arg == "--json" || arg == "-json" || strings.HasPrefix(arg, "--json=") || strings.HasPrefix(arg, "-json=") {
 			return true
 		}
 	}

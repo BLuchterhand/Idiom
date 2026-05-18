@@ -3075,6 +3075,17 @@ func TestProductStatusMigrationApplyUsageErrorsAreTyped(t *testing.T) {
 			},
 			want: "invalid_arguments",
 		},
+		{
+			name: "json true malformed expected revision",
+			args: []string{
+				"--json=true",
+				"--effort-root", filepath.Join("started", "test-effort"),
+				"--target-status", "closed",
+				"--apply",
+				"--expected-revision", "not-a-number",
+			},
+			want: "invalid_arguments",
+		},
 	}
 
 	for _, tc := range cases {
