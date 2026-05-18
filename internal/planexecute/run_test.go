@@ -13,6 +13,7 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/recovery"
 	"idiom/internal/workspace"
 )
 
@@ -137,6 +138,16 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 	}
 	if strings.Contains(readFileStringForRunTest(t, filepath.Join(root, first.ResumeStatePath)), prompt) {
 		t.Fatalf("progress state must store prompt hash, not raw prompt")
+	}
+	record, recordPath, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, first.SessionID)
+	if err != nil {
+		t.Fatalf("load recovery record: %v", err)
+	}
+	if !found {
+		t.Fatalf("failed run should write recovery record")
+	}
+	if record.Failure.Class != recovery.FailureClassReviewRepair || record.NextAction != recovery.NextActionReviewDecomposition {
+		t.Fatalf("unexpected recovery record at %s: %#v", recordPath, record)
 	}
 
 	var resumedStdout, resumedStderr bytes.Buffer

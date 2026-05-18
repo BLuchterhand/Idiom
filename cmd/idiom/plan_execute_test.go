@@ -602,6 +602,17 @@ func TestRunPlanExecuteMainDoesNotAutoSubmitRealQuestionBlocker(t *testing.T) {
 	if strings.Contains(stderr.String(), "planner phase did not produce a plan artifact") {
 		t.Fatalf("explicit blocker should not be masked as missing artifact, stderr=%s", stderr.String())
 	}
+	records, err := filepath.Glob(filepath.Join(root, ".idiom", "recovery", "plan-execute-*", "failure.json"))
+	if err != nil {
+		t.Fatalf("glob recovery records: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected one automatic recovery record, got %d: %v", len(records), records)
+	}
+	if body := readFileString(t, records[0]); !strings.Contains(body, `"class": "planner_blocked"`) ||
+		!strings.Contains(body, `"next_valid_action": "answer_blocker"`) {
+		t.Fatalf("unexpected recovery record:\n%s", body)
+	}
 }
 
 func TestRunPlanExecuteMainDoesNotTreatQuestionBlockerMentioningSourceSatisfiedAsCleanNoop(t *testing.T) {

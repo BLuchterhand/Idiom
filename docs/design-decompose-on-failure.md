@@ -11,10 +11,11 @@ Implementation state as of 2026-05-18: Idiom has adjacent recovery behavior,
 but not a complete decompose-on-failure workflow. Current behavior can atomize a
 broad referenced design document before dispatch, refine a non-dispatchable
 brief before dispatch, skip source-satisfied atoms, and make one
-planner-blocked retry-or-surface decision. It does not yet persist a failed run
-as a typed decomposition opportunity, classify the failure, synthesize smaller
-follow-up atoms from the failure evidence, gate those atoms, and resume through
-the new atoms.
+planner-blocked retry-or-surface decision. The first implementation slice also
+persists failed `plan-execute` sessions as recovery failure records and exposes
+read-only `idiom recover inspect` / `idiom recover status` inspection. It does
+not yet synthesize smaller follow-up atoms from the failure evidence, gate those
+atoms, or resume through the new atoms.
 
 Verified adjacent implementation:
 
@@ -29,11 +30,16 @@ Verified adjacent implementation:
 - `cmd/idiom/plan_execute.go` records planner failures such as
   `planner_blocked`, `planner_failed`, and `plan_artifact_missing` into durable
   progress state.
+- `cmd/idiom/plan_execute.go` and `internal/planexecute/run.go` now write
+  `.idiom/recovery/<failure-id>/failure.json` automatically whenever a
+  `plan-execute` progress state is saved with `status:"failed"`.
+- `cmd/idiom/recover.go` exposes read-only inspection for those records, with a
+  legacy fallback that can derive the same report from failed progress state
+  without mutating the workspace.
 
-Those pieces are useful, but they happen either before dispatch or as a
-same-scope retry/surface choice. Decompose-on-failure is the missing next layer:
-turn a failed run into smaller, auditable work without hiding the failure or
-letting the model loop.
+Those pieces are useful, but only the failure-record layer has landed. The
+remaining decompose-on-failure layer must still turn a failed run into smaller,
+auditable work without hiding the failure or letting the model loop.
 
 ## Problem
 
@@ -355,19 +361,23 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 0: Evidence Inventory
 
+- Status: partially landed for `plan-execute` failure records and read-only
+  inspection.
 - Inventory plan-execute progress state, lane postflight reports, debug logs,
   telemetry events, plan artifacts, brief lint output, atom intake output, and
   product workflow reports.
-- Define a privacy-safe `FailureRecord` struct.
+- Define a privacy-safe `FailureRecord` struct. Landed for
+  `idiom.recovery.failure_record.v1`.
 - Add tests for redaction of prompts, raw transcripts, secrets, and file bodies.
 
 ### Phase 1: Deterministic Failure Classifier
 
+- Status: partially landed for plan-execute failure kinds.
 - Classify `planner_blocked`, `plan_missing`, `executor_edit_failed`,
   `verification_failed`, `review_repair_failed`, `scope_too_large`,
   `stale_context`, `budget_exhausted`, and `needs_human_answer`.
 - Emit one root failure class plus secondary evidence tags.
-- Add JSON and human-readable output tests.
+- Add JSON and human-readable output tests. Landed for `recover inspect`.
 
 ### Phase 2: Decomposition Packet Builder
 

@@ -8,6 +8,7 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 	"idiom/internal/writerroute"
@@ -435,5 +436,50 @@ func saveRunProgressState(root string, state *ProgressState, jsonEvents bool, st
 		return statePath, err
 	}
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType, ProgressStateEventFields(*state, statePath))
+	if state.Status == ProgressStatusFailed {
+		record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, RecoveryInputFromProgress(*state, statePath), time.Now().UTC())
+		if err != nil {
+			emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_failure_record_failed", map[string]any{
+				"session_id": state.SessionID,
+				"state_path": statePath,
+				"reason":     err.Error(),
+			})
+			return statePath, err
+		}
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_failure_record_written", map[string]any{
+			"session_id":        state.SessionID,
+			"failure_id":        record.FailureID,
+			"failure_class":     record.Failure.Class,
+			"failure_kind":      record.Failure.Kind,
+			"record_path":       recordPath,
+			"next_valid_action": record.NextAction,
+		})
+	}
 	return statePath, nil
+}
+
+// RecoveryInputFromProgress maps plan-execute progress into the recovery failure input contract.
+func RecoveryInputFromProgress(state ProgressState, statePath string) recovery.PlanExecuteFailureInput {
+	return recovery.PlanExecuteFailureInput{
+		SessionID:         state.SessionID,
+		ProgressStatePath: statePath,
+		Phase:             state.Phase,
+		Status:            state.Status,
+		FailureKind:       state.FailureKind,
+		FailureReason:     state.FailureReason,
+		PromptSHA256:      state.PromptSHA256,
+		PromptFile:        state.PromptFile,
+		PlanPath:          state.PlanPath,
+		PlanID:            state.PlanID,
+		PackID:            state.PackID,
+		RequiredEditPaths: state.RequiredEditPaths,
+		AllowedEditPaths:  state.AllowedEditPaths,
+		ChangedPaths:      state.ChangedPaths,
+		TotalEdits:        state.TotalEdits,
+		ExecutorStatus:    state.Executor.Status,
+		ExecutorFailures:  state.Executor.Failures,
+		ReviewStatus:      state.Review.Status,
+		ReviewReasonClass: state.Review.ReasonClass,
+		ReviewError:       state.Review.Error,
+	}
 }

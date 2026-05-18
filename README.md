@@ -151,6 +151,10 @@ Other useful subcommands:
   without scraping the binary.
 - `idiom backend start | stop | status | list | proxy` — manage local
   LLM runners.
+- `idiom recover inspect --session <id> [--json]` — inspect the recovery
+  failure record for a failed `plan-execute` session. Failed plan-execute runs
+  now write `.idiom/recovery/<failure-id>/failure.json` automatically; inspect
+  is read-only and does not decompose, promote, or dispatch follow-up work.
 - `idiom tool schemas` — export built-in workspace tool schemas plus
   profile, side-effect, and policy metadata as JSON.
 - `idiom tool <name> --input '<json>'` — run one workspace tool and print JSON

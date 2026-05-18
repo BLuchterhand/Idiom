@@ -10,11 +10,13 @@ tags:
 
 # PROPOSAL: Decompose On Failure
 
-> **Status: TARGET DESIGN** — Idiom has pre-dispatch atomization/refine behavior
-> and one planner-blocked retry-or-surface path, but it does not yet have a
-> durable workflow that turns a failed run into classified failure evidence,
-> smaller gated recovery atoms, and reconciliation back to the original failed
-> atom. The reviewed target namespace is `idiom recover`.
+> **Status: TARGET DESIGN WITH FIRST SLICE LANDED** — Idiom has
+> pre-dispatch atomization/refine behavior, one planner-blocked
+> retry-or-surface path, and automatic failed `plan-execute` recovery records
+> inspectable through `idiom recover inspect`. It does not yet have the full
+> workflow that turns classified failure evidence into smaller gated recovery
+> atoms and reconciliation back to the original failed atom. The reviewed target
+> namespace is `idiom recover`.
 >
 > Source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
@@ -36,6 +38,10 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] TUI/prompt implementation dispatch can refine non-dispatchable briefs
   before `plan-execute`.
 - [x] Plan-execute records planner-blocked and missing-plan failure state.
+- [x] Failed plan-execute runs write
+  `.idiom/recovery/<failure-id>/failure.json` automatically.
+- [x] `idiom recover inspect --session <id>` provides read-only JSON/text
+  inspection of failure records.
 - [x] Planner-blocked recovery can choose one retry or surface to the human.
 - [ ] Failed runs are not yet converted into durable decomposition packets.
 - [ ] Smaller recovery atoms are not yet synthesized from failure evidence.

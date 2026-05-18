@@ -25,6 +25,7 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/planexecute"
+	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 	"idiom/internal/writerroute"
@@ -499,6 +500,25 @@ func savePlanExecuteProgressState(root string, state *planexecute.ProgressState,
 		return statePath, err
 	}
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType, planexecute.ProgressStateEventFields(*state, statePath))
+	if state.Status == planexecute.ProgressStatusFailed {
+		record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(*state, statePath), time.Now().UTC())
+		if err != nil {
+			emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_failure_record_failed", map[string]any{
+				"session_id": state.SessionID,
+				"state_path": statePath,
+				"reason":     err.Error(),
+			})
+			return statePath, err
+		}
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_failure_record_written", map[string]any{
+			"session_id":        state.SessionID,
+			"failure_id":        record.FailureID,
+			"failure_class":     record.Failure.Class,
+			"failure_kind":      record.Failure.Kind,
+			"record_path":       recordPath,
+			"next_valid_action": record.NextAction,
+		})
+	}
 	return statePath, nil
 }
 
