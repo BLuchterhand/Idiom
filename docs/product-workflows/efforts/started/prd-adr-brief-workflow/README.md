@@ -159,6 +159,33 @@ atoms close.
   verification in parallel where possible. Run multiple implementors in parallel
   only when their write sets are disjoint; shared parser, validator, CLI,
   durable-state, or report files stay sequential.
+- Parallelization should be planned deliberately at atom boundaries:
+  - Always keep one orchestrator responsible for durable effort state
+    (`workflow_state.json`, `events.jsonl`, `implementation_ledger.jsonl`,
+    `tdd.json`, reports, and `docs/product-workflows/efforts/index.json`).
+    Durable state remains sequential because event IDs, state revisions,
+    checkpoint commits, and per-atom commit coverage are order-sensitive.
+  - Parallelize read-only work aggressively: design-doc gap analysis, Idiom
+    discovery queries, impact checks, test selection, review preparation,
+    Obsidian parity review, and post-implementation code review can run while a
+    worker owns a disjoint patch.
+  - Prefer parallel implementation only for new-file pure logic with no shared
+    CLI, validator, parser, or durable-state edits. Good candidates are isolated
+    coverage-gate helpers, pure TDD synthesis helpers, or document-only parity
+    updates, provided each worker has an explicit disjoint write set.
+  - Do not run parallel implementors that both touch
+    `cmd/idiom/product_workflow.go`, `cmd/idiom/product_workflow_test.go`,
+    `internal/productworkflow/validate.go`,
+    `internal/productworkflow/validate_test.go`, parser/front-matter code,
+    scope/commit coverage gates, or durable effort state.
+  - For each parallel worker, record ownership, expected files, forbidden files,
+    tests, and the integration order in the atom plan. Tell workers they are not
+    alone in the codebase and must not revert or rewrite other workers' changes.
+  - Integrate one worker at a time: inspect its diff, run focused tests for its
+    slice, resolve conflicts locally, then run product lint/audit and full
+    verification only after all slices for that atom are merged.
+  - If parallel slices require the same shared file after discovery, collapse
+    them back into a sequential atom rather than forcing a merge-heavy split.
 - Keep implementor briefs patch-shaped, not task-shaped: name the exact
   decision, exact files, expected diff shape, forbidden choices, tests, and stop
   condition. Pre-resolve product/spec conflicts in Codex before handoff instead
@@ -178,6 +205,13 @@ atoms close.
   own verification, review, investigation, commit, and push before the next atom
   is treated as complete.
 - Commit and push after every atom completes.
+- Keep the Obsidian vault notes in parity with durable workflow reality. Before
+  closing any atom that changes product-workflow status, implemented surfaces,
+  phase completion, model policy, or remaining roadmap items, update
+  `docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md` and
+  `docs/obsidian/22 - Product Workflow ROADMAP.md` or record an explicit
+  no-change rationale in the investigation report. Treat stale Obsidian status
+  labels such as "NOT STARTED" as closeout drift for this effort.
 - Use the product workflow CLI surfaces that are ready now during every
   remaining atom. Treat the TUI as not yet authoritative for this workflow until
   a later TUI/operator atom closes.

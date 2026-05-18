@@ -3530,6 +3530,139 @@ func TestProductADRRenderPromptRejectsUnsafePromptOrOutputPath(t *testing.T) {
 	}
 }
 
+func TestProductTDDPlanObligationsSynthesizesPlan(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	beforeTDD, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforePRD, err := os.ReadFile(filepath.Join(dir, "prd.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeADR, err := os.ReadFile(filepath.Join(dir, "adrs", "ADR-001-test.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--plan-obligations",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status string `json:"status"`
+		Plan   struct {
+			Obligations []productworkflow.TDDObligationPlanItem    `json:"obligations"`
+			Findings    []productworkflow.TDDObligationPlanFinding `json:"findings"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "pass" {
+		t.Fatalf("expected pass, got %q", out.Status)
+	}
+	if len(out.Plan.Obligations) == 0 {
+		t.Fatalf("expected obligations, got %#v", out.Plan)
+	}
+	afterTDD, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterPRD, err := os.ReadFile(filepath.Join(dir, "prd.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterADR, err := os.ReadFile(filepath.Join(dir, "adrs", "ADR-001-test.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeTDD, afterTDD) || !bytes.Equal(beforePRD, afterPRD) || !bytes.Equal(beforeADR, afterADR) {
+		t.Fatal("product tdd plan-obligations must not mutate TDD, PRD, or ADR artifacts")
+	}
+}
+
+func TestProductTDDPlanObligationsBlocksWhenNoAcceptedADRMapsRequirement(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "adrs/index.json", strings.Replace(validTestADRIndexJSON(), "REQ-TEST-001", "REQ-OTHER-001", 1))
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", strings.Replace(validTestADRMarkdown(), "REQ-TEST-001", "REQ-OTHER-001", 1))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--plan-obligations",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status string                                     `json:"status"`
+		Plan   productworkflow.TDDObligationSynthesisPlan `json:"plan"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", out.Status)
+	}
+	found := false
+	for _, finding := range out.Plan.Findings {
+		if finding.Kind == "missing_accepted_adr_for_prd_requirement" && finding.File == "prd.md" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected missing accepted ADR finding, got %#v", out.Plan.Findings)
+	}
+}
+
+func TestProductTDDPlanObligationsFailsClosedOnMissingInputs(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--plan-obligations",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d", code)
+	}
+	var out struct {
+		Status string                                     `json:"status"`
+		Plan   productworkflow.TDDObligationSynthesisPlan `json:"plan"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", out.Status)
+	}
+	if len(out.Plan.Findings) == 0 {
+		t.Fatal("expected fail-closed findings")
+	}
+}
+
+func TestProductTDDPlanObligationsUsageErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{"--effort-root", "."}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected code 2 without --plan-obligations, got %d", code)
+	}
+}
+
 func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {

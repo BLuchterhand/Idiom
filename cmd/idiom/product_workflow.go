@@ -46,6 +46,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductPRD(args[1:], stdout, stderr, rec)
 	case "adr":
 		return runProductADR(args[1:], stdout, stderr, rec)
+	case "tdd":
+		return runProductTDD(args[1:], stdout, stderr, rec)
 	case "-h", "--help", "help":
 		printProductUsage(stdout)
 		return 0
@@ -67,6 +69,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --render-prompts [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--research-prompt-dir research/prompts] [--json]")
 	fmt.Fprintln(w, "  idiom product prd --effort-root <path> --render-prompt [--prd-prompt prd.prompt.md] [--prd-output prd.md] [--json]")
 	fmt.Fprintln(w, "  idiom product adr --effort-root <path> --render-prompt [--adr-prompt adrs/adr.prompt.md] [--adr-output adrs/ADR-draft.md] [--json]")
+	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --plan-obligations [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -1132,6 +1135,147 @@ func runProductADR(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		fmt.Fprintf(stdout, "product adr render-prompt: %s (%d findings)\n", status, len(plan.Findings))
 	}
 	if writeBlocked {
+		return 1
+	}
+	return 0
+}
+
+func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product tdd", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var effortRoot string
+	var planObligations bool
+	var jsonOutput bool
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
+	fs.BoolVar(&planObligations, "plan-obligations", false, "plan deterministic TDD obligations from accepted PRD and ADR artifacts")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if !planObligations {
+		fmt.Fprintln(stderr, "product tdd: --plan-obligations is required")
+		return 2
+	}
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product tdd: --effort-root is required")
+		return 2
+	}
+	absRoot, err := filepath.Abs(effortRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product tdd: resolve effort root: %v\n", err)
+		return 2
+	}
+	var findings []productworkflow.TDDObligationPlanFinding
+	addFinding := func(kind, message, file string) {
+		findings = append(findings, productworkflow.TDDObligationPlanFinding{
+			Kind:     kind,
+			Message:  message,
+			File:     file,
+			Severity: "error",
+		})
+	}
+	readFile := func(relPath string) ([]byte, bool) {
+		data, readErr := os.ReadFile(filepath.Join(absRoot, relPath))
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				addFinding("missing_file", "required file not found", relPath)
+			} else {
+				addFinding("read_error", readErr.Error(), relPath)
+			}
+			return nil, false
+		}
+		return data, true
+	}
+	var prdDoc productworkflow.PRDDocument
+	if data, ok := readFile("prd.md"); ok {
+		doc, parseErr := productworkflow.ParsePRDMarkdown(data)
+		if parseErr != nil {
+			addFinding("parse_error", parseErr.Error(), "prd.md")
+		} else {
+			prdDoc = doc
+		}
+	}
+	var adrIndex productworkflow.ADRIndex
+	adrPathByID := map[string]string{}
+	if data, ok := readFile(filepath.Join("adrs", "index.json")); ok {
+		idx, parseErr := productworkflow.ParseADRIndexJSON(data)
+		if parseErr != nil {
+			addFinding("parse_error", parseErr.Error(), filepath.Join("adrs", "index.json"))
+		} else {
+			adrIndex = idx
+			for _, entry := range idx.ADRs {
+				adrPathByID[entry.ADRID] = filepath.Join("adrs", entry.Path)
+			}
+		}
+	}
+	parsedADRs := make([]productworkflow.ParsedADR, 0, len(adrIndex.ADRs))
+	for _, entry := range adrIndex.ADRs {
+		relPath := filepath.Join("adrs", entry.Path)
+		data, ok := readFile(relPath)
+		if !ok {
+			continue
+		}
+		doc, parseErr := productworkflow.ParseADRMarkdown(data)
+		if parseErr != nil {
+			addFinding("parse_error", parseErr.Error(), relPath)
+			continue
+		}
+		parsedADRs = append(parsedADRs, productworkflow.ParsedADR{Doc: doc, RelPath: relPath})
+	}
+	var ledger productworkflow.TDDLedger
+	if data, ok := readFile("tdd.json"); ok {
+		parsed, parseErr := productworkflow.ParseTDDLedgerJSON(data)
+		if parseErr != nil {
+			addFinding("parse_error", parseErr.Error(), "tdd.json")
+		} else {
+			ledger = parsed
+		}
+	}
+
+	plan := productworkflow.TDDObligationSynthesisPlan{
+		Obligations: []productworkflow.TDDObligationPlanItem{},
+		Findings:    []productworkflow.TDDObligationPlanFinding{},
+	}
+	status := "blocked"
+	if len(findings) == 0 {
+		plan = productworkflow.PlanTDDObligations(prdDoc, parsedADRs, ledger, adrPathByID)
+		if !productworkflow.TDDObligationPlanHasBlockers(plan) {
+			status = "pass"
+		}
+	} else {
+		plan.Findings = append(plan.Findings, findings...)
+	}
+	logCLIPhase(rec, "product_tdd_plan_obligations", map[string]any{
+		"status":           status,
+		"finding_count":    len(plan.Findings),
+		"obligation_count": len(plan.Obligations),
+	})
+	type tddOutput struct {
+		Status     string                                     `json:"status"`
+		EffortRoot string                                     `json:"effort_root"`
+		Plan       productworkflow.TDDObligationSynthesisPlan `json:"plan"`
+	}
+	out := tddOutput{Status: status, EffortRoot: absRoot, Plan: plan}
+	if out.Plan.Obligations == nil {
+		out.Plan.Obligations = []productworkflow.TDDObligationPlanItem{}
+	}
+	if out.Plan.Findings == nil {
+		out.Plan.Findings = []productworkflow.TDDObligationPlanFinding{}
+	}
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			fmt.Fprintf(stderr, "product tdd: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintf(stdout, "product tdd plan-obligations: %s (%d obligations, %d findings)\n", out.Status, len(out.Plan.Obligations), len(out.Plan.Findings))
+	}
+	if out.Status != "pass" {
 		return 1
 	}
 	return 0

@@ -11,8 +11,9 @@ tags:
 # ROADMAP: Product Workflow and TDD Coverage
 
 > **Status: ROADMAP** — Tracks what is done and what remains for the upstream
-> product pipeline and behavioral TDD coverage. Last audited 2026-05-15 against
-> the codebase.
+> product pipeline and behavioral TDD coverage. Last audited 2026-05-18 against
+> the codebase and the durable effort state under
+> `docs/product-workflows/efforts/started/prd-adr-brief-workflow/`.
 >
 > Design docs:
 > [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md),
@@ -52,59 +53,83 @@ These are complete and the product workflow composes them without modification.
 | Localization benchmark | **DONE** | `internal/eval/localization_benchmark.go` |
 | SWE-bench eval infrastructure | **DONE** | `internal/eval/swe_suite.go` |
 
-## NOT STARTED: PRD/ADR/Brief Workflow
+## IN PROGRESS: PRD/ADR/Brief Workflow
 
 The design doc exists at
 [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md).
 See [[20 - PRD ADR Brief Research Workflow PROPOSAL]] for the Obsidian summary.
-Zero implementation code exists.
+Implementation is active and source-controlled through the durable effort folder.
+As of Atom 25, deterministic schemas, product lint/audit/status, research
+profile planning/merge/prompt rendering, PRD/ADR prompt rendering, acceptance
+metadata validation, and ADR supersession link validation exist. Atom 26 is
+planned as the first Phase 4 TDD obligation synthesis slice.
 
-### TODO: Schemas and Types
+### Schemas and Types
 
-- [ ] Evidence card schema struct and validator
-- [ ] Evidence ledger (merge, dedup, conflict tracking)
-- [ ] Research profile schema struct
-- [ ] PRD schema struct with requirement shape
-- [ ] ADR schema struct with Nygard-format fields
-- [ ] TDD obligation ledger schema v1 (existing types)
-- [ ] TDD obligation ledger schema v2 (with coverage metadata)
-- [ ] Traceability matrix linking evidence → PRD → ADR → TDD → brief
-- [ ] Artifact state machine enum (draft/audited/accepted/blocked/dispatched)
+- [x] Evidence card schema struct and validator
+- [x] Evidence ledger merge from researcher output cards, with conflict
+  preservation and freshness/unsupported-claim policy handling
+- [x] Research profile schema struct and project-local profile discovery
+- [x] PRD schema struct with requirement shape
+- [x] ADR schema struct with Nygard-format fields, acceptance metadata, and
+  supersession links
+- [x] TDD obligation ledger schema v1/v2 support with coverage metadata
+- [x] Traceability matrix linking evidence → PRD → ADR → TDD → brief
+- [x] Artifact state enum (draft/audited/accepted/blocked/dispatched)
 
-### TODO: Deterministic Audit Commands
+### Deterministic Audit Commands
 
-- [ ] PRD audit: schema validation, evidence reference existence, metric
-  presence, inference labeling, ADR contradiction detection, privacy scanning
-- [ ] ADR audit: completeness checks, link validation, supersession chains,
-  alternative presence, consequence fields
-- [ ] TDD obligation audit: high-priority requirement coverage, ADR validation
-  coverage, missing test detection, tautological assertion detection
+- [x] PRD audit: schema validation, evidence reference existence, metric
+  presence, TDD obligation references, parse failures, and privacy-safe durable
+  reports
+- [x] ADR audit: completeness checks, PRD/evidence/TDD link validation,
+  supersession chain validation, alternative presence, consequence fields, and
+  required acceptance metadata for accepted artifacts
+- [x] TDD obligation audit: high-priority requirement coverage and current plus
+  historical obligation reference checks
 - [ ] Coverage gate: 9-criterion threshold check (see below)
 - [ ] Brief generation: deterministic template filling from PRD/ADR/TDD
   artifacts, section ordering, ID injection
 
-### TODO: Research Infrastructure
+### Research Infrastructure
 
-- [ ] Researcher role configuration from profiles
+- [x] Researcher role configuration from profiles
 - [ ] `tdd_eval` researcher role with FMEA/HAZOP evidence sources
-- [ ] Deterministic evidence merge (dedup, freshness, conflict detection)
-- [ ] Research profile storage under `.idiom/research/profiles/`
+- [x] Deterministic evidence merge from stored researcher outputs, with explicit
+  profile selection and conflict preservation
+- [x] Research profile storage under `.idiom/research/profiles/`
+- [x] Plan-only research run specs from stored profiles
+- [x] Role-specific research artifact prompt rendering via `idiom artifact
+  --no-tools` command recipes
 
-### TODO: CLI Commands
+### CLI Commands
 
-- [ ] `idiom product research` — run configured researchers
-- [ ] `idiom product prd` — draft PRD from evidence ledger
-- [ ] `idiom product adr` — draft ADRs from PRD
+- [x] `idiom product status` — summarize durable workflow state, gates, blockers,
+  and next valid actions
+- [x] `idiom product research` — inspect profiles, plan research runs, merge
+  existing researcher outputs, and render prompt files without executing models
+- [x] `idiom product prd --render-prompt` — render deterministic PRD prompt from
+  the evidence ledger without drafting or accepting the PRD
+- [x] `idiom product adr --render-prompt` — render deterministic ADR prompt from
+  the evidence ledger plus parsed PRD without drafting or accepting ADRs
 - [ ] `idiom product tdd` — build TDD obligations from PRD + ADRs
 - [ ] `idiom product brief` — generate briefs from PRD + ADRs + TDD
-- [ ] `idiom product audit` — audit entire product workflow directory
+- [x] `idiom product lint` — validate durable effort artifacts and cross-links
+- [x] `idiom product audit` — sectioned audit over the product workflow directory
 
-### TODO: Telemetry Events
+### Telemetry and Durable Events
 
-- [ ] `research_packet_created`, `researcher_started`, `researcher_completed`
-- [ ] `evidence_card_recorded`, `evidence_conflict_recorded`
-- [ ] `prd_drafted`, `prd_audited`
-- [ ] `adr_drafted`, `adr_accepted`
+- [x] Durable workflow events for atom planning, implementor assignment,
+  implementation completion, verification, review, investigation, atom closeout,
+  and workflow-state updates
+- [x] Evidence merge and prompt-rendering behavior is represented in durable
+  reports and implementation ledger records
+- [ ] Runtime telemetry events: `research_packet_created`, `researcher_started`,
+  `researcher_completed`
+- [ ] Runtime telemetry events: `evidence_card_recorded`,
+  `evidence_conflict_recorded`
+- [ ] Runtime telemetry events: `prd_drafted`, `prd_audited`
+- [ ] Runtime telemetry events: `adr_drafted`, `adr_accepted`
 - [ ] `tdd_obligations_created`
 - [ ] `coverage_gate_evaluated`
 - [ ] `product_artifact_dispatch_ready`, `product_artifact_blocked`
@@ -168,80 +193,82 @@ Zero implementation code exists.
 ## TODO: Implementation Phases
 
 All implementation phases must be executed as long-lived implementation atoms.
-Each atom requires a complexity-tier assessment, OpenCode GLM 5.1 as the
-default implementation runtime, explicit fallback justification when another
-implementor is used, one dedicated implementor sub-agent, one distinct dedicated
-Codex/GPT reviewer sub-agent, required verification, and a post-effort
-investigation report before closeout. Persist atom state in the effort folder so
-work can resume across sessions without relying on raw transcript replay.
+Each atom requires a complexity-tier assessment, a GPT Codex implementor selected
+to match the atom complexity, one distinct GPT reviewer sub-agent, required
+verification, and a post-effort investigation report before closeout. Persist
+atom state in the effort folder so work can resume across sessions without
+relying on raw transcript replay. Historical DS4/GLM/OpenCode attempts remain
+audit evidence only unless a human explicitly re-authorizes them.
 
 ### TODO: Long-Lived Implementation Operating Model
 
-- [ ] Implementation atom schema with `task_id`, phase, state, complexity tier,
+- [x] Implementation atom schema with `task_id`, phase, state, complexity tier,
   blast radius, context pack ID, expected files, forbidden files, TDD
   obligations, required tests, and blockers
-- [ ] Implementor assignment fields: agent ID, runtime, model, OpenCode command,
-  smoke-test status, and selection reason
-- [ ] Reviewer assignment fields: distinct agent ID, GPT model, reasoning
+- [x] Implementor assignment fields: agent ID, runtime, model, command,
+  discovery evidence, and selection reason
+- [x] Reviewer assignment fields: distinct agent ID, GPT model, reasoning
   effort, selection reason, and reviewer independence check
-- [ ] Complexity tiers `C0` through `C4` with economic model/effort defaults
+- [x] Complexity tiers `C0` through `C4` with economic model/effort defaults
   and upgrade/downgrade justification
-- [ ] Repository OpenCode default points at `zai-coding-plan/glm-5.1`, with
-  implementation dispatch invoking `opencode run --model
-  zai-coding-plan/glm-5.1` or `scripts/run-opencode-glm.sh`
-- [ ] Headless implementation smoke test uses the attached-server path:
-  `scripts/run-opencode-glm.sh serve` plus `OPENCODE_SERVER_URL=...`
-  `scripts/run-opencode-glm.sh run`
-- [ ] Closeout blocker when the OpenCode GLM smoke test fails and no explicit
-  fallback implementor exception is recorded
-- [ ] Append-only `implementation_ledger.jsonl` in each effort folder
-- [ ] Per-atom implementation, review, and post-effort investigation reports
-- [ ] Resume validation that loads workflow state, implementation ledger, latest
+- [x] GPT Codex implementor policy recorded in effort README; DS4/GLM/OpenCode
+  lanes are historical evidence, not the active implementor default
+- [x] Append-only `implementation_ledger.jsonl` in each effort folder
+- [x] Per-atom implementation, review, and post-effort investigation reports
+- [x] Resume validation that loads workflow state, implementation ledger, latest
   reports, event log, context freshness, and git status before choosing the next
   action
-- [ ] Closeout blocker when model/effort selection is missing, implementor and
+- [x] Closeout blocker when model/effort selection is missing, implementor and
   reviewer are the same actor, required verification is missing, or the
   post-effort investigation is incomplete
+- [x] Per-atom changed-path scope gate and per-commit coverage validation
+- [x] Atom planning and closeout pattern includes commit and push after each
+  atom/checkpoint
 
-### Phase 0: Design Fixtures (Current)
+### Phase 0: Design Fixtures
 
 - [x] PRD/ADR/brief workflow design doc
 - [x] Behavioral TDD coverage design doc
 - [x] Obsidian PROPOSAL and ROADMAP notes
-- [ ] Example PRD, ADR, TDD ledger, and brief fixture under `testdata`
-- [ ] Manual walkthrough using current `context_pack`, `architect packet`,
-  `artifact`, `brief lint`, `atom intake`
-- [ ] Seed the implementation ledger with a `C0` documentation/fixture atom and
+- [x] Example PRD, ADR, TDD ledger, brief, evidence ledger, traceability matrix,
+  and reports under the durable effort folder
+- [x] Manual walkthrough using current `context_pack`, product lint/audit/status,
+  JSON/JSONL validation, privacy scan, and git diff checks
+- [x] Seed the implementation ledger with a `C0` documentation/fixture atom and
   persist implementor/reviewer assignments, reports, and post-effort
   investigation evidence
 
 ### Phase 1: Schemas and Deterministic Linters
 
-- [ ] Evidence card, PRD, ADR, TDD obligation v1 structs
-- [ ] Implementation atom, complexity tier, assignment, and investigation report
+- [x] Evidence card, PRD, ADR, TDD obligation structs
+- [x] Implementation atom, complexity tier, assignment, and investigation report
   structs
-- [ ] PRD audit, ADR audit, TDD audit deterministic commands
-- [ ] Artifact storage under `.idiom/product/`
-- [ ] Tests for schema validation and gate logic
-- [ ] Tests for assignment independence, missing model/effort selection,
+- [x] PRD audit, ADR audit, TDD audit deterministic commands
+- [x] Source-controlled durable effort storage under `docs/product-workflows/`
+- [ ] Working artifact storage under `.idiom/product/`
+- [x] Tests for schema validation and gate logic
+- [x] Tests for assignment independence, missing model/effort selection,
   incomplete investigation report, and cross-session resume blockers
 
 ### Phase 2: Research Profiles
 
-- [ ] Researcher role configuration from profiles
+- [x] Researcher role configuration from profiles
 - [ ] `tdd_eval` role with FMEA/HAZOP templates
-- [ ] Deterministic evidence merge
-- [ ] Profile storage under `.idiom/research/profiles/`
+- [x] Deterministic evidence merge
+- [x] Profile storage under `.idiom/research/profiles/`
+- [x] Plan-only research run specs
+- [x] Research artifact prompt rendering without model execution
 
 ### Phase 3: PRD and ADR Generation
 
-- [ ] PRD prompt renderer from evidence ledger
-- [ ] ADR prompt renderer from PRD
-- [ ] Acceptance state and supersession links
+- [x] PRD prompt renderer from evidence ledger
+- [x] ADR prompt renderer from PRD
+- [x] Acceptance state and supersession links
 - [ ] Human acceptance flow
 
 ### Phase 4: TDD Planner and Coverage Gate
 
+- [ ] Deterministic TDD obligation synthesis plan from accepted PRD/ADR artifacts
 - [ ] EARS template parser and validator
 - [ ] FMEA template and RPN scorer
 - [ ] HAZOP guide-word applicator

@@ -462,6 +462,33 @@ type ADRDraftPromptPlan struct {
 	Findings              []ProfileFinding           `json:"findings"`
 }
 
+type TDDObligationSynthesisPlan struct {
+	EffortID     string                     `json:"effort_id"`
+	TaskID       string                     `json:"task_id"`
+	CoverageTier string                     `json:"coverage_tier"`
+	Obligations  []TDDObligationPlanItem    `json:"obligations"`
+	Findings     []TDDObligationPlanFinding `json:"findings"`
+}
+
+type TDDObligationPlanItem struct {
+	PRDRequirementRef      string   `json:"prd_requirement_ref"`
+	ADRRef                 string   `json:"adr_ref"`
+	ExistingObligationRefs []string `json:"existing_obligation_refs"`
+	EvidenceRefs           []string `json:"evidence_refs,omitempty"`
+	CoverageTier           string   `json:"coverage_tier"`
+	SuggestedType          string   `json:"suggested_type"`
+	OwnerPath              string   `json:"owner_path"`
+	Command                string   `json:"command"`
+	BlockerReason          string   `json:"blocker_reason,omitempty"`
+}
+
+type TDDObligationPlanFinding struct {
+	Kind     string `json:"kind"`
+	Message  string `json:"message"`
+	File     string `json:"file"`
+	Severity string `json:"severity"`
+}
+
 type ADREvidenceCardSummary struct {
 	CardID      string `json:"card_id"`
 	Kind        string `json:"kind"`

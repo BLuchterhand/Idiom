@@ -11,9 +11,11 @@ tags:
 
 # PROPOSAL: PRD to ADR to Brief Research Workflow
 
-> **Status: PROPOSAL** — This is an upstream artifact pipeline design that has
-> not yet been implemented. It depends on the seven pillar designs and should be
-> built incrementally alongside them.
+> **Status: PARTIALLY IMPLEMENTED** — This upstream artifact pipeline is being
+> delivered through the durable effort at
+> `docs/product-workflows/efforts/started/prd-adr-brief-workflow/`. As of
+> 2026-05-18, implementation is complete through Phase 3 acceptance state and ADR
+> supersession validation; Phase 4 TDD obligation synthesis is planned next.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 
@@ -55,15 +57,17 @@ flowchart TD
     Feedback -. strengthens .-> TDD
 ```
 
-## TODO: Core Concepts
+## Core Concepts
 
-- [ ] **Researcher model**: bounded model passes configured with alignment,
-  scope, evidence sources, and output contracts
-- [ ] **Evidence cards**: structured findings with source handles, confidence,
+- [x] **Researcher model**: bounded planned passes configured with alignment,
+  scope, evidence sources, output contracts, and rendered prompt files; actual
+  model execution remains outside the trusted workflow
+- [x] **Evidence cards**: structured findings with source handles, confidence,
   freshness, uncertainty, and conflicts
-- [ ] **PRD**: product requirements with traceable evidence references
-- [ ] **ADR**: architecture decision records for material technical/product
-  choices
+- [x] **PRD**: product requirements with traceable evidence references,
+  acceptance metadata, and deterministic audit checks
+- [x] **ADR**: architecture decision records for material technical/product
+  choices, acceptance metadata, and supersession links
 - [ ] **TDD obligation plan**: test obligations derived before implementation
 - [ ] **Coverage gate**: deterministic completeness check between TDD and brief
   generation (see [[21 - Behavioral TDD Coverage PROPOSAL]])
@@ -84,7 +88,10 @@ flowchart TD
 
 ### PRD
 
-Location: `.idiom/product/<task-id>/prd.md`
+Working location target: `.idiom/product/<task-id>/prd.md`
+
+Durable fixture location now implemented:
+`docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md`
 
 Required sections: problem statement, user persona, goals/non-goals, current
 behavior and evidence, desired behavior, functional/non-functional requirements,
@@ -92,15 +99,22 @@ success metrics, TDD obligations summary, dependencies, risks, open questions,
 evidence appendix.
 
 Each requirement includes: stable ID, evidence references, owner alignment,
-priority, measurable outcome, testability status.
+priority, measurable outcome, testability status, and TDD obligations.
+Accepted PRDs require `accepted_at`, `accepted_by`, and `acceptance_profile`.
 
 ### ADR
 
-Location: `.idiom/product/<task-id>/adrs/ADR-0001-title.md`
+Working location target: `.idiom/product/<task-id>/adrs/ADR-0001-title.md`
 
-Fields: ADR ID, status (proposed/accepted/superseded/rejected), context,
-decision, alternatives, evidence, consequences, compatibility, TDD obligations,
-rollback plan, open questions.
+Durable fixture locations now implemented:
+`docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/`
+
+Fields: ADR ID, status, PRD references, evidence references, TDD obligations,
+coverage tier, acceptance metadata, supersession links, context, decision,
+alternatives, evidence, consequences, compatibility, rollback plan, and open
+questions. Accepted ADRs require `accepted_at`, `accepted_by`, and
+`acceptance_profile`; `supersedes` and `superseded_by` links are validated for
+broken, duplicate, self-referential, and non-reciprocal references.
 
 ### TDD Obligation Ledger
 
@@ -154,22 +168,27 @@ stateDiagram-v2
 | atom intake | complete, source-satisfied, stale, dirty, invalid scope |
 | lane contract | permission, protected path, verification, readiness |
 
-## TODO: Implementation Phases
+## Implementation Phases
 
-- [ ] **Phase 0**: Manual workflow and design fixtures using current tools
-- [ ] **Phase 1**: Artifact schemas and deterministic linters
-- [ ] **Phase 2**: Research profiles with role-specific model passes
-- [ ] **Phase 3**: PRD and ADR generation with audits
+- [x] **Phase 0**: Manual workflow and design fixtures using current tools
+- [x] **Phase 1**: Artifact schemas and deterministic linters
+- [x] **Phase 2**: Research profiles with role-specific planned passes and
+  prompt rendering
+- [x] **Phase 3**: PRD and ADR prompt rendering, audits, acceptance metadata,
+  and supersession validation
 - [ ] **Phase 4**: TDD planner, coverage gate, and brief generator
 - [ ] **Phase 5**: Execution feedback loop linking outcomes to obligations
 - [ ] **Phase 6**: Sidecar and external agent use
 
 ## Open Questions
 
-1. Should commands live under `idiom product`, `idiom architect`, or `idiom design`?
+1. Should any commands outside the implemented `idiom product` namespace remain
+   necessary?
 2. Minimum PRD schema without ceremony?
-3. Which ADR decisions require human approval by default?
-4. Should research profiles support parallel subagents?
+3. Which low-risk ADR decisions, if any, can be model-accepted under an explicit
+   profile after human-default acceptance is implemented?
+4. Should research profiles support parallel subagents beyond deterministic run
+   planning and prompt rendering?
 5. How should accepted PRDs/ADRs be reused without bloating packets?
 6. Coverage gate tiering by ADR blast radius?
 7. Minimum mutation score threshold and should it vary by obligation type?
