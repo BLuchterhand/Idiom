@@ -59,12 +59,12 @@ The design doc exists at
 [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md).
 See [[20 - PRD ADR Brief Research Workflow PROPOSAL]] for the Obsidian summary.
 Implementation is active and source-controlled through the durable effort folder.
-As of Atom 29, deterministic schemas, product lint/audit/status, research
+As of Atom 30 planning, deterministic schemas, product lint/audit/status, research
 profile planning/merge/prompt rendering, PRD/ADR prompt rendering, acceptance
 metadata validation, ADR supersession link validation, and plan-only TDD
 obligation synthesis, tiered coverage-gate evaluation, and lint-verified brief
 generation exist. The first Phase 5 read-only execution-feedback linker exists;
-the next design-doc slice is durable feedback reconciliation.
+the active design-doc slice is durable feedback reconciliation.
 
 ### Schemas and Types
 
@@ -146,9 +146,10 @@ the next design-doc slice is durable feedback reconciliation.
 - [x] Durable brief-generation evidence in implementation reports
 - [ ] `product_artifact_dispatch_ready`, `product_artifact_blocked`
 - [x] Read-only execution feedback summary from explicit lane/progress/evidence
+- [ ] Durable feedback reconciliation from passing summary into workflow-state/evidence links (Atom 30 planned)
   references
 - [ ] Durable `execution_result_linked` reconciliation into workflow state and
-  evidence links
+  evidence links (active Atom 30)
 
 ## NOT STARTED: Behavioral TDD Coverage Pipeline
 

@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0029-phase-5-execution-feedback-linker",
+  "task_id": "impl-0030-phase-5-feedback-reconciliation",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -22,7 +22,9 @@
       "atom_planned",
       "tdd_obligation_synthesis_plan",
       "coverage_gate_evaluator",
-      "brief_generator"
+      "brief_generator",
+      "execution_feedback_linker",
+      "feedback_reconciliation_planned"
     ],
     "gates_blocked": []
   },
@@ -170,6 +172,42 @@
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0030-001",
+      "type": "contract",
+      "behavior": "Feedback reconciliation deterministically transforms a passing execution feedback summary into privacy-safe workflow state and evidence-link updates, including product-evidence export ID, release-evidence bundle ID, brief path, changed paths, verification status, lane-history count, TDD obligation refs, reconciliation timestamp, and mismatch state.",
+      "owner": "internal/productworkflow/execution_feedback_test.go",
+      "command": "go test ./internal/productworkflow -run TestExecutionFeedbackReconciliation",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0030-002",
+      "type": "acceptance",
+      "behavior": "idiom product feedback can reconcile an explicit feedback summary reference, emit JSON and human-readable output with actionable next valid actions, fail closed for blocked/malformed/privacy-unsafe summaries, and avoid dispatch, .idiom runtime mutation, evidence export writes, or ranker-learning promotion.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProductFeedbackReconcile",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0030-003",
+      "type": "contract",
+      "behavior": "Reconciliation preserves authority boundaries: feedback summaries are observed execution evidence, workflow state receives only bounded links/status, and existing lint/audit/transition gates remain the authority for closeout or dispatch decisions.",
+      "owner": "internal/productworkflow/execution_feedback_test.go",
+      "command": "go test ./internal/productworkflow -run TestExecutionFeedbackReconciliation",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0030-004",
+      "type": "audit",
+      "behavior": "The atom records GPT Codex implementor/reviewer selection, Idiom discovery evidence, reconciliation verification, Obsidian parity, and privacy-safe durable reports without storing raw prompts/transcripts/file bodies/secrets/generated brief bodies/customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0030-review.json",
+      "command": "privacy secret-value scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

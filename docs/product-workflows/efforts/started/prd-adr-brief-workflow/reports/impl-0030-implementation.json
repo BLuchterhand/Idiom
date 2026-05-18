@@ -1,0 +1,38 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0030-phase-5-feedback-reconciliation",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0030",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.3-codex",
+  "completed_at": null,
+  "complexity_tier": "C2",
+  "scope_statement": "Add deterministic feedback reconciliation from passing idiom product feedback summaries into privacy-safe workflow-state and evidence-link updates without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
+  "code_changes": false,
+  "changed_paths": [
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go",
+    "internal/productworkflow/execution_feedback.go",
+    "internal/productworkflow/execution_feedback_test.go",
+    "internal/productworkflow/types.go"
+  ],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [],
+    "status": "pending"
+  },
+  "discovery_evidence": [
+    "context_pack:aabb32deaa458ac7",
+    "context_query:execution feedback reconciliation workflow state durable evidence links next actions product workflow"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0030",
+  "commit_hash": null,
+  "planning_checkpoint_commit": null,
+  "privacy_note": "report stores only scope, model assignment, command names, commit hashes, and blocker state; it must not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ]
+}

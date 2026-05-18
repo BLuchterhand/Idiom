@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0029-phase-5-execution-feedback-linker",
+  "task_id": "impl-0030-phase-5-feedback-reconciliation",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T14:50:00Z",
-  "state_revision": 86,
-  "last_event_id": "evt-0252",
-  "workspace_fingerprint": "idiom@b800235",
+  "updated_at": "2026-05-18T15:00:00Z",
+  "state_revision": 87,
+  "last_event_id": "evt-0254",
+  "workspace_fingerprint": "idiom@2d2addb",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -30,7 +30,7 @@
     "adr_prompt": "adrs/adr.prompt.md"
   },
   "context": {
-    "context_pack_id": "a68211353c1c7175",
+    "context_pack_id": "aabb32deaa458ac7",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -39,17 +39,14 @@
       "internal/productworkflow/execution_feedback.go",
       "internal/productworkflow/execution_feedback_test.go",
       "internal/productworkflow/types.go",
-      "cmd/idiom/lane.go",
-      "cmd/idiom/lane_history.go",
-      "cmd/idiom/brief.go",
-      "internal/app/implementation_dispatch.go",
-      "internal/productworkflow/validate.go",
-      "internal/productworkflow/validate_test.go"
+      "internal/productworkflow/status.go",
+      "internal/productworkflow/transition.go",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json"
     ],
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack a68211353c1c7175 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to the Phase 5 execution-feedback linker planning scope."
+        "description": "Context pack aabb32deaa458ac7 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to the feedback reconciliation planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -91,6 +88,16 @@
         "gate": "execution_feedback_linker",
         "status": "passed",
         "checked_at": "2026-05-18T14:45:00Z"
+      },
+      {
+        "gate": "feedback_reconciliation_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T15:00:00Z"
+      },
+      {
+        "gate": "feedback_reconciliation_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T15:00:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -105,12 +112,24 @@
       "Phase 4 brief generation is complete: idiom product brief --render creates lint-verified implementation briefs from accepted PRD/ADR/TDD artifacts and a passing coverage gate without dispatching work or executing models.",
       "Deferred follow-up: make coverage gate reuse product lint/audit validators or run them as blocking preconditions before brief generation.",
       "Atom 29 complete: idiom product feedback links explicit lane/progress/evidence references into privacy-safe execution feedback summaries without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
-      "Next Phase 5 slice: persist/reconcile feedback records into workflow state and durable evidence links, then add product workflow metrics to audit surfaces."
+      "Atom 30 planned: reconcile verified feedback records into workflow-state artifact links and durable evidence references without dispatching lanes, promoting ranker learning, storing raw transcripts/file bodies, or mutating .idiom runtime state.",
+      "Next Phase 5 slice after feedback reconciliation: add product workflow metrics to audit surfaces.",
+      "Atom 30 planned: reconcile passing idiom product feedback summaries into deterministic workflow-state/evidence-link updates without dispatching lanes, mutating .idiom runtime state, generating evidence exports, or promoting ranker learning."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0030-001",
+    "TDD-IMPL-0030-002",
+    "TDD-IMPL-0030-003",
+    "TDD-IMPL-0030-004"
+  ],
   "open_questions": [],
-  "blockers": [],
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -136,10 +155,11 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T14:50:00Z",
+  "last_reconciliation_at": "2026-05-18T15:00:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_5_feedback_reconciliation_atom",
+    "start_implementation",
+    "start_investigation",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"
