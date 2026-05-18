@@ -1,0 +1,40 @@
+{
+  "schema_version": "idiom.review_report.v1.fixture",
+  "task_id": "impl-0036-phase-6-effort-browser-cli",
+  "effort_id": "prd-adr-brief-workflow",
+  "reviewer": {
+    "agent_id": "codex-gpt-review-impl-0036",
+    "agent_path": null,
+    "model": "gpt-5.4",
+    "reasoning_effort": "medium",
+    "independent_from_implementor": true
+  },
+  "status": "pending",
+  "findings": [],
+  "checks": {
+    "read_only_effort_browser": "pending",
+    "status_and_query_filters": "pending",
+    "malformed_state_findings": "pending",
+    "cli_json_and_text_parity": "pending",
+    "no_mutation_or_migration": "pending"
+  },
+  "reviewed_at": "",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"phase 6 product workflow efforts browser CLI list search status bucket unstarted started closed read-only\",\"mode\":\"plan\",\"limit\":12}'",
+    "idiom tool context_query --input '{\"query\":\"product workflow efforts index status bucket workflow_state list efforts CLI read only malformed state findings\",\"resolution\":\"symbol\",\"limit\":12}'",
+    "go test ./internal/productworkflow -run TestProductEffortsBrowser -count=1",
+    "go test ./cmd/idiom -run 'TestProductEfforts' -count=1",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --json",
+    "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --status started",
+    "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go test ./...",
+    "JSON/JSONL validation for durable workflow artifacts",
+    "privacy secret-pattern scan over durable effort artifacts",
+    "git diff --check"
+  ],
+  "residual_risk": "pending review",
+  "created_at": "2026-05-18T21:05:00Z"
+}

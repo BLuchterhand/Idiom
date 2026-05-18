@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0035-phase-6-operator-status-view-model",
+  "task_id": "impl-0036-phase-6-effort-browser-cli",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -35,7 +35,8 @@
       "ranker_learning_evidence_adapter_planned",
       "ranker_learning_evidence_adapter",
       "operator_status_view_model_planned",
-      "operator_status_view_model"
+      "operator_status_view_model",
+      "effort_browser_cli_planned"
     ],
     "gates_blocked": []
   },
@@ -399,6 +400,42 @@
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0036-001",
+      "type": "contract",
+      "behavior": "The product workflow exposes a deterministic read-only effort browser model over docs/product-workflows/efforts status buckets, summarizing workflow_state identity, phase, state, revision, context freshness, blockers, open obligations, and relative folder path without mutating effort artifacts.",
+      "owner": "internal/productworkflow/efforts_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductEffortsBrowser -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0036-002",
+      "type": "contract",
+      "behavior": "Effort browsing supports explicit status-bucket and query filters, sorts output deterministically, includes typed findings for malformed effort workflow_state files, and fails closed for unsafe roots or unknown status buckets.",
+      "owner": "internal/productworkflow/efforts_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductEffortsBrowser -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0036-003",
+      "type": "acceptance",
+      "behavior": "idiom product efforts emits JSON and human-readable output with parity for effort identity, status bucket, phase/state, blockers, query/status filtering, and typed malformed-state findings while preserving read-only behavior.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run 'TestProductEfforts' -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0036-004",
+      "type": "audit",
+      "behavior": "The atom records C2 GPT Codex worker/reviewer selection, Idiom discovery evidence, focused/full verification, and privacy-safe durable reports without storing raw prompts, transcripts, file bodies, secrets, generated briefs, customer-identifying data, or TUI transcript bodies.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0036-review.json",
+      "command": "privacy secret-pattern scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

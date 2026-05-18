@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0035-phase-6-operator-status-view-model",
+  "task_id": "impl-0036-phase-6-effort-browser-cli",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T20:55:00Z",
-  "state_revision": 106,
-  "last_event_id": "evt-0309",
-  "workspace_fingerprint": "idiom@04fc1b5",
+  "updated_at": "2026-05-18T21:05:00Z",
+  "state_revision": 107,
+  "last_event_id": "evt-0312",
+  "workspace_fingerprint": "idiom@e94f567",
   "status_bucket": "started",
   "current_phase": "phase-6-operator-continuation",
   "current_state": "planned",
@@ -39,10 +39,13 @@
     "impl_0034_investigation_report": "reports/impl-0034-investigation.json",
     "impl_0035_implementation_report": "reports/impl-0035-implementation.json",
     "impl_0035_review_report": "reports/impl-0035-review.json",
-    "impl_0035_investigation_report": "reports/impl-0035-investigation.json"
+    "impl_0035_investigation_report": "reports/impl-0035-investigation.json",
+    "impl_0036_implementation_report": "reports/impl-0036-implementation.json",
+    "impl_0036_review_report": "reports/impl-0036-review.json",
+    "impl_0036_investigation_report": "reports/impl-0036-investigation.json"
   },
   "context": {
-    "context_pack_id": "835deff0af50032a",
+    "context_pack_id": "8daf2b7bf7efceb0",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -65,7 +68,10 @@
       "docs/obsidian/22 - Product Workflow ROADMAP.md",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
-      "internal/productworkflow/status_test.go"
+      "internal/productworkflow/status_test.go",
+      "internal/productworkflow/efforts.go",
+      "internal/productworkflow/efforts_test.go",
+      "docs/product-workflows/efforts/index.json"
     ],
     "unresolved_gaps": [
       {
@@ -188,6 +194,11 @@
         "gate": "operator_status_view_model",
         "status": "passed",
         "checked_at": "2026-05-18T20:55:00Z"
+      },
+      {
+        "gate": "effort_browser_cli_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T21:05:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -209,12 +220,23 @@
       "Atom 34 complete: idiom product feedback --ranker-learning-evidence-summary adapts verified execution feedback into bounded ranker-learning request-shaped evidence without promoting ranker weights, dispatching lanes, mutating .idiom runtime state, writing evidence exports, or storing raw content.",
       "Next design-doc slice: plan the Phase 6 operator status and continuation surface so CLI/TUI can present the same durable workflow state and valid next actions.",
       "Atom 35 complete: product status exposes a shared read-only operator view behind --operator-view with typed next actions, owners, blockers, freshness, metrics, and artifact paths; default status JSON/text remains stable and no lane dispatch, model execution, .idiom runtime mutation, status-folder migration, or broad TUI behavior was added.",
-      "Next design-doc slice: plan impl-0036 for browsing product workflow efforts by status bucket using a read-only CLI surface, before broader status-folder migration or TUI effort-browser work."
+      "Next design-doc slice: plan impl-0036 for browsing product workflow efforts by status bucket using a read-only CLI surface, before broader status-folder migration or TUI effort-browser work.",
+      "Atom 36 planned: add a read-only idiom product efforts browser/search surface over unstarted, started, and closed effort buckets, with typed malformed-state findings and JSON/text parity, while keeping folder migration, workflow mutation, model execution, lane dispatch, and broad TUI interactions outside the atom."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0036-001",
+    "TDD-IMPL-0036-002",
+    "TDD-IMPL-0036-003",
+    "TDD-IMPL-0036-004"
+  ],
   "open_questions": [],
-  "blockers": [],
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -243,7 +265,9 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_impl_0036_phase_6_effort_browser_atom"
+    "run_impl_0036_effort_browser_cli_worker",
+    "review_impl_0036_effort_browser_cli_atom",
+    "verify_impl_0036_effort_browser_cli_read_only"
   ],
   "durability_level": "source_controlled"
 }
