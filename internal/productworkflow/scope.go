@@ -63,6 +63,44 @@ func ValidateLedgerCoverage(atoms []AtomCoverageCheck, commitChangedPaths []stri
 	return findings
 }
 
+type AtomCommitCoverage struct {
+	TaskID       string
+	CommitHash   string
+	ChangedPaths []string
+}
+
+func ValidatePerAtomCoverage(atoms []AtomCommitCoverage, commitPaths map[string][]string) []LedgerCoverageFinding {
+	var findings []LedgerCoverageFinding
+	for _, atom := range atoms {
+		if atom.CommitHash == "" {
+			continue
+		}
+		paths, ok := commitPaths[atom.CommitHash]
+		if !ok {
+			findings = append(findings, LedgerCoverageFinding{
+				Code:    "commit_hash_not_found",
+				Path:    "",
+				Message: "atom " + atom.TaskID + " references commit " + atom.CommitHash + " not found in commit history",
+			})
+			continue
+		}
+		atomSet := make(map[string]struct{})
+		for _, p := range atom.ChangedPaths {
+			atomSet[normalizePath(p)] = struct{}{}
+		}
+		for _, p := range paths {
+			if _, ok := atomSet[normalizePath(p)]; !ok {
+				findings = append(findings, LedgerCoverageFinding{
+					Code:    "atom_under_reports_path",
+					Path:    normalizePath(p),
+					Message: "commit " + atom.CommitHash + " changed " + normalizePath(p) + " but atom " + atom.TaskID + " does not list it",
+				})
+			}
+		}
+	}
+	return findings
+}
+
 type ScopeGateResult struct {
 	Status             string
 	Blockers           []ScopeGateBlocker

@@ -452,6 +452,63 @@ func lintEffortFolder(root string) productLintResult {
 		}
 	}
 
+	{
+		var commitAtoms []productworkflow.AtomCommitCoverage
+		commitHashSet := map[string]bool{}
+		for _, rec := range parsedLedger {
+			if rec.CommitHash != "" && (rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded") {
+				commitAtoms = append(commitAtoms, productworkflow.AtomCommitCoverage{
+					TaskID:       rec.TaskID,
+					CommitHash:   rec.CommitHash,
+					ChangedPaths: rec.ChangedPaths,
+				})
+				commitHashSet[rec.CommitHash] = true
+			}
+		}
+		if len(commitAtoms) > 0 {
+			repoRoot := findGitRepoRoot(root)
+			if repoRoot != "" {
+				effortRel, _ := filepath.Rel(repoRoot, root)
+				hashes := make([]string, 0, len(commitHashSet))
+				for h := range commitHashSet {
+					hashes = append(hashes, h)
+				}
+				sort.Strings(hashes)
+				rawCommitPaths := gitCommitPaths(repoRoot, hashes)
+				commitPaths := make(map[string][]string, len(rawCommitPaths))
+				prefix := effortRel + "/"
+				for hash, paths := range rawCommitPaths {
+					var stripped []string
+					for _, p := range paths {
+						if effortRel != "" && strings.HasPrefix(p, prefix) {
+							stripped = append(stripped, strings.TrimPrefix(p, prefix))
+						} else if effortRel != "" && p == effortRel {
+							continue
+						} else {
+							stripped = append(stripped, p)
+						}
+					}
+					commitPaths[hash] = stripped
+				}
+				for i := range commitAtoms {
+					var norm []string
+					for _, p := range commitAtoms[i].ChangedPaths {
+						if effortRel != "" && strings.HasPrefix(p, prefix) {
+							norm = append(norm, strings.TrimPrefix(p, prefix))
+						} else {
+							norm = append(norm, p)
+						}
+					}
+					commitAtoms[i].ChangedPaths = norm
+				}
+				perAtomFindings := productworkflow.ValidatePerAtomCoverage(commitAtoms, commitPaths)
+				for _, f := range perAtomFindings {
+					addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
+				}
+			}
+		}
+	}
+
 	if len(result.Findings) == 0 {
 		result.Status = "pass"
 	} else {
@@ -795,6 +852,25 @@ func gitChangedPaths(effortRoot string) []string {
 		}
 	}
 	return paths
+}
+
+func gitCommitPaths(repoRoot string, hashes []string) map[string][]string {
+	result := make(map[string][]string)
+	for _, h := range hashes {
+		out, err := exec.Command("git", "-C", repoRoot, "show", "--name-only", "--format=", h).Output()
+		if err != nil {
+			continue
+		}
+		var paths []string
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				paths = append(paths, line)
+			}
+		}
+		result[h] = paths
+	}
+	return result
 }
 
 func findGitRepoRoot(start string) string {

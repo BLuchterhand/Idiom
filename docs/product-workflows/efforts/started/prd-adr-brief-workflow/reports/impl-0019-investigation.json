@@ -2,5 +2,42 @@
   "schema_version": "idiom.investigation_report.v1.fixture",
   "effort_id": "prd-adr-brief-workflow",
   "task_id": "impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes",
-  "status": "pending"
+  "status": "complete",
+  "created_at": "2026-05-18T00:20:00Z",
+  "completed_at": "2026-05-18T00:20:00Z",
+  "next_valid_action": "plan_next_phase_2_atom_or_advance_phase",
+  "scope": {
+    "types.go": "CommitHash field addition to ImplementationLedgerRecord",
+    "validate.go": "commit_hash format validation in validateImplementationLedger",
+    "scope.go": "AtomCommitCoverage type and ValidatePerAtomCoverage pure function",
+    "product_workflow.go": "gitCommitPaths helper and lint wiring",
+    "tests": "validate_test.go scope_test.go product_workflow_test.go"
+  },
+  "tests": {
+    "commit_hash_validation": "8 tests for commit_hash format validation",
+    "per_atom_coverage": "5 tests for ValidatePerAtomCoverage",
+    "lint_integration": "2 tests for lint integration with commit hashes",
+    "purity": "1 test for scope.go import purity"
+  },
+  "coverage": {
+    "validate_test.go": "valid hex, empty, invalid hex, too short, uppercase, fallback, partial, other types",
+    "scope_test.go": "matching, under-reporting, missing hash, empty hash skip, mixed",
+    "product_workflow_test.go": "detects under-reporting, skips without commit hash"
+  },
+  "traceability": {
+    "brief_to_types": "CommitHash field matches brief section 1",
+    "brief_to_validate": "commit_hash validation matches brief section 2",
+    "brief_to_scope": "ValidatePerAtomCoverage matches brief section 3",
+    "brief_to_product_workflow": "gitCommitPaths and lint wiring match brief section 4",
+    "brief_to_tests": "test coverage matches brief section 5"
+  },
+  "privacy_audit": {
+    "raw_prompts_stored": false,
+    "transcripts_stored": false,
+    "file_bodies_stored": false,
+    "secrets_stored": false,
+    "customer_identifying_data_stored": false
+  },
+  "reviewer_findings": [],
+  "blockers": []
 }

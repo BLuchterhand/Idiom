@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -2409,6 +2410,155 @@ func TestProductResearchInvalidProfileReturnsExit1(t *testing.T) {
 	findings, ok := result["findings"].([]any)
 	if !ok || len(findings) == 0 {
 		t.Fatalf("expected at least one finding, got %v", result["findings"])
+	}
+}
+
+func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	ledgerWithCommit := validTestImplementationLedgerJSONL() + "\n" +
+		`{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-17T16:06:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000","changed_paths":["cmd/foo.go"]}`
+	writeTestFile(t, dir, "implementation_ledger.jsonl", ledgerWithCommit)
+	result := lintEffortFolder(dir)
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "commit_hash_not_found" || f.Code == "atom_under_reports_path" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected per-atom commit coverage finding, got %v", result.Findings)
+	}
+}
+
+func TestProductLintPerAtomCommitCoverageSkippedWithoutCommitHash(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	result := lintEffortFolder(dir)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass for ledger without commit_hash, got %q with findings %v", result.Status, result.Findings)
+	}
+}
+
+func TestProductLintPerAtomRealGitUnderReporting(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %s: %v", args[0], strings.TrimSpace(string(out)), err)
+		}
+	}
+	runGit("init")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+
+	writeTestFile(t, dir, "effort/cmd/foo.go", "package foo")
+	writeTestFile(t, dir, "effort/internal/bar.go", "package bar")
+	writeTestFile(t, dir, "effort/internal/baz.go", "package baz")
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	hashCmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
+	hashOut, err := hashCmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse: %v", err)
+	}
+	commitHash := strings.TrimSpace(string(hashOut))
+
+	effortDir := filepath.Join(dir, "effort")
+	writeTestFile(t, effortDir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, effortDir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, effortDir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, effortDir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, effortDir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, effortDir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, effortDir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, effortDir, "briefs/test.md", "# Test Brief")
+	writeTestFile(t, effortDir, "reports/test.json", "{}")
+
+	ledgerEntry := `{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-17T16:06:00Z","implementor_id":"impl","commit_hash":"` + commitHash + `","changed_paths":["cmd/foo.go"]}`
+	writeTestFile(t, effortDir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL()+"\n"+ledgerEntry)
+
+	result := lintEffortFolder(effortDir)
+
+	var underReportMsgs []string
+	for _, f := range result.Findings {
+		if f.Code == "atom_under_reports_path" {
+			underReportMsgs = append(underReportMsgs, f.Message)
+		}
+	}
+	if len(underReportMsgs) < 2 {
+		t.Fatalf("expected at least 2 atom_under_reports_path findings (bar.go and baz.go), got %d: %v", len(underReportMsgs), underReportMsgs)
+	}
+
+	foundBar := false
+	foundBaz := false
+	for _, msg := range underReportMsgs {
+		if strings.Contains(msg, "internal/bar.go") {
+			foundBar = true
+		}
+		if strings.Contains(msg, "internal/baz.go") {
+			foundBaz = true
+		}
+	}
+	if !foundBar || !foundBaz {
+		t.Fatalf("expected findings for bar.go and baz.go, got %v", underReportMsgs)
+	}
+}
+
+func TestProductLintPerAtomRealGitMatchingPaths(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %s: %v", args[0], strings.TrimSpace(string(out)), err)
+		}
+	}
+	runGit("init")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+
+	writeTestFile(t, dir, "effort/cmd/foo.go", "package foo")
+	writeTestFile(t, dir, "effort/internal/bar.go", "package bar")
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	hashCmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
+	hashOut, err := hashCmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse: %v", err)
+	}
+	commitHash := strings.TrimSpace(string(hashOut))
+
+	effortDir := filepath.Join(dir, "effort")
+	writeTestFile(t, effortDir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, effortDir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, effortDir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, effortDir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, effortDir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, effortDir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, effortDir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, effortDir, "briefs/test.md", "# Test Brief")
+	writeTestFile(t, effortDir, "reports/test.json", "{}")
+
+	ledgerEntry := `{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-17T16:06:00Z","implementor_id":"impl","commit_hash":"` + commitHash + `","changed_paths":["cmd/foo.go","internal/bar.go"]}`
+	writeTestFile(t, effortDir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL()+"\n"+ledgerEntry)
+
+	result := lintEffortFolder(effortDir)
+
+	for _, f := range result.Findings {
+		if f.Code == "atom_under_reports_path" {
+			t.Fatalf("expected no atom_under_reports_path when paths match, got: %s: %s", f.Path, f.Message)
+		}
 	}
 }
 

@@ -173,6 +173,7 @@ type ImplementationLedgerRecord struct {
 	ImplementorID           string                 `json:"implementor_id,omitempty"`
 	ReviewerID              string                 `json:"reviewer_id,omitempty"`
 	ChangedPaths            []string               `json:"changed_paths,omitempty"`
+	CommitHash              string                 `json:"commit_hash,omitempty"`
 	CodeChanges             bool                   `json:"code_changes,omitempty"`
 	VerificationCommandsRun []string               `json:"verification_commands_run,omitempty"`
 	VerificationStatus      string                 `json:"verification_status,omitempty"`

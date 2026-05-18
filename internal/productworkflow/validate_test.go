@@ -2854,6 +2854,82 @@ func TestValidatePRDTDDObligationCrossLinksNilMapSkipsCheck(t *testing.T) {
 	}
 }
 
+func TestCommitHashValidHexPasses(t *testing.T) {
+	data := `{"record_type":"implementation_completed","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}`
+	if _, err := ParseImplementationLedgerJSONL([]byte(data)); err != nil {
+		t.Fatalf("expected valid 40-char hex commit_hash to pass, got %v", err)
+	}
+}
+
+func TestCommitHashEmptyStringPasses(t *testing.T) {
+	data := `{"record_type":"implementation_completed","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z"}`
+	if _, err := ParseImplementationLedgerJSONL([]byte(data)); err != nil {
+		t.Fatalf("expected missing/empty commit_hash to pass, got %v", err)
+	}
+}
+
+func TestCommitHashInvalidHexFails(t *testing.T) {
+	data := `{"record_type":"implementation_completed","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaG"}`
+	_, err := ParseImplementationLedgerJSONL([]byte(data))
+	if err == nil {
+		t.Fatal("expected commit_hash with non-hex chars to fail")
+	}
+	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
+		t.Fatalf("expected commit_hash format error, got %v", err)
+	}
+}
+
+func TestCommitHashTooShortFails(t *testing.T) {
+	data := `{"record_type":"implementation_completed","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"abc1234"}`
+	_, err := ParseImplementationLedgerJSONL([]byte(data))
+	if err == nil {
+		t.Fatal("expected short commit_hash to fail")
+	}
+	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
+		t.Fatalf("expected commit_hash format error, got %v", err)
+	}
+}
+
+func TestCommitHashUppercaseHexFails(t *testing.T) {
+	data := `{"record_type":"implementation_completed","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"}`
+	_, err := ParseImplementationLedgerJSONL([]byte(data))
+	if err == nil {
+		t.Fatal("expected uppercase hex commit_hash to fail")
+	}
+	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
+		t.Fatalf("expected commit_hash format error, got %v", err)
+	}
+}
+
+func TestCommitHashValidatedOnFallbackCompletion(t *testing.T) {
+	data := `{"record_type":"fallback_completion","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"bad"}`
+	_, err := ParseImplementationLedgerJSONL([]byte(data))
+	if err == nil {
+		t.Fatal("expected bad commit_hash on fallback_completion to fail")
+	}
+	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
+		t.Fatalf("expected commit_hash format error, got %v", err)
+	}
+}
+
+func TestCommitHashValidatedOnPartialImplementation(t *testing.T) {
+	data := `{"record_type":"partial_implementation_recorded","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"bad"}`
+	_, err := ParseImplementationLedgerJSONL([]byte(data))
+	if err == nil {
+		t.Fatal("expected bad commit_hash on partial_implementation_recorded to fail")
+	}
+	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
+		t.Fatalf("expected commit_hash format error, got %v", err)
+	}
+}
+
+func TestCommitHashNotValidatedOnOtherRecordTypes(t *testing.T) {
+	data := `{"record_type":"atom_planned","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","commit_hash":"bad","implementor":{"id":"i","runtime":"r","model":"m","command":"c"},"reviewer":{"id":"r","model":"m","reasoning_effort":"m","runtime":"r"},"scope":{"expected_files":["a.go"],"forbidden":["b.go"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/i.json","review":"reports/r.json","investigation":"reports/v.json"}}`
+	if _, err := ParseImplementationLedgerJSONL([]byte(data)); err != nil {
+		t.Fatalf("expected commit_hash on atom_planned to be ignored, got %v", err)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

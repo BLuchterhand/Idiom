@@ -658,3 +658,104 @@ func TestValidateLedgerCoverageMultipleAtomsUnion(t *testing.T) {
 		t.Fatalf("expected finding for docs/effort/extra.md, got %s", underReport[0].Path)
 	}
 }
+
+func TestValidatePerAtomCoverageMatchingPathsNoFindings(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			ChangedPaths: []string{"cmd/foo.go", "internal/bar.go"},
+		},
+	}
+	commitPaths := map[string][]string{
+		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2": {"cmd/foo.go", "internal/bar.go"},
+	}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings, got %d: %#v", len(findings), findings)
+	}
+}
+
+func TestValidatePerAtomCoverageUnderReportingDetectsMissingPath(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			ChangedPaths: []string{"cmd/foo.go"},
+		},
+	}
+	commitPaths := map[string][]string{
+		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2": {"cmd/foo.go", "internal/bar.go"},
+	}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "atom_under_reports_path" {
+		t.Fatalf("expected atom_under_reports_path, got %s", findings[0].Code)
+	}
+	if !strings.Contains(findings[0].Message, "internal/bar.go") {
+		t.Fatalf("expected message to mention internal/bar.go, got %s", findings[0].Message)
+	}
+	if !strings.Contains(findings[0].Message, "impl-001") {
+		t.Fatalf("expected message to mention impl-001, got %s", findings[0].Message)
+	}
+}
+
+func TestValidatePerAtomCoverageMissingCommitHash(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+			ChangedPaths: []string{"cmd/foo.go"},
+		},
+	}
+	commitPaths := map[string][]string{}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "commit_hash_not_found" {
+		t.Fatalf("expected commit_hash_not_found, got %s", findings[0].Code)
+	}
+	if !strings.Contains(findings[0].Message, "impl-001") {
+		t.Fatalf("expected message to mention impl-001, got %s", findings[0].Message)
+	}
+}
+
+func TestValidatePerAtomCoverageEmptyCommitHashSkipped(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "",
+			ChangedPaths: []string{"cmd/foo.go"},
+		},
+	}
+	commitPaths := map[string][]string{}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for empty commit hash, got %d: %#v", len(findings), findings)
+	}
+}
+
+func TestValidatePerAtomCoverageMixedAtoms(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			ChangedPaths: []string{"cmd/foo.go"},
+		},
+		{
+			TaskID:       "impl-002",
+			CommitHash:   "",
+			ChangedPaths: []string{"internal/bar.go"},
+		},
+	}
+	commitPaths := map[string][]string{
+		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2": {"cmd/foo.go"},
+	}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings with mixed atoms (one without hash), got %d: %#v", len(findings), findings)
+	}
+}

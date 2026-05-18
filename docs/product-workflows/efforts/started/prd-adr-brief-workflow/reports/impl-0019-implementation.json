@@ -2,21 +2,38 @@
   "schema_version": "idiom.implementation_report.v1.fixture",
   "task_id": "impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes",
   "effort_id": "prd-adr-brief-workflow",
-  "implementor_id": "pending",
-  "runtime": "pending",
-  "model": "pending",
-  "completed_at": "",
+  "implementor_id": "opencode-glm-impl-0019",
+  "runtime": "opencode_attached_server",
+  "model": "zai-coding-plan/glm-5.1",
+  "completed_at": "2026-05-18T00:15:00Z",
   "complexity_tier": "C2",
   "scope_statement": "Add commit_hash field to implementation ledger records and per-atom coverage validation to prevent piggybacking",
-  "code_changes": false,
-  "changed_paths": [],
+  "code_changes": true,
+  "changed_paths": [
+    "internal/productworkflow/types.go",
+    "internal/productworkflow/validate.go",
+    "internal/productworkflow/validate_test.go",
+    "internal/productworkflow/scope.go",
+    "internal/productworkflow/scope_test.go",
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go"
+  ],
   "verification": {
-    "status": "pending",
-    "commands": []
+    "status": "passed_after_orchestrator_review",
+    "commands": [
+      "go build ./...",
+      "go test ./internal/productworkflow/...",
+      "go test ./cmd/idiom/... -run TestProductLintPerAtomCommitCoverage",
+      "go test ./internal/productworkflow/... -run TestCommitHash",
+      "go test ./internal/productworkflow/... -run TestValidatePerAtomCoverage",
+      "go test ./internal/productworkflow/... -run TestTransitionPurity"
+    ]
   },
   "privacy_note": "no raw prompts, transcripts, file bodies, secrets, or customer-identifying data stored",
-  "open_blockers": [
-    "implementation_pending"
-  ],
-  "reviewer_id": "pending"
+  "open_blockers": [],
+  "reviewer_id": "codex-gpt-review-impl-0019",
+  "new_types": ["AtomCommitCoverage"],
+  "new_functions": ["isValidCommitHash", "ValidatePerAtomCoverage", "gitCommitPaths"],
+  "test_count": 15,
+  "lines_added": 310
 }

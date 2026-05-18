@@ -372,6 +372,11 @@ func validateImplementationLedger(records []ImplementationLedgerRecord) error {
 			require(&errs, rec.Reason, fmt.Sprintf("implementation ledger line %d: fallback_exception missing reason", line))
 			require(&errs, rec.AllowedScope, fmt.Sprintf("implementation ledger line %d: fallback_exception missing allowed_scope", line))
 		}
+		if rec.CommitHash != "" && (rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded") {
+			if !isValidCommitHash(rec.CommitHash) {
+				errs = append(errs, fmt.Errorf("implementation ledger line %d: commit_hash must be 40 hex chars, got %q", line, rec.CommitHash))
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -977,6 +982,18 @@ func require(errs *[]error, value string, message string) {
 	if strings.TrimSpace(value) == "" {
 		*errs = append(*errs, errors.New(message))
 	}
+}
+
+func isValidCommitHash(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 var allowedComplexityTiers = map[string]bool{
