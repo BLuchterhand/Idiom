@@ -32,27 +32,6 @@ type productLintResult struct {
 	NextValidAction string               `json:"next_valid_action"`
 }
 
-type productStatusMigrationResult struct {
-	Status             string                                          `json:"status"`
-	Mode               string                                          `json:"mode"`
-	EffortRoot         string                                          `json:"effort_root"`
-	EffortsRoot        string                                          `json:"efforts_root,omitempty"`
-	EffortID           string                                          `json:"effort_id"`
-	SourceStatusBucket string                                          `json:"source_status_bucket"`
-	TargetStatusBucket string                                          `json:"target_status_bucket"`
-	SourceFolderPath   string                                          `json:"source_folder_path"`
-	TargetFolderPath   string                                          `json:"target_folder_path"`
-	PriorFolderPaths   []string                                        `json:"prior_folder_paths"`
-	PriorIndexPaths    []string                                        `json:"prior_index_paths"`
-	Event              productworkflow.ProductStatusMigrationEvent     `json:"event"`
-	EventID            string                                          `json:"event_id"`
-	StateRevision      int                                             `json:"state_revision"`
-	LastEventID        string                                          `json:"last_event_id"`
-	Blockers           []productworkflow.ProductStatusMigrationBlocker `json:"blockers"`
-	Findings           []productworkflow.ProductStatusMigrationBlocker `json:"findings"`
-	NextValidAction    string                                          `json:"next_valid_action"`
-}
-
 func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 {
 		printProductUsage(stderr)
