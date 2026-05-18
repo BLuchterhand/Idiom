@@ -15,7 +15,8 @@
     "internal/productworkflow/status.go",
     "internal/productworkflow/types.go",
     "internal/productworkflow/metrics.go",
-    "internal/productworkflow/metrics_test.go"
+    "internal/productworkflow/metrics_test.go",
+    "internal/productworkflow/status_test.go"
   ],
   "verification": {
     "run_by_implementor": true,
@@ -44,8 +45,11 @@
     "context_query:product workflow metrics audit status gates blockers evidence links harness_audit product audit"
   ],
   "reviewer_id": "codex-gpt-review-impl-0031",
-  "commit_hash": "d5e1bea48dbba7079ce58835b59ae7922c50f087",
+  "commit_hash": "9b044daa35f55fa2415f21a0039b594a683c22db",
   "planning_checkpoint_commit": "de1f2035dfb1eb713da9fb1bafbb3ed1cc29439a",
   "privacy_note": "report stores only scope, model assignment, command names, commit hashes, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
-  "open_blockers": []
+  "open_blockers": [],
+  "implementation_commit": "9b044daa35f55fa2415f21a0039b594a683c22db",
+  "initial_commit_hash": "d5e1bea48dbba7079ce58835b59ae7922c50f087",
+  "review_repair_commit": "9b044daa35f55fa2415f21a0039b594a683c22db"
 }
