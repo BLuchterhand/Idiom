@@ -8,10 +8,33 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
+  "status": "pass",
   "findings": [],
-  "checks": {},
-  "reviewed_at": "",
-  "commands_reviewed": [],
-  "created_at": "2026-05-18T12:50:00Z"
+  "checks": {
+    "discovery_first_review": "Reviewer used Idiom discovery before localized patch review.",
+    "acceptance_metadata": "Accepted PRD and ADR artifacts require accepted_at, accepted_by, and acceptance_profile; nonaccepted states keep those fields optional.",
+    "no_fixture_bypass": "The durable accepted PRD fixture carries acceptance metadata instead of bypassing accepted-state validation by schema suffix.",
+    "supersession_links": "ADR markdown and ADR index parse supersedes/superseded_by and reject broken, duplicate, self-referential, and non-reciprocal links.",
+    "no_model_acceptance_authority": "No model-accept command, auto-accept behavior, promotion, TUI/operator behavior, or execution path was added.",
+    "durable_privacy": "Reports and workflow state exclude raw prompts, raw transcripts, file bodies, secrets, and customer-identifying data.",
+    "verdict": "pass"
+  },
+  "reviewed_at": "2026-05-18T13:05:00Z",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"review impl 0025 acceptance state and supersession links product workflow\",\"mode\":\"plan\",\"limit\":12}'",
+    "git diff -- internal/productworkflow/types.go internal/productworkflow/validate.go internal/productworkflow/validate_test.go",
+    "git diff -- cmd/idiom/product_workflow.go cmd/idiom/product_workflow_test.go",
+    "go test ./internal/productworkflow -run 'Test.*Acceptance|Test.*Supersession|TestADR|TestPRD'",
+    "go test ./cmd/idiom -run 'TestProduct.*Acceptance|TestProduct.*Supersession|TestProductLintPassesOnCurrentDurableEffortFixture|TestProductAudit'",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "git diff --check",
+    "go test ./..."
+  ],
+  "created_at": "2026-05-18T12:50:00Z",
+  "decision": "pass",
+  "residual_risks": [
+    "The durable fixture has no real supersession chain because only one ADR exists; synthetic tests cover populated supersession chains."
+  ]
 }

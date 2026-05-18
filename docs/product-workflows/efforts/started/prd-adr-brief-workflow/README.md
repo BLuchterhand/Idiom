@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0024-phase-3-adr-draft-prompt-rendering`
-- Active atom: `impl-0025-phase-3-acceptance-state-and-supersession-links` planned
+- Last completed atom: `impl-0025-phase-3-acceptance-state-and-supersession-links`
+- Active atom: none planned; next action is to plan TDD obligation synthesis
 - Status bucket: `started`
-- Current phase: `phase-3-prd-adr-generation`
-- Context pack: `c4fb4dbdee75e163`
+- Current phase: `phase-4-tdd-obligation-synthesis`
+- Context pack: `c9a474b8604dd293`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -84,12 +84,15 @@ This effort is the durable implementation state for delivering
   supersession links, or mutating PRD/evidence artifacts. It fails closed on
   missing/invalid evidence or PRD inputs, unsafe paths, prompt symlink targets,
   and symlinked prompt ancestors.
-- Atom 25 is planned as the acceptance state and supersession link atom. It
-  should add deterministic PRD/ADR acceptance metadata validation plus ADR
-  supersedes/superseded_by link checks for lint/audit. The atom must not add a
-  model acceptance command, must keep human acceptance as the default for
-  material decisions, and must preserve prompt-renderer behavior that leaves
-  acceptance metadata empty unless a human explicitly provided it.
+- Atom 25: all TDD obligations satisfied. Added deterministic PRD/ADR
+  acceptance metadata validation and ADR supersession link checks. Accepted
+  PRDs and ADRs now require explicit `accepted_at`, `accepted_by`, and
+  `acceptance_profile`; draft/nonaccepted artifacts keep those fields optional.
+  ADR markdown and `adrs/index.json` parse and validate `supersedes` and
+  `superseded_by`, rejecting broken, duplicate, self-referential, and
+  non-reciprocal links through product lint/audit. No model acceptance command,
+  auto-accept path, promotion path, TUI/operator behavior, or execution path was
+  added.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated

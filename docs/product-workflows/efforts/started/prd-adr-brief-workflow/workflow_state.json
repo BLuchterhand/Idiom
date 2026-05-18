@@ -4,12 +4,12 @@
   "task_id": "impl-0025-phase-3-acceptance-state-and-supersession-links",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T12:50:00Z",
-  "state_revision": 74,
-  "last_event_id": "evt-0214",
-  "workspace_fingerprint": "idiom@feb23c5",
+  "updated_at": "2026-05-18T13:05:00Z",
+  "state_revision": 75,
+  "last_event_id": "evt-0220",
+  "workspace_fingerprint": "idiom@f5de816",
   "status_bucket": "started",
-  "current_phase": "phase-3-prd-adr-generation",
+  "current_phase": "phase-4-tdd-obligation-synthesis",
   "current_state": "planned",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
@@ -72,8 +72,43 @@
       },
       {
         "gate": "acceptance_state_and_supersession_links",
-        "status": "pending",
-        "checked_at": "2026-05-18T12:50:00Z"
+        "status": "passed",
+        "checked_at": "2026-05-18T13:05:00Z"
+      },
+      {
+        "gate": "accepted_artifact_metadata_required",
+        "status": "passed",
+        "checked_at": "2026-05-18T13:05:00Z"
+      },
+      {
+        "gate": "adr_supersession_link_validation",
+        "status": "passed",
+        "checked_at": "2026-05-18T13:05:00Z"
+      },
+      {
+        "gate": "focused_go_tests",
+        "status": "passed",
+        "checked_at": "2026-05-18T13:05:00Z"
+      },
+      {
+        "gate": "full_go_tests",
+        "status": "passed",
+        "checked_at": "2026-05-18T13:05:00Z"
+      },
+      {
+        "gate": "durable_json_jsonl_validation",
+        "status": "passed",
+        "checked_at": "2026-05-18T13:05:00Z"
+      },
+      {
+        "gate": "privacy_secret_scan",
+        "status": "passed",
+        "checked_at": "2026-05-18T13:05:00Z"
+      },
+      {
+        "gate": "diff_whitespace_check",
+        "status": "passed",
+        "checked_at": "2026-05-18T13:05:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -115,10 +150,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T12:50:00Z",
+  "last_reconciliation_at": "2026-05-18T13:05:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "implement_phase_3_acceptance_state_and_supersession_atom",
+    "plan_phase_4_tdd_obligation_synthesis_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],

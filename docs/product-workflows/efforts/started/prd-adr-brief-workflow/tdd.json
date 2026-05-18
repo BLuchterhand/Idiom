@@ -19,7 +19,17 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned"
+      "atom_planned",
+      "acceptance_state_and_supersession_links",
+      "accepted_artifact_metadata_required",
+      "adr_supersession_link_validation",
+      "focused_go_tests",
+      "full_go_tests",
+      "durable_json_jsonl_validation",
+      "privacy_secret_scan",
+      "diff_whitespace_check",
+      "review_passed",
+      "atom_closed"
     ],
     "gates_blocked": []
   },
@@ -31,7 +41,7 @@
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow -run 'Test.*Acceptance'",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0025-002",
@@ -40,7 +50,7 @@
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow -run 'Test.*Supersession'",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0025-003",
@@ -49,7 +59,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run 'TestProduct.*Acceptance|TestProduct.*Supersession'",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0025-004",
@@ -58,7 +68,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0025-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     }
   ]
 }
