@@ -1,0 +1,26 @@
+{
+  "schema_version": "idiom.investigation_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0020-phase-2-research-evidence-merge-from-profile-runs",
+  "status": "pending",
+  "created_at": "2026-05-18T09:55:00Z",
+  "scope": {},
+  "tests": {},
+  "coverage": {},
+  "traceability": {},
+  "privacy_audit": {
+    "raw_prompts_stored": false,
+    "transcripts_stored": false,
+    "file_bodies_stored": false,
+    "secrets_stored": false,
+    "customer_identifying_data_stored": false
+  },
+  "reviewer_findings": [],
+  "blockers": [
+    "review_blocked_repairing",
+    "profile_selector_repair_review_pending",
+    "commit_and_push_pending"
+  ],
+  "next_valid_action": "repair_impl_0020_review_findings",
+  "completed_at": ""
+}

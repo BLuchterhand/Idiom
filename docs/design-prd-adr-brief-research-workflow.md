@@ -1376,6 +1376,7 @@ idiom product capture --design-doc docs/plan.md --status unstarted
 idiom product list --status unstarted
 idiom product start --effort <effort-id>
 idiom product research --effort <effort-id> --profile idiom-prd
+idiom product research --effort <effort-id> --merge-evidence --profile idiom-prd
 idiom product prd --effort <effort-id>
 idiom product adr --effort <effort-id>
 idiom product tdd --effort <effort-id>
@@ -1684,46 +1685,38 @@ starts:
 3. Declare the atom's complexity tier, blast radius, expected files, forbidden
    files, TDD obligations, required verification, and post-effort investigation
    checklist.
-4. Select the cheapest sufficient implementor runtime and model. The default
-   implementor is OpenCode with `zai-coding-plan/glm-5.1`, invoked explicitly
-   with `opencode run --model zai-coding-plan/glm-5.1` or the repository
-   `scripts/run-opencode-glm.sh` wrapper so implementation does not drift to a
-   different OpenCode default model.
-   Headless automation should prefer an attached server path:
-   `scripts/run-opencode-glm.sh serve --hostname 127.0.0.1 --port <port>` and
-   `OPENCODE_SERVER_URL=http://127.0.0.1:<port> scripts/run-opencode-glm.sh run
-   <brief>`. The smoke report records whether the standalone or attached-server
-   path was used.
+4. Select the cheapest sufficient GPT Codex implementor model and reasoning
+   effort for the atom's complexity. The implementor must start from the
+   recorded `context_pack` and use Idiom discovery tools where they apply before
+   falling back to raw file reads for exact localized evidence.
 5. Select the cheapest sufficient Codex/GPT reviewer model and reasoning
    effort.
-6. Assign one dedicated OpenCode/GLM implementor sub-agent and one distinct
+6. Assign one dedicated GPT Codex implementor sub-agent and one distinct
    dedicated Codex/GPT reviewer sub-agent.
-7. Persist the assignments, model choices, reasoning-effort choices, session
-   IDs, OpenCode command, smoke-test status, and rationale before
-   implementation begins.
+7. Persist the assignments, model choices, reasoning-effort choices, discovery
+   evidence, session IDs, and rationale before implementation begins.
 
-If OpenCode/GLM implementor execution is unavailable, the atom is blocked unless
-an operator records an explicit exception and assigns a fallback implementor and
-an independent reviewer. The same actor must not both implement and approve an
-atom.
+If the selected GPT Codex implementor is unavailable, the atom is blocked unless
+an operator records an explicit exception and assigns a replacement GPT Codex
+implementor and an independent reviewer. The same actor must not both implement
+and approve an atom.
 
 Complexity tiers:
 
 | Tier | Applies to | Implementor | Reviewer |
 | --- | --- | --- | --- |
-| `C0` | prose docs, fixtures, examples, tiny mechanical updates | OpenCode `zai-coding-plan/glm-5.1`, low-risk prompt | `gpt-5.4-mini`, medium |
-| `C1` | schema structs, validators, focused unit tests, narrow adapters | OpenCode `zai-coding-plan/glm-5.1`, focused implementation prompt | `gpt-5.4`, medium |
-| `C2` | CLI commands, storage, status migration, reconciliation, deterministic audit logic | OpenCode `zai-coding-plan/glm-5.1`, implementation prompt with explicit tests | `gpt-5.4`, high |
-| `C3` | harness contracts, dispatch gates, telemetry, workflow state shared by CLI/TUI, TUI continuation state | OpenCode `zai-coding-plan/glm-5.1` with Codex orchestration checkpoints | `gpt-5.5`, high |
-| `C4` | privacy/security boundaries, protocol/state-machine correctness, data migrations, ambiguous behavioral failures | OpenCode `zai-coding-plan/glm-5.1` only after Codex `gpt-5.5` xhigh planning acceptance | `gpt-5.5`, xhigh plus human acceptance |
+| `C0` | prose docs, fixtures, examples, tiny mechanical updates | `gpt-5.3-codex-spark`, medium | `gpt-5.4-mini`, medium |
+| `C1` | schema structs, validators, focused unit tests, narrow adapters | `gpt-5.3-codex-spark`, high | `gpt-5.4`, medium |
+| `C2` | CLI commands, storage, status migration, reconciliation, deterministic audit logic | `gpt-5.3-codex`, medium or high | `gpt-5.4`, high |
+| `C3` | harness contracts, dispatch gates, telemetry, workflow state shared by CLI/TUI, TUI continuation state | `gpt-5.4`, high with orchestration checkpoints | `gpt-5.5`, high |
+| `C4` | privacy/security boundaries, protocol/state-machine correctness, data migrations, ambiguous behavioral failures | `gpt-5.5`, xhigh after planning acceptance | `gpt-5.5`, xhigh plus human acceptance |
 
 The table is an economic default, not a license to under-scope risk. A task may
 upgrade the reviewer or require extra Codex orchestration checkpoints when
 evidence shows higher ambiguity, larger blast radius, weak tests, or
-privacy/security exposure. A downgrade or fallback from OpenCode/GLM is allowed
-only when the atom records why the cheaper or alternate implementor is still
-sufficient, which deterministic checks compensate for the downgrade, and why the
-standard OpenCode/GLM path was not used.
+privacy/security exposure. A downgrade to a cheaper GPT Codex model is allowed
+only when the atom records why the cheaper implementor is still sufficient and
+which deterministic checks compensate for the lower reasoning budget.
 
 Each atom must record a structured task entry:
 
@@ -1738,12 +1731,12 @@ Each atom must record a structured task entry:
   "blast_radius": "new domain schemas and validators only",
   "context_pack_id": "pack-id",
   "implementor": {
-    "agent_id": "agent-impl-001",
-    "runtime": "opencode",
-    "model": "zai-coding-plan/glm-5.1",
-    "command": "OPENCODE_SERVER_URL=http://127.0.0.1:<port> scripts/run-opencode-glm.sh run",
-    "smoke_status": "passed",
-    "selection_reason": "default economical implementation runtime for focused schema and validator work"
+    "agent_id": "codex-gpt-worker-impl-001",
+    "runtime": "codex_subagent",
+    "model": "gpt-5.3-codex-spark",
+    "reasoning_effort": "high",
+    "discovery_evidence": ["context_pack:<pack-id>"],
+    "selection_reason": "cheapest sufficient GPT Codex worker for focused schema and validator work"
   },
   "reviewer": {
     "agent_id": "agent-review-001",

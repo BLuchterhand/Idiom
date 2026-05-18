@@ -73,6 +73,11 @@ func ValidatePerAtomCoverage(atoms []AtomCommitCoverage, commitPaths map[string]
 	var findings []LedgerCoverageFinding
 	for _, atom := range atoms {
 		if atom.CommitHash == "" {
+			findings = append(findings, LedgerCoverageFinding{
+				Code:    "commit_hash_missing",
+				Path:    "",
+				Message: "atom " + atom.TaskID + " has no commit_hash; commit_hash is required for implementation_completed, fallback_completion, and partial_implementation_recorded records",
+			})
 			continue
 		}
 		paths, ok := commitPaths[atom.CommitHash]

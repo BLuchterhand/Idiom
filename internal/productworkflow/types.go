@@ -134,6 +134,29 @@ type EvidenceCard struct {
 	Timestamp    string   `json:"timestamp"`
 }
 
+type ResearchCardsDocument struct {
+	SchemaVersion string                     `json:"schema_version"`
+	ResearcherID  string                     `json:"researcher_id"`
+	Alignment     string                     `json:"alignment"`
+	Cards         []EvidenceCard             `json:"cards"`
+	Conflicts     []ResearchEvidenceConflict `json:"conflicts,omitempty"`
+}
+
+type ResearchEvidenceConflict struct {
+	Kind          string   `json:"kind"`
+	ClaimKey      string   `json:"claim_key"`
+	CardIDs       []string `json:"card_ids"`
+	ResearcherIDs []string `json:"researcher_ids"`
+	Message       string   `json:"message"`
+}
+
+type ResearchEvidenceMergeResult struct {
+	Cards         []EvidenceCard             `json:"cards"`
+	MergedCardIDs []string                   `json:"merged_card_ids"`
+	Conflicts     []ResearchEvidenceConflict `json:"conflicts"`
+	Findings      []ProfileFinding           `json:"findings"`
+}
+
 type TraceabilityMatrix struct {
 	SchemaVersion string            `json:"schema_version"`
 	EffortID      string            `json:"effort_id"`

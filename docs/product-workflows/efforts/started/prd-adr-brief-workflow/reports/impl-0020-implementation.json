@@ -1,0 +1,50 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0020-phase-2-research-evidence-merge-from-profile-runs",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0020",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.3-codex",
+  "completed_at": "2026-05-18T09:55:00Z",
+  "complexity_tier": "C2",
+  "scope_statement": "Add deterministic research-card parsing and evidence merge for profile-run outputs, plus a product research --merge-evidence CLI surface.",
+  "code_changes": true,
+  "changed_paths": [
+    "internal/productworkflow/types.go",
+    "internal/productworkflow/validate.go",
+    "internal/productworkflow/research_evidence_merge.go",
+    "internal/productworkflow/research_evidence_merge_test.go",
+    "internal/productworkflow/scope.go",
+    "internal/productworkflow/scope_test.go",
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go",
+    "docs/design-prd-adr-brief-research-workflow.md",
+    "docs/product-workflows/efforts/index.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-implementation.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-review.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-investigation.json"
+  ],
+  "verification": {
+    "run_by_implementor": true,
+    "commands": [
+      "go test ./internal/productworkflow -run 'TestMergeResearch|TestParseResearchCards'",
+      "go test ./cmd/idiom -run 'TestProductResearch'",
+      "go test ./cmd/idiom -run 'TestProductResearchMergeEvidence'",
+      "go test ./internal/productworkflow ./cmd/idiom"
+    ],
+    "status": "passed_focused_and_package"
+  },
+  "privacy_note": "no raw prompts, transcripts, file bodies, secrets, or customer-identifying data stored",
+  "open_blockers": [
+    "review_blocked_repairing",
+    "profile_selector_repair_review_pending",
+    "post_effort_investigation_pending",
+    "commit_and_push_pending"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0020"
+}

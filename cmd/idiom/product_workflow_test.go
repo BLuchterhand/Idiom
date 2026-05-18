@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"idiom/internal/productworkflow"
 )
 
 func TestProductLintPassesOnCurrentDurableEffortFixture(t *testing.T) {
@@ -358,7 +360,7 @@ func TestProductLintAcceptsHistoricalTDDObligationIDs(t *testing.T) {
 	}`)
 	writeTestFile(t, dir, "implementation_ledger.jsonl", strings.Join([]string{
 		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
-		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl"}`,
+		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000"}`,
 		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z","tdd_obligations_satisfied":["TDD-HIST-001"]}`,
 		`{"record_type":"review_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`,
 		`{"record_type":"post_effort_investigation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`,
@@ -1544,7 +1546,7 @@ func TestProductLintAcceptsHistoricalLedgerSatisfiedTDDObligationsForPRD(t *test
 	}`)
 	writeTestFile(t, dir, "implementation_ledger.jsonl", strings.Join([]string{
 		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
-		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl"}`,
+		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000"}`,
 		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z","tdd_obligations_satisfied":["TDD-HIST-001"]}`,
 		`{"record_type":"review_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`,
 		`{"record_type":"post_effort_investigation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`,
@@ -1931,7 +1933,7 @@ func invalidCloseoutLedgerJSONL() string {
 func validTestImplementationLedgerJSONL() string {
 	return strings.Join([]string{
 		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
-		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl"}`,
+		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000"}`,
 		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z"}`,
 		`{"record_type":"review_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`,
 		`{"record_type":"post_effort_investigation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`,
@@ -1940,23 +1942,66 @@ func validTestImplementationLedgerJSONL() string {
 }
 
 func validTestResearchProfileJSON() string {
+	return validTestResearchProfileJSONWithPolicy("test-profile", "test-profile", "block_prd_audit")
+}
+
+func validTestResearchProfileJSONWithPolicy(name, profileID, unsupportedClaimsPolicy string) string {
 	return `{
-		"schema_version": "idiom.research_profile.v1",
-		"name": "test-profile",
-		"researchers": [
-			{
-				"id": "r1",
-				"alignment": "technical",
-				"question": "What changed?",
+			"schema_version": "idiom.research_profile.v1",
+			"name": "` + name + `",
+			"profile_id": "` + profileID + `",
+			"researchers": [
+				{
+					"id": "r1",
+					"alignment": "technical",
+					"question": "What changed?",
 				"allowed_capabilities": ["query_context"],
 				"output": "evidence_cards"
 			}
-		],
-		"merge_policy": {
-			"conflicts": "preserve_until_adr",
-			"unsupported_claims": "block_prd_audit",
-			"stale_local_context": "refresh_or_mark_gap"
-		}
+			],
+			"merge_policy": {
+				"conflicts": "preserve_until_adr",
+				"unsupported_claims": "` + unsupportedClaimsPolicy + `",
+				"stale_local_context": "refresh_or_mark_gap"
+			}
+		}`
+}
+
+func writeProductResearchProfile(t *testing.T, dir, content string) {
+	t.Helper()
+	writeProductResearchProfileFile(t, dir, "test.json", content)
+}
+
+func writeProductResearchProfileFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	profilesDir := filepath.Join(dir, ".idiom", "research", "profiles")
+	if err := os.MkdirAll(profilesDir, 0o755); err != nil {
+		t.Fatalf("mkdir research profiles: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write research profile: %v", err)
+	}
+}
+
+func validTestResearchCardsJSON(cardID, researcherID, claim string) string {
+	return `{
+		"schema_version": "idiom.research_cards.v1",
+		"researcher_id": "` + researcherID + `",
+		"alignment": "technical",
+		"cards": [
+			{
+				"card_id": "` + cardID + `",
+				"kind": "finding",
+				"source_handle": "file://README.md",
+				"claim": "` + claim + `",
+				"confidence": "high",
+				"freshness": "current",
+				"uncertainty": "",
+				"evidence_refs": ["README.md:1"],
+				"researcher_id": "` + researcherID + `",
+				"timestamp": "2026-05-18T00:00:00Z"
+			}
+		]
 	}`
 }
 
@@ -2413,13 +2458,263 @@ func TestProductResearchInvalidProfileReturnsExit1(t *testing.T) {
 	}
 }
 
+func TestProductResearchMergeEvidenceWritesMergedLedger(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "research/outputs/technical.json", validTestResearchCardsJSON("EV-002", "r1", "Merged research claim"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--merge-evidence", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "pass" {
+		t.Fatalf("expected status pass, got %v", result["status"])
+	}
+	if result["wrote_evidence_ledger"] != true {
+		t.Fatalf("expected wrote_evidence_ledger true, got %v", result["wrote_evidence_ledger"])
+	}
+	merged, err := os.ReadFile(filepath.Join(dir, "evidence", "evidence.jsonl"))
+	if err != nil {
+		t.Fatalf("read merged evidence: %v", err)
+	}
+	cards, err := productworkflow.ParseEvidenceCardsJSONL(merged)
+	if err != nil {
+		t.Fatalf("merged evidence should parse: %v\n%s", err, string(merged))
+	}
+	if len(cards) != 2 {
+		t.Fatalf("expected 2 merged cards, got %d: %#v", len(cards), cards)
+	}
+	if cards[1].CardID != "EV-002" {
+		t.Fatalf("expected EV-002 to be merged after existing card, got %#v", cards)
+	}
+}
+
+func TestProductResearchMergeEvidenceBlocksOnConflict(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "research/outputs/product.json", validTestResearchCardsJSON("EV-001", "r1", "Conflicting claim"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--merge-evidence", "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for conflict, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "blocked" {
+		t.Fatalf("expected status blocked, got %v", result["status"])
+	}
+	conflicts, ok := result["conflicts"].([]any)
+	if !ok || len(conflicts) != 1 {
+		t.Fatalf("expected one conflict, got %v", result["conflicts"])
+	}
+	if result["wrote_evidence_ledger"] != false {
+		t.Fatalf("expected no write on conflict, got %v", result["wrote_evidence_ledger"])
+	}
+}
+
+func TestProductResearchMergeEvidenceBlocksOnInvalidResearchOutput(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "research/outputs/bad.json", `{"schema_version":"idiom.research_cards.v1","researcher_id":"r1","alignment":"technical","cards":[]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--merge-evidence", "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for invalid research output, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("expected findings for invalid research output, got %v", result["findings"])
+	}
+}
+
+func TestProductResearchMergeEvidenceDefersUnsupportedClaimsToPRDAudit(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	unsupported := strings.Replace(
+		validTestResearchCardsJSON("EV-002", "r1", "Unsupported claim"),
+		`"kind": "finding"`,
+		`"kind": "unsupported_claim"`,
+		1,
+	)
+	writeTestFile(t, dir, "research/outputs/product.json", unsupported)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--merge-evidence", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0 when unsupported claims are deferred to PRD audit, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["wrote_evidence_ledger"] != true {
+		t.Fatalf("expected merge to write ledger, got %v", result["wrote_evidence_ledger"])
+	}
+	findings := result["findings"].([]any)
+	if len(findings) != 1 {
+		t.Fatalf("expected one unsupported_claim warning, got %v", findings)
+	}
+	first := findings[0].(map[string]any)
+	if first["kind"] != "unsupported_claim" || first["severity"] != "warning" {
+		t.Fatalf("expected unsupported_claim warning, got %v", first)
+	}
+}
+
+func TestProductResearchMergeEvidenceRequiresProfileWhenMultipleProfilesExist(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfileFile(t, dir, "a.json", validTestResearchProfileJSONWithPolicy("warn-profile", "warn-profile", "warn"))
+	writeProductResearchProfileFile(t, dir, "b.json", validTestResearchProfileJSONWithPolicy("block-profile", "block-profile", "block_research_merge"))
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "research/outputs/product.json", validTestResearchCardsJSON("EV-002", "r1", "Merged research claim"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--merge-evidence", "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for ambiguous research profile, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("expected findings for ambiguous research profile, got %v", result["findings"])
+	}
+	found := false
+	for _, raw := range findings {
+		finding := raw.(map[string]any)
+		if finding["kind"] == "ambiguous_research_profile" && finding["severity"] == "error" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected ambiguous_research_profile error, got %v", findings)
+	}
+	if result["wrote_evidence_ledger"] != false {
+		t.Fatalf("expected no ledger write for ambiguous profile, got %v", result["wrote_evidence_ledger"])
+	}
+}
+
+func TestProductResearchMergeEvidenceUsesSelectedProfilePolicy(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfileFile(t, dir, "a.json", validTestResearchProfileJSONWithPolicy("warn-profile", "warn-profile", "warn"))
+	writeProductResearchProfileFile(t, dir, "b.json", validTestResearchProfileJSONWithPolicy("block-profile", "block-profile", "block_research_merge"))
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	unsupported := strings.Replace(
+		validTestResearchCardsJSON("EV-002", "r1", "Unsupported claim"),
+		`"kind": "finding"`,
+		`"kind": "unsupported_claim"`,
+		1,
+	)
+	writeTestFile(t, dir, "research/outputs/product.json", unsupported)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--merge-evidence", "--profile", "block-profile", "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 from selected block-profile policy, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["profile"] != "block-profile" {
+		t.Fatalf("expected selected profile in output, got %v", result["profile"])
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("expected unsupported claim finding, got %v", result["findings"])
+	}
+	found := false
+	for _, raw := range findings {
+		finding := raw.(map[string]any)
+		if finding["kind"] == "unsupported_claim" && finding["severity"] == "error" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unsupported_claim error from selected profile, got %v", findings)
+	}
+	if result["wrote_evidence_ledger"] != false {
+		t.Fatalf("expected no ledger write for selected blocking profile, got %v", result["wrote_evidence_ledger"])
+	}
+}
+
+func TestProductResearchMergeEvidenceRejectsTraversalOutputDir(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--merge-evidence", "--research-output-dir", "../outside", "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for traversal output dir, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("expected findings for traversal output dir, got %v", result["findings"])
+	}
+	first := findings[0].(map[string]any)
+	if first["kind"] != "invalid_research_output_dir" {
+		t.Fatalf("expected invalid_research_output_dir, got %v", first)
+	}
+}
+
+func TestProductResearchMergeEvidenceRejectsSymlinkOutputDir(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	if err := os.Symlink(outside, filepath.Join(dir, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--merge-evidence", "--research-output-dir", "linked", "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for symlink output dir, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("expected findings for symlink output dir, got %v", result["findings"])
+	}
+	first := findings[0].(map[string]any)
+	if first["kind"] != "research_output_dir_outside_effort" {
+		t.Fatalf("expected research_output_dir_outside_effort, got %v", first)
+	}
+}
+
 func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir .git: %v", err)
 	}
 	ledgerWithCommit := validTestImplementationLedgerJSONL() + "\n" +
-		`{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-17T16:06:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000","changed_paths":["cmd/foo.go"]}`
+		`{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-18T00:00:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000","changed_paths":["cmd/foo.go"]}`
 	writeTestFile(t, dir, "implementation_ledger.jsonl", ledgerWithCommit)
 	result := lintEffortFolder(dir)
 	found := false
@@ -2433,11 +2728,38 @@ func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	}
 }
 
-func TestProductLintPerAtomCommitCoverageSkippedWithoutCommitHash(t *testing.T) {
-	dir := writeValidTestEffort(t)
+func TestProductLintPerAtomCommitCoverageFailsWithoutCommitHash(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", strings.Join([]string{
+		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-18T00:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
+		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-18T00:01:00Z","implementor_id":"impl"}`,
+		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-18T00:02:00Z"}`,
+		`{"record_type":"review_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-18T00:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`,
+		`{"record_type":"post_effort_investigation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-18T00:04:00Z"}`,
+		`{"record_type":"atom_closed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-18T00:05:00Z","open_blockers":[]}`,
+	}, "\n"))
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
+	writeTestFile(t, dir, "reports/test.json", "{}")
 	result := lintEffortFolder(dir)
-	if result.Status != "pass" {
-		t.Fatalf("expected pass for ledger without commit_hash, got %q with findings %v", result.Status, result.Findings)
+	if result.Status != "fail" {
+		t.Fatalf("expected fail for ledger without commit_hash, got %q", result.Status)
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "commit_hash_missing" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected commit_hash_missing finding, got %v", result.Findings)
 	}
 }
 
@@ -2481,7 +2803,7 @@ func TestProductLintPerAtomRealGitUnderReporting(t *testing.T) {
 	writeTestFile(t, effortDir, "briefs/test.md", "# Test Brief")
 	writeTestFile(t, effortDir, "reports/test.json", "{}")
 
-	ledgerEntry := `{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-17T16:06:00Z","implementor_id":"impl","commit_hash":"` + commitHash + `","changed_paths":["cmd/foo.go"]}`
+	ledgerEntry := `{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-18T00:06:00Z","implementor_id":"impl","commit_hash":"` + commitHash + `","changed_paths":["cmd/foo.go"]}`
 	writeTestFile(t, effortDir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL()+"\n"+ledgerEntry)
 
 	result := lintEffortFolder(effortDir)
@@ -2550,7 +2872,7 @@ func TestProductLintPerAtomRealGitMatchingPaths(t *testing.T) {
 	writeTestFile(t, effortDir, "briefs/test.md", "# Test Brief")
 	writeTestFile(t, effortDir, "reports/test.json", "{}")
 
-	ledgerEntry := `{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-17T16:06:00Z","implementor_id":"impl","commit_hash":"` + commitHash + `","changed_paths":["cmd/foo.go","internal/bar.go"]}`
+	ledgerEntry := `{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-18T00:06:00Z","implementor_id":"impl","commit_hash":"` + commitHash + `","changed_paths":["cmd/foo.go","internal/bar.go"]}`
 	writeTestFile(t, effortDir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL()+"\n"+ledgerEntry)
 
 	result := lintEffortFolder(effortDir)

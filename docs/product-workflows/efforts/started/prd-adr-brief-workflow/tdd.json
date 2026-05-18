@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes",
+  "task_id": "impl-0020-phase-2-research-evidence-merge-from-profile-runs",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -25,47 +25,65 @@
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0019-001",
+      "id": "TDD-IMPL-0020-001",
       "type": "contract",
-      "behavior": "ImplementationLedgerRecord gains an optional commit_hash field. ParseImplementationLedgerJSONL accepts (does not require) commit_hash on implementation_completed, fallback_completion, and partial_implementation_recorded records. The validator rejects commit_hash values that are not 40-char lowercase hex.",
+      "behavior": "Researcher output JSON documents parse into typed research card documents. Invalid or empty researcher output fails closed with a validation error instead of silently merging.",
       "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow",
+      "command": "go test ./internal/productworkflow -run TestParseResearchCards",
       "required_before": "atom_close",
       "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0019-002",
+      "id": "TDD-IMPL-0020-002",
       "type": "contract",
-      "behavior": "ValidatePerAtomCoverage takes per-atom commit hashes and changed_paths, queries git log --name-only for each commit hash, and produces a ledger_under_reports_path finding for any git path not in that atom's changed_paths. This prevents piggybacking: atom B cannot rely on atom A's changed_paths to cover a shared file.",
-      "owner": "internal/productworkflow/scope_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Research evidence merge deterministically deduplicates exact duplicate cards, preserves provenance fields, and emits stable merged card IDs for the same inputs.",
+      "owner": "internal/productworkflow/research_evidence_merge_test.go",
+      "command": "go test ./internal/productworkflow -run TestMergeResearchEvidenceDeterministicOrderingAndDedup",
       "required_before": "atom_close",
       "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0019-003",
+      "id": "TDD-IMPL-0020-003",
       "type": "fmea_negative",
-      "behavior": "ValidatePerAtomCoverage returns findings for atoms with commit_hash set but no git output (missing/invalid commit), atoms with empty changed_paths despite having a valid commit, and atoms whose changed_paths omits a path present in their commit diff. It does not flag atoms without commit_hash (backward compatible).",
-      "owner": "internal/productworkflow/scope_test.go",
-      "command": "go test ./internal/productworkflow",
+      "behavior": "Conflicting researcher findings are retained and surfaced as typed conflicts rather than collapsed or auto-resolved during merge.",
+      "owner": "internal/productworkflow/research_evidence_merge_test.go",
+      "command": "go test ./internal/productworkflow -run TestMergeResearchEvidencePreservesDuplicateCardConflicts",
       "required_before": "atom_close",
       "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0019-004",
+      "id": "TDD-IMPL-0020-004",
       "type": "acceptance",
-      "behavior": "product lint --effort-root calls ValidatePerAtomCoverage for atoms with commit_hash set, in addition to the existing ValidateLedgerCoverage union check. Lint fails if any atom's commit changed paths that its ledger changed_paths does not record. Lint continues to pass for atoms without commit_hash (backward compatible).",
+      "behavior": "idiom product research --merge-evidence exposes a JSON merge surface, writes the merged evidence ledger on clean merges, and returns a blocker with typed conflicts or findings when merge is unsafe.",
       "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom",
+      "command": "go test ./cmd/idiom -run TestProductResearchMergeEvidence",
       "required_before": "atom_close",
       "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0019-005",
-      "type": "source_sanity",
-      "behavior": "The atom does not add git, os, exec, or flag imports to scope.go. Pure validation logic stays in scope.go; git command execution stays in cmd/idiom/product_workflow.go.",
-      "owner": "internal/productworkflow/scope_test.go",
-      "command": "go test ./internal/productworkflow -run TestScopeGateSourceSanityPurity",
+      "id": "TDD-IMPL-0020-005",
+      "type": "audit",
+      "behavior": "The merge surface records only evidence cards, counts, IDs, conflicts, paths, and typed findings; durable reports and state do not store raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-review.json",
+      "command": "privacy secret-pattern scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0020-006",
+      "type": "fmea_negative",
+      "behavior": "research-output-dir remains effort-relative after path cleaning and symlink resolution. Literal traversal, absolute paths, symlinked output directories outside the effort, and symlinked output files are blocked with typed findings before reading researcher output.",
+      "owner": "internal/productworkflow/research_evidence_merge_test.go",
+      "command": "go test ./internal/productworkflow -run TestDiscoverResearchCardDocumentsRejects",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0020-007",
+      "type": "fmea_negative",
+      "behavior": "When multiple research profiles exist, product research --merge-evidence must require an explicit --profile selector and must use the selected profile's merge policy rather than filename order.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run 'TestProductResearchMergeEvidenceRequiresProfileWhenMultipleProfilesExist|TestProductResearchMergeEvidenceUsesSelectedProfilePolicy'",
       "required_before": "atom_close",
       "status": "pending"
     }

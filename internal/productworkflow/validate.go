@@ -59,6 +59,17 @@ func ParseEvidenceCardsJSONL(data []byte) ([]EvidenceCard, error) {
 	return cards, nil
 }
 
+func ParseResearchCardsJSON(data []byte) (ResearchCardsDocument, error) {
+	var doc ResearchCardsDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return ResearchCardsDocument{}, fmt.Errorf("parse research cards: %w", err)
+	}
+	if err := validateResearchCardsDocument(doc); err != nil {
+		return ResearchCardsDocument{}, err
+	}
+	return doc, nil
+}
+
 func ParseTraceabilityMatrixJSON(data []byte) (TraceabilityMatrix, error) {
 	var matrix TraceabilityMatrix
 	if err := json.Unmarshal(data, &matrix); err != nil {
@@ -292,6 +303,36 @@ func validateEvidenceCard(card EvidenceCard, line int) error {
 	require(&errs, card.Timestamp, prefix+" missing timestamp")
 	if len(card.EvidenceRefs) == 0 {
 		errs = append(errs, fmt.Errorf("%s missing evidence_refs", prefix))
+	}
+	return errors.Join(errs...)
+}
+
+func validateResearchCardsDocument(doc ResearchCardsDocument) error {
+	var errs []error
+	require(&errs, doc.SchemaVersion, "research cards missing schema_version")
+	require(&errs, doc.ResearcherID, "research cards missing researcher_id")
+	require(&errs, doc.Alignment, "research cards missing alignment")
+	if len(doc.Cards) == 0 {
+		errs = append(errs, errors.New("research cards missing cards"))
+	}
+	for i, card := range doc.Cards {
+		if err := validateEvidenceCard(card, i+1); err != nil {
+			errs = append(errs, err)
+		}
+		if strings.TrimSpace(doc.ResearcherID) != "" &&
+			strings.TrimSpace(card.ResearcherID) != "" &&
+			card.ResearcherID != doc.ResearcherID {
+			errs = append(errs, fmt.Errorf("research card %s researcher_id %q does not match document researcher_id %q", card.CardID, card.ResearcherID, doc.ResearcherID))
+		}
+	}
+	for i, conflict := range doc.Conflicts {
+		prefix := fmt.Sprintf("research conflict %d", i)
+		require(&errs, conflict.Kind, prefix+" missing kind")
+		require(&errs, conflict.ClaimKey, prefix+" missing claim_key")
+		require(&errs, conflict.Message, prefix+" missing message")
+		if len(conflict.CardIDs) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing card_ids", prefix))
+		}
 	}
 	return errors.Join(errs...)
 }

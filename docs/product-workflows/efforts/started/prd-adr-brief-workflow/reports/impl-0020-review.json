@@ -1,0 +1,54 @@
+{
+  "schema_version": "idiom.review_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0020-phase-2-research-evidence-merge-from-profile-runs",
+  "reviewer": {
+    "agent_id": "codex-gpt-review-impl-0020",
+    "model": "GPT-5.4",
+    "reasoning_effort": "high",
+    "independent_from_implementor": true
+  },
+  "status": "fail",
+  "findings": [
+    {
+      "priority": "P1",
+      "summary": "Merge path ignored merge_policy.unsupported_claims and hard-blocked unsupported claims during merge instead of preserving them for PRD audit."
+    },
+    {
+      "priority": "P2",
+      "summary": "research-output-dir was documented as effort-relative but accepted traversal or absolute paths."
+    },
+    {
+      "priority": "P2",
+      "summary": "Durable state still showed impl-0020 planned while implementation report claimed completed work."
+    },
+    {
+      "priority": "P1",
+      "summary": "Re-review found research-output-dir still allowed symlinked directories to resolve outside the effort root."
+    },
+    {
+      "priority": "P2",
+      "summary": "Re-review found repair bookkeeping still had stale next actions and timestamps after the failed first review."
+    },
+    {
+      "priority": "P1",
+      "summary": "Final re-review found --merge-evidence selected merge_policy from the first sorted profile when multiple valid profiles existed instead of requiring or honoring an explicit profile."
+    }
+  ],
+  "checks": {
+    "discovery_first_review": "Reviewer used idiom context_pack/context_query before raw diff reads.",
+    "verdict": "fail_before_repair"
+  },
+  "reviewed_at": "2026-05-18T10:34:00Z",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"review impl 0020 research evidence merge from profile runs\",\"mode\":\"plan\",\"limit\":8}'",
+    "idiom tool context_pack --input '{\"task\":\"final re-review impl 0020 research evidence merge symlink boundary durable closeout\",\"mode\":\"plan\",\"limit\":8}'",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "git diff --check",
+    "go test ./...",
+    "manual multi-profile merge-policy repro"
+  ],
+  "created_at": "2026-05-18T09:55:00Z"
+}

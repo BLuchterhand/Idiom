@@ -1,16 +1,16 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes",
+  "task_id": "impl-0020-phase-2-research-evidence-merge-from-profile-runs",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-17T23:30:00Z",
-  "state_revision": 60,
-  "last_event_id": "evt-0161",
+  "updated_at": "2026-05-18T10:34:00Z",
+  "state_revision": 64,
+  "last_event_id": "evt-0174",
   "workspace_fingerprint": "idiom@6ffa133",
   "status_bucket": "started",
   "current_phase": "phase-2-research-profiles",
-  "current_state": "planned",
+  "current_state": "implementing",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -24,10 +24,11 @@
     "events": "events.jsonl",
     "source_design_ref": "source_design_ref.json",
     "readme": "README.md",
-    "research_profiles": ".idiom/research/profiles/"
+    "research_profiles": ".idiom/research/profiles/",
+    "research_outputs": "research/outputs/"
   },
   "context": {
-    "context_pack_id": "1997ef6140265b3d",
+    "context_pack_id": "b7898e573674e014",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -35,6 +36,8 @@
       "docs/obsidian/22 - Product Workflow ROADMAP.md",
       "cmd/idiom/product_workflow.go",
       "cmd/idiom/product_workflow_test.go",
+      "internal/productworkflow/research_evidence_merge.go",
+      "internal/productworkflow/research_evidence_merge_test.go",
       "internal/productworkflow/research_profile_store.go",
       "internal/productworkflow/research_profile_store_test.go",
       "internal/productworkflow/types.go",
@@ -43,7 +46,7 @@
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 1997ef6140265b3d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow research profile storage."
+        "description": "Context pack b7898e573674e014 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow research evidence merge."
       }
     ],
     "refresh_policy": "on_demand"
@@ -52,27 +55,32 @@
     "coverage_tier": "unit",
     "gate_results": [
       {
-        "gate": "profile_store_discovers_sorted_valid_profiles",
+        "gate": "research_cards_parse_and_validate",
         "status": "pending",
         "checked_at": ""
       },
       {
-        "gate": "profile_store_rejects_invalid_profiles",
+        "gate": "research_evidence_merge_deduplicates_deterministically",
         "status": "pending",
         "checked_at": ""
       },
       {
-        "gate": "profile_store_rejects_path_traversal",
+        "gate": "research_evidence_merge_preserves_conflicts",
         "status": "pending",
         "checked_at": ""
       },
       {
-        "gate": "product_research_json_surface",
+        "gate": "product_research_merge_json_surface",
         "status": "pending",
         "checked_at": ""
       },
       {
-        "gate": "no_committed_idiom_research_state",
+        "gate": "invalid_research_output_blocks_merge",
+        "status": "pending",
+        "checked_at": ""
+      },
+      {
+        "gate": "multi_profile_merge_requires_explicit_profile",
         "status": "pending",
         "checked_at": ""
       },
@@ -105,8 +113,8 @@
     "blocking_criteria": [],
     "advisory_criteria": [
       "Next do-now atom after impl-0014 should be impl-0015 workflow hardening: make workflow-level audit/status failures visible, and add an automated changed-path/scope closeout gate comparing actual changed paths with expected and forbidden atom scope.",
-      "Helper-injected token-saving policy: use GLM for bounded code drafting when it conserves Codex tokens after expected cleanup/review cost; keep Codex focused on orchestration, review, verification, reconciliation, and small surgical fixes.",
-      "Helper-injected brief-shaping rule: GLM briefs should be concise and patch-shaped, using context_pack and durable docs by reference instead of pasted broad context unless specific ambiguity requires it.",
+      "Current implementor policy: use GPT Codex workers selected by complexity tier; do not start new GLM/OpenCode implementors for this effort.",
+      "Current discovery policy: the orchestrator and all subagents must start from Idiom discovery tools where they apply, beginning with context_pack.",
       "Coverage quality policy: parser/audit/status/brief/closeout atoms require focused contract tests, one realistic human-authored fixture variant for artifact parsing, a negative fixture-level CLI test with typed finding or blocker assertions, durable fixture pass coverage, and privacy/audit assertions where outputs include reports/status/telemetry/evidence/history.",
       "Deferred follow-up: harden PRD/ADR parsing before broader user-authored artifacts are accepted; current parsers are fixture-oriented and string-shaped.",
       "Deferred follow-up: decide and encode TDD reference authority policy, current tdd.json only versus workflow-known historical implementation-ledger IDs.",
@@ -141,10 +149,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-17T22:12:00Z",
+  "last_reconciliation_at": "2026-05-18T09:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "execute_impl_0019",
+    "repair_impl_0020_review_findings",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],

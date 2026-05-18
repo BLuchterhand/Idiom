@@ -6,8 +6,8 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0018-phase-2-research-profile-storage`
-- Active atom: `impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes`
+- Last completed atom: `impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes`
+- Active atom: `impl-0020-phase-2-research-evidence-merge-from-profile-runs`
 - Status bucket: `started`
 - Current phase: `phase-2-research-profiles`
 - Context pack: `1997ef6140265b3d`
@@ -45,9 +45,16 @@ This effort is the durable implementation state for delivering
   for invalid/traversal/non-JSON entries, and a read-only `idiom product research`
   JSON surface. No committed .idiom state, no model execution, no merge/evidence
   surface changes. Codex review/verification passed.
-- Atom 19 (planned): add commit_hash to implementation ledger records and per-atom
-  coverage validation to prevent piggybacking. Each atom's changed_paths will be
-  validated against its specific commit diff when commit_hash is present.
+- Atom 19: all TDD obligations satisfied. GLM implemented commit_hash ledger
+  records and per-atom coverage validation; Codex review/verification passed.
+  Each atom's changed_paths can now be validated against its specific commit diff
+  when commit_hash is present, preventing piggybacking across atoms.
+- Atom 20 (active): add the deterministic research evidence merge surface. This
+  consumes typed researcher output cards, preserves conflicts, and exposes a
+  `product research --merge-evidence --profile <profile-id-or-name>` CLI path
+  without running models or committing `.idiom` runtime state. Single-profile
+  efforts can omit `--profile`; multi-profile efforts must pass it so merge
+  policy selection is explicit.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -64,17 +71,25 @@ atoms close.
 - Goal: deliver the full `docs/design-prd-adr-brief-research-workflow.md`
   design through durable atoms until the effort can be closed as complete.
 - Codex orchestrates, verifies, reviews, investigates, records durable state, and
-  commits. Dedicated implementor lanes make code changes by default; current
-  eligible lanes are GLM through OpenCode and bounded DS4 trials through Codex
-  CLI.
-- Use OpenCode attached-server runs for implementor attempts, with a 15 minute
-  cap before declaring timeout evidence:
-  `OPENCODE_SERVER_URL=http://127.0.0.1:<port> ./scripts/run-opencode-glm.sh run --format default "<brief>"`.
-- Select the implementor model from observed stability, not preference. As of
-  `impl-0004`, GLM (`zai-coding-plan/glm-5.1`) is the most stable recorded
-  choice because it produced partial patches on prior atoms; MiniMax 2.7
-  highspeed (`minimax-coding-plan/MiniMax-M2.7-highspeed`) timed out after
-  240 seconds with no output or code edits.
+  commits. Use GPT Codex subagents for future implementation and investigation
+  work; do not start new GLM/OpenCode implementors for this effort.
+- Before implementation, the orchestrator and any subagent must use Idiom's
+  discovery surface where it applies. Start with `idiom tool context_pack` for
+  localization, then prefer `context_query`, `context_zoom`,
+  `discovery_query`, `structural_search`, `dependency_graph`, or other
+  Idiom tools before falling back to raw `rg`/file reads for literal or
+  already-localized questions.
+- Select the GPT Codex worker by atom complexity and record that choice in the
+  ledger:
+  - `C1`: `codex-gpt-worker-impl-XXXX`, model `gpt-5.3-codex-spark`,
+    reasoning `high`, for small bounded edits.
+  - `C2`: `codex-gpt-worker-impl-XXXX`, model `gpt-5.3-codex`, reasoning
+    `medium` or `high`, for normal product-workflow code and fixture atoms.
+  - `C3+`: `codex-gpt-worker-impl-XXXX`, model `gpt-5.4` or stronger,
+    reasoning `high`, for cross-boundary harness, state-machine, audit, or
+    multi-package changes.
+- Reviewers remain `codex-gpt-review-impl-XXXX`, normally GPT-5.4 with medium
+  reasoning unless the atom has `contract_high` blast radius.
 - `impl-0008` is a controlled DS4 trial using `ds4/deepseek-v4-flash` through
   OpenCode attached-server execution. Record whether it is actually local if the
   run surfaces process/locality evidence; otherwise treat locality as unverified.
@@ -82,31 +97,21 @@ atoms close.
   `Tool call not allowed while generating summary: read`; the default-output
   retry hit the 10 minute cap with no persisted code changes. DS4 did surface a
   real status-schema conflict in reasoning, but it did not produce a patch.
-- DS4 through Codex CLI is now available for bounded implementor trials:
-  `codex exec -p ds4 --cd /Users/ben/Documents/GitHub/idiom --sandbox danger-full-access -c approval_policy="never" --json "<brief>"`.
-  A smoke test on 2026-05-17 returned `DS4_CODEX_READY` via JSONL in about 98
-  seconds. Use it for the next bounded atom when the write set is clear, with a
-  30 minute timeout. Prefer DS4 unless review finds serious quality issues,
-  DS4 times out without a usable patch, or DS4 cannot run; GLM remains fallback.
+- DS4 through Codex CLI remains historical evidence only for this effort unless
+  explicitly re-authorized. Future planning should use GPT Codex workers instead
+  of DS4 or GLM implementor lanes.
 - DS4 Atom 11 result: direct Codex CLI passes produced partial patches, then the
   second pass introduced malformed Go, used `git checkout --`, and used ad hoc
   Python rewriting. This met the fallback threshold for serious quality issues;
-  GLM repaired/finished the atom. For the next atom, use the most stable lane for
-  the write scope: DS4 may be retried on a small bounded atom only with a
-  patch-shaped brief and 30 minute cap, while GLM should remain the fallback for
-  shared parser/CLI code or any repeated DS4 edit-quality failure.
+  GLM repaired/finished the atom. This remains historical evidence only; do not
+  use DS4 or GLM as future implementor lanes unless a later human instruction
+  explicitly reopens that policy.
 - Re-evaluate model stability after each atom and record the model, elapsed time,
   timeout status, and patch completeness in the implementation report.
-- Codex-token conservation policy: preserve Codex for orchestration, review,
-  verification, reconciliation, and small surgical fixes. Use GLM for code
-  drafting on bounded atoms when its expected cleanup cost is lower than direct
-  Codex implementation. If an atom is tiny, highly coupled to durable state, or
-  GLM would require a long exploratory brief, Codex may implement directly only
-  after recording the fallback/exception reason.
-- Keep GLM briefs concise and patch-shaped to save Codex tokens: provide exact
-  files, contract, negative cases, forbidden edits, and stop condition; do not
-  paste broad repo context already available through context_pack or durable
-  docs unless it resolves a specific ambiguity.
+- Keep GPT Codex worker briefs concise and patch-shaped: provide exact files,
+  contract, negative cases, forbidden edits, tests, stop condition, and the
+  context_pack id. Do not paste broad repo context already available through
+  context_pack or durable docs unless it resolves a specific ambiguity.
 - Parallelization policy: run read-only investigation, context gathering, and
   verification in parallel where possible. Run multiple implementors in parallel
   only when their write sets are disjoint; shared parser, validator, CLI,
@@ -117,22 +122,22 @@ atoms close.
   of asking the implementor to discover and decide them while coding.
 - Prefer tiny implementation slices when a broader atom has coupled decisions.
   For example, migrate fixture data first, then add enum validation, then wire
-  CLI failure behavior. Parallelize GLM implementors only when their write sets
+  CLI failure behavior. Parallelize GPT Codex workers only when their write sets
   are disjoint; otherwise run sequential patch-shaped briefs and parallelize
   Codex-side context preparation, review, and verification.
-- Prefer observable OpenCode runs for future implementor attempts:
-  `--format json --print-logs --log-level INFO` for raw event/log streaming, and
-  `--thinking` only when the provider supports it and the output remains safe to
-  exclude from durable reports.
+- Prefer observable GPT Codex worker runs for future implementor attempts:
+  record the worker id, model, reasoning effort, discovery tool evidence,
+  changed paths, elapsed time, timeout status, and patch completeness in the
+  implementation report.
 - Parallelize independent Codex-side reads, reviews, context preparation, and
   verification where this does not duplicate or conflict with a running
   implementor. Preserve sequential atom closeout: each atom still requires its
   own verification, review, investigation, commit, and push before the next atom
   is treated as complete.
 - Commit and push after every atom completes.
-- If an implementor times out or produces no usable closeout, record a
-  `fallback_exception` before any Codex code edits. Keep fallback edits inside
-  the planned atom scope and add compensating verification.
+- If a GPT Codex worker times out or produces no usable closeout, record a
+  `fallback_exception` before orchestration-side code edits. Keep fallback edits
+  inside the planned atom scope and add compensating verification.
 - Do-now follow-up after Atom 14: plan Atom 15 as workflow hardening. It should
   make workflow-level audit/status failures visible so top-level failures cannot
   be hidden behind all-pass artifact sections, and it should add an automated

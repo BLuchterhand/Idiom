@@ -723,7 +723,7 @@ func TestValidatePerAtomCoverageMissingCommitHash(t *testing.T) {
 	}
 }
 
-func TestValidatePerAtomCoverageEmptyCommitHashSkipped(t *testing.T) {
+func TestValidatePerAtomCoverageEmptyCommitHashRequired(t *testing.T) {
 	atoms := []AtomCommitCoverage{
 		{
 			TaskID:       "impl-001",
@@ -733,8 +733,11 @@ func TestValidatePerAtomCoverageEmptyCommitHashSkipped(t *testing.T) {
 	}
 	commitPaths := map[string][]string{}
 	findings := ValidatePerAtomCoverage(atoms, commitPaths)
-	if len(findings) != 0 {
-		t.Fatalf("expected 0 findings for empty commit hash, got %d: %#v", len(findings), findings)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for empty commit hash, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "commit_hash_missing" {
+		t.Fatalf("expected commit_hash_missing, got %q", findings[0].Code)
 	}
 }
 
@@ -755,7 +758,13 @@ func TestValidatePerAtomCoverageMixedAtoms(t *testing.T) {
 		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2": {"cmd/foo.go"},
 	}
 	findings := ValidatePerAtomCoverage(atoms, commitPaths)
-	if len(findings) != 0 {
-		t.Fatalf("expected 0 findings with mixed atoms (one without hash), got %d: %#v", len(findings), findings)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding (commit_hash_missing for impl-002), got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "commit_hash_missing" {
+		t.Fatalf("expected commit_hash_missing, got %q", findings[0].Code)
+	}
+	if findings[0].Message != "atom impl-002 has no commit_hash; commit_hash is required for implementation_completed, fallback_completion, and partial_implementation_recorded records" {
+		t.Fatalf("unexpected message: %q", findings[0].Message)
 	}
 }

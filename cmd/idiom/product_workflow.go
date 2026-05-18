@@ -58,6 +58,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> [--json]")
+	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --merge-evidence [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -453,20 +454,26 @@ func lintEffortFolder(root string) productLintResult {
 	}
 
 	{
+		commitHashRequiredAfter := "2026-05-17T23:00:00Z"
 		var commitAtoms []productworkflow.AtomCommitCoverage
 		commitHashSet := map[string]bool{}
 		for _, rec := range parsedLedger {
-			if rec.CommitHash != "" && (rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded") {
-				commitAtoms = append(commitAtoms, productworkflow.AtomCommitCoverage{
-					TaskID:       rec.TaskID,
-					CommitHash:   rec.CommitHash,
-					ChangedPaths: rec.ChangedPaths,
-				})
-				commitHashSet[rec.CommitHash] = true
+			if rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded" {
+				if rec.Timestamp >= commitHashRequiredAfter {
+					commitAtoms = append(commitAtoms, productworkflow.AtomCommitCoverage{
+						TaskID:       rec.TaskID,
+						CommitHash:   rec.CommitHash,
+						ChangedPaths: rec.ChangedPaths,
+					})
+				}
+				if rec.CommitHash != "" {
+					commitHashSet[rec.CommitHash] = true
+				}
 			}
 		}
 		if len(commitAtoms) > 0 {
 			repoRoot := findGitRepoRoot(root)
+			commitPaths := map[string][]string{}
 			if repoRoot != "" {
 				effortRel, _ := filepath.Rel(repoRoot, root)
 				hashes := make([]string, 0, len(commitHashSet))
@@ -475,7 +482,6 @@ func lintEffortFolder(root string) productLintResult {
 				}
 				sort.Strings(hashes)
 				rawCommitPaths := gitCommitPaths(repoRoot, hashes)
-				commitPaths := make(map[string][]string, len(rawCommitPaths))
 				prefix := effortRel + "/"
 				for hash, paths := range rawCommitPaths {
 					var stripped []string
@@ -501,10 +507,10 @@ func lintEffortFolder(root string) productLintResult {
 					}
 					commitAtoms[i].ChangedPaths = norm
 				}
-				perAtomFindings := productworkflow.ValidatePerAtomCoverage(commitAtoms, commitPaths)
-				for _, f := range perAtomFindings {
-					addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
-				}
+			}
+			perAtomFindings := productworkflow.ValidatePerAtomCoverage(commitAtoms, commitPaths)
+			for _, f := range perAtomFindings {
+				addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
 			}
 		}
 	}
@@ -760,8 +766,16 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 	fs := flag.NewFlagSet("idiom product research", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var projectRoot string
+	var effortRoot string
+	var researchOutputDir string
+	var researchProfile string
+	var mergeEvidence bool
 	var jsonOutput bool
 	fs.StringVar(&projectRoot, "project-root", ".", "path to the project root")
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root for evidence merge")
+	fs.StringVar(&researchOutputDir, "research-output-dir", "research/outputs", "effort-relative directory containing researcher output JSON files")
+	fs.StringVar(&researchProfile, "profile", "", "research profile_id or name to use for merge policy")
+	fs.BoolVar(&mergeEvidence, "merge-evidence", false, "merge researcher output cards into the effort evidence ledger")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -773,6 +787,9 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 	if err != nil {
 		fmt.Fprintf(stderr, "product research: %v\n", err)
 		return 2
+	}
+	if mergeEvidence {
+		return runProductResearchMergeEvidence(result, effortRoot, researchOutputDir, researchProfile, jsonOutput, stdout, stderr, rec)
 	}
 	if jsonOutput {
 		type jsonOutput struct {
@@ -817,6 +834,217 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 		}
 	}
 	return 0
+}
+
+func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResult, effortRoot, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product research: --effort-root is required with --merge-evidence")
+		return 2
+	}
+	absRoot, err := filepath.Abs(effortRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product research: resolve effort root: %v\n", err)
+		return 2
+	}
+	findings := append([]productworkflow.ProfileFinding{}, profiles.Findings...)
+	if len(profiles.Profiles) == 0 {
+		findings = append(findings, productworkflow.ProfileFinding{
+			Kind:     "missing_research_profile",
+			Message:  "no valid research profile is available for evidence merge",
+			File:     ".idiom/research/profiles",
+			Severity: "error",
+		})
+	}
+	selectedProfile, profileFindings := selectResearchMergeProfile(profiles.Profiles, researchProfile)
+	findings = append(findings, profileFindings...)
+	var existing []productworkflow.EvidenceCard
+	evidencePath := filepath.Join(absRoot, "evidence", "evidence.jsonl")
+	if data, readErr := os.ReadFile(evidencePath); readErr == nil {
+		parsed, parseErr := productworkflow.ParseEvidenceCardsJSONL(data)
+		if parseErr != nil {
+			findings = append(findings, productworkflow.ProfileFinding{
+				Kind:     "validation_error",
+				Message:  fmt.Sprintf("existing evidence ledger failed validation: %v", parseErr),
+				File:     "evidence/evidence.jsonl",
+				Severity: "error",
+			})
+		} else {
+			existing = parsed
+		}
+	} else if os.IsNotExist(readErr) {
+		findings = append(findings, productworkflow.ProfileFinding{
+			Kind:     "missing_evidence_ledger",
+			Message:  "required evidence/evidence.jsonl not found",
+			File:     "evidence/evidence.jsonl",
+			Severity: "error",
+		})
+	} else {
+		findings = append(findings, productworkflow.ProfileFinding{
+			Kind:     "read_error",
+			Message:  fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", readErr),
+			File:     "evidence/evidence.jsonl",
+			Severity: "error",
+		})
+	}
+	docs, docFindings, discoverErr := productworkflow.DiscoverResearchCardDocuments(absRoot, researchOutputDir)
+	if discoverErr != nil {
+		fmt.Fprintf(stderr, "product research: %v\n", discoverErr)
+		return 2
+	}
+	findings = append(findings, docFindings...)
+	var policy productworkflow.MergePolicy
+	if selectedProfile != nil {
+		policy = selectedProfile.MergePolicy
+	}
+	merge := productworkflow.MergeResearchCardDocuments(existing, docs, policy)
+	merge.Findings = append(findings, merge.Findings...)
+	writeBlocked := hasResearchErrorFinding(merge.Findings) || len(merge.Conflicts) > 0
+	wrote := false
+	if !writeBlocked {
+		if err := writeEvidenceCardsJSONL(evidencePath, merge.Cards); err != nil {
+			fmt.Fprintf(stderr, "product research: write evidence ledger: %v\n", err)
+			return 2
+		}
+		wrote = true
+	}
+	logCLIPhase(rec, "product_research_merge", map[string]any{
+		"profile_count":      len(profiles.Profiles),
+		"research_run_count": len(docs),
+		"merged_card_count":  len(merge.Cards),
+		"conflict_count":     len(merge.Conflicts),
+		"finding_count":      len(merge.Findings),
+		"wrote_ledger":       wrote,
+	})
+	type mergeOutput struct {
+		Status              string                                     `json:"status"`
+		EffortRoot          string                                     `json:"effort_root"`
+		ResearchOutputDir   string                                     `json:"research_output_dir"`
+		Profile             string                                     `json:"profile"`
+		ProfileCount        int                                        `json:"profile_count"`
+		ResearchRunCount    int                                        `json:"research_run_count"`
+		MergedCardCount     int                                        `json:"merged_card_count"`
+		MergedCardIDs       []string                                   `json:"merged_card_ids"`
+		Conflicts           []productworkflow.ResearchEvidenceConflict `json:"conflicts"`
+		Findings            []productworkflow.ProfileFinding           `json:"findings"`
+		WroteEvidenceLedger bool                                       `json:"wrote_evidence_ledger"`
+	}
+	status := "pass"
+	if writeBlocked {
+		status = "blocked"
+	}
+	out := mergeOutput{
+		Status:              status,
+		EffortRoot:          absRoot,
+		ResearchOutputDir:   researchOutputDir,
+		Profile:             researchProfileOutput(selectedProfile),
+		ProfileCount:        len(profiles.Profiles),
+		ResearchRunCount:    len(docs),
+		MergedCardCount:     len(merge.Cards),
+		MergedCardIDs:       merge.MergedCardIDs,
+		Conflicts:           merge.Conflicts,
+		Findings:            merge.Findings,
+		WroteEvidenceLedger: wrote,
+	}
+	if out.Conflicts == nil {
+		out.Conflicts = []productworkflow.ResearchEvidenceConflict{}
+	}
+	if out.Findings == nil {
+		out.Findings = []productworkflow.ProfileFinding{}
+	}
+	if out.MergedCardIDs == nil {
+		out.MergedCardIDs = []string{}
+	}
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			fmt.Fprintf(stderr, "product research: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintf(stdout, "product research merge: %s (%d cards, %d conflicts, %d findings)\n", status, out.MergedCardCount, len(out.Conflicts), len(out.Findings))
+	}
+	if writeBlocked {
+		return 1
+	}
+	return 0
+}
+
+func selectResearchMergeProfile(profiles []productworkflow.ResearchProfile, selector string) (*productworkflow.ResearchProfile, []productworkflow.ProfileFinding) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		if len(profiles) == 1 {
+			return &profiles[0], nil
+		}
+		if len(profiles) > 1 {
+			return nil, []productworkflow.ProfileFinding{{
+				Kind:     "ambiguous_research_profile",
+				Message:  "multiple research profiles are available; pass --profile with a profile_id or name for deterministic merge policy selection",
+				File:     ".idiom/research/profiles",
+				Severity: "error",
+			}}
+		}
+		return nil, nil
+	}
+	matches := make([]int, 0, 1)
+	for i, profile := range profiles {
+		if strings.TrimSpace(profile.ProfileID) == selector || strings.TrimSpace(profile.Name) == selector {
+			matches = append(matches, i)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, []productworkflow.ProfileFinding{{
+			Kind:     "unknown_research_profile",
+			Message:  fmt.Sprintf("research profile %q was not found by profile_id or name", selector),
+			File:     ".idiom/research/profiles",
+			Severity: "error",
+		}}
+	case 1:
+		return &profiles[matches[0]], nil
+	default:
+		return nil, []productworkflow.ProfileFinding{{
+			Kind:     "ambiguous_research_profile",
+			Message:  fmt.Sprintf("research profile selector %q matched multiple profiles", selector),
+			File:     ".idiom/research/profiles",
+			Severity: "error",
+		}}
+	}
+}
+
+func researchProfileOutput(profile *productworkflow.ResearchProfile) string {
+	if profile == nil {
+		return ""
+	}
+	if strings.TrimSpace(profile.ProfileID) != "" {
+		return profile.ProfileID
+	}
+	return profile.Name
+}
+
+func hasResearchErrorFinding(findings []productworkflow.ProfileFinding) bool {
+	for _, finding := range findings {
+		if finding.Severity == "error" {
+			return true
+		}
+	}
+	return false
+}
+
+func writeEvidenceCardsJSONL(path string, cards []productworkflow.EvidenceCard) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, card := range cards {
+		data, err := json.Marshal(card)
+		if err != nil {
+			return err
+		}
+		b.Write(data)
+		b.WriteByte('\n')
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
 func gitChangedPaths(effortRoot string) []string {
