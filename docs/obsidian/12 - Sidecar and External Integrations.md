@@ -72,6 +72,12 @@ The result envelope contains the tool name, summary, output, and error fields.
 Exit code is 0 when the tool itself succeeds and 1 when the tool reports an
 error.
 
+Recovery inspection is part of the read-only sidecar surface. Use
+`recovery_inspect` and `recovery_status` in the `discovery` profile to inspect
+failure records and decomposition packets without dispatching or promoting
+follow-up work. `recovery_decompose` writes `.idiom/recovery` artifacts and
+therefore requires the default profile.
+
 ## MCP Surfaces
 
 There are two MCP-related boundaries:
@@ -109,8 +115,8 @@ Current limitations include:
 - Resource file bodies are not returned yet.
 - Resource paths are root-clamped and protected locations are denied.
 - Full resource/freshness parity remains later work.
-- Tool exposure is filtered by profile, with discovery/context surfaces favored
-  for MCP.
+- Tool exposure is filtered by profile, with discovery/context and read-only
+  recovery status surfaces favored for MCP.
 - Telemetry and permission behavior should be checked against the CLI sidecar
   path when changing MCP behavior.
 

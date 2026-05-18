@@ -14,8 +14,10 @@ tags:
 > atomization/refine behavior, one planner-blocked retry-or-surface path, and
 > automatic failed `plan-execute` recovery records plus decomposition packets.
 > `idiom recover inspect`, `status`, `decompose`, and `promote` provide the
-> operator-facing loop. Promotion writes a normal gated brief; it does not
-> dispatch or reconcile the original failure automatically yet.
+> operator-facing loop. Read-only `recovery_inspect` and `recovery_status` are
+> also exposed through `idiom tool`/MCP with the normal sidecar envelope.
+> Promotion writes a normal gated brief; it does not dispatch or reconcile the
+> original failure automatically yet.
 >
 > Source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
@@ -48,9 +50,12 @@ failed run -> failure record -> failure class -> decomposition packet
   changed path evidence.
 - [x] `idiom recover promote` writes a candidate atom brief only after brief
   lint, atom intake, and scope gates pass.
+- [x] `idiom tool --profile discovery recovery_inspect` and `recovery_status`
+  expose the read-only recovery state; `recovery_decompose` stays out of the
+  discovery profile because it writes artifacts.
 - [ ] Recovery success is not yet reconciled back to the original failure.
-- [ ] TUI, `idiom tool`/MCP, audit-watch, and non-plan-execute adapters are
-  not yet complete.
+- [ ] TUI/product projections, audit-watch summaries, deeper residual-work
+  evidence, and non-plan-execute adapters are not yet complete.
 
 ## Target Lifecycle
 

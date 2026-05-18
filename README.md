@@ -172,6 +172,10 @@ Other useful subcommands:
   profile, allowlisted short opaque caller metadata, contract metadata,
   freshness, warnings, audit IDs, structured output, and typed errors for
   integrations.
+  Recovery state is available through `recovery_inspect` and `recovery_status`
+  in the discovery profile; `recovery_decompose` writes local recovery artifacts
+  and therefore requires the default profile. `recovery_promote` remains a
+  first-party `idiom recover` command.
   See [docs/sidecar-recipes.md](docs/sidecar-recipes.md) for external caller
   recipes covering shell/CI scripts, coding-agent harnesses, local/private-code
   users, and the replayed discovery-profile smoke transcript.

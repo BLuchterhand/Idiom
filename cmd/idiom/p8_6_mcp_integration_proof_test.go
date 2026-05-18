@@ -191,8 +191,8 @@ func assertP86ToolsListFrame(t *testing.T, frame decodedMCPFrame) {
 	}
 	for _, tool := range tools {
 		name, _ := tool["name"].(string)
-		if !strings.HasPrefix(name, "context_") {
-			t.Fatalf("MCP discovery proof exposed non-context tool %q", name)
+		if !strings.HasPrefix(name, "context_") && name != "recovery_inspect" && name != "recovery_status" {
+			t.Fatalf("MCP discovery proof exposed unsupported discovery tool %q", name)
 		}
 		meta, _ := tool["_meta"].(map[string]any)
 		if meta["idiom_schema_version"] != workspace.ToolSchemaExportVersion {

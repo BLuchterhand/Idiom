@@ -94,6 +94,16 @@ idiom recover status --packet .idiom/recovery/<failure-id>/packet.json --json
 idiom recover promote --packet .idiom/recovery/<failure-id>/packet.json --atom recovery-001 --output briefs/recovery-001.md
 ```
 
+Read-only recovery state is also sidecar-visible:
+
+```bash
+idiom tool recovery_inspect --profile discovery --input '{"session_id":"<session-id>"}'
+idiom tool recovery_status --profile discovery --input '{"packet_path":".idiom/recovery/<failure-id>/packet.json"}'
+```
+
+`recovery_decompose` writes local `.idiom/recovery` artifacts, so it is exposed
+only through the default tool profile. `recovery_promote` remains CLI-only.
+
 Relevant JSON events include:
 
 - `idiom.plan_execute.resume_state_saved`

@@ -15,7 +15,8 @@ packet, and promote one candidate recovery atom into a normal brief after brief
 lint, atom intake, and recovery scope gates pass. Promotion is deliberately not
 dispatch authority; the promoted brief still enters the usual lane workflow.
 Remaining extensions are product-ledger reconciliation, TUI presenters,
-sidecar read-only tools, audit-watch summaries, and non-plan-execute adapters.
+audit-watch summaries, deeper residual-work evidence, and non-plan-execute
+adapters.
 
 Verified adjacent implementation:
 
@@ -40,6 +41,10 @@ Verified adjacent implementation:
 - `cmd/idiom/recover_packet.go` implements `recover decompose`, packet-based
   `recover status`, and `recover promote`. Promotion writes a brief only after
   brief lint, atom intake, and scope gates pass.
+- `internal/workspace/recovery_tools.go` exposes `recovery_inspect` and
+  `recovery_status` through `idiom tool --profile discovery` and MCP with the
+  normal sidecar envelope. `recovery_decompose` is available only through the
+  default tool profile because it writes `.idiom/recovery` artifacts.
 
 Those pieces now cover the operator-facing plan-execute loop. The remaining
 design work is to broaden adapters and close reconciliation surfaces without
@@ -417,6 +422,9 @@ it moved into a recovery state, not like it vanished into a separate tool.
 ### Phase 5: TUI, Sidecar, And Learning
 
 - Render decomposition actions in the TUI operator view.
+- Status: sidecar read-only parity landed for `recovery_inspect` and
+  `recovery_status`; artifact-writing `recovery_decompose` is intentionally
+  default-profile only, and `recovery_promote` remains CLI-only.
 - Expose read-only failure records and packets through `idiom tool` and MCP.
 - Feed recurring failure classes into eval fixtures, harness audit, and ranker
   learning only through deterministic evidence adapters.

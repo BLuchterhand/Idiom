@@ -135,6 +135,10 @@ type ToolRequest struct {
 	Confidence        string              `json:"confidence,omitempty"`
 	Severity          string              `json:"severity,omitempty"`
 	SuggestedFix      string              `json:"suggested_fix,omitempty"`
+	SessionID         string              `json:"session_id,omitempty"`
+	FailureID         string              `json:"failure_id,omitempty"`
+	PacketPath        string              `json:"packet_path,omitempty"`
+	OutputPath        string              `json:"output_path,omitempty"`
 	RequiredTests     []string            `json:"required_tests,omitempty"`
 	RequiredEditPaths []string            `json:"required_edit_paths,omitempty"`
 	ForbiddenPaths    []string            `json:"forbidden_paths,omitempty"`
@@ -794,6 +798,12 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.harnessAudit(req)
 	case "harness_feedback", "idiom_feedback":
 		return m.harnessFeedback(req)
+	case "recovery_inspect":
+		return m.recoveryInspect(ctx, req)
+	case "recovery_status":
+		return m.recoveryStatus(ctx, req)
+	case "recovery_decompose":
+		return m.recoveryDecompose(ctx, req)
 	case "submit_plan":
 		return m.submitPlan(req)
 	case "context_index":

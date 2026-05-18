@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/config"
+	"idiom/internal/recovery"
 	"idiom/internal/workspace"
 )
 
@@ -564,6 +566,50 @@ func TestRunMainDirectToolDiscoveryProfileAllowsReadOnlyTool(t *testing.T) {
 	}
 	if payload.Tool != "context_status" || payload.Sidecar.Profile != "discovery" || payload.Sidecar.Error != nil {
 		t.Fatalf("unexpected discovery success envelope: %#v", payload)
+	}
+}
+
+func TestRunMainDirectToolDiscoveryProfileAllowsRecoveryInspect(t *testing.T) {
+	root := t.TempDir()
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         "sid-cli",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "exact edit did not apply",
+		RequiredEditPaths: []string{"internal/app/foo.go"},
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("write recovery fixture: %v", err)
+	}
+	configPath := writeMainConfigRoot(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := runMain([]string{"tool", "recovery_inspect", "-config", configPath, "--profile", "discovery", "--input", `{"session_id":"sid-cli"}`}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var payload struct {
+		Tool    string `json:"Tool"`
+		Error   string `json:"Error"`
+		Sidecar struct {
+			Profile          string         `json:"profile"`
+			Contract         map[string]any `json:"contract"`
+			StructuredOutput map[string]any `json:"structured_output"`
+			Error            any            `json:"error"`
+		} `json:"sidecar"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode tool output: %v\n%s", err, stdout.String())
+	}
+	if payload.Tool != "recovery_inspect" || payload.Error != "" || payload.Sidecar.Profile != "discovery" || payload.Sidecar.Error != nil {
+		t.Fatalf("unexpected recovery_inspect sidecar payload: %#v", payload)
+	}
+	if payload.Sidecar.Contract["id"] != "idiom.tool.v1:recovery_inspect" {
+		t.Fatalf("unexpected recovery contract: %#v", payload.Sidecar.Contract)
+	}
+	if payload.Sidecar.StructuredOutput["failure_id"] != "plan-execute-sid-cli" ||
+		payload.Sidecar.StructuredOutput["next_valid_action"] != recovery.NextActionReviewDecomposition {
+		t.Fatalf("recovery structured output missing state: %#v", payload.Sidecar.StructuredOutput)
 	}
 }
 

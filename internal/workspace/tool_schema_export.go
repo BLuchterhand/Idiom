@@ -69,12 +69,16 @@ func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) 
 		if !exportedToolSchemaHasCapability(tool, autonomy.CapabilitySemanticDiscovery) {
 			continue
 		}
-		if profile == ToolProfileDiscovery && !strings.HasPrefix(tool.Name, "context_") {
+		if profile == ToolProfileDiscovery && !mcpDiscoveryProfileTool(tool.Name) {
 			continue
 		}
 		tools = append(tools, tool)
 	}
 	return tools, nil
+}
+
+func mcpDiscoveryProfileTool(tool string) bool {
+	return strings.HasPrefix(tool, "context_") || tool == "recovery_inspect" || tool == "recovery_status"
 }
 
 func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolDefinition, profiles map[string][]string) (ToolSchemaExport, error) {
@@ -246,7 +250,7 @@ func toolSchemaCapabilities(tool string) []autonomy.Capability {
 
 func toolSchemaSideEffects(tool string) []autonomy.SideEffectClass {
 	switch {
-	case tool == "task_ledger" || tool == "harness_feedback" || tool == "context_index" || tool == "submit_plan":
+	case tool == "task_ledger" || tool == "harness_feedback" || tool == "context_index" || tool == "submit_plan" || tool == "recovery_decompose":
 		return []autonomy.SideEffectClass{autonomy.SideEffectAdditive}
 	case tool == "task":
 		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly, autonomy.SideEffectAdditive}
@@ -304,7 +308,7 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 
 func isToolSchemaSemanticDiscoveryTool(tool string) bool {
 	switch tool {
-	case "code_navigate", "read_only_capability", "harness_audit", "context_status", "context_query", "context_zoom",
+	case "code_navigate", "read_only_capability", "harness_audit", "recovery_inspect", "recovery_status", "context_status", "context_query", "context_zoom",
 		"context_pack", "context_impact", "discovery_query", "structural_search", "dependency_graph",
 		"history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan":
 		return true

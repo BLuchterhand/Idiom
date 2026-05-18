@@ -92,6 +92,7 @@ func TestToolAllowedForMCPDiscoveryProfileAllowsReadOnlyDiscoveryTools(t *testin
 		"discovery_query", "structural_search", "dependency_graph",
 		"history_range", "history_symbol", "blame_range",
 		"ctags_symbols", "code_navigate", "harness_audit",
+		"recovery_inspect", "recovery_status",
 	} {
 		decision := ToolAllowedForProfile(tool, ToolProfileMCPDiscovery)
 		if !decision.Allowed {

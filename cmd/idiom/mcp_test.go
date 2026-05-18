@@ -17,6 +17,7 @@ import (
 
 	"idiom/internal/config"
 	mcppkg "idiom/internal/mcp"
+	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
@@ -97,6 +98,16 @@ func TestMCPDiscoveryStdioInitializeListAndCallUsesSharedSchemas(t *testing.T) {
 
 func TestMCPDiscoveryMCPDiscoveryProfileExposesExpandedSurface(t *testing.T) {
 	root := t.TempDir()
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         "sid-mcp",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "exact edit did not apply",
+		RequiredEditPaths: []string{"internal/app/foo.go"},
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("write recovery fixture: %v", err)
+	}
 	cfg := config.Default()
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
@@ -108,6 +119,7 @@ func TestMCPDiscoveryMCPDiscoveryProfileExposesExpandedSurface(t *testing.T) {
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"recovery_inspect","arguments":{"session_id":"sid-mcp"}}}`,
 	}, "\n") + "\n"
 
 	var stdout bytes.Buffer
@@ -115,7 +127,7 @@ func TestMCPDiscoveryMCPDiscoveryProfileExposesExpandedSurface(t *testing.T) {
 		t.Fatalf("serve MCP frames: %v", err)
 	}
 	frames := decodeMCPFrames(t, stdout.String())
-	if len(frames) != 2 {
+	if len(frames) != 3 {
 		t.Fatalf("expected 2 responses, got %d:\n%s", len(frames), stdout.String())
 	}
 	tools := mcpToolsFromFrame(t, frames[1])
@@ -133,6 +145,7 @@ func TestMCPDiscoveryMCPDiscoveryProfileExposesExpandedSurface(t *testing.T) {
 		"structural_search", "dependency_graph",
 		"history_range", "history_symbol", "blame_range",
 		"ctags_symbols", "code_navigate", "harness_audit",
+		"recovery_inspect", "recovery_status",
 	} {
 		if !toolNames[required] {
 			t.Fatalf("mcp_discovery surface should expose %s", required)
@@ -140,6 +153,17 @@ func TestMCPDiscoveryMCPDiscoveryProfileExposesExpandedSurface(t *testing.T) {
 	}
 	if toolNames["write_file"] || toolNames["shell"] || toolNames["edit_file"] {
 		t.Fatalf("mcp_discovery surface should not expose write or shell tools")
+	}
+	call := mcpToolResultFromFrame(t, frames[2])
+	if call.IsError {
+		t.Fatalf("recovery_inspect should be allowed: %#v", call)
+	}
+	payload := decodeMCPToolTextPayload(t, call)
+	if payload.Tool != "recovery_inspect" ||
+		payload.Sidecar.Profile != workspace.ToolProfileMCPDiscovery ||
+		payload.Sidecar.Contract.Transport != mcpStdioTransport ||
+		payload.Sidecar.Error != nil {
+		t.Fatalf("unexpected recovery_inspect MCP payload: %#v", payload)
 	}
 	assertMCPPublicPayloadSafe(t, stdout.String(), root)
 	assertNoMCPStrategyLeakage(t, stdout.String())

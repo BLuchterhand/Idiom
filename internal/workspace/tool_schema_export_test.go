@@ -114,6 +114,8 @@ func TestBuildMCPDiscoveryToolSchemasDerivesFromDiscoveryProfileAndSemanticCapab
 		t.Fatal("expected MCP discovery schema surface to contain tools")
 	}
 	var sawContextStatus bool
+	var sawRecoveryInspect bool
+	var sawRecoveryStatus bool
 	for _, tool := range tools {
 		if !slices.Contains(tool.Profiles, ToolProfileDiscovery) {
 			t.Fatalf("MCP discovery tool %s missing discovery profile: %#v", tool.Name, tool.Profiles)
@@ -127,10 +129,16 @@ func TestBuildMCPDiscoveryToolSchemasDerivesFromDiscoveryProfileAndSemanticCapab
 		if tool.Name == "context_status" {
 			sawContextStatus = true
 		}
-		if !strings.HasPrefix(tool.Name, "context_") {
-			t.Fatalf("P8.1 MCP discovery tool %s should be graph-backed context surface only", tool.Name)
+		if tool.Name == "recovery_inspect" {
+			sawRecoveryInspect = true
 		}
-		for _, forbidden := range []string{"read_file", "write_file", "shell", "context_pack", "go_read_symbol", "history_range", "blame_range"} {
+		if tool.Name == "recovery_status" {
+			sawRecoveryStatus = true
+		}
+		if !mcpDiscoveryProfileTool(tool.Name) {
+			t.Fatalf("MCP discovery tool %s should be context-backed or recovery read-only", tool.Name)
+		}
+		for _, forbidden := range []string{"read_file", "write_file", "shell", "context_pack", "recovery_decompose", "go_read_symbol", "history_range", "blame_range"} {
 			if tool.Name == forbidden {
 				t.Fatalf("MCP discovery schema surface should not expose %s in P8.1", forbidden)
 			}
@@ -138,6 +146,9 @@ func TestBuildMCPDiscoveryToolSchemasDerivesFromDiscoveryProfileAndSemanticCapab
 	}
 	if !sawContextStatus {
 		t.Fatalf("MCP discovery schema surface should expose context_status: %#v", tools)
+	}
+	if !sawRecoveryInspect || !sawRecoveryStatus {
+		t.Fatalf("MCP discovery schema surface should expose read-only recovery tools: inspect=%v status=%v tools=%#v", sawRecoveryInspect, sawRecoveryStatus, tools)
 	}
 }
 
@@ -168,6 +179,7 @@ func TestBuildMCPDiscoveryToolSchemasMCPDiscoveryProfileExposesExpandedSurface(t
 		"structural_search", "dependency_graph",
 		"history_range", "history_symbol", "blame_range",
 		"ctags_symbols", "code_navigate", "harness_audit",
+		"recovery_inspect", "recovery_status",
 	} {
 		if !toolNames[required] {
 			names := make([]string, 0, len(toolNames))
@@ -178,7 +190,7 @@ func TestBuildMCPDiscoveryToolSchemasMCPDiscoveryProfileExposesExpandedSurface(t
 			t.Fatalf("mcp_discovery schema surface should expose %s, got: %v", required, names)
 		}
 	}
-	for _, forbidden := range []string{"read_file", "write_file", "shell", "edit_file", "apply_patch", "context_trace_pack"} {
+	for _, forbidden := range []string{"read_file", "write_file", "shell", "edit_file", "apply_patch", "context_trace_pack", "recovery_decompose"} {
 		if toolNames[forbidden] {
 			t.Fatalf("mcp_discovery schema surface should not expose %s", forbidden)
 		}

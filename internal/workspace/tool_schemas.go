@@ -178,6 +178,30 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
+			Name:        "recovery_inspect",
+			Description: "Read a durable recovery failure record and current workspace partial-state classification without running models or mutating files.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"session_id":`+strProp("plan-execute session id; either session_id or failure_id is required")+`,"failure_id":`+strProp("recovery failure id such as plan-execute-session-001; either failure_id or session_id is required"),
+			),
+		},
+		{
+			Name:        "recovery_status",
+			Description: "Read a recovery decomposition packet and return status, blockers, gates, candidate atoms, product links, and next valid action.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"packet_path":`+strProp("workspace-relative path to packet.json; either packet_path or session_id/failure_id is required")+`,"session_id":`+strProp("plan-execute session id used to derive the default packet path")+`,"failure_id":`+strProp("recovery failure id used to derive the default packet path"),
+			),
+		},
+		{
+			Name:        "recovery_decompose",
+			Description: "Write or rebuild a local .idiom/recovery decomposition packet from an existing durable failure record. Not available in discovery profile.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"session_id":`+strProp("plan-execute session id; either session_id or failure_id is required")+`,"failure_id":`+strProp("recovery failure id such as plan-execute-session-001; either failure_id or session_id is required")+`,"output_path":`+strProp("optional workspace-relative output path under .idiom/recovery; defaults to .idiom/recovery/<failure-id>/packet.json"),
+			),
+		},
+		{
 			Name:        "context_index",
 			Description: "Build or refresh idiom's persistent, language-agnostic codebase comprehension graph. This writes the active SQLite graph plus a JSON export; use it when context_status is missing/stale or before generating packet-ready context.",
 			ParametersJSON: schemaObj(
