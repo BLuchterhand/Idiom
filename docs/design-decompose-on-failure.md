@@ -33,6 +33,10 @@ Verified adjacent implementation:
 - `cmd/idiom/plan_execute.go` records planner failures such as
   `planner_blocked`, `planner_failed`, and `plan_artifact_missing` into durable
   progress state.
+- `internal/recovery/record.go` classifies the documented plan-execute failure
+  classes deterministically, including `scope_too_large` and
+  `verification_failed`, from explicit failure kinds, review-repair reason
+  classes, and bounded host evidence text.
 - `cmd/idiom/plan_execute.go` and `internal/planexecute/run.go` now write
   `.idiom/recovery/<failure-id>/failure.json` and
   `.idiom/recovery/<failure-id>/packet.json` automatically whenever a

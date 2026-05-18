@@ -75,6 +75,50 @@ func TestClassifyPlanExecuteFailureRecognizesBudgetExhaustion(t *testing.T) {
 	}
 }
 
+func TestClassifyPlanExecuteFailureRecognizesScopeTooLarge(t *testing.T) {
+	tests := []struct {
+		name              string
+		kind              string
+		reason            string
+		reviewReasonClass string
+	}{
+		{name: "explicit_kind", kind: "scope_too_large"},
+		{name: "planner_reason", kind: "planner_failed", reason: "brief lint atom-size violation: scope too large for one atom"},
+		{name: "executor_reason", kind: "executor_failed", reason: "too many required paths for a bounded implementation"},
+		{name: "review_reason_class", kind: "review_repair_failed", reviewReasonClass: "scope_too_large"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyPlanExecuteFailure(tt.kind, tt.reason, tt.reviewReasonClass)
+			if got != FailureClassScopeTooLarge {
+				t.Fatalf("class=%q", got)
+			}
+		})
+	}
+}
+
+func TestClassifyPlanExecuteFailureRecognizesVerificationFailed(t *testing.T) {
+	tests := []struct {
+		name              string
+		kind              string
+		reason            string
+		reviewReasonClass string
+	}{
+		{name: "explicit_kind", kind: "verification_failed"},
+		{name: "executor_reason", kind: "executor_failed", reason: "required tests failed: go test ./internal/recovery"},
+		{name: "review_reason_class", kind: "review_repair_failed", reviewReasonClass: "verification_failed"},
+		{name: "fallback_reason", kind: "unknown", reason: "verification command failed: failing package ./cmd/idiom"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyPlanExecuteFailure(tt.kind, tt.reason, tt.reviewReasonClass)
+			if got != FailureClassVerification {
+				t.Fatalf("class=%q", got)
+			}
+		})
+	}
+}
+
 func TestBuildPlanExecuteFailureRecordRedactsSensitiveDetails(t *testing.T) {
 	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
 		SessionID:     "session-3",

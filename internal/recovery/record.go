@@ -18,7 +18,9 @@ const (
 	FailureClassPlannerBlocked    = "planner_blocked"
 	FailureClassPlanMissing       = "plan_missing"
 	FailureClassPlanInvalid       = "plan_invalid"
+	FailureClassScopeTooLarge     = "scope_too_large"
 	FailureClassExecutorEdit      = "executor_edit_failed"
+	FailureClassVerification      = "verification_failed"
 	FailureClassReviewRepair      = "review_repair_failed"
 	FailureClassStaleContext      = "stale_context"
 	FailureClassBudgetExhausted   = "budget_exhausted"
@@ -196,6 +198,9 @@ func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass st
 	reasonLower := strings.ToLower(reason)
 	switch kind {
 	case "planner_failed":
+		if looksScopeTooLarge(reasonLower) {
+			return FailureClassScopeTooLarge
+		}
 		if looksBudgetExhausted(reasonLower) {
 			return FailureClassBudgetExhausted
 		}
@@ -209,9 +214,19 @@ func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass st
 		return FailureClassPlanMissing
 	case "plan_artifact_invalid":
 		return FailureClassPlanInvalid
+	case "scope_too_large":
+		return FailureClassScopeTooLarge
+	case "verification_failed":
+		return FailureClassVerification
 	case "executor_failed":
 		if looksStaleContext(reasonLower) {
 			return FailureClassStaleContext
+		}
+		if looksVerificationFailed(reasonLower) {
+			return FailureClassVerification
+		}
+		if looksScopeTooLarge(reasonLower) {
+			return FailureClassScopeTooLarge
 		}
 		return FailureClassExecutorEdit
 	case "review_repair_failed":
@@ -226,6 +241,12 @@ func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass st
 	}
 	if looksBudgetExhausted(reasonLower) {
 		return FailureClassBudgetExhausted
+	}
+	if looksScopeTooLarge(reasonLower) {
+		return FailureClassScopeTooLarge
+	}
+	if looksVerificationFailed(reasonLower) {
+		return FailureClassVerification
 	}
 	if looksStaleContext(reasonLower) {
 		return FailureClassStaleContext
@@ -396,6 +417,10 @@ func normalizeReviewFailureClass(value string) string {
 		return FailureClassNeedsHumanAnswer
 	case "unsafe_policy_block":
 		return FailureClassUnsafePolicyBlock
+	case "scope_too_large":
+		return FailureClassScopeTooLarge
+	case "verification_failed":
+		return FailureClassVerification
 	}
 	return ""
 }
@@ -413,6 +438,29 @@ func looksStaleContext(reasonLower string) bool {
 		strings.Contains(reasonLower, "anchor") ||
 		strings.Contains(reasonLower, "old_text not found") ||
 		strings.Contains(reasonLower, "does not match current")
+}
+
+func looksScopeTooLarge(reasonLower string) bool {
+	return strings.Contains(reasonLower, "scope too large") ||
+		strings.Contains(reasonLower, "too much scope") ||
+		strings.Contains(reasonLower, "atom too large") ||
+		strings.Contains(reasonLower, "atom-size") ||
+		strings.Contains(reasonLower, "single purpose") ||
+		strings.Contains(reasonLower, "single-purpose") ||
+		strings.Contains(reasonLower, "too many required paths") ||
+		strings.Contains(reasonLower, "too many files")
+}
+
+func looksVerificationFailed(reasonLower string) bool {
+	return strings.Contains(reasonLower, "verification failed") ||
+		strings.Contains(reasonLower, "verification command failed") ||
+		strings.Contains(reasonLower, "required test failed") ||
+		strings.Contains(reasonLower, "required tests failed") ||
+		strings.Contains(reasonLower, "test failed") ||
+		strings.Contains(reasonLower, "tests failed") ||
+		strings.Contains(reasonLower, "go test failed") ||
+		strings.Contains(reasonLower, "failing test") ||
+		strings.Contains(reasonLower, "failing package")
 }
 
 func scopeStatus(changedPaths []string, requiredPaths []string, allowedPaths []string) string {

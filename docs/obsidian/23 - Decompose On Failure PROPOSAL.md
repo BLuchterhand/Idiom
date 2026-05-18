@@ -70,6 +70,9 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] `idiom product-evidence export` and `idiom release evidence` summarize
   local recovery artifacts with metadata-only failure-class, next-action,
   open/recovered/blocked, reconciliation, blocker, and release-impact counts.
+- [x] Recovery classification emits the documented `scope_too_large` and
+  `verification_failed` classes from explicit failure kinds, review-repair
+  reason classes, and bounded host evidence text.
 - [ ] TUI projections, deeper residual-work evidence, ranker-learning inputs,
   and non-plan-execute adapters are not yet complete.
 
