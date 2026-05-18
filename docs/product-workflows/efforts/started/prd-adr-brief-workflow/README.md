@@ -171,7 +171,7 @@ This effort is the durable implementation state for delivering
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 32 closeout. These
+The workflow implementation remains in progress after Atom 32 closeout and Atom 33 planning. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,

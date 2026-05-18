@@ -12,15 +12,27 @@
   "status": "pending",
   "findings": [],
   "checks": {
-    "human_readable_output_contract": "pending",
-    "actionable_failure_text": "pending",
-    "next_valid_action_text": "pending",
+    "human_readable_cli_parity": "pending",
+    "next_valid_action_json_parity": "pending",
+    "exit_code_compatibility": "pending",
     "authority_boundaries": "pending",
-    "no_dispatch_or_runtime_mutation": "pending",
     "privacy_secret_marker_regression": "pending"
   },
-  "reviewed_at": null,
-  "commands_reviewed": [],
-  "residual_risk": "Implementation pending.",
-  "created_at": "2026-05-18T16:50:00Z"
+  "reviewed_at": "",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"phase 5 human-readable CLI coverage operator-facing product commands actionable failure text next valid action JSON parity\",\"mode\":\"plan\",\"limit\":12}'",
+    "idiom tool context_query --input '{\"query\":\"product workflow human-readable CLI output tests actionable failure text next valid action operator-facing product commands\",\"resolution\":\"symbol\"}'",
+    "go test ./cmd/idiom -run 'TestProduct(Lint|Audit|Status).*Actionable|TestProduct(Lint|Audit).*NextValidAction' -count=1",
+    "go test ./cmd/idiom -run TestProduct -count=1",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "go test ./...",
+    "JSON/JSONL validation for durable workflow artifacts",
+    "privacy secret-pattern scan over durable effort artifacts",
+    "git diff --check"
+  ],
+  "residual_risk": "pending review",
+  "created_at": "2026-05-18T16:45:00Z"
 }
