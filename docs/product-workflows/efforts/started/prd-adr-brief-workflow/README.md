@@ -6,8 +6,8 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0030-phase-5-feedback-reconciliation`
-- Active atom: `impl-0031-phase-5-product-workflow-metrics`
+- Last completed atom: `impl-0031-phase-5-product-workflow-metrics`
+- Active atom: none; next valid action is `plan_phase_5_obsidian_parity_check_atom`
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
 - Context pack: `dd185841859a40b8`
@@ -140,6 +140,12 @@ This effort is the durable implementation state for delivering
   and bounded evidence-link counts without dispatching lanes, mutating `.idiom`
   runtime state, writing evidence exports, promoting ranker learning, or
   enforcing Obsidian parity.
+- Atom 31: all TDD obligations satisfied. Added deterministic product-workflow
+  metrics to `idiom product audit` and `idiom product status`, covering progress,
+  gates, blockers, TDD, ledger, report, artifact, and evidence-link counts. The
+  metrics path fails closed with privacy-safe relative artifact errors and keeps
+  dispatch, `.idiom` runtime mutation, evidence export generation, ranker
+  learning, and Obsidian parity enforcement outside the atom.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -153,9 +159,9 @@ prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
 plan-only TDD obligation synthesis, deterministic coverage-gate evaluation,
 lint-verified brief generation, read-only execution feedback linking, and
 deterministic feedback reconciliation into bounded workflow-state/evidence-link
-output. The active Phase 5 slice adds product-workflow metrics to product audit
-or a dedicated product audit surface; Obsidian parity checks and operator
-surfaces remain later atoms.
+output, and product-workflow metrics in product audit/status. The next Phase 5
+slice should add Obsidian parity checks to product lint/audit or closeout
+reporting; operator surfaces remain later atoms.
 
 ## Implementation Guidelines
 
@@ -380,4 +386,4 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Start the Atom 31 implementation. Keep the slice deterministic: expose workflow progress, gate, blocker, report, and evidence-link counts through product audit or a dedicated product audit surface, and keep lane dispatch, `.idiom` runtime mutation, evidence export generation, ranker-learning promotion, and Obsidian parity enforcement outside the atom unless the implementation explicitly scopes them.
+Plan the next Phase 5 Obsidian parity check atom. Keep the slice deterministic: detect stale proposal/roadmap status during product lint/audit or closeout reporting, or require an explicit no-change rationale, and keep lane dispatch, `.idiom` runtime mutation, evidence export generation, and ranker-learning promotion outside the atom.

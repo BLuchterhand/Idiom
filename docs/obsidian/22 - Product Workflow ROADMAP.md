@@ -63,8 +63,9 @@ As of Atom 30 closeout, deterministic schemas, product lint/audit/status,
 research profile planning/merge/prompt rendering, PRD/ADR prompt rendering,
 acceptance metadata validation, ADR supersession link validation, plan-only TDD
 obligation synthesis, tiered coverage-gate evaluation, lint-verified brief
-generation, read-only execution feedback linking, and durable feedback
-reconciliation exist. Atom 31 is planned for product-workflow metrics.
+generation, read-only execution feedback linking, durable feedback
+reconciliation, and product-workflow metrics in product audit/status exist. The
+next design-doc slice is Obsidian parity enforcement.
 
 ### Schemas and Types
 
@@ -151,7 +152,8 @@ reconciliation exist. Atom 31 is planned for product-workflow metrics.
   workflow-state/evidence links
 - [x] Durable `execution_result_linked` reconciliation into workflow state and
   evidence links
-- [ ] Product-workflow metrics in `harness_audit` or a dedicated audit command
+- [x] Product-workflow metrics in product audit/status
+- [ ] Obsidian parity check in product lint/audit or closeout reporting
 
 ## NOT STARTED: Behavioral TDD Coverage Pipeline
 

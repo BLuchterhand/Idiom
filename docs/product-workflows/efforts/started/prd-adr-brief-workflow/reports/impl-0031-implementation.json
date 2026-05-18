@@ -5,34 +5,47 @@
   "implementor_id": "codex-gpt-worker-impl-0031",
   "runtime": "codex_subagent",
   "model": "gpt-5.3-codex",
-  "completed_at": null,
+  "completed_at": "2026-05-18T15:45:00Z",
   "complexity_tier": "C2",
-  "scope_statement": "Add deterministic product-workflow metrics to product audit or a dedicated product audit surface, reporting progress/gates/blockers/evidence links with bounded metadata only.",
-  "code_changes": false,
+  "scope_statement": "Added deterministic product-workflow metrics to product audit and product status surfaces, reporting progress, gate, blocker, report, TDD, ledger, artifact, and evidence-link counts with bounded metadata only.",
+  "code_changes": true,
   "changed_paths": [
     "cmd/idiom/product_workflow.go",
     "cmd/idiom/product_workflow_test.go",
+    "internal/productworkflow/status.go",
     "internal/productworkflow/types.go",
     "internal/productworkflow/metrics.go",
     "internal/productworkflow/metrics_test.go"
   ],
   "verification": {
-    "run_by_implementor": false,
-    "commands": [],
-    "status": "pending"
+    "run_by_implementor": true,
+    "commands": [
+      "idiom tool context_pack --input {\"task\":\"phase 5 product workflow metrics harness audit dedicated audit command progress gates blockers evidence links\",\"mode\":\"plan\",\"limit\":12}",
+      "idiom tool context_query --input {\"query\":\"product workflow metrics audit status gates blockers evidence links harness_audit product audit\",\"resolution\":\"symbol\"}",
+      "go test ./internal/productworkflow -run TestProductWorkflowMetrics -count=1",
+      "go test ./cmd/idiom -run TestProductWorkflowMetrics -count=1",
+      "go test ./cmd/idiom -run TestProductAuditMetrics -count=1",
+      "go test ./cmd/idiom -run TestProductStatusMetrics -count=1",
+      "go test ./cmd/idiom -run TestProductStatusTextIncludesKeyFields -count=1",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "privacy secret-pattern scan over durable effort artifacts",
+      "git diff --check"
+    ],
+    "status": "passed_full_suite_and_product_gates"
   },
   "discovery_evidence": [
     "context_pack:dd185841859a40b8",
     "context_query:product workflow metrics audit status gates blockers evidence links harness_audit product audit"
   ],
   "reviewer_id": "codex-gpt-review-impl-0031",
-  "commit_hash": null,
+  "commit_hash": "d5e1bea48dbba7079ce58835b59ae7922c50f087",
   "planning_checkpoint_commit": "de1f2035dfb1eb713da9fb1bafbb3ed1cc29439a",
-  "privacy_note": "report stores only scope, model assignment, command names, commit hashes, and blocker state; it must not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
-  "open_blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ]
+  "privacy_note": "report stores only scope, model assignment, command names, commit hashes, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
+  "open_blockers": []
 }

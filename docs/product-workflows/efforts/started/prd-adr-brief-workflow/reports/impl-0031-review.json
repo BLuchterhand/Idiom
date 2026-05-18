@@ -9,17 +9,37 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
-  "findings": [],
+  "status": "pass_after_repair",
+  "findings": [
+    {
+      "severity": "P2",
+      "status": "fixed",
+      "summary": "Metrics errors originally leaked absolute paths and used an incorrect audit finding path."
+    },
+    {
+      "severity": "P3",
+      "status": "fixed",
+      "summary": "Product status human-readable metrics output lacked direct coverage."
+    }
+  ],
   "checks": {
-    "metrics_determinism": "pending",
-    "audit_surface_json_and_human_output": "pending",
-    "authority_boundaries": "pending",
-    "no_dispatch_or_runtime_mutation": "pending",
-    "evidence_export_write_absent": "pending",
-    "privacy_secret_marker_regression": "pending"
+    "metrics_determinism": "passed",
+    "audit_surface_json_and_human_output": "passed",
+    "status_surface_json_and_human_output": "passed",
+    "authority_boundaries": "passed",
+    "no_dispatch_or_runtime_mutation": "passed",
+    "evidence_export_write_absent": "passed",
+    "privacy_secret_marker_regression": "passed"
   },
-  "reviewed_at": null,
-  "commands_reviewed": [],
+  "reviewed_at": "2026-05-18T15:45:00Z",
+  "commands_reviewed": [
+    "go test ./internal/productworkflow -run TestProductWorkflowMetrics -count=1",
+    "go test ./cmd/idiom -run TestProductWorkflowMetrics -count=1",
+    "go test ./cmd/idiom -run TestProductAuditMetrics -count=1",
+    "go test ./cmd/idiom -run TestProductStatusMetrics -count=1",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./..."
+  ],
+  "residual_risk": "Metrics are read-only and bounded; future Obsidian parity enforcement remains a separate atom.",
   "created_at": "2026-05-18T15:30:00Z"
 }
