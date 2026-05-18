@@ -4,7 +4,16 @@
 their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: cross-pillar design proposal, drafted 2026-05-15
+Status: cross-pillar target design with implementation status overlay, drafted
+2026-05-15; reviewed 2026-05-18
+
+Implementation state as of 2026-05-18: the full behavioral coverage pipeline is
+still a target design. The PRD/ADR/brief workflow effort has shipped a
+deterministic tiered coverage evaluator and brief-render dependency, but that
+gate is not yet the complete nine-stage coverage pipeline described here and it
+still needs to reuse product lint/audit authority or run those validations as
+blocking preconditions before it can be treated as the canonical dispatch
+coverage gate.
 
 This document defines how Idiom achieves exhaustive behavioral coverage between
 a human-approved ADR and a dispatch-ready implementation brief. It is the

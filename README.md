@@ -9,7 +9,11 @@ though it has also been tested successfully against GLM 5.1 and Minimax m2.7
 models. It is meant to be an agnostic harness for local and hosted models, but
 it has not yet been broadly validated across providers.
 
-CURRENT STATE: Idiom is used primarily as a headless runner. The TUI is now being brought up to speed but shouldn't be expected to properly function at 100%. Or probably at all, really.
+CURRENT STATE: Idiom is used primarily as a headless runner. The product
+workflow has deterministic headless CLI surfaces under `idiom product`, but the
+PRD/ADR/brief design still has open post-closeout blockers before it is fully
+delivered. The TUI is being brought up to speed and should not yet be treated as
+authoritative for complex product-workflow continuation.
 
 ## What it does
 

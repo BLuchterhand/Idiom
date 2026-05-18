@@ -37,14 +37,19 @@ The executable implementation plan is
 - [PRD to ADR to brief research workflow](design-prd-adr-brief-research-workflow.md)
   defines the upstream artifact pipeline that turns aligned research evidence
   into traceable product requirements, architecture decisions, proactive TDD
-  obligations, and dispatch-ready Idiom briefs.
+  obligations, and dispatch-ready Idiom briefs. As of 2026-05-18, this workflow
+  has deterministic headless CLI surfaces and a closed durable effort folder,
+  but the design still has open blockers for status-migration hardening, TUI
+  continuation/handoff, coverage-gate authority reuse, durable supersession
+  fixtures, sidecar exposure, and operator UX/API parity.
 - [Behavioral TDD coverage](design-tdd-coverage.md)
   defines the staged pipeline from human-approved ADR through EARS requirements,
   example mapping, BDD scenarios, Design by Contract, failure mode analysis
   (FMEA, HAZOP, FTA), state machine modeling, property-based testing, decision
   tables, mutation verification, and the deterministic coverage gate that blocks
   dispatch when behavioral coverage is incomplete. This is the verification
-  contract for the PRD-to-brief workflow.
+  contract for the PRD-to-brief workflow; only a narrower tiered coverage
+  evaluator has shipped so far.
 
 ## System Shape
 

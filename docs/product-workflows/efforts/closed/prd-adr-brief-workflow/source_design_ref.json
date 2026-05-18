@@ -6,15 +6,15 @@
       "path": "docs/design-prd-adr-brief-research-workflow.md",
       "role": "primary_design",
       "title": "PRD To ADR To Brief Research Workflow",
-      "status": "cross-pillar design proposal",
-      "reviewed_at": "2026-05-17"
+      "status": "target design with implementation status overlay",
+      "reviewed_at": "2026-05-18"
     },
     {
       "path": "docs/design-tdd-coverage.md",
       "role": "coverage_design",
       "title": "Behavioral TDD Coverage",
-      "status": "cross-pillar design proposal",
-      "reviewed_at": null
+      "status": "target design with implementation status overlay",
+      "reviewed_at": "2026-05-18"
     },
     {
       "path": "docs/obsidian/22 - Product Workflow ROADMAP.md",

@@ -12,9 +12,11 @@ tags:
 
 # PROPOSAL: Behavioral TDD Coverage
 
-> **Status: PROPOSAL** — Full behavioral coverage pipeline design. Zero
-> implementation code exists. The seven Idiom pillars are complete; this is the
-> verification contract for the upstream product workflow.
+> **Status: TARGET DESIGN WITH PARTIAL COVERAGE-GATE IMPLEMENTATION** — The full
+> behavioral coverage pipeline is not implemented. The PRD/ADR/brief workflow
+> has a narrower deterministic coverage evaluator for current fixtures, but it
+> is not yet the nine-stage canonical gate and still needs product lint/audit
+> authority reuse before dispatch coverage can be treated as complete.
 >
 > Source: [design-tdd-coverage.md](../design-tdd-coverage.md)
 > Depends on: [[20 - PRD ADR Brief Research Workflow PROPOSAL]]

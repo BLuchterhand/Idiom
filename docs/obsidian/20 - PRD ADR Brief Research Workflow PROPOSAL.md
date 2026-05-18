@@ -11,17 +11,18 @@ tags:
 
 # PROPOSAL: PRD to ADR to Brief Research Workflow
 
-> **Status: PARTIALLY IMPLEMENTED** — This upstream artifact pipeline is being
-> delivered through the durable effort at
-> `docs/product-workflows/efforts/started/prd-adr-brief-workflow/`. As of
-> 2026-05-18, implementation is complete through Phase 4 and Phase 5
-> slices: read-only execution feedback linking, deterministic durable feedback
-> reconciliation into bounded workflow-state/evidence-link output, and product
-> workflow metrics in product audit/status, and Obsidian parity enforcement in
-> product lint/audit/status, and human-readable CLI next-action coverage for
-> operator-facing product commands, and deterministic ranker-learning evidence
-> adapter tracking. The active Phase 6 slice is a shared read-only operator
-> status view model for CLI/TUI continuation; broader operator surfaces remain.
+> **Status: PARTIALLY IMPLEMENTED WITH OPEN BLOCKERS** — The durable effort has
+> moved to
+> `docs/product-workflows/efforts/closed/prd-adr-brief-workflow/`, but the closed
+> folder is a status bucket, not a complete-delivery claim. As of 2026-05-18,
+> deterministic headless surfaces exist through product lint/audit/status,
+> research planning/merge/prompt rendering, PRD/ADR prompt rendering,
+> acceptance/supersession checks, TDD planning, coverage evaluation, brief
+> rendering, feedback/reconciliation/metrics, Obsidian parity, ranker-learning
+> evidence, effort browsing, and status migration. Remaining blockers include
+> status-migration temp symlink hardening, Phase 6 TUI continuation/handoff,
+> coverage-gate authority reuse, the two-ADR supersession/divergence fixture,
+> Phase 7 `idiom tool`/MCP exposure, and operator UX/API parity gaps.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 
@@ -77,7 +78,9 @@ flowchart TD
 - [x] **TDD obligation plan**: deterministic plan-only test obligations derived
   before implementation from accepted PRD requirements and accepted ADRs
 - [x] **Coverage gate**: deterministic completeness check between TDD and brief
-  generation (see [[21 - Behavioral TDD Coverage PROPOSAL]])
+  generation; still must reuse product lint/audit authority or preflight those
+  validators before it is canonical (see [[21 - Behavioral TDD Coverage
+  PROPOSAL]])
 - [x] **Brief**: the executable Idiom entrypoint consumed by `implement` or
   `plan-execute`
 
@@ -98,7 +101,7 @@ flowchart TD
 Working location target: `.idiom/product/<task-id>/prd.md`
 
 Durable fixture location now implemented:
-`docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md`
+`docs/product-workflows/efforts/closed/prd-adr-brief-workflow/prd.md`
 
 Required sections: problem statement, user persona, goals/non-goals, current
 behavior and evidence, desired behavior, functional/non-functional requirements,
@@ -114,7 +117,7 @@ Accepted PRDs require `accepted_at`, `accepted_by`, and `acceptance_profile`.
 Working location target: `.idiom/product/<task-id>/adrs/ADR-0001-title.md`
 
 Durable fixture locations now implemented:
-`docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/`
+`docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/`
 
 Fields: ADR ID, status, PRD references, evidence references, TDD obligations,
 coverage tier, acceptance metadata, supersession links, context, decision,
@@ -188,8 +191,9 @@ stateDiagram-v2
   read-only feedback linking, durable reconciliation, and product-workflow
   metrics, Obsidian parity enforcement, and human-readable CLI next-action
   coverage, plus ranker-learning evidence adapters, are implemented
-- [ ] **Phase 6**: Operator status and continuation surface; Atom 35 is planned
-  as the first shared CLI/TUI status view-model slice
+- [ ] **Phase 6**: Operator status and continuation surface; CLI operator
+  status, effort browsing, and status migration are implemented, but TUI
+  continuation/handoff fixtures are not complete
 - [ ] **Phase 7**: Sidecar and external agent use
 
 ## Open Questions

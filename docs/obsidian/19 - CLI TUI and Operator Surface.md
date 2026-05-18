@@ -119,11 +119,14 @@ belong to the TUI/prompt harness path.
 
 ## Product Workflow UX Contract
 
-For the proposed PRD/ADR/TDD product workflow, the TUI should be a presenter over
-the same application use cases as the CLI. A TUI action such as capture, start,
-continue, promote, dispatch, or close should resolve a stable effort ID, render
-the shared status view model, advance exactly one valid action, reconcile state
-from artifacts and evidence, and then render the next valid action.
+For the partially implemented PRD/ADR/TDD product workflow, the TUI is still a
+target presenter over the same application use cases as the CLI. The CLI has a
+shared operator status view model, effort browsing, and status migration; the
+TUI continuation/handoff fixtures remain open delivery work. A TUI action such
+as capture, start, continue, promote, dispatch, or close should resolve a stable
+effort ID, render the shared status view model, advance exactly one valid
+action, reconcile state from artifacts and evidence, and then render the next
+valid action.
 
 Efforts should be browsable by coarse status folders:
 

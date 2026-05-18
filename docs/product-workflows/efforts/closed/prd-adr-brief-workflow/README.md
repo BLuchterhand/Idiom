@@ -7,12 +7,13 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0038-phase-6-status-migration-apply-cli`
-- Active atom: none; effort closed
+- Active atom: post-closeout remediation planning required
 - Status bucket: `closed`
 - Current phase: `phase-6-operator-continuation`
 - Context pack: `b1e7a03548be8af5`
 - Coverage tier: `unit`
-- Blocker status: none
+- Blocker status: open post-closeout review findings; the durable folder is
+  closed, but full design-doc delivery is not complete
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
 - Atom 10 product audit command: all TDD obligations satisfied, 9 audit tests pass, product lint unchanged
 - Atom 11 PRD audit hard checks: all TDD obligations satisfied; DS4-through-Codex
@@ -222,19 +223,41 @@ This effort is the durable implementation state for delivering
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation is closed after Atom 38 closeout. These
-files are source-controlled fixtures and resumable implementation state; shipped
-behavior includes deterministic product lint/audit/status, research planning and
-prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
-plan-only TDD obligation synthesis, deterministic coverage-gate evaluation,
-lint-verified brief generation, read-only execution feedback linking,
-deterministic feedback reconciliation into bounded workflow-state/evidence-link
-output, product-workflow metrics in product audit/status, Obsidian parity
-checks, human-readable product CLI next-action coverage, ranker-learning
-evidence adapter tracking, a shared CLI-ready operator status view model, a
-read-only product effort browser by status bucket, status-migration planning
-contracts, and status-migration apply semantics. The status-folder migration has
-moved this effort from `started` to `closed`.
+The status-folder migration has moved this effort from `started` to `closed`,
+and these files are source-controlled fixtures plus resumable implementation
+state. Shipped behavior includes deterministic product lint/audit/status,
+research planning and prompt rendering, PRD/ADR prompt rendering,
+acceptance/supersession validation, plan-only TDD obligation synthesis,
+deterministic coverage-gate evaluation, lint-verified brief generation,
+read-only execution feedback linking, deterministic feedback reconciliation
+into bounded workflow-state/evidence-link output, product-workflow metrics in
+product audit/status, Obsidian parity checks, human-readable product CLI
+next-action coverage, ranker-learning evidence adapter tracking, a shared
+CLI-ready operator status view model, a read-only product effort browser by
+status bucket, status-migration planning contracts, and status-migration apply
+semantics.
+
+Post-closeout review on 2026-05-18 found that the effort should not be treated
+as fully delivered against `docs/design-prd-adr-brief-research-workflow.md`.
+Open blockers are:
+
+- P1: harden status-migration apply temp writes. The apply path uses
+  predictable temp names such as `workflow_state.json.status-migration.tmp` and
+  writes them with `os.WriteFile`; pre-existing temp symlinks can redirect
+  writes outside the effort root.
+- P1: deliver the missing Phase 6 TUI continuation/handoff behavior. The CLI
+  operator status view model exists, but the design requires CLI and TUI
+  presenters over the same workflow use cases plus cross-surface fixtures.
+- P1: make the coverage gate reuse canonical product lint/audit traceability,
+  acceptance, and supersession validators, or run those checks as blocking
+  preconditions.
+- P2: add the durable two-ADR supersession fixture and explicit
+  index-vs-markdown divergence policy.
+- P2: ship Phase 7 read-only product workflow exposure through `idiom tool` and
+  MCP once schemas are stable.
+- P2: repair operator UX/API parity gaps for closed-effort actions, missing
+  `workflow_state.json` recovery output, and JSON usage errors across product
+  commands.
 
 ## Implementation Guidelines
 
@@ -396,10 +419,10 @@ moved this effort from `started` to `closed`.
   smallest workflow-level test that exercises the user-visible command from an
   effort folder and checks the next valid action.
 
-## Deferred Follow-ups
+## Open Design-Delivery Blockers
 
-These are not blockers for Atom 14 or Atom 15, but future orchestrators should
-preserve them until explicitly resolved:
+These items are blockers to claiming the entire design document is delivered.
+Preserve them until explicitly resolved by follow-up atoms:
 
 - Parser hardening: current PRD/ADR parsing is intentionally string-shaped and
   fixture-oriented. Before accepting broader user-authored artifacts, add a
@@ -428,6 +451,20 @@ preserve them until explicitly resolved:
 - Human-readable CLI coverage: each new operator-facing product command needs
   tests for text output as well as JSON output, including actionable failure
   text, next valid action, and typed blocker/finding identity.
+- Status-migration apply hardening: replace predictable temp-file writes that
+  can follow pre-existing symlinks with a no-follow, unique-temp, same-directory
+  write/rename contract and regression tests.
+- TUI continuation and handoff: implement the design requirement that CLI and
+  TUI share workflow use cases and prove cross-surface pause/resume behavior
+  without relying on raw transcript replay.
+- Sidecar and external-agent surface: expose read-only product workflow status,
+  effort browsing, and artifact inspection through `idiom tool` and MCP after
+  schema stability is confirmed.
+- Closed-effort operator UX: stop presenting `inspect_closed_effort` as a
+  dispatchable action, and collapse missing-state recovery to the root typed
+  repair action instead of a long list of derived blockers.
+- JSON usage-error parity: make product workflow commands that support `--json`
+  return structured JSON for missing required arguments and usage failures.
 - Product completion roadmap: after Phase 1 hardening, continue the remaining
   design-doc surfaces rather than treating lint/audit as the product endpoint:
   research profiles, PRD/ADR generation, acceptance and supersession flow, brief
@@ -459,6 +496,8 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Inspect the closed effort under
-`docs/product-workflows/efforts/closed/prd-adr-brief-workflow` with
-`idiom product status --effort-root docs/product-workflows/efforts/closed/prd-adr-brief-workflow`.
+Plan and execute follow-up remediation atoms for the post-closeout review
+blockers above. Start by inspecting the closed effort with
+`idiom product status --effort-root docs/product-workflows/efforts/closed/prd-adr-brief-workflow --json`,
+then reopen or create a remediation atom before claiming complete design-doc
+delivery.

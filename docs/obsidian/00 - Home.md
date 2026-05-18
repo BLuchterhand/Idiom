@@ -91,12 +91,17 @@ before discussing enterprise or regulated use.
 
 ## Proposals and Roadmaps
 
-These notes track proposed but unimplemented work. All seven architectural
-pillars are complete; the product workflow and TDD coverage pipeline are design
-only.
+These notes track proposed and partially implemented work. All seven
+architectural pillars are complete. The PRD/ADR/brief product workflow now has
+deterministic headless CLI surfaces and a durable closed effort folder, but the
+post-closeout review still lists delivery blockers before the design can be
+claimed complete. The full behavioral TDD coverage pipeline remains a target
+design, with only the narrower product-workflow coverage evaluator currently
+implemented.
 
-- [[20 - PRD ADR Brief Research Workflow PROPOSAL]] — upstream artifact pipeline
-  from research evidence to dispatch-ready briefs
+- [[20 - PRD ADR Brief Research Workflow PROPOSAL]] — upstream artifact
+  pipeline from research evidence to dispatch-ready briefs, with current
+  implementation status and blockers
 - [[21 - Behavioral TDD Coverage PROPOSAL]] — exhaustive behavioral coverage
   between human-approved ADR and implementation brief
 - [[22 - Product Workflow ROADMAP]] — what is done, what remains, and the

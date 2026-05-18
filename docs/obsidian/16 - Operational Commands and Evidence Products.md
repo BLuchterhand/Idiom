@@ -208,8 +208,11 @@ remain visible instead of being marked complete.
 
 ## Product Workflow Effort Evidence
 
-The proposed product workflow should store each design doc or product effort as
-one effort folder under a status bucket:
+The product workflow stores each design doc or product effort as one effort
+folder under a status bucket. The current durable PRD/ADR/brief workflow effort
+is under `docs/product-workflows/efforts/closed/prd-adr-brief-workflow/`, while
+its workflow state and effort index preserve the prior `started` path as
+history:
 
 - `.idiom/product/efforts/unstarted/<effort-id>/...`
 - `.idiom/product/efforts/started/<effort-id>/...`

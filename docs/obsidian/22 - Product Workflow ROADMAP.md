@@ -13,7 +13,9 @@ tags:
 > **Status: ROADMAP** — Tracks what is done and what remains for the upstream
 > product pipeline and behavioral TDD coverage. Last audited 2026-05-18 against
 > the codebase and the durable effort state under
-> `docs/product-workflows/efforts/started/prd-adr-brief-workflow/`.
+> `docs/product-workflows/efforts/closed/prd-adr-brief-workflow/`.
+> The effort is in the `closed` status bucket after Atom 38, but post-closeout
+> review found open blockers before the full design can be claimed delivered.
 >
 > Design docs:
 > [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md),
@@ -58,16 +60,23 @@ These are complete and the product workflow composes them without modification.
 The design doc exists at
 [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md).
 See [[20 - PRD ADR Brief Research Workflow PROPOSAL]] for the Obsidian summary.
-Implementation is active and source-controlled through the durable effort folder.
-As of Atom 35 planning, deterministic schemas, product lint/audit/status,
-research profile planning/merge/prompt rendering, PRD/ADR prompt rendering,
-acceptance metadata validation, ADR supersession link validation, plan-only TDD
-obligation synthesis, tiered coverage-gate evaluation, lint-verified brief
-generation, read-only execution feedback linking, durable feedback
-reconciliation, product-workflow metrics in product audit/status, Obsidian
-parity enforcement, human-readable CLI next-action coverage, and
-ranker-learning evidence adapter tracking exist. The active design-doc slice is
-the first Phase 6 operator status and continuation surface atom.
+Implementation is source-controlled through the durable effort folder. After
+Atom 38, deterministic schemas, product lint/audit/status, research profile
+planning/merge/prompt rendering, PRD/ADR prompt rendering, acceptance metadata
+validation, ADR supersession link validation, plan-only TDD obligation
+synthesis, tiered coverage-gate evaluation, lint-verified brief generation,
+read-only execution feedback linking, durable feedback reconciliation,
+product-workflow metrics in product audit/status, Obsidian parity enforcement,
+human-readable CLI next-action coverage, ranker-learning evidence adapter
+tracking, a CLI-ready operator status view, effort browsing, and status
+migration plan/apply behavior exist.
+
+Post-closeout blockers: status-migration apply temp-path writes need symlink
+hardening; Phase 6 TUI continuation/handoff is incomplete; the coverage gate
+must reuse product lint/audit authority or preflight those validators; the
+durable two-ADR supersession fixture and index-vs-markdown divergence policy are
+missing; Phase 7 read-only `idiom tool`/MCP product workflow exposure is not
+shipped; and closed-effort/missing-state/JSON usage-error UX parity gaps remain.
 
 ### Schemas and Types
 
@@ -128,6 +137,9 @@ the first Phase 6 operator status and continuation surface atom.
   references without dispatching lanes or mutating `.idiom` runtime state
 - [x] `idiom product lint` — validate durable effort artifacts and cross-links
 - [x] `idiom product audit` — sectioned audit over the product workflow directory
+- [x] `idiom product efforts` — browse durable efforts by status bucket
+- [x] `idiom product status-migration` — plan and apply status-folder migration
+  with stable effort IDs
 
 ### Telemetry and Durable Events
 
@@ -159,11 +171,14 @@ the first Phase 6 operator status and continuation surface atom.
 - [x] Human-readable CLI coverage for operator-facing product commands
 - [x] Ranker-learning evidence adapter tracking
 
-## NOT STARTED: Behavioral TDD Coverage Pipeline
+## TARGET DESIGN: Behavioral TDD Coverage Pipeline
 
 The design doc exists at [design-tdd-coverage.md](../design-tdd-coverage.md).
 See [[21 - Behavioral TDD Coverage PROPOSAL]] for the Obsidian summary.
-Zero implementation code exists.
+The full EARS/FMEA/HAZOP/PBT/mutation pipeline is not implemented. A narrower
+product-workflow coverage evaluator exists and is enough to gate current brief
+rendering fixtures, but it is not yet the full canonical coverage gate and
+still needs product lint/audit authority reuse.
 
 ### TODO: Stage 1-4 (Requirements to Contracts)
 
@@ -222,9 +237,9 @@ to match the atom complexity, one distinct GPT reviewer sub-agent, required
 verification, and a post-effort investigation report before closeout. Persist
 atom state in the effort folder so work can resume across sessions without
 relying on raw transcript replay. Historical DS4/GLM/OpenCode attempts remain
-audit evidence only unless a human explicitly re-authorizes them. The active
-Phase 6 atom is `impl-0035-phase-6-operator-status-view-model`, a shared
-read-only operator status view model for CLI/TUI continuation.
+audit evidence only unless a human explicitly re-authorizes them. The next work
+should be follow-up remediation atoms for the post-closeout blockers, not a
+claim that Atom 38 completed the design.
 
 ### TODO: Long-Lived Implementation Operating Model
 
@@ -309,16 +324,13 @@ read-only operator status view model for CLI/TUI continuation.
     supersession validation fails
 - [x] Brief generator with coverage gate dependency
 
-### Phase 5: Mutation Testing and Verification
-
-- [ ] Mutation operator registry
-- [ ] Mutation score calculator
-- [ ] Mutation score gate (>= 80%)
-- [ ] Spec-compliance evaluation
-
-### Phase 6: Execution Feedback Loop
+### Phase 5: Execution Feedback Loop
 
 - [x] Read-only lane/progress/evidence reference summary
+- [x] Durable feedback reconciliation into bounded workflow-state/evidence-link
+  output
+- [x] Product-workflow metrics in product audit/status
+- [x] Ranker-learning evidence adapter from verified feedback summaries
 - [ ] Durable lane event → PRD/ADR/TDD obligation linking
 - [ ] Post-mortem obligation auto-generation
 - [ ] Incident → FMEA/HAZOP feedback
@@ -327,7 +339,23 @@ read-only operator status view model for CLI/TUI continuation.
   status, with explicit no-change rationale support
 - [x] Human-readable CLI output tests for each operator-facing product command,
   including actionable failure text and next valid action
-- [ ] Shared CLI/TUI operator status and continuation view model
+
+### Behavioral Coverage Remaining
+
+- [ ] Mutation operator registry
+- [ ] Mutation score calculator
+- [ ] Mutation score gate (>= 80%)
+- [ ] Spec-compliance evaluation
+
+### Phase 6: TUI Operator and Continuation Surface
+
+- [x] Shared CLI-ready operator status view model
+- [x] Read-only effort browser over `unstarted`, `started`, and `closed`
+  buckets
+- [x] Status migration planning and apply semantics
+- [ ] TUI presenter over the same workflow use cases as the CLI
+- [ ] CLI/TUI handoff fixtures proving pause/resume without raw transcript
+  context
 
 ### Phase 7: Sidecar and External Agent Use
 

@@ -4,14 +4,36 @@
 their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: cross-pillar design proposal, drafted 2026-05-15; reviewed
-2026-05-17
+Status: cross-pillar target design with implementation status overlay, drafted
+2026-05-15; reviewed 2026-05-18
 
-Implementation state as of 2026-05-17: the lower-level context,
-architect-packet, artifact, brief-lint, atom-intake, lane, product-evidence,
-and release-evidence surfaces exist. The PRD/ADR/TDD product workflow and
-behavioral coverage pipeline described here are still proposed and should not be
-read as shipped CLI behavior.
+Implementation state as of 2026-05-18: the durable implementation effort has
+been migrated to
+`docs/product-workflows/efforts/closed/prd-adr-brief-workflow`, and many
+headless product workflow surfaces now ship as deterministic CLI behavior. The
+closed folder is a durable status bucket, not proof that every acceptance
+criterion in this design has been delivered. Treat this document as the target
+contract plus the status overlay below.
+
+Shipped workflow surfaces include product lint/audit/status, research profile
+inspection/planning/merge/prompt rendering, PRD/ADR prompt rendering,
+acceptance metadata and ADR supersession validation, plan-only TDD obligation
+synthesis, deterministic coverage-gate evaluation, lint-verified brief
+rendering, read-only execution feedback linking, bounded feedback
+reconciliation, product-workflow metrics, Obsidian parity checks, CLI
+next-action guidance, ranker-learning evidence adapters, the CLI-ready operator
+status view model, the read-only effort browser, and status-migration
+plan/apply behavior.
+
+Open delivery blockers from the 2026-05-18 post-closeout review: status
+migration apply must harden predictable temp-path writes against pre-existing
+symlinks; the TUI continuation/handoff surface is not yet delivered; the
+coverage gate must reuse product lint/audit authority or run those checks as
+blocking preconditions; the durable two-ADR supersession fixture and
+index-vs-markdown divergence policy are still missing; Phase 7 `idiom tool`/MCP
+read-only product workflow exposure is not shipped; and operator UX/API parity
+gaps remain for closed-effort actions, missing-state recovery, and JSON
+usage-error output.
 
 This document designs the upstream product and architecture workflow that turns
 research-backed product intent into dispatchable Idiom implementation briefs:
@@ -205,8 +227,9 @@ The proposal should be read in two layers:
 
 | Layer | Current state | Implication |
 | --- | --- | --- |
-| Lower harness substrate | Implemented: context graph tools, architect packets, artifact generation, brief lint, atom intake, lane dispatch, plan-execute progress state, lane history, product evidence, release evidence, telemetry, and audit. | The workflow can be prototyped manually with current commands. |
-| Product workflow | Proposed: research profiles, evidence cards, PRD/ADR schemas, TDD obligation ledgers, risk-tiered coverage gate, traceability matrix, product workflow commands, and TUI operator surface. | Do not treat PRD/ADR/TDD artifacts as dispatch authority until schemas and gates exist. |
+| Lower harness substrate | Implemented: context graph tools, architect packets, artifact generation, brief lint, atom intake, lane dispatch, plan-execute progress state, lane history, product evidence, release evidence, telemetry, and audit. | The workflow can be composed from stable headless harness capabilities. |
+| Product workflow CLI | Partially implemented: durable effort folders/indexes, product lint/audit/status, research profile surfaces, evidence merge, PRD/ADR prompt renderers, acceptance/supersession checks, plan-only TDD obligation synthesis, deterministic coverage evaluation, brief rendering, execution feedback, metrics, Obsidian parity, effort browsing, and status migration. | These surfaces are usable as headless deterministic workflow contracts, but several design acceptance criteria remain open. |
+| Product workflow TUI/sidecar | Not complete: the shared operator status model exists for CLI use, but TUI continuation/handoff fixtures and read-only `idiom tool`/MCP product workflow exposure are not delivered. | Do not claim graceful interactive continuation or external-agent product workflow consumption until these slices close. |
 
 For TUI users, the current implementation does not yet provide a first-class
 interactive product-workflow surface. Existing resume support can replay a prior
@@ -1999,6 +2022,13 @@ and fixture atoms. The investigation answers:
    artifact promotion, or dispatch continuation?
 
 ## Acceptance Criteria For The Effort
+
+Post-closeout review status as of 2026-05-18: the durable effort is in the
+`closed` status bucket after Atom 38, but the feature does not yet satisfy all
+criteria below. The remaining blockers are the status-migration temp-path
+hardening issue, Phase 6 TUI continuation/handoff completion, coverage-gate
+authority reuse, durable two-ADR supersession/divergence fixtures, Phase 7
+sidecar exposure, and operator UX/API parity gaps.
 
 The feature is useful when a team can:
 
