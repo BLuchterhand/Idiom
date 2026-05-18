@@ -1,6 +1,6 @@
 {
   "schema_version": "idiom.effort_index.v1",
-  "updated_at": "2026-05-18T12:41:00Z",
+  "updated_at": "2026-05-18T12:50:00Z",
   "efforts": [
     {
       "effort_id": "prd-adr-brief-workflow",
@@ -9,7 +9,7 @@
       "current_phase": "phase-3-prd-adr-generation",
       "current_state": "planned",
       "folder_path": "started/prd-adr-brief-workflow",
-      "task_id": "impl-0024-phase-3-adr-draft-prompt-rendering",
+      "task_id": "impl-0025-phase-3-acceptance-state-and-supersession-links",
       "created_at": "2026-05-17T15:20:00Z",
       "prior_paths": []
     }

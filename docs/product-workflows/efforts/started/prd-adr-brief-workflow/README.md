@@ -7,7 +7,7 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0024-phase-3-adr-draft-prompt-rendering`
-- Active atom: none planned; next action is to plan acceptance state and supersession links
+- Active atom: `impl-0025-phase-3-acceptance-state-and-supersession-links` planned
 - Status bucket: `started`
 - Current phase: `phase-3-prd-adr-generation`
 - Context pack: `c4fb4dbdee75e163`
@@ -84,6 +84,12 @@ This effort is the durable implementation state for delivering
   supersession links, or mutating PRD/evidence artifacts. It fails closed on
   missing/invalid evidence or PRD inputs, unsafe paths, prompt symlink targets,
   and symlinked prompt ancestors.
+- Atom 25 is planned as the acceptance state and supersession link atom. It
+  should add deterministic PRD/ADR acceptance metadata validation plus ADR
+  supersedes/superseded_by link checks for lint/audit. The atom must not add a
+  model acceptance command, must keep human acceptance as the default for
+  material decisions, and must preserve prompt-renderer behavior that leaves
+  acceptance metadata empty unless a human explicitly provided it.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated

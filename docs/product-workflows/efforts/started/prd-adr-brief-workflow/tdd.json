@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0024-phase-3-adr-draft-prompt-rendering",
+  "task_id": "impl-0025-phase-3-acceptance-state-and-supersession-links",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,57 +19,46 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned",
-      "adr_draft_prompt_rendering",
-      "adr_draft_command_recipe",
-      "product_adr_render_prompt_json_surface",
-      "product_adr_render_prompt_no_model_or_artifact_writes",
-      "focused_go_tests",
-      "full_go_tests",
-      "durable_json_jsonl_validation",
-      "privacy_secret_scan",
-      "diff_whitespace_check",
-      "review_passed",
-      "atom_closed"
+      "atom_planned"
     ],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0024-001",
+      "id": "TDD-IMPL-0025-001",
       "type": "contract",
-      "behavior": "ADR draft prompt planning reads the validated evidence ledger and parsed PRD, then produces a deterministic prompt plan containing bounded evidence summaries, PRD requirement summaries, material-decision guidance, output path metadata, and no raw file bodies.",
-      "owner": "internal/productworkflow/adr_draft_prompts_test.go",
-      "command": "go test ./internal/productworkflow -run TestADRDraftPrompt",
+      "behavior": "PRD and ADR parsers retain acceptance metadata fields, and accepted artifacts require explicit accepted_at, accepted_by, and acceptance_profile metadata while draft/proposed artifacts keep those fields optional.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow -run 'Test.*Acceptance'",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0024-002",
+      "id": "TDD-IMPL-0025-002",
       "type": "contract",
-      "behavior": "The ADR draft prompt plan includes a deterministic idiom artifact command recipe using --prompt-file, --output, --json-out, --report-out, --no-tools, and --mechanical-repair without executing the command.",
-      "owner": "internal/productworkflow/adr_draft_prompts_test.go",
-      "command": "go test ./internal/productworkflow -run TestADRDraftPrompt",
+      "behavior": "ADR index and ADR front matter support supersedes and superseded_by link arrays and reject broken, duplicate, self-referential, or non-reciprocal supersession links.",
+      "owner": "internal/productworkflow/validate_test.go",
+      "command": "go test ./internal/productworkflow -run 'Test.*Supersession'",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0024-003",
+      "id": "TDD-IMPL-0025-003",
       "type": "acceptance",
-      "behavior": "idiom product adr --render-prompt writes exactly the configured effort-relative prompt file, exposes JSON metadata, fails closed for missing or invalid evidence/PRD inputs and unsafe prompt/output paths, and does not write ADR markdown, ADR index, PRD, traceability, or evidence.",
+      "behavior": "idiom product lint and idiom product audit surface typed findings for missing acceptance metadata and broken ADR supersession links in the ADR section while preserving the current durable fixture pass path.",
       "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom -run TestProductADRRenderPrompt",
+      "command": "go test ./cmd/idiom -run 'TestProduct.*Acceptance|TestProduct.*Supersession'",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0024-004",
+      "id": "TDD-IMPL-0025-004",
       "type": "audit",
-      "behavior": "The ADR draft prompt rendering surface records only effort-relative paths, evidence/PRD identifiers, counts, command recipes, and typed findings in reports/state; durable workflow metadata does not embed rendered prompt bodies, raw transcripts, file bodies, secrets, or customer-identifying data.",
-      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0024-review.json",
+      "behavior": "The atom records GPT Codex implementor/reviewer selection, Idiom discovery evidence, and privacy-safe durable reports without adding model-acceptance authority or storing raw prompts/transcripts/file bodies/secrets.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0025-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     }
   ]
 }
