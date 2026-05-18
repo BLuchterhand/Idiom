@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.effort_index.v1",
-  "updated_at": "2026-05-18T16:45:00Z",
+  "updated_at": "2026-05-18T17:05:00Z",
   "efforts": [
     {
       "effort_id": "prd-adr-brief-workflow",
       "title": "PRD/ADR/Brief Research Workflow",
       "status_bucket": "started",
       "current_phase": "phase-5-execution-feedback",
-      "current_state": "implementing",
+      "current_state": "planned",
       "folder_path": "started/prd-adr-brief-workflow",
       "task_id": "impl-0033-phase-5-human-readable-cli-coverage",
       "created_at": "2026-05-17T15:20:00Z",

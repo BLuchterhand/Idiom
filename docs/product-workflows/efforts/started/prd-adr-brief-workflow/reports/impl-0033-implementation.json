@@ -5,19 +5,28 @@
   "implementor_id": "codex-gpt-worker-impl-0033",
   "runtime": "codex_subagent",
   "model": "gpt-5.3-codex",
-  "completed_at": "",
+  "completed_at": "2026-05-18T17:05:00Z",
   "complexity_tier": "C2",
-  "scope_statement": "Add human-readable CLI coverage and any minimal CLI text/JSON parity needed so operator-facing product lint, audit, and status commands expose actionable next-step text on pass/fail/error paths without dispatching lanes or mutating runtime state.",
-  "code_changes": false,
-  "changed_paths": [],
+  "scope_statement": "Added actionable human-readable and JSON next-step guidance for product lint, audit, and status output while preserving exit codes, typed findings, metrics/section summaries, privacy-safe error output, and no-dispatch authority boundaries.",
+  "code_changes": true,
+  "changed_paths": [
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go",
+    "internal/productworkflow/status.go",
+    "internal/productworkflow/status_test.go"
+  ],
   "verification": {
-    "run_by_implementor": false,
+    "run_by_implementor": true,
     "commands": [
       "idiom tool context_pack --input '{\"task\":\"phase 5 human-readable CLI coverage operator-facing product commands actionable failure text next valid action JSON parity\",\"mode\":\"plan\",\"limit\":12}'",
       "idiom tool context_query --input '{\"query\":\"product workflow human-readable CLI output tests actionable failure text next valid action operator-facing product commands\",\"resolution\":\"symbol\"}'",
-      "go test ./cmd/idiom -run 'TestProduct(Lint|Audit|Status).*Actionable|TestProduct(Lint|Audit).*NextValidAction' -count=1",
+      "go test ./cmd/idiom -run 'TestProduct(Lint|Audit|Status).*Actionable|TestProduct(Lint|Audit).*NextValidAction|TestProductStatusAuditFailTextIncludesNextAction|TestProductStatusErrorNextValidActionsParity' -count=1",
+      "go test ./internal/productworkflow -run TestLoadProductStatus -count=1",
       "go test ./cmd/idiom -run TestProduct -count=1",
       "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
@@ -26,20 +35,19 @@
       "privacy secret-pattern scan over durable effort artifacts",
       "git diff --check"
     ],
-    "status": "pending"
+    "status": "passed_full_suite_and_product_gates"
   },
   "discovery_evidence": [
     "context_pack:b946625388f049d8",
-    "context_query:product workflow human-readable CLI output tests actionable failure text next valid action operator-facing product commands"
+    "context_query:product workflow human-readable CLI output tests actionable failure text next valid action operator-facing product commands",
+    "context_zoom:runProductLint",
+    "context_zoom:productBriefNextValidAction"
   ],
   "reviewer_id": "codex-gpt-review-impl-0033",
-  "commit_hash": "",
+  "commit_hash": "031298ad6c424afee3374d9114364cb5262aa270",
   "planning_checkpoint_commit": "b2c4645fb478f88302e75fc69d7a4e5640ea8930",
-  "privacy_note": "planning report stores only scope, model assignment, command names, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
-  "open_blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ]
+  "planning_record_checkpoint_commit": "1e771ae",
+  "privacy_note": "report stores only scope, model assignment, command names, bounded findings, changed paths, and commit ids; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
+  "open_blockers": [],
+  "implementation_commit": "031298ad6c424afee3374d9114364cb5262aa270"
 }

@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0032-phase-5-obsidian-parity-check`
-- Active atom: `impl-0033-phase-5-human-readable-cli-coverage`
+- Last completed atom: `impl-0033-phase-5-human-readable-cli-coverage`
+- Active atom: none; next valid action is `track_phase_5_ranker_learning_evidence_adapter_atom`
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
-- Context pack: `7ba9bd95a3f2d29d`
+- Context pack: `b946625388f049d8`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -158,29 +158,29 @@ This effort is the durable implementation state for delivering
   post-closeout checklist drift, scoped repo/effort reads, and typed
   privacy-safe findings. Review repairs ensured explicit no-change rationale
   text is honored and ancestor-directory Obsidian files are not read.
-- Atom 33 is planned as the next Phase 5 execution-feedback slice. It should
-  harden human-readable output coverage for ready operator-facing product
-  commands, especially actionable failure text, typed finding/blocker identity,
-  and next-valid-action text where the JSON surface already exposes it. Keep
-  lane dispatch, model execution, `.idiom` runtime mutation, evidence export
-  generation, ranker-learning promotion, and raw prompt/transcript/file-body
-  output outside the atom.
+- Atom 33: all TDD obligations satisfied. Added deterministic
+  `next_valid_action` parity to product lint/audit JSON and human-readable
+  output, status text `next:` guidance for pass/fail/error paths,
+  privacy-safe workflow-state error recovery actions, and a repair ensuring
+  current product status failures surface remediation before stale workflow
+  progression.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 32 closeout and Atom 33 planning. These
+The workflow implementation remains in progress after Atom 33 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
 plan-only TDD obligation synthesis, deterministic coverage-gate evaluation,
-lint-verified brief generation, read-only execution feedback linking, and
+lint-verified brief generation, read-only execution feedback linking,
 deterministic feedback reconciliation into bounded workflow-state/evidence-link
-output, and product-workflow metrics in product audit/status. The active Phase
-5 slice is human-readable CLI output coverage for operator-facing product
-commands; ranker-learning adapters and operator/TUI surfaces remain later atoms.
+output, product-workflow metrics in product audit/status, Obsidian parity
+checks, and human-readable product CLI next-action coverage. The next Phase 5
+slice is ranker-learning evidence adapter tracking; operator/TUI surfaces remain
+later atoms.
 
 ## Implementation Guidelines
 
@@ -405,8 +405,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Start `impl-0033-phase-5-human-readable-cli-coverage` with the planned C2 GPT
-Codex worker. Keep the slice focused on operator-facing product command text
-output, actionable failure text, and next-valid-action coverage; keep lane
-dispatch, `.idiom` runtime mutation, evidence export generation, and
-ranker-learning promotion outside the atom.
+Plan the Phase 5 ranker-learning evidence adapter atom. Keep the slice focused
+on deterministic evidence tracking and adapter boundaries; keep lane dispatch,
+`.idiom` runtime mutation beyond the explicit adapter contract, evidence export
+generation, and operator/TUI surfaces outside the atom.

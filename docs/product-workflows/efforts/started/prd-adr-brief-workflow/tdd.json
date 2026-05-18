@@ -30,7 +30,8 @@
       "product_workflow_metrics",
       "product_workflow_metrics_planned",
       "tdd_obligation_synthesis_plan",
-      "human_readable_cli_coverage_planned"
+      "human_readable_cli_coverage_planned",
+      "human_readable_cli_coverage"
     ],
     "gates_blocked": []
   },
@@ -294,7 +295,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run 'TestProductLintTextOutputIsActionable|TestProductLintJSONIncludesNextValidAction' -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0033-002",
@@ -303,7 +304,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run 'TestProductAuditTextOutputIsActionable|TestProductAuditJSONIncludesNextValidAction' -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0033-003",
@@ -312,7 +313,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run 'TestProductStatusTextOutputIsActionable|TestProductStatusErrorTextIncludesNextAction' -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0033-004",
@@ -321,7 +322,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0033-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     }
   ]
 }
