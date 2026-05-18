@@ -78,6 +78,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --evaluate-coverage [--json]")
 	fmt.Fprintln(w, "  idiom product brief --effort-root <path> --render [--brief-output briefs/<task>.md] [--json]")
 	fmt.Fprintln(w, "  idiom product feedback --effort-root <path> --lane-history-file <path> --plan-progress-file <path> --product-evidence-id <id> --product-evidence-path <path> --release-evidence-id <id> --release-evidence-path <path> --verification-file <path> --brief-path <path> --changed-path <path> --tdd-obligation-ref <id> [--json]")
+	fmt.Fprintln(w, "  idiom product feedback --effort-root <path> --reconcile-summary <path> --reconciled-state-output <path> [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -1392,6 +1393,15 @@ type productFeedbackOutput struct {
 	NextValidAction string                                   `json:"next_valid_action"`
 }
 
+type productFeedbackReconcileOutput struct {
+	Status                string                                                `json:"status"`
+	EffortRoot            string                                                `json:"effort_root"`
+	SummaryReferencePath  string                                                `json:"summary_reference_path"`
+	ReconciledStateOutput string                                                `json:"reconciled_state_output"`
+	Reconciliation        productworkflow.ExecutionFeedbackReconciliationResult `json:"reconciliation"`
+	NextValidAction       string                                                `json:"next_valid_action"`
+}
+
 var productFeedbackPrivacyMarkers = []string{
 	"raw prompt",
 	"raw prompts",
@@ -1422,6 +1432,8 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	var releaseEvidenceID string
 	var releaseEvidencePath string
 	var briefPath string
+	var reconcileSummary string
+	var reconciledStateOutput string
 	var jsonOutput bool
 	var changedPaths multiValueFlag
 	var tddRefs multiValueFlag
@@ -1434,6 +1446,8 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	fs.StringVar(&releaseEvidenceID, "release-evidence-id", "", "release evidence bundle id reference")
 	fs.StringVar(&releaseEvidencePath, "release-evidence-path", "", "release evidence bundle path reference")
 	fs.StringVar(&briefPath, "brief-path", "", "effort-relative brief path reference")
+	fs.StringVar(&reconcileSummary, "reconcile-summary", "", "effort-relative JSON execution feedback summary to reconcile")
+	fs.StringVar(&reconciledStateOutput, "reconciled-state-output", "", "effort-relative workflow-state JSON output path for reconciliation result")
 	fs.Var(&changedPaths, "changed-path", "changed path reference (repeatable)")
 	fs.Var(&tddRefs, "tdd-obligation-ref", "TDD obligation reference (repeatable)")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
@@ -1443,19 +1457,42 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		}
 		return 2
 	}
+	reconcileMode := strings.TrimSpace(reconcileSummary) != "" || strings.TrimSpace(reconciledStateOutput) != ""
+	if reconcileMode {
+		if strings.TrimSpace(reconcileSummary) == "" || strings.TrimSpace(reconciledStateOutput) == "" {
+			fmt.Fprintln(stderr, "product feedback: --reconcile-summary and --reconciled-state-output are both required in reconcile mode")
+			return 2
+		}
+		if len(changedPaths.values) > 0 || len(tddRefs.values) > 0 ||
+			strings.TrimSpace(laneHistoryFile) != "" || strings.TrimSpace(planProgressFile) != "" ||
+			strings.TrimSpace(verificationFile) != "" || strings.TrimSpace(productEvidenceID) != "" ||
+			strings.TrimSpace(productEvidencePath) != "" || strings.TrimSpace(releaseEvidenceID) != "" ||
+			strings.TrimSpace(releaseEvidencePath) != "" || strings.TrimSpace(briefPath) != "" {
+			fmt.Fprintln(stderr, "product feedback: reconcile mode only supports --effort-root, --reconcile-summary, --reconciled-state-output, and --json")
+			return 2
+		}
+	}
+
 	requirements := []struct {
 		name  string
 		value string
 	}{
 		{"--effort-root", effortRoot},
-		{"--lane-history-file", laneHistoryFile},
-		{"--plan-progress-file", planProgressFile},
-		{"--verification-file", verificationFile},
-		{"--product-evidence-id", productEvidenceID},
-		{"--product-evidence-path", productEvidencePath},
-		{"--release-evidence-id", releaseEvidenceID},
-		{"--release-evidence-path", releaseEvidencePath},
-		{"--brief-path", briefPath},
+	}
+	if !reconcileMode {
+		requirements = append(requirements, []struct {
+			name  string
+			value string
+		}{
+			{"--lane-history-file", laneHistoryFile},
+			{"--plan-progress-file", planProgressFile},
+			{"--verification-file", verificationFile},
+			{"--product-evidence-id", productEvidenceID},
+			{"--product-evidence-path", productEvidencePath},
+			{"--release-evidence-id", releaseEvidenceID},
+			{"--release-evidence-path", releaseEvidencePath},
+			{"--brief-path", briefPath},
+		}...)
 	}
 	for _, req := range requirements {
 		if strings.TrimSpace(req.value) == "" {
@@ -1463,11 +1500,11 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			return 2
 		}
 	}
-	if len(changedPaths.values) == 0 {
+	if !reconcileMode && len(changedPaths.values) == 0 {
 		fmt.Fprintln(stderr, "product feedback: at least one --changed-path is required")
 		return 2
 	}
-	if len(tddRefs.values) == 0 {
+	if !reconcileMode && len(tddRefs.values) == 0 {
 		fmt.Fprintln(stderr, "product feedback: at least one --tdd-obligation-ref is required")
 		return 2
 	}
@@ -1495,6 +1532,134 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			return err
 		}
 		return nil
+	}
+
+	var workflowState productworkflow.WorkflowState
+	if err := readJSONFile("workflow_state", "workflow_state.json", &workflowState, false); err != nil {
+		fmt.Fprintf(stderr, "product feedback: workflow_state.json invalid: %v\n", err)
+		return 1
+	}
+	if _, err := productworkflow.ParseWorkflowStateJSON(mustJSONMarshal(workflowState)); err != nil {
+		fmt.Fprintf(stderr, "product feedback: workflow_state.json parse failed: %v\n", err)
+		return 1
+	}
+
+	if reconcileMode {
+		summaryAbs, summaryRel, err := resolveProductFeedbackReferencePath(absRoot, reconcileSummary)
+		if err != nil {
+			fmt.Fprintf(stderr, "product feedback: reconcile summary invalid: %v\n", err)
+			return 1
+		}
+		summaryRaw, err := os.ReadFile(summaryAbs)
+		if err != nil {
+			fmt.Fprintf(stderr, "product feedback: reconcile summary invalid: %v\n", err)
+			return 1
+		}
+		if marker := findProductFeedbackPrivacyMarker(string(summaryRaw)); marker != "" {
+			fmt.Fprintf(stderr, "product feedback: reconcile summary contains forbidden privacy marker %q\n", marker)
+			return 1
+		}
+		var summary productworkflow.ExecutionFeedbackSummary
+		var wrapped productFeedbackOutput
+		switch {
+		case json.Unmarshal(summaryRaw, &wrapped) == nil && strings.TrimSpace(wrapped.Summary.Status) != "":
+			if !executionFeedbackStatusPass(wrapped.Status) {
+				fmt.Fprintf(stderr, "product feedback: reconcile summary status must be pass, got %q\n", wrapped.Status)
+				return 1
+			}
+			summary = wrapped.Summary
+		case json.Unmarshal(summaryRaw, &summary) == nil && strings.TrimSpace(summary.Status) != "":
+		default:
+			fmt.Fprintln(stderr, "product feedback: reconcile summary must be a feedback summary or full `product feedback --json` output")
+			return 1
+		}
+		var tddLedger productworkflow.TDDLedger
+		if err := readJSONFile("tdd", "tdd.json", &tddLedger, false); err != nil {
+			fmt.Fprintf(stderr, "product feedback: tdd.json invalid: %v\n", err)
+			return 1
+		}
+		if _, err := productworkflow.ParseTDDLedgerJSON(mustJSONMarshal(tddLedger)); err != nil {
+			fmt.Fprintf(stderr, "product feedback: tdd.json parse failed: %v\n", err)
+			return 1
+		}
+		knownObligations := make([]string, 0, len(tddLedger.Obligations))
+		for _, obligation := range tddLedger.Obligations {
+			knownObligations = append(knownObligations, obligation.ID)
+		}
+		_, outputRel, err := resolveProductFeedbackReferencePath(absRoot, reconciledStateOutput)
+		if err != nil {
+			fmt.Fprintf(stderr, "product feedback: reconciled-state-output path invalid: %v\n", err)
+			return 1
+		}
+		if filepath.ToSlash(outputRel) == "workflow_state.json" {
+			fmt.Fprintln(stderr, "product feedback: reconciled-state-output must not overwrite workflow_state.json")
+			return 1
+		}
+		reconciledAt := ""
+		if len(summary.LaneHistory) > 0 {
+			reconciledAt = strings.TrimSpace(summary.LaneHistory[len(summary.LaneHistory)-1].Timestamp)
+		}
+		if reconciledAt == "" {
+			reconciledAt = strings.TrimSpace(workflowState.UpdatedAt)
+		}
+		reconciled := productworkflow.ReconcileExecutionFeedback(productworkflow.ExecutionFeedbackReconciliationInput{
+			WorkflowState:        workflowState,
+			Summary:              summary,
+			ReconciledAt:         reconciledAt,
+			SummaryReferencePath: filepath.ToSlash(summaryRel),
+			ReconciledOutputPath: filepath.ToSlash(outputRel),
+			KnownTDDObligations:  knownObligations,
+		})
+		out := productFeedbackReconcileOutput{
+			Status:                reconciled.Status,
+			EffortRoot:            absRoot,
+			SummaryReferencePath:  filepath.ToSlash(summaryRel),
+			ReconciledStateOutput: filepath.ToSlash(outputRel),
+			Reconciliation:        reconciled,
+			NextValidAction:       reconciled.NextValidAction,
+		}
+		logCLIPhase(rec, "product_feedback_reconcile", map[string]any{
+			"status":          out.Status,
+			"blocker_count":   len(out.Reconciliation.Blockers),
+			"finding_count":   len(out.Reconciliation.Findings),
+			"next_valid_step": out.NextValidAction,
+		})
+		if out.Status == "pass" {
+			stateBytes, err := json.MarshalIndent(reconciled.WorkflowState, "", "  ")
+			if err != nil {
+				fmt.Fprintf(stderr, "product feedback: marshal reconciled workflow state: %v\n", err)
+				return 1
+			}
+			if err := writeProductFeedbackReconciledState(absRoot, outputRel, append(stateBytes, '\n')); err != nil {
+				fmt.Fprintf(stderr, "product feedback: write reconciled state output: %v\n", err)
+				return 1
+			}
+		}
+		if jsonOutput {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(out); err != nil {
+				fmt.Fprintf(stderr, "product feedback: encode JSON: %v\n", err)
+				return 1
+			}
+		} else {
+			fmt.Fprintf(stdout, "product feedback reconcile: %s\n", out.Status)
+			fmt.Fprintf(stdout, "effort: %s\n", filepath.Base(absRoot))
+			fmt.Fprintf(stdout, "summary: %s\n", out.SummaryReferencePath)
+			fmt.Fprintf(stdout, "reconciled-state-output: %s\n", out.ReconciledStateOutput)
+			fmt.Fprintf(stdout, "evidence links: %d (product=%s release=%s)\n", out.Reconciliation.EvidenceLinks.LinkedArtifactPathCount, out.Reconciliation.EvidenceLinks.ProductEvidenceID, out.Reconciliation.EvidenceLinks.ReleaseEvidenceID)
+			if len(out.Reconciliation.Blockers) > 0 {
+				fmt.Fprintf(stdout, "blockers: %d\n", len(out.Reconciliation.Blockers))
+				for _, blocker := range out.Reconciliation.Blockers {
+					fmt.Fprintf(stdout, "  [%s] %s\n", blocker.Kind, blocker.Message)
+				}
+			}
+			fmt.Fprintf(stdout, "next: %s\n", out.NextValidAction)
+		}
+		if out.Status != "pass" {
+			return 1
+		}
+		return 0
 	}
 
 	var laneHistory []productworkflow.ExecutionLaneEventRef
@@ -1528,15 +1693,6 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		return 1
 	}
 
-	var workflowState productworkflow.WorkflowState
-	if err := readJSONFile("workflow_state", "workflow_state.json", &workflowState, false); err != nil {
-		fmt.Fprintf(stderr, "product feedback: workflow_state.json invalid: %v\n", err)
-		return 1
-	}
-	if _, err := productworkflow.ParseWorkflowStateJSON(mustJSONMarshal(workflowState)); err != nil {
-		fmt.Fprintf(stderr, "product feedback: workflow_state.json parse failed: %v\n", err)
-		return 1
-	}
 	var tddLedger productworkflow.TDDLedger
 	if err := readJSONFile("tdd", "tdd.json", &tddLedger, false); err != nil {
 		fmt.Fprintf(stderr, "product feedback: tdd.json invalid: %v\n", err)
@@ -1612,6 +1768,9 @@ func resolveProductFeedbackReferencePath(effortRoot, relPath string) (string, st
 		return "", "", fmt.Errorf("path %q must be effort-relative and must not contain path traversal", relPath)
 	}
 	absPath := filepath.Join(effortRoot, clean)
+	if err := rejectProductFeedbackSymlinkAncestors(effortRoot, clean); err != nil {
+		return "", "", err
+	}
 	if info, err := os.Lstat(absPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return "", "", fmt.Errorf("path %q must not be a symlink", clean)
 	} else if err != nil && !os.IsNotExist(err) {
@@ -1640,6 +1799,25 @@ func resolveProductFeedbackReferencePath(effortRoot, relPath string) (string, st
 		}
 		existing = parent
 	}
+}
+
+func rejectProductFeedbackSymlinkAncestors(effortRoot, cleanRel string) error {
+	parts := strings.Split(filepath.ToSlash(cleanRel), "/")
+	current := filepath.Clean(effortRoot)
+	for i := 0; i < len(parts)-1; i++ {
+		current = filepath.Join(current, parts[i])
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect path ancestor %q: %w", filepath.ToSlash(filepath.Join(parts[:i+1]...)), err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path ancestor %q must not be a symlink", filepath.ToSlash(filepath.Join(parts[:i+1]...)))
+		}
+	}
+	return nil
 }
 
 func findProductFeedbackPrivacyMarker(value string) string {
@@ -1839,6 +2017,37 @@ func productBriefNextValidAction(status, briefOutputPath string) string {
 		return "rerun with `--brief-output briefs/<task>.md` to persist the lint-passing brief"
 	}
 	return "run `idiom brief lint <brief.md>` or dispatch from this brief output"
+}
+
+func writeProductFeedbackReconciledState(effortRoot, relPath string, data []byte) error {
+	clean := filepath.ToSlash(relPath)
+	if _, _, err := resolveProductFeedbackReferencePath(effortRoot, clean); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(effortRoot)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	dir := filepath.Dir(clean)
+	if dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	if _, _, err := resolveProductFeedbackReferencePath(effortRoot, clean); err != nil {
+		return err
+	}
+	return root.WriteFile(clean, data, 0o644)
+}
+
+func executionFeedbackStatusPass(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pass", "passed", "complete", "completed", "success", "source-satisfied":
+		return true
+	default:
+		return false
+	}
 }
 
 func cleanProductRelativePath(relPath string) (string, bool) {

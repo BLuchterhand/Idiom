@@ -4267,6 +4267,275 @@ func TestProductFeedbackPassesWithValidReferences(t *testing.T) {
 	}
 }
 
+func TestProductFeedbackReconcilePassesAndWritesOutput(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)
+	workflowState = strings.Replace(workflowState, `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	workflowState = strings.Replace(workflowState, `"task_id":"impl-test"`, `"task_id":"impl-test","state_revision":1`, 1)
+	writeTestFile(t, dir, "workflow_state.json", workflowState)
+	writeTestFile(t, dir, "references/feedback_summary.json", `{
+  "status":"pass",
+  "effort_id":"test-effort",
+  "task_id":"impl-test",
+	  "state_revision":1,
+	  "current_phase":"phase-5-execution-feedback",
+	  "current_state":"planned",
+  "lane_history":[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z"}],
+  "plan_phase":"phase-5",
+  "plan_state":"feedback",
+  "plan_status":"completed",
+  "product_evidence":{"id":"pe-1","path":"product_evidence/export-1.json"},
+  "release_evidence":{"id":"re-1","path":"release_evidence/bundle-1.json"},
+  "brief_path":"briefs/test.md",
+  "changed_paths":["cmd/idiom/product_workflow.go"],
+  "verification":{"status":"pass","commands":["go test ./cmd/idiom"]},
+  "tdd_obligations":["TDD-001"],
+  "findings":[],
+  "blockers":[],
+  "next_valid_action":"publish execution feedback summary as deterministic closeout evidence"
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--reconcile-summary", "references/feedback_summary.json",
+		"--reconciled-state-output", "reports/workflow_state.reconciled.json",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productFeedbackReconcileOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "pass" || out.Reconciliation.Status != "pass" {
+		t.Fatalf("expected pass reconciliation output, got %#v", out)
+	}
+	if out.Reconciliation.EvidenceLinks.LinkedArtifactPathCount != 4 {
+		t.Fatalf("expected linked path count 4, got %#v", out.Reconciliation.EvidenceLinks)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "reports", "workflow_state.reconciled.json"))
+	if err != nil {
+		t.Fatalf("expected reconciled output file: %v", err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("expected JSON output state: %v", err)
+	}
+	artifactPaths, _ := state["artifact_paths"].(map[string]any)
+	if artifactPaths["execution_feedback_summary"] != "references/feedback_summary.json" {
+		t.Fatalf("expected summary artifact link, got %#v", artifactPaths)
+	}
+}
+
+func TestProductFeedbackReconcileBlocksMalformedPassSummary(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/feedback_summary.json", `{
+  "status":"pass",
+  "effort_id":"test-effort",
+  "task_id":"impl-test",
+  "state_revision":1,
+  "product_evidence":{"id":"pe-1","path":"product_evidence/export-1.json"},
+  "release_evidence":{"id":"re-1","path":"release_evidence/bundle-1.json"},
+  "brief_path":"briefs/test.md"
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--reconcile-summary", "references/feedback_summary.json",
+		"--reconciled-state-output", "reports/workflow_state.reconciled.json",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for malformed pass summary, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productFeedbackReconcileOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked output, got %#v", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "reports", "workflow_state.reconciled.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected malformed summary not to write output file, got err=%v", err)
+	}
+}
+
+func TestProductFeedbackReconcileFailsClosed(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/feedback_summary.json", `{
+  "status":"blocked",
+  "effort_id":"wrong-effort",
+  "task_id":"wrong-task",
+  "lane_history":[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z"}],
+  "product_evidence":{"id":"pe-1","path":"../escape.json"},
+  "release_evidence":{"id":"re-1","path":"release_evidence/bundle-1.json"},
+  "brief_path":"briefs/test.md",
+  "verification":{"status":"pass","commands":[]},
+  "tdd_obligations":["TDD-001"],
+  "findings":[],
+  "blockers":[{"kind":"x","message":"y","next_valid_action":"z"}],
+  "next_valid_action":"dispatch lane now"
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--reconcile-summary", "references/feedback_summary.json",
+		"--reconciled-state-output", "reports/workflow_state.reconciled.json",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productFeedbackReconcileOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked, got %#v", out)
+	}
+	if len(out.Reconciliation.Blockers) == 0 {
+		t.Fatalf("expected reconciliation blockers, got %#v", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "reports", "workflow_state.reconciled.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected blocked reconciliation not to write output file, got err=%v", err)
+	}
+}
+
+func TestProductFeedbackReconcileTextOutputIsActionable(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)
+	workflowState = strings.Replace(workflowState, `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	workflowState = strings.Replace(workflowState, `"task_id":"impl-test"`, `"task_id":"impl-test","state_revision":1`, 1)
+	writeTestFile(t, dir, "workflow_state.json", workflowState)
+	writeTestFile(t, dir, "references/feedback_summary.json", `{
+  "status":"pass",
+  "effort_id":"test-effort",
+  "task_id":"impl-test",
+  "state_revision":1,
+  "current_phase":"phase-5-execution-feedback",
+  "current_state":"planned",
+  "lane_history":[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z"}],
+  "plan_phase":"phase-5",
+  "plan_state":"feedback",
+  "plan_status":"completed",
+  "product_evidence":{"id":"pe-1","path":"product_evidence/export-1.json"},
+  "release_evidence":{"id":"re-1","path":"release_evidence/bundle-1.json"},
+  "brief_path":"briefs/test.md",
+  "changed_paths":["cmd/idiom/product_workflow.go"],
+  "verification":{"status":"pass","commands":["go test ./cmd/idiom"]},
+  "tdd_obligations":["TDD-001"],
+  "findings":[],
+  "blockers":[],
+  "next_valid_action":"publish execution feedback summary as deterministic closeout evidence"
+}`)
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--reconcile-summary", "references/feedback_summary.json",
+		"--reconciled-state-output", "reports/workflow_state.reconciled.json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{"product feedback reconcile: pass", "evidence links: 4", "next: review reconciled workflow-state output"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected text output to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestProductFeedbackReconcileRejectsWorkflowStateOverwrite(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/feedback_summary.json", `{"status":"pass"}`)
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--reconcile-summary", "references/feedback_summary.json",
+		"--reconciled-state-output", "workflow_state.json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for workflow_state overwrite, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "must not overwrite workflow_state.json") {
+		t.Fatalf("expected workflow_state overwrite failure, got %s", stderr.String())
+	}
+}
+
+func TestProductFeedbackReconcileRejectsOutputSymlinkAncestor(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)
+	workflowState = strings.Replace(workflowState, `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	workflowState = strings.Replace(workflowState, `"task_id":"impl-test"`, `"task_id":"impl-test","state_revision":1`, 1)
+	writeTestFile(t, dir, "workflow_state.json", workflowState)
+	writeTestFile(t, dir, "references/feedback_summary.json", `{
+  "status":"pass",
+  "effort_id":"test-effort",
+  "task_id":"impl-test",
+  "state_revision":1,
+  "current_phase":"phase-5-execution-feedback",
+  "current_state":"planned",
+  "lane_history":[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z"}],
+  "plan_phase":"phase-5",
+  "plan_state":"feedback",
+  "plan_status":"completed",
+  "product_evidence":{"id":"pe-1","path":"product_evidence/export-1.json"},
+  "release_evidence":{"id":"re-1","path":"release_evidence/bundle-1.json"},
+  "brief_path":"briefs/test.md",
+  "changed_paths":["cmd/idiom/product_workflow.go"],
+  "verification":{"status":"pass","commands":["go test ./cmd/idiom"]},
+  "tdd_obligations":["TDD-001"],
+  "findings":[],
+  "blockers":[],
+  "next_valid_action":"publish execution feedback summary as deterministic closeout evidence"
+}`)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "linked-output")); err != nil {
+		if os.IsPermission(err) {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		t.Fatalf("create symlink: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--reconcile-summary", "references/feedback_summary.json",
+		"--reconciled-state-output", "linked-output/workflow_state.reconciled.json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for output symlink ancestor, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "must not be a symlink") {
+		t.Fatalf("expected output symlink failure, got %s", stderr.String())
+	}
+}
+
+func TestProductFeedbackReconcileBlocksSymlinkAncestor(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	outside := t.TempDir()
+	writeTestFile(t, outside, "feedback_summary.json", `{"status":"pass"}`)
+	link := filepath.Join(dir, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		if os.IsPermission(err) {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		t.Fatalf("create symlink: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--reconcile-summary", "linked/feedback_summary.json",
+		"--reconciled-state-output", "reports/workflow_state.reconciled.json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for symlink ancestor, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "must not be a symlink") {
+		t.Fatalf("expected symlink ancestor failure, got %s", stderr.String())
+	}
+}
+
 func TestProductFeedbackTextOutputIsActionable(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	writeTestFile(t, dir, "references/lane_history.json", `[{"lane":"implement","event":"closed","status":"completed","timestamp":"2026-05-18T00:00:00Z"}]`)

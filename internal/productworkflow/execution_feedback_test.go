@@ -173,3 +173,274 @@ func TestExecutionFeedbackBlocksOnPrivacyMarkers(t *testing.T) {
 		t.Fatalf("expected privacy_marker_detected blocker, got %#v", out.Blockers)
 	}
 }
+
+func TestExecutionFeedbackReconciliationPassesAndLinksState(t *testing.T) {
+	out := ReconcileExecutionFeedback(ExecutionFeedbackReconciliationInput{
+		WorkflowState: WorkflowState{
+			EffortID:      "eff-1",
+			TaskID:        "task-1",
+			StateRevision: 5,
+			CurrentPhase:  "phase-5-execution-feedback",
+			CurrentState:  "planned",
+			ArtifactPaths: map[string]string{
+				"events": "events.jsonl",
+			},
+			Coverage: CoverageState{
+				GateResults: []GateResult{{Gate: "coverage", Status: "pass", CheckedAt: "2026-05-17T00:00:00Z"}},
+			},
+		},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "pass",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			StateRevision:   5,
+			CurrentPhase:    "phase-5-execution-feedback",
+			CurrentState:    "planned",
+			LaneHistory:     []ExecutionLaneEventRef{{Lane: "implement", Event: "closed", Status: "pass"}},
+			PlanPhase:       "phase-5",
+			PlanState:       "feedback",
+			PlanStatus:      "completed",
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			ChangedPaths:    []string{"cmd/idiom/product_workflow.go"},
+			Verification:    VerificationRef{Status: "pass", Commands: []string{"go test ./cmd/idiom"}},
+			TDDObligations:  []string{"TDD-001"},
+		},
+		ReconciledAt:         "2026-05-18T00:00:00Z",
+		SummaryReferencePath: "reports/execution_feedback_summary.json",
+		ReconciledOutputPath: "reports/workflow_state.reconciled.json",
+	})
+	if out.Status != "pass" {
+		t.Fatalf("expected pass, got %#v", out)
+	}
+	if out.WorkflowState.ReconciliationMismatch {
+		t.Fatalf("expected reconciliation mismatch false")
+	}
+	if out.WorkflowState.ArtifactPaths["execution_feedback_summary"] != "reports/execution_feedback_summary.json" {
+		t.Fatalf("expected summary path link, got %#v", out.WorkflowState.ArtifactPaths)
+	}
+	if out.WorkflowState.ArtifactPaths["product_evidence"] != "product_evidence/export-1.json" {
+		t.Fatalf("expected product evidence link, got %#v", out.WorkflowState.ArtifactPaths)
+	}
+	if out.EvidenceLinks.LinkedArtifactPathCount != 4 {
+		t.Fatalf("expected linked path count 4, got %#v", out.EvidenceLinks)
+	}
+	if out.NextValidAction != "review reconciled workflow-state output and persist only after operator approval" {
+		t.Fatalf("expected review-first next action, got %q", out.NextValidAction)
+	}
+	foundGate := false
+	for _, gate := range out.WorkflowState.Coverage.GateResults {
+		if gate.Gate == "execution_feedback_reconciliation" && gate.Status == "pass" {
+			foundGate = true
+		}
+	}
+	if !foundGate {
+		t.Fatalf("expected reconciliation gate result, got %#v", out.WorkflowState.Coverage.GateResults)
+	}
+}
+
+func TestExecutionFeedbackReconciliationRejectsMalformedPassSummary(t *testing.T) {
+	out := ReconcileExecutionFeedback(ExecutionFeedbackReconciliationInput{
+		WorkflowState:       WorkflowState{EffortID: "eff-1", TaskID: "task-1", StateRevision: 5, CurrentPhase: "phase-5-execution-feedback", CurrentState: "feedback"},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "pass",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			StateRevision:   5,
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+		},
+		ReconciledAt:         "2026-05-18T00:00:00Z",
+		SummaryReferencePath: "reports/summary.json",
+		ReconciledOutputPath: "reports/reconciled.json",
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked malformed pass summary, got %#v", out)
+	}
+	kinds := map[string]bool{}
+	for _, blocker := range out.Blockers {
+		kinds[blocker.Kind] = true
+	}
+	for _, want := range []string{"missing_lane_history", "plan_progress_not_pass", "plan_progress_phase_mismatch", "verification_not_pass", "missing_changed_paths", "missing_tdd_obligations"} {
+		if !kinds[want] {
+			t.Fatalf("expected blocker %s, got %#v", want, out.Blockers)
+		}
+	}
+}
+
+func TestExecutionFeedbackReconciliationRejectsMissingStateRevision(t *testing.T) {
+	out := ReconcileExecutionFeedback(ExecutionFeedbackReconciliationInput{
+		WorkflowState:       WorkflowState{EffortID: "eff-1", TaskID: "task-1", StateRevision: 5, CurrentPhase: "phase-5-execution-feedback", CurrentState: "planned"},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "pass",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			CurrentPhase:    "phase-5-execution-feedback",
+			CurrentState:    "planned",
+			LaneHistory:     []ExecutionLaneEventRef{{Lane: "implement", Event: "closed", Status: "pass"}},
+			PlanPhase:       "phase-5",
+			PlanState:       "feedback",
+			PlanStatus:      "completed",
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			ChangedPaths:    []string{"cmd/idiom/product_workflow.go"},
+			Verification:    VerificationRef{Status: "pass", Commands: []string{"go test ./cmd/idiom"}},
+			TDDObligations:  []string{"TDD-001"},
+		},
+		ReconciledAt:         "2026-05-18T00:00:00Z",
+		SummaryReferencePath: "reports/summary.json",
+		ReconciledOutputPath: "reports/reconciled.json",
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked missing state revision, got %#v", out)
+	}
+	found := false
+	for _, blocker := range out.Blockers {
+		if blocker.Kind == "missing_state_revision" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected missing_state_revision blocker, got %#v", out.Blockers)
+	}
+}
+
+func TestExecutionFeedbackReconciliationRejectsWrongPhaseState(t *testing.T) {
+	out := ReconcileExecutionFeedback(ExecutionFeedbackReconciliationInput{
+		WorkflowState:       WorkflowState{EffortID: "eff-1", TaskID: "task-1", StateRevision: 5, CurrentPhase: "phase-4-brief-generation", CurrentState: "planned"},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "pass",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			StateRevision:   5,
+			CurrentPhase:    "phase-4-brief-generation",
+			CurrentState:    "planned",
+			LaneHistory:     []ExecutionLaneEventRef{{Lane: "implement", Event: "closed", Status: "pass"}},
+			PlanPhase:       "phase-4",
+			PlanState:       "brief",
+			PlanStatus:      "completed",
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			ChangedPaths:    []string{"cmd/idiom/product_workflow.go"},
+			Verification:    VerificationRef{Status: "pass", Commands: []string{"go test ./cmd/idiom"}},
+			TDDObligations:  []string{"TDD-001"},
+		},
+		ReconciledAt:         "2026-05-18T00:00:00Z",
+		SummaryReferencePath: "reports/summary.json",
+		ReconciledOutputPath: "reports/reconciled.json",
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked wrong phase/state, got %#v", out)
+	}
+	kinds := map[string]bool{}
+	for _, blocker := range out.Blockers {
+		kinds[blocker.Kind] = true
+	}
+	for _, want := range []string{"workflow_phase_mismatch", "plan_progress_phase_mismatch"} {
+		if !kinds[want] {
+			t.Fatalf("expected blocker %s, got %#v", want, out.Blockers)
+		}
+	}
+}
+
+func TestExecutionFeedbackReconciliationFailsClosed(t *testing.T) {
+	out := ReconcileExecutionFeedback(ExecutionFeedbackReconciliationInput{
+		WorkflowState:       WorkflowState{EffortID: "eff-1", TaskID: "task-1", StateRevision: 5, CurrentPhase: "phase-5-execution-feedback", CurrentState: "feedback"},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "blocked",
+			EffortID:        "eff-2",
+			TaskID:          "task-2",
+			StateRevision:   4,
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "../escape.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			Verification:    VerificationRef{Status: "pass"},
+			TDDObligations:  []string{"TDD-001"},
+			NextValidAction: "dispatch lane now",
+			Blockers:        []ExecutionFeedbackBlocker{{Kind: "x", Message: "y", NextValid: "z"}},
+		},
+		ReconciledAt:         "",
+		SummaryReferencePath: "reports/summary.json",
+		ReconciledOutputPath: "reports/reconciled.json",
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked, got %#v", out)
+	}
+	if !out.WorkflowState.ReconciliationMismatch {
+		t.Fatalf("expected reconciliation mismatch true")
+	}
+	if len(out.Blockers) == 0 {
+		t.Fatalf("expected blockers")
+	}
+}
+
+func TestExecutionFeedbackReconciliationRejectsUnknownTDDAndUnsafeChangedPath(t *testing.T) {
+	out := ReconcileExecutionFeedback(ExecutionFeedbackReconciliationInput{
+		WorkflowState:       WorkflowState{EffortID: "eff-1", TaskID: "task-1", StateRevision: 5, CurrentPhase: "phase-5-execution-feedback", CurrentState: "planned"},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "pass",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			StateRevision:   5,
+			CurrentPhase:    "phase-5-execution-feedback",
+			CurrentState:    "planned",
+			LaneHistory:     []ExecutionLaneEventRef{{Lane: "implement", Event: "closed", Status: "pass"}},
+			PlanPhase:       "phase-5",
+			PlanState:       "feedback",
+			PlanStatus:      "completed",
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			ChangedPaths:    []string{"../bad"},
+			Verification:    VerificationRef{Status: "pass", Commands: []string{"go test ./cmd/idiom"}},
+			TDDObligations:  []string{"TDD-404"},
+		},
+		ReconciledAt:         "2026-05-18T00:00:00Z",
+		SummaryReferencePath: "reports/summary.json",
+		ReconciledOutputPath: "reports/reconciled.json",
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked, got %#v", out)
+	}
+}
+
+func TestExecutionFeedbackReconciliationAllowsDispatchNamedPath(t *testing.T) {
+	out := ReconcileExecutionFeedback(ExecutionFeedbackReconciliationInput{
+		WorkflowState:       WorkflowState{EffortID: "eff-1", TaskID: "task-1", StateRevision: 5, CurrentPhase: "phase-5-execution-feedback", CurrentState: "feedback"},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "pass",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			StateRevision:   5,
+			CurrentPhase:    "phase-5-execution-feedback",
+			CurrentState:    "feedback",
+			LaneHistory:     []ExecutionLaneEventRef{{Lane: "implement", Event: "closed", Status: "pass"}},
+			PlanPhase:       "phase-5",
+			PlanState:       "feedback",
+			PlanStatus:      "pass",
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			ChangedPaths:    []string{"internal/app/implementation_dispatch.go"},
+			Verification:    VerificationRef{Status: "pass", Commands: []string{"go test ./cmd/idiom"}},
+			TDDObligations:  []string{"TDD-001"},
+		},
+		ReconciledAt:         "2026-05-18T00:00:00Z",
+		SummaryReferencePath: "reports/summary.json",
+		ReconciledOutputPath: "reports/reconciled.json",
+	})
+	if out.Status != "pass" {
+		t.Fatalf("expected dispatch-named path to be treated as a path, got %#v", out.Blockers)
+	}
+}
