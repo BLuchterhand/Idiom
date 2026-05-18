@@ -22,5 +22,6 @@
     "review_pending",
     "investigation_pending"
   ],
-  "reviewer_id": "codex-gpt-review-impl-0029"
+  "reviewer_id": "codex-gpt-review-impl-0029",
+  "planning_checkpoint_commit": "a515c4aaba670d8a19431c2465a714c5518d7802"
 }
