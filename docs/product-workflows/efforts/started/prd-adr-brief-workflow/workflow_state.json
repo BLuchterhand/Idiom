@@ -4,10 +4,10 @@
   "task_id": "impl-0037-phase-6-status-migration-contract",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T21:35:00Z",
-  "state_revision": 111,
-  "last_event_id": "evt-0324",
-  "workspace_fingerprint": "idiom@a0b30a2",
+  "updated_at": "2026-05-18T21:55:00Z",
+  "state_revision": 112,
+  "last_event_id": "evt-0330",
+  "workspace_fingerprint": "idiom@92d4b31",
   "status_bucket": "started",
   "current_phase": "phase-6-operator-continuation",
   "current_state": "planned",
@@ -215,6 +215,11 @@
         "gate": "status_migration_contract_planned",
         "status": "passed",
         "checked_at": "2026-05-18T21:30:00Z"
+      },
+      {
+        "gate": "status_migration_contract",
+        "status": "passed",
+        "checked_at": "2026-05-18T21:55:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -241,19 +246,9 @@
       "Next design-doc slice: plan Phase 6 status-folder migration behavior through shared workflow use cases, preserving stable effort IDs and fail-closed continuation boundaries."
     ]
   },
-  "open_obligations": [
-    "TDD-IMPL-0037-001",
-    "TDD-IMPL-0037-002",
-    "TDD-IMPL-0037-003",
-    "TDD-IMPL-0037-004"
-  ],
+  "open_obligations": [],
   "open_questions": [],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ],
+  "blockers": [],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -282,9 +277,7 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "run_impl_0037_status_migration_contract_worker",
-    "review_impl_0037_status_migration_contract_atom",
-    "verify_impl_0037_status_migration_contract"
+    "plan_impl_0038_phase_6_status_migration_apply_cli_atom"
   ],
   "durability_level": "source_controlled"
 }

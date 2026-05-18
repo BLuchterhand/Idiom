@@ -2,44 +2,45 @@
   "schema_version": "idiom.implementation_report.v1.fixture",
   "task_id": "impl-0037-phase-6-status-migration-contract",
   "effort_id": "prd-adr-brief-workflow",
-  "implementor_id": "codex-gpt-worker-impl-0037",
-  "runtime": "codex_subagent",
-  "model": "gpt-5.3-codex",
-  "completed_at": "",
+  "implementor_id": "codex-orchestrator-after-stalled-gpt-worker",
+  "runtime": "codex",
+  "model": "gpt-5",
+  "completed_at": "2026-05-18T21:55:00Z",
   "complexity_tier": "C2",
   "scope_statement": "Add deterministic product workflow status-migration planning contracts that preserve stable effort IDs, update workflow_state/index/event records, track prior paths, and fail closed for invalid buckets or unsafe paths without moving folders, dispatching lanes, executing models, mutating .idiom runtime state, or adding broad TUI behavior.",
-  "code_changes": false,
-  "changed_paths": [],
+  "code_changes": true,
+  "changed_paths": [
+    "internal/productworkflow/migration.go",
+    "internal/productworkflow/migration_test.go"
+  ],
   "verification": {
     "run_by_implementor": false,
     "commands": [
       "idiom tool context_pack --input '{\"task\":\"phase 6 status folder migration effort index stable effort id product workflow started closed unstarted deterministic no dispatch\",\"mode\":\"plan\",\"limit\":12}'",
       "idiom tool context_query --input '{\"query\":\"product workflow status migration effort index stable effort id folder_path prior_paths workflow_state status_bucket transition no dispatch\",\"resolution\":\"symbol\",\"limit\":12}'",
+      "idiom tool context_pack --input '{\"task\":\"phase 6 status folder migration effort index stable effort id product workflow started closed unstarted deterministic no dispatch path safety absolute leak\",\"mode\":\"plan\",\"limit\":8}'",
       "go test ./internal/productworkflow -run TestProductStatusMigration -count=1",
       "go test ./cmd/idiom -run 'TestProduct.*StatusMigration|TestProductEfforts' -count=1",
       "go test ./internal/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "git diff --check",
       "go test ./...",
       "JSON/JSONL validation for durable workflow artifacts",
-      "privacy secret-pattern scan over durable effort artifacts",
-      "git diff --check"
+      "privacy secret-pattern scan over durable effort artifacts"
     ],
-    "status": "implementation_pending"
+    "status": "passed_full_suite_and_product_gates"
   },
   "discovery_evidence": [
     "context_pack:5636955570c7b36d",
-    "context_query:product workflow status migration effort index stable effort id folder_path prior_paths workflow_state status_bucket transition no dispatch"
+    "context_query:product workflow status migration effort index stable effort id folder_path prior_paths workflow_state status_bucket transition no dispatch",
+    "context_pack:af334ab737b34c9c"
   ],
   "reviewer_id": "codex-gpt-review-impl-0037",
-  "commit_hash": "",
+  "commit_hash": "92d4b3198c1cc98462c994b2d80aee104f72c39d",
   "planning_checkpoint_commit": "a0b30a2d8dde1a8c051423611709a2fd6893f5ab",
   "privacy_note": "planning report stores only scope, model assignment, command names, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, TUI transcript bodies, or customer-identifying data",
-  "open_blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ]
+  "open_blockers": [],
+  "implementation_note": "The planned GPT Codex worker stalled before a final response; Codex orchestration reconciled the delayed partial patch, repaired path-safety findings from independent GPT review, and completed verification. No GLM/OpenCode implementor was used."
 }

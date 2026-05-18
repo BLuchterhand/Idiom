@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0036-phase-6-effort-browser-cli",
+  "task_id": "impl-0037-phase-6-status-migration-contract",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -37,7 +37,8 @@
       "operator_status_view_model_planned",
       "operator_status_view_model",
       "effort_browser_cli_planned",
-      "effort_browser_cli"
+      "effort_browser_cli",
+      "status_migration_contract"
     ],
     "gates_blocked": []
   },
@@ -445,7 +446,7 @@
       "owner": "internal/productworkflow/migration_test.go",
       "command": "go test ./internal/productworkflow -run TestProductStatusMigration -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0037-002",
@@ -454,7 +455,7 @@
       "owner": "internal/productworkflow/migration_test.go",
       "command": "go test ./internal/productworkflow -run TestProductStatusMigration -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0037-003",
@@ -463,7 +464,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run 'TestProduct.*StatusMigration|TestProductEfforts' -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0037-004",
@@ -472,7 +473,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0037-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     }
   ]
 }
