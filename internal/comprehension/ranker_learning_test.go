@@ -454,6 +454,68 @@ func TestApplyVerifiedRankerLearningHonorsDisableEnv(t *testing.T) {
 	}
 }
 
+func TestRecordVerifiedRankerEvidenceDoesNotMutateWeights(t *testing.T) {
+	root := t.TempDir()
+	event, err := RecordVerifiedRankerEvidence(root, VerifiedRankerLearningRequest{
+		Source:   LearningSourceRecoveryReconciliation,
+		Action:   "boost",
+		Files:    []string{"internal/recovery/packet.go"},
+		Score:    1,
+		TaskID:   "failure-123",
+		CorpusID: "packet-123",
+		ResultID: "reconciliation-123",
+		Reason:   LearningReasonVerifiedRecovery,
+		Verified: true,
+		Evidence: LearningEvidenceRef{
+			Kind:     LearningEvidenceKindRecoveryReconciliation,
+			Verified: true,
+			TaskID:   "failure-123",
+			CorpusID: "packet-123",
+			ResultID: "reconciliation-123",
+			Files:    []string{"internal/recovery/packet.go"},
+			Metrics: map[string]float64{
+				"candidate_atom_count":       2,
+				"completed_atom_count":       1,
+				"remaining_atom_count":       1,
+				"required_test_count":        1,
+				"verification_command_count": 1,
+				"localization_improved":      1,
+				"packet_quality":             0.5,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("record evidence: %v", err)
+	}
+	if event.Source != LearningSourceRecoveryReconciliation || event.Action != "no_op" ||
+		event.State != LearningStateAccepted || event.Reason != LearningReasonVerifiedRecovery {
+		t.Fatalf("unexpected evidence event: %#v", event)
+	}
+	if event.Evidence == nil || event.Evidence.Kind != LearningEvidenceKindRecoveryReconciliation ||
+		event.Evidence.Metrics["packet_quality"] != 0.5 ||
+		event.Evidence.Metrics["completed_atom_count"] != 1 {
+		t.Fatalf("recovery evidence metrics were not preserved: %#v", event.Evidence)
+	}
+	weights, err := LoadLearnedWeights(root)
+	if err != nil {
+		t.Fatalf("load weights: %v", err)
+	}
+	if len(weights) != 0 {
+		t.Fatalf("evidence-only event must not update weights: %v", weights)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "ranker", "weights.json")); !os.IsNotExist(err) {
+		t.Fatalf("evidence-only event must not create weights.json, err=%v", err)
+	}
+	entries, err := ReadLearningLog(root)
+	if err != nil {
+		t.Fatalf("read learning log: %v", err)
+	}
+	summary := SummarizeLearningLog(entries)
+	if summary.BySource[LearningSourceRecoveryReconciliation] != 1 || summary.AcceptedReasonCounts[LearningReasonVerifiedRecovery] != 1 {
+		t.Fatalf("summary missing recovery evidence: %#v", summary)
+	}
+}
+
 func TestRestoreLearnedWeightsFromLearningLog(t *testing.T) {
 	root := t.TempDir()
 	event, weights, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{

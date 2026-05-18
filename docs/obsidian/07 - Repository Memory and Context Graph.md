@@ -128,8 +128,11 @@ Repository memory also includes learned ranking signals. `context_pack` and
 per-workspace ranker weights under `.idiom/ranker/weights.json`.
 
 Learning events are recorded under `.idiom/ranker/learning_log.jsonl` from eval
-groundedness outcomes and manual `idiom ranker` commands. This makes ranking an
-inspectable evidence-ordering mechanism, not a hidden model-strategy override.
+groundedness outcomes, manual `idiom ranker` commands, and validated recovery
+reconciliation outcomes. Recovery reconciliation writes
+`source:"recovery_reconciliation"` no-op events for audit/ranker summaries and
+does not mutate `.idiom/ranker/weights.json`. This makes ranking an inspectable
+evidence-ordering mechanism, not a hidden model-strategy override.
 
 Packet consumers should treat ranking scores and hub demotion as evidence
 ordering, not proof that lower-ranked files are irrelevant.

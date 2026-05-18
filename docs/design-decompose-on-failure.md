@@ -17,9 +17,10 @@ back to the original packet. Promotion is deliberately not dispatch authority;
 the promoted brief still enters the usual lane workflow. Product/operator
 status, the TUI `/product-status` presenter, audit-watch, product-evidence, and
 release-evidence now project recovery state from bounded artifacts and
-telemetry events. Remaining extensions are broader TUI continuation/handoff
-actions, deeper residual-work evidence, ranker learning inputs, and
-non-plan-execute adapters.
+telemetry events. Successful `recover reconcile` runs also write sanitized,
+evidence-only ranker-learning events without mutating learned weights.
+Remaining extensions are broader TUI continuation/handoff actions, deeper
+residual-work evidence, and non-plan-execute adapters.
 
 Verified adjacent implementation:
 
@@ -80,6 +81,12 @@ Verified adjacent implementation:
   blockers. Open packets downgrade release readiness to partial evidence;
   malformed, missing, or stale recovery artifacts block the export without
   storing prompt, transcript, or file-body content.
+- `cmd/idiom/recover_packet.go` records a sanitized evidence-only
+  `.idiom/ranker/learning_log.jsonl` event under
+  `source:"recovery_reconciliation"` after a validated reconciliation artifact
+  is written. The event uses action `no_op`, records packet quality,
+  localization-improvement, completed/remaining atom counts, and verification
+  counts, and does not create or update `.idiom/ranker/weights.json`.
 
 Those pieces now cover the operator-facing plan-execute loop across CLI,
 sidecar, product workflow, evidence exports, and the first TUI product-status
@@ -303,7 +310,10 @@ Required behavior:
   packet digest, completed/remaining atom manifest, and required-test command
   results, and refuses to close the packet when the artifact no longer matches
   the current decomposition packet or the required tests are not recorded as
-  passing.
+  passing. After the reconciliation artifact is validated and written, it
+  records a recovery reconciliation learning-log event for audit/ranker
+  summaries. This event is evidence-only and never changes learned ranker
+  weights.
 - Product workflow integrations link decomposition packets back to PRD
   requirements, ADR decisions, TDD obligations, and implementation ledger
   records when those paths are present in source-run or evidence paths.
@@ -337,7 +347,7 @@ not-applicable for a given failure class.
 | `idiom audit watch` | Treat recovery failure-record and decomposition-packet events as first-class triggers; summarize failure classes, candidate atom counts, next valid actions, and artifact paths without raw transcripts. |
 | Product workflow commands | Link recovery packets through `workflow_state.artifact_paths.recovery_packet`; product status and operator status expose packet status, gates, required tests, product links, blockers, reconciliation counts, and a non-dispatchable recovery action while normal dispatch remains blocked until the packet is closed by a valid reconciliation artifact with passing required-test evidence. |
 | Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. Landed for local `.idiom/recovery` artifacts with metadata-only rollups. |
-| `idiom ranker` | Accept only deterministic, verified recovery outcomes as learning input; record whether recovery improved localization or packet quality. |
+| `idiom ranker` | Accept only deterministic, verified recovery outcomes as learning input. Landed for `recover reconcile`: validated recovery outcomes append sanitized `source:"recovery_reconciliation"` no-op learning-log events with packet-quality and localization metrics, without mutating weights. |
 | Queue/backend/local-ops/doctor | Classify readiness, queue, backend, timeout, or capacity failures separately from implementation failures so decomposition does not hide environment problems. |
 | TUI/prompt dispatch | `/product-status` renders the same operator recovery status and next-action model as CLI; broader continuation/handoff actions should keep using durable workflow state and must not infer recovery state from transcript prose. |
 | `idiom tool` and MCP | Expose read-only recovery inspection with the same sidecar envelope and profile rules as other tools; keep write/promote actions outside discovery profile. |
@@ -490,6 +500,10 @@ it moved into a recovery state, not like it vanished into a separate tool.
   recovery rollups with open/recovered/blocked counts, failure classes,
   next-action counts, reconciliation counts, release impact, and privacy-safe
   artifact IDs.
+- Status: validated `recover reconcile` runs now feed ranker/audit learning
+  summaries through evidence-only learning-log events under
+  `source:"recovery_reconciliation"`; the adapter rejects ranker state paths
+  and does not mutate `.idiom/ranker/weights.json`.
 - Expose read-only failure records and packets through `idiom tool` and MCP.
 - Feed recurring failure classes into eval fixtures, harness audit, and ranker
   learning only through deterministic evidence adapters.

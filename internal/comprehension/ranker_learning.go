@@ -16,10 +16,13 @@ import (
 const (
 	RankerLearningEnv = "IDIOM_RANKER_LEARNING"
 
+	LearningSourceRecoveryReconciliation = "recovery_reconciliation"
+
 	LearningStateAccepted = "accepted"
 	LearningStateRejected = "rejected"
 
 	LearningReasonVerifiedFeedback = "verified_feedback"
+	LearningReasonVerifiedRecovery = "verified_recovery"
 	LearningReasonDisabled         = "learning_disabled"
 	LearningReasonUnverified       = "unverified_evidence"
 	LearningReasonNoValidFiles     = "no_valid_files"
@@ -27,6 +30,8 @@ const (
 	LearningReasonNoOpBand         = "score_noop_band"
 	LearningReasonUpdateFailed     = "update_failed"
 	LearningReasonRollbackRestore  = "rollback_restored"
+
+	LearningEvidenceKindRecoveryReconciliation = "recovery_reconciliation"
 )
 
 var (
@@ -39,15 +44,17 @@ var (
 	}
 
 	learningLogAllowedSources = map[string]struct{}{
-		"eval":             {},
-		"cli":              {},
-		"rollback":         {},
-		"verified_edit":    {},
-		"harness_feedback": {},
-		"audit_watch":      {},
+		"eval":                               {},
+		"cli":                                {},
+		"rollback":                           {},
+		"verified_edit":                      {},
+		"harness_feedback":                   {},
+		"audit_watch":                        {},
+		LearningSourceRecoveryReconciliation: {},
 	}
 	learningLogAllowedReasons = map[string]struct{}{
 		LearningReasonVerifiedFeedback: {},
+		LearningReasonVerifiedRecovery: {},
 		LearningReasonDisabled:         {},
 		LearningReasonUnverified:       {},
 		LearningReasonNoValidFiles:     {},
@@ -59,17 +66,25 @@ var (
 		"unknown":                      {},
 	}
 	learningLogAllowedEvidenceKinds = map[string]struct{}{
-		LearningReasonVerifiedFeedback: {},
-		"swe_groundedness_oracle":      {},
-		"learning_event_rollback":      {},
-		"unknown":                      {},
+		LearningReasonVerifiedFeedback:             {},
+		LearningEvidenceKindRecoveryReconciliation: {},
+		"swe_groundedness_oracle":                  {},
+		"learning_event_rollback":                  {},
+		"unknown":                                  {},
 	}
 	learningLogAllowedMetricKeys = map[string]struct{}{
-		"score":      {},
-		"boost_at":   {},
-		"penalty_at": {},
-		"min_score":  {},
-		"unknown":    {},
+		"score":                      {},
+		"boost_at":                   {},
+		"penalty_at":                 {},
+		"min_score":                  {},
+		"candidate_atom_count":       {},
+		"completed_atom_count":       {},
+		"remaining_atom_count":       {},
+		"required_test_count":        {},
+		"verification_command_count": {},
+		"localization_improved":      {},
+		"packet_quality":             {},
+		"unknown":                    {},
 	}
 	learningLogAllowedWeightFeatureKeys = map[string]struct{}{}
 	learningLogKnownPathBasenames       = map[string]struct{}{
@@ -269,6 +284,52 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 		return entry, cloneWeights(*entry.AfterWeights), nil
 	}
 	return entry, before, nil
+}
+
+// RecordVerifiedRankerEvidence records deterministic, verified learning
+// evidence without mutating ranker weights. It is for audit-readable outcomes
+// such as recovery reconciliation where the event is useful to the learning
+// flywheel but should not directly change future context ranking.
+func RecordVerifiedRankerEvidence(root string, req VerifiedRankerLearningRequest) (LearningLogEntry, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return LearningLogEntry{}, errors.New("workspace root is required for ranker evidence")
+	}
+
+	source := sanitizeLearningSource(req.Source)
+	taskID := sanitizeLearningCorrelationID("task", req.TaskID)
+	corpusID := sanitizeLearningCorrelationID("corpus", req.CorpusID)
+	resultID := sanitizeLearningCorrelationID("result", req.ResultID)
+	files, invalidPathCount := sanitizeLearningPaths(req.Files)
+	entry := LearningLogEntry{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Source:    source,
+		Action:    "no_op",
+		State:     LearningStateRejected,
+		Score:     req.Score,
+		Files:     files,
+		TaskID:    taskID,
+		CorpusID:  corpusID,
+		ResultID:  resultID,
+		Evidence:  learningEvidenceRef(req, files, invalidPathCount),
+	}
+
+	verified := req.Verified || (entry.Evidence != nil && entry.Evidence.Verified)
+	switch {
+	case RankerLearningDisabled():
+		entry.Reason = LearningReasonDisabled
+	case !verified:
+		entry.Reason = LearningReasonUnverified
+	case len(files) == 0:
+		entry.Reason = LearningReasonNoValidFiles
+	default:
+		entry.State = LearningStateAccepted
+		entry.Reason = sanitizeVerifiedLearningReason(req.Reason)
+	}
+	if err := appendLearningDecision(root, &entry); err != nil {
+		return entry, err
+	}
+	return entry, nil
 }
 
 // RestoreLearnedWeightsFromLearningLog restores weights to the state captured

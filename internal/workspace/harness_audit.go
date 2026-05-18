@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"idiom/internal/autonomy"
-	"idiom/internal/util"
 	"idiom/internal/comprehension"
 	"idiom/internal/discovery"
 	"idiom/internal/eval"
+	"idiom/internal/util"
 )
 
 const (
@@ -2028,6 +2028,11 @@ var rankerLearningKnownTriggers = []harnessAuditRankerTrigger{
 		Component:   "cmd/idiom/audit.go",
 		Description: "autonomous review packets folding learning updates; not yet wired",
 	},
+	{
+		Name:        comprehension.LearningSourceRecoveryReconciliation,
+		Component:   "cmd/idiom/recover_packet.go",
+		Description: "verified recovery reconciliation outcomes recorded as evidence-only learning events",
+	},
 }
 
 // buildRankerLearningAudit reads the persisted ranker weights and learning
@@ -2114,6 +2119,8 @@ func rankerTriggerSuggestion(name, status string, count int) string {
 		return "harness_feedback relevance categories can feed learned weights from self-reported useful and misleading files"
 	case "audit_watch":
 		return "audit watch review packets can convert low-groundedness session summaries and surfaced files into learned-weight evidence"
+	case comprehension.LearningSourceRecoveryReconciliation:
+		return "successful `idiom recover reconcile` runs record verified recovery outcomes without mutating learned weights"
 	default:
 		return "no signal observed yet"
 	}
@@ -2133,7 +2140,7 @@ func rankerLearningFindings(learning *harnessAuditRankerLearning) []harnessAudit
 		})
 		return findings
 	}
-	if learning.LearningSummary != nil && learning.LearningSummary.NoOpCount*4 > learning.LearningSummary.TotalEntries*3 {
+	if learningSummaryMostlyMutableNoop(learning.LearningSummary) {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "ranker_learning_mostly_noop",
 			Severity:       "low",
@@ -2150,6 +2157,25 @@ func rankerLearningFindings(learning *harnessAuditRankerLearning) []harnessAudit
 		})
 	}
 	return findings
+}
+
+func learningSummaryMostlyMutableNoop(summary *comprehension.LearningLogSummary) bool {
+	if summary == nil || summary.TotalEntries == 0 {
+		return false
+	}
+	evidenceOnly := 0
+	if summary.BySource != nil {
+		evidenceOnly += summary.BySource[comprehension.LearningSourceRecoveryReconciliation]
+	}
+	mutableEntries := summary.TotalEntries - evidenceOnly
+	if mutableEntries <= 0 {
+		return false
+	}
+	mutableNoOps := summary.NoOpCount - evidenceOnly
+	if mutableNoOps < 0 {
+		mutableNoOps = 0
+	}
+	return mutableNoOps*4 > mutableEntries*3
 }
 
 func rankerLearningQuestions(learning *harnessAuditRankerLearning) []harnessAuditQuestion {

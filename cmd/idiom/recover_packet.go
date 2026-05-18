@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/recovery"
 )
@@ -98,9 +99,23 @@ type recoverReconcileReport struct {
 	PacketID           string                   `json:"packet_id,omitempty"`
 	CompletedAtoms     []string                 `json:"completed_atoms,omitempty"`
 	RemainingAtoms     []string                 `json:"remaining_atoms,omitempty"`
+	RankerLearning     *recoverRankerLearning   `json:"ranker_learning,omitempty"`
 	NextAction         string                   `json:"next_valid_action"`
 	Reconciliation     *recovery.Reconciliation `json:"reconciliation,omitempty"`
 	Error              string                   `json:"error,omitempty"`
+}
+
+type recoverRankerLearning struct {
+	Status       string             `json:"status"`
+	EventID      string             `json:"event_id,omitempty"`
+	Source       string             `json:"source,omitempty"`
+	Action       string             `json:"action,omitempty"`
+	State        string             `json:"state,omitempty"`
+	Reason       string             `json:"reason,omitempty"`
+	EvidenceKind string             `json:"evidence_kind,omitempty"`
+	Files        []string           `json:"files,omitempty"`
+	Metrics      map[string]float64 `json:"metrics,omitempty"`
+	Error        string             `json:"error,omitempty"`
 }
 
 type recoverGateReport struct {
@@ -434,6 +449,7 @@ func buildRecoverReconcileReport(root string, opts recoverReconcileOptions) (rec
 	if err != nil {
 		return recoverReconcileReport{}, err
 	}
+	rankerLearning := recordRecoverReconciliationLearning(root, packet, reconciliation)
 	completed := make([]string, 0, len(reconciliation.CompletedAtoms))
 	for _, atom := range reconciliation.CompletedAtoms {
 		completed = append(completed, atom.ID)
@@ -447,9 +463,124 @@ func buildRecoverReconcileReport(root string, opts recoverReconcileOptions) (rec
 		PacketID:           packet.PacketID,
 		CompletedAtoms:     completed,
 		RemainingAtoms:     append([]string{}, reconciliation.RemainingAtoms...),
+		RankerLearning:     rankerLearning,
 		NextAction:         reconciliation.NextAction,
 		Reconciliation:     &reconciliation,
 	}, nil
+}
+
+func recordRecoverReconciliationLearning(root string, packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) *recoverRankerLearning {
+	files := recoverLearningCompletedPaths(reconciliation)
+	metrics := recoverLearningMetrics(packet, reconciliation)
+	score := metrics["packet_quality"]
+	resultID := recoverLearningResultID(packet, reconciliation)
+	event, err := comprehension.RecordVerifiedRankerEvidence(root, comprehension.VerifiedRankerLearningRequest{
+		Source:   comprehension.LearningSourceRecoveryReconciliation,
+		Action:   "no_op",
+		Files:    files,
+		Score:    score,
+		TaskID:   packet.FailureID,
+		CorpusID: packet.PacketID,
+		ResultID: resultID,
+		Reason:   comprehension.LearningReasonVerifiedRecovery,
+		Verified: true,
+		Evidence: comprehension.LearningEvidenceRef{
+			Kind:     comprehension.LearningEvidenceKindRecoveryReconciliation,
+			Verified: true,
+			TaskID:   packet.FailureID,
+			CorpusID: packet.PacketID,
+			ResultID: resultID,
+			Files:    files,
+			Metrics:  metrics,
+		},
+	})
+	if err != nil {
+		return &recoverRankerLearning{
+			Status:  "error",
+			Source:  comprehension.LearningSourceRecoveryReconciliation,
+			Action:  "no_op",
+			Files:   files,
+			Metrics: metrics,
+			Error:   fmt.Sprintf("record recovery ranker-learning evidence: %v", err),
+		}
+	}
+	report := &recoverRankerLearning{
+		Status:  event.State,
+		EventID: event.EventID,
+		Source:  event.Source,
+		Action:  event.Action,
+		State:   event.State,
+		Reason:  event.Reason,
+		Files:   append([]string{}, event.Files...),
+	}
+	if event.Evidence != nil {
+		report.EvidenceKind = event.Evidence.Kind
+		report.Metrics = event.Evidence.Metrics
+	}
+	return report
+}
+
+func recoverLearningCompletedPaths(reconciliation recovery.Reconciliation) []string {
+	seen := map[string]bool{}
+	var files []string
+	for _, atom := range reconciliation.CompletedAtoms {
+		for _, path := range atom.RequiredPaths {
+			path = normalizeRecoverLearningPath(path)
+			if path == "" || path == "." || recoverLearningRankerStatePath(path) || seen[path] {
+				continue
+			}
+			seen[path] = true
+			files = append(files, path)
+		}
+	}
+	sort.Strings(files)
+	return files
+}
+
+func recoverLearningRankerStatePath(path string) bool {
+	clean := normalizeRecoverLearningPath(path)
+	clean = strings.ToLower(clean)
+	return clean == ".idiom/ranker" || strings.HasPrefix(clean, ".idiom/ranker/")
+}
+
+func normalizeRecoverLearningPath(path string) string {
+	path = strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
+	return filepath.ToSlash(filepath.Clean(path))
+}
+
+func recoverLearningMetrics(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) map[string]float64 {
+	packetQuality := 0.5
+	if reconciliation.Status == recovery.ReconciliationStatusRecovered &&
+		reconciliation.Verification.Status == recovery.ReconciliationVerificationPass &&
+		len(reconciliation.Blockers) == 0 {
+		packetQuality = 1
+	}
+	localizationImproved := 0.0
+	if len(packet.CandidateAtoms) > 1 {
+		localizationImproved = 1
+	}
+	return map[string]float64{
+		"candidate_atom_count":       float64(len(packet.CandidateAtoms)),
+		"completed_atom_count":       float64(len(reconciliation.CompletedAtoms)),
+		"remaining_atom_count":       float64(len(reconciliation.RemainingAtoms)),
+		"required_test_count":        float64(len(reconciliation.Verification.RequiredTests)),
+		"verification_command_count": float64(len(reconciliation.Verification.Commands)),
+		"localization_improved":      localizationImproved,
+		"packet_quality":             packetQuality,
+	}
+}
+
+func recoverLearningResultID(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) string {
+	parts := []string{
+		packet.FailureID,
+		packet.PacketID,
+		reconciliation.PacketDigest,
+		reconciliation.Status,
+		strings.Join(recovery.ReconciliationCompletedAtomIDs(reconciliation), ","),
+		strings.Join(reconciliation.RemainingAtoms, ","),
+	}
+	sum := localOpsStableID(strings.Join(parts, "\x00"))
+	return "recovery_reconciliation_" + sum
 }
 
 func failureRecordFromPacket(packet recovery.DecompositionPacket) recovery.FailureRecord {
@@ -1189,6 +1320,13 @@ func writeRecoverReconcileReport(stdout io.Writer, stderr io.Writer, jsonOut boo
 	}
 	if len(report.RemainingAtoms) > 0 {
 		fmt.Fprintf(stdout, "remaining_atoms: %s\n", strings.Join(report.RemainingAtoms, ", "))
+	}
+	if report.RankerLearning != nil {
+		fmt.Fprintf(stdout, "ranker_learning: %s", report.RankerLearning.Status)
+		if report.RankerLearning.EventID != "" {
+			fmt.Fprintf(stdout, " (%s)", report.RankerLearning.EventID)
+		}
+		fmt.Fprintln(stdout)
 	}
 	fmt.Fprintf(stdout, "next_valid_action: %s\n", report.NextAction)
 	return code

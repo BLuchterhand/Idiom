@@ -478,6 +478,10 @@ The target source list is:
   misses, stale packet use, bad rank order, or low groundedness into candidate
   learning events. Audit watch should generate candidates; a deterministic
   adapter decides whether to apply them.
+- `recovery_reconciliation`: wired as evidence-only input. Validated
+  `idiom recover reconcile` outcomes append no-op learning-log events with
+  packet-quality, localization-improvement, completed/remaining atom, and
+  verification metrics, but do not mutate learned weights.
 
 ### Promotion Rules
 
@@ -740,6 +744,8 @@ Status: already started.
 - Add `harness_feedback` candidate learning for packet quality and impact
   ranking categories.
 - Add `audit_watch` candidate learning for repeated context-ranking findings.
+- Keep `recovery_reconciliation` events evidence-only until there is an oracle
+  proving a recovery outcome should boost or penalize file ranking.
 - Record no-op and skipped learning events so audit can distinguish dormant,
   healthy, and blocked sources.
 - Add drift checks to `harness_audit` for path-prefix concentration and stale

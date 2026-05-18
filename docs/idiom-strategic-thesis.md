@@ -533,8 +533,9 @@ the surface area.
    whether the targeted finding actually changes.
 3. Create a `context_pack` localization eval from 20 recent successful and
    failed implementation logs.
-4. Wire one non-manual ranker-learning trigger from verified edits or
-   `harness_feedback`.
+4. Wire the next non-manual weight-mutating ranker-learning trigger from
+   verified edits or `harness_feedback`; recovery reconciliation is already
+   evidence-only.
 5. Fix incomplete implement session lifecycle logging.
 6. Turn the top redirect-storm and same-tool-repeat patterns into regression
    tests.

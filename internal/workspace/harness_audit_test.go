@@ -71,6 +71,66 @@ func TestBuildRankerLearningAuditClassifiesObservedSources(t *testing.T) {
 	}
 }
 
+func TestBuildRankerLearningAuditClassifiesRecoveryReconciliationSource(t *testing.T) {
+	root := t.TempDir()
+	if _, err := comprehension.RecordVerifiedRankerEvidence(root, comprehension.VerifiedRankerLearningRequest{
+		Source:   comprehension.LearningSourceRecoveryReconciliation,
+		Files:    []string{"internal/recovery/packet.go"},
+		Score:    1,
+		Reason:   comprehension.LearningReasonVerifiedRecovery,
+		Verified: true,
+		Evidence: comprehension.LearningEvidenceRef{
+			Kind:     comprehension.LearningEvidenceKindRecoveryReconciliation,
+			Verified: true,
+			Files:    []string{"internal/recovery/packet.go"},
+			Metrics: map[string]float64{
+				"packet_quality":       1,
+				"completed_atom_count": 1,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("record recovery learning evidence: %v", err)
+	}
+	got := buildRankerLearningAudit(root)
+	if got.LearningSummary == nil || got.LearningSummary.BySource[comprehension.LearningSourceRecoveryReconciliation] != 1 {
+		t.Fatalf("learning summary missing recovery reconciliation source: %#v", got.LearningSummary)
+	}
+	if !slices.Contains(got.WiredSources, comprehension.LearningSourceRecoveryReconciliation) {
+		t.Fatalf("recovery reconciliation should be wired, got %v", got.WiredSources)
+	}
+	for _, trigger := range got.TriggerRecommendations {
+		if trigger.Name == comprehension.LearningSourceRecoveryReconciliation && trigger.Status != "wired" {
+			t.Fatalf("recovery reconciliation trigger should be wired, got %#v", trigger)
+		}
+	}
+}
+
+func TestRankerLearningFindingsIgnoreEvidenceOnlyRecoveryNoOps(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 4; i++ {
+		if _, err := comprehension.RecordVerifiedRankerEvidence(root, comprehension.VerifiedRankerLearningRequest{
+			Source:   comprehension.LearningSourceRecoveryReconciliation,
+			Files:    []string{"internal/recovery/packet.go"},
+			Score:    1,
+			Reason:   comprehension.LearningReasonVerifiedRecovery,
+			Verified: true,
+			Evidence: comprehension.LearningEvidenceRef{
+				Kind:     comprehension.LearningEvidenceKindRecoveryReconciliation,
+				Verified: true,
+				Files:    []string{"internal/recovery/packet.go"},
+			},
+		}); err != nil {
+			t.Fatalf("record recovery learning evidence: %v", err)
+		}
+	}
+	got := buildRankerLearningAudit(root)
+	for _, finding := range rankerLearningFindings(got) {
+		if finding.ID == "ranker_learning_mostly_noop" {
+			t.Fatalf("evidence-only recovery no-op events should not trigger mutable no-op warning: %#v", finding)
+		}
+	}
+}
+
 func TestRankerLearningAuditSurfacesAcceptedRejectedReasons(t *testing.T) {
 	root := t.TempDir()
 	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{

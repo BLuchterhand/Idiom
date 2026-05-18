@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/comprehension"
 	"idiom/internal/planexecute"
 	"idiom/internal/recovery"
 )
@@ -243,6 +244,29 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	}
 	if reconcileReport.Status != recovery.ReconciliationStatusRecovered || reconcileReport.NextAction != recovery.NextActionNone {
 		t.Fatalf("unexpected reconcile report: %#v", reconcileReport)
+	}
+	if reconcileReport.RankerLearning == nil ||
+		reconcileReport.RankerLearning.State != comprehension.LearningStateAccepted ||
+		reconcileReport.RankerLearning.Source != comprehension.LearningSourceRecoveryReconciliation ||
+		reconcileReport.RankerLearning.Reason != comprehension.LearningReasonVerifiedRecovery ||
+		reconcileReport.RankerLearning.EvidenceKind != comprehension.LearningEvidenceKindRecoveryReconciliation {
+		t.Fatalf("expected accepted recovery learning evidence, got %#v", reconcileReport.RankerLearning)
+	}
+	if reconcileReport.RankerLearning.Metrics["packet_quality"] != 1 ||
+		reconcileReport.RankerLearning.Metrics["completed_atom_count"] != 1 {
+		t.Fatalf("expected recovery learning metrics, got %#v", reconcileReport.RankerLearning.Metrics)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "ranker", "weights.json")); !os.IsNotExist(err) {
+		t.Fatalf("recovery learning evidence must not write weights.json, err=%v", err)
+	}
+	learningEntries, err := comprehension.ReadLearningLog(root)
+	if err != nil {
+		t.Fatalf("read learning log: %v", err)
+	}
+	learningSummary := comprehension.SummarizeLearningLog(learningEntries)
+	if learningSummary.BySource[comprehension.LearningSourceRecoveryReconciliation] != 1 ||
+		learningSummary.AcceptedReasonCounts[comprehension.LearningReasonVerifiedRecovery] != 1 {
+		t.Fatalf("learning summary missing recovery reconciliation event: %#v", learningSummary)
 	}
 	if _, err := os.Stat(filepath.Join(root, reconcileReport.ReconciliationPath)); err != nil {
 		t.Fatalf("reconciliation output missing: %v", err)
@@ -497,6 +521,42 @@ func TestRecoverReconcileMergesCompletedAtoms(t *testing.T) {
 	}
 	if len(report.CompletedAtoms) != 2 || !recoverAtomIDsContain(report.CompletedAtoms, packet.CandidateAtoms[0].ID) || !recoverAtomIDsContain(report.CompletedAtoms, packet.CandidateAtoms[1].ID) {
 		t.Fatalf("expected merged completed atoms, got %#v", report)
+	}
+}
+
+func TestRecoveryReconciliationLearningRejectsRankerStatePaths(t *testing.T) {
+	root := t.TempDir()
+	packet := recovery.DecompositionPacket{
+		SchemaVersion: recovery.DecompositionPacketSchemaVersion,
+		FailureID:     "failure-ranker-path",
+		PacketID:      "packet-failure-ranker-path",
+		CandidateAtoms: []recovery.CandidateAtom{{
+			ID:            "recovery-001",
+			RequiredPaths: []string{".idiom\\ranker\\weights.json"},
+			RequiredTests: []string{"go test ./cmd/idiom"},
+		}},
+	}
+	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
+		CompletedAtomIDs: []string{"recovery-001"},
+		Verification: recovery.ReconciliationVerification{
+			Status:        recovery.ReconciliationVerificationPass,
+			RequiredTests: []string{"go test ./cmd/idiom"},
+			Commands: []recovery.ReconciliationCommandResult{{
+				Command:  "go test ./cmd/idiom",
+				Status:   recovery.ReconciliationVerificationPass,
+				ExitCode: 0,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build reconciliation: %v", err)
+	}
+	report := recordRecoverReconciliationLearning(root, packet, reconciliation)
+	if report.State != comprehension.LearningStateRejected || report.Reason != comprehension.LearningReasonNoValidFiles {
+		t.Fatalf("ranker state paths should be rejected as learning files, got %#v", report)
+	}
+	if len(report.Files) != 0 {
+		t.Fatalf("ranker state paths must not be retained in learning report: %#v", report.Files)
 	}
 }
 

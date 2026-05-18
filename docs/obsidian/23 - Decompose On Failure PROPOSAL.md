@@ -20,7 +20,9 @@ tags:
 > presenter, audit-watch, product-evidence, and release-evidence now project
 > bounded recovery state. Promotion writes a normal gated brief; reconciliation
 > closes the packet only after packet-digest, atom-manifest, and required-test
-> evidence validation.
+> evidence validation. Valid reconciliation also records sanitized,
+> evidence-only ranker-learning events under
+> `source:"recovery_reconciliation"` without mutating learned weights.
 >
 > Source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
@@ -77,8 +79,11 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] TUI `/product-status` renders the shared product operator view, including
   recovery packet blockers, dispatchability, and the non-dispatchable recovery
   inspection command hint.
+- [x] Valid `recover reconcile` runs append evidence-only ranker-learning events
+  with packet-quality, localization, atom-count, and verification-count metrics;
+  the adapter rejects ranker state paths and never mutates weights.
 - [ ] Broader TUI continuation/handoff actions, deeper residual-work evidence,
-  ranker-learning inputs, and non-plan-execute adapters are not yet complete.
+  and non-plan-execute adapters are not yet complete.
 
 ## Target Lifecycle
 
@@ -132,6 +137,8 @@ flowchart TD
   downgrade open recovery to release-impact evidence; malformed or stale
   recovery artifacts block without exporting raw prompts, transcripts, or file
   bodies.
+- Ranker-learning summaries include validated recovery reconciliation outcomes
+  as no-op evidence events, not learned-weight mutations.
 - Write/promote/reconcile recovery actions stay out of the sidecar discovery
   profile until a dedicated write-authorization contract exists.
 

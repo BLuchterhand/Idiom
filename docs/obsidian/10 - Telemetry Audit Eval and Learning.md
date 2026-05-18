@@ -160,11 +160,16 @@ Learning signals can come from:
 
 - SWE/eval groundedness outcomes.
 - Manual `idiom ranker boost` and `idiom ranker penalize` commands.
+- Valid `idiom recover reconcile` outcomes, recorded as
+  `source:"recovery_reconciliation"` no-op events with packet-quality,
+  localization, completed/remaining atom, and verification metrics.
 - Future verified edit, audit watch, and feedback promotion paths.
 
 Every update should write a bounded event to
 `.idiom/ranker/learning_log.jsonl`. `harness_audit` reports the merged learning
 state so operators can see whether ranking is live, idle, or missing evidence.
+Recovery reconciliation events are evidence-only and do not create or mutate
+`.idiom/ranker/weights.json`.
 
 Ranker learning is not a hidden strategy override. It changes evidence ordering
 and should remain inspectable through packets, scores, learning logs, and audit

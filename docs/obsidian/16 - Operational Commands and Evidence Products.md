@@ -120,6 +120,13 @@ artifact closes the blocker only when its packet digest, completed/remaining
 atom manifest, and required-test command results validate against the current
 packet.
 
+After `idiom recover reconcile` validates and writes the reconciliation
+artifact, it also appends an evidence-only ranker-learning event under
+`source:"recovery_reconciliation"`. The event records packet-quality,
+localization, completed/remaining atom, and verification metrics for
+`harness_audit` and product evidence summaries, and it does not mutate
+`.idiom/ranker/weights.json`.
+
 Product and release evidence exports also scan local `.idiom/recovery`
 artifacts. They report metadata-only recovery counts, failure classes, next
 actions, reconciliation counts, open/recovered/blocked packet counts,

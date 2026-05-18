@@ -63,9 +63,11 @@ The executable implementation plan is
   summaries. The recovery classifier covers the documented `scope_too_large`
   and `verification_failed` classes, and reconciliation artifacts close packets
   only after packet-digest, atom manifest, and required-test evidence
-  validation. Broader TUI continuation/handoff actions, deeper residual-work
-  evidence, ranker learning inputs, and non-plan-execute failure sources remain
-  follow-up work.
+  validation. Successful reconciliation also records sanitized evidence-only
+  ranker-learning events under `source:"recovery_reconciliation"` without
+  mutating learned weights. Broader TUI continuation/handoff actions, deeper
+  residual-work evidence, and non-plan-execute failure sources remain follow-up
+  work.
 
 ## System Shape
 

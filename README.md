@@ -171,7 +171,9 @@ Other useful subcommands:
   atom manifest plus passing required-test evidence covers every candidate in
   the current packet. The default reconciliation artifact is
   `reconciliation.json` next to the packet when that path is under the workspace
-  root. Failed plan-execute runs automatically write both
+  root. Valid reconciliation also appends an evidence-only
+  `source:"recovery_reconciliation"` ranker-learning event without mutating
+  learned weights. Failed plan-execute runs automatically write both
   `.idiom/recovery/<failure-id>/failure.json` and
   `.idiom/recovery/<failure-id>/packet.json`; promotion still does not dispatch
   follow-up work, and reconciliation preserves the original failure record.
@@ -753,6 +755,13 @@ oracle is configured: scores >= 0.75 boost the oracle's `context_files`,
 scores < 0.40 penalize them, and the noisy middle band records a no-op so the
 audit trail still reflects that the eval ran. Every update writes to
 `.idiom/ranker/learning_log.jsonl` under `source: "eval"`.
+
+Recovery reconciliation also feeds the learning log after a packet is validated
+and written. `idiom recover reconcile` records
+`source:"recovery_reconciliation"` with action `no_op`, packet-quality and
+localization metrics, completed/remaining atom counts, and verification counts.
+This is evidence-only: it updates `learning_log.jsonl` for audit/ranker
+summaries but does not create or mutate `.idiom/ranker/weights.json`.
 
 For manual nudges, the `idiom ranker` CLI is the escape hatch:
 
