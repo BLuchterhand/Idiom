@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0021-phase-2-research-run-plan-from-profiles`
-- Active atom: `impl-0022-phase-2-research-artifact-prompt-rendering`
+- Last completed atom: `impl-0022-phase-2-research-artifact-prompt-rendering`
+- Active atom: none planned; next action is to plan the first Phase 3 atom
 - Status bucket: `started`
-- Current phase: `phase-2-research-profiles`
-- Context pack: `2da56cd96a95bc0c`
+- Current phase: `phase-3-prd-adr-generation`
+- Context pack: `c4fb4dbdee75e163`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -62,18 +62,20 @@ This effort is the durable implementation state for delivering
   evidence ledger. The plan surface is mutually exclusive with evidence merge,
   requires explicit profile selection for multi-profile efforts, and fails closed
   on unsafe profile or researcher identifiers.
-- Atom 22 (active): add role-specific research artifact prompt rendering for
-  planned runs. This should write deterministic prompt files and emit
-  `idiom artifact --no-tools` command recipes for each researcher without
+- Atom 22: all TDD obligations satisfied. Added role-specific research artifact
+  prompt rendering for planned runs. This writes deterministic prompt files and
+  emits `idiom artifact --no-tools` command recipes for each researcher without
   executing models, writing researcher outputs, merging evidence, or drafting
-  PRDs.
+  PRDs. The render surface fails closed for missing profiles and unsafe prompt
+  paths, blocks symlink prompt targets before partial writes, and leaves rendered
+  prompt bodies out of durable reports and workflow state.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 21 closeout. These files are source-controlled
+The workflow implementation remains in progress after Atom 22 closeout. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
 committed product workflow validators plus lint and audit commands until later
 atoms close.
@@ -250,7 +252,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Implement Atom 22: role-specific research artifact prompt rendering through
-`idiom artifact --no-tools`. Profile storage, deterministic research run
-planning, and evidence merge are in place; this atom should close the remaining
-Phase 2 design-doc gap before Phase 3 PRD/ADR generation begins.
+Plan the first Phase 3 atom for PRD and ADR generation. Phase 2 is complete:
+profile storage, deterministic run planning, role-specific prompt rendering,
+evidence merge, and conflict preservation are in place.

@@ -5,7 +5,7 @@
   "implementor_id": "codex-gpt-worker-impl-0022",
   "runtime": "codex_subagent",
   "model": "gpt-5.3-codex",
-  "completed_at": "",
+  "completed_at": "2026-05-18T12:06:00Z",
   "complexity_tier": "C2",
   "scope_statement": "Add deterministic role-specific research prompt rendering and idiom artifact --no-tools command recipes for planned research runs without executing models or writing researcher outputs.",
   "code_changes": true,
@@ -26,17 +26,25 @@
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0022-investigation.json"
   ],
   "verification": {
-    "run_by_implementor": false,
-    "commands": [],
-    "status": "pending"
+    "run_by_implementor": true,
+    "commands": [
+      "idiom tool context_pack --input '{\"task\":\"impl 0022 role specific research artifact prompt rendering through idiom artifact no tools\",\"mode\":\"plan\",\"limit\":12}'",
+      "idiom tool context_query --input '{\"query\":\"artifact command prompt file no tools product research run plan prompt renderer output contract\",\"resolution\":\"symbol\"}'",
+      "idiom tool context_pack --input '{\"task\":\"repair impl 0022 research prompt symlink boundary fail closed\",\"mode\":\"plan\",\"limit\":8}'",
+      "go test ./internal/productworkflow -run TestResearchArtifactPrompt",
+      "go test ./cmd/idiom -run TestProductResearchRenderPrompts",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "JSON/JSONL validation for durable impl-0022 artifacts",
+      "privacy secret-pattern scan over durable impl-0022 artifacts",
+      "git diff --check",
+      "go test ./..."
+    ],
+    "status": "passed_full_suite_and_product_gates"
   },
   "privacy_note": "durable reports and workflow state do not embed rendered prompt bodies, raw transcripts, file bodies, secrets, or customer-identifying data; prompt files are intentional generated artifacts under the configured prompt directory",
-  "open_blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "post_effort_investigation_pending",
-    "commit_and_push_pending"
-  ],
-  "reviewer_id": "codex-gpt-review-impl-0022"
+  "open_blockers": [],
+  "reviewer_id": "codex-gpt-review-impl-0022",
+  "checkpoint_commit_hash": "3ce0deecece6f6e2e5c2a164ebe957190641c865"
 }

@@ -4,13 +4,13 @@
   "task_id": "impl-0022-phase-2-research-artifact-prompt-rendering",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T11:55:00Z",
-  "state_revision": 68,
-  "last_event_id": "evt-0190",
-  "workspace_fingerprint": "idiom@c6bad16",
+  "updated_at": "2026-05-18T12:06:00Z",
+  "state_revision": 69,
+  "last_event_id": "evt-0196",
+  "workspace_fingerprint": "idiom@3ce0dee",
   "status_bucket": "started",
-  "current_phase": "phase-2-research-profiles",
-  "current_state": "implementing",
+  "current_phase": "phase-3-prd-adr-generation",
+  "current_state": "planned",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -62,48 +62,48 @@
     "gate_results": [
       {
         "gate": "research_artifact_prompt_rendering",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       },
       {
         "gate": "research_artifact_command_recipe",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       },
       {
         "gate": "product_research_render_prompts_json_surface",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       },
       {
         "gate": "product_research_render_prompts_no_model_or_output_writes",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       },
       {
         "gate": "focused_go_tests",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       },
       {
         "gate": "full_go_tests",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       },
       {
         "gate": "durable_json_jsonl_validation",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       },
       {
         "gate": "privacy_secret_scan",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       },
       {
         "gate": "diff_whitespace_check",
-        "status": "pending",
-        "checked_at": ""
+        "status": "passed",
+        "checked_at": "2026-05-18T12:06:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -145,10 +145,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T11:55:00Z",
+  "last_reconciliation_at": "2026-05-18T12:06:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "implement_impl_0022_research_artifact_prompt_rendering",
+    "plan_phase_3_prd_adr_generation_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],

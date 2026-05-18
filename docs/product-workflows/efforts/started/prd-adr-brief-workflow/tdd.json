@@ -19,7 +19,18 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned"
+      "atom_planned",
+      "research_artifact_prompt_rendering",
+      "research_artifact_command_recipe",
+      "product_research_render_prompts_json_surface",
+      "product_research_render_prompts_no_model_or_output_writes",
+      "focused_go_tests",
+      "full_go_tests",
+      "durable_json_jsonl_validation",
+      "privacy_secret_scan",
+      "diff_whitespace_check",
+      "review_passed",
+      "atom_closed"
     ],
     "gates_blocked": []
   },
@@ -31,7 +42,7 @@
       "owner": "internal/productworkflow/research_artifact_prompts_test.go",
       "command": "go test ./internal/productworkflow -run TestResearchArtifactPrompt",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0022-002",
@@ -40,7 +51,7 @@
       "owner": "internal/productworkflow/research_artifact_prompts_test.go",
       "command": "go test ./internal/productworkflow -run TestResearchArtifactPrompt",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0022-003",
@@ -49,16 +60,16 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductResearchRenderPrompts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0022-004",
       "type": "audit",
-      "behavior": "The prompt rendering surface records only profile identifiers, researcher metadata, prompt/output paths, command recipes, counts, and typed findings; durable reports and state do not store raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data.",
+      "behavior": "The prompt rendering surface records only profile identifiers, researcher metadata, prompt/output paths, command recipes, counts, and typed findings; durable reports and state do not embed rendered prompt bodies, raw transcripts, file bodies, secrets, or customer-identifying data.",
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0022-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     }
   ]
 }

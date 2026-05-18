@@ -8,10 +8,33 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
+  "status": "pass",
   "findings": [],
-  "checks": {},
-  "reviewed_at": "",
-  "commands_reviewed": [],
-  "created_at": "2026-05-18T11:55:00Z"
+  "checks": {
+    "discovery_first_review": "Reviewer used Idiom context_pack, context_query, and context_zoom before localized file reads.",
+    "prompt_rendering_contract": "Prompt rendering is deterministic, role-specific, JSON-only, and includes researcher metadata, evidence boundaries, output path, and output contract metadata.",
+    "artifact_command_recipe": "Each prompt run includes a deterministic idiom artifact --no-tools command recipe with prompt, output, events, report, and mechanical repair flags.",
+    "no_model_execution": "Render mode plans, validates, and writes prompt files only; it does not execute idiom artifact or write researcher outputs, evidence, PRD, or ADR artifacts.",
+    "fail_closed_boundaries": "Missing profiles, invalid prompt directories, symlinked prompt parents, and symlink prompt files block before prompt writes.",
+    "durable_privacy_wording": "Durable reports and workflow state do not embed rendered prompt bodies; prompt files are intentional generated artifacts.",
+    "verdict": "pass_after_repairs"
+  },
+  "reviewed_at": "2026-05-18T12:06:00Z",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"review impl-0022 phase 2 research artifact prompt rendering\",\"mode\":\"plan\",\"limit\":12,\"path\":\".\"}'",
+    "idiom tool context_query --input '{\"query\":\"callers and tests for runProductResearchRenderPrompts and PlanResearchArtifactPrompts\",\"resolution\":\"symbol\"}'",
+    "idiom tool context_zoom --input '{\"handle\":\"symbol://cmd/idiom/product_workflow.go#runProductResearchRenderPrompts\",\"resolution\":\"symbol\"}'",
+    "idiom tool context_zoom --input '{\"handle\":\"symbol://internal/productworkflow/research_artifact_prompts.go#PlanResearchArtifactPrompts\",\"resolution\":\"symbol\"}'",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "temp-dir repro for --render-prompts with no profiles",
+    "idiom tool context_pack --input '{\"task\":\"re-review impl-0022 repaired research artifact prompt rendering\",\"mode\":\"plan\",\"limit\":10,\"path\":\".\"}'",
+    "idiom tool context_query --input '{\"query\":\"tests and callers for runProductResearchRenderPrompts after missing_research_profile repair\",\"resolution\":\"symbol\"}'",
+    "go test ./internal/productworkflow ./cmd/idiom"
+  ],
+  "created_at": "2026-05-18T11:55:00Z",
+  "decision": "pass",
+  "resolved_prior_findings": [
+    "render_prompts_missing_profile_fails_open",
+    "impl22_privacy_note_overbroad"
+  ]
 }
