@@ -3175,6 +3175,165 @@ func TestProductPRDRenderPromptRejectsUnsafePromptOrOutputPath(t *testing.T) {
 	}
 }
 
+func TestProductADRRenderPromptWritesPromptOnly(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductADR([]string{
+		"--effort-root", dir,
+		"--render-prompt",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "pass" {
+		t.Fatalf("expected status pass, got %v", result["status"])
+	}
+	if strings.Contains(stdout.String(), "Draft an Architecture Decision Record") {
+		t.Fatalf("JSON output should not include rendered prompt body:\n%s", stdout.String())
+	}
+	if result["prompt_write_count"].(float64) != 1 {
+		t.Fatalf("expected prompt_write_count=1, got %v", result["prompt_write_count"])
+	}
+	promptData, err := os.ReadFile(filepath.Join(dir, "adrs", "adr.prompt.md"))
+	if err != nil {
+		t.Fatalf("read prompt: %v", err)
+	}
+	prompt := string(promptData)
+	if !strings.Contains(prompt, "ADR parser/audit contract") || !strings.Contains(prompt, "Do not claim acceptance, approval, or supersession.") {
+		t.Fatalf("missing ADR contract guidance in prompt:\n%s", prompt)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "adrs", "ADR-draft.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected no ADR write, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "events", "adr-draft.events.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("expected no events write, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "reports", "adr-draft.report.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no report write, stat err=%v", err)
+	}
+}
+
+func TestProductADRRenderPromptFailsClosedOnInvalidEvidenceOrPRD(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "evidence/evidence.jsonl", "{bad json")
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	var stdout, stderr bytes.Buffer
+	code := runProductADR([]string{
+		"--effort-root", dir,
+		"--render-prompt",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for invalid evidence, got %d", code)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	plan := result["plan"].(map[string]any)
+	findings := plan["findings"].([]any)
+	if findings[0].(map[string]any)["kind"] != "validation_error" {
+		t.Fatalf("expected validation_error finding, got %#v", findings)
+	}
+
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir2, "prd.md", "not valid prd")
+	stdout.Reset()
+	stderr.Reset()
+	code = runProductADR([]string{
+		"--effort-root", dir2,
+		"--render-prompt",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for invalid prd, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir2, "adrs", "adr.prompt.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected no prompt write for invalid prd, stat err=%v", err)
+	}
+}
+
+func TestProductADRRenderPromptFailsClosedWhenInputsMissing(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := runProductADR([]string{
+		"--effort-root", dir,
+		"--render-prompt",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for missing inputs, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	plan := result["plan"].(map[string]any)
+	findings := plan["findings"].([]any)
+	var sawEvidence, sawPRD bool
+	for _, item := range findings {
+		kind := item.(map[string]any)["kind"]
+		if kind == "missing_evidence_ledger" {
+			sawEvidence = true
+		}
+		if kind == "missing_prd" {
+			sawPRD = true
+		}
+	}
+	if !sawEvidence || !sawPRD {
+		t.Fatalf("expected missing evidence and PRD findings, got %#v", findings)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "adrs", "adr.prompt.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected no prompt write for missing inputs, stat err=%v", err)
+	}
+}
+
+func TestProductADRRenderPromptRejectsUnsafePromptOrOutputPath(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductADR([]string{
+		"--effort-root", dir,
+		"--render-prompt",
+		"--adr-prompt", "../bad.prompt.md",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected blocked code for traversal prompt path, got %d", code)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v", err)
+	}
+	plan := result["plan"].(map[string]any)
+	findings := plan["findings"].([]any)
+	if findings[0].(map[string]any)["kind"] != "invalid_adr_prompt_path" {
+		t.Fatalf("expected invalid_adr_prompt_path, got %#v", findings)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = runProductADR([]string{
+		"--effort-root", dir,
+		"--render-prompt",
+		"--adr-output", "../bad.md",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected blocked code for traversal output path, got %d", code)
+	}
+}
+
 func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {

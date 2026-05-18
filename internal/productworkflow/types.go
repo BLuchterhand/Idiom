@@ -440,6 +440,40 @@ type PRDEvidenceCardSummary struct {
 	Uncertainty string `json:"uncertainty"`
 }
 
+type ADRDraftPromptPlan struct {
+	EvidenceLedgerPath    string                     `json:"evidence_ledger_path"`
+	PRDInputPath          string                     `json:"prd_input_path"`
+	PromptPath            string                     `json:"prompt_path"`
+	ADROutputPath         string                     `json:"adr_output_path"`
+	EventsPath            string                     `json:"events_path"`
+	ReportPath            string                     `json:"report_path"`
+	Command               string                     `json:"command"`
+	EvidenceCardCount     int                        `json:"evidence_card_count"`
+	EvidenceCardIDs       []string                   `json:"evidence_card_ids"`
+	EvidenceSummaries     []ADREvidenceCardSummary   `json:"evidence_summaries"`
+	PRDRequirementCount   int                        `json:"prd_requirement_count"`
+	PRDRequirementIDs     []string                   `json:"prd_requirement_ids"`
+	PRDRequirementSummary []ADRPRDRequirementSummary `json:"prd_requirement_summaries"`
+	Findings              []ProfileFinding           `json:"findings"`
+}
+
+type ADREvidenceCardSummary struct {
+	CardID      string `json:"card_id"`
+	Kind        string `json:"kind"`
+	Confidence  string `json:"confidence"`
+	Freshness   string `json:"freshness"`
+	Claim       string `json:"claim"`
+	Uncertainty string `json:"uncertainty"`
+}
+
+type ADRPRDRequirementSummary struct {
+	ID          string `json:"id"`
+	Priority    string `json:"priority"`
+	Statement   string `json:"statement"`
+	Evidence    int    `json:"evidence_ref_count"`
+	Obligations int    `json:"tdd_obligation_count"`
+}
+
 type ADRDocument struct {
 	FrontMatter ADRFrontMatter
 	Sections    ADRSections
