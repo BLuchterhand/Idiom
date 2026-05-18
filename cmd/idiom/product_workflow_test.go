@@ -3837,6 +3837,354 @@ func TestProductTDDCoverageGateIgnoresOtherTaskHistoricalTDDObligations(t *testi
 	}
 }
 
+func TestProductBriefRenderFailsClosedOnMissingInputs(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", dir,
+		"--render",
+		"--brief-output", "briefs/blocked.md",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected blocked code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked status, got %q", out.Status)
+	}
+	if strings.TrimSpace(out.Blocker) == "" {
+		t.Fatal("expected blocker text")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "briefs", "blocked.md")); !os.IsNotExist(err) {
+		t.Fatalf("blocked render must not write requested output path, stat err=%v", err)
+	}
+}
+
+func TestProductBriefRenderTextFailureIncludesNextAction(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", dir,
+		"--render",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected blocked code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	text := stdout.String()
+	if !strings.Contains(text, "product brief render: blocked") || !strings.Contains(text, "next:") {
+		t.Fatalf("expected actionable text failure output, got stdout=%s stderr=%s", text, stderr.String())
+	}
+}
+
+func TestProductBriefRenderRejectsUnsafeOutputPath(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", dir,
+		"--render",
+		"--brief-output", "../bad.md",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected blocked code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(out.Blocker, "must be effort-relative") {
+		t.Fatalf("expected traversal blocker, got %q", out.Blocker)
+	}
+	if strings.Contains(out.NextValidAction, "dispatch from this brief output") {
+		t.Fatalf("blocked output must not claim dispatch readiness, got next action %q", out.NextValidAction)
+	}
+}
+
+func TestProductBriefRenderRejectsNonBriefsOutputPath(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", dir,
+		"--render",
+		"--brief-output", "prd.md",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected blocked code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(out.Blocker, "must be under briefs/") {
+		t.Fatalf("expected briefs/ blocker, got %q", out.Blocker)
+	}
+}
+
+func TestProductBriefRenderRejectsSymlinkOutputPath(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	if err := os.MkdirAll(filepath.Join(dir, "briefs"), 0o755); err != nil {
+		t.Fatalf("mkdir briefs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "target.md"), []byte("target"), 0o644); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "target.md"), filepath.Join(dir, "briefs", "linked.md")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", dir,
+		"--render",
+		"--brief-output", "briefs/linked.md",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected blocked code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(out.Blocker, "must not be a symlink") {
+		t.Fatalf("expected symlink blocker, got %q", out.Blocker)
+	}
+}
+
+func TestProductBriefRenderWritesRequestedPathOnly(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "workflow_state.json", strings.Replace(validTestWorkflowStateJSON(), `"coverage":{"coverage_tier":"unit"}`, `"coverage":{"coverage_tier":"behavior_standard"}`, 1))
+	writeTestFile(t, dir, "tdd.json", `{
+		"schema_version":"idiom.tdd_obligations.v2.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"coverage_tier":"behavior_standard",
+		"coverage":{"ears_total":1,"ears_mapped":1,"bdd_total":1,"bdd_with_concrete_data":1,"mutation_min_score":80,"gates_passed":["contract"]},
+		"obligations":[{"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test ./...","required_before":"close","status":"pending"}]
+	}`)
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", dir,
+		"--render",
+		"--brief-output", "briefs/generated.md",
+		"--json",
+	}, &stdout, &stderr, nil)
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if code != 0 {
+		t.Fatalf("expected pass exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if out.Status != "pass" {
+		t.Fatalf("expected pass status, got %#v", out)
+	}
+	if out.BriefOutputPath != "briefs/generated.md" {
+		t.Fatalf("expected relative output path, got %q", out.BriefOutputPath)
+	}
+	if out.Lint == nil || out.Lint.Exit != 0 {
+		t.Fatalf("expected passing brief lint result, got %#v", out.Lint)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "briefs", "generated.md")); err != nil {
+		t.Fatalf("expected brief write at requested path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "briefs", "other.md")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected write to unrequested path, stat err=%v", err)
+	}
+}
+
+func TestProductBriefRenderScopesReadFirstPathsToEffortRoot(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	effort := filepath.Join(repo, "custom", "efforts", "brief-case")
+	writeMinimalPassingBriefEffort(t, effort)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", effort,
+		"--render",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected pass exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if !containsString(out.Generated.FilesToReadFirst, "custom/efforts/brief-case/prd.md") {
+		t.Fatalf("read-first paths must be scoped to requested effort root, got %#v", out.Generated.FilesToReadFirst)
+	}
+	for _, path := range out.Generated.FilesToReadFirst {
+		if strings.Contains(path, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md") {
+			t.Fatalf("read-first path leaked durable fixture path: %#v", out.Generated.FilesToReadFirst)
+		}
+	}
+}
+
+func TestProductBriefRenderScopesExternalReadFirstPathsToEffortRoot(t *testing.T) {
+	effort := filepath.Join(t.TempDir(), "brief-case")
+	writeMinimalPassingBriefEffort(t, effort)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", effort,
+		"--render",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected pass exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	want := filepath.ToSlash(filepath.Join(effort, "prd.md"))
+	if !containsString(out.Generated.FilesToReadFirst, want) {
+		t.Fatalf("external read-first paths must be scoped to effort root %q, got %#v", want, out.Generated.FilesToReadFirst)
+	}
+}
+
+func TestProductBriefRenderExistingFileDetectionDoesNotDependOnCWD(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	writeTestFile(t, repo, "cmd/idiom/product_workflow.go", "package main\n")
+	effort := filepath.Join(repo, "docs", "efforts", "brief-case")
+	writeMinimalPassingBriefEffort(t, effort)
+	writeTestFile(t, effort, "implementation_ledger.jsonl", strings.Replace(validTestImplementationLedgerJSONL(), `"expected_files":["test.go"]`, `"expected_files":["cmd/idiom/product_workflow.go"]`, 1))
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherWD := t.TempDir()
+	if err := os.Chdir(otherWD); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	}()
+
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", effort,
+		"--render",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected pass exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if got := out.Generated.FileActions["cmd/idiom/product_workflow.go"]; !strings.Contains(got, "Modify existing file") {
+		t.Fatalf("expected existing file action independent of cwd, got %q", got)
+	}
+}
+
+func TestProductBriefRenderTextOutputIsActionable(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", dir,
+		"--render",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected pass exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		"product brief render: pass",
+		"# Brief: Product Workflow Dispatch",
+		"## Files To Modify",
+		"## Acceptance",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected text output to contain %q, got:\n%s", want, text)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "briefs", "generated.md")); !os.IsNotExist(err) {
+		t.Fatalf("render without --brief-output must not write a durable brief, stat err=%v", err)
+	}
+}
+
+func TestProductBriefRenderPassesCurrentDurableEffortFixture(t *testing.T) {
+	root := repoRoot(t)
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", effortRoot,
+		"--render",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected durable fixture brief render to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "pass" || out.Lint == nil || out.Lint.Exit != 0 {
+		t.Fatalf("expected pass with lint success, got %#v", out)
+	}
+	if !strings.Contains(out.Generated.RenderedBrief, "## Files To Modify") {
+		t.Fatal("expected rendered brief body in JSON output")
+	}
+}
+
+func writeMinimalPassingBriefEffort(t *testing.T, dir string) {
+	t.Helper()
+	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", validTestTraceabilityMatrixJSON())
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL())
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "adrs/index.json", validTestADRIndexJSON())
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
+	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
+	writeTestFile(t, dir, "reports/test.json", "{}")
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestProductTDDCoverageGateFailsClosedOnMissingTraceability(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	if err := os.Remove(filepath.Join(dir, "evidence", "traceability_matrix.json")); err != nil {

@@ -1,0 +1,72 @@
+package productworkflow
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
+	input := BriefGenerationInput{
+		WorkflowState: WorkflowState{
+			CurrentPhase: "phase-4",
+			CurrentState: "briefing",
+			TaskID:       "impl-0028",
+		},
+		PRD: PRDDocument{
+			FrontMatter: PRDFrontMatter{PRDID: "prd-1", Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Priority: "must", Statement: "Do the thing"},
+			},
+		},
+		ADRs: []ParsedADR{
+			{Doc: ADRDocument{FrontMatter: ADRFrontMatter{ADRID: "ADR-1", Status: "accepted"}}, RelPath: "adrs/ADR-1.md"},
+		},
+		TDD: TDDLedger{
+			TaskID: "impl-0028",
+			Obligations: []TDDObligation{
+				{ID: "TDD-1", Command: "go test ./..."},
+			},
+		},
+		ImplementationRecords: []ImplementationLedgerRecord{
+			{RecordType: "atom_planned", TaskID: "impl-0028", Scope: &AtomScope{ExpectedFiles: []string{"b.go", "a.go"}, AllowedFiles: []string{"a.go"}}},
+		},
+		CoverageEvaluation: CoverageGateEvaluation{Status: "pass", CoverageTier: "behavior_standard"},
+	}
+	a := GenerateImplementationBrief(input)
+	b := GenerateImplementationBrief(input)
+	if a.Status != "pass" {
+		t.Fatalf("expected pass status, got %q blockers=%v", a.Status, a.Blockers)
+	}
+	if a.RenderedBrief != b.RenderedBrief {
+		t.Fatal("brief generation must be deterministic")
+	}
+	if strings.Index(a.RenderedBrief, "`a.go`") > strings.Index(a.RenderedBrief, "`b.go`") {
+		t.Fatalf("files should be sorted in rendered brief:\n%s", a.RenderedBrief)
+	}
+	for _, section := range []string{
+		"## Files To Modify",
+		"## Files to Read First",
+		"## Verified Current State",
+		"## Required Behavior",
+		"## Constraints",
+		"## Tests",
+		"## Acceptance",
+	} {
+		if !strings.Contains(a.RenderedBrief, section) {
+			t.Fatalf("expected section %q in rendered brief", section)
+		}
+	}
+}
+
+func TestBriefGenerationBlocksWhenCoverageOrAcceptedInputsMissing(t *testing.T) {
+	out := GenerateImplementationBrief(BriefGenerationInput{
+		PRD:                PRDDocument{FrontMatter: PRDFrontMatter{Status: "draft"}},
+		CoverageEvaluation: CoverageGateEvaluation{Status: "blocked", Blockers: []CoverageGateBlocker{{Kind: "k"}}},
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked status, got %q", out.Status)
+	}
+	if len(out.Blockers) == 0 {
+		t.Fatal("expected blockers")
+	}
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -48,6 +49,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductADR(args[1:], stdout, stderr, rec)
 	case "tdd":
 		return runProductTDD(args[1:], stdout, stderr, rec)
+	case "brief":
+		return runProductBrief(args[1:], stdout, stderr, rec)
 	case "-h", "--help", "help":
 		printProductUsage(stdout)
 		return 0
@@ -71,6 +74,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product adr --effort-root <path> --render-prompt [--adr-prompt adrs/adr.prompt.md] [--adr-output adrs/ADR-draft.md] [--json]")
 	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --plan-obligations [--json]")
 	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --evaluate-coverage [--json]")
+	fmt.Fprintln(w, "  idiom product brief --effort-root <path> --render [--brief-output briefs/<task>.md] [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -1376,6 +1380,300 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		return 1
 	}
 	return 0
+}
+
+type productBriefOutput struct {
+	Status          string                                `json:"status"`
+	EffortRoot      string                                `json:"effort_root"`
+	BriefOutputPath string                                `json:"brief_output_path,omitempty"`
+	Generated       productworkflow.BriefGenerationResult `json:"generated"`
+	Lint            *briefLintReport                      `json:"lint,omitempty"`
+	Blocker         string                                `json:"blocker,omitempty"`
+	NextValidAction string                                `json:"next_valid_action,omitempty"`
+}
+
+func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product brief", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var effortRoot string
+	var render bool
+	var briefOutput string
+	var jsonOutput bool
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
+	fs.BoolVar(&render, "render", false, "render deterministic implementation brief from accepted workflow artifacts")
+	fs.StringVar(&briefOutput, "brief-output", "", "effort-relative brief output path to write")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if !render {
+		fmt.Fprintln(stderr, "product brief: --render is required")
+		return 2
+	}
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product brief: --effort-root is required")
+		return 2
+	}
+	absRoot, err := filepath.Abs(effortRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product brief: resolve effort root: %v\n", err)
+		return 2
+	}
+
+	input, blockers := loadBriefGenerationInput(absRoot)
+	gen := productworkflow.GenerateImplementationBrief(input)
+	allBlockers := append([]string{}, blockers...)
+	allBlockers = append(allBlockers, gen.Blockers...)
+
+	out := productBriefOutput{
+		Status:     "blocked",
+		EffortRoot: absRoot,
+		Generated:  gen,
+	}
+
+	var cleanup func()
+	var briefPathForLint string
+	tmp, tmpErr := os.CreateTemp("", "idiom-product-brief-*.md")
+	if tmpErr != nil {
+		allBlockers = append(allBlockers, fmt.Sprintf("failed to create temp brief for lint: %v", tmpErr))
+	} else {
+		briefPathForLint = tmp.Name()
+		_ = tmp.Close()
+		cleanup = func() { _ = os.Remove(briefPathForLint) }
+	}
+	if strings.TrimSpace(briefOutput) != "" {
+		_, rel, block := resolveProductBriefOutputPath(absRoot, briefOutput)
+		if block != "" {
+			allBlockers = append(allBlockers, block)
+		} else {
+			out.BriefOutputPath = filepath.ToSlash(rel)
+		}
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if briefPathForLint != "" {
+		if err := os.WriteFile(briefPathForLint, []byte(gen.RenderedBrief), 0o644); err != nil {
+			allBlockers = append(allBlockers, fmt.Sprintf("failed to stage brief for lint: %v", err))
+		} else {
+			var lintStdout bytes.Buffer
+			var lintStderr bytes.Buffer
+			lintCode := runBriefLint([]string{briefPathForLint, "--json"}, &lintStdout, &lintStderr, rec)
+			var lintReport briefLintReport
+			if unmarshalErr := json.Unmarshal(lintStdout.Bytes(), &lintReport); unmarshalErr != nil {
+				allBlockers = append(allBlockers, fmt.Sprintf("brief lint output parse failed: %v", unmarshalErr))
+			} else {
+				out.Lint = &lintReport
+				if lintCode != 0 {
+					allBlockers = append(allBlockers, fmt.Sprintf("brief lint failed (exit %d)", lintCode))
+				}
+			}
+		}
+	}
+
+	if len(allBlockers) == 0 && strings.TrimSpace(briefOutput) != "" {
+		absOut := filepath.Join(absRoot, filepath.FromSlash(out.BriefOutputPath))
+		if err := os.MkdirAll(filepath.Dir(absOut), 0o755); err != nil {
+			allBlockers = append(allBlockers, fmt.Sprintf("create brief output directory: %v", err))
+		} else if err := os.WriteFile(absOut, []byte(gen.RenderedBrief), 0o644); err != nil {
+			allBlockers = append(allBlockers, fmt.Sprintf("write brief output: %v", err))
+		}
+	}
+
+	if len(allBlockers) == 0 {
+		out.Status = "pass"
+		gen.Status = "pass"
+	} else {
+		out.Blocker = strings.Join(allBlockers, "; ")
+		gen.Status = "blocked"
+		gen.Blockers = append([]string{}, allBlockers...)
+	}
+	out.NextValidAction = productBriefNextValidAction(out.Status, out.BriefOutputPath)
+	out.Generated = gen
+
+	logCLIPhase(rec, "product_brief_render", map[string]any{
+		"status":        out.Status,
+		"has_output":    out.BriefOutputPath != "",
+		"blocker_count": len(allBlockers),
+	})
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			fmt.Fprintf(stderr, "product brief: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintf(stdout, "product brief render: %s\n", out.Status)
+		if out.BriefOutputPath != "" {
+			fmt.Fprintf(stdout, "brief_output: %s\n", out.BriefOutputPath)
+		}
+		if out.Status != "pass" {
+			fmt.Fprintf(stdout, "blocker: %s\nnext: %s\n", out.Blocker, out.NextValidAction)
+		} else if strings.TrimSpace(briefOutput) == "" {
+			fmt.Fprintln(stdout, out.Generated.RenderedBrief)
+		}
+	}
+	if out.Status != "pass" {
+		return 1
+	}
+	return 0
+}
+
+func resolveProductBriefOutputPath(effortRoot, relPath string) (string, string, string) {
+	clean, ok := cleanProductRelativePath(relPath)
+	if !ok {
+		return "", "", fmt.Sprintf("brief output path %q must be effort-relative and must not contain path traversal", relPath)
+	}
+	if !strings.HasPrefix(filepath.ToSlash(clean), "briefs/") {
+		return "", "", fmt.Sprintf("brief output path %q must be under briefs/", relPath)
+	}
+	absPath := filepath.Join(effortRoot, clean)
+	if finding, outside := productworkflow.ValidateResearchPromptPathBoundary(effortRoot, absPath, clean); outside {
+		return "", "", finding.Message
+	}
+	if info, err := os.Lstat(absPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", "", fmt.Sprintf("brief output path %q must not be a symlink", clean)
+	}
+	return absPath, clean, ""
+}
+
+func productBriefNextValidAction(status, briefOutputPath string) string {
+	if status != "pass" {
+		return "resolve blockers before running `idiom brief lint <brief.md>` or dispatching this brief"
+	}
+	if strings.TrimSpace(briefOutputPath) == "" {
+		return "rerun with `--brief-output briefs/<task>.md` to persist the lint-passing brief"
+	}
+	return "run `idiom brief lint <brief.md>` or dispatch from this brief output"
+}
+
+func cleanProductRelativePath(relPath string) (string, bool) {
+	if strings.TrimSpace(relPath) == "" || filepath.IsAbs(relPath) {
+		return "", false
+	}
+	clean := filepath.Clean(relPath)
+	slash := filepath.ToSlash(clean)
+	if slash == "." || slash == ".." || strings.HasPrefix(slash, "../") {
+		return "", false
+	}
+	return clean, true
+}
+
+func loadBriefGenerationInput(effortRoot string) (productworkflow.BriefGenerationInput, []string) {
+	in := productworkflow.BriefGenerationInput{EffortRoot: effortRoot, ExistingWorkspacePath: map[string]bool{}}
+	blockers := []string{}
+	workspaceRoot := resolveProductBriefWorkspaceRoot(effortRoot)
+	if rel, err := filepath.Rel(workspaceRoot, effortRoot); err == nil && rel != "." && !strings.HasPrefix(filepath.ToSlash(rel), "../") {
+		in.ArtifactRootPath = filepath.ToSlash(rel)
+	} else {
+		in.ArtifactRootPath = filepath.ToSlash(effortRoot)
+	}
+	readAndParse := func(relPath string, parse func([]byte) error) {
+		data, err := os.ReadFile(filepath.Join(effortRoot, relPath))
+		if err != nil {
+			if os.IsNotExist(err) {
+				blockers = append(blockers, fmt.Sprintf("required file missing: %s", relPath))
+			} else {
+				blockers = append(blockers, fmt.Sprintf("read %s: %v", relPath, err))
+			}
+			return
+		}
+		if err := parse(data); err != nil {
+			blockers = append(blockers, fmt.Sprintf("parse %s: %v", relPath, err))
+		}
+	}
+	readAndParse("workflow_state.json", func(data []byte) error {
+		parsed, err := productworkflow.ParseWorkflowStateJSON(data)
+		if err == nil {
+			in.WorkflowState = parsed
+		}
+		return err
+	})
+	readAndParse("prd.md", func(data []byte) error {
+		parsed, err := productworkflow.ParsePRDMarkdown(data)
+		if err == nil {
+			in.PRD = parsed
+		}
+		return err
+	})
+	readAndParse(filepath.Join("adrs", "index.json"), func(data []byte) error {
+		parsed, err := productworkflow.ParseADRIndexJSON(data)
+		if err == nil {
+			in.ADRIndex = parsed
+		}
+		return err
+	})
+	for _, entry := range in.ADRIndex.ADRs {
+		rel := filepath.Join("adrs", entry.Path)
+		readAndParse(rel, func(data []byte) error {
+			parsed, err := productworkflow.ParseADRMarkdown(data)
+			if err == nil {
+				in.ADRs = append(in.ADRs, productworkflow.ParsedADR{Doc: parsed, RelPath: rel})
+			}
+			return err
+		})
+	}
+	readAndParse("tdd.json", func(data []byte) error {
+		parsed, err := productworkflow.ParseTDDLedgerJSON(data)
+		if err == nil {
+			in.TDD = parsed
+		}
+		return err
+	})
+	readAndParse(filepath.Join("evidence", "traceability_matrix.json"), func(data []byte) error {
+		parsed, err := productworkflow.ParseTraceabilityMatrixJSON(data)
+		if err == nil {
+			in.Traceability = parsed
+		}
+		return err
+	})
+	readAndParse("implementation_ledger.jsonl", func(data []byte) error {
+		parsed, err := productworkflow.ParseImplementationLedgerJSONL(data)
+		if err == nil {
+			in.ImplementationRecords = parsed
+		}
+		return err
+	})
+	for _, rec := range in.ImplementationRecords {
+		if rec.RecordType != "atom_planned" || rec.Scope == nil {
+			continue
+		}
+		for _, path := range append(append([]string{}, rec.Scope.ExpectedFiles...), rec.Scope.AllowedFiles...) {
+			clean := filepath.ToSlash(strings.TrimSpace(path))
+			if clean == "" {
+				continue
+			}
+			if _, statErr := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(clean))); statErr == nil {
+				in.ExistingWorkspacePath[clean] = true
+			}
+		}
+	}
+	if len(blockers) == 0 {
+		knownTDDIDs := productworkflow.BuildKnownTDDObligationIDs(in.TDD, in.ImplementationRecords, in.PRD.FrontMatter.TaskID)
+		in.CoverageEvaluation = productworkflow.EvaluateCoverageGate(in.PRD, in.ADRIndex, in.ADRs, in.TDD, in.Traceability, knownTDDIDs)
+		if productworkflow.CoverageGateHasBlockers(in.CoverageEvaluation) {
+			blockers = append(blockers, "coverage gate evaluation is blocked")
+		}
+	}
+	return in, blockers
+}
+
+func resolveProductBriefWorkspaceRoot(effortRoot string) string {
+	dir := filepath.Clean(effortRoot)
+	for {
+		next := filepath.Dir(dir)
+		if next == dir {
+			return filepath.Clean(effortRoot)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		dir = next
+	}
 }
 
 func runProductResearchPlanRuns(profiles *productworkflow.ProfileStoreResult, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
