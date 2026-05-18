@@ -37,10 +37,11 @@ This is pre-dispatch decomposition. The post-failure plan-execute loop described
 in [[23 - Decompose On Failure PROPOSAL]] now writes a durable failure record,
 classified failure shape, and decomposition packet automatically when a
 plan-execute session fails. The CLI surface is `idiom recover inspect`,
-`idiom recover status`, `idiom recover decompose`, and `idiom recover promote`.
-Product operator status now projects referenced recovery packets and blocks
-normal workflow dispatch while recovery is open. Reconciliation back to the
-original failed atom remains a follow-up adapter.
+`idiom recover status`, `idiom recover decompose`, `idiom recover promote`, and
+`idiom recover reconcile`. Product operator status now projects referenced
+recovery packets, blocks normal workflow dispatch while recovery is open, and
+unblocks only after a validated reconciliation artifact covers the current
+packet's candidate atom manifest with passing required-test evidence.
 
 ## Operator Surface Map
 
@@ -78,7 +79,7 @@ flowchart TD
 | `idiom atom` | Atom/spec intake and classification |
 | `idiom brief lint` | Pre-dispatch brief linting |
 | `idiom lane postflight` | Diff QC after lane output |
-| `idiom recover` | Failure-record inspection, packet status, decomposition, and promotion into a gated brief |
+| `idiom recover` | Failure-record inspection, packet status, decomposition, promotion into a gated brief, and packet reconciliation |
 | `idiom local-ops benchmark` | Activation and local readiness evidence |
 | `idiom product-evidence export` | Product go/no-go evidence |
 | `idiom release evidence` | Release evidence bundle |

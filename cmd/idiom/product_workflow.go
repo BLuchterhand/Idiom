@@ -1334,6 +1334,15 @@ func printProductRecoveryStatus(stdout io.Writer, recoveryStatus *productworkflo
 	if recoveryStatus.CandidateAtomCount > 0 {
 		fmt.Fprintf(stdout, " candidate_atoms=%d", recoveryStatus.CandidateAtomCount)
 	}
+	if recoveryStatus.CompletedAtomCount > 0 {
+		fmt.Fprintf(stdout, " completed_atoms=%d", recoveryStatus.CompletedAtomCount)
+	}
+	if recoveryStatus.RemainingAtomCount > 0 && recoveryStatus.RemainingAtomCount != recoveryStatus.CandidateAtomCount {
+		fmt.Fprintf(stdout, " remaining_atoms=%d", recoveryStatus.RemainingAtomCount)
+	}
+	if recoveryStatus.ReconciliationPath != "" {
+		fmt.Fprintf(stdout, " reconciliation=%s", recoveryStatus.ReconciliationPath)
+	}
 	if recoveryStatus.PacketPath != "" {
 		fmt.Fprintf(stdout, " packet=%s", recoveryStatus.PacketPath)
 	}

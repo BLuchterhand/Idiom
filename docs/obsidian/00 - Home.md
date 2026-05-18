@@ -109,7 +109,7 @@ implemented.
   implementation phase plan
 - [[23 - Decompose On Failure PROPOSAL]] — recovery layer for converting failed
   plan-execute runs into classified evidence, decomposition packets, and gated
-  follow-up atoms, with reconciliation adapters still pending
+  follow-up atoms, with validated CLI/product reconciliation now landed
 
 ## Core Sources
 

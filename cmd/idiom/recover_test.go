@@ -166,6 +166,7 @@ func TestRunRecoverInspectClassifiesOutOfScopeDirtyWorkspace(t *testing.T) {
 func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
+	writeRecoverTestGoModule(t, root)
 	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package allowed\n"), 0o644); err != nil {
 		t.Fatalf("write scoped source: %v", err)
 	}
@@ -229,6 +230,187 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		if gate.Status != "pass" {
 			t.Fatalf("gate did not pass: %#v report=%#v", gate, promoteReport)
 		}
+	}
+
+	var reconcileOut, reconcileErr bytes.Buffer
+	code = runRecoverMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", "recovery-001", "--json"}, &reconcileOut, &reconcileErr)
+	if code != 0 {
+		t.Fatalf("recover reconcile exit=%d stdout=%s stderr=%s", code, reconcileOut.String(), reconcileErr.String())
+	}
+	var reconcileReport recoverReconcileReport
+	if err := json.Unmarshal(reconcileOut.Bytes(), &reconcileReport); err != nil {
+		t.Fatalf("decode reconcile report: %v\n%s", err, reconcileOut.String())
+	}
+	if reconcileReport.Status != recovery.ReconciliationStatusRecovered || reconcileReport.NextAction != recovery.NextActionNone {
+		t.Fatalf("unexpected reconcile report: %#v", reconcileReport)
+	}
+	if _, err := os.Stat(filepath.Join(root, reconcileReport.ReconciliationPath)); err != nil {
+		t.Fatalf("reconciliation output missing: %v", err)
+	}
+	if reconcileReport.ReconciliationPath != "reconciliation.json" {
+		t.Fatalf("expected sibling reconciliation output, got %#v", reconcileReport)
+	}
+
+	statusOut.Reset()
+	statusErr.Reset()
+	code = runRecoverMain([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &statusOut, &statusErr)
+	if code != 0 {
+		t.Fatalf("recover status after reconcile exit=%d stdout=%s stderr=%s", code, statusOut.String(), statusErr.String())
+	}
+	statusReport = recoverStatusReport{}
+	if err := json.Unmarshal(statusOut.Bytes(), &statusReport); err != nil {
+		t.Fatalf("decode reconciled status report: %v\n%s", err, statusOut.String())
+	}
+	if statusReport.Status != "recovered" || statusReport.NextAction != recovery.NextActionNone || len(statusReport.CandidateAtoms) != 0 || statusReport.Reconciliation == nil {
+		t.Fatalf("expected recovered status after reconcile, got %#v", statusReport)
+	}
+}
+
+func TestRecoverReconcileMergesCompletedAtoms(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
+		SessionID:         "recover-session-reconcile-merge",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		RequiredEditPaths: []string{"pkg/a/a.go", "pkg/b/b.go", "pkg/c/c.go", "pkg/d/d.go", "pkg/e/e.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	writeRecoverTestGoModule(t, root)
+	for _, dir := range []string{"pkg/a", "pkg/b", "pkg/c", "pkg/d", "pkg/e"} {
+		writeRecoverTestPackage(t, root, dir)
+	}
+	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	if len(packet.CandidateAtoms) < 2 {
+		t.Fatalf("expected multiple atoms, got %#v", packet.CandidateAtoms)
+	}
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[0].ID, "--output", "reconciliation.json", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("first reconcile exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = runRecoverMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[1].ID, "--output", "reconciliation.json", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("second reconcile exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverReconcileReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if len(report.CompletedAtoms) != 2 || !recoverAtomIDsContain(report.CompletedAtoms, packet.CandidateAtoms[0].ID) || !recoverAtomIDsContain(report.CompletedAtoms, packet.CandidateAtoms[1].ID) {
+		t.Fatalf("expected merged completed atoms, got %#v", report)
+	}
+}
+
+func TestRecoverReconcileRejectsOutsideOutputPath(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
+		SessionID:         "recover-session-reconcile-outside",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		RequiredEditPaths: []string{"allowed.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+	outsidePath := filepath.Join(root, "..", "outside-reconciliation.json")
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", "recovery-001", "--output", outsidePath, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover reconcile should reject outside output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverReconcileReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recovery.NextActionInspectFailure {
+		t.Fatalf("unexpected outside output report: %#v", report)
+	}
+	if _, err := os.Stat(outsidePath); !os.IsNotExist(err) {
+		t.Fatalf("outside output should not be written, stat err=%v", err)
+	}
+}
+
+func TestRecoverReconcileRejectsSymlinkedOutputParent(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	writeRecoverTestGoModule(t, root)
+	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package recover_test\n"), 0o644); err != nil {
+		t.Fatalf("write scoped source: %v", err)
+	}
+	packet := writeRecoverTestPacket(t, root, "recover-session-reconcile-symlink", "packet.json")
+	outsideDir := t.TempDir()
+	if err := os.Symlink(outsideDir, filepath.Join(root, "link-out")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[0].ID, "--output", "link-out/reconciliation.json", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover reconcile should reject symlinked output parent, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverReconcileReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "symlinked directories") {
+		t.Fatalf("unexpected symlink output report: %#v", report)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "reconciliation.json")); !os.IsNotExist(err) {
+		t.Fatalf("symlink target output should not be written, stat err=%v", err)
+	}
+}
+
+func TestRecoverReconcileDefaultOutputAvoidsSymlinkedPacketDirectory(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	writeRecoverTestGoModule(t, root)
+	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package recover_test\n"), 0o644); err != nil {
+		t.Fatalf("write scoped source: %v", err)
+	}
+	packet := writeRecoverTestPacket(t, root, "recover-session-reconcile-symlink-default", "")
+	outsideDir := t.TempDir()
+	if _, _, err := recovery.WriteDecompositionPacket(outsideDir, packet, "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket outside: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(root, "link-packet")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"reconcile", "--config", configPath, "--packet", "link-packet/packet.json", "--completed", packet.CandidateAtoms[0].ID, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("recover reconcile exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverReconcileReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	wantPrefix := filepath.ToSlash(filepath.Join(".idiom", "recovery", packet.FailureID))
+	if !strings.HasPrefix(report.ReconciliationPath, wantPrefix) {
+		t.Fatalf("expected fallback under .idiom/recovery, got %#v", report)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "reconciliation.json")); !os.IsNotExist(err) {
+		t.Fatalf("symlink packet dir reconciliation should not be written outside root, stat err=%v", err)
 	}
 }
 
@@ -352,6 +534,58 @@ func recoverGateBlocked(gates []recoverGateReport, name string) bool {
 		}
 	}
 	return false
+}
+
+func recoverAtomIDsContain(ids []string, want string) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
+func writeRecoverTestGoModule(t *testing.T, root string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module recover.test\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+}
+
+func writeRecoverTestPackage(t *testing.T, root string, dir string) {
+	t.Helper()
+	fullDir := filepath.Join(root, filepath.FromSlash(dir))
+	if err := os.MkdirAll(fullDir, 0o755); err != nil {
+		t.Fatalf("mkdir test package: %v", err)
+	}
+	pkg := filepath.Base(dir)
+	body := []byte("package " + pkg + "\n\nfunc Value() int { return 1 }\n")
+	if err := os.WriteFile(filepath.Join(fullDir, pkg+".go"), body, 0o644); err != nil {
+		t.Fatalf("write test package: %v", err)
+	}
+}
+
+func writeRecoverTestPacket(t *testing.T, root string, sessionID string, outputPath string) recovery.DecompositionPacket {
+	t.Helper()
+	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
+		SessionID:         sessionID,
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		RequiredEditPaths: []string{"allowed.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	if outputPath != "" {
+		if _, _, err := recovery.WriteDecompositionPacket(root, packet, outputPath); err != nil {
+			t.Fatalf("WriteDecompositionPacket: %v", err)
+		}
+	}
+	return packet
 }
 
 func initRecoverTestGitRepo(t *testing.T, root string) {

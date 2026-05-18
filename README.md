@@ -158,12 +158,19 @@ Other useful subcommands:
   recovery atoms, product links, gates, and the next valid action from a
   decomposition packet.
 - `idiom recover decompose --session <id> [--output <packet.json>] [--json]`
-  and `idiom recover promote --packet <packet.json> --atom <id> --output
-  <brief.md>` — rebuild a recovery packet or promote one candidate atom into a
-  normal gated brief. Failed plan-execute runs automatically write both
+  — rebuild a recovery packet from a failed plan-execute session.
+- `idiom recover promote --packet <packet.json> --atom <id> --output
+  <brief.md>` — promote one candidate atom into a normal gated brief.
+- `idiom recover reconcile --packet <packet.json> --completed <atom-id>[,<atom-id>...] [--json]`
+  — run completed atoms' required tests, record completed recovery atoms, merge
+  with prior reconciliation state, and close the packet only when the validated
+  atom manifest plus passing required-test evidence covers every candidate in
+  the current packet. The default reconciliation artifact is
+  `reconciliation.json` next to the packet when that path is under the workspace
+  root. Failed plan-execute runs automatically write both
   `.idiom/recovery/<failure-id>/failure.json` and
   `.idiom/recovery/<failure-id>/packet.json`; promotion still does not dispatch
-  follow-up work.
+  follow-up work, and reconciliation preserves the original failure record.
 - `idiom tool schemas` — export built-in workspace tool schemas plus
   profile, side-effect, and policy metadata as JSON.
 - `idiom tool <name> --input '<json>'` — run one workspace tool and print JSON
@@ -174,10 +181,12 @@ Other useful subcommands:
   integrations.
   Recovery state is available through `recovery_inspect` and `recovery_status`
   in the discovery profile; `recovery_decompose` writes local recovery artifacts
-  and therefore requires the default profile. `recovery_promote` remains a
-  first-party `idiom recover` command. Product operator status also surfaces
-  recovery packets referenced from `workflow_state.artifact_paths` and blocks
-  normal workflow dispatch while a recovery packet is open.
+  and therefore requires the default profile. `recovery_promote` and
+  `recovery_reconcile` remain first-party `idiom recover` commands. Product
+  operator status also surfaces
+  recovery packets referenced from `workflow_state.artifact_paths`, validates
+  recovery reconciliation artifacts before closing packets, and blocks normal
+  workflow dispatch while a recovery packet is open.
   See [docs/sidecar-recipes.md](docs/sidecar-recipes.md) for external caller
   recipes covering shell/CI scripts, coding-agent harnesses, local/private-code
   users, and the replayed discovery-profile smoke transcript.

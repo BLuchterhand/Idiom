@@ -94,6 +94,7 @@ type ProductRecoveryStatus struct {
 	Status             string                 `json:"status"`
 	PacketPath         string                 `json:"packet_path,omitempty"`
 	FailureRecordPath  string                 `json:"failure_record_path,omitempty"`
+	ReconciliationPath string                 `json:"reconciliation_path,omitempty"`
 	FailureID          string                 `json:"failure_id,omitempty"`
 	PacketID           string                 `json:"packet_id,omitempty"`
 	FailureClass       string                 `json:"failure_class,omitempty"`
@@ -101,6 +102,8 @@ type ProductRecoveryStatus struct {
 	SourceSessionID    string                 `json:"source_session_id,omitempty"`
 	NextValidAction    string                 `json:"next_valid_action,omitempty"`
 	CandidateAtomCount int                    `json:"candidate_atom_count,omitempty"`
+	CompletedAtomCount int                    `json:"completed_atom_count,omitempty"`
+	RemainingAtomCount int                    `json:"remaining_atom_count,omitempty"`
 	ResidualWorkCount  int                    `json:"residual_work_count,omitempty"`
 	Gates              []string               `json:"gates,omitempty"`
 	RequiredTests      []string               `json:"required_tests,omitempty"`
@@ -406,7 +409,7 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 			Blockers:     append([]ProductOperatorBlocker{}, blockingReasons...),
 		})
 	}
-	if status.Recovery != nil {
+	if status.Recovery != nil && status.Recovery.Status != "closed" {
 		view.NextValidActions = append(view.NextValidActions, productRecoveryOperatorAction(*status.Recovery, blockerCodes, blockingReasons))
 	}
 
@@ -416,14 +419,16 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 func loadProductRecoveryStatus(absRoot string, artifactPaths map[string]string) *ProductRecoveryStatus {
 	packetPath := firstArtifactPath(artifactPaths, "recovery_packet", "recovery_decomposition_packet")
 	failurePath := firstArtifactPath(artifactPaths, "recovery_failure", "recovery_failure_record")
-	if packetPath == "" && failurePath == "" {
+	reconciliationPath := firstArtifactPath(artifactPaths, "recovery_reconciliation", "recovery_reconciliation_record")
+	if packetPath == "" && failurePath == "" && reconciliationPath == "" {
 		return nil
 	}
 	status := &ProductRecoveryStatus{
-		Status:            "blocked",
-		PacketPath:        productRecoveryArtifactDisplayPath(absRoot, packetPath),
-		FailureRecordPath: productRecoveryArtifactDisplayPath(absRoot, failurePath),
-		Blockers:          []ProductRecoveryBlock{},
+		Status:             "blocked",
+		PacketPath:         productRecoveryArtifactDisplayPath(absRoot, packetPath),
+		FailureRecordPath:  productRecoveryArtifactDisplayPath(absRoot, failurePath),
+		ReconciliationPath: productRecoveryArtifactDisplayPath(absRoot, reconciliationPath),
+		Blockers:           []ProductRecoveryBlock{},
 	}
 	if packetPath == "" {
 		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
@@ -464,6 +469,7 @@ func loadProductRecoveryStatus(absRoot string, artifactPaths map[string]string) 
 	status.SourceSessionID = packet.SourceRun.SessionID
 	status.NextValidAction = packet.NextAction
 	status.CandidateAtomCount = len(packet.CandidateAtoms)
+	status.RemainingAtomCount = len(packet.CandidateAtoms)
 	status.ResidualWorkCount = len(packet.ResidualWork)
 	status.Gates = productRecoveryPacketGates(packet)
 	status.RequiredTests = productRecoveryPacketRequiredTests(packet)
@@ -473,6 +479,11 @@ func loadProductRecoveryStatus(absRoot string, artifactPaths map[string]string) 
 			Code:    "recovery_requires_human_action",
 			Message: fmt.Sprintf("recovery next_valid_action is %q", packet.NextAction),
 		})
+	}
+	if reconciliation, relPath, found, blockers := loadProductRecoveryReconciliation(absRoot, reconciliationPath, safeRel, packet); len(blockers) > 0 {
+		status.Blockers = append(status.Blockers, blockers...)
+	} else if found {
+		applyProductRecoveryReconciliation(status, packet, reconciliation, relPath)
 	}
 	return status
 }
@@ -565,6 +576,109 @@ func productRecoveryPacketRequiredTests(packet recovery.DecompositionPacket) []s
 	}
 	sort.Strings(tests)
 	return tests
+}
+
+func loadProductRecoveryReconciliation(absRoot string, configuredPath string, packetRelPath string, packet recovery.DecompositionPacket) (recovery.Reconciliation, string, bool, []ProductRecoveryBlock) {
+	if strings.TrimSpace(configuredPath) != "" {
+		fullPath, safeRel, ok := resolveProductRecoveryArtifactPath(absRoot, configuredPath)
+		if !ok {
+			return recovery.Reconciliation{}, "outside_effort_root", false, []ProductRecoveryBlock{{
+				Code:    "unsafe_recovery_reconciliation_path",
+				Message: "recovery reconciliation path must stay under the effort root",
+			}}
+		}
+		reconciliation, _, found, err := recovery.TryLoadReconciliation(fullPath)
+		if err != nil {
+			return recovery.Reconciliation{}, safeRel, false, []ProductRecoveryBlock{{
+				Code:    "invalid_recovery_reconciliation",
+				Message: "recovery reconciliation could not be decoded",
+			}}
+		}
+		if !found {
+			return recovery.Reconciliation{}, safeRel, false, []ProductRecoveryBlock{{
+				Code:    "missing_recovery_reconciliation",
+				Message: "recovery reconciliation artifact was not found under the effort root",
+			}}
+		}
+		return reconciliation, safeRel, true, productRecoveryReconciliationValidationBlockers(packet, reconciliation)
+	}
+	if strings.TrimSpace(packetRelPath) != "" {
+		siblingRel := filepath.ToSlash(filepath.Join(filepath.Dir(filepath.FromSlash(packetRelPath)), "reconciliation.json"))
+		fullPath := filepath.Join(absRoot, filepath.FromSlash(siblingRel))
+		reconciliation, _, found, err := recovery.TryLoadReconciliation(fullPath)
+		if err != nil {
+			return recovery.Reconciliation{}, siblingRel, false, []ProductRecoveryBlock{{
+				Code:    "invalid_recovery_reconciliation",
+				Message: "recovery reconciliation could not be decoded",
+			}}
+		}
+		if found {
+			return reconciliation, siblingRel, true, productRecoveryReconciliationValidationBlockers(packet, reconciliation)
+		}
+	}
+	fullPath, relPath, err := recovery.ReconciliationPath(absRoot, packet.FailureID, "")
+	if err != nil {
+		return recovery.Reconciliation{}, "", false, nil
+	}
+	reconciliation, _, found, err := recovery.TryLoadReconciliation(fullPath)
+	if err != nil {
+		return recovery.Reconciliation{}, relPath, false, []ProductRecoveryBlock{{
+			Code:    "invalid_recovery_reconciliation",
+			Message: "recovery reconciliation could not be decoded",
+		}}
+	}
+	if !found {
+		return recovery.Reconciliation{}, "", false, nil
+	}
+	return reconciliation, relPath, true, productRecoveryReconciliationValidationBlockers(packet, reconciliation)
+}
+
+func productRecoveryReconciliationValidationBlockers(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) []ProductRecoveryBlock {
+	findings := recovery.ValidateReconciliation(packet, reconciliation)
+	if len(findings) == 0 {
+		return nil
+	}
+	blockers := make([]ProductRecoveryBlock, 0, len(findings))
+	for _, finding := range findings {
+		blockers = append(blockers, ProductRecoveryBlock{
+			Code:    finding.Code,
+			Message: finding.Message,
+		})
+	}
+	return blockers
+}
+
+func applyProductRecoveryReconciliation(status *ProductRecoveryStatus, packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation, relPath string) {
+	status.ReconciliationPath = relPath
+	status.CompletedAtomCount = len(reconciliation.CompletedAtoms)
+	status.RemainingAtomCount = len(reconciliation.RemainingAtoms)
+	status.NextValidAction = reconciliation.NextAction
+	switch reconciliation.Status {
+	case recovery.ReconciliationStatusRecovered:
+		status.Status = "closed"
+		status.NextValidAction = recovery.NextActionNone
+	case recovery.ReconciliationStatusPartial:
+		status.Status = "partial"
+		status.NextValidAction = recovery.NextActionReviewDecomposition
+		if status.RemainingAtomCount == 0 {
+			status.RemainingAtomCount = len(productRecoveryRemainingAtomIDs(packet, reconciliation))
+		}
+	}
+}
+
+func productRecoveryRemainingAtomIDs(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) []string {
+	completed := map[string]bool{}
+	for _, atom := range reconciliation.CompletedAtoms {
+		completed[atom.ID] = true
+	}
+	var remaining []string
+	for _, atom := range packet.CandidateAtoms {
+		if !completed[atom.ID] {
+			remaining = append(remaining, atom.ID)
+		}
+	}
+	sort.Strings(remaining)
+	return remaining
 }
 
 func productRecoveryLinks(links recovery.ProductLinks) ProductRecoveryLinks {

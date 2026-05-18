@@ -11,12 +11,13 @@ Implementation state as of 2026-05-18: the plan-execute recovery loop is now
 shipped for the first supported failure source. Failed `plan-execute` runs
 automatically persist a privacy-safe failure record and a decomposition packet.
 Operators can inspect the failed session, inspect packet status, rebuild the
-packet, and promote one candidate recovery atom into a normal brief after brief
-lint, atom intake, and recovery scope gates pass. Promotion is deliberately not
-dispatch authority; the promoted brief still enters the usual lane workflow.
-Product/operator status and audit-watch now project recovery state from bounded
-artifacts and telemetry events. Remaining extensions are product-ledger
-reconciliation, TUI presenters, deeper residual-work evidence, and
+packet, promote one candidate recovery atom into a normal brief after brief
+lint, atom intake, and recovery scope gates pass, and reconcile completed atoms
+back to the original packet. Promotion is deliberately not dispatch authority;
+the promoted brief still enters the usual lane workflow. Product/operator
+status and audit-watch now project recovery state from bounded artifacts and
+telemetry events. Remaining extensions are TUI presenters, deeper residual-work
+evidence, product/release evidence rollups, ranker learning inputs, and
 non-plan-execute adapters.
 
 Verified adjacent implementation:
@@ -40,8 +41,12 @@ Verified adjacent implementation:
   legacy fallback that can derive the same report from failed progress state
   without mutating the workspace.
 - `cmd/idiom/recover_packet.go` implements `recover decompose`, packet-based
-  `recover status`, and `recover promote`. Promotion writes a brief only after
-  brief lint, atom intake, and scope gates pass.
+  `recover status`, `recover promote`, and `recover reconcile`. Promotion
+  writes a brief only after brief lint, atom intake, and scope gates pass.
+  Reconciliation runs the completed atoms' required tests, records completed
+  atom IDs, validates a packet digest plus the atom manifest, merges sequential
+  completions, and closes the packet only when every candidate atom is covered
+  by passing required-test evidence.
 - `internal/workspace/recovery_tools.go` exposes `recovery_inspect` and
   `recovery_status` through `idiom tool --profile discovery` and MCP with the
   normal sidecar envelope. `recovery_decompose` is available only through the
@@ -50,15 +55,17 @@ Verified adjacent implementation:
   recovery packets into `idiom product status` and the shared operator status
   view. Open recovery packets block normal workflow dispatch and add a runnable
   recovery inspection action without making the packet itself dispatch
-  authority.
+  authority. Valid reconciliation artifacts close the recovery blocker only when
+  their packet digest, completed/remaining atom manifest, and passing
+  required-test evidence match the current packet.
 - `cmd/idiom/audit.go` treats recovery failure-record and decomposition-packet
   events as audit-watch triggers, summarizes failure classes, candidate atom
   counts, next valid actions, and artifact paths, and keeps the packet
   metadata-only.
 
 Those pieces now cover the operator-facing plan-execute loop. The remaining
-design work is to broaden adapters and close reconciliation surfaces without
-hiding the original failure or letting the model loop.
+design work is to broaden adapters, add richer reconciliation evidence rollups,
+and keep the original failure visible without letting the model loop.
 
 ## Problem
 
@@ -250,6 +257,7 @@ experience action-oriented and cross-lane without overloading `audit`,
 idiom recover inspect --session <id> --json
 idiom recover decompose --session <id> --output .idiom/recovery/<id>/packet.json --json
 idiom recover promote --packet .idiom/recovery/<id>/packet.json --atom recovery-001 --output briefs/recovery-001.md
+idiom recover reconcile --packet .idiom/recovery/<id>/packet.json --completed recovery-001 --json
 idiom recover status --packet .idiom/recovery/<id>/packet.json --json
 ```
 
@@ -265,6 +273,13 @@ Required behavior:
 - `promote` converts one candidate atom into a normal dispatchable brief only
   after required gates pass. It writes the brief and stops; it does not dispatch
   or mark the original failure recovered.
+- `reconcile` records which packet atoms have completed after they have run
+  through the normal lane workflow. It merges repeated calls, writes a
+  `reconciliation.json` artifact next to the packet when possible, stores the
+  packet digest, completed/remaining atom manifest, and required-test command
+  results, and refuses to close the packet when the artifact no longer matches
+  the current decomposition packet or the required tests are not recorded as
+  passing.
 - Product workflow integrations link decomposition packets back to PRD
   requirements, ADR decisions, TDD obligations, and implementation ledger
   records when those paths are present in source-run or evidence paths.
@@ -296,7 +311,7 @@ not-applicable for a given failure class.
 | Shell and verification commands | Store command, exit code, bounded output refs, failing test names, and timestamps; do not store raw private output by default. |
 | `harness_audit` and `harness_feedback` | Report recovery coverage, repeated failure classes, malformed recovery packets, loop risk, and gaps in tool/event correlation. |
 | `idiom audit watch` | Treat recovery failure-record and decomposition-packet events as first-class triggers; summarize failure classes, candidate atom counts, next valid actions, and artifact paths without raw transcripts. |
-| Product workflow commands | Link recovery packets through `workflow_state.artifact_paths.recovery_packet`; product status and operator status expose packet status, gates, required tests, product links, blockers, and a non-dispatchable recovery action while normal dispatch remains blocked until the packet is closed. |
+| Product workflow commands | Link recovery packets through `workflow_state.artifact_paths.recovery_packet`; product status and operator status expose packet status, gates, required tests, product links, blockers, reconciliation counts, and a non-dispatchable recovery action while normal dispatch remains blocked until the packet is closed by a valid reconciliation artifact with passing required-test evidence. |
 | Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. |
 | `idiom ranker` | Accept only deterministic, verified recovery outcomes as learning input; record whether recovery improved localization or packet quality. |
 | Queue/backend/local-ops/doctor | Classify readiness, queue, backend, timeout, or capacity failures separately from implementation failures so decomposition does not hide environment problems. |
@@ -311,8 +326,8 @@ The initial sidecar/tool shape should be:
   packet status, gates, blockers, and next valid actions.
 - `recovery_decompose`: default profile only, writes local `.idiom/recovery`
   artifacts and returns a sidecar envelope with artifact paths and hashes.
-- `recovery_promote`: CLI-only until a write-authorization contract exists for
-  sidecar/MCP callers.
+- `recovery_promote` and `recovery_reconcile`: CLI-only until a
+  write-authorization contract exists for sidecar/MCP callers.
 
 This mirrors the current sidecar rule: read-only evidence is available through
 the discovery profile, while artifact-writing and promotion stay behind a
@@ -424,9 +439,14 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 4: Execution And Reconciliation
 
+- Status: CLI and product/operator reconciliation projections landed for
+  packet-backed plan-execute recovery.
 - Run recovery atoms sequentially by default.
 - Reconcile completed recovery atoms against the original failure and residual
-  work.
+  work. Landed through `idiom recover reconcile`, the
+  `idiom.recovery.reconciliation.v1` artifact, required-test execution,
+  packet-digest validation, sequential completion merge, and product/operator
+  closeout projection.
 - Preserve the original failed run and every generated atom in audit output.
 
 ### Phase 5: TUI, Sidecar, And Learning
@@ -434,7 +454,8 @@ it moved into a recovery state, not like it vanished into a separate tool.
 - Render decomposition actions in the TUI operator view.
 - Status: sidecar read-only parity landed for `recovery_inspect` and
   `recovery_status`; artifact-writing `recovery_decompose` is intentionally
-  default-profile only, and `recovery_promote` remains CLI-only.
+  default-profile only, and `recovery_promote`/`recovery_reconcile` remain
+  CLI-only.
 - Status: product/operator status now projects recovery packets referenced from
   durable workflow state, and audit-watch packets now include a bounded
   `recovery` summary plus `failure_recovery` findings.
@@ -452,15 +473,16 @@ it moved into a recovery state, not like it vanished into a separate tool.
 | Model invents recovery work | Candidate atoms must cite failure evidence, required paths, and source anchors; unsupported atoms fail promotion. |
 | Product intent drift | Product workflow recovery atoms must cite PRD/ADR/TDD IDs or request human clarification. |
 | Privacy leaks | Store paths, hashes, counts, test names, command IDs, and redacted excerpts only. |
-| User loses failure context | Original failure remains immutable and linked to every recovery atom. |
+| User loses failure context | Original failure remains immutable and linked to every recovery atom and reconciliation artifact. |
+| Stale or hand-edited reconciliation closes recovery | Store the packet digest, completed/remaining atom manifest, and required-test command results; status loaders validate them before removing the recovery blocker. |
 
 ## Open Questions
 
 1. Which failure classes should allow one same-scope retry before decomposition?
 2. Should decomposition packet promotion require human approval by default, or
    only for scope-changing packets?
-3. How should recovery atoms interact with product workflow implementation
-   ledgers and status buckets?
+3. How should recovery atoms write richer product workflow implementation
+   ledger links after the CLI reconciliation artifact has closed the packet?
 4. What is the minimum test evidence needed before a verification failure can be
    split by failing package or symbol?
 5. Should failed runs in ignored `.idiom/` storage be promotable to durable
@@ -480,6 +502,8 @@ The feature is useful when a team can:
   product workflow gates pass
 - resume recovery across sessions from durable artifacts
 - preserve the original failed run in audit output after recovery succeeds
+- reconcile completed recovery atoms through a validated artifact that preserves
+  the original failure and blocks stale or malformed closeout records
 - expose the same read-only failure/decomposition state to CLI, TUI, and
   sidecar consumers
 - prove read-only parity for `idiom tool` and MCP through sidecar-envelope

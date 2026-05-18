@@ -13,12 +13,13 @@ tags:
 > **Status: PLAN-EXECUTE LOOP LANDED** — Idiom has pre-dispatch
 > atomization/refine behavior, one planner-blocked retry-or-surface path, and
 > automatic failed `plan-execute` recovery records plus decomposition packets.
-> `idiom recover inspect`, `status`, `decompose`, and `promote` provide the
-> operator-facing loop. Read-only `recovery_inspect` and `recovery_status` are
-> also exposed through `idiom tool`/MCP with the normal sidecar envelope.
-> Product/operator status and audit-watch now project bounded recovery state.
-> Promotion writes a normal gated brief; it does not dispatch or reconcile the
-> original failure automatically yet.
+> `idiom recover inspect`, `status`, `decompose`, `promote`, and `reconcile`
+> provide the operator-facing loop. Read-only `recovery_inspect` and
+> `recovery_status` are also exposed through `idiom tool`/MCP with the normal
+> sidecar envelope. Product/operator status and audit-watch now project bounded
+> recovery state. Promotion writes a normal gated brief; reconciliation closes
+> the packet only after packet-digest, atom-manifest, and required-test
+> evidence validation.
 >
 > Source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
@@ -59,7 +60,9 @@ failed run -> failure record -> failure class -> decomposition packet
   while recovery is open.
 - [x] `idiom audit watch` emits `failure_recovery` findings and bounded
   recovery summaries for recovery record and decomposition-packet events.
-- [ ] Recovery success is not yet reconciled back to the original failure.
+- [x] `idiom recover reconcile` runs completed atoms' required tests, records
+  completed recovery atoms, and preserves the original failure through a
+  validated reconciliation artifact.
 - [ ] TUI projections, deeper residual-work evidence, and non-plan-execute
   adapters are not yet complete.
 
@@ -103,13 +106,16 @@ flowchart TD
 - Candidate atoms must pass normal brief lint, atom intake, scope, and product
   workflow gates before dispatch.
 - The original failure remains immutable and linked after recovery succeeds.
+- Reconciliation artifacts carry a packet digest, completed/remaining atom
+  manifest, and required-test command results; stale, unverified, or malformed
+  artifacts do not close product workflow dispatch blockers.
 - CLI, TUI, product workflow, `idiom tool`, and MCP expose the same read-only
   recovery status model: typed blockers, gates, evidence links,
   dispatchability, and one next valid action.
 - Audit-watch review packets include bounded recovery summaries and
   `failure_recovery` findings without raw transcripts.
-- Write/promote recovery actions stay out of the sidecar discovery profile until
-  a dedicated write-authorization contract exists.
+- Write/promote/reconcile recovery actions stay out of the sidecar discovery
+  profile until a dedicated write-authorization contract exists.
 
 ## Tool Parity
 

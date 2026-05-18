@@ -74,12 +74,15 @@ error.
 
 Recovery inspection is part of the read-only sidecar surface. Use
 `recovery_inspect` and `recovery_status` in the `discovery` profile to inspect
-failure records and decomposition packets without dispatching or promoting
-follow-up work. `recovery_decompose` writes `.idiom/recovery` artifacts and
-therefore requires the default profile. Product/operator status consumes the
-same bounded recovery packet contract when `workflow_state.artifact_paths`
-references a recovery packet; it does not make sidecar recovery packets
-dispatch authority.
+failure records and decomposition packets without dispatching, promoting, or
+reconciling follow-up work. `recovery_decompose` writes `.idiom/recovery`
+artifacts and therefore requires the default profile; `recover promote` and
+`recover reconcile` remain first-party CLI write surfaces. Product/operator
+status consumes the same bounded recovery packet contract when
+`workflow_state.artifact_paths` references a recovery packet, and it validates
+reconciliation packet digests and required-test evidence before treating
+recovery as closed. It does not make sidecar recovery packets dispatch
+authority.
 
 ## MCP Surfaces
 

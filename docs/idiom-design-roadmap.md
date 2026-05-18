@@ -55,12 +55,15 @@ The executable implementation plan is
   failure record, deterministic failure classification, smaller gated recovery
   atoms, and auditable reconciliation through the `idiom recover` namespace.
   The plan-execute slice now writes failure records and decomposition packets
-  automatically, with `recover inspect/status/decompose/promote` covering the
-  operator loop and read-only `recovery_inspect`/`recovery_status` exposed
-  through the sidecar/MCP tool surface. Product/operator status and audit-watch
-  now project recovery packet state through bounded summaries. Reconciliation,
-  TUI presenters, deeper residual-work evidence, and non-plan-execute failure
-  sources remain follow-up work.
+  automatically, with `recover inspect/status/decompose/promote/reconcile`
+  covering the operator loop and read-only `recovery_inspect`/`recovery_status`
+  exposed through the sidecar/MCP tool surface. Product/operator status and
+  audit-watch now project recovery packet state through bounded summaries, and
+  reconciliation artifacts close packets only after packet-digest, atom
+  manifest, and required-test evidence validation. TUI presenters, deeper
+  residual-work evidence, product/release evidence rollups, ranker learning
+  inputs, and
+  non-plan-execute failure sources remain follow-up work.
 
 ## System Shape
 

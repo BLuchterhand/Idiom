@@ -92,6 +92,7 @@ idiom recover inspect --session <session-id> --json
 idiom recover decompose --session <session-id> --json
 idiom recover status --packet .idiom/recovery/<failure-id>/packet.json --json
 idiom recover promote --packet .idiom/recovery/<failure-id>/packet.json --atom recovery-001 --output briefs/recovery-001.md
+idiom recover reconcile --packet .idiom/recovery/<failure-id>/packet.json --completed recovery-001 --json
 ```
 
 Read-only recovery state is also sidecar-visible:
@@ -102,14 +103,18 @@ idiom tool recovery_status --profile discovery --input '{"packet_path":".idiom/r
 ```
 
 `recovery_decompose` writes local `.idiom/recovery` artifacts, so it is exposed
-only through the default tool profile. `recovery_promote` remains CLI-only.
+only through the default tool profile. `recovery_promote` and
+`recovery_reconcile` remain CLI-only.
 
 Product workflow status can surface recovery packets when durable
 `workflow_state.json` includes `artifact_paths.recovery_packet`. The shared
 operator status view exposes recovery packet status, gates, required tests,
-product links, blockers, and a runnable `idiom recover status --packet ...`
-hint. While a recovery packet is open, normal workflow continuation actions are
-not dispatchable.
+product links, blockers, reconciliation counts, and a runnable
+`idiom recover status --packet ...` hint. While a recovery packet is open,
+normal workflow continuation actions are not dispatchable. A reconciliation
+artifact closes the blocker only when its packet digest, completed/remaining
+atom manifest, and required-test command results validate against the current
+packet.
 
 Relevant JSON events include:
 

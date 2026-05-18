@@ -187,7 +187,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "recovery_status",
-			Description: "Read a recovery decomposition packet and return status, blockers, gates, candidate atoms, product links, and next valid action.",
+			Description: "Read a recovery decomposition packet plus any valid reconciliation artifact, and return status, blockers, gates, candidate atoms, product links, and next valid action.",
 			ParametersJSON: schemaObj(
 				nil,
 				`"packet_path":`+strProp("workspace-relative path to packet.json; either packet_path or session_id/failure_id is required")+`,"session_id":`+strProp("plan-execute session id used to derive the default packet path")+`,"failure_id":`+strProp("recovery failure id used to derive the default packet path"),
