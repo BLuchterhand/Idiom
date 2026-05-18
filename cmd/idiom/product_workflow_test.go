@@ -2258,6 +2258,9 @@ func TestProductStatusJSONOnDurableFixture(t *testing.T) {
 			t.Fatalf("expected field %q in JSON output", field)
 		}
 	}
+	if _, ok := result["operator"]; ok {
+		t.Fatalf("default status JSON must not include operator view: %#v", result["operator"])
+	}
 }
 
 func TestProductStatusMetrics(t *testing.T) {
@@ -2333,6 +2336,129 @@ func TestProductStatusTextIncludesKeyFields(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected text output to contain %q, got:\n%s", want, output)
 		}
+	}
+	if strings.Contains(output, "continuation_actions") {
+		t.Fatalf("default status text must not include operator continuation actions, got:\n%s", output)
+	}
+}
+
+func TestProductStatusOperatorViewJSON(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	ws := strings.Replace(
+		validTestWorkflowStateJSON(),
+		`"current_state":"implementing"`,
+		`"current_state":"planned"`,
+		1,
+	)
+	ws = strings.Replace(
+		ws,
+		`"next_valid_actions":["complete"]`,
+		`"next_valid_actions":["start_implementation"]`,
+		1,
+	)
+	writeTestFile(t, dir, "workflow_state.json", ws)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--operator-view", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected operator status to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var result productworkflow.ProductOperatorStatusView
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("operator output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.SchemaVersion != "idiom.product_operator_status.v1" {
+		t.Fatalf("expected operator schema version, got %q", result.SchemaVersion)
+	}
+	if result.ContinuationAuthority != "workflow_state" {
+		t.Fatalf("expected workflow_state continuation authority, got %q", result.ContinuationAuthority)
+	}
+	if len(result.ArtifactPaths) != 1 || result.ArtifactPaths[0].Name != "events" || result.ArtifactPaths[0].Path != "events.jsonl" {
+		t.Fatalf("expected artifact paths from workflow_state, got %#v", result.ArtifactPaths)
+	}
+	if len(result.NextValidActions) != 1 {
+		t.Fatalf("expected typed continuation actions for planned state, got %#v", result.NextValidActions)
+	}
+	var action productworkflow.ProductOperatorAction
+	for _, candidate := range result.NextValidActions {
+		if candidate.ID == "start_implementation" {
+			action = candidate
+			break
+		}
+	}
+	if action.ID != "start_implementation" || action.Label != "start implementation" || action.Owner != "implementor" || !action.Dispatchable || !action.RunnableNow {
+		t.Fatalf("expected typed dispatchable transition action, got %#v", action)
+	}
+}
+
+func TestProductStatusOperatorViewTextFailsClosedOnStaleContext(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	ws := strings.Replace(validTestWorkflowStateJSON(), `"freshness_state":"current"`, `"freshness_state":"stale"`, 1)
+	ws = strings.Replace(ws, `"next_valid_actions":["complete"]`, `"next_valid_actions":["start_implementation"]`, 1)
+	writeTestFile(t, dir, "workflow_state.json", ws)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--operator-view"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected status exit code to preserve existing behavior, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		"product operator status:",
+		"authority: workflow_state",
+		"[stale_context] workflow freshness_state \"stale\" is not current",
+		"next_valid_actions (1):",
+		"dispatchable=false",
+		"runnable_now=false",
+		"blocked_by=stale_context",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected operator text to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestProductStatusJSONDoesNotIncludeOperatorContinuationView(t *testing.T) {
+	dir := writeValidTestEffort(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected status to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+		t.Fatalf("status JSON should decode to raw map: %v\n%s", err, stdout.String())
+	}
+	if _, ok := raw["operator"]; ok {
+		t.Fatalf("default status JSON must not include operator view: %s", stdout.String())
+	}
+}
+
+func TestProductStatusOperatorNoRuntimeMutation(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	before, err := os.ReadFile(filepath.Join(dir, "workflow_state.json"))
+	if err != nil {
+		t.Fatalf("read workflow_state.json before status: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected status to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	after, err := os.ReadFile(filepath.Join(dir, "workflow_state.json"))
+	if err != nil {
+		t.Fatalf("read workflow_state.json after status: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("product status must not mutate workflow_state.json")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".idiom")); !os.IsNotExist(err) {
+		t.Fatalf("product status must not create .idiom runtime state, err=%v", err)
 	}
 }
 

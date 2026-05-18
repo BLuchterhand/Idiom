@@ -69,7 +69,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  idiom product lint --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
-	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--json]")
+	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--operator-view] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --plan-runs [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --merge-evidence [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
@@ -773,8 +773,10 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	fs.SetOutput(stderr)
 	var effortRoot string
 	var jsonOutput bool
+	var operatorView bool
 	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	fs.BoolVar(&operatorView, "operator-view", false, "emit shared operator continuation status view")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -832,12 +834,27 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		exitCode = 1
 	}
 	view.NextValidActions = productStatusNextValidActions(view, exitCode, wsErr != nil)
+	operatorStatus := productworkflow.BuildProductOperatorStatusView(view, readProductOperatorWorkflowState(absRoot, wsErr))
 
 	logCLIPhase(rec, "product_status", map[string]any{
 		"audit_status":  view.AuditStatus,
 		"effort_id":     view.EffortID,
 		"current_state": view.CurrentState,
 	})
+
+	if operatorView {
+		if jsonOutput {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(operatorStatus); err != nil {
+				fmt.Fprintf(stderr, "product status: encode operator JSON: %v\n", err)
+				return 1
+			}
+			return exitCode
+		}
+		printProductOperatorStatus(stdout, filepath.Base(absRoot), operatorStatus)
+		return exitCode
+	}
 
 	if jsonOutput {
 		enc := json.NewEncoder(stdout)
@@ -907,6 +924,81 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	fmt.Fprintf(stdout, "  next: %s\n", view.NextValidActions[0])
 
 	return exitCode
+}
+
+func readProductOperatorWorkflowState(absRoot string, statusErr error) *productworkflow.WorkflowState {
+	if statusErr != nil {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(absRoot, "workflow_state.json"))
+	if err != nil {
+		return nil
+	}
+	ws, err := productworkflow.ParseWorkflowStateJSON(data)
+	if err != nil {
+		return nil
+	}
+	return &ws
+}
+
+func printProductOperatorStatus(stdout io.Writer, effortName string, view productworkflow.ProductOperatorStatusView) {
+	fmt.Fprintf(stdout, "product operator status: %s %s\n", effortName, view.EffortID)
+	fmt.Fprintf(stdout, "  authority: %s\n", view.ContinuationAuthority)
+	fmt.Fprintf(stdout, "  state: %s/%s  audit: %s\n", view.CurrentPhase, view.CurrentState, view.AuditStatus)
+	fmt.Fprintf(stdout, "  context_pack: %s  freshness: %s\n", view.ContextPackID, view.FreshnessState)
+	if len(view.Blockers) > 0 {
+		fmt.Fprintf(stdout, "  blockers (%d):\n", len(view.Blockers))
+		for _, blocker := range view.Blockers {
+			fmt.Fprintf(stdout, "    [%s] %s (%s)\n", blocker.Code, blocker.Message, blocker.Source)
+		}
+	}
+	if len(view.OpenObligations) > 0 {
+		fmt.Fprintf(stdout, "  open_obligations (%d): %s\n", len(view.OpenObligations), strings.Join(view.OpenObligations, ", "))
+	}
+	if len(view.NextValidActions) > 0 {
+		fmt.Fprintf(stdout, "  next_valid_actions (%d):\n", len(view.NextValidActions))
+		for _, action := range view.NextValidActions {
+			fmt.Fprintf(stdout, "    - %s [%s] owner=%s dispatchable=%t runnable_now=%t", action.Label, action.ID, action.Owner, action.Dispatchable, action.RunnableNow)
+			if len(action.BlockedBy) > 0 {
+				fmt.Fprintf(stdout, " blocked_by=%s", strings.Join(action.BlockedBy, ","))
+			}
+			if action.CommandHint != "" {
+				fmt.Fprintf(stdout, " command_hint=%s", action.CommandHint)
+			}
+			if action.Message != "" {
+				fmt.Fprintf(stdout, "  %s", action.Message)
+			}
+			fmt.Fprintln(stdout)
+		}
+	}
+	if view.CheckedFileCount > 0 {
+		fmt.Fprintf(stdout, "  files_checked: %d\n", view.CheckedFileCount)
+	}
+	if view.Metrics != nil {
+		metrics := *view.Metrics
+		fmt.Fprintf(stdout, "  metrics: phase=%s state=%s revision=%d gates=%d blockers=%d obligations=%d next_actions=%d\n",
+			metrics.CurrentPhase,
+			metrics.CurrentState,
+			metrics.StateRevision,
+			len(metrics.GateStatusCounts),
+			metrics.BlockerCount,
+			metrics.OpenObligationCount,
+			metrics.NextValidActionCount,
+		)
+	}
+	for _, sec := range view.Sections {
+		fmt.Fprintf(stdout, "  %s: %s", sec.Name, sec.Status)
+		if sec.FindingCount > 0 {
+			fmt.Fprintf(stdout, " (%d findings)", sec.FindingCount)
+		}
+		fmt.Fprintln(stdout)
+	}
+	if len(view.ArtifactPaths) > 0 {
+		fmt.Fprintf(stdout, "  artifacts (%d):\n", len(view.ArtifactPaths))
+		for _, artifact := range view.ArtifactPaths {
+			fmt.Fprintf(stdout, "    %s: %s\n", artifact.Name, artifact.Path)
+		}
+	}
 }
 
 func productLintNextValidAction(status string) string {

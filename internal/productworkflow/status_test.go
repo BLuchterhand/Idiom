@@ -32,6 +32,14 @@ func TestLoadProductStatusMissingWorkflowState(t *testing.T) {
 	if containsStatusSubstring(view, dir) {
 		t.Fatalf("status error view leaked absolute effort path %q: %#v", dir, view)
 	}
+	operatorView := BuildProductOperatorStatusView(view, nil)
+	if len(operatorView.NextValidActions) == 0 {
+		t.Fatalf("expected shared operator recovery view, got %#v", operatorView)
+	}
+	action := operatorView.NextValidActions[0]
+	if action.Owner != "operator" || action.Dispatchable || !action.RunnableNow {
+		t.Fatalf("expected non-dispatchable runnable recovery action, got %#v", action)
+	}
 }
 
 func TestLoadProductStatusInvalidWorkflowStateJSON(t *testing.T) {
@@ -150,6 +158,126 @@ func TestLoadProductStatusValidWorkflowState(t *testing.T) {
 	}
 	if view.FreshnessState != "current" {
 		t.Fatalf("expected freshness_state current, got %q", view.FreshnessState)
+	}
+}
+
+func TestProductOperatorStatusViewUsesTypedContinuationActions(t *testing.T) {
+	dir := t.TempDir()
+	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"open_obligations":["TDD-001"]`, `"open_obligations":[]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["complete"]`, `"next_valid_actions":["submit_for_verification"]`, 1)
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{
+		Status:       "pass",
+		CheckedFiles: []string{"workflow_state.json"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	if view.TaskID != "impl-test" || view.StatusBucket != "started" {
+		t.Fatalf("expected workflow identity fields, got %#v", view)
+	}
+	if len(view.NextValidActions) != 1 {
+		t.Fatalf("expected typed continuation actions, got %#v", view.NextValidActions)
+	}
+	if len(view.Sections) != 7 {
+		t.Fatalf("expected section summary copied into operator view, got %#v", view.Sections)
+	}
+	action := findOperatorContinuationAction(t, view.NextValidActions, "submit_for_verification")
+	if action.Label != "submit for verification" {
+		t.Fatalf("expected stable label, got %#v", action)
+	}
+	if action.Owner != "implementor" || !action.Dispatchable || !action.RunnableNow {
+		t.Fatalf("expected dispatchable typed continuation action, got %#v", action)
+	}
+	if len(action.Blockers) != 0 {
+		t.Fatalf("expected no blockers on dispatchable action, got %#v", action.Blockers)
+	}
+}
+
+func TestProductOperatorStatusViewFailsClosedForStaleContextAndBlockers(t *testing.T) {
+	dir := t.TempDir()
+	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"freshness_state":"current"`, `"freshness_state":"stale"`, 1)
+	wsJSON = strings.Replace(wsJSON, `"open_obligations":["TDD-001"]`, `"open_obligations":["TDD-001"],"blockers":["implementation_pending"]`, 1)
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{Status: "pass"})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	if view.SchemaVersion != "idiom.product_operator_status.v1" {
+		t.Fatalf("expected operator schema version, got %q", view.SchemaVersion)
+	}
+	if view.ContinuationAuthority != "workflow_state" {
+		t.Fatalf("expected workflow_state continuation authority, got %q", view.ContinuationAuthority)
+	}
+	if len(view.ArtifactPaths) == 0 || view.ArtifactPaths[0].Name != "events" {
+		t.Fatalf("expected sorted artifact paths from workflow_state, got %#v", view.ArtifactPaths)
+	}
+	if !operatorBlockerCodesContain(view.Blockers, "workflow_blocker") {
+		t.Fatalf("expected workflow blocker, got %#v", view.Blockers)
+	}
+	if !operatorBlockerCodesContain(view.Blockers, "stale_context") {
+		t.Fatalf("expected stale context blocker, got %#v", view.Blockers)
+	}
+	if !operatorBlockerCodesContain(view.Blockers, "open_obligations") {
+		t.Fatalf("expected open obligations blocker, got %#v", view.Blockers)
+	}
+	if len(view.NextValidActions) == 0 {
+		t.Fatal("expected continuation actions")
+	}
+	for _, action := range view.NextValidActions {
+		if action.Dispatchable {
+			t.Fatalf("expected stale/blocking operator actions to fail closed, got %#v", action)
+		}
+		if action.RunnableNow {
+			t.Fatalf("expected blocked workflow continuation to be non-runnable, got %#v", action)
+		}
+		if action.Owner == "" {
+			t.Fatalf("expected action owner metadata, got %#v", action)
+		}
+		if !strings.Contains(strings.Join(action.BlockedBy, ","), "stale_context") {
+			t.Fatalf("expected stale_context dispatch blocker, got %#v", action)
+		}
+	}
+}
+
+func TestProductOperatorStatusViewFailsClosedForAuditFailure(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestFile(t, dir, "workflow_state.json", statusTestWorkflowStateJSON())
+	status, err := LoadProductStatus(dir, &LintSummaryResult{
+		Status:   "fail",
+		Findings: []LintSummaryFinding{{Code: "parse_error", Path: "tdd.json", Message: "bad"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+	workflowState, err := ParseWorkflowStateJSON([]byte(statusTestWorkflowStateJSON()))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	if !operatorBlockerCodesContain(view.Blockers, "audit_not_passing") {
+		t.Fatalf("expected audit_not_passing blocker, got %#v", view.Blockers)
+	}
+	if len(view.NextValidActions) == 0 {
+		t.Fatal("expected continuation actions")
+	}
+	if view.NextValidActions[0].Dispatchable || view.NextValidActions[0].RunnableNow {
+		t.Fatalf("expected audit failure to block typed continuation, got %#v", view.NextValidActions[0])
 	}
 }
 
@@ -299,6 +427,26 @@ func TestLoadProductStatusOnDurableFixture(t *testing.T) {
 			t.Fatalf("expected field %q in JSON output", field)
 		}
 	}
+}
+
+func operatorBlockerCodesContain(blockers []ProductOperatorBlocker, code string) bool {
+	for _, blocker := range blockers {
+		if blocker.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func findOperatorContinuationAction(t *testing.T, actions []ProductOperatorAction, id string) ProductOperatorAction {
+	t.Helper()
+	for _, action := range actions {
+		if action.ID == id {
+			return action
+		}
+	}
+	t.Fatalf("continuation action %q not found in %#v", id, actions)
+	return ProductOperatorAction{}
 }
 
 func findStatusSection(t *testing.T, sections []StatusSection, name string) StatusSection {
