@@ -157,8 +157,10 @@ func lintEffortFolder(root string) productLintResult {
 	var parsedPRD *productworkflow.PRDDocument
 	var parsedADRIndex *productworkflow.ADRIndex
 	var parsedTDD *productworkflow.TDDLedger
+	var parsedWorkflowState *productworkflow.WorkflowState
 	var parsedLedger []productworkflow.ImplementationLedgerRecord
 	var parsedADRs []productworkflow.ParsedADR
+	var parsedInvestigations []productworkflow.InvestigationReport
 
 	checkFile := func(relPath string, validate func([]byte) error) {
 		fullPath := filepath.Join(root, relPath)
@@ -178,7 +180,10 @@ func lintEffortFolder(root string) productLintResult {
 	}
 
 	checkFile("workflow_state.json", func(data []byte) error {
-		_, err := productworkflow.ParseWorkflowStateJSON(data)
+		ws, err := productworkflow.ParseWorkflowStateJSON(data)
+		if err == nil {
+			parsedWorkflowState = &ws
+		}
 		return err
 	})
 	checkFile("tdd.json", func(data []byte) error {
@@ -279,8 +284,11 @@ func lintEffortFolder(root string) productLintResult {
 					addFinding("parse_error", relPath, err.Error())
 				}
 			case "investigation":
-				if _, err := productworkflow.ParseInvestigationReportJSON(data); err != nil {
+				report, err := productworkflow.ParseInvestigationReportJSON(data)
+				if err != nil {
 					addFinding("parse_error", relPath, err.Error())
+				} else {
+					parsedInvestigations = append(parsedInvestigations, report)
 				}
 			}
 		}
@@ -404,6 +412,22 @@ func lintEffortFolder(root string) productLintResult {
 		prdTDDErrs := productworkflow.ValidatePRDTDDObligationCrossLinks(parsedPRD.Requirements, tddIDSet)
 		for _, le := range prdTDDErrs {
 			addFinding("broken_link", "tdd.json", le.Message)
+		}
+	}
+
+	{
+		repoRoot := findGitRepoRoot(root)
+		if repoRoot == "" {
+			repoRoot = root
+		}
+		if parsedWorkflowState != nil {
+			parity := productworkflow.EvaluateObsidianParity(repoRoot, parsedWorkflowState, parsedLedger, parsedInvestigations)
+			for _, checked := range parity.CheckedFiles {
+				result.CheckedFiles = append(result.CheckedFiles, checked)
+			}
+			for _, finding := range parity.Findings {
+				addFinding(finding.Code, finding.Path, finding.Message)
+			}
 		}
 	}
 
@@ -591,6 +615,7 @@ func buildAuditResult(lintResult productLintResult) productAuditResult {
 		"tdd":          {Name: "tdd", Status: "pass"},
 		"traceability": {Name: "traceability", Status: "pass"},
 		"reports":      {Name: "reports", Status: "pass"},
+		"obsidian":     {Name: "obsidian", Status: "pass"},
 		"scope_gate":   {Name: "scope_gate", Status: "pass"},
 		"metrics":      {Name: "metrics", Status: "pass"},
 	}
@@ -599,6 +624,8 @@ func buildAuditResult(lintResult productLintResult) productAuditResult {
 		if section == "" {
 			if strings.HasPrefix(f.Code, "scope_gate_") {
 				section = "scope_gate"
+			} else if strings.HasPrefix(f.Code, "obsidian_") {
+				section = "obsidian"
 			} else {
 				continue
 			}
@@ -608,7 +635,7 @@ func buildAuditResult(lintResult productLintResult) productAuditResult {
 		sec.Status = "fail"
 	}
 	sections := make([]productAuditSection, 0, len(sectionMap))
-	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate", "metrics"} {
+	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "obsidian", "scope_gate", "metrics"} {
 		sections = append(sections, *sectionMap[name])
 	}
 	status := "pass"

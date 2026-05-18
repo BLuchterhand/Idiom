@@ -728,7 +728,7 @@ func TestProductAuditPassesOnDurableEffortFixture(t *testing.T) {
 	if len(result.CheckedFiles) == 0 {
 		t.Fatal("should have checked at least one file")
 	}
-	requiredSections := []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate", "metrics"}
+	requiredSections := []string{"prd", "adr", "tdd", "traceability", "reports", "obsidian", "scope_gate", "metrics"}
 	if len(result.Sections) != len(requiredSections) {
 		t.Fatalf("expected %d sections, got %d", len(requiredSections), len(result.Sections))
 	}
@@ -758,10 +758,182 @@ func TestProductAuditJSONIncludesAllRequiredSections(t *testing.T) {
 	for _, sec := range result.Sections {
 		sectionNames[sec.Name] = true
 	}
-	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate"} {
+	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "obsidian", "scope_gate"} {
 		if !sectionNames[name] {
 			t.Fatalf("expected section %q in audit result", name)
 		}
+	}
+}
+
+func TestProductObsidianParityDurableFixturePasses(t *testing.T) {
+	effortRoot := writeValidTestEffort(t)
+	writeTestFile(t, effortRoot, ".git/HEAD", "ref: refs/heads/main\n")
+	writeTestFile(t, effortRoot, "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md", `---
+status: proposal
+---
+> **Status: PARTIALLY IMPLEMENTED** As of 2026-05-18
+- [x] **Phase 0** complete
+- [x] **Phase 1** complete
+- [x] **Phase 2** complete
+- [x] **Phase 3** complete
+- [x] **Phase 4** complete
+- [ ] **Phase 5** active
+`)
+	writeTestFile(t, effortRoot, "docs/obsidian/22 - Product Workflow ROADMAP.md", `---
+status: roadmap
+---
+Last audited 2026-05-18.
+- [ ] Obsidian parity check in product lint/audit or closeout reporting (active Atom 32)
+`)
+	writeTestFile(t, effortRoot, "workflow_state.json", strings.ReplaceAll(strings.ReplaceAll(validTestWorkflowStateJSON(),
+		`"effort_id":"test-effort"`, `"effort_id":"prd-adr-brief-workflow"`),
+		`"task_id":"impl-test"`, `"task_id":"impl-0032-phase-5-obsidian-parity-check"`))
+	writeTestFile(t, effortRoot, "implementation_ledger.jsonl",
+		`{"record_type":"atom_planned","task_id":"impl-0032-phase-5-obsidian-parity-check","effort_id":"prd-adr-brief-workflow","timestamp":"2026-05-18T16:05:00Z","complexity_tier":"C2","context_pack_id":"pack","implementor":{"id":"impl","runtime":"codex","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["cmd/idiom/product_workflow.go"],"forbidden":["internal/forbidden.go"],"forbidden_patterns":["docs/private/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint pass on durable fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("lint output should be valid JSON: %v", err)
+	}
+	for _, finding := range result.Findings {
+		if strings.HasPrefix(finding.Code, "obsidian_parity_") {
+			t.Fatalf("unexpected obsidian parity finding on durable fixture: %#v", finding)
+		}
+	}
+}
+
+func TestProductObsidianParityFailsWithoutNoChangeRationale(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, ".git/HEAD", "ref: refs/heads/main\n")
+	writeTestFile(t, dir, "workflow_state.json", `{
+		"schema_version":"idiom.product_workflow_state.v0.fixture",
+		"effort_id":"prd-adr-brief-workflow",
+		"task_id":"impl-0032-phase-5-obsidian-parity-check",
+		"title":"Test Effort",
+		"status_bucket":"started",
+		"current_phase":"phase-5-execution-feedback",
+		"current_state":"planned",
+		"artifact_paths":{"events":"events.jsonl"},
+		"context":{"context_pack_id":"pack","freshness_state":"current"},
+		"coverage":{"coverage_tier":"unit"},
+		"privacy":{"redaction_status":"applied"},
+		"folder_path":"docs/test",
+		"durability_level":"source_controlled",
+		"next_valid_actions":["complete"]
+	}`)
+	writeTestFile(t, dir, "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md", "> **Status: NOT STARTED**")
+	writeTestFile(t, dir, "docs/obsidian/22 - Product Workflow ROADMAP.md", "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	writeTestFile(t, dir, "reports/impl-0032-investigation.json", validTestTestInvestigationReportJSON())
+
+	result := lintEffortFolder(dir)
+	if result.Status != "fail" {
+		t.Fatalf("expected lint fail, got %q", result.Status)
+	}
+	found := false
+	for _, finding := range result.Findings {
+		if finding.Code == "obsidian_stale_status" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected obsidian_stale_status finding, got %#v", result.Findings)
+	}
+}
+
+func TestProductObsidianParityFailsClosedWithoutGitRoot(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "workflow_state.json", `{
+		"schema_version":"idiom.product_workflow_state.v0.fixture",
+		"effort_id":"prd-adr-brief-workflow",
+		"task_id":"impl-0032-phase-5-obsidian-parity-check",
+		"title":"Test Effort",
+		"status_bucket":"started",
+		"current_phase":"phase-5-execution-feedback",
+		"current_state":"planned",
+		"artifact_paths":{"events":"events.jsonl"},
+		"context":{"context_pack_id":"pack","freshness_state":"current"},
+		"coverage":{"coverage_tier":"unit"},
+		"privacy":{"redaction_status":"applied"},
+		"folder_path":"docs/test",
+		"durability_level":"source_controlled",
+		"next_valid_actions":["complete"]
+	}`)
+
+	result := lintEffortFolder(dir)
+	if result.Status != "fail" {
+		t.Fatalf("expected lint fail when Obsidian notes are missing without git root, got %q", result.Status)
+	}
+	var readErrors int
+	for _, finding := range result.Findings {
+		if finding.Code == "obsidian_read_error" {
+			readErrors++
+			if strings.Contains(finding.Message, dir) {
+				t.Fatalf("obsidian read finding leaked temp path: %#v", finding)
+			}
+		}
+	}
+	if readErrors != 2 {
+		t.Fatalf("expected two obsidian_read_error findings, got %d in %#v", readErrors, result.Findings)
+	}
+}
+
+func TestProductObsidianParityDoesNotMaskStaleStatusWithNoChangeRationale(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, ".git/HEAD", "ref: refs/heads/main\n")
+	writeTestFile(t, dir, "workflow_state.json", `{
+		"schema_version":"idiom.product_workflow_state.v0.fixture",
+		"effort_id":"prd-adr-brief-workflow",
+		"task_id":"impl-0032-phase-5-obsidian-parity-check",
+		"title":"Test Effort",
+		"status_bucket":"started",
+		"current_phase":"phase-5-execution-feedback",
+		"current_state":"planned",
+		"artifact_paths":{"events":"events.jsonl"},
+		"context":{"context_pack_id":"pack","freshness_state":"current"},
+		"coverage":{"coverage_tier":"unit"},
+		"privacy":{"redaction_status":"applied"},
+		"folder_path":"docs/test",
+		"durability_level":"source_controlled",
+		"next_valid_actions":["complete"]
+	}`)
+	writeTestFile(t, dir, "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md", "> **Status: NOT STARTED**")
+	writeTestFile(t, dir, "docs/obsidian/22 - Product Workflow ROADMAP.md", "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	writeTestFile(t, dir, "reports/impl-0032-investigation.json", `{
+		"schema_version":"idiom.investigation_report.v1.fixture",
+		"effort_id":"prd-adr-brief-workflow",
+		"task_id":"impl-0032-phase-5-obsidian-parity-check",
+		"status":"pending",
+		"created_at":"2026-05-17T16:00:00Z",
+		"scope":{"obsidian_no_change_rationale":"No documentation edits needed; status text is intentionally deferred to closeout."},
+		"tests":{"focused":"go test"},
+		"coverage":{"tier":"unit"},
+		"traceability":{"checked":false},
+		"privacy_audit":{"no_raw_prompts":true},
+		"reviewer_findings":[],
+		"blockers":["implementation_pending"],
+		"next_valid_action":"",
+		"completed_at":""
+	}`)
+
+	result := lintEffortFolder(dir)
+	if result.Status != "fail" {
+		t.Fatalf("expected lint fail, got %q", result.Status)
+	}
+	found := false
+	for _, finding := range result.Findings {
+		if finding.Code == "obsidian_stale_status" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected obsidian_stale_status finding, got %#v", result.Findings)
 	}
 }
 

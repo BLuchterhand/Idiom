@@ -114,6 +114,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 			"tdd":          {Name: "tdd", Status: "pass"},
 			"traceability": {Name: "traceability", Status: "pass"},
 			"reports":      {Name: "reports", Status: "pass"},
+			"obsidian":     {Name: "obsidian", Status: "pass"},
 			"metrics":      {Name: "metrics", Status: "pass"},
 		}
 		for _, f := range lintResult.Findings {
@@ -126,7 +127,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 				s.FindingCount++
 			}
 		}
-		for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "metrics"} {
+		for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "obsidian", "metrics"} {
 			view.Sections = append(view.Sections, *sectionMap[name])
 		}
 
@@ -157,6 +158,8 @@ func ClassifySection(relPath string) string {
 		return "traceability"
 	case len(relPath) > 8 && relPath[:8] == "reports/":
 		return "reports"
+	case relPath == ObsidianProposalPath || relPath == ObsidianRoadmapPath:
+		return "obsidian"
 	default:
 		return ""
 	}

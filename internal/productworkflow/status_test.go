@@ -136,8 +136,8 @@ func TestLoadProductStatusWithLintResultPass(t *testing.T) {
 	if view.CheckedFileCount != 2 {
 		t.Fatalf("expected checked_file_count 2, got %d", view.CheckedFileCount)
 	}
-	if len(view.Sections) != 6 {
-		t.Fatalf("expected 6 sections, got %d", len(view.Sections))
+	if len(view.Sections) != 7 {
+		t.Fatalf("expected 7 sections, got %d", len(view.Sections))
 	}
 	for _, sec := range view.Sections {
 		if sec.Status != "pass" {
