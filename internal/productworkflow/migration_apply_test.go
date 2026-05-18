@@ -348,6 +348,38 @@ func TestProductStatusMigrationApplyRollsBackAfterFolderRenameFailure(t *testing
 	}
 }
 
+func TestProductStatusMigrationApplyRollsBackAfterReplacementSyncFailure(t *testing.T) {
+	fixture := newMigrationApplyFixture(t)
+	before := snapshotMigrationApplyTree(t, fixture.root)
+	originalSyncFile := productStatusMigrationSyncFile
+	productStatusMigrationSyncFile = func(path string) error {
+		if strings.HasSuffix(filepath.ToSlash(path), "closed/test-effort/workflow_state.json") {
+			return os.ErrPermission
+		}
+		return originalSyncFile(path)
+	}
+	t.Cleanup(func() {
+		productStatusMigrationSyncFile = originalSyncFile
+	})
+
+	opts := fixture.options("closed")
+	opts.ExpectedStateRevision = 7
+	result := ApplyProductStatusMigration(opts)
+	if result.Status != "blocked" || !migrationTestHasBlocker(result, "status_migration_apply_error") {
+		t.Fatalf("expected rollback-backed sync error, got %#v", result)
+	}
+	if _, err := os.Stat(fixture.sourceRoot); err != nil {
+		t.Fatalf("expected source effort restored after rollback: %v", err)
+	}
+	if _, err := os.Stat(fixture.targetRoot); !os.IsNotExist(err) {
+		t.Fatalf("expected target effort removed after rollback, stat err=%v", err)
+	}
+	after := snapshotMigrationApplyTree(t, fixture.root)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("expected rollback to restore original workflow/index/events after sync failure, before=%#v after=%#v", before, after)
+	}
+}
+
 type migrationApplyFixture struct {
 	root             string
 	effortsRoot      string

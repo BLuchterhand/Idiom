@@ -35,6 +35,8 @@ type productStatusMigrationDiskState struct {
 }
 
 var productStatusMigrationAfterFolderRenameHook func() error
+var productStatusMigrationSyncFile = syncProductStatusMigrationFile
+var productStatusMigrationSyncDir = syncProductStatusMigrationDir
 
 func PlanProductStatusMigrationFromEffortRoot(options ProductStatusMigrationApplyOptions) ProductStatusMigrationPlan {
 	plan := ProductStatusMigrationPlan{
@@ -240,27 +242,27 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 	if err := os.Rename(targetWorkflowTemp, filepath.Join(targetRoot, "workflow_state.json")); err != nil {
 		return rollback(err)
 	}
+	workflowReplaced = true
 	if err := syncFileBestEffort(filepath.Join(targetRoot, "workflow_state.json")); err != nil {
 		return rollback(err)
 	}
 	if err := syncDirBestEffort(targetRoot); err != nil {
 		return rollback(err)
 	}
-	workflowReplaced = true
 	if err := os.Rename(targetEventsTemp, filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath))); err != nil {
 		return rollback(err)
 	}
+	eventsReplaced = true
 	if err := syncFileBestEffort(filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath))); err != nil {
 		return rollback(err)
 	}
 	if err := syncDirBestEffort(filepath.Dir(filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath)))); err != nil {
 		return rollback(err)
 	}
-	eventsReplaced = true
+	indexReplaced = true
 	if err := atomicWriteFile(indexPath, updatedIndexBytes, 0o644); err != nil {
 		return rollback(err)
 	}
-	indexReplaced = true
 
 	plan.Status = "applied"
 	plan.NextValidAction = fmt.Sprintf("inspect migrated effort under %s and rerun `idiom product status --effort-root <path>`", plan.TargetFolderPath)
@@ -604,6 +606,14 @@ func productStatusMigrationPathIsSymlink(path string) (bool, error) {
 }
 
 func syncFileBestEffort(path string) error {
+	return productStatusMigrationSyncFile(path)
+}
+
+func syncDirBestEffort(path string) error {
+	return productStatusMigrationSyncDir(path)
+}
+
+func syncProductStatusMigrationFile(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -612,7 +622,7 @@ func syncFileBestEffort(path string) error {
 	return file.Sync()
 }
 
-func syncDirBestEffort(path string) error {
+func syncProductStatusMigrationDir(path string) error {
 	dir, err := os.Open(path)
 	if err != nil {
 		return err

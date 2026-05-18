@@ -926,6 +926,9 @@ func runProductStatusMigration(args []string, stdout io.Writer, stderr io.Writer
 		if err == flag.ErrHelp {
 			return 0
 		}
+		if productStatusMigrationArgsRequestJSON(args) {
+			return writeProductStatusMigrationUsageError(stdout, stderr, true, "invalid_arguments", "arguments", err.Error(), targetStatus)
+		}
 		return 2
 	}
 	if fs.NArg() != 0 {
@@ -1024,6 +1027,15 @@ func productStatusMigrationUsageResult(code, path, message, targetStatus string)
 		}},
 		NextValidAction: "fix status-migration arguments and rerun the command",
 	}
+}
+
+func productStatusMigrationArgsRequestJSON(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" || arg == "-json" {
+			return true
+		}
+	}
+	return false
 }
 
 func productStatusMigrationExitCode(result productworkflow.ProductStatusMigrationPlan) int {
