@@ -188,7 +188,9 @@ stateDiagram-v2
   read-only feedback linking, durable reconciliation, and product-workflow
   metrics, Obsidian parity enforcement, and human-readable CLI next-action
   coverage, plus ranker-learning evidence adapters, are implemented
-- [ ] **Phase 6**: Sidecar and external agent use
+- [ ] **Phase 6**: Operator status and continuation surface; Atom 35 is planned
+  as the first shared CLI/TUI status view-model slice
+- [ ] **Phase 7**: Sidecar and external agent use
 
 ## Open Questions
 
