@@ -4,13 +4,13 @@
   "task_id": "impl-0020-phase-2-research-evidence-merge-from-profile-runs",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T10:34:00Z",
-  "state_revision": 64,
-  "last_event_id": "evt-0174",
-  "workspace_fingerprint": "idiom@6ffa133",
+  "updated_at": "2026-05-18T10:58:00Z",
+  "state_revision": 65,
+  "last_event_id": "evt-0180",
+  "workspace_fingerprint": "idiom@3b7e779",
   "status_bucket": "started",
   "current_phase": "phase-2-research-profiles",
-  "current_state": "implementing",
+  "current_state": "planned",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -56,58 +56,58 @@
     "gate_results": [
       {
         "gate": "research_cards_parse_and_validate",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "research_evidence_merge_deduplicates_deterministically",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "research_evidence_merge_preserves_conflicts",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "product_research_merge_json_surface",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "invalid_research_output_blocks_merge",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "multi_profile_merge_requires_explicit_profile",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "focused_go_tests",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "full_go_tests",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "durable_json_jsonl_validation",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "privacy_secret_scan",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       },
       {
         "gate": "diff_whitespace_check",
-        "status": "pending",
-        "checked_at": ""
+        "status": "pass",
+        "checked_at": "2026-05-18T10:58:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -152,7 +152,7 @@
   "last_reconciliation_at": "2026-05-18T09:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "repair_impl_0020_review_findings",
+    "plan_next_phase_2_atom_or_advance_phase",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],

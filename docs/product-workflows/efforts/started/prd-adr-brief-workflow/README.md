@@ -6,11 +6,11 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0019-phase-2-atom-scoped-ledger-coverage-via-commit-hashes`
-- Active atom: `impl-0020-phase-2-research-evidence-merge-from-profile-runs`
+- Last completed atom: `impl-0020-phase-2-research-evidence-merge-from-profile-runs`
+- Active atom: `next phase-2 atom pending planning`
 - Status bucket: `started`
 - Current phase: `phase-2-research-profiles`
-- Context pack: `1997ef6140265b3d`
+- Context pack: `b7898e573674e014`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -49,7 +49,7 @@ This effort is the durable implementation state for delivering
   records and per-atom coverage validation; Codex review/verification passed.
   Each atom's changed_paths can now be validated against its specific commit diff
   when commit_hash is present, preventing piggybacking across atoms.
-- Atom 20 (active): add the deterministic research evidence merge surface. This
+- Atom 20: all TDD obligations satisfied. Added the deterministic research evidence merge surface. This
   consumes typed researcher output cards, preserves conflicts, and exposes a
   `product research --merge-evidence --profile <profile-id-or-name>` CLI path
   without running models or committing `.idiom` runtime state. Single-profile
@@ -61,7 +61,7 @@ This effort is the durable implementation state for delivering
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation is in progress. These files are source-controlled
+The workflow implementation remains in progress after Atom 20 closeout. These files are source-controlled
 fixtures and resumable implementation state; shipped behavior is limited to the
 committed product workflow validators plus lint and audit commands until later
 atoms close.

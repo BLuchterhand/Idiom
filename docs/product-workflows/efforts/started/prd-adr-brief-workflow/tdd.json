@@ -19,7 +19,21 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned"
+      "atom_planned",
+      "research_cards_parse_and_validate",
+      "research_evidence_merge_deduplicates_deterministically",
+      "research_evidence_merge_preserves_conflicts",
+      "product_research_merge_json_surface",
+      "invalid_research_output_blocks_merge",
+      "multi_profile_merge_requires_explicit_profile",
+      "focused_go_tests",
+      "full_go_tests",
+      "product_lint",
+      "product_audit",
+      "durable_json_jsonl_validation",
+      "privacy_secret_scan",
+      "diff_whitespace_check",
+      "independent_codex_review"
     ],
     "gates_blocked": []
   },
@@ -31,7 +45,7 @@
       "owner": "internal/productworkflow/validate_test.go",
       "command": "go test ./internal/productworkflow -run TestParseResearchCards",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0020-002",
@@ -40,7 +54,7 @@
       "owner": "internal/productworkflow/research_evidence_merge_test.go",
       "command": "go test ./internal/productworkflow -run TestMergeResearchEvidenceDeterministicOrderingAndDedup",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0020-003",
@@ -49,7 +63,7 @@
       "owner": "internal/productworkflow/research_evidence_merge_test.go",
       "command": "go test ./internal/productworkflow -run TestMergeResearchEvidencePreservesDuplicateCardConflicts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0020-004",
@@ -58,7 +72,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductResearchMergeEvidence",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0020-005",
@@ -67,7 +81,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0020-006",
@@ -76,7 +90,7 @@
       "owner": "internal/productworkflow/research_evidence_merge_test.go",
       "command": "go test ./internal/productworkflow -run TestDiscoverResearchCardDocumentsRejects",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     },
     {
       "id": "TDD-IMPL-0020-007",
@@ -85,7 +99,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run 'TestProductResearchMergeEvidenceRequiresProfileWhenMultipleProfilesExist|TestProductResearchMergeEvidenceUsesSelectedProfilePolicy'",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "satisfied"
     }
   ]
 }

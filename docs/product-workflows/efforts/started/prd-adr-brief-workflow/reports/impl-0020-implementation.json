@@ -5,46 +5,50 @@
   "implementor_id": "codex-gpt-worker-impl-0020",
   "runtime": "codex_subagent",
   "model": "gpt-5.3-codex",
-  "completed_at": "2026-05-18T09:55:00Z",
+  "completed_at": "2026-05-18T10:58:00Z",
   "complexity_tier": "C2",
   "scope_statement": "Add deterministic research-card parsing and evidence merge for profile-run outputs, plus a product research --merge-evidence CLI surface.",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/types.go",
-    "internal/productworkflow/validate.go",
-    "internal/productworkflow/research_evidence_merge.go",
-    "internal/productworkflow/research_evidence_merge_test.go",
-    "internal/productworkflow/scope.go",
-    "internal/productworkflow/scope_test.go",
     "cmd/idiom/product_workflow.go",
     "cmd/idiom/product_workflow_test.go",
     "docs/design-prd-adr-brief-research-workflow.md",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
-    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
-    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-implementation.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-investigation.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-review.json",
-    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-investigation.json"
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
+    "internal/productworkflow/research_evidence_merge.go",
+    "internal/productworkflow/research_evidence_merge_test.go",
+    "internal/productworkflow/scope.go",
+    "internal/productworkflow/scope_test.go",
+    "internal/productworkflow/types.go",
+    "internal/productworkflow/validate.go"
   ],
   "verification": {
     "run_by_implementor": true,
     "commands": [
-      "go test ./internal/productworkflow -run 'TestMergeResearch|TestParseResearchCards'",
-      "go test ./cmd/idiom -run 'TestProductResearch'",
+      "idiom tool context_pack --input '{\"task\":\"continue implementation of prd to adr workflow impl 20 design doc replace GLM subagents with GPT Codex subagents\",\"mode\":\"plan\",\"limit\":10}'",
+      "idiom tool context_pack --input '{\"task\":\"implement impl 0020 phase 2 research execution or evidence merge product workflow\",\"mode\":\"plan\",\"limit\":12}'",
+      "idiom tool context_pack --input '{\"task\":\"repair impl 0020 explicit research profile selector for evidence merge\",\"mode\":\"plan\",\"limit\":8}'",
+      "go test ./internal/productworkflow -run 'TestMergeResearch|TestParseResearchCards|TestDiscoverResearchCardDocuments'",
       "go test ./cmd/idiom -run 'TestProductResearchMergeEvidence'",
-      "go test ./internal/productworkflow ./cmd/idiom"
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "jq -R 'fromjson? | empty' docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl docs/product-workflows/efforts/started/prd-adr-brief-workflow/evidence/evidence.jsonl >/dev/null",
+      "privacy credential-value scan over durable impl-0020 artifacts",
+      "git diff --check",
+      "go test ./..."
     ],
-    "status": "passed_focused_and_package"
+    "status": "passed_full_suite_and_product_gates"
   },
   "privacy_note": "no raw prompts, transcripts, file bodies, secrets, or customer-identifying data stored",
-  "open_blockers": [
-    "review_blocked_repairing",
-    "profile_selector_repair_review_pending",
-    "post_effort_investigation_pending",
-    "commit_and_push_pending"
-  ],
-  "reviewer_id": "codex-gpt-review-impl-0020"
+  "open_blockers": [],
+  "reviewer_id": "codex-gpt-review-impl-0020-final",
+  "checkpoint_commit_hash": "3b7e7794e205f531a8d5507bd265e39daedfffa0"
 }

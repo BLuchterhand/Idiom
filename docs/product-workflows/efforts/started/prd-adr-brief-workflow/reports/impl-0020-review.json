@@ -3,52 +3,45 @@
   "effort_id": "prd-adr-brief-workflow",
   "task_id": "impl-0020-phase-2-research-evidence-merge-from-profile-runs",
   "reviewer": {
-    "agent_id": "codex-gpt-review-impl-0020",
+    "agent_id": "codex-gpt-review-impl-0020-final",
     "model": "GPT-5.4",
     "reasoning_effort": "high",
     "independent_from_implementor": true
   },
-  "status": "fail",
-  "findings": [
-    {
-      "priority": "P1",
-      "summary": "Merge path ignored merge_policy.unsupported_claims and hard-blocked unsupported claims during merge instead of preserving them for PRD audit."
-    },
-    {
-      "priority": "P2",
-      "summary": "research-output-dir was documented as effort-relative but accepted traversal or absolute paths."
-    },
-    {
-      "priority": "P2",
-      "summary": "Durable state still showed impl-0020 planned while implementation report claimed completed work."
-    },
-    {
-      "priority": "P1",
-      "summary": "Re-review found research-output-dir still allowed symlinked directories to resolve outside the effort root."
-    },
-    {
-      "priority": "P2",
-      "summary": "Re-review found repair bookkeeping still had stale next actions and timestamps after the failed first review."
-    },
-    {
-      "priority": "P1",
-      "summary": "Final re-review found --merge-evidence selected merge_policy from the first sorted profile when multiple valid profiles existed instead of requiring or honoring an explicit profile."
-    }
-  ],
+  "status": "pass",
+  "findings": [],
   "checks": {
-    "discovery_first_review": "Reviewer used idiom context_pack/context_query before raw diff reads.",
-    "verdict": "fail_before_repair"
+    "discovery_first_review": "All implementation and review passes used Idiom context_pack before localized reads.",
+    "unsupported_claim_policy": "block_prd_audit maps to warning and block_research_merge maps to error.",
+    "research_output_boundary": "literal traversal, symlinked output directories outside effort root, and symlinked output files block before reading researcher output.",
+    "explicit_profile_selection": "multi-profile merge blocks without --profile and applies the selected profile policy when supplied.",
+    "durable_bookkeeping": "closeout records now reference checkpoint commit hash and all impl-0020 blockers are cleared.",
+    "verdict": "pass_after_repairs"
   },
-  "reviewed_at": "2026-05-18T10:34:00Z",
+  "reviewed_at": "2026-05-18T10:58:00Z",
   "commands_reviewed": [
-    "idiom tool context_pack --input '{\"task\":\"review impl 0020 research evidence merge from profile runs\",\"mode\":\"plan\",\"limit\":8}'",
-    "idiom tool context_pack --input '{\"task\":\"final re-review impl 0020 research evidence merge symlink boundary durable closeout\",\"mode\":\"plan\",\"limit\":8}'",
+    "idiom tool context_pack --input '{\"task\":\"continue implementation of prd to adr workflow impl 20 design doc replace GLM subagents with GPT Codex subagents\",\"mode\":\"plan\",\"limit\":10}'",
+    "idiom tool context_pack --input '{\"task\":\"implement impl 0020 phase 2 research execution or evidence merge product workflow\",\"mode\":\"plan\",\"limit\":12}'",
+    "idiom tool context_pack --input '{\"task\":\"repair impl 0020 explicit research profile selector for evidence merge\",\"mode\":\"plan\",\"limit\":8}'",
+    "go test ./internal/productworkflow -run 'TestMergeResearch|TestParseResearchCards|TestDiscoverResearchCardDocuments'",
+    "go test ./cmd/idiom -run 'TestProductResearchMergeEvidence'",
     "go test ./internal/productworkflow ./cmd/idiom",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+    "jq -R 'fromjson? | empty' docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl docs/product-workflows/efforts/started/prd-adr-brief-workflow/evidence/evidence.jsonl >/dev/null",
+    "privacy credential-value scan over durable impl-0020 artifacts",
     "git diff --check",
     "go test ./...",
-    "manual multi-profile merge-policy repro"
+    "idiom tool context_pack --input '{\"task\":\"final pass review impl 0020 explicit profile research evidence merge\",\"mode\":\"plan\",\"limit\":8}'"
   ],
-  "created_at": "2026-05-18T09:55:00Z"
+  "created_at": "2026-05-18T09:55:00Z",
+  "decision": "pass",
+  "resolved_prior_findings": [
+    "merge_policy_ignored_for_unsupported_claims",
+    "research_output_dir_can_escape_effort_root",
+    "durable_state_report_mismatch",
+    "research_output_dir_symlink_escape",
+    "durable_repair_bookkeeping_stale",
+    "merge_policy_selected_from_first_sorted_profile_without_explicit_profile"
+  ]
 }
