@@ -156,8 +156,8 @@ This effort is the durable implementation state for delivering
   checks to `idiom product lint`, `idiom product audit`, and `idiom product
   status`, covering stale proposal/roadmap status, stale phase checkboxes,
   post-closeout checklist drift, scoped repo/effort reads, and typed
-  privacy-safe findings. Review repairs ensured no-change rationale text cannot
-  suppress stale docs and ancestor-directory Obsidian files are not read.
+  privacy-safe findings. Review repairs ensured explicit no-change rationale
+  text is honored and ancestor-directory Obsidian files are not read.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated

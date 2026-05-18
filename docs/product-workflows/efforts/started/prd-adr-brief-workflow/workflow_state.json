@@ -7,7 +7,7 @@
   "updated_at": "2026-05-18T16:35:00Z",
   "state_revision": 97,
   "last_event_id": "evt-0281",
-  "workspace_fingerprint": "idiom@448506e",
+  "workspace_fingerprint": "idiom@6b2472c",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -143,7 +143,7 @@
       "Atom 29 complete: idiom product feedback links explicit lane/progress/evidence references into privacy-safe execution feedback summaries without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
       "Atom 30 complete: idiom product feedback reconciliation consumes passing feedback summaries and writes deterministic reconciled workflow-state output with bounded artifact/evidence links, while preserving dispatch, .idiom runtime mutation, evidence export generation, and ranker-learning boundaries.",
       "Atom 31 complete: product audit and product status expose deterministic product-workflow metrics for progress, gates, blockers, TDD, ledger, reports, artifacts, and evidence-link counts without dispatching lanes, mutating .idiom runtime state, writing evidence exports, promoting ranker learning, or enforcing Obsidian parity.",
-      "Atom 32 complete: product lint/audit/status now include deterministic Obsidian parity checks for stale proposal/roadmap status and fail closed on stale docs even when no-change rationale text is present.",
+      "Atom 32 complete: product lint/audit/status now include deterministic Obsidian parity checks for stale proposal/roadmap status, with an explicit no-change rationale path and fail-closed missing-note behavior.",
       "Next Phase 5 slice after Obsidian parity: add human-readable CLI output coverage for operator-facing product commands."
     ]
   },

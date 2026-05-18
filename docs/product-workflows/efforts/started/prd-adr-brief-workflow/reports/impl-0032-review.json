@@ -14,7 +14,7 @@
     {
       "severity": "High",
       "status": "fixed",
-      "summary": "No-change rationale originally suppressed stale Obsidian status findings."
+      "summary": "No-change rationale was defined but originally did not suppress stale Obsidian status findings."
     },
     {
       "severity": "Medium",
@@ -34,7 +34,7 @@
   "reviewed_at": "2026-05-18T16:35:00Z",
   "commands_reviewed": [
     "go test ./internal/productworkflow -run TestObsidianParity -count=1",
-    "go test ./cmd/idiom -run TestProductObsidianParity -count=1",
+    "go test ./cmd/idiom -run 'TestProductObsidianParity|TestProductStatusObsidianParity' -count=1",
     "go test ./internal/productworkflow ./cmd/idiom",
     "go test ./..."
   ],

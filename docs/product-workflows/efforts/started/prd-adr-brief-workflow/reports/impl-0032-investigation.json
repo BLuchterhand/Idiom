@@ -26,7 +26,7 @@
       "idiom tool context_pack --input {\"task\":\"phase 5 Obsidian parity check product lint audit closeout reporting proposal roadmap stale status no-change rationale\",\"mode\":\"plan\",\"limit\":12}",
       "idiom tool context_query --input {\"query\":\"product lint audit Obsidian parity proposal roadmap closeout reports stale status no-change rationale\",\"resolution\":\"symbol\"}",
       "go test ./internal/productworkflow -run TestObsidianParity -count=1",
-      "go test ./cmd/idiom -run TestProductObsidianParity -count=1",
+      "go test ./cmd/idiom -run 'TestProductObsidianParity|TestProductStatusObsidianParity' -count=1",
       "go test ./internal/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
@@ -51,6 +51,7 @@
       "688124fae36b08eb"
     ],
     "implementation_commit": "448506e164a4b8bf15cb55287676b7e8fd030606",
+    "review_repair_commit": "6b2472c7e3f91b0961a0eaa8fcbfa08050cc28b6",
     "product_lint_status": "pass",
     "product_audit_status": "pass"
   },
@@ -70,5 +71,6 @@
   "blockers": [],
   "next_valid_action": "plan_phase_5_human_readable_cli_coverage_atom",
   "commit_hash": "448506e164a4b8bf15cb55287676b7e8fd030606",
-  "implementation_commit": "448506e164a4b8bf15cb55287676b7e8fd030606"
+  "implementation_commit": "448506e164a4b8bf15cb55287676b7e8fd030606",
+  "review_repair_commit": "6b2472c7e3f91b0961a0eaa8fcbfa08050cc28b6"
 }
