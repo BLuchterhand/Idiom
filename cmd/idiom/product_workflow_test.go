@@ -728,7 +728,7 @@ func TestProductAuditPassesOnDurableEffortFixture(t *testing.T) {
 	if len(result.CheckedFiles) == 0 {
 		t.Fatal("should have checked at least one file")
 	}
-	requiredSections := []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate"}
+	requiredSections := []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate", "metrics"}
 	if len(result.Sections) != len(requiredSections) {
 		t.Fatalf("expected %d sections, got %d", len(requiredSections), len(result.Sections))
 	}

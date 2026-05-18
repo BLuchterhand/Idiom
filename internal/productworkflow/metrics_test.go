@@ -81,6 +81,7 @@ func TestProductWorkflowMetrics(t *testing.T) {
 			path    string
 			oldText string
 			newText string
+			content string
 		}{
 			{
 				name:    "workflow gate status",
@@ -103,8 +104,7 @@ func TestProductWorkflowMetrics(t *testing.T) {
 			{
 				name:    "review status",
 				path:    "reports/test-review.json",
-				oldText: `"status":"pending"`,
-				newText: `"status":"surprise"`,
+				content: `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"surprise","findings":[],"checks":{"metrics":"pass"},"reviewed_at":"2026-05-17T00:02:00Z","commands_reviewed":["go test"],"created_at":"2026-05-17T00:00:00Z"}`,
 			},
 			{
 				name:    "investigation status",
@@ -117,18 +117,21 @@ func TestProductWorkflowMetrics(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				root := writeMetricsFixture(t)
 				abs := filepath.Join(root, tt.path)
-				data, err := os.ReadFile(abs)
-				if err != nil {
-					t.Fatalf("read fixture: %v", err)
-				}
-				updated := strings.Replace(string(data), tt.oldText, tt.newText, 1)
-				if updated == string(data) {
-					t.Fatalf("fixture replacement %q not found", tt.oldText)
+				updated := tt.content
+				if updated == "" {
+					data, err := os.ReadFile(abs)
+					if err != nil {
+						t.Fatalf("read fixture: %v", err)
+					}
+					updated = strings.Replace(string(data), tt.oldText, tt.newText, 1)
+					if updated == string(data) {
+						t.Fatalf("fixture replacement %q not found", tt.oldText)
+					}
 				}
 				if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
 					t.Fatalf("write fixture: %v", err)
 				}
-				_, err = BuildProductWorkflowMetrics(root)
+				_, err := BuildProductWorkflowMetrics(root)
 				if err == nil {
 					t.Fatal("expected metrics to fail closed")
 				}
