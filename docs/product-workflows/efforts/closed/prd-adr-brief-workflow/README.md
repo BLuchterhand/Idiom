@@ -7,8 +7,8 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0038-phase-6-status-migration-apply-cli`
-- Active atom: none; ready for status-folder migration to `closed`
-- Status bucket: `started`
+- Active atom: none; effort closed
+- Status bucket: `closed`
 - Current phase: `phase-6-operator-continuation`
 - Context pack: `b1e7a03548be8af5`
 - Coverage tier: `unit`
@@ -222,7 +222,7 @@ This effort is the durable implementation state for delivering
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation is ready to close after Atom 38 closeout. These
+The workflow implementation is closed after Atom 38 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
@@ -233,8 +233,8 @@ output, product-workflow metrics in product audit/status, Obsidian parity
 checks, human-readable product CLI next-action coverage, ranker-learning
 evidence adapter tracking, a shared CLI-ready operator status view model, a
 read-only product effort browser by status bucket, status-migration planning
-contracts, and status-migration apply semantics. The next action is to apply the
-status-folder migration that moves this effort from `started` to `closed`.
+contracts, and status-migration apply semantics. The status-folder migration has
+moved this effort from `started` to `closed`.
 
 ## Implementation Guidelines
 
@@ -459,6 +459,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Apply the status migration for this effort with
-`idiom product status-migration --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --target-status closed --apply --expected-revision 115`,
-then inspect the moved effort under `docs/product-workflows/efforts/closed/prd-adr-brief-workflow`.
+Inspect the closed effort under
+`docs/product-workflows/efforts/closed/prd-adr-brief-workflow` with
+`idiom product status --effort-root docs/product-workflows/efforts/closed/prd-adr-brief-workflow`.
