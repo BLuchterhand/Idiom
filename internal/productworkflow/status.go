@@ -114,6 +114,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 			"tdd":          {Name: "tdd", Status: "pass"},
 			"traceability": {Name: "traceability", Status: "pass"},
 			"reports":      {Name: "reports", Status: "pass"},
+			"metrics":      {Name: "metrics", Status: "pass"},
 		}
 		for _, f := range lintResult.Findings {
 			sec := ClassifySection(f.Path)
@@ -125,7 +126,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 				s.FindingCount++
 			}
 		}
-		for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports"} {
+		for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "metrics"} {
 			view.Sections = append(view.Sections, *sectionMap[name])
 		}
 

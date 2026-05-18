@@ -592,6 +592,7 @@ func buildAuditResult(lintResult productLintResult) productAuditResult {
 		"traceability": {Name: "traceability", Status: "pass"},
 		"reports":      {Name: "reports", Status: "pass"},
 		"scope_gate":   {Name: "scope_gate", Status: "pass"},
+		"metrics":      {Name: "metrics", Status: "pass"},
 	}
 	for _, f := range lintResult.Findings {
 		section := productworkflow.ClassifySection(f.Path)
@@ -607,7 +608,7 @@ func buildAuditResult(lintResult productLintResult) productAuditResult {
 		sec.Status = "fail"
 	}
 	sections := make([]productAuditSection, 0, len(sectionMap))
-	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate"} {
+	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "scope_gate", "metrics"} {
 		sections = append(sections, *sectionMap[name])
 	}
 	status := "pass"
@@ -649,8 +650,10 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	auditResult := buildAuditResult(lintResult)
 	metrics, metricsErr := productworkflow.BuildProductWorkflowMetrics(absRoot)
 	if metricsErr != nil {
+		finding := productMetricsFinding(metricsErr)
 		auditResult.Status = "fail"
-		auditResult.Findings = append(auditResult.Findings, productMetricsFinding(metricsErr))
+		auditResult.Findings = append(auditResult.Findings, finding)
+		markAuditSectionFailure(&auditResult, "metrics", finding)
 	} else {
 		auditResult.Metrics = &metrics
 	}
@@ -713,6 +716,21 @@ func productMetricsFinding(err error) productLintFinding {
 	}
 }
 
+func markAuditSectionFailure(result *productAuditResult, name string, finding productLintFinding) {
+	for i := range result.Sections {
+		if result.Sections[i].Name == name {
+			result.Sections[i].Status = "fail"
+			result.Sections[i].Findings = append(result.Sections[i].Findings, finding)
+			return
+		}
+	}
+	result.Sections = append(result.Sections, productAuditSection{
+		Name:     name,
+		Status:   "fail",
+		Findings: []productLintFinding{finding},
+	})
+}
+
 func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	fs := flag.NewFlagSet("idiom product status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -764,6 +782,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 				Code:    "metrics_error",
 				Message: metricsErr.Error(),
 			})
+			markStatusSectionFailure(&view, "metrics")
 		} else {
 			view.Metrics = &metrics
 		}
@@ -846,6 +865,21 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 
 	return exitCode
+}
+
+func markStatusSectionFailure(view *productworkflow.ProductStatusView, name string) {
+	for i := range view.Sections {
+		if view.Sections[i].Name == name {
+			view.Sections[i].Status = "fail"
+			view.Sections[i].FindingCount++
+			return
+		}
+	}
+	view.Sections = append(view.Sections, productworkflow.StatusSection{
+		Name:         name,
+		Status:       "fail",
+		FindingCount: 1,
+	})
 }
 
 func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

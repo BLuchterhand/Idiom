@@ -825,6 +825,42 @@ func TestProductAuditMetricsErrorUsesRelativeArtifactPath(t *testing.T) {
 	}
 }
 
+func TestProductAuditMetricsFailsClosedOnUnknownGateStatus(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "reports/test-implementation.json", validTestImplementationReportJSON())
+	writeTestFile(t, dir, "reports/test-review.json", validTestReviewReportJSON())
+	writeTestFile(t, dir, "reports/test-investigation.json", validTestTestInvestigationReportJSON())
+	writeTestFile(t, dir, "workflow_state.json", strings.Replace(
+		validTestWorkflowStateJSON(),
+		`"coverage":{"coverage_tier":"unit"}`,
+		`"coverage":{"coverage_tier":"unit","gate_results":[{"gate":"metrics","status":"surprise"}]}`,
+		1,
+	))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit to fail closed, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "fail" {
+		t.Fatalf("expected status fail, got %q", result.Status)
+	}
+	metricsSection := findAuditSection(t, result, "metrics")
+	if metricsSection.Status != "fail" || len(metricsSection.Findings) != 1 {
+		t.Fatalf("expected metrics section failure, got %#v", metricsSection)
+	}
+	if result.Metrics != nil {
+		t.Fatalf("expected metrics omitted on failure, got %#v", result.Metrics)
+	}
+	if !strings.Contains(metricsSection.Findings[0].Message, "unsupported") {
+		t.Fatalf("expected unsupported-value metrics finding, got %#v", metricsSection.Findings[0])
+	}
+}
+
 func TestProductWorkflowMetrics(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	writeTestFile(t, dir, "reports/test-implementation.json", validTestImplementationReportJSON())
@@ -1956,6 +1992,39 @@ func TestProductStatusMetrics(t *testing.T) {
 	}
 }
 
+func TestProductStatusMetricsFailsClosedOnUnknownGateStatus(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "reports/test-implementation.json", validTestImplementationReportJSON())
+	writeTestFile(t, dir, "reports/test-review.json", validTestReviewReportJSON())
+	writeTestFile(t, dir, "reports/test-investigation.json", validTestTestInvestigationReportJSON())
+	writeTestFile(t, dir, "workflow_state.json", strings.Replace(
+		validTestWorkflowStateJSON(),
+		`"coverage":{"coverage_tier":"unit"}`,
+		`"coverage":{"coverage_tier":"unit","gate_results":[{"gate":"metrics","status":"surprise"}]}`,
+		1,
+	))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected status to fail closed, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productworkflow.ProductStatusView
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.AuditStatus != "fail" {
+		t.Fatalf("expected audit_status fail, got %q", result.AuditStatus)
+	}
+	metricsSection := findStatusSection(t, result.Sections, "metrics")
+	if metricsSection.Status != "fail" || metricsSection.FindingCount != 1 {
+		t.Fatalf("expected metrics section failure, got %#v", metricsSection)
+	}
+	if result.Metrics != nil {
+		t.Fatalf("expected metrics omitted on failure, got %#v", result.Metrics)
+	}
+}
+
 func TestProductStatusTextIncludesKeyFields(t *testing.T) {
 	root := repoRoot(t)
 	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
@@ -2123,6 +2192,17 @@ func findAuditSection(t *testing.T, result productAuditResult, name string) prod
 	}
 	t.Fatalf("section %q not found", name)
 	return productAuditSection{}
+}
+
+func findStatusSection(t *testing.T, sections []productworkflow.StatusSection, name string) productworkflow.StatusSection {
+	t.Helper()
+	for _, sec := range sections {
+		if sec.Name == name {
+			return sec
+		}
+	}
+	t.Fatalf("status section %q not found", name)
+	return productworkflow.StatusSection{}
 }
 
 func writeValidTestEffort(t *testing.T) string {

@@ -91,20 +91,28 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 
 	gateStatusCounts := map[string]int{}
 	for _, gate := range ws.Coverage.GateResults {
-		gateStatusCounts[gate.Status]++
+		if err := countBoundedMetricValue(gateStatusCounts, "coverage.gate_results.status", gate.Status, allowedMetricGateStatuses); err != nil {
+			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "workflow_state.json", err)
+		}
 	}
 
 	tddStatusCounts := map[string]int{}
 	tddTypeCounts := map[string]int{}
 	for _, obligation := range tdd.Obligations {
-		tddStatusCounts[obligation.Status]++
-		tddTypeCounts[obligation.Type]++
+		if err := countBoundedMetricValue(tddStatusCounts, "tdd.obligations.status", obligation.Status, allowedMetricTDDStatuses); err != nil {
+			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "tdd.json", err)
+		}
+		if err := countBoundedMetricValue(tddTypeCounts, "tdd.obligations.type", obligation.Type, allowedMetricTDDTypes); err != nil {
+			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "tdd.json", err)
+		}
 	}
 
 	ledgerTypeCounts := map[string]int{}
 	ledgerAtomCount := 0
 	for _, record := range ledger {
-		ledgerTypeCounts[record.RecordType]++
+		if err := countBoundedMetricValue(ledgerTypeCounts, "implementation_ledger.record_type", record.RecordType, allowedMetricLedgerRecordTypes); err != nil {
+			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "implementation_ledger.jsonl", err)
+		}
 		if strings.HasPrefix(record.RecordType, "atom_") {
 			ledgerAtomCount++
 		}
@@ -241,15 +249,107 @@ func collectReportMetrics(absRoot string) (map[string]int, map[string]int, error
 			if parseErr != nil {
 				return nil, nil, metricsArtifactError("parse", relPath, parseErr)
 			}
-			reportStatusCounts["review_"+strings.TrimSpace(report.Status)]++
+			status := strings.TrimSpace(report.Status)
+			if !allowedMetricReviewStatuses[status] {
+				return nil, nil, metricsArtifactError("validate", relPath, fmt.Errorf("review status has unsupported value %q", status))
+			}
+			reportStatusCounts["review_"+status]++
 		case "investigation":
 			report, parseErr := ParseInvestigationReportJSON(data)
 			if parseErr != nil {
 				return nil, nil, metricsArtifactError("parse", relPath, parseErr)
 			}
-			reportStatusCounts["investigation_"+strings.TrimSpace(report.Status)]++
+			status := strings.TrimSpace(report.Status)
+			if !allowedMetricInvestigationStatuses[status] {
+				return nil, nil, metricsArtifactError("validate", relPath, fmt.Errorf("investigation status has unsupported value %q", status))
+			}
+			reportStatusCounts["investigation_"+status]++
 		}
 	}
 
 	return reportTypeCounts, reportStatusCounts, nil
+}
+
+func countBoundedMetricValue(counts map[string]int, field, value string, allowed map[string]bool) error {
+	trimmed := strings.TrimSpace(value)
+	if !allowed[trimmed] {
+		return fmt.Errorf("%s has unsupported value %q", field, trimmed)
+	}
+	counts[trimmed]++
+	return nil
+}
+
+var allowedMetricGateStatuses = map[string]bool{
+	"pass":    true,
+	"passed":  true,
+	"fail":    true,
+	"failed":  true,
+	"pending": true,
+	"planned": true,
+	"blocked": true,
+	"error":   true,
+}
+
+var allowedMetricTDDStatuses = map[string]bool{
+	"pending":  true,
+	"planned":  true,
+	"passed":   true,
+	"pass":     true,
+	"done":     true,
+	"complete": true,
+	"failed":   true,
+	"blocked":  true,
+}
+
+var allowedMetricTDDTypes = map[string]bool{
+	"acceptance":  true,
+	"audit":       true,
+	"contract":    true,
+	"unit":        true,
+	"integration": true,
+	"property":    true,
+	"mutation":    true,
+	"eval":        true,
+	"security":    true,
+	"privacy":     true,
+}
+
+var allowedMetricLedgerRecordTypes = map[string]bool{
+	"atom_closed":                                  true,
+	"atom_planned":                                 true,
+	"blocker_recorded":                             true,
+	"fallback_completion":                          true,
+	"fallback_exception":                           true,
+	"implementation_completed":                     true,
+	"implementation_guidelines_updated":            true,
+	"implementor_error":                            true,
+	"implementor_interrupted_for_guideline_update": true,
+	"implementor_policy_updated":                   true,
+	"implementor_timeout":                          true,
+	"partial_implementation_recorded":              true,
+	"post_effort_investigation_completed":          true,
+	"review_completed":                             true,
+	"verification_completed":                       true,
+}
+
+var allowedMetricReviewStatuses = map[string]bool{
+	"pending":           true,
+	"pass":              true,
+	"passed":            true,
+	"pass_after_repair": true,
+	"fail":              true,
+	"failed":            true,
+	"blocked":           true,
+	"complete":          true,
+}
+
+var allowedMetricInvestigationStatuses = map[string]bool{
+	"planned":  true,
+	"pending":  true,
+	"complete": true,
+	"blocked":  true,
+	"pass":     true,
+	"passed":   true,
+	"fail":     true,
+	"failed":   true,
 }

@@ -74,6 +74,73 @@ func TestProductWorkflowMetrics(t *testing.T) {
 			t.Fatalf("expected stable relative missing-file error, got %q", err.Error())
 		}
 	})
+
+	t.Run("fails closed on unbounded metric values", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			path    string
+			oldText string
+			newText string
+		}{
+			{
+				name:    "workflow gate status",
+				path:    "workflow_state.json",
+				oldText: `"status":"fail"`,
+				newText: `"status":"surprise"`,
+			},
+			{
+				name:    "tdd status",
+				path:    "tdd.json",
+				oldText: `"status":"done"`,
+				newText: `"status":"surprise"`,
+			},
+			{
+				name:    "ledger record type",
+				path:    "implementation_ledger.jsonl",
+				oldText: `"record_type":"verification_completed"`,
+				newText: `"record_type":"surprise"`,
+			},
+			{
+				name:    "review status",
+				path:    "reports/test-review.json",
+				oldText: `"status":"pending"`,
+				newText: `"status":"surprise"`,
+			},
+			{
+				name:    "investigation status",
+				path:    "reports/test-investigation.json",
+				oldText: `"status":"pending"`,
+				newText: `"status":"surprise"`,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				root := writeMetricsFixture(t)
+				abs := filepath.Join(root, tt.path)
+				data, err := os.ReadFile(abs)
+				if err != nil {
+					t.Fatalf("read fixture: %v", err)
+				}
+				updated := strings.Replace(string(data), tt.oldText, tt.newText, 1)
+				if updated == string(data) {
+					t.Fatalf("fixture replacement %q not found", tt.oldText)
+				}
+				if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
+					t.Fatalf("write fixture: %v", err)
+				}
+				_, err = BuildProductWorkflowMetrics(root)
+				if err == nil {
+					t.Fatal("expected metrics to fail closed")
+				}
+				if !strings.Contains(err.Error(), "unsupported") {
+					t.Fatalf("expected unsupported-value error, got %v", err)
+				}
+				if strings.Contains(err.Error(), root) {
+					t.Fatalf("metrics error should not leak absolute root path, got %q", err.Error())
+				}
+			})
+		}
+	})
 }
 
 func writeMetricsFixture(t *testing.T) string {
