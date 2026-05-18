@@ -45,11 +45,11 @@
     "context_query:product workflow metrics audit status gates blockers evidence links harness_audit product audit"
   ],
   "reviewer_id": "codex-gpt-review-impl-0031",
-  "commit_hash": "9b044daa35f55fa2415f21a0039b594a683c22db",
+  "commit_hash": "6b6e68439d7167487a4b600f915632d5fa289ffc",
   "planning_checkpoint_commit": "de1f2035dfb1eb713da9fb1bafbb3ed1cc29439a",
   "privacy_note": "report stores only scope, model assignment, command names, commit hashes, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
   "open_blockers": [],
-  "implementation_commit": "9b044daa35f55fa2415f21a0039b594a683c22db",
+  "implementation_commit": "6b6e68439d7167487a4b600f915632d5fa289ffc",
   "initial_commit_hash": "d5e1bea48dbba7079ce58835b59ae7922c50f087",
-  "review_repair_commit": "9b044daa35f55fa2415f21a0039b594a683c22db"
+  "review_repair_commit": "6b6e68439d7167487a4b600f915632d5fa289ffc"
 }
