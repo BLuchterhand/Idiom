@@ -7,10 +7,10 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0028-phase-4-brief-generator`
-- Active atom: none; next action is `plan_phase_5_execution_feedback_atom`
+- Active atom: `impl-0029-phase-5-execution-feedback-linker` planned
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
-- Context pack: `6c2f728f391c0488`
+- Context pack: `a68211353c1c7175`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -114,6 +114,11 @@ This effort is the durable implementation state for delivering
   implementation brief, reports brief-lint blockers before any dispatch-ready
   claim, covers JSON and human-readable output, keeps `--brief-output` under
   `briefs/`, and does not dispatch work or execute models.
+- Atom 29 is planned as the first Phase 5 execution-feedback slice. It should
+  add deterministic feedback linking from explicit lane/progress/evidence
+  references into privacy-safe workflow summaries, preserving authority
+  boundaries and avoiding lane dispatch, `.idiom` runtime mutation, evidence
+  export writes, ranker-learning promotion, or raw transcript/file-body storage.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -125,8 +130,8 @@ files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
 plan-only TDD obligation synthesis, deterministic coverage-gate evaluation, and
-lint-verified brief generation. Execution feedback loops and operator surfaces
-remain later atoms.
+lint-verified brief generation. Execution feedback linking is the active Phase 5
+slice; operator surfaces remain later atoms.
 
 ## Implementation Guidelines
 

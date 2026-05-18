@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0028-phase-4-brief-generator",
+  "task_id": "impl-0029-phase-5-execution-feedback-validator",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T14:25:00Z",
-  "state_revision": 81,
-  "last_event_id": "evt-0244",
-  "workspace_fingerprint": "idiom@895eb3b",
+  "updated_at": "2026-05-18T14:35:00Z",
+  "state_revision": 82,
+  "last_event_id": "evt-0246",
+  "workspace_fingerprint": "idiom@a324b64",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -30,40 +30,26 @@
     "adr_prompt": "adrs/adr.prompt.md"
   },
   "context": {
-    "context_pack_id": "6c2f728f391c0488",
+    "context_pack_id": "2249e5eafb7503fe",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
-      "docs/design-tdd-coverage.md",
-      "docs/obsidian/22 - Product Workflow ROADMAP.md",
       "cmd/idiom/product_workflow.go",
       "cmd/idiom/product_workflow_test.go",
-      "internal/productworkflow/research_evidence_merge.go",
-      "internal/productworkflow/research_evidence_merge_test.go",
-      "internal/productworkflow/research_profile_store.go",
-      "internal/productworkflow/research_profile_store_test.go",
-      "internal/productworkflow/research_runs.go",
-      "internal/productworkflow/research_runs_test.go",
-      "internal/productworkflow/research_artifact_prompts.go",
-      "internal/productworkflow/research_artifact_prompts_test.go",
-      "internal/productworkflow/prd_draft_prompts.go",
-      "internal/productworkflow/prd_draft_prompts_test.go",
-      "internal/productworkflow/tdd_obligation_plans.go",
-      "internal/productworkflow/tdd_obligation_plans_test.go",
-      "internal/productworkflow/coverage_gate.go",
-      "internal/productworkflow/coverage_gate_test.go",
-      "internal/productworkflow/brief_generation.go",
-      "internal/productworkflow/brief_generation_test.go",
+      "internal/productworkflow/execution_feedback.go",
+      "internal/productworkflow/execution_feedback_test.go",
       "internal/productworkflow/types.go",
+      "cmd/idiom/lane.go",
+      "cmd/idiom/lane_history.go",
+      "cmd/idiom/brief.go",
+      "internal/app/implementation_dispatch.go",
       "internal/productworkflow/validate.go",
-      "internal/productworkflow/validate_test.go",
-      "cmd/idiom/artifact.go",
-      "cmd/idiom/artifact_test.go"
+      "internal/productworkflow/validate_test.go"
     ],
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 341cfce94f353ee2 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow TDD obligation synthesis planning."
+        "description": "Context pack 2249e5eafb7503fe reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to the Phase 5 execution-feedback validator planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -90,6 +76,16 @@
         "gate": "brief_generator",
         "status": "passed",
         "checked_at": "2026-05-18T14:25:00Z"
+      },
+      {
+        "gate": "atom_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T14:35:00Z"
+      },
+      {
+        "gate": "execution_feedback_validator_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T14:35:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -103,7 +99,7 @@
       "Deferred follow-up: continue remaining design-doc product surfaces after Phase 1 hardening, including research profiles, generation, acceptance/supersession, brief dispatch, coverage gates, feedback, and operator surfaces.",
       "Phase 4 brief generation is complete: idiom product brief --render creates lint-verified implementation briefs from accepted PRD/ADR/TDD artifacts and a passing coverage gate without dispatching work or executing models.",
       "Deferred follow-up: make coverage gate reuse product lint/audit validators or run them as blocking preconditions before brief generation.",
-      "Next design-doc phase: execution feedback loop linking lane outcomes, evidence exports, and product workflow state."
+      "Atom 29 planned: add deterministic execution-feedback record validation before any state mutation or evidence export wiring."
     ]
   },
   "open_obligations": [],
@@ -134,10 +130,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T14:25:00Z",
+  "last_reconciliation_at": "2026-05-18T14:35:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_5_execution_feedback_atom",
+    "implement_phase_5_execution_feedback_validator_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"
