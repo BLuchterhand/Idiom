@@ -570,3 +570,52 @@ func TestRankerLearningEvidenceAdapterFailsClosed(t *testing.T) {
 		t.Fatalf("blocked adapter next action must not imply promotion, got %q", out.NextValidAction)
 	}
 }
+
+func TestRankerLearningEvidenceAdapterRejectsRankerStatePaths(t *testing.T) {
+	out := AdaptExecutionFeedbackToRankerLearning(RankerLearningEvidenceInput{
+		WorkflowState: WorkflowState{
+			EffortID:     "eff-1",
+			TaskID:       "task-1",
+			CurrentPhase: "phase-5-execution-feedback",
+			CurrentState: "planned",
+			Context: WorkflowContext{
+				ContextPackID:  "pack-1",
+				FreshnessState: "current",
+			},
+			Privacy: PrivacyState{
+				RedactionStatus: "applied",
+			},
+		},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "pass",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			StateRevision:   5,
+			CurrentPhase:    "phase-5-execution-feedback",
+			CurrentState:    "planned",
+			LaneHistory:     []ExecutionLaneEventRef{{Lane: "implement", Event: "closed", Status: "pass"}},
+			PlanPhase:       "phase-5",
+			PlanState:       "feedback",
+			PlanStatus:      "completed",
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			ChangedPaths:    []string{".idiom/ranker/weights.json"},
+			Verification:    VerificationRef{Status: "pass", Commands: []string{"go test ./cmd/idiom"}},
+			TDDObligations:  []string{"TDD-001"},
+		},
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked, got %#v", out)
+	}
+	if out.Request != nil {
+		t.Fatalf("ranker state paths must not be emitted in a request, got %#v", out.Request)
+	}
+	for _, blocker := range out.Blockers {
+		if blocker.Kind == "unsupported_authority_reference" && strings.Contains(blocker.Message, ".idiom/ranker") {
+			return
+		}
+	}
+	t.Fatalf("expected ranker state path blocker, got %#v", out.Blockers)
+}

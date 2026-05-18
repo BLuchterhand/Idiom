@@ -1762,9 +1762,13 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary contains forbidden privacy marker %q\n", marker)
 			return 1
 		}
-		summary, _, err := parseProductFeedbackSummaryDocument(summaryRaw)
+		summary, wrappedStatus, err := parseProductFeedbackSummaryDocument(summaryRaw)
 		if err != nil {
 			fmt.Fprintf(stderr, "product feedback: %v\n", err)
+			return 1
+		}
+		if wrappedStatus != "" && !executionFeedbackStatusPass(wrappedStatus) {
+			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary status must be pass, got %q\n", wrappedStatus)
 			return 1
 		}
 		var tddLedger productworkflow.TDDLedger

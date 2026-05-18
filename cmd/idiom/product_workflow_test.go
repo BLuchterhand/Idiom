@@ -5080,6 +5080,67 @@ func TestProductFeedbackRankerLearningEvidenceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestProductFeedbackRankerLearningEvidenceRejectsWrappedBlockedStatus(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)
+	workflowState = strings.Replace(workflowState, `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	workflowState = strings.Replace(workflowState, `"task_id":"impl-test"`, `"task_id":"impl-test","state_revision":1`, 1)
+	writeTestFile(t, dir, "workflow_state.json", workflowState)
+	writeTestFile(t, dir, "references/feedback_summary.json", `{"status":"blocked","summary":`+validRankerLearningFeedbackSummaryJSON("pass")+`}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--ranker-learning-evidence-summary", "references/feedback_summary.json",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no JSON request for blocked wrapper, got stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `summary status must be pass`) {
+		t.Fatalf("expected wrapped status error, got stderr=%s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".idiom")); !os.IsNotExist(err) {
+		t.Fatalf("blocked wrapper must not write .idiom state, err=%v", err)
+	}
+}
+
+func TestProductFeedbackRankerLearningEvidenceRejectsRankerStatePath(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)
+	workflowState = strings.Replace(workflowState, `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	workflowState = strings.Replace(workflowState, `"task_id":"impl-test"`, `"task_id":"impl-test","state_revision":1`, 1)
+	writeTestFile(t, dir, "workflow_state.json", workflowState)
+	summary := strings.Replace(validRankerLearningFeedbackSummaryJSON("pass"), `"changed_paths":["cmd/idiom/product_workflow.go"]`, `"changed_paths":[".idiom/ranker/weights.json"]`, 1)
+	writeTestFile(t, dir, "references/feedback_summary.json", summary)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--ranker-learning-evidence-summary", "references/feedback_summary.json",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productFeedbackRankerLearningOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" || out.RankerLearningEvidence.Request != nil {
+		t.Fatalf("expected blocked output without request, got %#v", out)
+	}
+	for _, blocker := range out.RankerLearningEvidence.Blockers {
+		if blocker.Kind == "unsupported_authority_reference" && strings.Contains(blocker.Message, ".idiom/ranker") {
+			return
+		}
+	}
+	t.Fatalf("expected ranker state path blocker, got %#v", out.RankerLearningEvidence.Blockers)
+}
+
 func validRankerLearningFeedbackSummaryJSON(status string) string {
 	if status == "blocked" {
 		return `{

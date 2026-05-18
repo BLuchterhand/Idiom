@@ -313,6 +313,24 @@ func executionFeedbackUnsupportedAuthorityMarker(value string) string {
 	return ""
 }
 
+func executionFeedbackUnsupportedRankerStatePathMarker(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == "" {
+		return ""
+	}
+	v = strings.ReplaceAll(v, "\\", "/")
+	if strings.Contains(v, ".idiom/ranker") {
+		return ".idiom/ranker"
+	}
+	for _, part := range strings.Split(v, "/") {
+		switch part {
+		case "weights.json", "learning_log.jsonl":
+			return part
+		}
+	}
+	return ""
+}
+
 func executionFeedbackHasPassingLane(events []ExecutionLaneEventRef) bool {
 	for _, event := range events {
 		if executionFeedbackPassingStatus(event.Status) {
@@ -786,6 +804,15 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 			)
 		}
 	}
+	checkUnsupportedRankerStatePath := func(field, value string) {
+		if marker := executionFeedbackUnsupportedRankerStatePathMarker(value); marker != "" {
+			addBlocker(
+				"unsupported_authority_reference",
+				fmt.Sprintf("%s references unsupported ranker state path (%s)", field, marker),
+				"remove ranker state paths from the feedback summary before deriving ranker-learning evidence",
+			)
+		}
+	}
 
 	if !executionFeedbackPassingStatus(summary.Status) {
 		addBlocker(
@@ -947,6 +974,7 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 	if strings.TrimSpace(input.SummaryReferencePath) != "" {
 		checkSafePath("summary_reference_path", input.SummaryReferencePath)
 		checkPrivacy("summary_reference_path", input.SummaryReferencePath)
+		checkUnsupportedRankerStatePath("summary_reference_path", input.SummaryReferencePath)
 	}
 	for _, obligation := range result.Summary.TDDObligations {
 		if !knownObligations[obligation] {
@@ -962,6 +990,7 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 	for _, path := range result.Summary.ChangedPaths {
 		checkSafePath("changed_paths", path)
 		checkPrivacy("changed_paths", path)
+		checkUnsupportedRankerStatePath("changed_paths", path)
 	}
 	for _, command := range summary.Verification.Commands {
 		checkPrivacy("verification.commands", command)
@@ -986,6 +1015,12 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 	checkSafePath("brief_path", summary.BriefPath)
 	checkSafePath("product_evidence_path", result.Summary.ProductEvidencePath)
 	checkSafePath("release_evidence_path", result.Summary.ReleaseEvidencePath)
+	checkUnsupportedRankerStatePath("brief_path", summary.BriefPath)
+	checkUnsupportedRankerStatePath("product_evidence_path", result.Summary.ProductEvidencePath)
+	checkUnsupportedRankerStatePath("release_evidence_path", result.Summary.ReleaseEvidencePath)
+	for _, path := range result.Summary.EvidenceBundlePaths {
+		checkUnsupportedRankerStatePath("evidence_bundle_paths", path)
+	}
 	checkSafeToken("product_evidence_id", result.Summary.ProductEvidenceID)
 	checkSafeToken("release_evidence_id", result.Summary.ReleaseEvidenceID)
 
