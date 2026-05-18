@@ -18,23 +18,24 @@ type StatusSection struct {
 }
 
 type ProductStatusView struct {
-	AuditStatus      string          `json:"audit_status"`
-	EffortRoot       string          `json:"effort_root"`
-	EffortID         string          `json:"effort_id"`
-	TaskID           string          `json:"task_id"`
-	StatusBucket     string          `json:"status_bucket"`
-	CurrentPhase     string          `json:"current_phase"`
-	CurrentState     string          `json:"current_state"`
-	StateRevision    int             `json:"state_revision"`
-	LastEventID      string          `json:"last_event_id"`
-	ContextPackID    string          `json:"context_pack_id"`
-	FreshnessState   string          `json:"freshness_state"`
-	CheckedFileCount int             `json:"checked_file_count"`
-	Sections         []StatusSection `json:"sections"`
-	Blockers         []StatusBlocker `json:"blockers"`
-	OpenObligations  []string        `json:"open_obligations"`
-	NextValidActions []string        `json:"next_valid_actions"`
-	Findings         []StatusBlocker `json:"findings,omitempty"`
+	AuditStatus      string                  `json:"audit_status"`
+	EffortRoot       string                  `json:"effort_root"`
+	EffortID         string                  `json:"effort_id"`
+	TaskID           string                  `json:"task_id"`
+	StatusBucket     string                  `json:"status_bucket"`
+	CurrentPhase     string                  `json:"current_phase"`
+	CurrentState     string                  `json:"current_state"`
+	StateRevision    int                     `json:"state_revision"`
+	LastEventID      string                  `json:"last_event_id"`
+	ContextPackID    string                  `json:"context_pack_id"`
+	FreshnessState   string                  `json:"freshness_state"`
+	CheckedFileCount int                     `json:"checked_file_count"`
+	Sections         []StatusSection         `json:"sections"`
+	Blockers         []StatusBlocker         `json:"blockers"`
+	OpenObligations  []string                `json:"open_obligations"`
+	NextValidActions []string                `json:"next_valid_actions"`
+	Findings         []StatusBlocker         `json:"findings,omitempty"`
+	Metrics          *ProductWorkflowMetrics `json:"metrics,omitempty"`
 }
 
 func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductStatusView, error) {

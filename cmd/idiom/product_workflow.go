@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -575,11 +576,12 @@ type productAuditSection struct {
 }
 
 type productAuditResult struct {
-	Status       string                `json:"status"`
-	EffortRoot   string                `json:"effort_root"`
-	CheckedFiles []string              `json:"checked_files"`
-	Sections     []productAuditSection `json:"sections"`
-	Findings     []productLintFinding  `json:"findings"`
+	Status       string                                  `json:"status"`
+	EffortRoot   string                                  `json:"effort_root"`
+	CheckedFiles []string                                `json:"checked_files"`
+	Sections     []productAuditSection                   `json:"sections"`
+	Findings     []productLintFinding                    `json:"findings"`
+	Metrics      *productworkflow.ProductWorkflowMetrics `json:"metrics,omitempty"`
 }
 
 func buildAuditResult(lintResult productLintResult) productAuditResult {
@@ -645,6 +647,13 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	}
 	lintResult := lintEffortFolder(absRoot)
 	auditResult := buildAuditResult(lintResult)
+	metrics, metricsErr := productworkflow.BuildProductWorkflowMetrics(absRoot)
+	if metricsErr != nil {
+		auditResult.Status = "fail"
+		auditResult.Findings = append(auditResult.Findings, productMetricsFinding(metricsErr))
+	} else {
+		auditResult.Metrics = &metrics
+	}
 	logCLIPhase(rec, "product_audit", map[string]any{
 		"status":        auditResult.Status,
 		"finding_count": len(auditResult.Findings),
@@ -672,11 +681,36 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 			}
 			fmt.Fprintln(stdout)
 		}
+		if auditResult.Metrics != nil {
+			metrics := *auditResult.Metrics
+			fmt.Fprintf(stdout, "  metrics: phase=%s state=%s revision=%d gates=%d blockers=%d obligations=%d next_actions=%d\n",
+				metrics.CurrentPhase,
+				metrics.CurrentState,
+				metrics.StateRevision,
+				len(metrics.GateStatusCounts),
+				metrics.BlockerCount,
+				metrics.OpenObligationCount,
+				metrics.NextValidActionCount,
+			)
+		}
 	}
 	if auditResult.Status != "pass" {
 		return 1
 	}
 	return 0
+}
+
+func productMetricsFinding(err error) productLintFinding {
+	path := "workflow_state.json"
+	var metricsErr productworkflow.ProductWorkflowMetricsError
+	if errors.As(err, &metricsErr) && strings.TrimSpace(metricsErr.Path) != "" {
+		path = metricsErr.Path
+	}
+	return productLintFinding{
+		Code:    "metrics_error",
+		Path:    path,
+		Message: err.Error(),
+	}
 }
 
 func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -718,6 +752,22 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 
 	view, wsErr := productworkflow.LoadProductStatus(absRoot, lintSummary)
+	if wsErr == nil {
+		metrics, metricsErr := productworkflow.BuildProductWorkflowMetrics(absRoot)
+		if metricsErr != nil {
+			view.AuditStatus = "fail"
+			view.Findings = append(view.Findings, productworkflow.StatusBlocker{
+				Code:    "metrics_error",
+				Message: metricsErr.Error(),
+			})
+			view.Blockers = append(view.Blockers, productworkflow.StatusBlocker{
+				Code:    "metrics_error",
+				Message: metricsErr.Error(),
+			})
+		} else {
+			view.Metrics = &metrics
+		}
+	}
 	exitCode := 0
 	if wsErr != nil {
 		exitCode = 1
@@ -774,6 +824,18 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 	if view.CheckedFileCount > 0 {
 		fmt.Fprintf(stdout, "  files_checked: %d\n", view.CheckedFileCount)
+	}
+	if view.Metrics != nil {
+		metrics := *view.Metrics
+		fmt.Fprintf(stdout, "  metrics: phase=%s state=%s revision=%d gates=%d blockers=%d obligations=%d next_actions=%d\n",
+			metrics.CurrentPhase,
+			metrics.CurrentState,
+			metrics.StateRevision,
+			len(metrics.GateStatusCounts),
+			metrics.BlockerCount,
+			metrics.OpenObligationCount,
+			metrics.NextValidActionCount,
+		)
 	}
 	for _, sec := range view.Sections {
 		fmt.Fprintf(stdout, "  %s: %s", sec.Name, sec.Status)

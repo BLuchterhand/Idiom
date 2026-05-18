@@ -765,6 +765,82 @@ func TestProductAuditJSONIncludesAllRequiredSections(t *testing.T) {
 	}
 }
 
+func TestProductAuditMetrics(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "reports/test-implementation.json", validTestImplementationReportJSON())
+	writeTestFile(t, dir, "reports/test-review.json", validTestReviewReportJSON())
+	writeTestFile(t, dir, "reports/test-investigation.json", validTestTestInvestigationReportJSON())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected audit to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Metrics == nil {
+		t.Fatal("expected metrics in product audit JSON")
+	}
+	if result.Metrics.CurrentPhase == "" || result.Metrics.CurrentState == "" {
+		t.Fatalf("expected phase/state metrics, got %#v", result.Metrics)
+	}
+	if result.Metrics.NextValidActionCount <= 0 {
+		t.Fatalf("expected next_valid_action_count > 0, got %d", result.Metrics.NextValidActionCount)
+	}
+	if result.Metrics.TDDObligationTotal != 1 {
+		t.Fatalf("expected tdd_obligation_total=1, got %d", result.Metrics.TDDObligationTotal)
+	}
+}
+
+func TestProductAuditMetricsErrorUsesRelativeArtifactPath(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{not valid json`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit failure, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, finding := range result.Findings {
+		if finding.Code != "metrics_error" {
+			continue
+		}
+		found = true
+		if finding.Path != "tdd.json" {
+			t.Fatalf("expected metrics_error path tdd.json, got %#v", finding)
+		}
+		if strings.Contains(finding.Message, dir) {
+			t.Fatalf("metrics_error should not leak absolute effort path, got %q", finding.Message)
+		}
+	}
+	if !found {
+		t.Fatalf("expected metrics_error finding, got %#v", result.Findings)
+	}
+}
+
+func TestProductWorkflowMetrics(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "reports/test-implementation.json", validTestImplementationReportJSON())
+	writeTestFile(t, dir, "reports/test-review.json", validTestReviewReportJSON())
+	writeTestFile(t, dir, "reports/test-investigation.json", validTestTestInvestigationReportJSON())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected audit to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "metrics: phase=") {
+		t.Fatalf("expected human output to include metrics summary, got:\n%s", stdout.String())
+	}
+}
+
 func TestProductAuditSurfacesParseErrorInPRDSection(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	writeTestFile(t, dir, "prd.md", `not valid prd`)
@@ -1848,12 +1924,35 @@ func TestProductStatusJSONOnDurableFixture(t *testing.T) {
 		"status_bucket", "current_phase", "current_state",
 		"state_revision", "last_event_id", "context_pack_id",
 		"freshness_state", "checked_file_count", "sections",
-		"blockers", "open_obligations", "next_valid_actions",
+		"blockers", "open_obligations", "next_valid_actions", "metrics",
 	}
 	for _, field := range requiredFields {
 		if _, ok := result[field]; !ok {
 			t.Fatalf("expected field %q in JSON output", field)
 		}
+	}
+}
+
+func TestProductStatusMetrics(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "reports/test-implementation.json", validTestImplementationReportJSON())
+	writeTestFile(t, dir, "reports/test-review.json", validTestReviewReportJSON())
+	writeTestFile(t, dir, "reports/test-investigation.json", validTestTestInvestigationReportJSON())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected status to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productworkflow.ProductStatusView
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Metrics == nil {
+		t.Fatal("expected metrics in product status JSON")
+	}
+	if result.Metrics.CurrentPhase == "" || result.Metrics.CurrentState == "" {
+		t.Fatalf("expected metrics phase/state, got %#v", result.Metrics)
 	}
 }
 
@@ -1870,7 +1969,7 @@ func TestProductStatusTextIncludesKeyFields(t *testing.T) {
 		t.Fatalf("expected status to pass on durable fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"prd-adr-brief-workflow", currentState, "audit:", "next_actions:"} {
+	for _, want := range []string{"prd-adr-brief-workflow", currentState, "audit:", "next_actions:", "metrics: phase="} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected text output to contain %q, got:\n%s", want, output)
 		}
@@ -1983,6 +2082,24 @@ func TestProductStatusAuditFailReturnsCode1(t *testing.T) {
 	}
 	if result["audit_status"] != "fail" {
 		t.Fatalf("expected audit_status fail, got %v", result["audit_status"])
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatal("expected findings in failed status output")
+	}
+	metricErr := false
+	for _, raw := range findings {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entry["code"] == "metrics_error" {
+			metricErr = true
+			break
+		}
+	}
+	if !metricErr {
+		t.Fatalf("expected metrics_error finding in status output, got %#v", findings)
 	}
 }
 
