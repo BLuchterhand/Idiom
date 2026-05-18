@@ -14,9 +14,9 @@ tags:
 > **Status: PARTIALLY IMPLEMENTED** — This upstream artifact pipeline is being
 > delivered through the durable effort at
 > `docs/product-workflows/efforts/started/prd-adr-brief-workflow/`. As of
-> 2026-05-18, implementation is complete through the Phase 4 deterministic TDD
-> obligation synthesis plan and coverage gate evaluator surfaces. Brief
-> generation remains.
+> 2026-05-18, implementation is complete through Phase 4: deterministic TDD
+> obligation synthesis, coverage-gate evaluation, and lint-verified brief
+> generation. Phase 5 execution feedback remains.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 
@@ -73,7 +73,7 @@ flowchart TD
   before implementation from accepted PRD requirements and accepted ADRs
 - [x] **Coverage gate**: deterministic completeness check between TDD and brief
   generation (see [[21 - Behavioral TDD Coverage PROPOSAL]])
-- [ ] **Brief**: the executable Idiom entrypoint consumed by `implement` or
+- [x] **Brief**: the executable Idiom entrypoint consumed by `implement` or
   `plan-execute`
 
 ## TODO: Researcher Roles
@@ -178,9 +178,7 @@ stateDiagram-v2
   prompt rendering
 - [x] **Phase 3**: PRD and ADR prompt rendering, audits, acceptance metadata,
   and supersession validation
-- [ ] **Phase 4**: TDD planner, coverage gate, and brief generator; the
-  plan-only TDD obligation synthesis and coverage-gate evaluator slices are
-  implemented, while the brief generator remains
+- [x] **Phase 4**: TDD planner, coverage gate, and brief generator
 - [ ] **Phase 5**: Execution feedback loop linking outcomes to obligations
 - [ ] **Phase 6**: Sidecar and external agent use
 

@@ -59,10 +59,11 @@ The design doc exists at
 [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md).
 See [[20 - PRD ADR Brief Research Workflow PROPOSAL]] for the Obsidian summary.
 Implementation is active and source-controlled through the durable effort folder.
-As of Atom 26, deterministic schemas, product lint/audit/status, research
+As of Atom 28, deterministic schemas, product lint/audit/status, research
 profile planning/merge/prompt rendering, PRD/ADR prompt rendering, acceptance
 metadata validation, ADR supersession link validation, and plan-only TDD
-obligation synthesis exist. The next Phase 4 slice is the coverage gate.
+obligation synthesis, tiered coverage-gate evaluation, and lint-verified brief
+generation exist. The next design-doc slice is Phase 5 execution feedback.
 
 ### Schemas and Types
 
@@ -90,7 +91,7 @@ obligation synthesis exist. The next Phase 4 slice is the coverage gate.
 - [x] Coverage gate: deterministic tiered threshold check (see below)
   - [ ] Reuse product lint/audit traceability, acceptance, and supersession
     validators, or run them as blocking coverage-gate preconditions
-- [ ] Brief generation: deterministic template filling from PRD/ADR/TDD
+- [x] Brief generation: deterministic template filling from PRD/ADR/TDD
   artifacts, section ordering, ID injection
 
 ### Research Infrastructure
@@ -118,7 +119,7 @@ obligation synthesis exist. The next Phase 4 slice is the coverage gate.
   plan-only obligation plan from accepted PRD requirements and accepted ADRs
 - [x] `idiom product tdd --evaluate-coverage` — evaluate tiered coverage
   criteria from accepted PRD/ADR/TDD artifacts without generating briefs
-- [ ] `idiom product brief` — generate briefs from PRD + ADRs + TDD
+- [x] `idiom product brief` — generate briefs from PRD + ADRs + TDD
 - [x] `idiom product lint` — validate durable effort artifacts and cross-links
 - [x] `idiom product audit` — sectioned audit over the product workflow directory
 
@@ -139,6 +140,7 @@ obligation synthesis exist. The next Phase 4 slice is the coverage gate.
 - [ ] Runtime telemetry event: `tdd_obligations_created`
 - [x] Durable coverage-gate evaluation evidence in implementation reports
 - [ ] Runtime telemetry event: `coverage_gate_evaluated`
+- [x] Durable brief-generation evidence in implementation reports
 - [ ] `product_artifact_dispatch_ready`, `product_artifact_blocked`
 - [ ] `execution_result_linked`
 
@@ -288,7 +290,7 @@ audit evidence only unless a human explicitly re-authorizes them.
 - [x] Coverage gate evaluator (tiered criteria, deterministic)
   - [ ] Gate fails when canonical lint/audit cross-link, acceptance, or
     supersession validation fails
-- [ ] Brief generator with coverage gate dependency
+- [x] Brief generator with coverage gate dependency
 
 ### Phase 5: Mutation Testing and Verification
 

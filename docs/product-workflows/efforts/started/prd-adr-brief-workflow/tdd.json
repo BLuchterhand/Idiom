@@ -105,7 +105,7 @@
       "owner": "internal/productworkflow/brief_generation_test.go",
       "command": "go test ./internal/productworkflow -run TestBriefGeneration",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0028-002",
@@ -114,7 +114,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductBriefRender",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0028-003",
@@ -123,7 +123,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductBriefRender",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0028-004",
@@ -132,7 +132,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0028-review.json",
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     }
   ]
 }

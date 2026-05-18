@@ -6,10 +6,10 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0027-phase-4-coverage-gate-evaluator`
-- Active atom: `impl-0028-phase-4-brief-generator` planned
+- Last completed atom: `impl-0028-phase-4-brief-generator`
+- Active atom: none; next action is `plan_phase_5_execution_feedback_atom`
 - Status bucket: `started`
-- Current phase: `phase-4-brief-generation`
+- Current phase: `phase-5-execution-feedback`
 - Context pack: `6c2f728f391c0488`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
@@ -108,25 +108,25 @@ This effort is the durable implementation state for delivering
   verified records for the current effort and PRD task, and does not generate
   briefs, mutate artifacts, execute models, run tests on behalf of the user, or
   dispatch work.
-- Atom 28 is planned as the Phase 4 brief generation slice. It should add a
-  deterministic `idiom product brief --render` surface that consumes accepted
-  PRD/ADR/TDD artifacts plus a passing coverage-gate evaluation, emits or writes
-  a brief with existing `idiom brief lint` sections, verifies or reports brief
-  lint blockers, covers JSON and human-readable output, and does not dispatch
-  work or execute models.
+- Atom 28: all TDD obligations satisfied. Added deterministic
+  `idiom product brief --render`, which consumes accepted PRD/ADR/TDD artifacts
+  plus a passing coverage-gate evaluation, emits or writes a lint-verified
+  implementation brief, reports brief-lint blockers before any dispatch-ready
+  claim, covers JSON and human-readable output, keeps `--brief-output` under
+  `briefs/`, and does not dispatch work or execute models.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 27 closeout. These
+The workflow implementation remains in progress after Atom 28 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
-plan-only TDD obligation synthesis, and deterministic coverage-gate evaluation.
-Brief generation, execution feedback loops, and operator surfaces remain later
-atoms.
+plan-only TDD obligation synthesis, deterministic coverage-gate evaluation, and
+lint-verified brief generation. Execution feedback loops and operator surfaces
+remain later atoms.
 
 ## Implementation Guidelines
 
