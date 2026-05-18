@@ -20,7 +20,86 @@ var executionFeedbackPrivacyMarkers = []string{
 	"customer data",
 }
 
+var executionFeedbackUnsupportedAuthorityMarkers = []string{
+	"dispatch",
+	"close effort",
+	"applyverifiedrankerlearning",
+	"apply verified ranker learning",
+	"ranker weight",
+	"ranker weights",
+	"learning_log.jsonl",
+	"weights.json",
+	".idiom/ranker",
+	"evidence export generation",
+	"generate evidence export",
+}
+
 const executionFeedbackReconciliationPhase = "phase-5-execution-feedback"
+
+type RankerLearningEvidenceInput struct {
+	WorkflowState        WorkflowState
+	KnownTDDObligations  []string
+	Summary              ExecutionFeedbackSummary
+	SummaryReferencePath string
+}
+
+type RankerLearningEvidenceSummary struct {
+	Kind                     string             `json:"kind"`
+	Source                   string             `json:"source"`
+	Verified                 bool               `json:"verified"`
+	TaskID                   string             `json:"task_id"`
+	ContextPackID            string             `json:"context_pack_id,omitempty"`
+	FreshnessState           string             `json:"freshness_state,omitempty"`
+	ChangedPaths             []string           `json:"changed_paths"`
+	Files                    []string           `json:"files"`
+	VerificationStatus       string             `json:"verification_status"`
+	VerificationCommands     []string           `json:"verification_commands"`
+	VerificationCommandCount int                `json:"verification_command_count"`
+	TDDObligations           []string           `json:"tdd_obligations"`
+	TDDObligationCount       int                `json:"tdd_obligation_count"`
+	LaneHistoryCount         int                `json:"lane_history_count"`
+	ProductEvidenceID        string             `json:"product_evidence_id"`
+	ProductEvidencePath      string             `json:"product_evidence_path"`
+	ReleaseEvidenceID        string             `json:"release_evidence_id"`
+	ReleaseEvidencePath      string             `json:"release_evidence_path"`
+	EvidenceBundleIDs        []string           `json:"evidence_bundle_ids"`
+	EvidenceBundlePaths      []string           `json:"evidence_bundle_paths"`
+	EvidenceBundleCount      int                `json:"evidence_bundle_count"`
+	Metrics                  map[string]float64 `json:"metrics"`
+}
+
+type RankerLearningEvidenceRequest struct {
+	Source   string                    `json:"source"`
+	Action   string                    `json:"action"`
+	Files    []string                  `json:"files"`
+	Score    float64                   `json:"score"`
+	TaskID   string                    `json:"task_id"`
+	CorpusID string                    `json:"corpus_id"`
+	ResultID string                    `json:"result_id"`
+	Reason   string                    `json:"reason"`
+	Verified bool                      `json:"verified"`
+	Evidence RankerLearningEvidenceRef `json:"evidence"`
+}
+
+type RankerLearningEvidenceRef struct {
+	Kind     string             `json:"kind"`
+	Verified bool               `json:"verified"`
+	TaskID   string             `json:"task_id"`
+	CorpusID string             `json:"corpus_id"`
+	ResultID string             `json:"result_id"`
+	Files    []string           `json:"files"`
+	Metrics  map[string]float64 `json:"metrics"`
+}
+
+type RankerLearningEvidenceResult struct {
+	Status               string                         `json:"status"`
+	SummaryReferencePath string                         `json:"summary_reference_path,omitempty"`
+	Summary              RankerLearningEvidenceSummary  `json:"summary"`
+	Request              *RankerLearningEvidenceRequest `json:"request,omitempty"`
+	Findings             []ExecutionFeedbackFinding     `json:"findings"`
+	Blockers             []ExecutionFeedbackBlocker     `json:"blockers"`
+	NextValidAction      string                         `json:"next_valid_action"`
+}
 
 func SummarizeExecutionFeedback(input ExecutionFeedbackInput) ExecutionFeedbackSummary {
 	knownObligations := map[string]bool{}
@@ -221,6 +300,19 @@ func executionFeedbackContainsPrivacyMarker(value string) bool {
 	return false
 }
 
+func executionFeedbackUnsupportedAuthorityMarker(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == "" {
+		return ""
+	}
+	for _, marker := range executionFeedbackUnsupportedAuthorityMarkers {
+		if strings.Contains(v, marker) {
+			return marker
+		}
+	}
+	return ""
+}
+
 func executionFeedbackHasPassingLane(events []ExecutionLaneEventRef) bool {
 	for _, event := range events {
 		if executionFeedbackPassingStatus(event.Status) {
@@ -350,22 +442,13 @@ func ReconcileExecutionFeedback(input ExecutionFeedbackReconciliationInput) Exec
 		}
 	}
 	checkUnsupportedAuthority := func(field, value string) {
-		v := strings.ToLower(strings.TrimSpace(value))
-		if v == "" {
+		if marker := executionFeedbackUnsupportedAuthorityMarker(value); marker != "" {
+			addBlocker(
+				"unsupported_authority_reference",
+				fmt.Sprintf("%s implies unsupported authority (%s)", field, marker),
+				"remove dispatch/close/ranker/evidence-export-generation directives from reconciliation inputs",
+			)
 			return
-		}
-		unsupported := []string{
-			"dispatch", "close effort", "ranker", "evidence export generation", "generate evidence export",
-		}
-		for _, marker := range unsupported {
-			if strings.Contains(v, marker) {
-				addBlocker(
-					"unsupported_authority_reference",
-					fmt.Sprintf("%s implies unsupported authority (%s)", field, marker),
-					"remove dispatch/close/ranker/evidence-export-generation directives from reconciliation inputs",
-				)
-				return
-			}
 		}
 	}
 
@@ -568,4 +651,458 @@ func ReconcileExecutionFeedback(input ExecutionFeedbackReconciliationInput) Exec
 		"info",
 	)
 	return result
+}
+
+func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) RankerLearningEvidenceResult {
+	knownObligations := map[string]bool{}
+	for _, obligation := range input.KnownTDDObligations {
+		id := strings.TrimSpace(obligation)
+		if id == "" {
+			continue
+		}
+		knownObligations[id] = true
+	}
+
+	state := input.WorkflowState
+	summary := input.Summary
+	changedPaths := stableUniqueStrings(summary.ChangedPaths)
+	tddObligations := stableUniqueStrings(summary.TDDObligations)
+	evidenceBundleIDs := stableUniqueStrings([]string{
+		strings.TrimSpace(summary.ProductEvidence.ID),
+		strings.TrimSpace(summary.ReleaseEvidence.ID),
+	})
+	evidenceBundlePaths := stableUniqueStrings([]string{
+		strings.TrimSpace(summary.ProductEvidence.Path),
+		strings.TrimSpace(summary.ReleaseEvidence.Path),
+	})
+	metrics := map[string]float64{
+		"changed_path_count":         float64(len(changedPaths)),
+		"verification_command_count": float64(len(summary.Verification.Commands)),
+		"tdd_obligation_count":       float64(len(tddObligations)),
+		"lane_history_count":         float64(len(summary.LaneHistory)),
+		"evidence_bundle_count":      float64(len(evidenceBundleIDs)),
+		"context_pack_present":       0,
+		"context_fresh_current":      0,
+		"plan_pass":                  0,
+		"verification_pass":          0,
+		"lane_history_pass":          0,
+	}
+	if strings.TrimSpace(state.Context.ContextPackID) != "" {
+		metrics["context_pack_present"] = 1
+	}
+	if executionFeedbackCurrentContext(state.Context.FreshnessState) {
+		metrics["context_fresh_current"] = 1
+	}
+	if executionFeedbackPassingStatus(summary.PlanStatus) {
+		metrics["plan_pass"] = 1
+	}
+	if executionFeedbackPassingStatus(summary.Verification.Status) {
+		metrics["verification_pass"] = 1
+	}
+	if executionFeedbackHasPassingLane(summary.LaneHistory) {
+		if _, failing := executionFeedbackFirstNonPassingLane(summary.LaneHistory); !failing {
+			metrics["lane_history_pass"] = 1
+		}
+	}
+	result := RankerLearningEvidenceResult{
+		Status:               "pass",
+		SummaryReferencePath: strings.TrimSpace(input.SummaryReferencePath),
+		Summary: RankerLearningEvidenceSummary{
+			Kind:                     "verified_product_workflow_feedback",
+			Source:                   "product_feedback",
+			Verified:                 false,
+			TaskID:                   strings.TrimSpace(summary.TaskID),
+			ContextPackID:            strings.TrimSpace(state.Context.ContextPackID),
+			FreshnessState:           strings.TrimSpace(state.Context.FreshnessState),
+			ChangedPaths:             changedPaths,
+			Files:                    append([]string(nil), changedPaths...),
+			VerificationStatus:       strings.TrimSpace(summary.Verification.Status),
+			VerificationCommands:     stableUniqueStrings(summary.Verification.Commands),
+			VerificationCommandCount: len(stableUniqueStrings(summary.Verification.Commands)),
+			TDDObligations:           tddObligations,
+			TDDObligationCount:       len(tddObligations),
+			LaneHistoryCount:         len(summary.LaneHistory),
+			ProductEvidenceID:        strings.TrimSpace(summary.ProductEvidence.ID),
+			ProductEvidencePath:      strings.TrimSpace(summary.ProductEvidence.Path),
+			ReleaseEvidenceID:        strings.TrimSpace(summary.ReleaseEvidence.ID),
+			ReleaseEvidencePath:      strings.TrimSpace(summary.ReleaseEvidence.Path),
+			EvidenceBundleIDs:        evidenceBundleIDs,
+			EvidenceBundlePaths:      evidenceBundlePaths,
+			EvidenceBundleCount:      len(evidenceBundleIDs),
+			Metrics:                  metrics,
+		},
+		Findings: []ExecutionFeedbackFinding{},
+		Blockers: []ExecutionFeedbackBlocker{},
+	}
+
+	addFinding := func(kind, field, message, severity string) {
+		result.Findings = append(result.Findings, ExecutionFeedbackFinding{
+			Kind:     kind,
+			Field:    field,
+			Message:  message,
+			Severity: severity,
+		})
+	}
+	addBlocker := func(kind, message, next string) {
+		result.Blockers = append(result.Blockers, ExecutionFeedbackBlocker{
+			Kind:      kind,
+			Message:   message,
+			NextValid: next,
+		})
+	}
+	checkPrivacy := func(field, value string) {
+		if executionFeedbackContainsPrivacyMarker(value) {
+			addBlocker(
+				"privacy_marker_detected",
+				fmt.Sprintf("%s contains forbidden privacy marker", field),
+				"remove raw prompt/transcript/file-body/secret/customer-identifying content before deriving ranker-learning evidence",
+			)
+		}
+	}
+	checkSafePath := func(field, value string) {
+		if !safeExecutionFeedbackArtifactPath(value) {
+			addBlocker(
+				"unsafe_artifact_reference",
+				fmt.Sprintf("%s must be a safe relative path", field),
+				"replace unsafe references with bounded effort-relative paths before deriving ranker-learning evidence",
+			)
+		}
+	}
+	checkSafeToken := func(field, value string) {
+		if !safeExecutionFeedbackToken(value) {
+			addBlocker(
+				"unsafe_identifier",
+				fmt.Sprintf("%s must be a bounded token", field),
+				"replace unsafe identifiers with bounded task/context references before deriving ranker-learning evidence",
+			)
+		}
+	}
+	checkUnsupportedAuthority := func(field, value string) {
+		if marker := executionFeedbackUnsupportedAuthorityMarker(value); marker != "" {
+			addBlocker(
+				"unsupported_authority_reference",
+				fmt.Sprintf("%s implies unsupported authority (%s)", field, marker),
+				"remove dispatch/promotion/ranker-write/evidence-export directives from the feedback summary",
+			)
+		}
+	}
+
+	if !executionFeedbackPassingStatus(summary.Status) {
+		addBlocker(
+			"feedback_not_pass",
+			fmt.Sprintf("feedback summary status is %q", summary.Status),
+			"resolve execution feedback blockers before deriving ranker-learning evidence",
+		)
+	}
+	if len(summary.Blockers) > 0 {
+		addBlocker(
+			"feedback_contains_blockers",
+			"feedback summary contains blockers and is not verified",
+			"resolve execution feedback blockers before deriving ranker-learning evidence",
+		)
+	}
+	if strings.TrimSpace(state.CurrentPhase) != executionFeedbackReconciliationPhase {
+		addBlocker(
+			"workflow_phase_mismatch",
+			fmt.Sprintf("workflow_state current_phase %q is not %q", state.CurrentPhase, executionFeedbackReconciliationPhase),
+			"only derive ranker-learning evidence during phase-5 execution feedback",
+		)
+	}
+	if result.Summary.ContextPackID == "" {
+		addBlocker(
+			"missing_context_pack_id",
+			"workflow_state context_pack_id is required for verified context evidence",
+			"attach a current context pack id before deriving ranker-learning evidence",
+		)
+	}
+	if result.Summary.FreshnessState == "" {
+		addBlocker(
+			"missing_context_freshness",
+			"workflow_state freshness_state is required for verified context evidence",
+			"attach freshness state for the referenced context pack before deriving ranker-learning evidence",
+		)
+	} else if !executionFeedbackCurrentContext(result.Summary.FreshnessState) {
+		addBlocker(
+			"stale_workflow_context",
+			fmt.Sprintf("workflow_state freshness_state %q is not current", result.Summary.FreshnessState),
+			"refresh workflow context to current before deriving ranker-learning evidence",
+		)
+	}
+	if strings.TrimSpace(summary.CurrentPhase) != strings.TrimSpace(state.CurrentPhase) {
+		addBlocker(
+			"summary_phase_mismatch",
+			fmt.Sprintf("feedback summary current_phase %q does not match workflow_state current_phase %q", summary.CurrentPhase, state.CurrentPhase),
+			"regenerate the feedback summary from the current workflow phase before deriving ranker-learning evidence",
+		)
+	}
+	if strings.TrimSpace(summary.CurrentState) != strings.TrimSpace(state.CurrentState) {
+		addBlocker(
+			"summary_state_mismatch",
+			fmt.Sprintf("feedback summary current_state %q does not match workflow_state current_state %q", summary.CurrentState, state.CurrentState),
+			"regenerate the feedback summary from the current workflow state before deriving ranker-learning evidence",
+		)
+	}
+	if strings.TrimSpace(summary.EffortID) != strings.TrimSpace(state.EffortID) || strings.TrimSpace(summary.TaskID) != strings.TrimSpace(state.TaskID) {
+		addBlocker(
+			"effort_task_mismatch",
+			fmt.Sprintf("feedback summary effort/task (%s/%s) does not match workflow state (%s/%s)", summary.EffortID, summary.TaskID, state.EffortID, state.TaskID),
+			"regenerate the feedback summary from the current effort/task before deriving ranker-learning evidence",
+		)
+	}
+	if summary.StateRevision <= 0 {
+		addBlocker(
+			"missing_state_revision",
+			"feedback summary is missing state_revision",
+			"regenerate the feedback summary with the current workflow state revision",
+		)
+	}
+	if state.StateRevision > 0 && summary.StateRevision > 0 && summary.StateRevision != state.StateRevision {
+		addBlocker(
+			"state_revision_mismatch",
+			fmt.Sprintf("summary state_revision %d does not match workflow_state state_revision %d", summary.StateRevision, state.StateRevision),
+			"re-run `idiom product feedback` against the current workflow_state.json revision",
+		)
+	}
+	if !executionFeedbackPassingStatus(summary.PlanStatus) {
+		addBlocker(
+			"plan_progress_not_pass",
+			fmt.Sprintf("feedback summary plan status is %q", summary.PlanStatus),
+			"attach passing phase-5 feedback plan progress before deriving ranker-learning evidence",
+		)
+	}
+	if !strings.Contains(strings.ToLower(summary.PlanPhase), "phase-5") || !strings.Contains(strings.ToLower(summary.PlanState), "feedback") {
+		addBlocker(
+			"plan_progress_phase_mismatch",
+			fmt.Sprintf("feedback summary plan progress %q/%q is not phase-5 feedback", summary.PlanPhase, summary.PlanState),
+			"attach a phase-5 feedback plan-progress reference before deriving ranker-learning evidence",
+		)
+	}
+	if !executionFeedbackPassingStatus(result.Summary.VerificationStatus) {
+		addBlocker(
+			"verification_not_pass",
+			fmt.Sprintf("feedback summary verification status is %q", result.Summary.VerificationStatus),
+			"attach passing verification evidence before deriving ranker-learning evidence",
+		)
+	}
+	if len(summary.Verification.Commands) == 0 {
+		addBlocker(
+			"missing_verification_commands",
+			"feedback summary is missing verification commands",
+			"attach bounded verification command references before deriving ranker-learning evidence",
+		)
+	}
+	if len(result.Summary.ChangedPaths) == 0 {
+		addBlocker(
+			"missing_changed_paths",
+			"feedback summary is missing changed paths",
+			"attach bounded changed paths before deriving ranker-learning evidence",
+		)
+	}
+	if len(result.Summary.TDDObligations) == 0 {
+		addBlocker(
+			"missing_tdd_obligations",
+			"feedback summary is missing TDD obligation references",
+			"attach TDD obligation references before deriving ranker-learning evidence",
+		)
+	}
+	if len(summary.LaneHistory) == 0 {
+		addBlocker(
+			"missing_lane_history",
+			"feedback summary is missing lane history",
+			"attach passing lane-history evidence before deriving ranker-learning evidence",
+		)
+	} else if failingLane, ok := executionFeedbackFirstNonPassingLane(summary.LaneHistory); ok {
+		addBlocker(
+			"lane_history_not_pass",
+			fmt.Sprintf("lane history event %q/%q has non-passing status %q", failingLane.Lane, failingLane.Event, failingLane.Status),
+			"attach only passing or source-satisfied lane-history outcomes before deriving ranker-learning evidence",
+		)
+	} else if !executionFeedbackHasPassingLane(summary.LaneHistory) {
+		addBlocker(
+			"lane_history_not_pass",
+			"feedback summary has no passing lane event",
+			"attach a passing lane-history event before deriving ranker-learning evidence",
+		)
+	}
+	if strings.TrimSpace(result.Summary.ProductEvidenceID) == "" {
+		addBlocker("missing_product_evidence_id", "feedback summary is missing product evidence id", "attach product evidence id before deriving ranker-learning evidence")
+	}
+	if strings.TrimSpace(result.Summary.ReleaseEvidenceID) == "" {
+		addBlocker("missing_release_evidence_id", "feedback summary is missing release evidence id", "attach release evidence id before deriving ranker-learning evidence")
+	}
+	if strings.TrimSpace(result.Summary.ProductEvidencePath) == "" {
+		addBlocker("missing_product_evidence_path", "feedback summary is missing product evidence path", "attach product evidence path before deriving ranker-learning evidence")
+	}
+	if strings.TrimSpace(result.Summary.ReleaseEvidencePath) == "" {
+		addBlocker("missing_release_evidence_path", "feedback summary is missing release evidence path", "attach release evidence path before deriving ranker-learning evidence")
+	}
+	if strings.TrimSpace(summary.BriefPath) == "" {
+		addBlocker("missing_brief_path", "feedback summary is missing brief path", "attach brief path before deriving ranker-learning evidence")
+	}
+
+	checkSafeToken("task_id", result.Summary.TaskID)
+	if result.Summary.ContextPackID != "" {
+		checkSafeToken("context_pack_id", result.Summary.ContextPackID)
+	}
+	if strings.TrimSpace(input.SummaryReferencePath) != "" {
+		checkSafePath("summary_reference_path", input.SummaryReferencePath)
+		checkPrivacy("summary_reference_path", input.SummaryReferencePath)
+	}
+	for _, obligation := range result.Summary.TDDObligations {
+		if !knownObligations[obligation] {
+			addBlocker(
+				"unknown_tdd_obligation",
+				fmt.Sprintf("TDD obligation %q is not present in tdd.json", obligation),
+				"align TDD obligation references with tdd.json before deriving ranker-learning evidence",
+			)
+		}
+		checkSafeToken("tdd_obligations", obligation)
+		checkPrivacy("tdd_obligations", obligation)
+	}
+	for _, path := range result.Summary.ChangedPaths {
+		checkSafePath("changed_paths", path)
+		checkPrivacy("changed_paths", path)
+	}
+	for _, command := range summary.Verification.Commands {
+		checkPrivacy("verification.commands", command)
+	}
+	for _, value := range []struct {
+		field string
+		value string
+	}{
+		{"task_id", result.Summary.TaskID},
+		{"context_pack_id", result.Summary.ContextPackID},
+		{"freshness_state", result.Summary.FreshnessState},
+		{"product_evidence_id", result.Summary.ProductEvidenceID},
+		{"product_evidence_path", result.Summary.ProductEvidencePath},
+		{"release_evidence_id", result.Summary.ReleaseEvidenceID},
+		{"release_evidence_path", result.Summary.ReleaseEvidencePath},
+	} {
+		checkPrivacy(value.field, value.value)
+	}
+	checkPrivacy("brief_path", summary.BriefPath)
+	checkPrivacy("summary.next_valid_action", summary.NextValidAction)
+	checkUnsupportedAuthority("summary.next_valid_action", summary.NextValidAction)
+	checkSafePath("brief_path", summary.BriefPath)
+	checkSafePath("product_evidence_path", result.Summary.ProductEvidencePath)
+	checkSafePath("release_evidence_path", result.Summary.ReleaseEvidencePath)
+	checkSafeToken("product_evidence_id", result.Summary.ProductEvidenceID)
+	checkSafeToken("release_evidence_id", result.Summary.ReleaseEvidenceID)
+
+	if len(state.Context.UnresolvedGaps) > 0 {
+		addFinding(
+			"context_unresolved_gaps",
+			"context.unresolved_gaps",
+			fmt.Sprintf("workflow state still records %d unresolved context gap(s)", len(state.Context.UnresolvedGaps)),
+			"warning",
+		)
+	}
+	if strings.TrimSpace(result.Summary.ContextPackID) == "" {
+		addFinding(
+			"missing_context_pack_id",
+			"context_pack_id",
+			"workflow_state context_pack_id is empty; metadata remains deterministic but cannot cite a packet id",
+			"info",
+		)
+	}
+
+	sort.Slice(result.Findings, func(i, j int) bool {
+		if result.Findings[i].Severity == result.Findings[j].Severity {
+			if result.Findings[i].Field == result.Findings[j].Field {
+				return result.Findings[i].Kind < result.Findings[j].Kind
+			}
+			return result.Findings[i].Field < result.Findings[j].Field
+		}
+		return result.Findings[i].Severity < result.Findings[j].Severity
+	})
+	sort.Slice(result.Blockers, func(i, j int) bool {
+		if result.Blockers[i].Kind == result.Blockers[j].Kind {
+			return result.Blockers[i].Message < result.Blockers[j].Message
+		}
+		return result.Blockers[i].Kind < result.Blockers[j].Kind
+	})
+
+	if len(result.Blockers) > 0 {
+		result.Status = "blocked"
+		result.NextValidAction = result.Blockers[0].NextValid
+		result.Request = nil
+		return result
+	}
+	result.Summary.Verified = true
+	result.Request = &RankerLearningEvidenceRequest{
+		Source:   "harness_feedback",
+		Action:   "boost",
+		Files:    append([]string(nil), result.Summary.ChangedPaths...),
+		Score:    1,
+		TaskID:   result.Summary.TaskID,
+		CorpusID: result.Summary.ContextPackID,
+		ResultID: executionFeedbackRankerLearningResultID(summary.StateRevision),
+		Reason:   "verified_feedback",
+		Verified: true,
+		Evidence: RankerLearningEvidenceRef{
+			Kind:     "verified_feedback",
+			Verified: true,
+			TaskID:   result.Summary.TaskID,
+			CorpusID: result.Summary.ContextPackID,
+			ResultID: executionFeedbackRankerLearningResultID(summary.StateRevision),
+			Files:    append([]string(nil), result.Summary.ChangedPaths...),
+			Metrics: map[string]float64{
+				"score":                      1,
+				"changed_path_count":         float64(len(result.Summary.ChangedPaths)),
+				"verification_command_count": float64(result.Summary.VerificationCommandCount),
+				"tdd_obligation_count":       float64(result.Summary.TDDObligationCount),
+			},
+		},
+	}
+	result.NextValidAction = "review bounded ranker-learning evidence with the existing gate; no ranker promotion was applied"
+	result.Findings = append(result.Findings, ExecutionFeedbackFinding{
+		Kind:     "ranker_learning_request_prepared",
+		Field:    "request",
+		Message:  fmt.Sprintf("prepared review-only ranker-learning request for %d changed path(s) and %d verification command(s)", len(result.Summary.ChangedPaths), result.Summary.VerificationCommandCount),
+		Severity: "info",
+	})
+	sort.Slice(result.Findings, func(i, j int) bool {
+		if result.Findings[i].Severity == result.Findings[j].Severity {
+			if result.Findings[i].Field == result.Findings[j].Field {
+				return result.Findings[i].Kind < result.Findings[j].Kind
+			}
+			return result.Findings[i].Field < result.Findings[j].Field
+		}
+		return result.Findings[i].Severity < result.Findings[j].Severity
+	})
+	return result
+}
+
+func executionFeedbackCurrentContext(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "current", "fresh", "verified":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeExecutionFeedbackToken(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || len(trimmed) > 128 {
+		return false
+	}
+	for _, r := range trimmed {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.', r == ':':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func executionFeedbackRankerLearningResultID(stateRevision int) string {
+	if stateRevision <= 0 {
+		return "feedback_r0"
+	}
+	return fmt.Sprintf("feedback_r%d", stateRevision)
 }

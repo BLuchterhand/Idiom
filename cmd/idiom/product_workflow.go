@@ -1580,6 +1580,14 @@ type productFeedbackReconcileOutput struct {
 	NextValidAction       string                                                `json:"next_valid_action"`
 }
 
+type productFeedbackRankerLearningOutput struct {
+	Status                 string                                       `json:"status"`
+	EffortRoot             string                                       `json:"effort_root"`
+	SummaryReferencePath   string                                       `json:"summary_reference_path"`
+	RankerLearningEvidence productworkflow.RankerLearningEvidenceResult `json:"ranker_learning_evidence"`
+	NextValidAction        string                                       `json:"next_valid_action"`
+}
+
 var productFeedbackPrivacyMarkers = []string{
 	"raw prompt",
 	"raw prompts",
@@ -1612,6 +1620,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	var briefPath string
 	var reconcileSummary string
 	var reconciledStateOutput string
+	var rankerLearningEvidenceSummary string
 	var jsonOutput bool
 	var changedPaths multiValueFlag
 	var tddRefs multiValueFlag
@@ -1626,6 +1635,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	fs.StringVar(&briefPath, "brief-path", "", "effort-relative brief path reference")
 	fs.StringVar(&reconcileSummary, "reconcile-summary", "", "effort-relative JSON execution feedback summary to reconcile")
 	fs.StringVar(&reconciledStateOutput, "reconciled-state-output", "", "effort-relative workflow-state JSON output path for reconciliation result")
+	fs.StringVar(&rankerLearningEvidenceSummary, "ranker-learning-evidence-summary", "", "effort-relative JSON execution feedback summary to adapt into read-only ranker-learning evidence metadata")
 	fs.Var(&changedPaths, "changed-path", "changed path reference (repeatable)")
 	fs.Var(&tddRefs, "tdd-obligation-ref", "TDD obligation reference (repeatable)")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
@@ -1636,6 +1646,11 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		return 2
 	}
 	reconcileMode := strings.TrimSpace(reconcileSummary) != "" || strings.TrimSpace(reconciledStateOutput) != ""
+	rankerLearningMode := strings.TrimSpace(rankerLearningEvidenceSummary) != ""
+	if reconcileMode && rankerLearningMode {
+		fmt.Fprintln(stderr, "product feedback: --reconcile-summary and --ranker-learning-evidence-summary are mutually exclusive")
+		return 2
+	}
 	if reconcileMode {
 		if strings.TrimSpace(reconcileSummary) == "" || strings.TrimSpace(reconciledStateOutput) == "" {
 			fmt.Fprintln(stderr, "product feedback: --reconcile-summary and --reconciled-state-output are both required in reconcile mode")
@@ -1650,6 +1665,16 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			return 2
 		}
 	}
+	if rankerLearningMode {
+		if len(changedPaths.values) > 0 || len(tddRefs.values) > 0 ||
+			strings.TrimSpace(laneHistoryFile) != "" || strings.TrimSpace(planProgressFile) != "" ||
+			strings.TrimSpace(verificationFile) != "" || strings.TrimSpace(productEvidenceID) != "" ||
+			strings.TrimSpace(productEvidencePath) != "" || strings.TrimSpace(releaseEvidenceID) != "" ||
+			strings.TrimSpace(releaseEvidencePath) != "" || strings.TrimSpace(briefPath) != "" {
+			fmt.Fprintln(stderr, "product feedback: ranker-learning evidence mode only supports --effort-root, --ranker-learning-evidence-summary, and --json")
+			return 2
+		}
+	}
 
 	requirements := []struct {
 		name  string
@@ -1657,7 +1682,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	}{
 		{"--effort-root", effortRoot},
 	}
-	if !reconcileMode {
+	if !reconcileMode && !rankerLearningMode {
 		requirements = append(requirements, []struct {
 			name  string
 			value string
@@ -1678,11 +1703,11 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			return 2
 		}
 	}
-	if !reconcileMode && len(changedPaths.values) == 0 {
+	if !reconcileMode && !rankerLearningMode && len(changedPaths.values) == 0 {
 		fmt.Fprintln(stderr, "product feedback: at least one --changed-path is required")
 		return 2
 	}
-	if !reconcileMode && len(tddRefs.values) == 0 {
+	if !reconcileMode && !rankerLearningMode && len(tddRefs.values) == 0 {
 		fmt.Fprintln(stderr, "product feedback: at least one --tdd-obligation-ref is required")
 		return 2
 	}
@@ -1722,6 +1747,103 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		return 1
 	}
 
+	if rankerLearningMode {
+		summaryAbs, summaryRel, err := resolveProductFeedbackReferencePath(absRoot, rankerLearningEvidenceSummary)
+		if err != nil {
+			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary invalid: %v\n", err)
+			return 1
+		}
+		summaryRaw, err := os.ReadFile(summaryAbs)
+		if err != nil {
+			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary invalid: %v\n", err)
+			return 1
+		}
+		if marker := findProductFeedbackPrivacyMarker(string(summaryRaw)); marker != "" {
+			fmt.Fprintf(stderr, "product feedback: ranker-learning evidence summary contains forbidden privacy marker %q\n", marker)
+			return 1
+		}
+		summary, _, err := parseProductFeedbackSummaryDocument(summaryRaw)
+		if err != nil {
+			fmt.Fprintf(stderr, "product feedback: %v\n", err)
+			return 1
+		}
+		var tddLedger productworkflow.TDDLedger
+		if err := readJSONFile("tdd", "tdd.json", &tddLedger, false); err != nil {
+			fmt.Fprintf(stderr, "product feedback: tdd.json invalid: %v\n", err)
+			return 1
+		}
+		if _, err := productworkflow.ParseTDDLedgerJSON(mustJSONMarshal(tddLedger)); err != nil {
+			fmt.Fprintf(stderr, "product feedback: tdd.json parse failed: %v\n", err)
+			return 1
+		}
+		knownObligations := make([]string, 0, len(tddLedger.Obligations))
+		for _, obligation := range tddLedger.Obligations {
+			knownObligations = append(knownObligations, obligation.ID)
+		}
+		adapted := productworkflow.AdaptExecutionFeedbackToRankerLearning(productworkflow.RankerLearningEvidenceInput{
+			WorkflowState:        workflowState,
+			KnownTDDObligations:  knownObligations,
+			Summary:              summary,
+			SummaryReferencePath: filepath.ToSlash(summaryRel),
+		})
+		logCLIPhase(rec, "product_feedback_ranker_learning_evidence", map[string]any{
+			"status":          adapted.Status,
+			"finding_count":   len(adapted.Findings),
+			"blocker_count":   len(adapted.Blockers),
+			"next_valid_step": adapted.NextValidAction,
+		})
+		out := productFeedbackRankerLearningOutput{
+			Status:                 adapted.Status,
+			EffortRoot:             absRoot,
+			SummaryReferencePath:   filepath.ToSlash(summaryRel),
+			RankerLearningEvidence: adapted,
+			NextValidAction:        adapted.NextValidAction,
+		}
+		if jsonOutput {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(out); err != nil {
+				fmt.Fprintf(stderr, "product feedback: encode JSON: %v\n", err)
+				return 1
+			}
+		} else {
+			fmt.Fprintf(stdout, "product feedback ranker-learning-evidence: %s\n", out.Status)
+			fmt.Fprintf(stdout, "effort: %s\n", filepath.Base(absRoot))
+			fmt.Fprintf(stdout, "summary: %s\n", out.SummaryReferencePath)
+			fmt.Fprintf(stdout, "task: %s\n", adapted.Summary.TaskID)
+			if adapted.Summary.ContextPackID != "" {
+				fmt.Fprintf(stdout, "context_pack: %s (%s)\n", adapted.Summary.ContextPackID, adapted.Summary.FreshnessState)
+			} else {
+				fmt.Fprintf(stdout, "context_pack: (missing) (%s)\n", adapted.Summary.FreshnessState)
+			}
+			fmt.Fprintf(stdout, "changed_paths: %d\n", len(adapted.Summary.ChangedPaths))
+			fmt.Fprintf(stdout, "verification: %s (%d commands)\n", adapted.Summary.VerificationStatus, adapted.Summary.VerificationCommandCount)
+			fmt.Fprintf(stdout, "tdd_obligations: %d\n", adapted.Summary.TDDObligationCount)
+			fmt.Fprintf(stdout, "lane_history: %d\n", adapted.Summary.LaneHistoryCount)
+			fmt.Fprintf(stdout, "evidence_bundles: %d\n", adapted.Summary.EvidenceBundleCount)
+			if adapted.Request != nil {
+				fmt.Fprintf(stdout, "request: %s score=%.2f files=%d\n", adapted.Request.Action, adapted.Request.Score, len(adapted.Request.Files))
+			}
+			if len(adapted.Findings) > 0 {
+				fmt.Fprintf(stdout, "findings: %d\n", len(adapted.Findings))
+				for _, finding := range adapted.Findings {
+					fmt.Fprintf(stdout, "  [%s] %s\n", finding.Kind, finding.Message)
+				}
+			}
+			if len(adapted.Blockers) > 0 {
+				fmt.Fprintf(stdout, "blockers: %d\n", len(adapted.Blockers))
+				for _, blocker := range adapted.Blockers {
+					fmt.Fprintf(stdout, "  [%s] %s\n", blocker.Kind, blocker.Message)
+				}
+			}
+			fmt.Fprintf(stdout, "next: %s\n", out.NextValidAction)
+		}
+		if out.Status != "pass" {
+			return 1
+		}
+		return 0
+	}
+
 	if reconcileMode {
 		summaryAbs, summaryRel, err := resolveProductFeedbackReferencePath(absRoot, reconcileSummary)
 		if err != nil {
@@ -1737,18 +1859,13 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			fmt.Fprintf(stderr, "product feedback: reconcile summary contains forbidden privacy marker %q\n", marker)
 			return 1
 		}
-		var summary productworkflow.ExecutionFeedbackSummary
-		var wrapped productFeedbackOutput
-		switch {
-		case json.Unmarshal(summaryRaw, &wrapped) == nil && strings.TrimSpace(wrapped.Summary.Status) != "":
-			if !executionFeedbackStatusPass(wrapped.Status) {
-				fmt.Fprintf(stderr, "product feedback: reconcile summary status must be pass, got %q\n", wrapped.Status)
-				return 1
-			}
-			summary = wrapped.Summary
-		case json.Unmarshal(summaryRaw, &summary) == nil && strings.TrimSpace(summary.Status) != "":
-		default:
-			fmt.Fprintln(stderr, "product feedback: reconcile summary must be a feedback summary or full `product feedback --json` output")
+		summary, wrappedStatus, err := parseProductFeedbackSummaryDocument(summaryRaw)
+		if err != nil {
+			fmt.Fprintf(stderr, "product feedback: %v\n", err)
+			return 1
+		}
+		if wrappedStatus != "" && !executionFeedbackStatusPass(wrappedStatus) {
+			fmt.Fprintf(stderr, "product feedback: reconcile summary status must be pass, got %q\n", wrappedStatus)
 			return 1
 		}
 		var tddLedger productworkflow.TDDLedger
@@ -1938,6 +2055,18 @@ func mustJSONMarshal(v any) []byte {
 		return []byte("{}")
 	}
 	return data
+}
+
+func parseProductFeedbackSummaryDocument(data []byte) (productworkflow.ExecutionFeedbackSummary, string, error) {
+	var wrapped productFeedbackOutput
+	if err := json.Unmarshal(data, &wrapped); err == nil && strings.TrimSpace(wrapped.Summary.Status) != "" {
+		return wrapped.Summary, strings.TrimSpace(wrapped.Status), nil
+	}
+	var summary productworkflow.ExecutionFeedbackSummary
+	if err := json.Unmarshal(data, &summary); err == nil && strings.TrimSpace(summary.Status) != "" {
+		return summary, "", nil
+	}
+	return productworkflow.ExecutionFeedbackSummary{}, "", fmt.Errorf("feedback summary must be a feedback summary or full `product feedback --json` output")
 }
 
 func resolveProductFeedbackReferencePath(effortRoot, relPath string) (string, string, error) {

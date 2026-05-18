@@ -4970,6 +4970,163 @@ func TestProductFeedbackPassesWithValidReferences(t *testing.T) {
 	}
 }
 
+func TestProductFeedbackRankerLearningEvidenceJSON(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)
+	workflowState = strings.Replace(workflowState, `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	workflowState = strings.Replace(workflowState, `"task_id":"impl-test"`, `"task_id":"impl-test","state_revision":1`, 1)
+	writeTestFile(t, dir, "workflow_state.json", workflowState)
+	writeTestFile(t, dir, "references/feedback_summary.json", validRankerLearningFeedbackSummaryJSON("pass"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--ranker-learning-evidence-summary", "references/feedback_summary.json",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productFeedbackRankerLearningOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "pass" || out.RankerLearningEvidence.Status != "pass" {
+		t.Fatalf("expected pass output, got %#v", out)
+	}
+	if out.RankerLearningEvidence.Request == nil {
+		t.Fatalf("expected bounded learning request, got %#v", out)
+	}
+	if out.RankerLearningEvidence.Summary.ContextPackID != "pack" {
+		t.Fatalf("expected context pack id, got %#v", out.RankerLearningEvidence.Summary)
+	}
+	if out.RankerLearningEvidence.Request.Action != "boost" || out.RankerLearningEvidence.Request.ResultID != "feedback_r1" {
+		t.Fatalf("expected deterministic request shape, got %#v", out.RankerLearningEvidence.Request)
+	}
+	if !strings.Contains(out.NextValidAction, "no ranker promotion was applied") {
+		t.Fatalf("expected bounded next action, got %q", out.NextValidAction)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".idiom")); !os.IsNotExist(err) {
+		t.Fatalf("ranker-learning evidence mode must not write .idiom state, err=%v", err)
+	}
+}
+
+func TestProductFeedbackRankerLearningEvidenceTextOutput(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)
+	workflowState = strings.Replace(workflowState, `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	workflowState = strings.Replace(workflowState, `"task_id":"impl-test"`, `"task_id":"impl-test","state_revision":1`, 1)
+	writeTestFile(t, dir, "workflow_state.json", workflowState)
+	writeTestFile(t, dir, "references/feedback_summary.json", validRankerLearningFeedbackSummaryJSON("pass"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--ranker-learning-evidence-summary", "references/feedback_summary.json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		"product feedback ranker-learning-evidence: pass",
+		"context_pack: pack (current)",
+		"request: boost",
+		"findings: 1",
+		"[ranker_learning_request_prepared]",
+		"next: review bounded ranker-learning evidence",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected text output to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestProductFeedbackRankerLearningEvidenceFailsClosed(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)
+	workflowState = strings.Replace(workflowState, `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	workflowState = strings.Replace(workflowState, `"task_id":"impl-test"`, `"task_id":"impl-test","state_revision":1`, 1)
+	writeTestFile(t, dir, "workflow_state.json", workflowState)
+	writeTestFile(t, dir, "references/feedback_summary.json", validRankerLearningFeedbackSummaryJSON("blocked"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--ranker-learning-evidence-summary", "references/feedback_summary.json",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productFeedbackRankerLearningOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" || out.RankerLearningEvidence.Request != nil {
+		t.Fatalf("expected blocked adapter output without request, got %#v", out)
+	}
+	kinds := map[string]bool{}
+	for _, blocker := range out.RankerLearningEvidence.Blockers {
+		kinds[blocker.Kind] = true
+	}
+	for _, want := range []string{"feedback_not_pass", "feedback_contains_blockers", "unknown_tdd_obligation", "unsafe_artifact_reference"} {
+		if !kinds[want] {
+			t.Fatalf("expected blocker %s, got %#v", want, out.RankerLearningEvidence.Blockers)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".idiom")); !os.IsNotExist(err) {
+		t.Fatalf("blocked adapter output must not write .idiom state, err=%v", err)
+	}
+}
+
+func validRankerLearningFeedbackSummaryJSON(status string) string {
+	if status == "blocked" {
+		return `{
+  "status":"blocked",
+  "effort_id":"test-effort",
+  "task_id":"impl-test",
+  "state_revision":1,
+  "current_phase":"phase-5-execution-feedback",
+  "current_state":"planned",
+  "lane_history":[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z"}],
+  "plan_phase":"phase-5",
+  "plan_state":"feedback",
+  "plan_status":"completed",
+  "product_evidence":{"id":"pe-1","path":"product_evidence/export-1.json"},
+  "release_evidence":{"id":"re-1","path":"release_evidence/bundle-1.json"},
+  "brief_path":"briefs/test.md",
+  "changed_paths":["../bad"],
+  "verification":{"status":"fail","commands":[]},
+  "tdd_obligations":["TDD-404"],
+  "findings":[],
+  "blockers":[{"kind":"verification_not_pass","message":"verification failed","next_valid_action":"repair before ranker weights"}],
+  "next_valid_action":"repair before deriving ranker weights"
+}`
+	}
+	return `{
+  "status":"pass",
+  "effort_id":"test-effort",
+  "task_id":"impl-test",
+  "state_revision":1,
+  "current_phase":"phase-5-execution-feedback",
+  "current_state":"planned",
+  "lane_history":[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z"}],
+  "plan_phase":"phase-5",
+  "plan_state":"feedback",
+  "plan_status":"completed",
+  "product_evidence":{"id":"pe-1","path":"product_evidence/export-1.json"},
+  "release_evidence":{"id":"re-1","path":"release_evidence/bundle-1.json"},
+  "brief_path":"briefs/test.md",
+  "changed_paths":["cmd/idiom/product_workflow.go"],
+  "verification":{"status":"pass","commands":["go test ./cmd/idiom"]},
+  "tdd_obligations":["TDD-001"],
+  "findings":[],
+  "blockers":[],
+  "next_valid_action":"publish execution feedback summary as deterministic closeout evidence"
+}`
+}
+
 func TestProductFeedbackReconcilePassesAndWritesOutput(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	workflowState := strings.Replace(validTestWorkflowStateJSON(), `"current_phase":"phase-1"`, `"current_phase":"phase-5-execution-feedback"`, 1)

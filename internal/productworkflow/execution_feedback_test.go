@@ -1,6 +1,9 @@
 package productworkflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestExecutionFeedbackPassesWithDeterministicOrdering(t *testing.T) {
 	out := SummarizeExecutionFeedback(ExecutionFeedbackInput{
@@ -442,5 +445,128 @@ func TestExecutionFeedbackReconciliationAllowsDispatchNamedPath(t *testing.T) {
 	})
 	if out.Status != "pass" {
 		t.Fatalf("expected dispatch-named path to be treated as a path, got %#v", out.Blockers)
+	}
+}
+
+func TestRankerLearningEvidenceAdapterPassesWithVerifiedExecutionFeedback(t *testing.T) {
+	out := AdaptExecutionFeedbackToRankerLearning(RankerLearningEvidenceInput{
+		WorkflowState: WorkflowState{
+			EffortID:     "eff-1",
+			TaskID:       "task-1",
+			CurrentPhase: "phase-5-execution-feedback",
+			CurrentState: "planned",
+			Context: WorkflowContext{
+				ContextPackID:  "pack-1",
+				FreshnessState: "current",
+			},
+			Privacy: PrivacyState{
+				RedactionStatus: "applied",
+			},
+		},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "pass",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			StateRevision:   5,
+			CurrentPhase:    "phase-5-execution-feedback",
+			CurrentState:    "planned",
+			LaneHistory:     []ExecutionLaneEventRef{{Lane: "implement", Event: "closed", Status: "pass"}},
+			PlanPhase:       "phase-5",
+			PlanState:       "feedback",
+			PlanStatus:      "completed",
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			ChangedPaths:    []string{"cmd/idiom/product_workflow.go"},
+			Verification:    VerificationRef{Status: "pass", Commands: []string{"go test ./cmd/idiom"}},
+			TDDObligations:  []string{"TDD-001"},
+		},
+	})
+	if out.Status != "pass" {
+		t.Fatalf("expected pass, got %#v", out)
+	}
+	if out.Request == nil {
+		t.Fatalf("expected request, got %#v", out)
+	}
+	if out.Request.Source != "harness_feedback" || out.Request.Action != "boost" || !out.Request.Verified {
+		t.Fatalf("expected review request shape, got %#v", out.Request)
+	}
+	if out.Request.TaskID != "task-1" || out.Request.CorpusID != "pack-1" || out.Request.ResultID != "feedback_r5" {
+		t.Fatalf("expected deterministic request ids, got %#v", out.Request)
+	}
+	if len(out.Request.Files) != 1 || out.Request.Files[0] != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("expected changed path files, got %#v", out.Request.Files)
+	}
+	if out.Request.Evidence.Kind != "verified_feedback" || !out.Request.Evidence.Verified {
+		t.Fatalf("expected verified feedback evidence, got %#v", out.Request.Evidence)
+	}
+	if out.Summary.ContextPackID != "pack-1" || out.Summary.VerificationStatus != "pass" {
+		t.Fatalf("expected privacy-safe summary fields, got %#v", out.Summary)
+	}
+	if !strings.Contains(out.NextValidAction, "no ranker promotion was applied") {
+		t.Fatalf("expected bounded next action, got %q", out.NextValidAction)
+	}
+}
+
+func TestRankerLearningEvidenceAdapterFailsClosed(t *testing.T) {
+	out := AdaptExecutionFeedbackToRankerLearning(RankerLearningEvidenceInput{
+		WorkflowState: WorkflowState{
+			EffortID:     "eff-1",
+			TaskID:       "task-1",
+			CurrentPhase: "phase-5-execution-feedback",
+			CurrentState: "planned",
+			Privacy: PrivacyState{
+				RedactionStatus: "applied",
+			},
+		},
+		KnownTDDObligations: []string{"TDD-001"},
+		Summary: ExecutionFeedbackSummary{
+			Status:          "blocked",
+			EffortID:        "eff-1",
+			TaskID:          "task-1",
+			StateRevision:   5,
+			CurrentPhase:    "phase-5-execution-feedback",
+			CurrentState:    "planned",
+			PlanPhase:       "phase-5",
+			PlanState:       "feedback",
+			PlanStatus:      "blocked",
+			ProductEvidence: EvidenceBundleRef{ID: "pe-1", Path: "product_evidence/export-1.json"},
+			ReleaseEvidence: EvidenceBundleRef{ID: "re-1", Path: "release_evidence/bundle-1.json"},
+			BriefPath:       "briefs/test.md",
+			ChangedPaths:    []string{"../bad", "contains raw transcript"},
+			Verification:    VerificationRef{Status: "fail"},
+			TDDObligations:  []string{"TDD-404"},
+			Blockers:        []ExecutionFeedbackBlocker{{Kind: "verification_not_pass", Message: "blocked", NextValid: "repair"}},
+		},
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked, got %#v", out)
+	}
+	if out.Request != nil {
+		t.Fatalf("blocked adapter must not return a request, got %#v", out.Request)
+	}
+	kinds := map[string]bool{}
+	for _, blocker := range out.Blockers {
+		kinds[blocker.Kind] = true
+	}
+	for _, want := range []string{
+		"feedback_not_pass",
+		"feedback_contains_blockers",
+		"missing_context_pack_id",
+		"missing_context_freshness",
+		"plan_progress_not_pass",
+		"verification_not_pass",
+		"missing_verification_commands",
+		"unsafe_artifact_reference",
+		"unknown_tdd_obligation",
+		"privacy_marker_detected",
+	} {
+		if !kinds[want] {
+			t.Fatalf("expected blocker %s, got %#v", want, out.Blockers)
+		}
+	}
+	if strings.Contains(strings.ToLower(out.NextValidAction), "promot") {
+		t.Fatalf("blocked adapter next action must not imply promotion, got %q", out.NextValidAction)
 	}
 }
