@@ -393,6 +393,31 @@ type ResearchRunOutputContract struct {
 	SchemaVersion string `json:"schema_version"`
 }
 
+type ResearchArtifactPromptPlan struct {
+	SelectedProfileID string                          `json:"selected_profile_id"`
+	SelectedProfile   string                          `json:"selected_profile"`
+	ProfileCount      int                             `json:"profile_count"`
+	RunCount          int                             `json:"run_count"`
+	ResearchOutputDir string                          `json:"research_output_dir"`
+	ResearchPromptDir string                          `json:"research_prompt_dir"`
+	Runs              []ResearchArtifactPromptRunSpec `json:"runs"`
+	Findings          []ProfileFinding                `json:"findings"`
+}
+
+type ResearchArtifactPromptRunSpec struct {
+	ResearcherID        string                    `json:"researcher_id"`
+	Alignment           string                    `json:"alignment"`
+	Question            string                    `json:"question"`
+	RequiredSources     []string                  `json:"required_sources"`
+	AllowedCapabilities []string                  `json:"allowed_capabilities"`
+	OutputPath          string                    `json:"output_path"`
+	OutputContract      ResearchRunOutputContract `json:"output_contract"`
+	PromptPath          string                    `json:"prompt_path"`
+	EventsPath          string                    `json:"events_path"`
+	ReportPath          string                    `json:"report_path"`
+	Command             string                    `json:"command"`
+}
+
 type ADRDocument struct {
 	FrontMatter ADRFrontMatter
 	Sections    ADRSections

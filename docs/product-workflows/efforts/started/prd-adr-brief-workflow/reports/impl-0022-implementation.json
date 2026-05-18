@@ -1,0 +1,42 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0022-phase-2-research-artifact-prompt-rendering",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0022",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.3-codex",
+  "completed_at": "",
+  "complexity_tier": "C2",
+  "scope_statement": "Add deterministic role-specific research prompt rendering and idiom artifact --no-tools command recipes for planned research runs without executing models or writing researcher outputs.",
+  "code_changes": true,
+  "changed_paths": [
+    "internal/productworkflow/types.go",
+    "internal/productworkflow/research_artifact_prompts.go",
+    "internal/productworkflow/research_artifact_prompts_test.go",
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go",
+    "docs/product-workflows/efforts/index.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0022-implementation.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0022-review.json",
+    "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0022-investigation.json"
+  ],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [],
+    "status": "pending"
+  },
+  "privacy_note": "durable reports and workflow state do not embed rendered prompt bodies, raw transcripts, file bodies, secrets, or customer-identifying data; prompt files are intentional generated artifacts under the configured prompt directory",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "post_effort_investigation_pending",
+    "commit_and_push_pending"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0022"
+}

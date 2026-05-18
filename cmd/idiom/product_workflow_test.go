@@ -2832,6 +2832,214 @@ func TestProductResearchPlanRunsRejectsMergeEvidenceFlag(t *testing.T) {
 	}
 }
 
+func TestProductResearchRenderPromptsJSONSurfaceWritesPromptFilesOnly(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{
+		"--project-root", dir,
+		"--effort-root", dir,
+		"--render-prompts",
+		"--research-prompt-dir", "research/prompts",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "pass" {
+		t.Fatalf("expected status pass, got %v", result["status"])
+	}
+	if result["prompt_write_count"].(float64) != 1 {
+		t.Fatalf("expected prompt_write_count 1, got %v", result["prompt_write_count"])
+	}
+	plan := result["plan"].(map[string]any)
+	runs := plan["runs"].([]any)
+	run := runs[0].(map[string]any)
+	if run["prompt_path"] != "research/prompts/test-profile--r1.prompt.txt" {
+		t.Fatalf("unexpected prompt path: %v", run["prompt_path"])
+	}
+	command := run["command"].(string)
+	if !strings.Contains(command, "idiom artifact --prompt-file research/prompts/test-profile--r1.prompt.txt") || !strings.Contains(command, "--no-tools --mechanical-repair") {
+		t.Fatalf("unexpected command recipe: %q", command)
+	}
+	promptData, err := os.ReadFile(filepath.Join(dir, "research", "prompts", "test-profile--r1.prompt.txt"))
+	if err != nil {
+		t.Fatalf("read prompt file: %v", err)
+	}
+	prompt := string(promptData)
+	if !strings.Contains(prompt, "Write JSON only.") || !strings.Contains(prompt, "Do not call tools or inspect the workspace") {
+		t.Fatalf("prompt missing no-tools/json requirements:\n%s", prompt)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "research", "outputs", "test-profile--r1.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no research output write, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "evidence", "evidence.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("expected no evidence write, stat err=%v", err)
+	}
+}
+
+func TestProductResearchRenderPromptsUsesSelectedProfile(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfileFile(t, dir, "a.json", validTestResearchProfileJSONWithPolicy("warn-profile", "warn-profile", "warn"))
+	writeProductResearchProfileFile(t, dir, "b.json", validTestResearchProfileJSONWithPolicy("block-profile", "block-profile", "block_research_merge"))
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{
+		"--project-root", dir,
+		"--effort-root", dir,
+		"--render-prompts",
+		"--profile", "block-profile",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	plan := result["plan"].(map[string]any)
+	if plan["selected_profile_id"] != "block-profile" {
+		t.Fatalf("expected selected_profile_id block-profile, got %v", plan["selected_profile_id"])
+	}
+}
+
+func TestProductResearchRenderPromptsRejectsMutuallyExclusiveModes(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{
+		"--project-root", dir,
+		"--effort-root", dir,
+		"--render-prompts",
+		"--plan-runs",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected usage code 2 for mutually exclusive flags, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "mutually exclusive") {
+		t.Fatalf("expected mutual exclusion error, got stderr=%q", stderr.String())
+	}
+}
+
+func TestProductResearchRenderPromptsFailsClosedWhenProfilesMissing(t *testing.T) {
+	dir := t.TempDir()
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{
+		"--project-root", dir,
+		"--effort-root", dir,
+		"--render-prompts",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 when profiles are missing, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "blocked" {
+		t.Fatalf("expected blocked status, got %v", result["status"])
+	}
+	if result["prompt_write_count"].(float64) != 0 {
+		t.Fatalf("expected no prompt writes, got %v", result["prompt_write_count"])
+	}
+	plan := result["plan"].(map[string]any)
+	findings := plan["findings"].([]any)
+	first := findings[0].(map[string]any)
+	if first["kind"] != "missing_research_profile" {
+		t.Fatalf("expected missing_research_profile, got %v", first)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "research", "prompts")); !os.IsNotExist(err) {
+		t.Fatalf("expected no prompt directory write, stat err=%v", err)
+	}
+}
+
+func TestProductResearchRenderPromptsRejectsSymlinkPromptDir(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	if err := os.Symlink(outside, filepath.Join(dir, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{
+		"--project-root", dir,
+		"--effort-root", dir,
+		"--render-prompts",
+		"--research-prompt-dir", "linked/prompts",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for symlink prompt dir, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	plan := result["plan"].(map[string]any)
+	findings := plan["findings"].([]any)
+	first := findings[0].(map[string]any)
+	if first["kind"] != "research_prompt_dir_outside_effort" {
+		t.Fatalf("expected research_prompt_dir_outside_effort, got %v", first)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "prompts")); !os.IsNotExist(err) {
+		t.Fatalf("expected no prompt directory outside effort, stat err=%v", err)
+	}
+}
+
+func TestProductResearchRenderPromptsRejectsSymlinkPromptFileBeforePartialWrites(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	writeProductResearchProfileFile(t, dir, "profile.json", `{
+  "schema_version": "idiom.research_profile.v1",
+  "name": "multi",
+  "profile_id": "multi",
+  "researchers": [
+    {"id": "a", "alignment": "technical", "question": "qa", "required_sources": ["repo"], "allowed_capabilities": ["context_query"], "output": "evidence_cards"},
+    {"id": "b", "alignment": "product", "question": "qb", "required_sources": ["repo"], "allowed_capabilities": ["context_query"], "output": "evidence_cards"}
+  ],
+  "merge_policy": {"conflicts": "preserve", "unsupported_claims": "block_research_merge", "stale_local_context": "warn"}
+}`)
+	if err := os.MkdirAll(filepath.Join(dir, "research", "prompts"), 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "b.prompt.txt"), filepath.Join(dir, "research", "prompts", "multi--b.prompt.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{
+		"--project-root", dir,
+		"--effort-root", dir,
+		"--render-prompts",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for symlink prompt file, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	plan := result["plan"].(map[string]any)
+	findings := plan["findings"].([]any)
+	first := findings[0].(map[string]any)
+	if first["kind"] != "research_prompt_symlink" {
+		t.Fatalf("expected research_prompt_symlink, got %v", first)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "research", "prompts", "multi--a.prompt.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected no partial prompt write for first run, stat err=%v", err)
+	}
+}
+
 func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {

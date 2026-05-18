@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0021-phase-2-research-run-plan-from-profiles",
+  "task_id": "impl-0022-phase-2-research-artifact-prompt-rendering",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,57 +19,46 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned",
-      "research_run_plan_from_profile",
-      "research_run_plan_rejects_unsafe_ids",
-      "product_research_plan_runs_json_surface",
-      "product_research_plan_runs_profile_selection",
-      "focused_go_tests",
-      "full_go_tests",
-      "durable_json_jsonl_validation",
-      "privacy_secret_scan",
-      "diff_whitespace_check",
-      "review_passed",
-      "atom_closed"
+      "atom_planned"
     ],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0021-001",
+      "id": "TDD-IMPL-0022-001",
       "type": "contract",
-      "behavior": "Research run planning turns a selected research profile into deterministic run specs with researcher id, alignment, question, required sources, allowed capabilities, output kind, output path, and research-card output contract metadata.",
-      "owner": "internal/productworkflow/research_runs_test.go",
-      "command": "go test ./internal/productworkflow -run TestResearchRunPlan",
+      "behavior": "Research artifact prompt rendering turns a deterministic research run plan into stable role-specific prompt documents that include researcher id, alignment, question, required sources, allowed capabilities, output path, and research-card JSON output contract metadata.",
+      "owner": "internal/productworkflow/research_artifact_prompts_test.go",
+      "command": "go test ./internal/productworkflow -run TestResearchArtifactPrompt",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0021-002",
-      "type": "fmea_negative",
-      "behavior": "Research run planning fails closed with typed findings when profile or researcher identifiers cannot produce safe deterministic effort-relative output paths.",
-      "owner": "internal/productworkflow/research_runs_test.go",
-      "command": "go test ./internal/productworkflow -run TestResearchRunPlan",
+      "id": "TDD-IMPL-0022-002",
+      "type": "contract",
+      "behavior": "Each rendered run includes a deterministic idiom artifact command recipe using --prompt-file, --output, --json-out, --report-out, --no-tools, and --mechanical-repair without executing the command.",
+      "owner": "internal/productworkflow/research_artifact_prompts_test.go",
+      "command": "go test ./internal/productworkflow -run TestResearchArtifactPrompt",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0021-003",
+      "id": "TDD-IMPL-0022-003",
       "type": "acceptance",
-      "behavior": "idiom product research --plan-runs exposes a JSON surface for run planning, reuses explicit profile selection semantics, returns blocker findings for ambiguous or unknown profiles, and does not write researcher output files.",
+      "behavior": "idiom product research --render-prompts writes deterministic prompt files under an effort-relative prompt directory, exposes JSON metadata, reuses explicit profile selection semantics, and does not run models, write researcher outputs, merge evidence, or draft PRDs.",
       "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom -run TestProductResearchPlanRuns",
+      "command": "go test ./cmd/idiom -run TestProductResearchRenderPrompts",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0021-004",
+      "id": "TDD-IMPL-0022-004",
       "type": "audit",
-      "behavior": "The run planning surface records only profile identifiers, researcher metadata, output paths, counts, and typed findings; durable reports and state do not store raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data.",
-      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0021-review.json",
+      "behavior": "The prompt rendering surface records only profile identifiers, researcher metadata, prompt/output paths, command recipes, counts, and typed findings; durable reports and state do not store raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0022-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     }
   ]
 }

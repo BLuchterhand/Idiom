@@ -7,7 +7,7 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0021-phase-2-research-run-plan-from-profiles`
-- Active atom: none planned; next action is to plan the next Phase 2 atom or advance phase
+- Active atom: `impl-0022-phase-2-research-artifact-prompt-rendering`
 - Status bucket: `started`
 - Current phase: `phase-2-research-profiles`
 - Context pack: `2da56cd96a95bc0c`
@@ -62,6 +62,11 @@ This effort is the durable implementation state for delivering
   evidence ledger. The plan surface is mutually exclusive with evidence merge,
   requires explicit profile selection for multi-profile efforts, and fails closed
   on unsafe profile or researcher identifiers.
+- Atom 22 (active): add role-specific research artifact prompt rendering for
+  planned runs. This should write deterministic prompt files and emit
+  `idiom artifact --no-tools` command recipes for each researcher without
+  executing models, writing researcher outputs, merging evidence, or drafting
+  PRDs.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -142,6 +147,30 @@ atoms close.
   own verification, review, investigation, commit, and push before the next atom
   is treated as complete.
 - Commit and push after every atom completes.
+- Use the product workflow CLI surfaces that are ready now during every
+  remaining atom. Treat the TUI as not yet authoritative for this workflow until
+  a later TUI/operator atom closes.
+  - Run `idiom product status --effort-root <path> --json` before planning or
+    resuming an atom to read the durable state, next actions, blockers, gates,
+    and current phase.
+  - Run `idiom product lint --effort-root <path> --json` and
+    `idiom product audit --effort-root <path> --json` before atom closeout.
+    These are the current workflow-quality gates, alongside focused tests,
+    full-suite tests when warranted, JSON/JSONL validation, privacy scans, and
+    `git diff --check`.
+  - Run `idiom product research --project-root <repo> --json` when an atom needs
+    to inspect project-owned research profiles under `.idiom/research/profiles`.
+  - Run `idiom product research --project-root <repo> --plan-runs --profile <id>
+    --json` when research is needed. The output is a deterministic run plan only;
+    it does not execute models, call `idiom artifact`, write researcher outputs,
+    draft PRDs, or write the evidence ledger.
+  - When researcher output cards already exist, run
+    `idiom product research --project-root <repo> --effort-root <effort>
+    --merge-evidence --profile <id> --json` to merge them into the durable
+    evidence ledger with conflict preservation.
+  - Keep generated researcher outputs and model-execution mechanics out of the
+    trusted workflow until a later atom explicitly implements and verifies that
+    execution path.
 - If a GPT Codex worker times out or produces no usable closeout, record a
   `fallback_exception` before orchestration-side code edits. Keep fallback edits
   inside the planned atom scope and add compensating verification.
@@ -221,7 +250,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 2 atom or advance phase. Profile storage, deterministic
-research run planning, and evidence merge are in place; the next atom should
-close the remaining design-doc gap before any later workflow is treated as
-fully delivered.
+Implement Atom 22: role-specific research artifact prompt rendering through
+`idiom artifact --no-tools`. Profile storage, deterministic research run
+planning, and evidence merge are in place; this atom should close the remaining
+Phase 2 design-doc gap before Phase 3 PRD/ADR generation begins.

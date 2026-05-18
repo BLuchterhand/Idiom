@@ -60,6 +60,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product research --project-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --plan-runs [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --merge-evidence [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
+	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --render-prompts [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--research-prompt-dir research/prompts] [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -770,15 +771,19 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 	var effortRoot string
 	var researchOutputDir string
 	var researchProfile string
+	var researchPromptDir string
 	var mergeEvidence bool
 	var planRuns bool
+	var renderPrompts bool
 	var jsonOutput bool
 	fs.StringVar(&projectRoot, "project-root", ".", "path to the project root")
 	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root for evidence merge")
 	fs.StringVar(&researchOutputDir, "research-output-dir", "research/outputs", "effort-relative directory containing researcher output JSON files")
+	fs.StringVar(&researchPromptDir, "research-prompt-dir", "research/prompts", "effort-relative directory where rendered researcher prompt files are written")
 	fs.StringVar(&researchProfile, "profile", "", "research profile_id or name to use for merge policy")
 	fs.BoolVar(&mergeEvidence, "merge-evidence", false, "merge researcher output cards into the effort evidence ledger")
 	fs.BoolVar(&planRuns, "plan-runs", false, "emit deterministic researcher run specs derived from the selected profile")
+	fs.BoolVar(&renderPrompts, "render-prompts", false, "write deterministic no-tools artifact prompt files and command recipes for planned research runs")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -786,8 +791,18 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 		}
 		return 2
 	}
-	if mergeEvidence && planRuns {
-		fmt.Fprintln(stderr, "product research: --merge-evidence and --plan-runs are mutually exclusive")
+	modeCount := 0
+	if mergeEvidence {
+		modeCount++
+	}
+	if planRuns {
+		modeCount++
+	}
+	if renderPrompts {
+		modeCount++
+	}
+	if modeCount > 1 {
+		fmt.Fprintln(stderr, "product research: --merge-evidence, --plan-runs, and --render-prompts are mutually exclusive")
 		return 2
 	}
 	result, err := productworkflow.DiscoverProfiles(projectRoot)
@@ -800,6 +815,9 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 	}
 	if planRuns {
 		return runProductResearchPlanRuns(result, researchOutputDir, researchProfile, jsonOutput, stdout, stderr, rec)
+	}
+	if renderPrompts {
+		return runProductResearchRenderPrompts(result, effortRoot, researchOutputDir, researchPromptDir, researchProfile, jsonOutput, stdout, stderr, rec)
 	}
 	if jsonOutput {
 		type jsonOutput struct {
@@ -865,6 +883,112 @@ func runProductResearchPlanRuns(profiles *productworkflow.ProfileStoreResult, re
 		fmt.Fprintf(stdout, "product research plan: %d runs (%d findings)\n", plan.RunCount, len(plan.Findings))
 	}
 	if hasResearchErrorFinding(plan.Findings) {
+		return 1
+	}
+	return 0
+}
+
+func runProductResearchRenderPrompts(profiles *productworkflow.ProfileStoreResult, effortRoot, researchOutputDir, researchPromptDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product research: --effort-root is required with --render-prompts")
+		return 2
+	}
+	absRoot, err := filepath.Abs(effortRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product research: resolve effort root: %v\n", err)
+		return 2
+	}
+
+	findings := append([]productworkflow.ProfileFinding{}, profiles.Findings...)
+	if len(profiles.Profiles) == 0 {
+		findings = append(findings, productworkflow.ProfileFinding{
+			Kind:     "missing_research_profile",
+			Message:  "no valid research profile is available for prompt rendering",
+			File:     ".idiom/research/profiles",
+			Severity: "error",
+		})
+	}
+	runPlan := productworkflow.PlanResearchRuns(profiles.Profiles, researchProfile, researchOutputDir)
+	runPlan.Findings = append(findings, runPlan.Findings...)
+	promptPlan := productworkflow.PlanResearchArtifactPrompts(runPlan, researchPromptDir)
+
+	promptDir := filepath.Join(absRoot, promptPlan.ResearchPromptDir)
+	if finding, outside := productworkflow.ValidateResearchPromptDirBoundary(absRoot, promptDir, promptPlan.ResearchPromptDir); outside {
+		promptPlan.Findings = append(promptPlan.Findings, finding)
+	}
+	productworkflow.SortProfileFindings(promptPlan.Findings)
+
+	writeBlocked := hasResearchErrorFinding(promptPlan.Findings)
+	wrotePromptCount := 0
+	if !writeBlocked {
+		for _, run := range promptPlan.Runs {
+			promptPath := filepath.Join(absRoot, run.PromptPath)
+			if finding, outside := productworkflow.ValidateResearchPromptPathBoundary(absRoot, promptPath, run.PromptPath); outside {
+				promptPlan.Findings = append(promptPlan.Findings, finding)
+			}
+		}
+		productworkflow.SortProfileFindings(promptPlan.Findings)
+		writeBlocked = hasResearchErrorFinding(promptPlan.Findings)
+	}
+	if !writeBlocked {
+		if err := os.MkdirAll(promptDir, 0o755); err != nil {
+			fmt.Fprintf(stderr, "product research: create prompt directory: %v\n", err)
+			return 2
+		}
+		for _, run := range promptPlan.Runs {
+			promptPath := filepath.Join(absRoot, run.PromptPath)
+			if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
+				fmt.Fprintf(stderr, "product research: create prompt directory: %v\n", err)
+				return 2
+			}
+			if err := os.WriteFile(promptPath, []byte(productworkflow.RenderResearchArtifactPromptText(run)), 0o644); err != nil {
+				fmt.Fprintf(stderr, "product research: write prompt file: %v\n", err)
+				return 2
+			}
+			wrotePromptCount++
+		}
+	}
+
+	logCLIPhase(rec, "product_research_render_prompts", map[string]any{
+		"profile_count":      len(profiles.Profiles),
+		"run_count":          promptPlan.RunCount,
+		"finding_count":      len(promptPlan.Findings),
+		"wrote_prompt_count": wrotePromptCount,
+	})
+
+	type renderOutput struct {
+		Status           string                                     `json:"status"`
+		EffortRoot       string                                     `json:"effort_root"`
+		PromptWriteCount int                                        `json:"prompt_write_count"`
+		Plan             productworkflow.ResearchArtifactPromptPlan `json:"plan"`
+	}
+	status := "pass"
+	if writeBlocked {
+		status = "blocked"
+	}
+	out := renderOutput{
+		Status:           status,
+		EffortRoot:       absRoot,
+		PromptWriteCount: wrotePromptCount,
+		Plan:             promptPlan,
+	}
+	if out.Plan.Runs == nil {
+		out.Plan.Runs = []productworkflow.ResearchArtifactPromptRunSpec{}
+	}
+	if out.Plan.Findings == nil {
+		out.Plan.Findings = []productworkflow.ProfileFinding{}
+	}
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			fmt.Fprintf(stderr, "product research: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintf(stdout, "product research render-prompts: %s (%d prompts, %d findings)\n", status, wrotePromptCount, len(promptPlan.Findings))
+	}
+	if writeBlocked {
 		return 1
 	}
 	return 0
