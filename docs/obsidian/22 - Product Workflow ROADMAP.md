@@ -59,11 +59,12 @@ The design doc exists at
 [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md).
 See [[20 - PRD ADR Brief Research Workflow PROPOSAL]] for the Obsidian summary.
 Implementation is active and source-controlled through the durable effort folder.
-As of Atom 28, deterministic schemas, product lint/audit/status, research
+As of Atom 29, deterministic schemas, product lint/audit/status, research
 profile planning/merge/prompt rendering, PRD/ADR prompt rendering, acceptance
 metadata validation, ADR supersession link validation, and plan-only TDD
 obligation synthesis, tiered coverage-gate evaluation, and lint-verified brief
-generation exist. The next design-doc slice is Phase 5 execution feedback.
+generation exist. The first Phase 5 read-only execution-feedback linker exists;
+the next design-doc slice is durable feedback reconciliation.
 
 ### Schemas and Types
 
@@ -120,6 +121,8 @@ generation exist. The next design-doc slice is Phase 5 execution feedback.
 - [x] `idiom product tdd --evaluate-coverage` — evaluate tiered coverage
   criteria from accepted PRD/ADR/TDD artifacts without generating briefs
 - [x] `idiom product brief` — generate briefs from PRD + ADRs + TDD
+- [x] `idiom product feedback` — summarize explicit lane/progress/evidence
+  references without dispatching lanes or mutating `.idiom` runtime state
 - [x] `idiom product lint` — validate durable effort artifacts and cross-links
 - [x] `idiom product audit` — sectioned audit over the product workflow directory
 
@@ -142,7 +145,10 @@ generation exist. The next design-doc slice is Phase 5 execution feedback.
 - [ ] Runtime telemetry event: `coverage_gate_evaluated`
 - [x] Durable brief-generation evidence in implementation reports
 - [ ] `product_artifact_dispatch_ready`, `product_artifact_blocked`
-- [ ] `execution_result_linked`
+- [x] Read-only execution feedback summary from explicit lane/progress/evidence
+  references
+- [ ] Durable `execution_result_linked` reconciliation into workflow state and
+  evidence links
 
 ## NOT STARTED: Behavioral TDD Coverage Pipeline
 
@@ -301,7 +307,8 @@ audit evidence only unless a human explicitly re-authorizes them.
 
 ### Phase 6: Execution Feedback Loop
 
-- [ ] Lane event → PRD/ADR/TDD obligation linking
+- [x] Read-only lane/progress/evidence reference summary
+- [ ] Durable lane event → PRD/ADR/TDD obligation linking
 - [ ] Post-mortem obligation auto-generation
 - [ ] Incident → FMEA/HAZOP feedback
 - [ ] Coverage metric updates from outcomes

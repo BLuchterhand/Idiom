@@ -6,8 +6,8 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0028-phase-4-brief-generator`
-- Active atom: `impl-0029-phase-5-execution-feedback-linker` planned
+- Last completed atom: `impl-0029-phase-5-execution-feedback-linker`
+- Active atom: none; next action is `plan_phase_5_feedback_reconciliation_atom`
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
 - Context pack: `a68211353c1c7175`
@@ -119,6 +119,13 @@ This effort is the durable implementation state for delivering
   references into privacy-safe workflow summaries, preserving authority
   boundaries and avoiding lane dispatch, `.idiom` runtime mutation, evidence
   export writes, ranker-learning promotion, or raw transcript/file-body storage.
+- Atom 29: all TDD obligations satisfied. Added deterministic
+  `idiom product feedback`, which links explicit lane/progress/evidence
+  references into privacy-safe execution feedback summaries, supports JSON and
+  human-readable output, blocks unsafe reference paths and raw secret markers,
+  preserves existing dispatch authority boundaries, and does not dispatch lanes,
+  mutate `.idiom` runtime state, write evidence exports, or promote ranker
+  learning.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -129,9 +136,10 @@ The workflow implementation remains in progress after Atom 28 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
-plan-only TDD obligation synthesis, deterministic coverage-gate evaluation, and
-lint-verified brief generation. Execution feedback linking is the active Phase 5
-slice; operator surfaces remain later atoms.
+plan-only TDD obligation synthesis, deterministic coverage-gate evaluation,
+lint-verified brief generation, and read-only execution feedback linking. The
+next Phase 5 slice is feedback reconciliation into workflow state and durable
+evidence links; operator surfaces remain later atoms.
 
 ## Implementation Guidelines
 
@@ -356,9 +364,8 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Implement the Phase 5 execution-feedback linker atom. Keep the slice
-deterministic: link explicit lane/progress/evidence references into a
-privacy-safe workflow feedback summary with changed paths, verification status,
-brief lint and atom intake outcomes, TDD obligation references, and next valid
-actions. Do not dispatch lanes, mutate `.idiom` runtime state, write evidence
-exports, or promote ranker learning in this atom.
+Plan the next Phase 5 feedback reconciliation atom. Keep the slice
+deterministic: consume `idiom product feedback` summaries, reconcile durable
+workflow state and evidence links, and keep dispatch, `.idiom` runtime mutation,
+evidence export generation, and ranker-learning promotion outside the atom
+unless a later design-doc slice explicitly authorizes them.

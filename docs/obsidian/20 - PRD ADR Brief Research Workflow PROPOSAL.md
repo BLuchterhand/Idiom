@@ -16,7 +16,8 @@ tags:
 > `docs/product-workflows/efforts/started/prd-adr-brief-workflow/`. As of
 > 2026-05-18, implementation is complete through Phase 4: deterministic TDD
 > obligation synthesis, coverage-gate evaluation, and lint-verified brief
-> generation. Phase 5 execution feedback remains.
+> generation and the first read-only Phase 5 execution-feedback linker.
+> Feedback reconciliation and operator surfaces remain.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 
@@ -179,7 +180,9 @@ stateDiagram-v2
 - [x] **Phase 3**: PRD and ADR prompt rendering, audits, acceptance metadata,
   and supersession validation
 - [x] **Phase 4**: TDD planner, coverage gate, and brief generator
-- [ ] **Phase 5**: Execution feedback loop linking outcomes to obligations
+- [ ] **Phase 5**: Execution feedback loop linking outcomes to obligations;
+  the read-only feedback linker is implemented, while durable reconciliation
+  remains
 - [ ] **Phase 6**: Sidecar and external agent use
 
 ## Open Questions

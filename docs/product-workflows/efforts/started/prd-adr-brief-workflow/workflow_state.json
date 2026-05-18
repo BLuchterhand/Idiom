@@ -4,10 +4,10 @@
   "task_id": "impl-0029-phase-5-execution-feedback-linker",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T14:38:00Z",
-  "state_revision": 84,
-  "last_event_id": "evt-0247",
-  "workspace_fingerprint": "idiom@a6724dc",
+  "updated_at": "2026-05-18T14:50:00Z",
+  "state_revision": 86,
+  "last_event_id": "evt-0252",
+  "workspace_fingerprint": "idiom@b800235",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -86,6 +86,11 @@
         "gate": "execution_feedback_linker_planned",
         "status": "passed",
         "checked_at": "2026-05-18T14:35:00Z"
+      },
+      {
+        "gate": "execution_feedback_linker",
+        "status": "passed",
+        "checked_at": "2026-05-18T14:45:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -99,7 +104,8 @@
       "Deferred follow-up: continue remaining design-doc product surfaces after Phase 1 hardening, including research profiles, generation, acceptance/supersession, brief dispatch, coverage gates, feedback, and operator surfaces.",
       "Phase 4 brief generation is complete: idiom product brief --render creates lint-verified implementation briefs from accepted PRD/ADR/TDD artifacts and a passing coverage gate without dispatching work or executing models.",
       "Deferred follow-up: make coverage gate reuse product lint/audit validators or run them as blocking preconditions before brief generation.",
-      "Atom 29 planned: add deterministic execution feedback linking from explicit lane/progress/evidence references into privacy-safe workflow feedback summaries before evidence export or ranker-learning promotion."
+      "Atom 29 complete: idiom product feedback links explicit lane/progress/evidence references into privacy-safe execution feedback summaries without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
+      "Next Phase 5 slice: persist/reconcile feedback records into workflow state and durable evidence links, then add product workflow metrics to audit surfaces."
     ]
   },
   "open_obligations": [],
@@ -130,10 +136,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T14:38:00Z",
+  "last_reconciliation_at": "2026-05-18T14:50:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "implement_phase_5_execution_feedback_linker_atom",
+    "plan_phase_5_feedback_reconciliation_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"
