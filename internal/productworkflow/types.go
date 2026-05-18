@@ -368,6 +368,31 @@ type MergePolicy struct {
 	StaleLocalContext string `json:"stale_local_context"`
 }
 
+type ResearchRunPlan struct {
+	SelectedProfileID string            `json:"selected_profile_id"`
+	SelectedProfile   string            `json:"selected_profile"`
+	ProfileCount      int               `json:"profile_count"`
+	RunCount          int               `json:"run_count"`
+	ResearchOutputDir string            `json:"research_output_dir"`
+	Runs              []ResearchRunSpec `json:"runs"`
+	Findings          []ProfileFinding  `json:"findings"`
+}
+
+type ResearchRunSpec struct {
+	ResearcherID        string                    `json:"researcher_id"`
+	Alignment           string                    `json:"alignment"`
+	Question            string                    `json:"question"`
+	RequiredSources     []string                  `json:"required_sources"`
+	AllowedCapabilities []string                  `json:"allowed_capabilities"`
+	Output              string                    `json:"output"`
+	OutputPath          string                    `json:"output_path"`
+	OutputContract      ResearchRunOutputContract `json:"output_contract"`
+}
+
+type ResearchRunOutputContract struct {
+	SchemaVersion string `json:"schema_version"`
+}
+
 type ADRDocument struct {
 	FrontMatter ADRFrontMatter
 	Sections    ADRSections

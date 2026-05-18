@@ -7,10 +7,10 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0020-phase-2-research-evidence-merge-from-profile-runs`
-- Active atom: `next phase-2 atom pending planning`
+- Active atom: `impl-0021-phase-2-research-run-plan-from-profiles`
 - Status bucket: `started`
 - Current phase: `phase-2-research-profiles`
-- Context pack: `b7898e573674e014`
+- Context pack: `2da56cd96a95bc0c`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -55,6 +55,10 @@ This effort is the durable implementation state for delivering
   without running models or committing `.idiom` runtime state. Single-profile
   efforts can omit `--profile`; multi-profile efforts must pass it so merge
   policy selection is explicit.
+- Atom 21 (active): add a deterministic research run planning surface from
+  stored profiles. This should turn selected profile researcher rosters into
+  stable run specs and output paths without running models, calling
+  `idiom artifact`, writing researcher outputs, or drafting PRDs.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -214,7 +218,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 2 atom (research execution or model merge). The research
-profile storage substrate is now in place; future atoms should add researcher
-execution, evidence merge, conflict detection, and PRD synthesis using the
-stored profiles. Codex owns durable closeout.
+Implement Atom 21: deterministic research run planning from stored profiles.
+Profile storage and evidence merge are in place; this atom should add the
+model-free run plan contract before any later atom executes researchers or
+generates PRDs. Codex owns durable closeout.

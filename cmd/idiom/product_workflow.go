@@ -58,6 +58,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> [--json]")
+	fmt.Fprintln(w, "  idiom product research --project-root <path> --plan-runs [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --merge-evidence [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
@@ -770,17 +771,23 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 	var researchOutputDir string
 	var researchProfile string
 	var mergeEvidence bool
+	var planRuns bool
 	var jsonOutput bool
 	fs.StringVar(&projectRoot, "project-root", ".", "path to the project root")
 	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root for evidence merge")
 	fs.StringVar(&researchOutputDir, "research-output-dir", "research/outputs", "effort-relative directory containing researcher output JSON files")
 	fs.StringVar(&researchProfile, "profile", "", "research profile_id or name to use for merge policy")
 	fs.BoolVar(&mergeEvidence, "merge-evidence", false, "merge researcher output cards into the effort evidence ledger")
+	fs.BoolVar(&planRuns, "plan-runs", false, "emit deterministic researcher run specs derived from the selected profile")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
 		}
+		return 2
+	}
+	if mergeEvidence && planRuns {
+		fmt.Fprintln(stderr, "product research: --merge-evidence and --plan-runs are mutually exclusive")
 		return 2
 	}
 	result, err := productworkflow.DiscoverProfiles(projectRoot)
@@ -790,6 +797,9 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 	}
 	if mergeEvidence {
 		return runProductResearchMergeEvidence(result, effortRoot, researchOutputDir, researchProfile, jsonOutput, stdout, stderr, rec)
+	}
+	if planRuns {
+		return runProductResearchPlanRuns(result, researchOutputDir, researchProfile, jsonOutput, stdout, stderr, rec)
 	}
 	if jsonOutput {
 		type jsonOutput struct {
@@ -836,6 +846,30 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 	return 0
 }
 
+func runProductResearchPlanRuns(profiles *productworkflow.ProfileStoreResult, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	plan := productworkflow.PlanResearchRuns(profiles.Profiles, researchProfile, researchOutputDir)
+	plan.Findings = append(append([]productworkflow.ProfileFinding{}, profiles.Findings...), plan.Findings...)
+	logCLIPhase(rec, "product_research_plan_runs", map[string]any{
+		"profile_count": len(profiles.Profiles),
+		"run_count":     plan.RunCount,
+		"finding_count": len(plan.Findings),
+	})
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(plan); err != nil {
+			fmt.Fprintf(stderr, "product research: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintf(stdout, "product research plan: %d runs (%d findings)\n", plan.RunCount, len(plan.Findings))
+	}
+	if hasResearchErrorFinding(plan.Findings) {
+		return 1
+	}
+	return 0
+}
+
 func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResult, effortRoot, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if strings.TrimSpace(effortRoot) == "" {
 		fmt.Fprintln(stderr, "product research: --effort-root is required with --merge-evidence")
@@ -855,7 +889,7 @@ func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResul
 			Severity: "error",
 		})
 	}
-	selectedProfile, profileFindings := selectResearchMergeProfile(profiles.Profiles, researchProfile)
+	selectedProfile, profileFindings := productworkflow.SelectResearchProfile(profiles.Profiles, researchProfile)
 	findings = append(findings, profileFindings...)
 	var existing []productworkflow.EvidenceCard
 	evidencePath := filepath.Join(absRoot, "evidence", "evidence.jsonl")
@@ -968,48 +1002,6 @@ func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResul
 		return 1
 	}
 	return 0
-}
-
-func selectResearchMergeProfile(profiles []productworkflow.ResearchProfile, selector string) (*productworkflow.ResearchProfile, []productworkflow.ProfileFinding) {
-	selector = strings.TrimSpace(selector)
-	if selector == "" {
-		if len(profiles) == 1 {
-			return &profiles[0], nil
-		}
-		if len(profiles) > 1 {
-			return nil, []productworkflow.ProfileFinding{{
-				Kind:     "ambiguous_research_profile",
-				Message:  "multiple research profiles are available; pass --profile with a profile_id or name for deterministic merge policy selection",
-				File:     ".idiom/research/profiles",
-				Severity: "error",
-			}}
-		}
-		return nil, nil
-	}
-	matches := make([]int, 0, 1)
-	for i, profile := range profiles {
-		if strings.TrimSpace(profile.ProfileID) == selector || strings.TrimSpace(profile.Name) == selector {
-			matches = append(matches, i)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return nil, []productworkflow.ProfileFinding{{
-			Kind:     "unknown_research_profile",
-			Message:  fmt.Sprintf("research profile %q was not found by profile_id or name", selector),
-			File:     ".idiom/research/profiles",
-			Severity: "error",
-		}}
-	case 1:
-		return &profiles[matches[0]], nil
-	default:
-		return nil, []productworkflow.ProfileFinding{{
-			Kind:     "ambiguous_research_profile",
-			Message:  fmt.Sprintf("research profile selector %q matched multiple profiles", selector),
-			File:     ".idiom/research/profiles",
-			Severity: "error",
-		}}
-	}
 }
 
 func researchProfileOutput(profile *productworkflow.ResearchProfile) string {

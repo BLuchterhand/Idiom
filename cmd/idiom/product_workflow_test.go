@@ -2708,6 +2708,130 @@ func TestProductResearchMergeEvidenceRejectsSymlinkOutputDir(t *testing.T) {
 	}
 }
 
+func TestProductResearchPlanRunsJSONSurface(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--plan-runs", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["selected_profile_id"] != "test-profile" {
+		t.Fatalf("expected selected_profile_id test-profile, got %v", result["selected_profile_id"])
+	}
+	if result["profile_count"].(float64) != 1 {
+		t.Fatalf("expected profile_count 1, got %v", result["profile_count"])
+	}
+	if result["run_count"].(float64) != 1 {
+		t.Fatalf("expected run_count 1, got %v", result["run_count"])
+	}
+	runs := result["runs"].([]any)
+	if len(runs) != 1 {
+		t.Fatalf("expected one run, got %d", len(runs))
+	}
+	run := runs[0].(map[string]any)
+	if run["output_path"] != "research/outputs/test-profile--r1.json" {
+		t.Fatalf("unexpected output_path: %v", run["output_path"])
+	}
+	contract := run["output_contract"].(map[string]any)
+	if contract["schema_version"] != "idiom.research_cards.v1" {
+		t.Fatalf("unexpected output contract schema: %v", contract["schema_version"])
+	}
+}
+
+func TestProductResearchPlanRunsRequiresProfileWhenMultipleProfilesExist(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfileFile(t, dir, "a.json", validTestResearchProfileJSONWithPolicy("warn-profile", "warn-profile", "warn"))
+	writeProductResearchProfileFile(t, dir, "b.json", validTestResearchProfileJSONWithPolicy("block-profile", "block-profile", "block_research_merge"))
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--plan-runs", "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for ambiguous profile, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	findings := result["findings"].([]any)
+	found := false
+	for _, raw := range findings {
+		f := raw.(map[string]any)
+		if f["kind"] == "ambiguous_research_profile" && f["severity"] == "error" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected ambiguous_research_profile error, got %v", findings)
+	}
+}
+
+func TestProductResearchPlanRunsUsesSelectedProfile(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfileFile(t, dir, "a.json", validTestResearchProfileJSONWithPolicy("warn-profile", "warn-profile", "warn"))
+	writeProductResearchProfileFile(t, dir, "b.json", validTestResearchProfileJSONWithPolicy("block-profile", "block-profile", "block_research_merge"))
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--plan-runs", "--profile", "block-profile", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result["selected_profile_id"] != "block-profile" {
+		t.Fatalf("expected selected_profile_id block-profile, got %v", result["selected_profile_id"])
+	}
+	runs := result["runs"].([]any)
+	run := runs[0].(map[string]any)
+	if run["output_path"] != "research/outputs/block-profile--r1.json" {
+		t.Fatalf("unexpected output path for selected profile: %v", run["output_path"])
+	}
+}
+
+func TestProductResearchPlanRunsDoesNotWriteEvidenceLedger(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--plan-runs", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "evidence", "evidence.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("expected no evidence/evidence.jsonl write during planning, stat err=%v", err)
+	}
+}
+
+func TestProductResearchPlanRunsRejectsMergeEvidenceFlag(t *testing.T) {
+	dir := t.TempDir()
+	writeProductResearchProfile(t, dir, validTestResearchProfileJSON())
+	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "research/outputs/technical.json", validTestResearchCardsJSON("EV-002", "r1", "Should not merge"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductResearch([]string{"--project-root", dir, "--effort-root", dir, "--plan-runs", "--merge-evidence", "--json"}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected usage code 2 for mutually exclusive flags, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "mutually exclusive") {
+		t.Fatalf("expected mutual exclusion error, got stderr=%q", stderr.String())
+	}
+	merged, err := os.ReadFile(filepath.Join(dir, "evidence", "evidence.jsonl"))
+	if err != nil {
+		t.Fatalf("read evidence ledger: %v", err)
+	}
+	cards, err := productworkflow.ParseEvidenceCardsJSONL(merged)
+	if err != nil {
+		t.Fatalf("evidence ledger should remain parseable: %v", err)
+	}
+	if len(cards) != 1 || cards[0].CardID != "EV-001" {
+		t.Fatalf("expected merge not to run, got cards %#v", cards)
+	}
+}
+
 func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {

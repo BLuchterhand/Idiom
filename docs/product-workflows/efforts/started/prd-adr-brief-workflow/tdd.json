@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0020-phase-2-research-evidence-merge-from-profile-runs",
+  "task_id": "impl-0021-phase-2-research-run-plan-from-profiles",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,87 +19,46 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned",
-      "research_cards_parse_and_validate",
-      "research_evidence_merge_deduplicates_deterministically",
-      "research_evidence_merge_preserves_conflicts",
-      "product_research_merge_json_surface",
-      "invalid_research_output_blocks_merge",
-      "multi_profile_merge_requires_explicit_profile",
-      "focused_go_tests",
-      "full_go_tests",
-      "product_lint",
-      "product_audit",
-      "durable_json_jsonl_validation",
-      "privacy_secret_scan",
-      "diff_whitespace_check",
-      "independent_codex_review"
+      "atom_planned"
     ],
     "gates_blocked": []
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0020-001",
+      "id": "TDD-IMPL-0021-001",
       "type": "contract",
-      "behavior": "Researcher output JSON documents parse into typed research card documents. Invalid or empty researcher output fails closed with a validation error instead of silently merging.",
-      "owner": "internal/productworkflow/validate_test.go",
-      "command": "go test ./internal/productworkflow -run TestParseResearchCards",
+      "behavior": "Research run planning turns a selected research profile into deterministic run specs with researcher id, alignment, question, required sources, allowed capabilities, output kind, output path, and research-card output contract metadata.",
+      "owner": "internal/productworkflow/research_runs_test.go",
+      "command": "go test ./internal/productworkflow -run TestResearchRunPlan",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0020-002",
-      "type": "contract",
-      "behavior": "Research evidence merge deterministically deduplicates exact duplicate cards, preserves provenance fields, and emits stable merged card IDs for the same inputs.",
-      "owner": "internal/productworkflow/research_evidence_merge_test.go",
-      "command": "go test ./internal/productworkflow -run TestMergeResearchEvidenceDeterministicOrderingAndDedup",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0020-003",
+      "id": "TDD-IMPL-0021-002",
       "type": "fmea_negative",
-      "behavior": "Conflicting researcher findings are retained and surfaced as typed conflicts rather than collapsed or auto-resolved during merge.",
-      "owner": "internal/productworkflow/research_evidence_merge_test.go",
-      "command": "go test ./internal/productworkflow -run TestMergeResearchEvidencePreservesDuplicateCardConflicts",
+      "behavior": "Research run planning fails closed with typed findings when profile or researcher identifiers cannot produce safe deterministic effort-relative output paths.",
+      "owner": "internal/productworkflow/research_runs_test.go",
+      "command": "go test ./internal/productworkflow -run TestResearchRunPlanRejects",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0020-004",
+      "id": "TDD-IMPL-0021-003",
       "type": "acceptance",
-      "behavior": "idiom product research --merge-evidence exposes a JSON merge surface, writes the merged evidence ledger on clean merges, and returns a blocker with typed conflicts or findings when merge is unsafe.",
+      "behavior": "idiom product research --plan-runs exposes a JSON surface for run planning, reuses explicit profile selection semantics, returns blocker findings for ambiguous or unknown profiles, and does not write researcher output files.",
       "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom -run TestProductResearchMergeEvidence",
+      "command": "go test ./cmd/idiom -run TestProductResearchPlanRuns",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0020-005",
+      "id": "TDD-IMPL-0021-004",
       "type": "audit",
-      "behavior": "The merge surface records only evidence cards, counts, IDs, conflicts, paths, and typed findings; durable reports and state do not store raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data.",
-      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0020-review.json",
+      "behavior": "The run planning surface records only profile identifiers, researcher metadata, output paths, counts, and typed findings; durable reports and state do not store raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0021-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0020-006",
-      "type": "fmea_negative",
-      "behavior": "research-output-dir remains effort-relative after path cleaning and symlink resolution. Literal traversal, absolute paths, symlinked output directories outside the effort, and symlinked output files are blocked with typed findings before reading researcher output.",
-      "owner": "internal/productworkflow/research_evidence_merge_test.go",
-      "command": "go test ./internal/productworkflow -run TestDiscoverResearchCardDocumentsRejects",
-      "required_before": "atom_close",
-      "status": "satisfied"
-    },
-    {
-      "id": "TDD-IMPL-0020-007",
-      "type": "fmea_negative",
-      "behavior": "When multiple research profiles exist, product research --merge-evidence must require an explicit --profile selector and must use the selected profile's merge policy rather than filename order.",
-      "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom -run 'TestProductResearchMergeEvidenceRequiresProfileWhenMultipleProfilesExist|TestProductResearchMergeEvidenceUsesSelectedProfilePolicy'",
-      "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     }
   ]
 }
