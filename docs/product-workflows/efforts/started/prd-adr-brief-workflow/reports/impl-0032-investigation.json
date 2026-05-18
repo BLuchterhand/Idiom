@@ -2,11 +2,18 @@
   "schema_version": "idiom.investigation_report.v1.fixture",
   "effort_id": "prd-adr-brief-workflow",
   "task_id": "impl-0032-phase-5-obsidian-parity-check",
-  "status": "blocked",
+  "status": "complete",
   "created_at": "2026-05-18T16:05:00Z",
-  "completed_at": null,
+  "completed_at": "2026-05-18T16:35:00Z",
   "scope": {
-    "changed_paths": [],
+    "changed_paths": [
+      "cmd/idiom/product_workflow.go",
+      "cmd/idiom/product_workflow_test.go",
+      "internal/productworkflow/obsidian_parity.go",
+      "internal/productworkflow/obsidian_parity_test.go",
+      "internal/productworkflow/status.go",
+      "internal/productworkflow/status_test.go"
+    ],
     "forbidden_paths_touched": [],
     "obsidian_parity_updated": true,
     "obsidian_no_change_rationale": null,
@@ -14,20 +21,38 @@
     "dispatch_or_model_execution_added": false
   },
   "tests": {
-    "status": "pending",
-    "commands": []
+    "status": "passed",
+    "commands": [
+      "idiom tool context_pack --input {\"task\":\"phase 5 Obsidian parity check product lint audit closeout reporting proposal roadmap stale status no-change rationale\",\"mode\":\"plan\",\"limit\":12}",
+      "idiom tool context_query --input {\"query\":\"product lint audit Obsidian parity proposal roadmap closeout reports stale status no-change rationale\",\"resolution\":\"symbol\"}",
+      "go test ./internal/productworkflow -run TestObsidianParity -count=1",
+      "go test ./cmd/idiom -run TestProductObsidianParity -count=1",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "privacy secret-pattern scan over durable effort artifacts",
+      "git diff --check"
+    ]
   },
   "coverage": {
-    "tdd_obligations_satisfied": [],
-    "obsidian_parity_status": "pending"
+    "tdd_obligations_satisfied": [
+      "TDD-IMPL-0032-001",
+      "TDD-IMPL-0032-002",
+      "TDD-IMPL-0032-003",
+      "TDD-IMPL-0032-004"
+    ],
+    "obsidian_parity_status": "passed"
   },
   "traceability": {
     "context_pack_ids": [
       "688124fae36b08eb"
     ],
-    "implementation_commit": null,
-    "product_lint_status": "pending",
-    "product_audit_status": "pending"
+    "implementation_commit": "448506e164a4b8bf15cb55287676b7e8fd030606",
+    "product_lint_status": "pass",
+    "product_audit_status": "pass"
   },
   "privacy_audit": {
     "raw_prompts_stored": false,
@@ -36,16 +61,14 @@
     "secrets_stored": false,
     "customer_identifying_data_stored": false,
     "generated_brief_bodies_stored_in_durable_reports": false,
-    "secret_pattern_scan_status": "pending"
+    "secret_pattern_scan_status": "passed"
   },
-  "reviewer_findings": [],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
+  "reviewer_findings": [
+    "High no-change rationale bypass repaired",
+    "Medium ancestor directory read boundary repaired"
   ],
-  "next_valid_action": "start_impl_0032_obsidian_parity_check",
-  "commit_hash": null,
-  "implementation_commit": null
+  "blockers": [],
+  "next_valid_action": "plan_phase_5_human_readable_cli_coverage_atom",
+  "commit_hash": "448506e164a4b8bf15cb55287676b7e8fd030606",
+  "implementation_commit": "448506e164a4b8bf15cb55287676b7e8fd030606"
 }

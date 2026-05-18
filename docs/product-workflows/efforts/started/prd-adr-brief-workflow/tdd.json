@@ -25,6 +25,7 @@
       "execution_feedback_linker",
       "execution_feedback_reconciliation",
       "feedback_reconciliation_planned",
+      "obsidian_parity_check",
       "obsidian_parity_check_planned",
       "product_workflow_metrics",
       "product_workflow_metrics_planned",
@@ -256,7 +257,7 @@
       "owner": "internal/productworkflow/obsidian_parity_test.go",
       "command": "go test ./internal/productworkflow -run TestObsidianParity",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0032-002",
@@ -265,7 +266,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductObsidianParity",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0032-003",
@@ -274,7 +275,7 @@
       "owner": "internal/productworkflow/obsidian_parity_test.go",
       "command": "go test ./internal/productworkflow -run TestObsidianParity",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0032-004",
@@ -283,7 +284,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0032-review.json",
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     }
   ]
 }

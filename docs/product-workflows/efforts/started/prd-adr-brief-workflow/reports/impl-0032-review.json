@@ -9,18 +9,35 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
-  "findings": [],
+  "status": "pass_after_repair",
+  "findings": [
+    {
+      "severity": "High",
+      "status": "fixed",
+      "summary": "No-change rationale originally suppressed stale Obsidian status findings."
+    },
+    {
+      "severity": "Medium",
+      "status": "fixed",
+      "summary": "The initial Obsidian reader could walk to ancestor directories outside the selected repo or effort root."
+    }
+  ],
   "checks": {
-    "obsidian_parity_contract": "pending",
-    "lint_audit_json_and_human_output": "pending",
-    "no_change_rationale_path": "pending",
-    "authority_boundaries": "pending",
-    "no_dispatch_or_runtime_mutation": "pending",
-    "privacy_secret_marker_regression": "pending"
+    "obsidian_parity_contract": "passed",
+    "lint_audit_json_and_human_output": "passed",
+    "no_change_rationale_path": "passed_after_repair",
+    "ancestor_path_boundary": "passed_after_repair",
+    "authority_boundaries": "passed",
+    "no_dispatch_or_runtime_mutation": "passed",
+    "privacy_secret_marker_regression": "passed"
   },
-  "reviewed_at": null,
-  "commands_reviewed": [],
-  "residual_risk": "Implementation has not started.",
+  "reviewed_at": "2026-05-18T16:35:00Z",
+  "commands_reviewed": [
+    "go test ./internal/productworkflow -run TestObsidianParity -count=1",
+    "go test ./cmd/idiom -run TestProductObsidianParity -count=1",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./..."
+  ],
+  "residual_risk": "The parity rules are deterministic and intentionally narrow around explicit status/checklist drift; future Obsidian wording changes may require new explicit rules.",
   "created_at": "2026-05-18T16:05:00Z"
 }

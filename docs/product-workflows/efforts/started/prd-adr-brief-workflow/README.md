@@ -6,8 +6,8 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0031-phase-5-product-workflow-metrics`
-- Active atom: `impl-0032-phase-5-obsidian-parity-check`
+- Last completed atom: `impl-0032-phase-5-obsidian-parity-check`
+- Active atom: none; next valid action is `plan_phase_5_human_readable_cli_coverage_atom`
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
 - Context pack: `688124fae36b08eb`
@@ -152,13 +152,19 @@ This effort is the durable implementation state for delivering
   rationale is recorded in the atom investigation report. Keep lane dispatch,
   `.idiom` runtime mutation, evidence export generation, ranker-learning
   promotion, and operator/TUI surfaces outside the atom.
+- Atom 32: all TDD obligations satisfied. Added deterministic Obsidian parity
+  checks to `idiom product lint`, `idiom product audit`, and `idiom product
+  status`, covering stale proposal/roadmap status, stale phase checkboxes,
+  post-closeout checklist drift, scoped repo/effort reads, and typed
+  privacy-safe findings. Review repairs ensured no-change rationale text cannot
+  suppress stale docs and ancestor-directory Obsidian files are not read.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 31 closeout. These
+The workflow implementation remains in progress after Atom 32 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
@@ -166,8 +172,8 @@ plan-only TDD obligation synthesis, deterministic coverage-gate evaluation,
 lint-verified brief generation, read-only execution feedback linking, and
 deterministic feedback reconciliation into bounded workflow-state/evidence-link
 output, and product-workflow metrics in product audit/status. The active Phase
-5 slice is Obsidian parity checking in product lint/audit; operator surfaces
-remain later atoms.
+5 slice is human-readable CLI output coverage for operator-facing product
+commands; ranker-learning adapters and operator/TUI surfaces remain later atoms.
 
 ## Implementation Guidelines
 
@@ -392,4 +398,4 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Start `impl-0032-phase-5-obsidian-parity-check` with the planned C2 GPT Codex worker. Keep the slice deterministic: detect stale proposal/roadmap status during product lint/audit or closeout reporting, or require an explicit no-change rationale, and keep lane dispatch, `.idiom` runtime mutation, evidence export generation, and ranker-learning promotion outside the atom.
+Plan the next Phase 5 human-readable CLI coverage atom. Keep the slice focused on operator-facing product command text output, actionable failure text, and next-valid-action coverage; keep lane dispatch, `.idiom` runtime mutation, evidence export generation, and ranker-learning promotion outside the atom.

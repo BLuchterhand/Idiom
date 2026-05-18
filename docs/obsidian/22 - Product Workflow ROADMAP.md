@@ -64,8 +64,9 @@ research profile planning/merge/prompt rendering, PRD/ADR prompt rendering,
 acceptance metadata validation, ADR supersession link validation, plan-only TDD
 obligation synthesis, tiered coverage-gate evaluation, lint-verified brief
 generation, read-only execution feedback linking, durable feedback
-reconciliation, and product-workflow metrics in product audit/status exist. The
-active design-doc slice is Obsidian parity enforcement.
+reconciliation, product-workflow metrics in product audit/status, and Obsidian
+parity enforcement exist. The next design-doc slice is human-readable CLI
+output coverage for operator-facing product commands.
 
 ### Schemas and Types
 
@@ -153,8 +154,7 @@ active design-doc slice is Obsidian parity enforcement.
 - [x] Durable `execution_result_linked` reconciliation into workflow state and
   evidence links
 - [x] Product-workflow metrics in product audit/status
-- [ ] Obsidian parity check in product lint/audit or closeout reporting
-  (active Atom 32)
+- [x] Obsidian parity check in product lint/audit or closeout reporting
 
 ## NOT STARTED: Behavioral TDD Coverage Pipeline
 
@@ -318,7 +318,7 @@ audit evidence only unless a human explicitly re-authorizes them.
 - [ ] Post-mortem obligation auto-generation
 - [ ] Incident → FMEA/HAZOP feedback
 - [ ] Coverage metric updates from outcomes
-- [ ] Obsidian parity lint/audit or closeout check for stale proposal/roadmap
+- [x] Obsidian parity lint/audit or closeout check for stale proposal/roadmap
   status, with explicit no-change rationale support
 - [ ] Human-readable CLI output tests for each operator-facing product command,
   including actionable failure text and next valid action

@@ -4,10 +4,10 @@
   "task_id": "impl-0032-phase-5-obsidian-parity-check",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T16:10:00Z",
-  "state_revision": 96,
-  "last_event_id": "evt-0275",
-  "workspace_fingerprint": "idiom@f72312c",
+  "updated_at": "2026-05-18T16:35:00Z",
+  "state_revision": 97,
+  "last_event_id": "evt-0281",
+  "workspace_fingerprint": "idiom@448506e",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -122,6 +122,11 @@
         "gate": "obsidian_parity_check_planned",
         "status": "passed",
         "checked_at": "2026-05-18T16:05:00Z"
+      },
+      {
+        "gate": "obsidian_parity_check",
+        "status": "passed",
+        "checked_at": "2026-05-18T16:35:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -138,15 +143,11 @@
       "Atom 29 complete: idiom product feedback links explicit lane/progress/evidence references into privacy-safe execution feedback summaries without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
       "Atom 30 complete: idiom product feedback reconciliation consumes passing feedback summaries and writes deterministic reconciled workflow-state output with bounded artifact/evidence links, while preserving dispatch, .idiom runtime mutation, evidence export generation, and ranker-learning boundaries.",
       "Atom 31 complete: product audit and product status expose deterministic product-workflow metrics for progress, gates, blockers, TDD, ledger, reports, artifacts, and evidence-link counts without dispatching lanes, mutating .idiom runtime state, writing evidence exports, promoting ranker learning, or enforcing Obsidian parity.",
-      "Atom 32 planned: add deterministic Obsidian parity checks to product lint/audit so stale proposal/roadmap status is detected before closeout or an explicit no-change rationale is recorded."
+      "Atom 32 complete: product lint/audit/status now include deterministic Obsidian parity checks for stale proposal/roadmap status and fail closed on stale docs even when no-change rationale text is present.",
+      "Next Phase 5 slice after Obsidian parity: add human-readable CLI output coverage for operator-facing product commands."
     ]
   },
-  "open_obligations": [
-    "TDD-IMPL-0032-001",
-    "TDD-IMPL-0032-002",
-    "TDD-IMPL-0032-003",
-    "TDD-IMPL-0032-004"
-  ],
+  "open_obligations": [],
   "open_questions": [],
   "blockers": [],
   "privacy": {
@@ -177,9 +178,8 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "start_impl_0032_obsidian_parity_check",
-    "run_c2_codex_gpt_worker_impl_0032",
-    "review_impl_0032_with_codex_gpt_review",
+    "plan_phase_5_human_readable_cli_coverage_atom",
+    "track_phase_5_ranker_learning_evidence_adapter_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"
