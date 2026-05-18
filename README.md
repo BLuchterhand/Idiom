@@ -188,10 +188,10 @@ Other useful subcommands:
   under `.idiom/recovery`, rejects symlinked output parents, and therefore
   requires the default profile. `recovery_promote` and
   `recovery_reconcile` remain first-party `idiom recover` commands. Product
-  operator status also surfaces
-  recovery packets referenced from `workflow_state.artifact_paths`, validates
-  recovery reconciliation artifacts before closing packets, and blocks normal
-  workflow dispatch while a recovery packet is open.
+  operator status and the TUI `/product-status` presenter also surface recovery
+  packets referenced from `workflow_state.artifact_paths`, validate recovery
+  reconciliation artifacts before closing packets, and block normal workflow
+  dispatch while a recovery packet is open.
   Product and release evidence exports also include metadata-only recovery
   rollups from `.idiom/recovery`, including failure-class, next-action,
   reconciliation, open/recovered/blocked, blocker, and release-impact counts
@@ -396,6 +396,7 @@ integration proof lives in
 - `/profile list`
 - `/profile add <name>`
 - `/profile remove <name>`
+- `/product-status [--effort-root <path>]`
 - `/server start`
 - `/server stop`
 - `/server restart`

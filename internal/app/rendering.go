@@ -115,6 +115,7 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 	// Fix 5 (context compaction) — fold the oldest messages into a session
 	// digest before the hard-truncation below kicks in.
 	history = m.MaybeCompactHistory(context.Background(), history)
+	history = modelPayloadHistory(history)
 
 	// Pinned-file reference snapshot — keep recently-read files visible even
 	// after their raw tool results have been compacted out of history.
@@ -137,6 +138,20 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 		})
 	}
 	return messages
+}
+
+func modelPayloadHistory(history []llama.ChatMessage) []llama.ChatMessage {
+	if len(history) == 0 {
+		return history
+	}
+	out := history[:0]
+	for _, msg := range history {
+		if msg.Role == "operator" {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 func (m *Model) renderMessages(forceBottom bool) {

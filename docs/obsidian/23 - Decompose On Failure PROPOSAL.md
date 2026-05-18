@@ -16,10 +16,11 @@ tags:
 > `idiom recover inspect`, `status`, `decompose`, `promote`, and `reconcile`
 > provide the operator-facing loop. Read-only `recovery_inspect` and
 > `recovery_status` are also exposed through `idiom tool`/MCP with the normal
-> sidecar envelope. Product/operator status, audit-watch, product-evidence, and
-> release-evidence now project bounded recovery state. Promotion writes a
-> normal gated brief; reconciliation closes the packet only after packet-digest,
-> atom-manifest, and required-test evidence validation.
+> sidecar envelope. Product/operator status, the TUI `/product-status`
+> presenter, audit-watch, product-evidence, and release-evidence now project
+> bounded recovery state. Promotion writes a normal gated brief; reconciliation
+> closes the packet only after packet-digest, atom-manifest, and required-test
+> evidence validation.
 >
 > Source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
@@ -73,8 +74,11 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] Recovery classification emits the documented `scope_too_large` and
   `verification_failed` classes from explicit failure kinds, review-repair
   reason classes, and bounded host evidence text.
-- [ ] TUI projections, deeper residual-work evidence, ranker-learning inputs,
-  and non-plan-execute adapters are not yet complete.
+- [x] TUI `/product-status` renders the shared product operator view, including
+  recovery packet blockers, dispatchability, and the non-dispatchable recovery
+  inspection command hint.
+- [ ] Broader TUI continuation/handoff actions, deeper residual-work evidence,
+  ranker-learning inputs, and non-plan-execute adapters are not yet complete.
 
 ## Target Lifecycle
 

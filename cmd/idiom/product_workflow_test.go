@@ -23,7 +23,7 @@ func TestProductLintPassesOnCurrentDurableEffortFixture(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected lint to pass on current durable effort fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -48,7 +48,7 @@ func TestProductLintFailsOnMissingRequiredFile(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail on empty dir, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -81,7 +81,7 @@ func TestProductLintFailsOnInvalidImplementationLedgerCloseout(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail on invalid closeout, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -109,7 +109,7 @@ func TestProductLintIncludesPRDAndADRInCheckedFiles(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected lint to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -181,7 +181,7 @@ func TestProductLintChecksOptionalResearchProfileWhenConfigured(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected lint to pass with valid research profile, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -219,7 +219,7 @@ func TestProductLintRejectsInvalidResearchProfile(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail with invalid research profile, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -249,7 +249,7 @@ func TestProductLintParseErrorOnInvalidTDDJSON(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail on invalid tdd.json, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -286,7 +286,7 @@ func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail on invalid coverage_tier, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -327,7 +327,7 @@ func TestProductLintDetectsBrokenTraceabilityLinks(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail with broken links, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -390,7 +390,7 @@ func TestProductLintTraceabilityMatrixInCheckedFiles(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected lint to pass, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -442,7 +442,7 @@ created_at: 2026-05-17T00:00:00Z
 	if code != 1 {
 		t.Fatalf("expected lint to fail with invalid PRD status, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -475,7 +475,7 @@ func TestProductLintRejectsInvalidADRIndexArtifactStatus(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail with invalid ADR index status, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -558,7 +558,7 @@ None.
 	if code != 1 {
 		t.Fatalf("expected lint to fail with invalid ADR markdown status, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -588,7 +588,7 @@ func TestProductLintRejectsMalformedImplementationReport(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail on malformed implementation report, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -618,7 +618,7 @@ func TestProductLintRejectsMalformedReviewReport(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail on malformed review report, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -648,7 +648,7 @@ func TestProductLintRejectsMalformedInvestigationReport(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected lint to fail on malformed investigation report, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -798,7 +798,7 @@ Last audited 2026-05-18.
 	if code != 0 {
 		t.Fatalf("expected lint pass on durable fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("lint output should be valid JSON: %v", err)
 	}
@@ -832,7 +832,7 @@ func TestProductObsidianParityFailsWithoutNoChangeRationale(t *testing.T) {
 	writeTestFile(t, dir, "docs/obsidian/22 - Product Workflow ROADMAP.md", "## IN PROGRESS: PRD/ADR/Brief Workflow")
 	writeTestFile(t, dir, "reports/impl-0032-investigation.json", validTestTestInvestigationReportJSON())
 
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
 		t.Fatalf("expected lint fail, got %q", result.Status)
 	}
@@ -867,7 +867,7 @@ func TestProductObsidianParityFailsClosedWithoutGitRoot(t *testing.T) {
 		"next_valid_actions":["complete"]
 	}`)
 
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
 		t.Fatalf("expected lint fail when Obsidian notes are missing without git root, got %q", result.Status)
 	}
@@ -923,7 +923,7 @@ func TestProductObsidianParityAllowsNoChangeRationale(t *testing.T) {
 		"completed_at":""
 	}`)
 
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	for _, finding := range result.Findings {
 		if strings.HasPrefix(finding.Code, "obsidian_") {
 			t.Fatalf("expected no obsidian findings with no-change rationale, got %#v", finding)
@@ -1200,7 +1200,7 @@ func TestProductAuditDoesNotChangeLintBehavior(t *testing.T) {
 		t.Fatalf("expected audit to pass, got code=%d stdout=%s", auditCode, auditStdout.String())
 	}
 
-	var lintResult productLintResult
+	var lintResult productworkflow.LintSummaryResult
 	if err := json.Unmarshal(lintStdout.Bytes(), &lintResult); err != nil {
 		t.Fatalf("lint output should be valid JSON: %v", err)
 	}
@@ -1229,7 +1229,7 @@ func TestProductLintTextOutputIsActionable(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected pass, got code=%d stdout=%s stderr=%s", code, jsonStdout.String(), jsonStderr.String())
 	}
-	var jsonResult productLintResult
+	var jsonResult productworkflow.LintSummaryResult
 	if err := json.Unmarshal(jsonStdout.Bytes(), &jsonResult); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
@@ -1255,7 +1255,7 @@ func TestProductLintFailNextValidActionParity(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected fail, got code=%d stdout=%s stderr=%s", code, jsonStdout.String(), jsonStderr.String())
 	}
-	var jsonResult productLintResult
+	var jsonResult productworkflow.LintSummaryResult
 	if err := json.Unmarshal(jsonStdout.Bytes(), &jsonResult); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
@@ -1432,7 +1432,7 @@ None.
 	if code != 1 {
 		t.Fatalf("expected lint to fail with broken ADR evidence ref, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -1511,7 +1511,7 @@ None.
 	if code != 1 {
 		t.Fatalf("expected lint to fail with broken ADR TDD obligation ref, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -1589,7 +1589,7 @@ None.
 	if code != 1 {
 		t.Fatalf("expected lint to fail with broken ADR PRD ref, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -1885,7 +1885,7 @@ created_at: 2026-05-17T00:00:00Z
 	if code != 1 {
 		t.Fatalf("expected lint failure, got %d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -2060,7 +2060,7 @@ created_at: 2026-05-17T00:00:00Z
 	if code != 1 {
 		t.Fatalf("expected lint to fail on missing must-priority PRD TDD obligation, got code=%d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -2554,7 +2554,7 @@ func TestProductLintNextValidActionParity(t *testing.T) {
 	if jsonCode != 1 {
 		t.Fatalf("expected lint failure exit code 1, got code=%d stdout=%s stderr=%s", jsonCode, jsonStdout.String(), jsonStderr.String())
 	}
-	var out productLintResult
+	var out productworkflow.LintSummaryResult
 	if err := json.Unmarshal(jsonStdout.Bytes(), &out); err != nil {
 		t.Fatalf("expected valid lint JSON: %v", err)
 	}
@@ -3748,7 +3748,7 @@ func writeScopeGateEffort(t *testing.T, ledgerJSONL string) string {
 
 func TestProductLintScopeGateFailsOnForbiddenPath(t *testing.T) {
 	dir := writeScopeGateEffort(t, scopeGateLedgerForbiddenExactPathJSONL())
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
 		t.Fatalf("expected fail, got %q", result.Status)
 	}
@@ -3765,7 +3765,7 @@ func TestProductLintScopeGateFailsOnForbiddenPath(t *testing.T) {
 
 func TestProductLintScopeGateFailsOnForbiddenPattern(t *testing.T) {
 	dir := writeScopeGateEffort(t, scopeGateLedgerForbiddenPatternJSONL())
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
 		t.Fatalf("expected fail, got %q", result.Status)
 	}
@@ -3782,7 +3782,7 @@ func TestProductLintScopeGateFailsOnForbiddenPattern(t *testing.T) {
 
 func TestProductLintScopeGateFailsOnUnexpectedPath(t *testing.T) {
 	dir := writeScopeGateEffort(t, scopeGateLedgerUnexpectedPathJSONL())
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
 		t.Fatalf("expected fail, got %q", result.Status)
 	}
@@ -3799,7 +3799,7 @@ func TestProductLintScopeGateFailsOnUnexpectedPath(t *testing.T) {
 
 func TestProductLintScopeGateFailsOnMissingExpectedPath(t *testing.T) {
 	dir := writeScopeGateEffort(t, scopeGateLedgerMissingExpectedPathJSONL())
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
 		t.Fatalf("expected fail, got %q", result.Status)
 	}
@@ -3816,7 +3816,7 @@ func TestProductLintScopeGateFailsOnMissingExpectedPath(t *testing.T) {
 
 func TestProductLintScopeGatePassingLedgerPasses(t *testing.T) {
 	dir := writeScopeGateEffort(t, scopeGateLedgerPassingJSONL())
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "pass" {
 		t.Fatalf("expected pass, got %q with findings %v", result.Status, result.Findings)
 	}
@@ -3834,7 +3834,7 @@ func TestProductLintScopeGateClosedAtomNotEnforced(t *testing.T) {
 		`{"record_type":"post_effort_investigation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`+"\n"+
 		`{"record_type":"atom_closed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":[]}`,
 	)
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "pass" {
 		t.Fatalf("expected pass for closed atom (historical), got %q with findings %v", result.Status, result.Findings)
 	}
@@ -3855,7 +3855,7 @@ func TestProductLintScopeGateSkipsClosedAtomsButEnforcesActive(t *testing.T) {
 	activeAtomScope := scopeGatePlannedAtom + "\n" +
 		`{"record_type":"implementation_completed","task_id":"impl-scope-test","effort_id":"test-effort","timestamp":"2026-05-17T16:06:00Z","implementor_id":"impl","changed_paths":["cmd/idiom/product_workflow.go","internal/productworkflow/validate.go"]}`
 	dir := writeScopeGateEffort(t, closedAtomScope+"\n"+activeAtomScope)
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
 		t.Fatalf("expected fail, got %q", result.Status)
 	}
@@ -3884,7 +3884,7 @@ func TestProductLintScopeGateJSONValidFailing(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -3915,7 +3915,7 @@ func TestProductLintScopeGateJSONValidPassing(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
 	}
-	var result productLintResult
+	var result productworkflow.LintSummaryResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
 	}
@@ -6394,7 +6394,7 @@ func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	ledgerWithCommit := validTestImplementationLedgerJSONL() + "\n" +
 		`{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-18T00:00:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000","changed_paths":["cmd/foo.go"]}`
 	writeTestFile(t, dir, "implementation_ledger.jsonl", ledgerWithCommit)
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	found := false
 	for _, f := range result.Findings {
 		if f.Code == "commit_hash_not_found" || f.Code == "atom_under_reports_path" {
@@ -6425,7 +6425,7 @@ func TestProductLintPerAtomCommitCoverageFailsWithoutCommitHash(t *testing.T) {
 	writeTestFile(t, dir, "adrs/ADR-001-test.md", validTestADRMarkdown())
 	writeTestFile(t, dir, "briefs/test.md", "# Test Brief")
 	writeTestFile(t, dir, "reports/test.json", "{}")
-	result := lintEffortFolder(dir)
+	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
 		t.Fatalf("expected fail for ledger without commit_hash, got %q", result.Status)
 	}
@@ -6484,7 +6484,7 @@ func TestProductLintPerAtomRealGitUnderReporting(t *testing.T) {
 	ledgerEntry := `{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-18T00:06:00Z","implementor_id":"impl","commit_hash":"` + commitHash + `","changed_paths":["cmd/foo.go"]}`
 	writeTestFile(t, effortDir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL()+"\n"+ledgerEntry)
 
-	result := lintEffortFolder(effortDir)
+	result := productworkflow.LintEffortFolder(effortDir)
 
 	var underReportMsgs []string
 	for _, f := range result.Findings {
@@ -6553,7 +6553,7 @@ func TestProductLintPerAtomRealGitMatchingPaths(t *testing.T) {
 	ledgerEntry := `{"record_type":"implementation_completed","task_id":"impl-commit-test","effort_id":"test-effort","timestamp":"2026-05-18T00:06:00Z","implementor_id":"impl","commit_hash":"` + commitHash + `","changed_paths":["cmd/foo.go","internal/bar.go"]}`
 	writeTestFile(t, effortDir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL()+"\n"+ledgerEntry)
 
-	result := lintEffortFolder(effortDir)
+	result := productworkflow.LintEffortFolder(effortDir)
 
 	for _, f := range result.Findings {
 		if f.Code == "atom_under_reports_path" {

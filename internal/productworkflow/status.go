@@ -231,6 +231,48 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 	return view, nil
 }
 
+// LoadWorkflowState reads and validates workflow_state.json from an effort root.
+func LoadWorkflowState(absRoot string) (WorkflowState, error) {
+	data, err := os.ReadFile(filepath.Join(absRoot, "workflow_state.json"))
+	if err != nil {
+		return WorkflowState{}, fmt.Errorf("workflow_state.json: %w", err)
+	}
+	ws, err := ParseWorkflowStateJSON(data)
+	if err != nil {
+		return WorkflowState{}, fmt.Errorf("workflow_state.json: %w", err)
+	}
+	return ws, nil
+}
+
+// LoadCheckedProductStatus builds the product status view with the same lint and metrics inputs used by operator presenters.
+func LoadCheckedProductStatus(absRoot string) (ProductStatusView, *WorkflowState, error) {
+	lintSummary := LintEffortFolder(absRoot)
+	view, statusErr := LoadProductStatus(absRoot, &lintSummary)
+	if statusErr != nil {
+		return view, nil, statusErr
+	}
+	workflowState, workflowStateErr := LoadWorkflowState(absRoot)
+	if workflowStateErr != nil {
+		return view, nil, workflowStateErr
+	}
+	metrics, metricsErr := BuildProductWorkflowMetrics(absRoot)
+	if metricsErr != nil {
+		view.AuditStatus = "fail"
+		view.Findings = append(view.Findings, StatusBlocker{
+			Code:    "metrics_error",
+			Message: metricsErr.Error(),
+		})
+		view.Blockers = append(view.Blockers, StatusBlocker{
+			Code:    "metrics_error",
+			Message: metricsErr.Error(),
+		})
+		markStatusSectionFailure(&view, "metrics")
+	} else {
+		view.Metrics = &metrics
+	}
+	return view, &workflowState, nil
+}
+
 func BuildProductOperatorStatusView(status ProductStatusView, workflowState *WorkflowState) ProductOperatorStatusView {
 	view := ProductOperatorStatusView{
 		SchemaVersion:         "idiom.product_operator_status.v1",
@@ -414,6 +456,21 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 	}
 
 	return view
+}
+
+func markStatusSectionFailure(view *ProductStatusView, name string) {
+	for i := range view.Sections {
+		if view.Sections[i].Name == name {
+			view.Sections[i].Status = "fail"
+			view.Sections[i].FindingCount++
+			return
+		}
+	}
+	view.Sections = append(view.Sections, StatusSection{
+		Name:         name,
+		Status:       "fail",
+		FindingCount: 1,
+	})
 }
 
 func loadProductRecoveryStatus(absRoot string, artifactPaths map[string]string) *ProductRecoveryStatus {
@@ -906,13 +963,15 @@ func ClassifySection(relPath string) string {
 }
 
 type LintSummaryFinding struct {
-	Code    string
-	Path    string
-	Message string
+	Code    string `json:"code"`
+	Path    string `json:"path"`
+	Message string `json:"message"`
 }
 
 type LintSummaryResult struct {
-	Status       string
-	CheckedFiles []string
-	Findings     []LintSummaryFinding
+	Status          string               `json:"status"`
+	EffortRoot      string               `json:"effort_root,omitempty"`
+	CheckedFiles    []string             `json:"checked_files"`
+	Findings        []LintSummaryFinding `json:"findings"`
+	NextValidAction string               `json:"next_valid_action,omitempty"`
 }

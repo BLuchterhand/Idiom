@@ -8,29 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"idiom/internal/productworkflow"
 	"idiom/internal/telemetry"
 )
-
-type productLintFinding struct {
-	Code    string `json:"code"`
-	Path    string `json:"path"`
-	Message string `json:"message"`
-}
-
-type productLintResult struct {
-	Status          string               `json:"status"`
-	EffortRoot      string               `json:"effort_root"`
-	CheckedFiles    []string             `json:"checked_files"`
-	Findings        []productLintFinding `json:"findings"`
-	NextValidAction string               `json:"next_valid_action"`
-}
 
 func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 {
@@ -119,7 +103,7 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 		fmt.Fprintf(stderr, "product lint: resolve effort root: %v\n", err)
 		return 2
 	}
-	result := lintEffortFolder(absRoot)
+	result := productworkflow.LintEffortFolder(absRoot)
 	result.NextValidAction = productLintNextValidAction(result.Status)
 	logCLIPhase(rec, "product_lint", map[string]any{
 		"status":        result.Status,
@@ -151,464 +135,10 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	return 0
 }
 
-func lintEffortFolder(root string) productLintResult {
-	result := productLintResult{
-		EffortRoot:   root,
-		CheckedFiles: []string{},
-		Findings:     []productLintFinding{},
-	}
-	addFinding := func(code, relPath, message string) {
-		result.Findings = append(result.Findings, productLintFinding{
-			Code:    code,
-			Path:    relPath,
-			Message: message,
-		})
-	}
-	var parsedCards []productworkflow.EvidenceCard
-	var parsedMatrix *productworkflow.TraceabilityMatrix
-	var parsedPRD *productworkflow.PRDDocument
-	var parsedADRIndex *productworkflow.ADRIndex
-	var parsedTDD *productworkflow.TDDLedger
-	var parsedWorkflowState *productworkflow.WorkflowState
-	var parsedLedger []productworkflow.ImplementationLedgerRecord
-	var parsedADRs []productworkflow.ParsedADR
-	var parsedInvestigations []productworkflow.InvestigationReport
-
-	checkFile := func(relPath string, validate func([]byte) error) {
-		fullPath := filepath.Join(root, relPath)
-		result.CheckedFiles = append(result.CheckedFiles, relPath)
-		data, err := os.ReadFile(fullPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				addFinding("missing_file", relPath, "required file not found")
-			} else {
-				addFinding("read_error", relPath, err.Error())
-			}
-			return
-		}
-		if err := validate(data); err != nil {
-			addFinding("parse_error", relPath, err.Error())
-		}
-	}
-
-	checkFile("workflow_state.json", func(data []byte) error {
-		ws, err := productworkflow.ParseWorkflowStateJSON(data)
-		if err == nil {
-			parsedWorkflowState = &ws
-		}
-		return err
-	})
-	checkFile("tdd.json", func(data []byte) error {
-		l, err := productworkflow.ParseTDDLedgerJSON(data)
-		if err == nil {
-			parsedTDD = &l
-		}
-		return err
-	})
-	checkFile("evidence/evidence.jsonl", func(data []byte) error {
-		c, err := productworkflow.ParseEvidenceCardsJSONL(data)
-		if err == nil {
-			parsedCards = c
-		}
-		return err
-	})
-	checkFile("evidence/traceability_matrix.json", func(data []byte) error {
-		m, err := productworkflow.ParseTraceabilityMatrixJSON(data)
-		if err == nil {
-			parsedMatrix = &m
-		}
-		return err
-	})
-	checkFile("implementation_ledger.jsonl", func(data []byte) error {
-		recs, err := productworkflow.ParseImplementationLedgerJSONL(data)
-		if err == nil {
-			parsedLedger = recs
-		}
-		return err
-	})
-	checkFile("prd.md", func(data []byte) error {
-		d, err := productworkflow.ParsePRDMarkdown(data)
-		if err == nil {
-			parsedPRD = &d
-		}
-		return err
-	})
-	checkFile("adrs/index.json", func(data []byte) error {
-		idx, err := productworkflow.ParseADRIndexJSON(data)
-		if err != nil {
-			return err
-		}
-		parsedADRIndex = &idx
-		for _, entry := range idx.ADRs {
-			adrRelPath := filepath.Join("adrs", entry.Path)
-			checkFile(adrRelPath, func(adrData []byte) error {
-				adrDoc, adrErr := productworkflow.ParseADRMarkdown(adrData)
-				if adrErr != nil {
-					return adrErr
-				}
-				parsedADRs = append(parsedADRs, productworkflow.ParsedADR{
-					Doc:     adrDoc,
-					RelPath: adrRelPath,
-				})
-				return nil
-			})
-		}
-		return nil
-	})
-
-	reportPaths := map[string]bool{}
-	reportsDir := filepath.Join(root, "reports")
-	entries, err := os.ReadDir(reportsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			addFinding("missing_dir", "reports/", "required directory not found")
-		} else {
-			addFinding("read_error", "reports/", err.Error())
-		}
-	} else {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-			relPath := filepath.Join("reports", entry.Name())
-			result.CheckedFiles = append(result.CheckedFiles, relPath)
-			reportPaths[relPath] = true
-			data, readErr := os.ReadFile(filepath.Join(reportsDir, entry.Name()))
-			if readErr != nil {
-				addFinding("read_error", relPath, readErr.Error())
-				continue
-			}
-			reportType, known := productworkflow.ClassifyReportFileName(entry.Name())
-			if !known {
-				var raw json.RawMessage
-				if err := json.Unmarshal(data, &raw); err != nil {
-					addFinding("parse_error", relPath, fmt.Sprintf("invalid JSON: %v", err))
-				}
-				continue
-			}
-			switch reportType {
-			case "implementation":
-				if _, err := productworkflow.ParseImplementationReportJSON(data); err != nil {
-					addFinding("parse_error", relPath, err.Error())
-				}
-			case "review":
-				if _, err := productworkflow.ParseReviewReportJSON(data); err != nil {
-					addFinding("parse_error", relPath, err.Error())
-				}
-			case "investigation":
-				report, err := productworkflow.ParseInvestigationReportJSON(data)
-				if err != nil {
-					addFinding("parse_error", relPath, err.Error())
-				} else {
-					parsedInvestigations = append(parsedInvestigations, report)
-				}
-			}
-		}
-	}
-
-	briefPaths := map[string]bool{}
-	briefsDir := filepath.Join(root, "briefs")
-	if briefEntries, briefErr := os.ReadDir(briefsDir); briefErr == nil {
-		for _, be := range briefEntries {
-			if !be.IsDir() {
-				briefPaths[filepath.Join("briefs", be.Name())] = true
-			}
-		}
-	}
-
-	if parsedMatrix != nil {
-		var evidenceIDs map[string]bool
-		if parsedCards != nil {
-			evidenceIDs = make(map[string]bool)
-			for _, c := range parsedCards {
-				evidenceIDs[c.CardID] = true
-			}
-		}
-		var prdReqIDs map[string]bool
-		if parsedPRD != nil {
-			prdReqIDs = make(map[string]bool)
-			for _, r := range parsedPRD.Requirements {
-				prdReqIDs[r.ID] = true
-			}
-		}
-		var adrIDSet map[string]bool
-		if parsedADRIndex != nil {
-			adrIDSet = make(map[string]bool)
-			for _, a := range parsedADRIndex.ADRs {
-				adrIDSet[a.ADRID] = true
-			}
-		}
-		tddIDSet := make(map[string]bool)
-		if parsedTDD != nil {
-			for _, o := range parsedTDD.Obligations {
-				tddIDSet[o.ID] = true
-			}
-		}
-		for _, rec := range parsedLedger {
-			for _, id := range rec.TDDObligationsSatisfied {
-				tddIDSet[id] = true
-			}
-		}
-		linkErrs := productworkflow.ValidateTraceabilityCrossLinks(
-			*parsedMatrix, evidenceIDs, prdReqIDs, adrIDSet, tddIDSet, briefPaths, reportPaths,
-		)
-		for _, le := range linkErrs {
-			addFinding("broken_link", "evidence/traceability_matrix.json", le.Message)
-		}
-	}
-
-	if parsedPRD != nil && parsedCards != nil {
-		evidenceIDs := make(map[string]bool)
-		for _, c := range parsedCards {
-			evidenceIDs[c.CardID] = true
-		}
-		for _, req := range parsedPRD.Requirements {
-			for _, ref := range req.EvidenceRefs {
-				if !evidenceIDs[ref] {
-					addFinding("broken_link", "prd.md", fmt.Sprintf(
-						"PRD requirement %s references evidence card %q not found in evidence ledger", req.ID, ref,
-					))
-				}
-			}
-		}
-	}
-
-	if len(parsedADRs) > 0 {
-		var prdReqIDs map[string]bool
-		if parsedPRD != nil {
-			prdReqIDs = make(map[string]bool)
-			for _, r := range parsedPRD.Requirements {
-				prdReqIDs[r.ID] = true
-			}
-		}
-		var evidenceIDs map[string]bool
-		if parsedCards != nil {
-			evidenceIDs = make(map[string]bool)
-			for _, c := range parsedCards {
-				evidenceIDs[c.CardID] = true
-			}
-		}
-		tddIDSet := make(map[string]bool)
-		if parsedTDD != nil {
-			for _, o := range parsedTDD.Obligations {
-				tddIDSet[o.ID] = true
-			}
-		}
-		for _, rec := range parsedLedger {
-			for _, id := range rec.TDDObligationsSatisfied {
-				tddIDSet[id] = true
-			}
-		}
-		adrLinkErrs := productworkflow.ValidateADRCrossLinks(parsedADRs, prdReqIDs, evidenceIDs, tddIDSet)
-		for _, le := range adrLinkErrs {
-			addFinding("broken_link", le.ADRPath, le.Message)
-		}
-		supersessionErrs := productworkflow.ValidateADRSupersessionLinks(parsedADRs)
-		for _, se := range supersessionErrs {
-			addFinding(se.Code, se.ADRPath, se.Message)
-		}
-	}
-
-	if parsedPRD != nil {
-		tddIDSet := make(map[string]bool)
-		if parsedTDD != nil {
-			for _, o := range parsedTDD.Obligations {
-				tddIDSet[o.ID] = true
-			}
-		}
-		for _, rec := range parsedLedger {
-			for _, id := range rec.TDDObligationsSatisfied {
-				tddIDSet[id] = true
-			}
-		}
-		prdTDDErrs := productworkflow.ValidatePRDTDDObligationCrossLinks(parsedPRD.Requirements, tddIDSet)
-		for _, le := range prdTDDErrs {
-			addFinding("broken_link", "tdd.json", le.Message)
-		}
-	}
-
-	{
-		repoRoot := findGitRepoRoot(root)
-		if repoRoot == "" {
-			repoRoot = root
-		}
-		if parsedWorkflowState != nil {
-			parity := productworkflow.EvaluateObsidianParity(repoRoot, parsedWorkflowState, parsedLedger, parsedInvestigations)
-			for _, checked := range parity.CheckedFiles {
-				result.CheckedFiles = append(result.CheckedFiles, checked)
-			}
-			for _, finding := range parity.Findings {
-				addFinding(finding.Code, finding.Path, finding.Message)
-			}
-		}
-	}
-
-	{
-		plannedScopes := map[string]*productworkflow.AtomScope{}
-		closedTasks := map[string]bool{}
-		for _, rec := range parsedLedger {
-			switch rec.RecordType {
-			case "atom_planned":
-				if rec.Scope != nil {
-					plannedScopes[rec.TaskID] = rec.Scope
-				}
-			case "atom_closed":
-				closedTasks[rec.TaskID] = true
-			}
-		}
-		// Scope gate lint is a closeout-time guard for active/in-progress
-		// atoms; historical closed atoms were closed before this gate existed
-		// and remain covered by their recorded review/investigation.
-		taskPaths := map[string][]string{}
-		for _, rec := range parsedLedger {
-			if rec.RecordType != "implementation_completed" && rec.RecordType != "fallback_completion" {
-				continue
-			}
-			if closedTasks[rec.TaskID] {
-				continue
-			}
-			taskPaths[rec.TaskID] = append(taskPaths[rec.TaskID], rec.ChangedPaths...)
-		}
-		sortedTIDs := make([]string, 0, len(taskPaths))
-		for tid := range taskPaths {
-			sortedTIDs = append(sortedTIDs, tid)
-		}
-		sort.Strings(sortedTIDs)
-		for _, tid := range sortedTIDs {
-			paths := taskPaths[tid]
-			scope, ok := plannedScopes[tid]
-			if !ok || scope == nil || len(paths) == 0 {
-				continue
-			}
-			gateResult := productworkflow.EvaluateScopeGate(productworkflow.ScopeGateInput{
-				ExpectedFiles:      scope.ExpectedFiles,
-				AllowedFiles:       scope.AllowedFiles,
-				ForbiddenFiles:     scope.Forbidden,
-				ForbiddenPatterns:  scope.ForbiddenPatterns,
-				ActualChangedPaths: paths,
-			})
-			for _, b := range gateResult.Blockers {
-				msg := fmt.Sprintf("task %s scope_gate_%s: %s", tid, b.Code, b.Message)
-				addFinding("scope_gate_"+b.Code, "implementation_ledger.jsonl", msg)
-			}
-		}
-	}
-
-	var atoms []productworkflow.AtomCoverageCheck
-	for _, rec := range parsedLedger {
-		if rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded" {
-			atoms = append(atoms, productworkflow.AtomCoverageCheck{
-				TaskID:       rec.TaskID,
-				ChangedPaths: rec.ChangedPaths,
-			})
-		}
-	}
-	if len(atoms) > 0 {
-		gitPaths := gitChangedPaths(root)
-		if len(gitPaths) > 0 {
-			rel, _ := filepath.Rel(findGitRepoRoot(root), root)
-			coverageFindings := productworkflow.ValidateLedgerCoverage(atoms, gitPaths, rel)
-			for _, f := range coverageFindings {
-				addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
-			}
-		}
-	}
-
-	{
-		commitHashRequiredAfter := "2026-05-17T23:00:00Z"
-		var commitAtoms []productworkflow.AtomCommitCoverage
-		commitHashSet := map[string]bool{}
-		for _, rec := range parsedLedger {
-			if rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded" {
-				if rec.Timestamp >= commitHashRequiredAfter {
-					commitAtoms = append(commitAtoms, productworkflow.AtomCommitCoverage{
-						TaskID:       rec.TaskID,
-						CommitHash:   rec.CommitHash,
-						ChangedPaths: rec.ChangedPaths,
-					})
-				}
-				if rec.CommitHash != "" {
-					commitHashSet[rec.CommitHash] = true
-				}
-			}
-		}
-		if len(commitAtoms) > 0 {
-			repoRoot := findGitRepoRoot(root)
-			commitPaths := map[string][]string{}
-			if repoRoot != "" {
-				effortRel, _ := filepath.Rel(repoRoot, root)
-				hashes := make([]string, 0, len(commitHashSet))
-				for h := range commitHashSet {
-					hashes = append(hashes, h)
-				}
-				sort.Strings(hashes)
-				rawCommitPaths := gitCommitPaths(repoRoot, hashes)
-				prefix := effortRel + "/"
-				for hash, paths := range rawCommitPaths {
-					var stripped []string
-					for _, p := range paths {
-						if effortRel != "" && strings.HasPrefix(p, prefix) {
-							stripped = append(stripped, strings.TrimPrefix(p, prefix))
-						} else if effortRel != "" && p == effortRel {
-							continue
-						} else {
-							stripped = append(stripped, p)
-						}
-					}
-					commitPaths[hash] = stripped
-				}
-				for i := range commitAtoms {
-					var norm []string
-					for _, p := range commitAtoms[i].ChangedPaths {
-						if effortRel != "" && strings.HasPrefix(p, prefix) {
-							norm = append(norm, strings.TrimPrefix(p, prefix))
-						} else {
-							norm = append(norm, p)
-						}
-					}
-					commitAtoms[i].ChangedPaths = norm
-				}
-			}
-			perAtomFindings := productworkflow.ValidatePerAtomCoverage(commitAtoms, commitPaths)
-			for _, f := range perAtomFindings {
-				addFinding(f.Code, "implementation_ledger.jsonl", f.Message)
-			}
-		}
-	}
-
-	if len(result.Findings) == 0 {
-		result.Status = "pass"
-	} else {
-		result.Status = "fail"
-	}
-
-	wsData, wsErr := os.ReadFile(filepath.Join(root, "workflow_state.json"))
-	if wsErr == nil {
-		var ws struct {
-			ArtifactPaths map[string]string `json:"artifact_paths"`
-		}
-		if json.Unmarshal(wsData, &ws) == nil {
-			if rp, ok := ws.ArtifactPaths["research_profile"]; ok && rp != "" {
-				checkFile(rp, func(data []byte) error {
-					_, err := productworkflow.ParseResearchProfileJSON(data)
-					return err
-				})
-			}
-		}
-		if len(result.Findings) == 0 {
-			result.Status = "pass"
-		} else {
-			result.Status = "fail"
-		}
-	}
-
-	return result
-}
-
 type productAuditSection struct {
-	Name     string               `json:"name"`
-	Status   string               `json:"status"`
-	Findings []productLintFinding `json:"findings"`
+	Name     string                               `json:"name"`
+	Status   string                               `json:"status"`
+	Findings []productworkflow.LintSummaryFinding `json:"findings"`
 }
 
 type productAuditResult struct {
@@ -616,12 +146,12 @@ type productAuditResult struct {
 	EffortRoot      string                                  `json:"effort_root"`
 	CheckedFiles    []string                                `json:"checked_files"`
 	Sections        []productAuditSection                   `json:"sections"`
-	Findings        []productLintFinding                    `json:"findings"`
+	Findings        []productworkflow.LintSummaryFinding    `json:"findings"`
 	Metrics         *productworkflow.ProductWorkflowMetrics `json:"metrics,omitempty"`
 	NextValidAction string                                  `json:"next_valid_action"`
 }
 
-func buildAuditResult(lintResult productLintResult) productAuditResult {
+func buildAuditResult(lintResult productworkflow.LintSummaryResult) productAuditResult {
 	sectionMap := map[string]*productAuditSection{
 		"prd":          {Name: "prd", Status: "pass"},
 		"adr":          {Name: "adr", Status: "pass"},
@@ -686,7 +216,7 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		fmt.Fprintf(stderr, "product audit: resolve effort root: %v\n", err)
 		return 2
 	}
-	lintResult := lintEffortFolder(absRoot)
+	lintResult := productworkflow.LintEffortFolder(absRoot)
 	auditResult := buildAuditResult(lintResult)
 	metrics, metricsErr := productworkflow.BuildProductWorkflowMetrics(absRoot)
 	if metricsErr != nil {
@@ -747,20 +277,20 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	return 0
 }
 
-func productMetricsFinding(err error) productLintFinding {
+func productMetricsFinding(err error) productworkflow.LintSummaryFinding {
 	path := "workflow_state.json"
 	var metricsErr productworkflow.ProductWorkflowMetricsError
 	if errors.As(err, &metricsErr) && strings.TrimSpace(metricsErr.Path) != "" {
 		path = metricsErr.Path
 	}
-	return productLintFinding{
+	return productworkflow.LintSummaryFinding{
 		Code:    "metrics_error",
 		Path:    path,
 		Message: err.Error(),
 	}
 }
 
-func markAuditSectionFailure(result *productAuditResult, name string, finding productLintFinding) {
+func markAuditSectionFailure(result *productAuditResult, name string, finding productworkflow.LintSummaryFinding) {
 	for i := range result.Sections {
 		if result.Sections[i].Name == name {
 			result.Sections[i].Status = "fail"
@@ -771,7 +301,7 @@ func markAuditSectionFailure(result *productAuditResult, name string, finding pr
 	result.Sections = append(result.Sections, productAuditSection{
 		Name:     name,
 		Status:   "fail",
-		Findings: []productLintFinding{finding},
+		Findings: []productworkflow.LintSummaryFinding{finding},
 	})
 }
 
@@ -1112,39 +642,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 2
 	}
 
-	var lintSummary *productworkflow.LintSummaryResult
-	lintResult := lintEffortFolder(absRoot)
-	lintSummary = &productworkflow.LintSummaryResult{
-		Status:       lintResult.Status,
-		CheckedFiles: lintResult.CheckedFiles,
-		Findings:     make([]productworkflow.LintSummaryFinding, len(lintResult.Findings)),
-	}
-	for i, f := range lintResult.Findings {
-		lintSummary.Findings[i] = productworkflow.LintSummaryFinding{
-			Code:    f.Code,
-			Path:    f.Path,
-			Message: f.Message,
-		}
-	}
-
-	view, wsErr := productworkflow.LoadProductStatus(absRoot, lintSummary)
-	if wsErr == nil {
-		metrics, metricsErr := productworkflow.BuildProductWorkflowMetrics(absRoot)
-		if metricsErr != nil {
-			view.AuditStatus = "fail"
-			view.Findings = append(view.Findings, productworkflow.StatusBlocker{
-				Code:    "metrics_error",
-				Message: metricsErr.Error(),
-			})
-			view.Blockers = append(view.Blockers, productworkflow.StatusBlocker{
-				Code:    "metrics_error",
-				Message: metricsErr.Error(),
-			})
-			markStatusSectionFailure(&view, "metrics")
-		} else {
-			view.Metrics = &metrics
-		}
-	}
+	view, workflowState, wsErr := productworkflow.LoadCheckedProductStatus(absRoot)
 	exitCode := 0
 	if wsErr != nil {
 		exitCode = 1
@@ -1154,7 +652,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 	operatorInputView := view
 	view.NextValidActions = productStatusNextValidActions(view, exitCode, wsErr != nil)
-	operatorStatus := productworkflow.BuildProductOperatorStatusView(operatorInputView, readProductOperatorWorkflowState(absRoot, wsErr))
+	operatorStatus := productworkflow.BuildProductOperatorStatusView(operatorInputView, workflowState)
 
 	logCLIPhase(rec, "product_status", map[string]any{
 		"audit_status":  view.AuditStatus,
@@ -1247,112 +745,12 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	return exitCode
 }
 
-func readProductOperatorWorkflowState(absRoot string, statusErr error) *productworkflow.WorkflowState {
-	if statusErr != nil {
-		return nil
-	}
-	data, err := os.ReadFile(filepath.Join(absRoot, "workflow_state.json"))
-	if err != nil {
-		return nil
-	}
-	ws, err := productworkflow.ParseWorkflowStateJSON(data)
-	if err != nil {
-		return nil
-	}
-	return &ws
-}
-
 func printProductOperatorStatus(stdout io.Writer, effortName string, view productworkflow.ProductOperatorStatusView) {
-	fmt.Fprintf(stdout, "product operator status: %s %s\n", effortName, view.EffortID)
-	fmt.Fprintf(stdout, "  authority: %s\n", view.ContinuationAuthority)
-	fmt.Fprintf(stdout, "  state: %s/%s  audit: %s\n", view.CurrentPhase, view.CurrentState, view.AuditStatus)
-	fmt.Fprintf(stdout, "  context_pack: %s  freshness: %s\n", view.ContextPackID, view.FreshnessState)
-	printProductRecoveryStatus(stdout, view.Recovery)
-	if len(view.Blockers) > 0 {
-		fmt.Fprintf(stdout, "  blockers (%d):\n", len(view.Blockers))
-		for _, blocker := range view.Blockers {
-			fmt.Fprintf(stdout, "    [%s] %s (%s)\n", blocker.Code, blocker.Message, blocker.Source)
-		}
-	}
-	if len(view.OpenObligations) > 0 {
-		fmt.Fprintf(stdout, "  open_obligations (%d): %s\n", len(view.OpenObligations), strings.Join(view.OpenObligations, ", "))
-	}
-	if len(view.NextValidActions) > 0 {
-		fmt.Fprintf(stdout, "  next_valid_actions (%d):\n", len(view.NextValidActions))
-		for _, action := range view.NextValidActions {
-			fmt.Fprintf(stdout, "    - %s [%s] owner=%s dispatchable=%t runnable_now=%t", action.Label, action.ID, action.Owner, action.Dispatchable, action.RunnableNow)
-			if len(action.BlockedBy) > 0 {
-				fmt.Fprintf(stdout, " blocked_by=%s", strings.Join(action.BlockedBy, ","))
-			}
-			if action.CommandHint != "" {
-				fmt.Fprintf(stdout, " command_hint=%s", action.CommandHint)
-			}
-			if action.Message != "" {
-				fmt.Fprintf(stdout, "  %s", action.Message)
-			}
-			fmt.Fprintln(stdout)
-		}
-	}
-	if view.CheckedFileCount > 0 {
-		fmt.Fprintf(stdout, "  files_checked: %d\n", view.CheckedFileCount)
-	}
-	if view.Metrics != nil {
-		metrics := *view.Metrics
-		fmt.Fprintf(stdout, "  metrics: phase=%s state=%s revision=%d gates=%d blockers=%d obligations=%d next_actions=%d\n",
-			metrics.CurrentPhase,
-			metrics.CurrentState,
-			metrics.StateRevision,
-			len(metrics.GateStatusCounts),
-			metrics.BlockerCount,
-			metrics.OpenObligationCount,
-			metrics.NextValidActionCount,
-		)
-	}
-	for _, sec := range view.Sections {
-		fmt.Fprintf(stdout, "  %s: %s", sec.Name, sec.Status)
-		if sec.FindingCount > 0 {
-			fmt.Fprintf(stdout, " (%d findings)", sec.FindingCount)
-		}
-		fmt.Fprintln(stdout)
-	}
-	if len(view.ArtifactPaths) > 0 {
-		fmt.Fprintf(stdout, "  artifacts (%d):\n", len(view.ArtifactPaths))
-		for _, artifact := range view.ArtifactPaths {
-			fmt.Fprintf(stdout, "    %s: %s\n", artifact.Name, artifact.Path)
-		}
-	}
+	fmt.Fprint(stdout, productworkflow.FormatProductOperatorStatusText(effortName, view))
 }
 
 func printProductRecoveryStatus(stdout io.Writer, recoveryStatus *productworkflow.ProductRecoveryStatus) {
-	if recoveryStatus == nil {
-		return
-	}
-	fmt.Fprintf(stdout, "  recovery: %s", recoveryStatus.Status)
-	if recoveryStatus.NextValidAction != "" {
-		fmt.Fprintf(stdout, " next=%s", recoveryStatus.NextValidAction)
-	}
-	if recoveryStatus.CandidateAtomCount > 0 {
-		fmt.Fprintf(stdout, " candidate_atoms=%d", recoveryStatus.CandidateAtomCount)
-	}
-	if recoveryStatus.CompletedAtomCount > 0 {
-		fmt.Fprintf(stdout, " completed_atoms=%d", recoveryStatus.CompletedAtomCount)
-	}
-	if recoveryStatus.RemainingAtomCount > 0 && recoveryStatus.RemainingAtomCount != recoveryStatus.CandidateAtomCount {
-		fmt.Fprintf(stdout, " remaining_atoms=%d", recoveryStatus.RemainingAtomCount)
-	}
-	if recoveryStatus.ReconciliationPath != "" {
-		fmt.Fprintf(stdout, " reconciliation=%s", recoveryStatus.ReconciliationPath)
-	}
-	if recoveryStatus.PacketPath != "" {
-		fmt.Fprintf(stdout, " packet=%s", recoveryStatus.PacketPath)
-	}
-	fmt.Fprintln(stdout)
-	if len(recoveryStatus.Blockers) > 0 {
-		fmt.Fprintf(stdout, "  recovery_blockers (%d):\n", len(recoveryStatus.Blockers))
-		for _, blocker := range recoveryStatus.Blockers {
-			fmt.Fprintf(stdout, "    [%s] %s\n", blocker.Code, blocker.Message)
-		}
-	}
+	fmt.Fprint(stdout, productworkflow.FormatProductRecoveryStatusText(recoveryStatus))
 }
 
 func productLintNextValidAction(status string) string {
@@ -1393,21 +791,6 @@ func productStatusNextValidActions(view productworkflow.ProductStatusView, exitC
 		return view.NextValidActions
 	}
 	return []string{"run `idiom product audit --effort-root <path>` for detailed section findings"}
-}
-
-func markStatusSectionFailure(view *productworkflow.ProductStatusView, name string) {
-	for i := range view.Sections {
-		if view.Sections[i].Name == name {
-			view.Sections[i].Status = "fail"
-			view.Sections[i].FindingCount++
-			return
-		}
-	}
-	view.Sections = append(view.Sections, productworkflow.StatusSection{
-		Name:         name,
-		Status:       "fail",
-		FindingCount: 1,
-	})
 }
 
 func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -3229,72 +2612,4 @@ func writeEvidenceCardsJSONL(path string, cards []productworkflow.EvidenceCard) 
 		b.WriteByte('\n')
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
-}
-
-func gitChangedPaths(effortRoot string) []string {
-	repoRoot := findGitRepoRoot(effortRoot)
-	if repoRoot == "" {
-		return nil
-	}
-	rel, err := filepath.Rel(repoRoot, effortRoot)
-	if err != nil {
-		return nil
-	}
-	out, err := exec.Command("git", "-C", repoRoot, "log", "--reverse", "--format=%H", "--", rel).Output()
-	if err != nil {
-		return nil
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return nil
-	}
-	firstCommit := lines[0]
-	diffOut, err := exec.Command("git", "-C", repoRoot, "diff", "--name-only", firstCommit+"^", "HEAD").Output()
-	if err != nil {
-		diffOut, err = exec.Command("git", "-C", repoRoot, "diff", "--name-only", firstCommit, "HEAD").Output()
-		if err != nil {
-			return nil
-		}
-	}
-	var paths []string
-	for _, line := range strings.Split(strings.TrimSpace(string(diffOut)), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			paths = append(paths, line)
-		}
-	}
-	return paths
-}
-
-func gitCommitPaths(repoRoot string, hashes []string) map[string][]string {
-	result := make(map[string][]string)
-	for _, h := range hashes {
-		out, err := exec.Command("git", "-C", repoRoot, "show", "--name-only", "--format=", h).Output()
-		if err != nil {
-			continue
-		}
-		var paths []string
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				paths = append(paths, line)
-			}
-		}
-		result[h] = paths
-	}
-	return result
-}
-
-func findGitRepoRoot(start string) string {
-	dir := start
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-		dir = parent
-	}
 }

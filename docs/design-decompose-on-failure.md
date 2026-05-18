@@ -15,10 +15,11 @@ packet, promote one candidate recovery atom into a normal brief after brief
 lint, atom intake, and recovery scope gates pass, and reconcile completed atoms
 back to the original packet. Promotion is deliberately not dispatch authority;
 the promoted brief still enters the usual lane workflow. Product/operator
-status, audit-watch, product-evidence, and release-evidence now project
-recovery state from bounded artifacts and telemetry events. Remaining
-extensions are TUI presenters, deeper residual-work evidence, ranker learning
-inputs, and non-plan-execute adapters.
+status, the TUI `/product-status` presenter, audit-watch, product-evidence, and
+release-evidence now project recovery state from bounded artifacts and
+telemetry events. Remaining extensions are broader TUI continuation/handoff
+actions, deeper residual-work evidence, ranker learning inputs, and
+non-plan-execute adapters.
 
 Verified adjacent implementation:
 
@@ -62,6 +63,13 @@ Verified adjacent implementation:
   authority. Valid reconciliation artifacts close the recovery blocker only when
   their packet digest, completed/remaining atom manifest, and passing
   required-test evidence match the current packet.
+- `internal/app/product_status.go` exposes `/product-status [--effort-root
+  <path>]` in the TUI. It renders the same shared operator status text as
+  `idiom product status --operator-view` from the same lint, metrics, workflow
+  state, and recovery inputs, including open recovery packet blockers and the
+  non-dispatchable recovery command hint. The rendered transcript entry is
+  harness/operator-authored and is not replayed as an assistant message in
+  later model context.
 - `cmd/idiom/audit.go` treats recovery failure-record and decomposition-packet
   events as audit-watch triggers, summarizes failure classes, candidate atom
   counts, next valid actions, and artifact paths, and keeps the packet
@@ -73,10 +81,11 @@ Verified adjacent implementation:
   malformed, missing, or stale recovery artifacts block the export without
   storing prompt, transcript, or file-body content.
 
-Those pieces now cover the operator-facing plan-execute loop. The remaining
-design work is to broaden adapters, deepen residual-work evidence, feed
-deterministic recovered outcomes into learning, and keep the original failure
-visible without letting the model loop.
+Those pieces now cover the operator-facing plan-execute loop across CLI,
+sidecar, product workflow, evidence exports, and the first TUI product-status
+projection. The remaining design work is to broaden adapters, deepen
+residual-work evidence, feed deterministic recovered outcomes into learning,
+and keep the original failure visible without letting the model loop.
 
 ## Problem
 
@@ -330,7 +339,7 @@ not-applicable for a given failure class.
 | Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. Landed for local `.idiom/recovery` artifacts with metadata-only rollups. |
 | `idiom ranker` | Accept only deterministic, verified recovery outcomes as learning input; record whether recovery improved localization or packet quality. |
 | Queue/backend/local-ops/doctor | Classify readiness, queue, backend, timeout, or capacity failures separately from implementation failures so decomposition does not hide environment problems. |
-| TUI/prompt dispatch | Render the same status and next-action model as CLI; do not infer recovery state from transcript prose. |
+| TUI/prompt dispatch | `/product-status` renders the same operator recovery status and next-action model as CLI; broader continuation/handoff actions should keep using durable workflow state and must not infer recovery state from transcript prose. |
 | `idiom tool` and MCP | Expose read-only recovery inspection with the same sidecar envelope and profile rules as other tools; keep write/promote actions outside discovery profile. |
 
 The initial sidecar/tool shape should be:
@@ -467,7 +476,9 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 5: TUI, Sidecar, And Learning
 
-- Render decomposition actions in the TUI operator view.
+- Status: the TUI `/product-status` slash command renders the shared product
+  operator view, including recovery packet blockers, dispatchability, and the
+  non-dispatchable recovery inspection command hint.
 - Status: sidecar read-only parity landed for `recovery_inspect` and
   `recovery_status`; artifact-writing `recovery_decompose` is intentionally
   default-profile only, and `recovery_promote`/`recovery_reconcile` remain
