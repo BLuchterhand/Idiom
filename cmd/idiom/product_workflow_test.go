@@ -2777,6 +2777,128 @@ func TestProductStatusSemanticInvalidWorkflowStateExits1(t *testing.T) {
 	}
 }
 
+func TestProductEffortsJSONListsFiltersAndSummarizes(t *testing.T) {
+	root := t.TempDir()
+	effortsRoot := filepath.Join(root, "docs", "product-workflows", "efforts")
+	writeTestFile(t, effortsRoot, filepath.Join("started", "beta", "workflow_state.json"), productEffortsCLIWorkflowState("beta-effort", "Beta Work", "started", "implementing", "beta"))
+	writeTestFile(t, effortsRoot, filepath.Join("unstarted", "alpha", "workflow_state.json"), productEffortsCLIWorkflowState("alpha-effort", "Alpha Work", "unstarted", "planned", "alpha"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductEfforts([]string{"--root", effortsRoot, "--status", "started", "--query", "beta", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected efforts to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productworkflow.ProductEffortsResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "pass" || result.Counts.EffortCount != 1 || len(result.Efforts) != 1 {
+		t.Fatalf("expected one matching effort, got %#v", result)
+	}
+	effort := result.Efforts[0]
+	if effort.EffortID != "beta-effort" || effort.RelativeFolderPath != "started/beta" {
+		t.Fatalf("unexpected effort summary: %#v", effort)
+	}
+	if effort.ContextPackID != "pack-beta-effort" || effort.FreshnessState != "current" {
+		t.Fatalf("expected context summary, got %#v", effort)
+	}
+	if effort.BlockerCount != 1 || effort.OpenObligationCount != 1 {
+		t.Fatalf("expected blocker and obligation counts, got %#v", effort)
+	}
+	if len(effort.NextValidActions) != 1 || effort.NextValidActions[0] != "submit_for_verification" {
+		t.Fatalf("expected next action summary, got %#v", effort.NextValidActions)
+	}
+}
+
+func TestProductEffortsTextReportsTypedWorkflowStateFindings(t *testing.T) {
+	root := t.TempDir()
+	effortsRoot := filepath.Join(root, "docs", "product-workflows", "efforts")
+	if err := os.MkdirAll(filepath.Join(effortsRoot, "started", "missing"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, effortsRoot, filepath.Join("started", "bad", "workflow_state.json"), `{not valid json`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductEfforts([]string{"--root", effortsRoot, "--status", "started"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected malformed effort state to fail, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"product efforts: efforts FAILED",
+		"[invalid_workflow_state:started/bad/workflow_state.json]",
+		"[missing_workflow_state:started/missing/workflow_state.json]",
+		"next: fix product effort workflow_state findings before relying on the effort browser",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected text output to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestProductEffortsTextIncludesFullSummaryFields(t *testing.T) {
+	root := t.TempDir()
+	effortsRoot := filepath.Join(root, "docs", "product-workflows", "efforts")
+	writeTestFile(t, effortsRoot, filepath.Join("started", "beta", "workflow_state.json"), productEffortsCLIWorkflowState("beta-effort", "Beta Work", "started", "implementing", "beta"))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductEfforts([]string{"--root", effortsRoot}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected efforts to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"title=\"Beta Work\"",
+		"last_event=evt-007",
+		"context_pack=pack-beta-effort",
+		"freshness=current",
+		"next_actions: submit_for_verification",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected text output to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestProductEffortsUsageErrorsAreTyped(t *testing.T) {
+	root := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := runProductEfforts([]string{"--root", root, "--status", "later", "--json"}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected unknown status usage error, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productworkflow.ProductEffortsResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "fail" || len(result.Findings) != 1 || result.Findings[0].Code != "invalid_status_filter" {
+		t.Fatalf("expected typed invalid status finding, got %#v", result)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runProductEfforts([]string{"--root", filepath.Join("..", "efforts"), "--json"}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected unsafe root usage error, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Code != "unsafe_efforts_root" {
+		t.Fatalf("expected unsafe root finding, got %#v", result)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runProductEfforts([]string{"--root", root, "extra"}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected stray positional argument usage error, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unexpected arguments: extra") {
+		t.Fatalf("expected unexpected argument message, got stderr=%s", stderr.String())
+	}
+}
+
 func TestProductStatusUsageErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runProductStatus([]string{}, &stdout, &stderr, nil)
@@ -2945,6 +3067,29 @@ func validTestWorkflowStateJSON() string {
 		"folder_path":"docs/test",
 		"durability_level":"source_controlled",
 		"next_valid_actions":["complete"]
+	}`
+}
+
+func productEffortsCLIWorkflowState(effortID, title, bucket, state, folderName string) string {
+	return `{
+		"schema_version":"idiom.product_workflow_state.v0.fixture",
+		"effort_id":"` + effortID + `",
+		"task_id":"impl-test",
+		"title":"` + title + `",
+		"status_bucket":"` + bucket + `",
+		"current_phase":"phase-1",
+		"current_state":"` + state + `",
+		"state_revision":7,
+		"last_event_id":"evt-007",
+		"artifact_paths":{"events":"events.jsonl"},
+		"context":{"context_pack_id":"pack-` + effortID + `","freshness_state":"current"},
+		"coverage":{"coverage_tier":"unit"},
+		"open_obligations":["TDD-001"],
+		"blockers":["blocked-a"],
+		"privacy":{"redaction_status":"applied"},
+		"folder_path":"docs/product-workflows/efforts/` + bucket + `/` + folderName + `",
+		"next_valid_actions":["submit_for_verification"],
+		"durability_level":"source_controlled"
 	}`
 }
 

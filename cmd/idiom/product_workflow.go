@@ -41,6 +41,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductLint(args[1:], stdout, stderr, rec)
 	case "audit":
 		return runProductAudit(args[1:], stdout, stderr, rec)
+	case "efforts":
+		return runProductEfforts(args[1:], stdout, stderr, rec)
 	case "status":
 		return runProductStatus(args[1:], stdout, stderr, rec)
 	case "research":
@@ -69,6 +71,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  idiom product lint --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
+	fmt.Fprintln(w, "  idiom product efforts [--root docs/product-workflows/efforts] [--status unstarted|started|closed|all] [--query <text>] [--json]")
 	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--operator-view] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --plan-runs [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
@@ -766,6 +769,126 @@ func markAuditSectionFailure(result *productAuditResult, name string, finding pr
 		Status:   "fail",
 		Findings: []productLintFinding{finding},
 	})
+}
+
+func runProductEfforts(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product efforts", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	root := productworkflow.DefaultProductEffortsRoot
+	statusFilter := "all"
+	var query string
+	var jsonOutput bool
+	fs.StringVar(&root, "root", productworkflow.DefaultProductEffortsRoot, "path to the product efforts root")
+	fs.StringVar(&statusFilter, "status", "all", "filter by status bucket: unstarted, started, closed, or all")
+	fs.StringVar(&query, "query", "", "substring filter over effort summaries")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintf(stderr, "product efforts: unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
+		return 2
+	}
+
+	result, browseErr := productworkflow.BrowseProductEfforts(productworkflow.ProductEffortsOptions{
+		Root:   root,
+		Status: statusFilter,
+		Query:  query,
+	})
+
+	logCLIPhase(rec, "product_efforts", map[string]any{
+		"status":        result.Status,
+		"effort_count":  result.Counts.EffortCount,
+		"finding_count": result.Counts.FindingCount,
+		"status_filter": result.StatusFilter,
+	})
+
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(stderr, "product efforts: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		printProductEfforts(stdout, result)
+	}
+
+	if browseErr != nil {
+		return productEffortsErrorCode(result)
+	}
+	if result.Status != "pass" {
+		return 1
+	}
+	return 0
+}
+
+func productEffortsErrorCode(result productworkflow.ProductEffortsResult) int {
+	for _, finding := range result.Findings {
+		switch finding.Code {
+		case "invalid_status_filter", "unsafe_efforts_root":
+			return 2
+		}
+	}
+	return 1
+}
+
+func printProductEfforts(w io.Writer, result productworkflow.ProductEffortsResult) {
+	label := "OK"
+	if result.Status != "pass" {
+		label = "FAILED"
+	}
+	rootLabel := result.Root
+	if rootLabel == "" {
+		rootLabel = productworkflow.DefaultProductEffortsRoot
+	}
+	fmt.Fprintf(w, "product efforts: %s %s\n", filepath.Base(rootLabel), label)
+	if result.Query != "" {
+		fmt.Fprintf(w, "  filters: status=%s query=%q\n", result.StatusFilter, result.Query)
+	} else {
+		fmt.Fprintf(w, "  filters: status=%s\n", result.StatusFilter)
+	}
+	fmt.Fprintf(w, "  counts: efforts=%d unstarted=%d started=%d closed=%d findings=%d\n",
+		result.Counts.EffortCount,
+		result.Counts.Unstarted,
+		result.Counts.Started,
+		result.Counts.Closed,
+		result.Counts.FindingCount,
+	)
+	if len(result.Efforts) > 0 {
+		fmt.Fprintf(w, "  efforts (%d):\n", len(result.Efforts))
+		for _, effort := range result.Efforts {
+			fmt.Fprintf(w, "    [%s] %s  %s/%s  task=%s  title=%q  revision=%d  last_event=%s  blockers=%d obligations=%d  path=%s\n",
+				effort.StatusBucket,
+				effort.EffortID,
+				effort.CurrentPhase,
+				effort.CurrentState,
+				effort.TaskID,
+				effort.Title,
+				effort.StateRevision,
+				effort.LastEventID,
+				effort.BlockerCount,
+				effort.OpenObligationCount,
+				effort.RelativeFolderPath,
+			)
+			if effort.ContextPackID != "" || effort.FreshnessState != "" {
+				fmt.Fprintf(w, "      context_pack=%s freshness=%s\n", effort.ContextPackID, effort.FreshnessState)
+			}
+			if len(effort.NextValidActions) > 0 {
+				fmt.Fprintf(w, "      next_actions: %s\n", strings.Join(effort.NextValidActions, ", "))
+			}
+		}
+	}
+	if len(result.Findings) > 0 {
+		fmt.Fprintf(w, "  findings (%d):\n", len(result.Findings))
+		for _, finding := range result.Findings {
+			fmt.Fprintf(w, "    [%s] %s: %s\n", finding.ID, finding.Path, finding.Message)
+		}
+	}
+	fmt.Fprintf(w, "  next: %s\n", result.NextValidAction)
 }
 
 func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
