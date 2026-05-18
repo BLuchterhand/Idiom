@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,6 +34,7 @@ type recoverInspectReport struct {
 	FailureKind       string                  `json:"failure_kind,omitempty"`
 	NextAction        string                  `json:"next_valid_action"`
 	Summary           string                  `json:"summary,omitempty"`
+	PartialState      recovery.PartialState   `json:"partial_state"`
 	Record            *recovery.FailureRecord `json:"record,omitempty"`
 	Error             string                  `json:"error,omitempty"`
 }
@@ -111,7 +114,7 @@ func buildRecoverInspectReport(root string, sessionID string) (recoverInspectRep
 		return recoverInspectReport{}, err
 	}
 	if found {
-		return recoverInspectReportFromRecord(record, recordPath, true), nil
+		return recoverInspectReportFromRecord(root, record, recordPath, true), nil
 	}
 	state, statePath, stateFound, err := planexecute.TryLoadProgressState(root, sessionID)
 	if err != nil {
@@ -135,12 +138,15 @@ func buildRecoverInspectReport(root string, sessionID string) (recoverInspectRep
 	if err != nil {
 		return recoverInspectReport{}, err
 	}
-	report := recoverInspectReportFromRecord(computed, "", false)
+	report := recoverInspectReportFromRecord(root, computed, "", false)
 	report.ProgressStatePath = statePath
 	return report, nil
 }
 
-func recoverInspectReportFromRecord(record recovery.FailureRecord, recordPath string, recorded bool) recoverInspectReport {
+func recoverInspectReportFromRecord(root string, record recovery.FailureRecord, recordPath string, recorded bool) recoverInspectReport {
+	partial := inspectRecoveryPartialState(root, record)
+	record.PartialState = partial
+	record.NextAction = recovery.NextActionForPartialState(record, partial)
 	return recoverInspectReport{
 		Type:              "idiom.recover.inspect.v1",
 		Status:            "failed",
@@ -153,6 +159,7 @@ func recoverInspectReportFromRecord(record recovery.FailureRecord, recordPath st
 		FailureKind:       record.Failure.Kind,
 		NextAction:        record.NextAction,
 		Summary:           record.Failure.Summary,
+		PartialState:      partial,
 		Record:            &record,
 	}
 }
@@ -192,9 +199,65 @@ func writeRecoverInspectReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 	if report.RecordPath != "" {
 		fmt.Fprintf(stdout, "record: %s\n", report.RecordPath)
 	}
+	if report.PartialState.DirtyStatus != "" {
+		fmt.Fprintf(stdout, "dirty_status: %s\n", report.PartialState.DirtyStatus)
+	}
+	if report.PartialState.ScopeStatus != "" {
+		fmt.Fprintf(stdout, "scope_status: %s\n", report.PartialState.ScopeStatus)
+	}
 	fmt.Fprintf(stdout, "next_valid_action: %s\n", report.NextAction)
 	if report.Summary != "" {
 		fmt.Fprintf(stdout, "summary: %s\n", report.Summary)
 	}
 	return code
+}
+
+func inspectRecoveryPartialState(root string, record recovery.FailureRecord) recovery.PartialState {
+	dirtyPaths, err := gitDirtyPaths(root)
+	if err != nil {
+		return record.PartialState
+	}
+	return recovery.PartialStateForDirtyPaths(
+		dirtyPaths,
+		record.PartialState.ChangedPaths,
+		record.SourceRun.RequiredEditPaths,
+		record.SourceRun.AllowedEditPaths,
+		record.PartialState.TotalEdits,
+	)
+}
+
+func gitDirtyPaths(root string) ([]string, error) {
+	cmd := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=all")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseGitPorcelainPaths(string(out)), nil
+}
+
+func parseGitPorcelainPaths(output string) []string {
+	seen := map[string]bool{}
+	var paths []string
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if strings.Contains(path, " -> ") {
+			parts := strings.Split(path, " -> ")
+			path = parts[len(parts)-1]
+		}
+		path = filepath.ToSlash(strings.Trim(path, `"`))
+		if path == "" || isRecoveryInternalPath(path) || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func isRecoveryInternalPath(path string) bool {
+	return strings.HasPrefix(path, ".idiom/recovery/") ||
+		strings.HasPrefix(path, ".idiom/plan-execute/")
 }

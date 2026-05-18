@@ -3,6 +3,7 @@ package recovery
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,4 +73,54 @@ func TestClassifyPlanExecuteFailureRecognizesBudgetExhaustion(t *testing.T) {
 	if got != FailureClassBudgetExhausted {
 		t.Fatalf("class=%q", got)
 	}
+}
+
+func TestBuildPlanExecuteFailureRecordRedactsSensitiveDetails(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:     "session-3",
+		FailureKind:   "executor_failed",
+		FailureReason: "executor failed\nOPENAI_API_KEY=sk-live-secret",
+		ExecutorFailures: []string{
+			"request failed with bearer abc123",
+		},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	for _, value := range []string{record.Failure.Summary, record.Failure.EvidenceRefs[0].Summary} {
+		if value == "" {
+			t.Fatalf("expected redacted value")
+		}
+		if containsAny(value, []string{"OPENAI_API_KEY", "sk-live-secret", "bearer abc123"}) {
+			t.Fatalf("sensitive value was not redacted: %q", value)
+		}
+	}
+	if !containsAny(record.Failure.Summary, []string{"[redacted sensitive recovery detail]"}) {
+		t.Fatalf("summary did not include redaction marker: %q", record.Failure.Summary)
+	}
+}
+
+func TestPartialStateForDirtyPathsClassifiesOutOfScope(t *testing.T) {
+	partial := PartialStateForDirtyPaths(
+		[]string{"unexpected.go"},
+		[]string{"allowed.go"},
+		[]string{"allowed.go"},
+		nil,
+		1,
+	)
+	if partial.DirtyStatus != DirtyStatusDirtyOutScope {
+		t.Fatalf("dirty status=%q", partial.DirtyStatus)
+	}
+	if partial.ScopeStatus != ScopeStatusOutOfScope {
+		t.Fatalf("scope status=%q", partial.ScopeStatus)
+	}
+}
+
+func containsAny(value string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
 }

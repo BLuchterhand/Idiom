@@ -32,6 +32,16 @@ const (
 	NextActionInspectFailure      = "inspect_failure"
 	NextActionHumanIntervention   = "human_intervention"
 	NextActionNone                = "none"
+
+	DirtyStatusNotChecked    = "not_checked"
+	DirtyStatusClean         = "clean"
+	DirtyStatusDirtyInScope  = "dirty_in_scope"
+	DirtyStatusDirtyOutScope = "dirty_out_of_scope"
+
+	ScopeStatusNotChecked = "not_checked"
+	ScopeStatusNone       = "none"
+	ScopeStatusInScope    = "in_scope"
+	ScopeStatusOutOfScope = "out_of_scope"
 )
 
 type PlanExecuteFailureInput struct {
@@ -138,7 +148,7 @@ func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time)
 			EvidenceRefs: planExecuteEvidenceRefs(input),
 		},
 		PartialState: PartialState{
-			DirtyStatus:  "not_checked",
+			DirtyStatus:  DirtyStatusNotChecked,
 			ChangedPaths: cleanPathList(input.ChangedPaths),
 			TotalEdits:   input.TotalEdits,
 			ScopeStatus:  scopeStatus(input.ChangedPaths, input.RequiredEditPaths, input.AllowedEditPaths),
@@ -146,6 +156,39 @@ func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time)
 		NextAction: nextActionForFailureClass(failureClass),
 	}
 	return record, nil
+}
+
+func PartialStateForDirtyPaths(dirtyPaths []string, changedPaths []string, requiredPaths []string, allowedPaths []string, totalEdits int) PartialState {
+	changed := cleanPathList(changedPaths)
+	dirty := cleanPathList(dirtyPaths)
+	partial := PartialState{
+		DirtyStatus:  DirtyStatusClean,
+		ChangedPaths: changed,
+		TotalEdits:   totalEdits,
+		ScopeStatus:  scopeStatus(changed, requiredPaths, allowedPaths),
+	}
+	if len(dirty) == 0 {
+		return partial
+	}
+	partial.ChangedPaths = cleanPathList(append(changed, dirty...))
+	dirtyScope := scopeStatus(dirty, append(requiredPaths, changed...), allowedPaths)
+	if dirtyScope == ScopeStatusOutOfScope || dirtyScope == ScopeStatusNotChecked {
+		partial.DirtyStatus = DirtyStatusDirtyOutScope
+		partial.ScopeStatus = ScopeStatusOutOfScope
+		return partial
+	}
+	partial.DirtyStatus = DirtyStatusDirtyInScope
+	if partial.ScopeStatus != ScopeStatusOutOfScope {
+		partial.ScopeStatus = ScopeStatusInScope
+	}
+	return partial
+}
+
+func NextActionForPartialState(record FailureRecord, partial PartialState) string {
+	if partial.DirtyStatus == DirtyStatusDirtyOutScope || partial.ScopeStatus == ScopeStatusOutOfScope {
+		return NextActionHumanIntervention
+	}
+	return record.NextAction
 }
 
 func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass string) string {
@@ -294,10 +337,10 @@ func validRecoveryComponent(value string) bool {
 
 func failureSummary(input PlanExecuteFailureInput) string {
 	if reason := strings.TrimSpace(input.FailureReason); reason != "" {
-		return truncate(reason, 2000)
+		return sanitizeAndTruncate(reason, 2000)
 	}
 	if err := strings.TrimSpace(input.ReviewError); err != "" {
-		return truncate(err, 2000)
+		return sanitizeAndTruncate(err, 2000)
 	}
 	if kind := strings.TrimSpace(input.FailureKind); kind != "" {
 		return kind
@@ -318,7 +361,7 @@ func planExecuteEvidenceRefs(input PlanExecuteFailureInput) []EvidenceRef {
 	}
 	for _, failure := range input.ExecutorFailures {
 		if failure = strings.TrimSpace(failure); failure != "" {
-			refs = append(refs, EvidenceRef{Kind: "executor_failure", Summary: truncate(failure, 500)})
+			refs = append(refs, EvidenceRef{Kind: "executor_failure", Summary: sanitizeAndTruncate(failure, 500)})
 		}
 	}
 	if status := strings.TrimSpace(input.ReviewStatus); status != "" {
@@ -375,7 +418,7 @@ func looksStaleContext(reasonLower string) bool {
 func scopeStatus(changedPaths []string, requiredPaths []string, allowedPaths []string) string {
 	changed := cleanPathList(changedPaths)
 	if len(changed) == 0 {
-		return "none"
+		return ScopeStatusNone
 	}
 	allowed := map[string]bool{}
 	for _, path := range cleanPathList(requiredPaths) {
@@ -385,14 +428,14 @@ func scopeStatus(changedPaths []string, requiredPaths []string, allowedPaths []s
 		allowed[path] = true
 	}
 	if len(allowed) == 0 {
-		return "not_checked"
+		return ScopeStatusNotChecked
 	}
 	for _, path := range changed {
 		if !allowed[path] {
-			return "out_of_scope"
+			return ScopeStatusOutOfScope
 		}
 	}
-	return "in_scope"
+	return ScopeStatusInScope
 }
 
 func cleanPathList(paths []string) []string {
@@ -423,4 +466,53 @@ func truncate(value string, limit int) string {
 		return value
 	}
 	return strings.TrimSpace(value[:limit]) + "..."
+}
+
+func sanitizeAndTruncate(value string, limit int) string {
+	return truncate(RedactRecoveryText(value), limit)
+}
+
+func RedactRecoveryText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		if looksSensitiveRecoveryLine(line) {
+			lines[i] = "[redacted sensitive recovery detail]"
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func looksSensitiveRecoveryLine(line string) bool {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "-----begin ") && strings.Contains(lower, "private key") {
+		return true
+	}
+	if strings.Contains(lower, "bearer ") || strings.Contains(lower, "sk-") {
+		return true
+	}
+	hasAssignment := strings.Contains(line, "=") || strings.Contains(line, ":")
+	if !hasAssignment {
+		return false
+	}
+	for _, indicator := range []string{
+		"api_key",
+		"api key",
+		"apikey",
+		"access_token",
+		"refresh_token",
+		"auth_token",
+		"password",
+		"passwd",
+		"credential",
+		"secret",
+	} {
+		if strings.Contains(lower, indicator) {
+			return true
+		}
+	}
+	return false
 }
