@@ -37,11 +37,32 @@ func TestBuildDecompositionPacketCreatesCandidateAtom(t *testing.T) {
 	if atom.ID != "recovery-001" || atom.Complexity != "C1" {
 		t.Fatalf("candidate atom=%#v", atom)
 	}
-	if !stringSlicesEqual(atom.Gates, []string{GateBriefLint, GateAtomIntake, GateScope}) {
+	if !stringSlicesEqual(atom.Gates, []string{GateWorkspaceState, GateBriefLint, GateAtomIntake, GateScope, GateRequiredTests}) {
 		t.Fatalf("gates=%#v", atom.Gates)
 	}
 	if !stringSlicesEqual(atom.RequiredTests, []string{"go test ./internal/recovery"}) {
 		t.Fatalf("required tests=%#v", atom.RequiredTests)
+	}
+}
+
+func TestBuildDecompositionPacketUsesDeepestGoPackageForRequiredTests(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-nested",
+		FailureKind:       "executor_failed",
+		RequiredEditPaths: []string{"internal/frontier/workerruntime/runtime.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	if len(packet.CandidateAtoms) != 1 {
+		t.Fatalf("candidate atoms=%#v", packet.CandidateAtoms)
+	}
+	if !stringSlicesEqual(packet.CandidateAtoms[0].RequiredTests, []string{"go test ./internal/frontier/workerruntime"}) {
+		t.Fatalf("required tests=%#v", packet.CandidateAtoms[0].RequiredTests)
 	}
 }
 

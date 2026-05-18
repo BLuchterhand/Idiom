@@ -122,6 +122,35 @@ func TestSaveRunProgressStateWritesRecoveryDecompositionPacket(t *testing.T) {
 	}
 }
 
+func TestSaveProgressStateRedactsDurableFailureText(t *testing.T) {
+	root := t.TempDir()
+	state := NewProgressState("redacted_progress", "prompt", "", []string{"a.txt"}, nil, timeNowForRunTest())
+	state.Status = ProgressStatusFailed
+	state.FailureKind = "executor_failed"
+	state.FailureReason = "raw_prompt: include customer file\n```text\nfile body with OPENAI_API_KEY=sk-secret\n```"
+	state.Executor.Failures = []string{"old_text: customer file body\npassword=secret"}
+	if _, err := SaveProgressState(root, &state); err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+	loaded, _, err := LoadProgressState(root, state.SessionID)
+	if err != nil {
+		t.Fatalf("LoadProgressState: %v", err)
+	}
+	encoded, err := json.Marshal(loaded)
+	if err != nil {
+		t.Fatalf("marshal loaded progress: %v", err)
+	}
+	text := string(encoded)
+	for _, forbidden := range []string{"raw_prompt", "file body", "OPENAI_API_KEY", "sk-secret", "old_text", "password=secret"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("durable progress state leaked %q: %s", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "redacted") {
+		t.Fatalf("expected redaction marker in progress state: %s", text)
+	}
+}
+
 func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old\n"), 0o644); err != nil {

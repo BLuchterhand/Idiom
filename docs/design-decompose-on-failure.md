@@ -141,7 +141,7 @@ flowchart TD
     Recoverability -- no --> Surface["Surface typed blocker"]
     Recoverability -- retry --> Retry["One changed-condition retry"]
     Recoverability -- decompose --> Packet["Write decomposition packet"]
-    Packet --> Gate["Brief lint, atom intake, scope, TDD gates"]
+    Packet --> Gate["Workspace, brief lint, atom intake, scope, test gates"]
     Gate --> Dispatch{"All recovery atoms dispatchable?"}
     Dispatch -- no --> Surface
     Dispatch -- yes --> RunAtoms["Run recovery atoms sequentially"]
@@ -215,7 +215,7 @@ The first durable schema can be small and JSON-first:
       "required_paths": ["internal/app/foo.go", "internal/app/foo_test.go"],
       "forbidden_paths": [],
       "required_tests": ["go test ./internal/app"],
-      "gates": ["brief_lint", "atom_intake", "scope_gate"]
+      "gates": ["workspace_state", "brief_lint", "atom_intake", "scope_gate", "required_tests"]
     }
   ],
   "next_valid_action": "review_decomposition"

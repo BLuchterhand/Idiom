@@ -60,6 +60,7 @@ type recoverStatusReport struct {
 	PacketID       string                   `json:"packet_id,omitempty"`
 	PartialState   recovery.PartialState    `json:"partial_state"`
 	ProductLinks   recovery.ProductLinks    `json:"product_links,omitempty"`
+	Blockers       []string                 `json:"blockers,omitempty"`
 	CandidateAtoms []recovery.CandidateAtom `json:"candidate_atoms,omitempty"`
 	NextAction     string                   `json:"next_valid_action"`
 	Error          string                   `json:"error,omitempty"`
@@ -189,6 +190,7 @@ func buildRecoverStatusReport(root string, packetPath string) (recoverStatusRepo
 		PacketID:       packet.PacketID,
 		PartialState:   packet.PartialState,
 		ProductLinks:   packet.ProductLinks,
+		Blockers:       recoverPacketBlockers(packet),
 		CandidateAtoms: packet.CandidateAtoms,
 		NextAction:     packet.NextAction,
 	}, nil
@@ -257,34 +259,42 @@ func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recover
 	if !ok {
 		return recoverPromoteReport{}, fmt.Errorf("candidate atom %q not found in packet", opts.AtomID)
 	}
+	currentPartial := inspectRecoveryPartialState(root, failureRecordFromPacket(packet))
 	brief := recovery.RenderRecoveryBrief(root, packet, atom)
 	tmpPath, cleanup, err := writeRecoveryPromotionTempBrief(root, packet.FailureID, brief)
 	if err != nil {
 		return recoverPromoteReport{}, err
 	}
 	defer cleanup()
-	allowDirty := opts.AllowDirty || packet.PartialState.DirtyStatus == recovery.DirtyStatusDirtyInScope
+	allowDirty := opts.AllowDirty
 	gates := []recoverGateReport{
+		runRecoveryWorkspaceStateGate(currentPartial, opts.AllowDirty),
 		runRecoveryBriefLintGate(root, tmpPath),
 		runRecoveryAtomIntakeGate(root, tmpPath, brief, allowDirty),
 		runRecoveryScopeGate(brief, atom),
+		runRecoveryRequiredTestsGate(atom),
 	}
 	report := recoverPromoteReport{
 		Type:       "idiom.recover.promote.v1",
 		Status:     "blocked",
 		PacketPath: relDisplayPath(root, relPacketPath),
 		AtomID:     atom.ID,
-		OutputPath: relDisplayPath(root, resolveRecoveryPath(root, opts.OutputPath)),
 		Gates:      gates,
 		NextAction: recovery.NextActionInspectFailure,
 	}
+	outputPath, outputRelPath, err := resolveRecoveryPromotionOutputPath(root, opts.OutputPath)
+	if err != nil {
+		report.Error = err.Error()
+		report.NextAction = recovery.NextActionHumanIntervention
+		return report, nil
+	}
+	report.OutputPath = outputRelPath
 	for _, gate := range gates {
 		if gate.Status != "pass" {
 			report.NextAction = "fix_promotion_gate"
 			return report, nil
 		}
 	}
-	outputPath := resolveRecoveryPath(root, opts.OutputPath)
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return recoverPromoteReport{}, fmt.Errorf("mkdir promotion output dir: %w", err)
 	}
@@ -294,6 +304,42 @@ func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recover
 	report.Status = "promoted"
 	report.NextAction = "dispatch_atom"
 	return report, nil
+}
+
+func failureRecordFromPacket(packet recovery.DecompositionPacket) recovery.FailureRecord {
+	return recovery.FailureRecord{
+		SchemaVersion: recovery.FailureRecordSchemaVersion,
+		FailureID:     packet.FailureID,
+		CreatedAt:     packet.CreatedAt,
+		UpdatedAt:     packet.UpdatedAt,
+		SourceRun:     packet.SourceRun,
+		Failure:       packet.Failure,
+		PartialState:  packet.PartialState,
+		NextAction:    packet.NextAction,
+	}
+}
+
+func runRecoveryWorkspaceStateGate(partial recovery.PartialState, allowDirty bool) recoverGateReport {
+	report := recoverGateReport{
+		Name:    recovery.GateWorkspaceState,
+		Status:  "pass",
+		Summary: fmt.Sprintf("dirty_status=%s scope_status=%s", partial.DirtyStatus, partial.ScopeStatus),
+	}
+	switch partial.DirtyStatus {
+	case recovery.DirtyStatusDirtyOutScope:
+		report.Status = "block"
+		report.Summary = "out-of-scope dirty workspace state must be inspected before promotion"
+	case recovery.DirtyStatusDirtyInScope:
+		if !allowDirty {
+			report.Status = "block"
+			report.Summary = "in-scope dirty workspace state requires explicit --allow-dirty before promotion"
+		}
+	}
+	if report.Status == "pass" && partial.ScopeStatus == recovery.ScopeStatusOutOfScope {
+		report.Status = "block"
+		report.Summary = "out-of-scope workspace state must be inspected before promotion"
+	}
+	return report
 }
 
 func runRecoveryBriefLintGate(root string, briefPath string) recoverGateReport {
@@ -364,6 +410,13 @@ func runRecoveryScopeGate(body string, atom recovery.CandidateAtom) recoverGateR
 	return recoverGateReport{Name: recovery.GateScope, Status: status, Summary: strings.Join(parts, "; "), ScopePaths: scopePaths}
 }
 
+func runRecoveryRequiredTestsGate(atom recovery.CandidateAtom) recoverGateReport {
+	if len(atom.RequiredTests) == 0 {
+		return recoverGateReport{Name: recovery.GateRequiredTests, Status: "block", Summary: "candidate atom has no required tests"}
+	}
+	return recoverGateReport{Name: recovery.GateRequiredTests, Status: "pass", Summary: strings.Join(atom.RequiredTests, "; ")}
+}
+
 func writeRecoveryPromotionTempBrief(root string, failureID string, content string) (string, func(), error) {
 	dir := filepath.Join(root, ".idiom", "recovery", failureID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -425,12 +478,76 @@ func recoverPacketStatus(packet recovery.DecompositionPacket) string {
 	return "ready"
 }
 
+func recoverPacketBlockers(packet recovery.DecompositionPacket) []string {
+	var blockers []string
+	if packet.NextAction != recovery.NextActionReviewDecomposition {
+		blockers = append(blockers, "packet next action is "+packet.NextAction)
+	}
+	if len(packet.CandidateAtoms) == 0 {
+		blockers = append(blockers, "packet has no candidate recovery atoms")
+	}
+	if packet.PartialState.DirtyStatus == recovery.DirtyStatusDirtyOutScope {
+		blockers = append(blockers, "workspace has out-of-scope dirty state")
+	}
+	return blockers
+}
+
 func resolveRecoveryPath(root string, path string) string {
 	path = strings.TrimSpace(path)
 	if filepath.IsAbs(path) {
 		return path
 	}
 	return filepath.Join(root, path)
+}
+
+func resolveRecoveryPromotionOutputPath(root string, path string) (string, string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", "", fmt.Errorf("promotion output path is empty")
+	}
+	fullPath := path
+	if !filepath.IsAbs(fullPath) {
+		fullPath = filepath.Join(root, fullPath)
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve promotion output path: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("promotion output path must stay under workspace root")
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if isProtectedPromotionOutputPath(rel) {
+		return "", "", fmt.Errorf("promotion output path is protected: %s", rel)
+	}
+	return absPath, rel, nil
+}
+
+func isProtectedPromotionOutputPath(rel string) bool {
+	rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
+	if rel == "" || rel == "." {
+		return true
+	}
+	protectedPrefixes := []string{
+		".git/",
+		".idiom/",
+		"logs/",
+	}
+	for _, prefix := range protectedPrefixes {
+		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
+			return true
+		}
+	}
+	switch rel {
+	case ".env", "config.json":
+		return true
+	}
+	return false
 }
 
 func relDisplayPath(root string, path string) string {
@@ -483,6 +600,7 @@ func writeRecoverDecomposeReport(stdout io.Writer, stderr io.Writer, jsonOut boo
 	}
 	if report.Error != "" {
 		fmt.Fprintln(stderr, report.Error)
+		fmt.Fprintf(stderr, "next_valid_action: %s\n", report.NextAction)
 		return code
 	}
 	fmt.Fprintf(stdout, "recover decompose: %s\n", report.Status)
@@ -500,15 +618,26 @@ func writeRecoverStatusReport(stdout io.Writer, stderr io.Writer, jsonOut bool, 
 	}
 	if report.Error != "" {
 		fmt.Fprintln(stderr, report.Error)
+		fmt.Fprintf(stderr, "next_valid_action: %s\n", report.NextAction)
 		return code
 	}
 	fmt.Fprintf(stdout, "recover status: %s\n", report.Status)
 	fmt.Fprintf(stdout, "packet: %s\n", report.PacketPath)
 	fmt.Fprintf(stdout, "failure_id: %s\n", report.FailureID)
 	fmt.Fprintf(stdout, "dirty_status: %s\n", report.PartialState.DirtyStatus)
+	for _, blocker := range report.Blockers {
+		fmt.Fprintf(stdout, "blocker: %s\n", blocker)
+	}
+	printRecoverProductLinks(stdout, report.ProductLinks)
 	fmt.Fprintf(stdout, "next_valid_action: %s\n", report.NextAction)
 	for _, atom := range report.CandidateAtoms {
 		fmt.Fprintf(stdout, "- %s: %s\n", atom.ID, atom.Title)
+		if len(atom.Gates) > 0 {
+			fmt.Fprintf(stdout, "  gates: %s\n", strings.Join(atom.Gates, ", "))
+		}
+		if len(atom.RequiredTests) > 0 {
+			fmt.Fprintf(stdout, "  required_tests: %s\n", strings.Join(atom.RequiredTests, "; "))
+		}
 	}
 	return code
 }
@@ -519,6 +648,7 @@ func writeRecoverPromoteReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 	}
 	if report.Error != "" {
 		fmt.Fprintln(stderr, report.Error)
+		fmt.Fprintf(stderr, "next_valid_action: %s\n", report.NextAction)
 		return code
 	}
 	fmt.Fprintf(stdout, "recover promote: %s\n", report.Status)
@@ -534,6 +664,19 @@ func writeRecoverPromoteReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 		fmt.Fprintln(stdout)
 	}
 	return code
+}
+
+func printRecoverProductLinks(w io.Writer, links recovery.ProductLinks) {
+	printRecoverProductLinkList(w, "prd", links.PRDPaths)
+	printRecoverProductLinkList(w, "adr", links.ADRPaths)
+	printRecoverProductLinkList(w, "tdd", links.TDDPaths)
+	printRecoverProductLinkList(w, "ledger", links.LedgerPaths)
+}
+
+func printRecoverProductLinkList(w io.Writer, label string, paths []string) {
+	for _, path := range paths {
+		fmt.Fprintf(w, "%s: %s\n", label, path)
+	}
 }
 
 func encodeRecoverJSON(stdout io.Writer, stderr io.Writer, report any, code int) int {

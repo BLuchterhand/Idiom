@@ -100,6 +100,18 @@ func TestBuildPlanExecuteFailureRecordRedactsSensitiveDetails(t *testing.T) {
 	}
 }
 
+func TestRedactRecoveryTextRemovesTranscriptAndFileBodyShapes(t *testing.T) {
+	redacted := RedactRecoveryText("raw_prompt: operator text\nfile_body:\n```text\ncustomer source\npassword=secret\n```\ntranscript: hidden")
+	for _, forbidden := range []string{"raw_prompt", "file_body", "customer source", "password=secret", "transcript"} {
+		if strings.Contains(redacted, forbidden) {
+			t.Fatalf("redaction leaked %q in %q", forbidden, redacted)
+		}
+	}
+	if !strings.Contains(redacted, "redacted") {
+		t.Fatalf("expected redaction marker: %q", redacted)
+	}
+}
+
 func TestPartialStateForDirtyPathsClassifiesOutOfScope(t *testing.T) {
 	partial := PartialStateForDirtyPaths(
 		[]string{"unexpected.go"},

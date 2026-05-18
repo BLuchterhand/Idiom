@@ -13,9 +13,11 @@ import (
 const DecompositionPacketSchemaVersion = "idiom.recovery.decomposition_packet.v1"
 
 const (
-	GateBriefLint  = "brief_lint"
-	GateAtomIntake = "atom_intake"
-	GateScope      = "scope_gate"
+	GateBriefLint      = "brief_lint"
+	GateAtomIntake     = "atom_intake"
+	GateScope          = "scope_gate"
+	GateWorkspaceState = "workspace_state"
+	GateRequiredTests  = "required_tests"
 )
 
 type DecompositionOptions struct {
@@ -118,7 +120,7 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 			Complexity:      complexityForPaths(group),
 			RequiredPaths:   group,
 			RequiredTests:   requiredTestsForPaths(group),
-			Gates:           []string{GateBriefLint, GateAtomIntake, GateScope},
+			Gates:           []string{GateWorkspaceState, GateBriefLint, GateAtomIntake, GateScope, GateRequiredTests},
 			ResidualWorkIDs: []string{residualID},
 		})
 	}
@@ -250,6 +252,13 @@ func RenderRecoveryBrief(root string, packet DecompositionPacket, atom Candidate
 	if packet.Failure.Summary != "" {
 		fmt.Fprintf(&b, "\nFailure summary: %s\n", packet.Failure.Summary)
 	}
+	if hasProductLinks(packet.ProductLinks) {
+		fmt.Fprintf(&b, "\n## Product Links\n\n")
+		writeBriefProductLinks(&b, "PRD", packet.ProductLinks.PRDPaths)
+		writeBriefProductLinks(&b, "ADR", packet.ProductLinks.ADRPaths)
+		writeBriefProductLinks(&b, "TDD", packet.ProductLinks.TDDPaths)
+		writeBriefProductLinks(&b, "Ledger", packet.ProductLinks.LedgerPaths)
+	}
 	fmt.Fprintf(&b, "\n## Acceptance\n\n")
 	for _, test := range atom.RequiredTests {
 		fmt.Fprintf(&b, "- `%s` succeeds.\n", test)
@@ -258,6 +267,16 @@ func RenderRecoveryBrief(root string, packet DecompositionPacket, atom Candidate
 		fmt.Fprintf(&b, "- `go test ./...` succeeds.\n")
 	}
 	return b.String()
+}
+
+func hasProductLinks(links ProductLinks) bool {
+	return len(links.PRDPaths)+len(links.ADRPaths)+len(links.TDDPaths)+len(links.LedgerPaths) > 0
+}
+
+func writeBriefProductLinks(b *strings.Builder, label string, paths []string) {
+	for _, path := range paths {
+		fmt.Fprintf(b, "- %s: `%s`\n", label, path)
+	}
 }
 
 func residualCandidatePaths(record FailureRecord, partial PartialState) []string {
@@ -317,12 +336,10 @@ func requiredTestsForPaths(paths []string) []string {
 	for _, path := range cleanPathList(paths) {
 		test := "go test ./..."
 		switch {
-		case strings.HasPrefix(path, "cmd/idiom/"):
-			test = "go test ./cmd/idiom"
-		case strings.HasPrefix(path, "internal/"):
-			parts := strings.Split(path, "/")
-			if len(parts) >= 2 {
-				test = "go test ./internal/" + parts[1]
+		case strings.HasSuffix(path, ".go"):
+			dir := filepath.ToSlash(filepath.Dir(path))
+			if dir != "." && dir != "" {
+				test = "go test ./" + dir
 			}
 		}
 		if !seen[test] {

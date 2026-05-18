@@ -89,6 +89,7 @@ Operators inspect or promote these artifacts through:
 
 ```bash
 idiom recover inspect --session <session-id> --json
+idiom recover decompose --session <session-id> --json
 idiom recover status --packet .idiom/recovery/<failure-id>/packet.json --json
 idiom recover promote --packet .idiom/recovery/<failure-id>/packet.json --atom recovery-001 --output briefs/recovery-001.md
 ```

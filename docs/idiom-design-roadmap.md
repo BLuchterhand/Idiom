@@ -51,12 +51,13 @@ The executable implementation plan is
   contract for the PRD-to-brief workflow; only a narrower tiered coverage
   evaluator has shipped so far.
 - [Decompose on failure](design-decompose-on-failure.md)
-  defines the missing recovery layer that turns a failed lane or atom into a
-  durable failure record, deterministic failure classification, smaller gated
-  recovery atoms, and auditable reconciliation through the target
-  `idiom recover` namespace. Existing behavior can pre-atomize broad design
-  docs before dispatch and retry/surface a blocked planner once, but it does
-  not yet decompose after a real failed run.
+  defines the recovery layer that turns a failed lane or atom into a durable
+  failure record, deterministic failure classification, smaller gated recovery
+  atoms, and auditable reconciliation through the `idiom recover` namespace.
+  The plan-execute slice now writes failure records and decomposition packets
+  automatically, with `recover inspect/status/decompose/promote` covering the
+  operator loop. Reconciliation, TUI/sidecar adapters, and non-plan-execute
+  failure sources remain follow-up work.
 
 ## System Shape
 

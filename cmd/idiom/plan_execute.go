@@ -278,7 +278,9 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			progress.Status = planexecute.ProgressStatusFailed
 			progress.FailureKind = "planner_failed"
 			progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
-			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+			if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+				fmt.Fprintln(stderr, saveErr)
+			}
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -308,7 +310,9 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			progress.Status = planexecute.ProgressStatusFailed
 			progress.FailureKind = planexecute.RunFailurePlannerBlocked
 			progress.FailureReason = planExecuteBlockerSummary(answer)
-			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+			if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+				fmt.Fprintln(stderr, saveErr)
+			}
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_blocked", map[string]any{
 				"reason":  err.Error(),
 				"blocker": planExecuteBlockerSummary(answer),
@@ -332,7 +336,9 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		progress.Status = planexecute.ProgressStatusFailed
 		progress.FailureKind = "plan_artifact_missing"
 		progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
-		_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+		if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+			fmt.Fprintln(stderr, saveErr)
+		}
 		return 1
 	}
 	plan, err := workspace.LoadPlanArtifact(planPath)
@@ -345,7 +351,9 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		progress.Status = planexecute.ProgressStatusFailed
 		progress.FailureKind = "plan_artifact_invalid"
 		progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
-		_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+		if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+			fmt.Fprintln(stderr, saveErr)
+		}
 		return 1
 	}
 	if inheritedPackID := inheritPlanExecutePromptPackID(&plan, prompt); inheritedPackID != "" {
@@ -537,6 +545,9 @@ func savePlanExecuteProgressState(root string, state *planexecute.ProgressState,
 			"candidate_atoms":   len(packet.CandidateAtoms),
 			"next_valid_action": packet.NextAction,
 		})
+		if !jsonEvents {
+			fmt.Fprintf(stdout, "recovery: failure_record=%s packet=%s next_valid_action=%s\n", recordPath, packetPath, packet.NextAction)
+		}
 	}
 	return statePath, nil
 }
@@ -668,7 +679,7 @@ func fromSharedExecutorHandoffPacket(handoff planexecute.ExecutorHandoffPacket) 
 }
 
 func truncatePlanExecuteProgressReason(reason string) string {
-	reason = strings.TrimSpace(reason)
+	reason = strings.TrimSpace(recovery.RedactRecoveryText(reason))
 	if len(reason) <= 2000 {
 		return reason
 	}

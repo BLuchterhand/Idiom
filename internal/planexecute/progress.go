@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/recovery"
 	"idiom/internal/workspace"
 )
 
@@ -122,6 +123,7 @@ func SaveProgressState(root string, state *ProgressState) (string, error) {
 	if state.SchemaVersion != ProgressStateSchemaVersion {
 		return "", fmt.Errorf("unsupported plan-execute progress schema %q", state.SchemaVersion)
 	}
+	sanitizeProgressState(state)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if strings.TrimSpace(state.CreatedAt) == "" {
 		state.CreatedAt = now
@@ -239,7 +241,7 @@ func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr 
 		Total:        report.Total,
 		Succeeded:    report.Succeeded,
 		Failed:       report.Failed,
-		Failures:     append([]string(nil), report.Failures...),
+		Failures:     sanitizeProgressReasons(report.Failures),
 		SourceSanity: append([]PhaseEvidenceCheck(nil), report.SourceSanity...),
 		Handoff:      report.Handoff,
 	}
@@ -247,7 +249,7 @@ func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr 
 		s.Status = ProgressStatusFailed
 		s.Executor.Status = ProgressStatusFailed
 		s.FailureKind = "executor_failed"
-		s.FailureReason = truncateProgressReason(runErr.Error())
+		s.FailureReason = sanitizeProgressReason(runErr.Error())
 		return
 	}
 	s.Status = ProgressStatusCompleted
@@ -281,9 +283,9 @@ func (s *ProgressState) MarkReviewComplete(report ReviewRepairPhaseReport, revie
 	if reviewErr != nil {
 		s.Status = ProgressStatusFailed
 		s.Review.Status = ProgressStatusFailed
-		s.Review.Error = truncateProgressReason(reviewErr.Error())
+		s.Review.Error = sanitizeProgressReason(reviewErr.Error())
 		s.FailureKind = "review_repair_failed"
-		s.FailureReason = truncateProgressReason(reviewErr.Error())
+		s.FailureReason = sanitizeProgressReason(reviewErr.Error())
 		return
 	}
 	if strings.Contains(strings.ToLower(report.Status), "degraded") {
@@ -423,6 +425,30 @@ func progressRelPath(root string, path string) string {
 		return filepath.ToSlash(filepath.Clean(path))
 	}
 	return filepath.ToSlash(filepath.Clean(path))
+}
+
+func sanitizeProgressState(state *ProgressState) {
+	state.FailureReason = sanitizeProgressReason(state.FailureReason)
+	state.Executor.Failures = sanitizeProgressReasons(state.Executor.Failures)
+	state.Review.Error = sanitizeProgressReason(state.Review.Error)
+	for i := range state.Executor.SourceSanity {
+		state.Executor.SourceSanity[i].Summary = sanitizeProgressReason(state.Executor.SourceSanity[i].Summary)
+		state.Executor.SourceSanity[i].Error = sanitizeProgressReason(state.Executor.SourceSanity[i].Error)
+	}
+}
+
+func sanitizeProgressReasons(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if sanitized := sanitizeProgressReason(value); sanitized != "" {
+			out = append(out, sanitized)
+		}
+	}
+	return out
+}
+
+func sanitizeProgressReason(reason string) string {
+	return truncateProgressReason(recovery.RedactRecoveryText(reason))
 }
 
 func truncateProgressReason(reason string) string {

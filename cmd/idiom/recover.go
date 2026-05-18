@@ -194,6 +194,7 @@ func writeRecoverInspectReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 	}
 	if report.Error != "" {
 		fmt.Fprintln(stderr, report.Error)
+		fmt.Fprintf(stderr, "next_valid_action: %s\n", report.NextAction)
 		return code
 	}
 	fmt.Fprintf(stdout, "recover inspect: plan-execute session %s\n", report.SessionID)

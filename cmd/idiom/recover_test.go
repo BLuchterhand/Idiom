@@ -232,6 +232,88 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	}
 }
 
+func TestRecoverPromoteRequiresExplicitAllowDirtyForDirtyPacket(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package allowed\n"), 0o644); err != nil {
+		t.Fatalf("write scoped source: %v", err)
+	}
+	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
+		SessionID:         "recover-session-dirty",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		RequiredEditPaths: []string{"allowed.go"},
+		ChangedPaths:      []string{"allowed.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	partial := recovery.PartialStateForDirtyPaths([]string{"allowed.go"}, record.PartialState.ChangedPaths, record.SourceRun.RequiredEditPaths, nil, 1)
+	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{Now: time.Now().UTC(), PartialState: partial})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", "briefs/recovery-001.md", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover promote should block dirty packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverPromoteReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode promote report: %v\n%s", err, stdout.String())
+	}
+	if report.Status != "blocked" || !recoverGateBlocked(report.Gates, recovery.GateWorkspaceState) {
+		t.Fatalf("expected workspace-state block: %#v", report)
+	}
+	if _, err := os.Stat(filepath.Join(root, "briefs", "recovery-001.md")); !os.IsNotExist(err) {
+		t.Fatalf("blocked promotion should not write output, stat err=%v", err)
+	}
+}
+
+func TestRecoverPromoteRejectsOutsideOutputPath(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package allowed\n"), 0o644); err != nil {
+		t.Fatalf("write scoped source: %v", err)
+	}
+	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
+		SessionID:         "recover-session-outside",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		RequiredEditPaths: []string{"allowed.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+	outsidePath := filepath.Join(root, "..", "outside-recovery.md")
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", outsidePath, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover promote should reject outside output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverPromoteReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode promote report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recovery.NextActionHumanIntervention {
+		t.Fatalf("unexpected outside output report: %#v", report)
+	}
+	if _, err := os.Stat(outsidePath); !os.IsNotExist(err) {
+		t.Fatalf("outside output should not be written, stat err=%v", err)
+	}
+}
+
 func TestSavePlanExecuteProgressStateWritesRecoveryDecompositionPacket(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
@@ -261,6 +343,15 @@ func TestSavePlanExecuteProgressStateWritesRecoveryDecompositionPacket(t *testin
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.recovery_decomposition_packet_written"`) {
 		t.Fatalf("packet event missing from stdout=%s", stdout.String())
 	}
+}
+
+func recoverGateBlocked(gates []recoverGateReport, name string) bool {
+	for _, gate := range gates {
+		if gate.Name == name && gate.Status == "block" {
+			return true
+		}
+	}
+	return false
 }
 
 func initRecoverTestGitRepo(t *testing.T, root string) {
