@@ -88,6 +88,7 @@ before discussing enterprise or regulated use.
 - [[20 - PRD ADR Brief Research Workflow PROPOSAL]]
 - [[21 - Behavioral TDD Coverage PROPOSAL]]
 - [[22 - Product Workflow ROADMAP]]
+- [[23 - Decompose On Failure PROPOSAL]]
 
 ## Proposals and Roadmaps
 
@@ -106,6 +107,8 @@ implemented.
   between human-approved ADR and implementation brief
 - [[22 - Product Workflow ROADMAP]] — what is done, what remains, and the
   implementation phase plan
+- [[23 - Decompose On Failure PROPOSAL]] — target recovery layer for converting
+  failed runs into classified evidence, smaller gated atoms, and reconciliation
 
 ## Core Sources
 

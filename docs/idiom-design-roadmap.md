@@ -50,6 +50,12 @@ The executable implementation plan is
   dispatch when behavioral coverage is incomplete. This is the verification
   contract for the PRD-to-brief workflow; only a narrower tiered coverage
   evaluator has shipped so far.
+- [Decompose on failure](design-decompose-on-failure.md)
+  defines the missing recovery layer that turns a failed lane or atom into a
+  durable failure record, deterministic failure classification, smaller gated
+  recovery atoms, and auditable reconciliation. Existing behavior can
+  pre-atomize broad design docs before dispatch and retry/surface a blocked
+  planner once, but it does not yet decompose after a real failed run.
 
 ## System Shape
 

@@ -31,6 +31,7 @@ and can be read directly in any editor.
 21. [[20 - PRD ADR Brief Research Workflow PROPOSAL]]
 22. [[21 - Behavioral TDD Coverage PROPOSAL]]
 23. [[22 - Product Workflow ROADMAP]]
+24. [[23 - Decompose On Failure PROPOSAL]]
 
 ## Source Documents
 
@@ -49,6 +50,7 @@ This vault summarizes and connects the repository's canonical documents:
 - [docs/design-agent-substrate-sidecar.md](../design-agent-substrate-sidecar.md)
 - [docs/design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 - [docs/design-tdd-coverage.md](../design-tdd-coverage.md)
+- [docs/design-decompose-on-failure.md](../design-decompose-on-failure.md)
 - [docs/security-privacy-posture.md](../security-privacy-posture.md)
 - [docs/product-evidence-export.md](../product-evidence-export.md)
 - [.codex/project-context.md](../../.codex/project-context.md)
