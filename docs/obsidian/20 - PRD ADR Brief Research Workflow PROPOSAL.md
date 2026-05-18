@@ -14,11 +14,11 @@ tags:
 > **Status: PARTIALLY IMPLEMENTED** — This upstream artifact pipeline is being
 > delivered through the durable effort at
 > `docs/product-workflows/efforts/started/prd-adr-brief-workflow/`. As of
-> 2026-05-18, implementation is complete through Phase 4: deterministic TDD
-> obligation synthesis, coverage-gate evaluation, and lint-verified brief
-> generation and the first read-only Phase 5 execution-feedback linker; Atom 30 is planned to add deterministic durable feedback reconciliation. Atom 30
-> is now planned for durable feedback reconciliation. Product workflow metrics
-> and operator surfaces remain.
+> 2026-05-18, implementation is complete through Phase 4 and the first two
+> Phase 5 slices: read-only execution feedback linking and deterministic durable
+> feedback reconciliation into bounded workflow-state/evidence-link output.
+> Product workflow metrics, Obsidian parity enforcement, and operator surfaces
+> remain.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 
@@ -182,8 +182,9 @@ stateDiagram-v2
   and supersession validation
 - [x] **Phase 4**: TDD planner, coverage gate, and brief generator
 - [ ] **Phase 5**: Execution feedback loop linking outcomes to obligations;
-  the read-only feedback linker is implemented and durable reconciliation is the
-  active Atom 30 slice
+  read-only feedback linking and durable reconciliation are implemented, while
+  product-workflow metrics, Obsidian parity enforcement, and operator surfaces
+  remain
 - [ ] **Phase 6**: Sidecar and external agent use
 
 ## Open Questions

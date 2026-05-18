@@ -6,8 +6,8 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0029-phase-5-execution-feedback-linker`
-- Active atom: `impl-0030-phase-5-feedback-reconciliation`
+- Last completed atom: `impl-0030-phase-5-feedback-reconciliation`
+- Active atom: none; next valid action is `plan_phase_5_product_workflow_metrics_atom`
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
 - Context pack: `aabb32deaa458ac7`
@@ -126,25 +126,30 @@ This effort is the durable implementation state for delivering
   preserves existing dispatch authority boundaries, and does not dispatch lanes,
   mutate `.idiom` runtime state, write evidence exports, or promote ranker
   learning.
-- Atom 30 is planned as the next Phase 5 execution-feedback slice. It should
-  reconcile verified feedback records into workflow-state artifact links and
-  durable evidence references, preserving bounded metadata only and avoiding
-  lane dispatch, ranker-learning promotion, raw transcript/file-body storage,
-  or direct mutation of `.idiom` runtime state.
+- Atom 30: all TDD obligations satisfied. Added deterministic
+  `idiom product feedback` reconciliation from passing feedback summaries into
+  bounded workflow-state/evidence-link output. The command requires matching
+  phase/state/revision context, blocks malformed or stale pass summaries,
+  rejects direct `workflow_state.json` overwrites, writes requested reconciled
+  state through a rooted effort filesystem boundary, and does not dispatch lanes,
+  mutate `.idiom` runtime state, generate evidence exports, promote ranker
+  learning, or store raw transcript/file bodies.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 29 closeout. These
+The workflow implementation remains in progress after Atom 30 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
 plan-only TDD obligation synthesis, deterministic coverage-gate evaluation,
-lint-verified brief generation, and read-only execution feedback linking. The
-active Phase 5 slice is feedback reconciliation into workflow state and durable
-evidence links; product-workflow metrics and operator surfaces remain later atoms.
+lint-verified brief generation, read-only execution feedback linking, and
+deterministic feedback reconciliation into bounded workflow-state/evidence-link
+output. The next Phase 5 slice should add product-workflow metrics to
+`harness_audit` or a dedicated product audit command; Obsidian parity checks and
+operator surfaces remain later atoms.
 
 ## Implementation Guidelines
 
@@ -369,4 +374,4 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Start the Atom 30 implementation. Keep the slice deterministic: consume passing `idiom product feedback` summaries, reconcile durable workflow state and evidence links, and keep dispatch, `.idiom` runtime mutation, evidence export generation, and ranker-learning promotion outside the atom unless a later design-doc slice explicitly authorizes them.
+Plan the next Phase 5 product-workflow metrics atom. Keep the slice deterministic: expose workflow progress, gate, blocker, and evidence-link counts through `harness_audit` or a dedicated product audit command, and keep lane dispatch, `.idiom` runtime mutation, evidence export generation, ranker-learning promotion, and Obsidian parity enforcement outside the atom unless the plan explicitly scopes them.

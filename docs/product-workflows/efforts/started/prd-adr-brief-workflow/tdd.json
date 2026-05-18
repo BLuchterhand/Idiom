@@ -20,11 +20,12 @@
     "mutation_min_score": 80,
     "gates_passed": [
       "atom_planned",
-      "tdd_obligation_synthesis_plan",
-      "coverage_gate_evaluator",
       "brief_generator",
+      "coverage_gate_evaluator",
       "execution_feedback_linker",
-      "feedback_reconciliation_planned"
+      "execution_feedback_reconciliation",
+      "feedback_reconciliation_planned",
+      "tdd_obligation_synthesis_plan"
     ],
     "gates_blocked": []
   },
@@ -180,7 +181,7 @@
       "owner": "internal/productworkflow/execution_feedback_test.go",
       "command": "go test ./internal/productworkflow -run TestExecutionFeedbackReconciliation",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0030-002",
@@ -189,7 +190,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run TestProductFeedbackReconcile",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0030-003",
@@ -198,7 +199,7 @@
       "owner": "internal/productworkflow/execution_feedback_test.go",
       "command": "go test ./internal/productworkflow -run TestExecutionFeedbackReconciliation",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0030-004",
@@ -207,7 +208,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0030-review.json",
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     }
   ]
 }

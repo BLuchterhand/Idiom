@@ -4,10 +4,10 @@
   "task_id": "impl-0030-phase-5-feedback-reconciliation",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T15:01:00Z",
-  "state_revision": 88,
-  "last_event_id": "evt-0255",
-  "workspace_fingerprint": "idiom@450c01c",
+  "updated_at": "2026-05-18T15:20:00Z",
+  "state_revision": 89,
+  "last_event_id": "evt-0261",
+  "workspace_fingerprint": "idiom@6e8d2f8",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -27,7 +27,10 @@
     "research_profiles": ".idiom/research/profiles/",
     "research_outputs": "research/outputs/",
     "prd_prompt": "prd.prompt.md",
-    "adr_prompt": "adrs/adr.prompt.md"
+    "adr_prompt": "adrs/adr.prompt.md",
+    "execution_feedback_summary": "references/feedback_summary.json",
+    "product_evidence": "references/product_evidence_impl_0030.json",
+    "release_evidence": "references/release_evidence_impl_0030.json"
   },
   "context": {
     "context_pack_id": "aabb32deaa458ac7",
@@ -93,6 +96,11 @@
         "gate": "feedback_reconciliation_planned",
         "status": "passed",
         "checked_at": "2026-05-18T15:00:00Z"
+      },
+      {
+        "gate": "execution_feedback_reconciliation",
+        "status": "passed",
+        "checked_at": "2026-05-18T15:20:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -107,23 +115,13 @@
       "Phase 4 brief generation is complete: idiom product brief --render creates lint-verified implementation briefs from accepted PRD/ADR/TDD artifacts and a passing coverage gate without dispatching work or executing models.",
       "Deferred follow-up: make coverage gate reuse product lint/audit validators or run them as blocking preconditions before brief generation.",
       "Atom 29 complete: idiom product feedback links explicit lane/progress/evidence references into privacy-safe execution feedback summaries without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
-      "Atom 30 planned: reconcile passing idiom product feedback summaries into deterministic workflow-state/evidence-link updates without dispatching lanes, mutating .idiom runtime state, generating evidence exports, or promoting ranker learning.",
-      "Next Phase 5 slice after feedback reconciliation: add product workflow metrics to audit surfaces."
+      "Atom 30 complete: idiom product feedback reconciliation consumes passing feedback summaries and writes deterministic reconciled workflow-state output with bounded artifact/evidence links, while preserving dispatch, .idiom runtime mutation, evidence export generation, and ranker-learning boundaries.",
+      "Next Phase 5 slice after feedback reconciliation: add product workflow metrics to harness_audit or a dedicated product audit command."
     ]
   },
-  "open_obligations": [
-    "TDD-IMPL-0030-001",
-    "TDD-IMPL-0030-002",
-    "TDD-IMPL-0030-003",
-    "TDD-IMPL-0030-004"
-  ],
+  "open_obligations": [],
   "open_questions": [],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ],
+  "blockers": [],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -149,11 +147,10 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T15:00:00Z",
+  "last_reconciliation_at": "2026-05-18T15:20:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "start_implementation",
-    "start_investigation",
+    "plan_phase_5_product_workflow_metrics_atom",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"

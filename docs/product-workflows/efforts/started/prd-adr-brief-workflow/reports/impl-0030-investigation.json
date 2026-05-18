@@ -2,37 +2,58 @@
   "schema_version": "idiom.investigation_report.v1.fixture",
   "effort_id": "prd-adr-brief-workflow",
   "task_id": "impl-0030-phase-5-feedback-reconciliation",
-  "status": "planned",
+  "status": "complete",
   "created_at": "2026-05-18T15:00:00Z",
-  "completed_at": null,
+  "completed_at": "2026-05-18T15:20:00Z",
   "scope": {
     "changed_paths": [
       "cmd/idiom/product_workflow.go",
       "cmd/idiom/product_workflow_test.go",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
       "internal/productworkflow/execution_feedback.go",
       "internal/productworkflow/execution_feedback_test.go",
       "internal/productworkflow/types.go"
     ],
     "forbidden_paths_touched": [],
-    "obsidian_parity_updated": false,
+    "obsidian_parity_updated": true,
     "durable_state_mutation_during_command": false,
     "dispatch_or_model_execution_added": false
   },
   "tests": {
-    "status": "pending",
-    "commands": []
+    "status": "passed",
+    "commands": [
+      "idiom tool context_pack --input {\"task\":\"prd adr brief workflow atom 30 feedback reconciliation closeout\",\"mode\":\"plan\",\"limit\":8}",
+      "go test ./internal/productworkflow -run TestExecutionFeedbackReconciliation -count=1",
+      "go test ./cmd/idiom -run TestProductFeedbackReconcile -count=1",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./cmd/idiom -run TestProductBriefRenderPassesCurrentDurableEffortFixture -count=1",
+      "go run ./cmd/idiom product feedback --effort-root <temp effort> --reconcile-summary references/feedback_summary.json --reconciled-state-output references/reconciled_workflow_state.json --json",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "privacy secret-pattern scan over durable effort artifacts",
+      "git diff --check"
+    ]
   },
   "coverage": {
-    "tdd_obligations_satisfied": [],
-    "product_feedback_reconciliation_fixture_status": "pending"
+    "tdd_obligations_satisfied": [
+      "TDD-IMPL-0030-001",
+      "TDD-IMPL-0030-002",
+      "TDD-IMPL-0030-003",
+      "TDD-IMPL-0030-004"
+    ],
+    "product_feedback_reconciliation_fixture_status": "passed"
   },
   "traceability": {
     "context_pack_ids": [
-      "aabb32deaa458ac7"
+      "aabb32deaa458ac7",
+      "313d0354ca7f3546"
     ],
-    "implementation_commit": null,
-    "product_lint_status": "pending",
-    "product_audit_status": "pending"
+    "implementation_commit": "6e8d2f863bc9ec1d24beae0747ce4f2ea684c93f",
+    "product_lint_status": "pass",
+    "product_audit_status": "pass"
   },
   "privacy_audit": {
     "raw_prompts_stored": false,
@@ -41,15 +62,13 @@
     "secrets_stored": false,
     "customer_identifying_data_stored": false,
     "generated_brief_bodies_stored_in_durable_reports": false,
-    "secret_pattern_scan_status": "pending"
+    "secret_pattern_scan_status": "passed"
   },
-  "reviewer_findings": [],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
+  "reviewer_findings": [
+    "P2 wrong phase/state reconciliation acceptance fixed",
+    "P2 output path write race risk mitigated with rooted write and output path rejection coverage"
   ],
-  "next_valid_action": "start_implementation",
-  "commit_hash": null
+  "blockers": [],
+  "next_valid_action": "plan_phase_5_product_workflow_metrics_atom",
+  "commit_hash": "6e8d2f863bc9ec1d24beae0747ce4f2ea684c93f"
 }

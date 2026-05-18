@@ -59,12 +59,12 @@ The design doc exists at
 [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md).
 See [[20 - PRD ADR Brief Research Workflow PROPOSAL]] for the Obsidian summary.
 Implementation is active and source-controlled through the durable effort folder.
-As of Atom 30 planning, deterministic schemas, product lint/audit/status, research
-profile planning/merge/prompt rendering, PRD/ADR prompt rendering, acceptance
-metadata validation, ADR supersession link validation, and plan-only TDD
-obligation synthesis, tiered coverage-gate evaluation, and lint-verified brief
-generation exist. The first Phase 5 read-only execution-feedback linker exists;
-the active design-doc slice is durable feedback reconciliation.
+As of Atom 30 closeout, deterministic schemas, product lint/audit/status,
+research profile planning/merge/prompt rendering, PRD/ADR prompt rendering,
+acceptance metadata validation, ADR supersession link validation, plan-only TDD
+obligation synthesis, tiered coverage-gate evaluation, lint-verified brief
+generation, read-only execution feedback linking, and durable feedback
+reconciliation exist. The next design-doc slice is product-workflow metrics.
 
 ### Schemas and Types
 
@@ -146,10 +146,12 @@ the active design-doc slice is durable feedback reconciliation.
 - [x] Durable brief-generation evidence in implementation reports
 - [ ] `product_artifact_dispatch_ready`, `product_artifact_blocked`
 - [x] Read-only execution feedback summary from explicit lane/progress/evidence
-- [ ] Durable feedback reconciliation from passing summary into workflow-state/evidence links (Atom 30 planned)
   references
-- [ ] Durable `execution_result_linked` reconciliation into workflow state and
-  evidence links (active Atom 30)
+- [x] Durable feedback reconciliation from passing summary into
+  workflow-state/evidence links
+- [x] Durable `execution_result_linked` reconciliation into workflow state and
+  evidence links
+- [ ] Product-workflow metrics in `harness_audit` or a dedicated audit command
 
 ## NOT STARTED: Behavioral TDD Coverage Pipeline
 

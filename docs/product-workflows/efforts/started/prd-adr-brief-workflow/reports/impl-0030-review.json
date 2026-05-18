@@ -9,17 +9,36 @@
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
-  "findings": [],
+  "status": "pass_after_repair",
+  "findings": [
+    {
+      "severity": "P2",
+      "status": "fixed",
+      "summary": "Reconciliation originally accepted pass summaries from the wrong workflow phase/state."
+    },
+    {
+      "severity": "P2",
+      "status": "fixed",
+      "summary": "Reconciled-state output originally validated the path before a plain filesystem write."
+    }
+  ],
   "checks": {
-    "reconciliation_authority": "pending",
-    "path_boundary": "pending",
-    "no_dispatch_or_runtime_mutation": "pending",
-    "evidence_export_write_absent": "pending",
-    "ranker_learning_promotion_absent": "pending",
-    "privacy_secret_marker_regression": "pending"
+    "reconciliation_authority": "passed_after_phase_state_revision_and_plan_status_validation",
+    "path_boundary": "passed_after_root_scoped_write_and_workflow_state_overwrite_rejection",
+    "no_dispatch_or_runtime_mutation": "passed",
+    "evidence_export_write_absent": "passed",
+    "ranker_learning_promotion_absent": "passed",
+    "privacy_secret_marker_regression": "passed"
   },
-  "reviewed_at": null,
-  "commands_reviewed": [],
+  "reviewed_at": "2026-05-18T15:20:00Z",
+  "commands_reviewed": [
+    "idiom tool context_pack --input {\"task\":\"prd adr brief workflow atom 30 feedback reconciliation closeout\",\"mode\":\"plan\",\"limit\":8}",
+    "go test ./internal/productworkflow -run TestExecutionFeedbackReconciliation -count=1",
+    "go test ./cmd/idiom -run TestProductFeedbackReconcile -count=1",
+    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./...",
+    "temp-effort product feedback reconciliation smoke"
+  ],
+  "residual_risk": "No concurrent symlink-swap race test was added; mitigation is grounded in os.Root-scoped write implementation plus targeted symlink ancestor and workflow_state overwrite tests.",
   "created_at": "2026-05-18T15:00:00Z"
 }
