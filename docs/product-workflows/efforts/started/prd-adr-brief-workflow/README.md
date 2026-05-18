@@ -7,7 +7,7 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0025-phase-3-acceptance-state-and-supersession-links`
-- Active atom: none planned; next action is to plan TDD obligation synthesis
+- Active atom: `impl-0026-phase-4-tdd-obligation-synthesis-plan` planned
 - Status bucket: `started`
 - Current phase: `phase-4-tdd-obligation-synthesis`
 - Context pack: `c9a474b8604dd293`
@@ -93,6 +93,11 @@ This effort is the durable implementation state for delivering
   non-reciprocal links through product lint/audit. No model acceptance command,
   auto-accept path, promotion path, TUI/operator behavior, or execution path was
   added.
+- Atom 26 is planned as the first Phase 4 TDD obligation synthesis slice. It
+  should add a deterministic, plan-only TDD obligation synthesis surface from
+  accepted PRD requirements and accepted ADRs, using current context/test
+  evidence summaries where available. It must not overwrite `tdd.json`, generate
+  briefs, evaluate the coverage gate, execute models, or dispatch work.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated

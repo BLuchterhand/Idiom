@@ -1,0 +1,27 @@
+{
+  "schema_version": "idiom.investigation_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0026-phase-4-tdd-obligation-synthesis-plan",
+  "status": "pending",
+  "created_at": "2026-05-18T13:15:00Z",
+  "scope": {},
+  "tests": {},
+  "coverage": {},
+  "traceability": {},
+  "privacy_audit": {
+    "raw_prompts_stored": false,
+    "transcripts_stored": false,
+    "file_bodies_stored": false,
+    "secrets_stored": false,
+    "customer_identifying_data_stored": false
+  },
+  "reviewer_findings": [],
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
+  "next_valid_action": "implement_phase_4_tdd_obligation_synthesis_atom",
+  "completed_at": ""
+}
