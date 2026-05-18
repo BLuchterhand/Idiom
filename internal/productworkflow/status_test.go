@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +22,15 @@ func TestLoadProductStatusMissingWorkflowState(t *testing.T) {
 	}
 	if view.Blockers[0].Code != "missing_workflow_state" {
 		t.Fatalf("expected blocker code missing_workflow_state, got %q", view.Blockers[0].Code)
+	}
+	if view.Blockers[0].Message != "workflow_state.json not found" {
+		t.Fatalf("expected privacy-safe missing workflow_state message, got %q", view.Blockers[0].Message)
+	}
+	if len(view.NextValidActions) != 1 || view.NextValidActions[0] != "restore workflow_state.json under the effort root and rerun product status" {
+		t.Fatalf("expected missing workflow_state recovery action, got %#v", view.NextValidActions)
+	}
+	if containsStatusSubstring(view, dir) {
+		t.Fatalf("status error view leaked absolute effort path %q: %#v", dir, view)
 	}
 }
 
@@ -40,6 +50,12 @@ func TestLoadProductStatusInvalidWorkflowStateJSON(t *testing.T) {
 	if view.Blockers[0].Code != "invalid_workflow_state" {
 		t.Fatalf("expected blocker code invalid_workflow_state, got %q", view.Blockers[0].Code)
 	}
+	if len(view.NextValidActions) != 1 || view.NextValidActions[0] != "fix workflow_state.json content and rerun product status" {
+		t.Fatalf("expected invalid workflow_state recovery action, got %#v", view.NextValidActions)
+	}
+	if containsStatusSubstring(view, dir) {
+		t.Fatalf("invalid workflow_state view leaked absolute effort path %q: %#v", dir, view)
+	}
 
 	out, marshalErr := json.Marshal(view)
 	if marshalErr != nil {
@@ -49,6 +65,25 @@ func TestLoadProductStatusInvalidWorkflowStateJSON(t *testing.T) {
 	if jsonErr := json.Unmarshal(out, &parsed); jsonErr != nil {
 		t.Fatalf("error view must round-trip as JSON: %v", jsonErr)
 	}
+}
+
+func containsStatusSubstring(view ProductStatusView, value string) bool {
+	for _, blocker := range view.Blockers {
+		if strings.Contains(blocker.Message, value) {
+			return true
+		}
+	}
+	for _, finding := range view.Findings {
+		if strings.Contains(finding.Message, value) {
+			return true
+		}
+	}
+	for _, next := range view.NextValidActions {
+		if strings.Contains(next, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLoadProductStatusSemanticInvalidWorkflowState(t *testing.T) {

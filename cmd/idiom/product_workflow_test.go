@@ -1220,6 +1220,78 @@ func TestProductAuditDoesNotChangeLintBehavior(t *testing.T) {
 	}
 }
 
+func TestProductLintTextOutputIsActionable(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	var jsonStdout, jsonStderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+	if code != 0 {
+		t.Fatalf("expected pass, got code=%d stdout=%s stderr=%s", code, jsonStdout.String(), jsonStderr.String())
+	}
+	var jsonResult productLintResult
+	if err := json.Unmarshal(jsonStdout.Bytes(), &jsonResult); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if strings.TrimSpace(jsonResult.NextValidAction) == "" {
+		t.Fatal("expected next_valid_action in lint json output")
+	}
+
+	var textStdout, textStderr bytes.Buffer
+	code = runProductLint([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+	if code != 0 {
+		t.Fatalf("expected pass text run, got code=%d stdout=%s stderr=%s", code, textStdout.String(), textStderr.String())
+	}
+	if !strings.Contains(textStdout.String(), "next: "+jsonResult.NextValidAction) {
+		t.Fatalf("expected text next-action parity, got:\n%s", textStdout.String())
+	}
+}
+
+func TestProductLintFailNextValidActionParity(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{not valid json`)
+	var jsonStdout, jsonStderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+	if code != 1 {
+		t.Fatalf("expected fail, got code=%d stdout=%s stderr=%s", code, jsonStdout.String(), jsonStderr.String())
+	}
+	var jsonResult productLintResult
+	if err := json.Unmarshal(jsonStdout.Bytes(), &jsonResult); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	var textStdout, textStderr bytes.Buffer
+	code = runProductLint([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+	if code != 1 {
+		t.Fatalf("expected fail text run, got code=%d stdout=%s stderr=%s", code, textStdout.String(), textStderr.String())
+	}
+	if !strings.Contains(textStdout.String(), "next: "+jsonResult.NextValidAction) {
+		t.Fatalf("expected text next-action parity, got:\n%s", textStdout.String())
+	}
+}
+
+func TestProductAuditFailNextValidActionParity(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{not valid json`)
+	var jsonStdout, jsonStderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+	if code != 1 {
+		t.Fatalf("expected fail, got code=%d stdout=%s stderr=%s", code, jsonStdout.String(), jsonStderr.String())
+	}
+	var jsonResult productAuditResult
+	if err := json.Unmarshal(jsonStdout.Bytes(), &jsonResult); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if strings.TrimSpace(jsonResult.NextValidAction) == "" {
+		t.Fatal("expected next_valid_action in audit json output")
+	}
+	var textStdout, textStderr bytes.Buffer
+	code = runProductAudit([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+	if code != 1 {
+		t.Fatalf("expected fail text run, got code=%d stdout=%s stderr=%s", code, textStdout.String(), textStderr.String())
+	}
+	if !strings.Contains(textStdout.String(), "next: "+jsonResult.NextValidAction) {
+		t.Fatalf("expected text next-action parity, got:\n%s", textStdout.String())
+	}
+}
+
 func TestProductAuditUsageMirrorsLint(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runProductAudit([]string{}, &stdout, &stderr, nil)
@@ -2257,10 +2329,225 @@ func TestProductStatusTextIncludesKeyFields(t *testing.T) {
 		t.Fatalf("expected status to pass on durable fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"prd-adr-brief-workflow", currentState, "audit:", "next_actions:", "metrics: phase="} {
+	for _, want := range []string{"prd-adr-brief-workflow", currentState, "audit:", "next_actions:", "metrics: phase=", "next:"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected text output to contain %q, got:\n%s", want, output)
 		}
+	}
+}
+
+func TestProductLintNextValidActionParity(t *testing.T) {
+	dir := t.TempDir()
+
+	var jsonStdout, jsonStderr bytes.Buffer
+	jsonCode := runProductLint([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+	if jsonCode != 1 {
+		t.Fatalf("expected lint failure exit code 1, got code=%d stdout=%s stderr=%s", jsonCode, jsonStdout.String(), jsonStderr.String())
+	}
+	var out productLintResult
+	if err := json.Unmarshal(jsonStdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected valid lint JSON: %v", err)
+	}
+	if strings.TrimSpace(out.NextValidAction) == "" {
+		t.Fatalf("expected next_valid_action in JSON, got %#v", out)
+	}
+
+	var textStdout, textStderr bytes.Buffer
+	textCode := runProductLint([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+	if textCode != jsonCode {
+		t.Fatalf("expected text and JSON exit code parity, got text=%d json=%d", textCode, jsonCode)
+	}
+	text := textStdout.String()
+	if !strings.Contains(text, "  status: FAIL") {
+		t.Fatalf("expected deterministic FAIL status label, got:\n%s", text)
+	}
+	if !strings.Contains(text, "  [missing_file] workflow_state.json: required file not found") {
+		t.Fatalf("expected typed finding identity in text output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "  next: "+out.NextValidAction) {
+		t.Fatalf("expected text next action parity with JSON value %q, got:\n%s", out.NextValidAction, text)
+	}
+}
+
+func TestProductAuditNextValidActionParity(t *testing.T) {
+	dir := t.TempDir()
+
+	var jsonStdout, jsonStderr bytes.Buffer
+	jsonCode := runProductAudit([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+	if jsonCode != 1 {
+		t.Fatalf("expected audit failure exit code 1, got code=%d stdout=%s stderr=%s", jsonCode, jsonStdout.String(), jsonStderr.String())
+	}
+	var out productAuditResult
+	if err := json.Unmarshal(jsonStdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected valid audit JSON: %v", err)
+	}
+	if strings.TrimSpace(out.NextValidAction) == "" {
+		t.Fatalf("expected next_valid_action in JSON, got %#v", out)
+	}
+
+	var textStdout, textStderr bytes.Buffer
+	textCode := runProductAudit([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+	if textCode != jsonCode {
+		t.Fatalf("expected text and JSON exit code parity, got text=%d json=%d", textCode, jsonCode)
+	}
+	text := textStdout.String()
+	if !strings.Contains(text, "  status: FAIL") {
+		t.Fatalf("expected deterministic FAIL status label, got:\n%s", text)
+	}
+	if !strings.Contains(text, "  [missing_file] workflow_state.json: required file not found") {
+		t.Fatalf("expected typed finding identity in text output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "  next: "+out.NextValidAction) {
+		t.Fatalf("expected text next action parity with JSON value %q, got:\n%s", out.NextValidAction, text)
+	}
+}
+
+func TestProductStatusTextOutputIsActionable(t *testing.T) {
+	t.Run("pass", func(t *testing.T) {
+		root := repoRoot(t)
+		effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+
+		var jsonStdout, jsonStderr bytes.Buffer
+		jsonCode := runProductStatus([]string{"--effort-root", effortRoot, "--json"}, &jsonStdout, &jsonStderr, nil)
+		if jsonCode != 0 {
+			t.Fatalf("expected pass status code 0, got code=%d stdout=%s stderr=%s", jsonCode, jsonStdout.String(), jsonStderr.String())
+		}
+		var out productworkflow.ProductStatusView
+		if err := json.Unmarshal(jsonStdout.Bytes(), &out); err != nil {
+			t.Fatalf("expected valid status JSON: %v", err)
+		}
+		if len(out.NextValidActions) == 0 || strings.TrimSpace(out.NextValidActions[0]) == "" {
+			t.Fatalf("expected next_valid_actions for pass output, got %#v", out.NextValidActions)
+		}
+
+		var textStdout, textStderr bytes.Buffer
+		textCode := runProductStatus([]string{"--effort-root", effortRoot}, &textStdout, &textStderr, nil)
+		if textCode != 0 {
+			t.Fatalf("expected pass text code 0, got code=%d stdout=%s stderr=%s", textCode, textStdout.String(), textStderr.String())
+		}
+		text := textStdout.String()
+		if !strings.Contains(text, "  status: OK") {
+			t.Fatalf("expected deterministic OK status label, got:\n%s", text)
+		}
+		if !strings.Contains(text, "  next: "+out.NextValidActions[0]) {
+			t.Fatalf("expected text next action parity with JSON value %q, got:\n%s", out.NextValidActions[0], text)
+		}
+	})
+
+	t.Run("audit_fail", func(t *testing.T) {
+		dir := writeValidTestEffort(t)
+		writeTestFile(t, dir, "tdd.json", `{not valid json`)
+
+		var jsonStdout, jsonStderr bytes.Buffer
+		jsonCode := runProductStatus([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+		if jsonCode != 1 {
+			t.Fatalf("expected audit-fail status code 1, got code=%d stdout=%s stderr=%s", jsonCode, jsonStdout.String(), jsonStderr.String())
+		}
+		var out productworkflow.ProductStatusView
+		if err := json.Unmarshal(jsonStdout.Bytes(), &out); err != nil {
+			t.Fatalf("expected valid status JSON: %v", err)
+		}
+		if len(out.NextValidActions) == 0 || strings.TrimSpace(out.NextValidActions[0]) == "" {
+			t.Fatalf("expected next_valid_actions for fail output, got %#v", out.NextValidActions)
+		}
+		if !strings.Contains(out.NextValidActions[0], "fix product workflow findings") {
+			t.Fatalf("expected current failure remediation as first next action, got %#v", out.NextValidActions)
+		}
+		if out.NextValidActions[0] == "complete" {
+			t.Fatalf("expected not to surface stale workflow progression as first next action, got %#v", out.NextValidActions)
+		}
+
+		var textStdout, textStderr bytes.Buffer
+		textCode := runProductStatus([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+		if textCode != 1 {
+			t.Fatalf("expected audit-fail text code 1, got code=%d stdout=%s stderr=%s", textCode, textStdout.String(), textStderr.String())
+		}
+		text := textStdout.String()
+		if !strings.Contains(text, "  status: FAILED") {
+			t.Fatalf("expected deterministic FAILED status label, got:\n%s", text)
+		}
+		if !strings.Contains(text, "    [metrics_error] ") {
+			t.Fatalf("expected typed blocker identity in text output, got:\n%s", text)
+		}
+		if !strings.Contains(text, "  next: "+out.NextValidActions[0]) {
+			t.Fatalf("expected text next action parity with JSON value %q, got:\n%s", out.NextValidActions[0], text)
+		}
+	})
+
+	t.Run("workflow_state_error", func(t *testing.T) {
+		dir := t.TempDir()
+
+		var jsonStdout, jsonStderr bytes.Buffer
+		jsonCode := runProductStatus([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+		if jsonCode != 1 {
+			t.Fatalf("expected error status code 1, got code=%d stdout=%s stderr=%s", jsonCode, jsonStdout.String(), jsonStderr.String())
+		}
+		var out productworkflow.ProductStatusView
+		if err := json.Unmarshal(jsonStdout.Bytes(), &out); err != nil {
+			t.Fatalf("expected valid status JSON: %v", err)
+		}
+		if len(out.NextValidActions) == 0 || strings.TrimSpace(out.NextValidActions[0]) == "" {
+			t.Fatalf("expected next_valid_actions for error output, got %#v", out.NextValidActions)
+		}
+
+		var textStdout, textStderr bytes.Buffer
+		textCode := runProductStatus([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+		if textCode != 1 {
+			t.Fatalf("expected error text code 1, got code=%d stdout=%s stderr=%s", textCode, textStdout.String(), textStderr.String())
+		}
+		text := textStdout.String()
+		if strings.Contains(text, dir) {
+			t.Fatalf("expected privacy-safe blocker details, got absolute path in text output:\n%s", text)
+		}
+		if !strings.Contains(text, "  status: ERROR") {
+			t.Fatalf("expected deterministic ERROR status label, got:\n%s", text)
+		}
+		if !strings.Contains(text, "  [missing_workflow_state] workflow_state.json not found") {
+			t.Fatalf("expected typed blocker identity in text output, got:\n%s", text)
+		}
+		if !strings.Contains(text, "  next: "+out.NextValidActions[0]) {
+			t.Fatalf("expected text next action parity with JSON value %q, got:\n%s", out.NextValidActions[0], text)
+		}
+	})
+}
+
+func TestProductStatusErrorNextValidActionsParity(t *testing.T) {
+	dir := t.TempDir()
+	var jsonStdout, jsonStderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--json"}, &jsonStdout, &jsonStderr, nil)
+	if code != 1 {
+		t.Fatalf("expected error code, got %d", code)
+	}
+	var jsonResult productworkflow.ProductStatusView
+	if err := json.Unmarshal(jsonStdout.Bytes(), &jsonResult); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if len(jsonResult.NextValidActions) == 0 {
+		t.Fatal("expected next_valid_actions for status error path")
+	}
+	var textStdout, textStderr bytes.Buffer
+	code = runProductStatus([]string{"--effort-root", dir}, &textStdout, &textStderr, nil)
+	if code != 1 {
+		t.Fatalf("expected error text code, got %d", code)
+	}
+	if !strings.Contains(textStdout.String(), "next: "+jsonResult.NextValidActions[0]) {
+		t.Fatalf("expected text next-action parity, got:\n%s", textStdout.String())
+	}
+}
+
+func TestProductStatusAuditFailTextIncludesNextAction(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{not valid json`)
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit fail code, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "next: fix product workflow findings") {
+		t.Fatalf("expected actionable next line, got:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "next: complete") {
+		t.Fatalf("expected status failure not to surface stale workflow progression, got:\n%s", stdout.String())
 	}
 }
 

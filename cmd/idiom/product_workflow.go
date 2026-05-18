@@ -24,10 +24,11 @@ type productLintFinding struct {
 }
 
 type productLintResult struct {
-	Status       string               `json:"status"`
-	EffortRoot   string               `json:"effort_root"`
-	CheckedFiles []string             `json:"checked_files"`
-	Findings     []productLintFinding `json:"findings"`
+	Status          string               `json:"status"`
+	EffortRoot      string               `json:"effort_root"`
+	CheckedFiles    []string             `json:"checked_files"`
+	Findings        []productLintFinding `json:"findings"`
+	NextValidAction string               `json:"next_valid_action"`
 }
 
 func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -112,6 +113,7 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 		return 2
 	}
 	result := lintEffortFolder(absRoot)
+	result.NextValidAction = productLintNextValidAction(result.Status)
 	logCLIPhase(rec, "product_lint", map[string]any{
 		"status":        result.Status,
 		"finding_count": len(result.Findings),
@@ -126,12 +128,15 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	} else {
 		if result.Status == "pass" {
 			fmt.Fprintf(stdout, "product lint: %s OK (%d files checked)\n", filepath.Base(absRoot), len(result.CheckedFiles))
+			fmt.Fprintln(stdout, "  status: PASS")
 		} else {
 			fmt.Fprintf(stdout, "product lint: %s FAILED (%d findings)\n", filepath.Base(absRoot), len(result.Findings))
+			fmt.Fprintln(stdout, "  status: FAIL")
 			for _, f := range result.Findings {
 				fmt.Fprintf(stdout, "  [%s] %s: %s\n", f.Code, f.Path, f.Message)
 			}
 		}
+		fmt.Fprintf(stdout, "  next: %s\n", result.NextValidAction)
 	}
 	if result.Status != "pass" {
 		return 1
@@ -600,12 +605,13 @@ type productAuditSection struct {
 }
 
 type productAuditResult struct {
-	Status       string                                  `json:"status"`
-	EffortRoot   string                                  `json:"effort_root"`
-	CheckedFiles []string                                `json:"checked_files"`
-	Sections     []productAuditSection                   `json:"sections"`
-	Findings     []productLintFinding                    `json:"findings"`
-	Metrics      *productworkflow.ProductWorkflowMetrics `json:"metrics,omitempty"`
+	Status          string                                  `json:"status"`
+	EffortRoot      string                                  `json:"effort_root"`
+	CheckedFiles    []string                                `json:"checked_files"`
+	Sections        []productAuditSection                   `json:"sections"`
+	Findings        []productLintFinding                    `json:"findings"`
+	Metrics         *productworkflow.ProductWorkflowMetrics `json:"metrics,omitempty"`
+	NextValidAction string                                  `json:"next_valid_action"`
 }
 
 func buildAuditResult(lintResult productLintResult) productAuditResult {
@@ -684,6 +690,7 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	} else {
 		auditResult.Metrics = &metrics
 	}
+	auditResult.NextValidAction = productAuditNextValidAction(auditResult.Status)
 	logCLIPhase(rec, "product_audit", map[string]any{
 		"status":        auditResult.Status,
 		"finding_count": len(auditResult.Findings),
@@ -698,8 +705,10 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	} else {
 		if auditResult.Status == "pass" {
 			fmt.Fprintf(stdout, "product audit: %s OK (%d files checked)\n", filepath.Base(absRoot), len(auditResult.CheckedFiles))
+			fmt.Fprintln(stdout, "  status: PASS")
 		} else {
 			fmt.Fprintf(stdout, "product audit: %s FAILED (%d findings)\n", filepath.Base(absRoot), len(auditResult.Findings))
+			fmt.Fprintln(stdout, "  status: FAIL")
 			for _, f := range auditResult.Findings {
 				fmt.Fprintf(stdout, "  [%s] %s: %s\n", f.Code, f.Path, f.Message)
 			}
@@ -723,6 +732,7 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 				metrics.NextValidActionCount,
 			)
 		}
+		fmt.Fprintf(stdout, "  next: %s\n", auditResult.NextValidAction)
 	}
 	if auditResult.Status != "pass" {
 		return 1
@@ -821,6 +831,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	if view.AuditStatus != "pass" {
 		exitCode = 1
 	}
+	view.NextValidActions = productStatusNextValidActions(view, exitCode, wsErr != nil)
 
 	logCLIPhase(rec, "product_status", map[string]any{
 		"audit_status":  view.AuditStatus,
@@ -839,10 +850,12 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 
 	if wsErr != nil {
-		fmt.Fprintf(stdout, "product status: ERROR %s\n", absRoot)
+		fmt.Fprintf(stdout, "product status: ERROR %s\n", filepath.Base(absRoot))
+		fmt.Fprintln(stdout, "  status: ERROR")
 		for _, b := range view.Blockers {
 			fmt.Fprintf(stdout, "  [%s] %s\n", b.Code, b.Message)
 		}
+		fmt.Fprintf(stdout, "  next: %s\n", view.NextValidActions[0])
 		return exitCode
 	}
 
@@ -852,6 +865,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 	fmt.Fprintf(stdout, "product status: %s %s\n", filepath.Base(absRoot), view.EffortID)
 	fmt.Fprintf(stdout, "  state: %s/%s  audit: %s\n", view.CurrentPhase, view.CurrentState, auditLabel)
+	fmt.Fprintf(stdout, "  status: %s\n", auditLabel)
 	if view.StateRevision > 0 {
 		fmt.Fprintf(stdout, "  revision: %d  last_event: %s\n", view.StateRevision, view.LastEventID)
 	}
@@ -890,8 +904,49 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		}
 		fmt.Fprintln(stdout)
 	}
+	fmt.Fprintf(stdout, "  next: %s\n", view.NextValidActions[0])
 
 	return exitCode
+}
+
+func productLintNextValidAction(status string) string {
+	if status == "pass" {
+		return "run `idiom product audit --effort-root <path>` for section-level checks"
+	}
+	return "fix findings, then rerun `idiom product lint --effort-root <path>`"
+}
+
+func productAuditNextValidAction(status string) string {
+	if status == "pass" {
+		return "run `idiom product status --effort-root <path>` to inspect workflow state"
+	}
+	return "fix findings, then rerun `idiom product audit --effort-root <path>`"
+}
+
+func productStatusNextValidActions(view productworkflow.ProductStatusView, exitCode int, workflowStateErr bool) []string {
+	if workflowStateErr {
+		if len(view.NextValidActions) > 0 {
+			return view.NextValidActions
+		}
+		return []string{"restore a valid workflow_state.json, then rerun `idiom product status --effort-root <path>`"}
+	}
+	if exitCode != 0 {
+		action := "fix product workflow findings, then rerun `idiom product status --effort-root <path>`"
+		if len(view.NextValidActions) == 0 {
+			return []string{action}
+		}
+		if view.NextValidActions[0] == action {
+			return view.NextValidActions
+		}
+		next := make([]string, 0, len(view.NextValidActions)+1)
+		next = append(next, action)
+		next = append(next, view.NextValidActions...)
+		return next
+	}
+	if len(view.NextValidActions) > 0 {
+		return view.NextValidActions
+	}
+	return []string{"run `idiom product audit --effort-root <path>` for detailed section findings"}
 }
 
 func markStatusSectionFailure(view *productworkflow.ProductStatusView, name string) {

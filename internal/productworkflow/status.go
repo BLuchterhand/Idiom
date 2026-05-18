@@ -44,7 +44,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 	if err != nil {
 		blocker := StatusBlocker{
 			Code:    "missing_workflow_state",
-			Message: fmt.Sprintf("workflow_state.json not found: %v", err),
+			Message: "workflow_state.json not found",
 		}
 		view := ProductStatusView{
 			AuditStatus:      "error",
@@ -52,7 +52,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 			Blockers:         []StatusBlocker{blocker},
 			Findings:         []StatusBlocker{blocker},
 			OpenObligations:  []string{},
-			NextValidActions: []string{},
+			NextValidActions: []string{"restore workflow_state.json under the effort root and rerun product status"},
 			Sections:         []StatusSection{},
 		}
 		return view, fmt.Errorf("workflow_state.json: %w", err)
@@ -70,7 +70,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 			Blockers:         []StatusBlocker{blocker},
 			Findings:         []StatusBlocker{blocker},
 			OpenObligations:  []string{},
-			NextValidActions: []string{},
+			NextValidActions: []string{"fix workflow_state.json content and rerun product status"},
 			Sections:         []StatusSection{},
 		}
 		return view, fmt.Errorf("workflow_state.json: %w", parseErr)
