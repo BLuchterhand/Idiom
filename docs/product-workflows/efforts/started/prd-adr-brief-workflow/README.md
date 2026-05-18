@@ -7,12 +7,12 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0037-phase-6-status-migration-contract`
-- Active atom: planning `impl-0038-phase-6-status-migration-apply-cli`
+- Active atom: `impl-0038-phase-6-status-migration-apply-cli`
 - Status bucket: `started`
 - Current phase: `phase-6-operator-continuation`
 - Context pack: `5636955570c7b36d`
 - Coverage tier: `unit`
-- Blocker status: none for Atom 37; next action is planning Atom 38 status-migration apply CLI/use case
+- Blocker status: Atom 38 implementation, verification, review, and investigation pending
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
 - Atom 10 product audit command: all TDD obligations satisfied, 9 audit tests pass, product lint unchanged
 - Atom 11 PRD audit hard checks: all TDD obligations satisfied; DS4-through-Codex
@@ -206,6 +206,7 @@ This effort is the durable implementation state for delivering
   No workflow mutation, status-folder migration, model execution, lane dispatch,
   or broad TUI behavior was added.
 - Atom 37: all TDD obligations satisfied. Added deterministic in-memory status-migration planning contracts that preserve stable `effort_id` identity across `unstarted`, `started`, and `closed` folders, compute updated workflow-state/index/event payloads, record workflow and index prior paths, derive next actions, and fail closed for invalid transitions or unsafe paths. Review repairs hardened absolute-path rejection and redacted blocker output. The planned GPT Codex worker stalled before final response; Codex orchestration completed the scoped patch and verification without any GLM/OpenCode implementor. No folder moves, lane dispatch, model execution, `.idiom` runtime mutation, or broad TUI behavior was added.
+- Atom 38 is planned as a C3 Phase 6 operator-continuation slice. It should add an apply-level status-migration use case and CLI surface over the Atom 37 planner, atomically updating the durable effort folder, `workflow_state.json`, status-migration event, and effort index while preserving stable `effort_id` and prior paths. It must fail closed for stale revisions, unsafe paths, conflicting target/source folders, malformed durable state, and cross-root paths. Keep lane dispatch, model execution, `.idiom` runtime mutation, and broad TUI interaction behavior outside the atom.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -446,4 +447,4 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan `impl-0038-phase-6-status-migration-apply-cli` as a C3 atom for an apply-level status-migration use case and CLI surface over the Atom 37 planner. It must preserve stable `effort_id`, perform filesystem/index/workflow/event updates atomically, fail closed for stale or unsafe state, and keep lane dispatch, model execution, `.idiom` runtime mutation, and broad TUI interaction behavior outside the atom.
+Run the planned C3 GPT Codex worker for `impl-0038-phase-6-status-migration-apply-cli`. Keep the slice focused on the apply-level status-migration use case and CLI surface; do not add lane dispatch, model execution, `.idiom` runtime mutation, or broad TUI interaction behavior.

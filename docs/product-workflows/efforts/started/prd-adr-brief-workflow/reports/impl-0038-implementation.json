@@ -1,0 +1,48 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0038-phase-6-status-migration-apply-cli",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0038",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.4",
+  "completed_at": "",
+  "complexity_tier": "C3",
+  "scope_statement": "Add an apply-level product workflow status-migration use case and CLI surface over the Atom 37 planner. The use case must atomically validate current workflow/index/source state, move the durable effort folder, write updated workflow_state/index/event artifacts, preserve stable effort_id and prior paths, fail closed for stale/unsafe/conflicting state, and avoid lane dispatch, model execution, .idiom runtime mutation, or broad TUI interaction behavior.",
+  "code_changes": false,
+  "changed_paths": [],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [
+      "idiom tool context_pack --input '{\"task\":\"phase 6 next atom after status migration contract product workflow design doc closeout CLI TUI status folder migration\",\"mode\":\"plan\",\"limit\":8}'",
+      "idiom tool context_query --input '{\"query\":\"product workflow apply status migration atomically move effort folder update workflow_state events effort index CLI no dispatch no model execution\",\"resolution\":\"symbol\",\"limit\":12}'",
+      "go test ./internal/productworkflow -run TestProductStatusMigrationApply -count=1",
+      "go test ./cmd/idiom -run 'TestProductStatusMigrationApply|TestProductEfforts' -count=1",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product status-migration --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --target-status closed --plan --json",
+      "go run ./cmd/idiom product status-migration --effort-root <temp-started-effort> --target-status closed --apply --json",
+      "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --json",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "privacy secret-pattern scan over durable effort artifacts",
+      "git diff --check"
+    ],
+    "status": "implementation_pending"
+  },
+  "discovery_evidence": [
+    "context_pack:b1e7a03548be8af5",
+    "context_query:product workflow apply status migration atomically move effort folder update workflow_state events effort index CLI no dispatch no model execution"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0038",
+  "commit_hash": "",
+  "planning_checkpoint_commit": "",
+  "privacy_note": "planning report stores only scope, model assignment, command names, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, TUI transcript bodies, or customer-identifying data",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ]
+}

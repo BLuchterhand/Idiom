@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0037-phase-6-status-migration-contract",
+  "task_id": "impl-0038-phase-6-status-migration-apply-cli",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -38,7 +38,8 @@
       "operator_status_view_model",
       "effort_browser_cli_planned",
       "effort_browser_cli",
-      "status_migration_contract"
+      "status_migration_contract",
+      "status_migration_apply_cli_planned"
     ],
     "gates_blocked": []
   },
@@ -474,6 +475,42 @@
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0038-001",
+      "type": "contract",
+      "behavior": "Status migration apply performs one atomic application-level transition from a valid planner result: it validates current source folder, workflow_state revision, status bucket, effort index entry, target folder availability, and writes updated workflow_state, event, index, and folder location while preserving stable effort_id and prior paths.",
+      "owner": "internal/productworkflow/migration_apply_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductStatusMigrationApply -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0038-002",
+      "type": "acceptance",
+      "behavior": "The product CLI exposes status-migration plan/apply output with deterministic JSON and human-readable summaries, typed blockers, stable effort_id, relative source/target paths, prior paths, event id, and no lane dispatch or model execution.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run 'TestProductStatusMigrationApply|TestProductEfforts' -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0038-003",
+      "type": "contract",
+      "behavior": "Status migration apply fails closed without partial durable mutation for stale revisions, mismatched index/workflow state, existing target folders, missing source folders, unsafe paths, unsupported transitions, malformed JSON/JSONL, or cross-root paths.",
+      "owner": "internal/productworkflow/migration_apply_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductStatusMigrationApply -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0038-004",
+      "type": "audit",
+      "behavior": "The atom records C3 GPT Codex worker/reviewer selection, Idiom discovery evidence, focused/full verification, and privacy-safe durable reports without storing raw prompts, transcripts, file bodies, secrets, generated briefs, customer-identifying data, or TUI transcript bodies.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0038-review.json",
+      "command": "privacy secret-pattern scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }
