@@ -6,8 +6,8 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0033-phase-5-human-readable-cli-coverage`
-- Active atom: `impl-0034-phase-5-ranker-learning-evidence-adapter`
+- Last completed atom: `impl-0034-phase-5-ranker-learning-evidence-adapter`
+- Active atom: pending Phase 6 operator status/continuation planning
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
 - Context pack: `512bb3db3ddfbe5d`
@@ -169,13 +169,21 @@ This effort is the durable implementation state for delivering
   execution feedback into bounded learning-gate input, while keeping ranker
   weight promotion, lane dispatch, `.idiom` runtime mutation, evidence export
   generation, and raw prompt/transcript/file-body storage outside the atom.
+- Atom 34: all TDD obligations satisfied. Added deterministic
+  `idiom product feedback --ranker-learning-evidence-summary`, which adapts
+  verified execution feedback summaries into bounded ranker-learning
+  request-shaped evidence, fails closed for missing context/test evidence,
+  unknown obligations, unsafe paths, privacy markers, and blocked summaries, and
+  keeps ranker-weight promotion, lane dispatch, `.idiom` runtime mutation,
+  evidence export generation, and raw prompt/transcript/file-body storage
+  outside the command.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 33 closeout. These
+The workflow implementation remains in progress after Atom 34 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
@@ -183,9 +191,9 @@ plan-only TDD obligation synthesis, deterministic coverage-gate evaluation,
 lint-verified brief generation, read-only execution feedback linking,
 deterministic feedback reconciliation into bounded workflow-state/evidence-link
 output, product-workflow metrics in product audit/status, Obsidian parity
-checks, and human-readable product CLI next-action coverage. The next Phase 5
-slice is ranker-learning evidence adapter tracking; operator/TUI surfaces remain
-later atoms.
+checks, human-readable product CLI next-action coverage, and ranker-learning
+evidence adapter tracking. The next slice is Phase 6 operator status and
+continuation surface planning; operator/TUI surfaces remain later atoms.
 
 ## Implementation Guidelines
 
@@ -410,7 +418,8 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Start `impl-0034-phase-5-ranker-learning-evidence-adapter` with the planned C3
-GPT Codex worker. Keep the slice focused on deterministic adapter output from
-verified feedback; keep ranker-weight promotion, lane dispatch, `.idiom` runtime
-mutation, evidence export generation, and operator/TUI surfaces outside the atom.
+Plan the Phase 6 operator status and continuation atom. Keep the slice focused
+on shared durable workflow status/next-action presentation for CLI/TUI
+continuation; keep lane dispatch, model execution, `.idiom` runtime mutation,
+and broad TUI interaction changes outside the next atom unless explicitly
+planned.

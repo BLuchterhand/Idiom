@@ -4,10 +4,10 @@
   "task_id": "impl-0034-phase-5-ranker-learning-evidence-adapter",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T18:05:00Z",
-  "state_revision": 102,
-  "last_event_id": "evt-0293",
-  "workspace_fingerprint": "idiom@7324ba0",
+  "updated_at": "2026-05-18T20:20:00Z",
+  "state_revision": 103,
+  "last_event_id": "evt-0299",
+  "workspace_fingerprint": "idiom@5ce9c73",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -164,6 +164,11 @@
         "gate": "ranker_learning_evidence_adapter_planned",
         "status": "passed",
         "checked_at": "2026-05-18T18:00:00Z"
+      },
+      {
+        "gate": "ranker_learning_evidence_adapter",
+        "status": "passed",
+        "checked_at": "2026-05-18T20:20:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -182,24 +187,13 @@
       "Atom 31 complete: product audit and product status expose deterministic product-workflow metrics for progress, gates, blockers, TDD, ledger, reports, artifacts, and evidence-link counts without dispatching lanes, mutating .idiom runtime state, writing evidence exports, promoting ranker learning, or enforcing Obsidian parity.",
       "Atom 32 complete: product lint/audit/status now include deterministic Obsidian parity checks for stale proposal/roadmap status, with an explicit no-change rationale path and fail-closed missing-note behavior.",
       "Atom 33 complete: product lint/audit/status JSON and human-readable outputs expose deterministic status labels, typed finding or blocker identities, and actionable next-valid-action text; audit-fail status output now prioritizes live remediation over stale workflow-state progression.",
-      "Atom 34 planned: add a deterministic ranker-learning evidence adapter that shapes verified product workflow context/test outcomes for the existing learning gate without promoting ranker weights or writing .idiom runtime state."
+      "Atom 34 complete: idiom product feedback --ranker-learning-evidence-summary adapts verified execution feedback into bounded ranker-learning request-shaped evidence without promoting ranker weights, dispatching lanes, mutating .idiom runtime state, writing evidence exports, or storing raw content.",
+      "Next design-doc slice: plan the Phase 6 operator status and continuation surface so CLI/TUI can present the same durable workflow state and valid next actions."
     ]
   },
-  "open_obligations": [
-    "TDD-IMPL-0034-001",
-    "TDD-IMPL-0034-002",
-    "TDD-IMPL-0034-003",
-    "TDD-IMPL-0034-004"
-  ],
-  "open_questions": [
-    "Whether the ranker-learning evidence adapter should live under product workflow feedback, context ranker infrastructure, or a narrow bridge package."
-  ],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ],
+  "open_obligations": [],
+  "open_questions": [],
+  "blockers": [],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -228,9 +222,7 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "run_impl_0034_ranker_learning_evidence_adapter_worker",
-    "review_impl_0034_ranker_learning_evidence_adapter_atom",
-    "verify_impl_0034_ranker_learning_adapter_no_promotion"
+    "plan_phase_6_operator_status_continuation_atom"
   ],
   "durability_level": "source_controlled"
 }

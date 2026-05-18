@@ -32,7 +32,8 @@
       "tdd_obligation_synthesis_plan",
       "human_readable_cli_coverage_planned",
       "human_readable_cli_coverage",
-      "ranker_learning_evidence_adapter_planned"
+      "ranker_learning_evidence_adapter_planned",
+      "ranker_learning_evidence_adapter"
     ],
     "gates_blocked": []
   },
@@ -332,7 +333,7 @@
       "owner": "internal/productworkflow/execution_feedback_test.go",
       "command": "go test ./internal/productworkflow -run TestRankerLearningEvidenceAdapter -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0034-002",
@@ -341,7 +342,7 @@
       "owner": "internal/productworkflow/execution_feedback_test.go",
       "command": "go test ./internal/productworkflow -run TestRankerLearningEvidenceAdapter -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0034-003",
@@ -350,7 +351,7 @@
       "owner": "cmd/idiom/product_workflow_test.go",
       "command": "go test ./cmd/idiom -run 'TestProductFeedback.*RankerLearning|TestProduct.*RankerLearningEvidence' -count=1",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     },
     {
       "id": "TDD-IMPL-0034-004",
@@ -359,7 +360,7 @@
       "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0034-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "pending"
+      "status": "passed"
     }
   ]
 }

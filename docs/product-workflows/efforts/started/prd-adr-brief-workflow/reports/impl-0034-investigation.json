@@ -2,11 +2,16 @@
   "schema_version": "idiom.investigation_report.v1.fixture",
   "effort_id": "prd-adr-brief-workflow",
   "task_id": "impl-0034-phase-5-ranker-learning-evidence-adapter",
-  "status": "pending",
+  "status": "complete",
   "created_at": "2026-05-18T18:00:00Z",
-  "completed_at": "",
+  "completed_at": "2026-05-18T20:20:00Z",
   "scope": {
-    "changed_paths": [],
+    "changed_paths": [
+      "cmd/idiom/product_workflow.go",
+      "cmd/idiom/product_workflow_test.go",
+      "internal/productworkflow/execution_feedback.go",
+      "internal/productworkflow/execution_feedback_test.go"
+    ],
     "expected_paths": [
       "cmd/idiom/product_workflow.go",
       "cmd/idiom/product_workflow_test.go",
@@ -33,7 +38,7 @@
     "runtime_state_mutation_added": false
   },
   "tests": {
-    "status": "pending",
+    "status": "passed",
     "commands": [
       "idiom tool context_pack --input '{\"task\":\"phase 5 ranker-learning evidence adapter tracking verified context and test outcomes product workflow feedback deterministic no promotion\",\"mode\":\"plan\",\"limit\":12}'",
       "idiom tool context_query --input '{\"query\":\"ranker learning product workflow feedback evidence adapter verified context test outcomes no promotion\",\"resolution\":\"symbol\",\"limit\":12}'",
@@ -51,17 +56,24 @@
     ]
   },
   "coverage": {
-    "tdd_obligations_satisfied": [],
-    "ranker_learning_adapter_status": "pending"
+    "tdd_obligations_satisfied": [
+      "TDD-IMPL-0034-001",
+      "TDD-IMPL-0034-002",
+      "TDD-IMPL-0034-003",
+      "TDD-IMPL-0034-004"
+    ],
+    "ranker_learning_adapter_status": "implemented_without_promotion"
   },
   "traceability": {
     "context_pack_ids": [
-      "512bb3db3ddfbe5d"
+      "512bb3db3ddfbe5d",
+      "9ee4a652d1efcf21"
     ],
-    "implementation_commit": "",
-    "product_lint_status": "pending",
-    "product_audit_status": "pending",
-    "product_status_status": "pending"
+    "implementation_commit": "5ce9c731376b1658fa212e3e397d9741d433c599",
+    "review_repair_commit": "5ce9c731376b1658fa212e3e397d9741d433c599",
+    "product_lint_status": "pass",
+    "product_audit_status": "pass",
+    "product_status_status": "pass"
   },
   "privacy_audit": {
     "raw_prompts_stored": false,
@@ -71,15 +83,18 @@
     "customer_identifying_data_stored": false,
     "generated_brief_bodies_stored_in_durable_reports": false,
     "ranker_weight_payloads_stored": false,
-    "secret_pattern_scan_status": "pending"
+    "secret_pattern_scan_status": "passed"
   },
-  "reviewer_findings": [],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
+  "reviewer_findings": [
+    "Initial build break repaired before commit",
+    "Missing context-pack blocker repaired before commit",
+    "Text findings output repaired before commit",
+    "Path blocker taxonomy repaired before commit",
+    "Review-found ranker state path request leak repaired in 5ce9c731376b1658fa212e3e397d9741d433c599",
+    "Review-found blocked wrapper status fail-open repaired in 5ce9c731376b1658fa212e3e397d9741d433c599"
   ],
-  "next_valid_action": "run_impl_0034_ranker_learning_evidence_adapter_worker",
-  "commit_hash": ""
+  "blockers": [],
+  "next_valid_action": "plan_phase_6_operator_status_continuation_atom",
+  "commit_hash": "5ce9c731376b1658fa212e3e397d9741d433c599",
+  "review_repair_commit": "5ce9c731376b1658fa212e3e397d9741d433c599"
 }
