@@ -833,8 +833,9 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	if view.AuditStatus != "pass" {
 		exitCode = 1
 	}
+	operatorInputView := view
 	view.NextValidActions = productStatusNextValidActions(view, exitCode, wsErr != nil)
-	operatorStatus := productworkflow.BuildProductOperatorStatusView(view, readProductOperatorWorkflowState(absRoot, wsErr))
+	operatorStatus := productworkflow.BuildProductOperatorStatusView(operatorInputView, readProductOperatorWorkflowState(absRoot, wsErr))
 
 	logCLIPhase(rec, "product_status", map[string]any{
 		"audit_status":  view.AuditStatus,

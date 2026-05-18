@@ -2419,6 +2419,38 @@ func TestProductStatusOperatorViewTextFailsClosedOnStaleContext(t *testing.T) {
 	}
 }
 
+func TestProductStatusOperatorViewUsesWorkflowActionsOnAuditFail(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{not valid json`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--operator-view", "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected operator status audit fail code 1, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var result productworkflow.ProductOperatorStatusView
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("operator audit-fail output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if len(result.NextValidActions) != 1 {
+		t.Fatalf("expected durable workflow action only, got %#v", result.NextValidActions)
+	}
+	action := result.NextValidActions[0]
+	if action.ID != "complete" || action.Action != "complete" {
+		t.Fatalf("expected operator view to preserve workflow_state next action, got %#v", action)
+	}
+	if action.Dispatchable || action.RunnableNow {
+		t.Fatalf("expected audit failure to block workflow action, got %#v", action)
+	}
+	if !strings.Contains(strings.Join(action.BlockedBy, ","), "audit_not_passing") {
+		t.Fatalf("expected audit_not_passing blocker, got %#v", action)
+	}
+	if strings.Contains(action.Action, "fix product workflow findings") || strings.Contains(action.ID, "fix_product_workflow_findings") {
+		t.Fatalf("operator view must not use CLI remediation prose as continuation authority, got %#v", action)
+	}
+}
+
 func TestProductStatusJSONDoesNotIncludeOperatorContinuationView(t *testing.T) {
 	dir := writeValidTestEffort(t)
 
