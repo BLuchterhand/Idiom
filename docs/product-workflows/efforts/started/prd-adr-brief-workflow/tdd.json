@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0034-phase-5-ranker-learning-evidence-adapter",
+  "task_id": "impl-0035-phase-6-operator-status-view-model",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -33,7 +33,8 @@
       "human_readable_cli_coverage_planned",
       "human_readable_cli_coverage",
       "ranker_learning_evidence_adapter_planned",
-      "ranker_learning_evidence_adapter"
+      "ranker_learning_evidence_adapter",
+      "operator_status_view_model_planned"
     ],
     "gates_blocked": []
   },
@@ -361,6 +362,42 @@
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0035-001",
+      "type": "contract",
+      "behavior": "The product workflow exposes a shared read-only operator status view model over workflow_state, lint/audit status, context freshness, blockers, open obligations, artifact paths, and next valid actions for CLI and future TUI presenters.",
+      "owner": "internal/productworkflow/status_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductOperatorStatusView -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0035-002",
+      "type": "contract",
+      "behavior": "Operator next actions are typed with owner and dispatchability metadata, fail closed for stale context, active blockers, invalid workflow state, or audit failures, and never use chat transcript replay as continuation authority.",
+      "owner": "internal/productworkflow/status_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductOperatorStatusView -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0035-003",
+      "type": "acceptance",
+      "behavior": "The product status CLI can emit the operator view in JSON and human-readable form with stable fields and actionable blocker/next-action text while preserving existing product status behavior.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run 'TestProductStatus.*Operator|TestProductOperatorStatus' -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0035-004",
+      "type": "audit",
+      "behavior": "The atom records C3 GPT Codex worker/reviewer selection, Idiom discovery evidence, focused/full verification, and privacy-safe durable reports without storing raw prompts, raw transcripts, file bodies, secrets, generated briefs, customer-identifying data, or TUI transcript bodies.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0035-review.json",
+      "command": "privacy secret-pattern scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

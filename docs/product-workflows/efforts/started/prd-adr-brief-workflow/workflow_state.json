@@ -1,15 +1,15 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0034-phase-5-ranker-learning-evidence-adapter",
+  "task_id": "impl-0035-phase-6-operator-status-view-model",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T20:20:00Z",
-  "state_revision": 103,
-  "last_event_id": "evt-0299",
-  "workspace_fingerprint": "idiom@5ce9c73",
+  "updated_at": "2026-05-18T20:35:00Z",
+  "state_revision": 104,
+  "last_event_id": "evt-0302",
+  "workspace_fingerprint": "idiom@615d019",
   "status_bucket": "started",
-  "current_phase": "phase-5-execution-feedback",
+  "current_phase": "phase-6-operator-continuation",
   "current_state": "planned",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
@@ -36,10 +36,13 @@
     "impl_0033_investigation_report": "reports/impl-0033-investigation.json",
     "impl_0034_implementation_report": "reports/impl-0034-implementation.json",
     "impl_0034_review_report": "reports/impl-0034-review.json",
-    "impl_0034_investigation_report": "reports/impl-0034-investigation.json"
+    "impl_0034_investigation_report": "reports/impl-0034-investigation.json",
+    "impl_0035_implementation_report": "reports/impl-0035-implementation.json",
+    "impl_0035_review_report": "reports/impl-0035-review.json",
+    "impl_0035_investigation_report": "reports/impl-0035-investigation.json"
   },
   "context": {
-    "context_pack_id": "512bb3db3ddfbe5d",
+    "context_pack_id": "835deff0af50032a",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -47,7 +50,9 @@
       "cmd/idiom/product_workflow_test.go",
       "internal/productworkflow/types.go",
       "internal/productworkflow/status.go",
+      "internal/productworkflow/status_test.go",
       "internal/productworkflow/transition.go",
+      "internal/productworkflow/transition_test.go",
       "internal/productworkflow/metrics.go",
       "internal/productworkflow/execution_feedback.go",
       "internal/productworkflow/execution_feedback_test.go",
@@ -78,6 +83,10 @@
       {
         "kind": "stale_runtime_trace",
         "description": "Context pack 512bb3db3ddfbe5d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to ranker-learning evidence adapter planning scope."
+      },
+      {
+        "kind": "stale_runtime_trace",
+        "description": "Context pack 835deff0af50032a reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to Phase 6 operator status view-model planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -169,6 +178,11 @@
         "gate": "ranker_learning_evidence_adapter",
         "status": "passed",
         "checked_at": "2026-05-18T20:20:00Z"
+      },
+      {
+        "gate": "operator_status_view_model_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T20:35:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -188,12 +202,23 @@
       "Atom 32 complete: product lint/audit/status now include deterministic Obsidian parity checks for stale proposal/roadmap status, with an explicit no-change rationale path and fail-closed missing-note behavior.",
       "Atom 33 complete: product lint/audit/status JSON and human-readable outputs expose deterministic status labels, typed finding or blocker identities, and actionable next-valid-action text; audit-fail status output now prioritizes live remediation over stale workflow-state progression.",
       "Atom 34 complete: idiom product feedback --ranker-learning-evidence-summary adapts verified execution feedback into bounded ranker-learning request-shaped evidence without promoting ranker weights, dispatching lanes, mutating .idiom runtime state, writing evidence exports, or storing raw content.",
-      "Next design-doc slice: plan the Phase 6 operator status and continuation surface so CLI/TUI can present the same durable workflow state and valid next actions."
+      "Next design-doc slice: plan the Phase 6 operator status and continuation surface so CLI/TUI can present the same durable workflow state and valid next actions.",
+      "Atom 35 planned: add a shared read-only operator status view model for CLI/TUI continuation, including typed next actions with owners and blockers, without dispatching lanes, executing models, mutating .idiom runtime state, or adding broad TUI interactions."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0035-001",
+    "TDD-IMPL-0035-002",
+    "TDD-IMPL-0035-003",
+    "TDD-IMPL-0035-004"
+  ],
   "open_questions": [],
-  "blockers": [],
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -222,7 +247,9 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_6_operator_status_continuation_atom"
+    "run_impl_0035_operator_status_view_model_worker",
+    "review_impl_0035_operator_status_view_model_atom",
+    "verify_impl_0035_operator_status_view_model_no_dispatch"
   ],
   "durability_level": "source_controlled"
 }

@@ -20,8 +20,8 @@ tags:
 > workflow metrics in product audit/status, and Obsidian parity enforcement in
 > product lint/audit/status, and human-readable CLI next-action coverage for
 > operator-facing product commands, and deterministic ranker-learning evidence
-> adapter tracking. The next slice is Phase 6 operator status and continuation;
-> operator surfaces remain.
+> adapter tracking. The active Phase 6 slice is a shared read-only operator
+> status view model for CLI/TUI continuation; broader operator surfaces remain.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 

@@ -7,12 +7,12 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0034-phase-5-ranker-learning-evidence-adapter`
-- Active atom: pending Phase 6 operator status/continuation planning
+- Active atom: `impl-0035-phase-6-operator-status-view-model`
 - Status bucket: `started`
-- Current phase: `phase-5-execution-feedback`
-- Context pack: `512bb3db3ddfbe5d`
+- Current phase: `phase-6-operator-continuation`
+- Context pack: `835deff0af50032a`
 - Coverage tier: `unit`
-- Blocker status: none open; fixture-status conflict resolved before Atom 8b
+- Blocker status: Atom 35 implementation, verification, review, and investigation pending
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
 - Atom 10 product audit command: all TDD obligations satisfied, 9 audit tests pass, product lint unchanged
 - Atom 11 PRD audit hard checks: all TDD obligations satisfied; DS4-through-Codex
@@ -177,13 +177,19 @@ This effort is the durable implementation state for delivering
   keeps ranker-weight promotion, lane dispatch, `.idiom` runtime mutation,
   evidence export generation, and raw prompt/transcript/file-body storage
   outside the command.
+- Atom 35 is planned as the first Phase 6 operator-continuation slice. It should
+  add a shared read-only operator status view model for CLI/TUI continuation,
+  with typed next actions and owners, blocker/freshness summaries, and durable
+  status presentation that does not dispatch lanes, execute models, mutate
+  `.idiom` runtime state, or add broad TUI interaction behavior.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 34 closeout. These
+The workflow implementation remains in progress after Atom 34 closeout and Atom
+35 planning. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
@@ -192,8 +198,8 @@ lint-verified brief generation, read-only execution feedback linking,
 deterministic feedback reconciliation into bounded workflow-state/evidence-link
 output, product-workflow metrics in product audit/status, Obsidian parity
 checks, human-readable product CLI next-action coverage, and ranker-learning
-evidence adapter tracking. The next slice is Phase 6 operator status and
-continuation surface planning; operator/TUI surfaces remain later atoms.
+evidence adapter tracking. The active slice starts Phase 6 with a shared
+operator status view model; broader TUI interactions remain later atoms.
 
 ## Implementation Guidelines
 
@@ -418,8 +424,8 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the Phase 6 operator status and continuation atom. Keep the slice focused
-on shared durable workflow status/next-action presentation for CLI/TUI
+Run the planned C3 GPT Codex worker for
+`impl-0035-phase-6-operator-status-view-model`. Keep the slice focused on a
+shared read-only durable workflow status/next-action view model for CLI/TUI
 continuation; keep lane dispatch, model execution, `.idiom` runtime mutation,
-and broad TUI interaction changes outside the next atom unless explicitly
-planned.
+status-folder migration, and broad TUI interaction changes outside this atom.

@@ -222,7 +222,9 @@ to match the atom complexity, one distinct GPT reviewer sub-agent, required
 verification, and a post-effort investigation report before closeout. Persist
 atom state in the effort folder so work can resume across sessions without
 relying on raw transcript replay. Historical DS4/GLM/OpenCode attempts remain
-audit evidence only unless a human explicitly re-authorizes them.
+audit evidence only unless a human explicitly re-authorizes them. The active
+Phase 6 atom is `impl-0035-phase-6-operator-status-view-model`, a shared
+read-only operator status view model for CLI/TUI continuation.
 
 ### TODO: Long-Lived Implementation Operating Model
 

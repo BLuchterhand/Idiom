@@ -1,0 +1,73 @@
+{
+  "schema_version": "idiom.investigation_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0035-phase-6-operator-status-view-model",
+  "status": "blocked",
+  "created_at": "2026-05-18T20:35:00Z",
+  "completed_at": "",
+  "scope": {
+    "expected_paths": [
+      "internal/productworkflow/status.go",
+      "internal/productworkflow/status_test.go",
+      "cmd/idiom/product_workflow.go",
+      "cmd/idiom/product_workflow_test.go",
+      "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md",
+      "docs/obsidian/22 - Product Workflow ROADMAP.md",
+      "docs/product-workflows/efforts/index.json",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0035-implementation.json",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0035-review.json",
+      "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0035-investigation.json"
+    ],
+    "forbidden_paths": [
+      "internal/app/**",
+      "internal/agent/**",
+      "prompts/**",
+      ".idiom/**"
+    ],
+    "dispatch_or_model_execution_added": false,
+    "runtime_state_mutation_added": false,
+    "status_folder_migration_added": false
+  },
+  "tests": {
+    "status": "pending",
+    "commands": []
+  },
+  "coverage": {
+    "tdd_obligations_pending": [
+      "TDD-IMPL-0035-001",
+      "TDD-IMPL-0035-002",
+      "TDD-IMPL-0035-003",
+      "TDD-IMPL-0035-004"
+    ]
+  },
+  "traceability": {
+    "context_pack_ids": [
+      "835deff0af50032a"
+    ],
+    "implementation_commit": "",
+    "product_lint_status": "pending",
+    "product_audit_status": "pending",
+    "product_status_status": "pending"
+  },
+  "privacy_audit": {
+    "raw_prompts_stored": false,
+    "transcripts_stored": false,
+    "file_bodies_stored": false,
+    "secrets_stored": false,
+    "customer_identifying_data_stored": false,
+    "tui_transcript_bodies_stored": false
+  },
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
+  "next_valid_action": "run_impl_0035_operator_status_view_model_worker",
+  "commit_hash": ""
+}
