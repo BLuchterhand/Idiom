@@ -32,6 +32,7 @@ type ProductStatusMigrationPlan struct {
 	SourceFolderPath     string                          `json:"source_folder_path"`
 	TargetFolderPath     string                          `json:"target_folder_path"`
 	PriorFolderPaths     []string                        `json:"prior_folder_paths"`
+	PriorIndexPaths      []string                        `json:"prior_index_paths"`
 	UpdatedWorkflowState WorkflowState                   `json:"updated_workflow_state"`
 	UpdatedEffortIndex   EffortIndex                     `json:"updated_effort_index"`
 	UpdatedIndexEntry    EffortIndexEntry                `json:"updated_index_entry"`
@@ -41,15 +42,23 @@ type ProductStatusMigrationPlan struct {
 }
 
 type ProductStatusMigrationEvent struct {
-	Event            string `json:"event"`
-	EventID          string `json:"event_id"`
-	EffortID         string `json:"effort_id"`
-	FromStatusBucket string `json:"from_status_bucket"`
-	ToStatusBucket   string `json:"to_status_bucket"`
-	FromFolderPath   string `json:"from_folder_path"`
-	ToFolderPath     string `json:"to_folder_path"`
-	StateRevision    int    `json:"state_revision"`
-	Timestamp        string `json:"timestamp"`
+	Event     string                            `json:"event"`
+	EventID   string                            `json:"event_id"`
+	EffortID  string                            `json:"effort_id"`
+	TaskID    string                            `json:"task_id"`
+	Timestamp string                            `json:"timestamp"`
+	Source    string                            `json:"source"`
+	Details   ProductStatusMigrationEventDetail `json:"details"`
+}
+
+type ProductStatusMigrationEventDetail struct {
+	FromStatusBucket string   `json:"from_status_bucket"`
+	ToStatusBucket   string   `json:"to_status_bucket"`
+	FromFolderPath   string   `json:"from_folder_path"`
+	ToFolderPath     string   `json:"to_folder_path"`
+	PriorFolderPaths []string `json:"prior_folder_paths"`
+	PriorIndexPaths  []string `json:"prior_index_paths"`
+	StateRevision    int      `json:"state_revision"`
 }
 
 type ProductStatusMigrationBlocker struct {
@@ -104,6 +113,9 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 	}
 	if workflowState.StatusBucket == targetBucket && targetBucket != "" {
 		plan.addBlocker("noop_status_migration", "target_status_bucket", "target status bucket must differ from source status bucket")
+	}
+	if !allowedStatusMigration(workflowState.StatusBucket, targetBucket) {
+		plan.addBlocker("invalid_status_migration", "target_status_bucket", fmt.Sprintf("status migration from %q to %q is not allowed", workflowState.StatusBucket, targetBucket))
 	}
 	if _, ok := validStates[workflowState.CurrentState]; !ok && workflowState.CurrentState != "" {
 		plan.addBlocker("invalid_current_state", "workflow_state.json", fmt.Sprintf("current_state %q is not valid", workflowState.CurrentState))
@@ -184,6 +196,14 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 	}
 	updatedWorkflow.FolderPath = path.Join(effortsRoot, targetFolder)
 	updatedWorkflow.PriorFolderPaths = appendUniqueStrings(compactSafeEffortPaths(updatedWorkflow.PriorFolderPaths), workflowFolderPath)
+	nextValidActions, nextActionBlockers := migrationNextValidActions(targetBucket, targetState)
+	for _, blocker := range nextActionBlockers {
+		plan.addBlocker("invalid_target_next_actions", "target_current_state", blocker.Message)
+	}
+	if len(plan.Blockers) > 0 {
+		return plan
+	}
+	updatedWorkflow.NextValidActions = nextValidActions
 
 	updatedIndexEntry := *indexEntry
 	updatedIndexEntry.StatusBucket = targetBucket
@@ -197,20 +217,27 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 
 	plan.Status = "planned"
 	plan.TargetFolderPath = targetFolder
-	plan.PriorFolderPaths = append([]string{}, updatedIndexEntry.PriorPaths...)
+	plan.PriorFolderPaths = append([]string{}, updatedWorkflow.PriorFolderPaths...)
+	plan.PriorIndexPaths = append([]string{}, updatedIndexEntry.PriorPaths...)
 	plan.UpdatedWorkflowState = updatedWorkflow
 	plan.UpdatedEffortIndex = updatedIndex
 	plan.UpdatedIndexEntry = updatedIndexEntry
 	plan.Event = ProductStatusMigrationEvent{
-		Event:            "status_migration_planned",
-		EventID:          strings.TrimSpace(options.MigrationEventID),
-		EffortID:         workflowState.EffortID,
-		FromStatusBucket: workflowState.StatusBucket,
-		ToStatusBucket:   targetBucket,
-		FromFolderPath:   sourceFolder,
-		ToFolderPath:     targetFolder,
-		StateRevision:    updatedWorkflow.StateRevision,
-		Timestamp:        strings.TrimSpace(options.UpdatedAt),
+		Event:     "status_migration_planned",
+		EventID:   strings.TrimSpace(options.MigrationEventID),
+		EffortID:  workflowState.EffortID,
+		TaskID:    workflowState.TaskID,
+		Timestamp: strings.TrimSpace(options.UpdatedAt),
+		Source:    "product_status_migration_planner",
+		Details: ProductStatusMigrationEventDetail{
+			FromStatusBucket: workflowState.StatusBucket,
+			ToStatusBucket:   targetBucket,
+			FromFolderPath:   sourceFolder,
+			ToFolderPath:     targetFolder,
+			PriorFolderPaths: append([]string{}, updatedWorkflow.PriorFolderPaths...),
+			PriorIndexPaths:  append([]string{}, updatedIndexEntry.PriorPaths...),
+			StateRevision:    updatedWorkflow.StateRevision,
+		},
 	}
 	plan.NextValidAction = "review the status migration plan before applying any folder move"
 	return plan
@@ -272,6 +299,17 @@ func defaultMigrationTargetState(targetBucket, currentState string) string {
 	}
 }
 
+func allowedStatusMigration(sourceBucket, targetBucket string) bool {
+	switch sourceBucket {
+	case "unstarted":
+		return targetBucket == "started" || targetBucket == "closed"
+	case "started":
+		return targetBucket == "closed"
+	default:
+		return false
+	}
+}
+
 func migrationIndexEntry(index EffortIndex, effortID string) (*EffortIndexEntry, []ProductStatusMigrationBlocker) {
 	if strings.TrimSpace(effortID) == "" {
 		return nil, nil
@@ -311,6 +349,27 @@ func updatedEffortIndex(index EffortIndex, effortID string, updatedEntry EffortI
 		}
 	}
 	return updated
+}
+
+func transitionActionNames(actions []TransitionAction) []string {
+	out := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if strings.TrimSpace(action.Action) != "" {
+			out = append(out, strings.TrimSpace(action.Action))
+		}
+	}
+	return out
+}
+
+func migrationNextValidActions(statusBucket, currentState string) ([]string, []TransitionBlocker) {
+	actions, blockers := NextActionsForState(statusBucket, currentState)
+	if len(blockers) > 0 {
+		return nil, blockers
+	}
+	if statusBucket == "closed" && len(actions) == 0 {
+		return []string{"inspect_closed_effort"}, nil
+	}
+	return transitionActionNames(actions), nil
 }
 
 func safeEffortRelativePath(value string) bool {
