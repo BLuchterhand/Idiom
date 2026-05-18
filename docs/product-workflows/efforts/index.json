@@ -1,15 +1,15 @@
 {
   "schema_version": "idiom.effort_index.v1",
-  "updated_at": "2026-05-18T13:15:00Z",
+  "updated_at": "2026-05-18T13:40:00Z",
   "efforts": [
     {
       "effort_id": "prd-adr-brief-workflow",
       "title": "PRD/ADR/Brief Research Workflow",
       "status_bucket": "started",
-      "current_phase": "phase-4-tdd-obligation-synthesis",
+      "current_phase": "phase-4-coverage-gate",
       "current_state": "planned",
       "folder_path": "started/prd-adr-brief-workflow",
-      "task_id": "impl-0026-phase-4-tdd-obligation-synthesis-plan",
+      "task_id": "impl-0027-phase-4-coverage-gate-evaluator",
       "created_at": "2026-05-17T15:20:00Z",
       "prior_paths": []
     }

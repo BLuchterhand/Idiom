@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0026-phase-4-tdd-obligation-synthesis-plan",
+  "task_id": "impl-0027-phase-4-coverage-gate-evaluator",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,7 +19,8 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned"
+      "atom_planned",
+      "tdd_obligation_synthesis_plan"
     ],
     "gates_blocked": []
   },
@@ -59,6 +60,42 @@
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0027-001",
+      "type": "contract",
+      "behavior": "Coverage gate evaluation deterministically checks existing PRD, accepted ADRs, TDD coverage metadata, and traceability inputs against tier-specific blocking criteria, returning typed pass/block findings without heuristic model judgment.",
+      "owner": "internal/productworkflow/coverage_gate_test.go",
+      "command": "go test ./internal/productworkflow -run TestCoverageGate",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0027-002",
+      "type": "acceptance",
+      "behavior": "idiom product tdd --evaluate-coverage reads the durable effort and emits JSON coverage-gate metadata plus typed findings, fails closed for missing or invalid PRD, ADR, TDD, or traceability inputs, and preserves the durable fixture pass path.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProductTDDCoverageGate",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0027-003",
+      "type": "contract",
+      "behavior": "Coverage gate tier selection blocks documentation/local_low/behavior_standard/contract_high/formal_optional criteria according to the design table, including explicit blockers for unavailable automation instead of silent pass.",
+      "owner": "internal/productworkflow/coverage_gate_test.go",
+      "command": "go test ./internal/productworkflow -run TestCoverageGate",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0027-004",
+      "type": "audit",
+      "behavior": "The atom records GPT Codex implementor/reviewer selection, Idiom discovery evidence, coverage-gate verification, and privacy-safe durable reports without storing raw prompts/transcripts/file bodies/secrets or generated brief bodies.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0027-review.json",
+      "command": "privacy secret-value scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

@@ -1,0 +1,26 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0027-phase-4-coverage-gate-evaluator",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0027",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.3-codex",
+  "completed_at": "",
+  "complexity_tier": "C2",
+  "scope_statement": "Add a deterministic coverage-gate evaluator over existing PRD, accepted ADR, TDD, and traceability artifacts without generating briefs, mutating artifacts, executing models, running validation commands on behalf of the user, or dispatching work.",
+  "code_changes": false,
+  "changed_paths": [],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [],
+    "status": "pending"
+  },
+  "privacy_note": "pending report stores only scope, GPT Codex assignment, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0027"
+}

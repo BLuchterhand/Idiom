@@ -7,10 +7,10 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0026-phase-4-tdd-obligation-synthesis-plan`
-- Active atom: none; next atom should plan the Phase 4 coverage gate slice
+- Active atom: `impl-0027-phase-4-coverage-gate-evaluator` planned
 - Status bucket: `started`
 - Current phase: `phase-4-coverage-gate`
-- Context pack: `341cfce94f353ee2`
+- Context pack: `74ed3aa5e0b41587`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -100,6 +100,11 @@ This effort is the durable implementation state for delivering
   suggested obligation type and command, blocks when an accepted ADR cannot map
   a requirement, and does not overwrite `tdd.json`, generate briefs, evaluate
   the coverage gate, execute models, or dispatch work.
+- Atom 27 is planned as the first Phase 4 coverage gate slice. It should add a
+  deterministic gate evaluator over existing PRD/ADR/TDD artifacts and coverage
+  metadata, reporting blocking criteria and typed findings by coverage tier. It
+  must not generate briefs, mutate product artifacts, execute models, run tests
+  on behalf of the user, or dispatch implementation work.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
