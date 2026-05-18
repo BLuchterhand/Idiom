@@ -1,6 +1,6 @@
 {
   "schema_version": "idiom.effort_index.v1",
-  "updated_at": "2026-05-18T22:05:00Z",
+  "updated_at": "2026-05-18T22:06:00Z",
   "efforts": [
     {
       "effort_id": "prd-adr-brief-workflow",

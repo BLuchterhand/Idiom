@@ -71,5 +71,6 @@
     "investigation_pending"
   ],
   "next_valid_action": "run_impl_0038_status_migration_apply_cli_worker",
-  "commit_hash": ""
+  "commit_hash": "",
+  "planning_checkpoint_commit": "f6a00c6f2b2a229de9166899aa6ad8b00a759bd9"
 }
