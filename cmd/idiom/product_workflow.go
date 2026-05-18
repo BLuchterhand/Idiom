@@ -51,6 +51,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductTDD(args[1:], stdout, stderr, rec)
 	case "brief":
 		return runProductBrief(args[1:], stdout, stderr, rec)
+	case "feedback":
+		return runProductFeedback(args[1:], stdout, stderr, rec)
 	case "-h", "--help", "help":
 		printProductUsage(stdout)
 		return 0
@@ -75,6 +77,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --plan-obligations [--json]")
 	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --evaluate-coverage [--json]")
 	fmt.Fprintln(w, "  idiom product brief --effort-root <path> --render [--brief-output briefs/<task>.md] [--json]")
+	fmt.Fprintln(w, "  idiom product feedback --effort-root <path> --lane-history-file <path> --plan-progress-file <path> --product-evidence-id <id> --product-evidence-path <path> --release-evidence-id <id> --release-evidence-path <path> --verification-file <path> --brief-path <path> --changed-path <path> --tdd-obligation-ref <id> [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -1380,6 +1383,298 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		return 1
 	}
 	return 0
+}
+
+type productFeedbackOutput struct {
+	Status          string                                   `json:"status"`
+	EffortRoot      string                                   `json:"effort_root"`
+	Summary         productworkflow.ExecutionFeedbackSummary `json:"summary"`
+	NextValidAction string                                   `json:"next_valid_action"`
+}
+
+var productFeedbackPrivacyMarkers = []string{
+	"raw prompt",
+	"raw prompts",
+	"raw transcript",
+	"raw transcripts",
+	"file body",
+	"file bodies",
+	"secret",
+	"secrets",
+	"secret=",
+	"secret:",
+	"secrets=",
+	"secrets:",
+	"customer-identifying",
+	"customer identifying",
+	"customer data",
+}
+
+func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product feedback", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var effortRoot string
+	var laneHistoryFile string
+	var planProgressFile string
+	var verificationFile string
+	var productEvidenceID string
+	var productEvidencePath string
+	var releaseEvidenceID string
+	var releaseEvidencePath string
+	var briefPath string
+	var verificationStatus string
+	var jsonOutput bool
+	var changedPaths multiValueFlag
+	var tddRefs multiValueFlag
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
+	fs.StringVar(&laneHistoryFile, "lane-history-file", "", "effort-relative JSON file with lane history references")
+	fs.StringVar(&planProgressFile, "plan-progress-file", "", "effort-relative JSON file with plan progress reference")
+	fs.StringVar(&verificationFile, "verification-file", "", "effort-relative JSON file with verification status and commands")
+	fs.StringVar(&verificationStatus, "verification-status", "", "override verification status")
+	fs.StringVar(&productEvidenceID, "product-evidence-id", "", "product evidence export id reference")
+	fs.StringVar(&productEvidencePath, "product-evidence-path", "", "product evidence export path reference")
+	fs.StringVar(&releaseEvidenceID, "release-evidence-id", "", "release evidence bundle id reference")
+	fs.StringVar(&releaseEvidencePath, "release-evidence-path", "", "release evidence bundle path reference")
+	fs.StringVar(&briefPath, "brief-path", "", "effort-relative brief path reference")
+	fs.Var(&changedPaths, "changed-path", "changed path reference (repeatable)")
+	fs.Var(&tddRefs, "tdd-obligation-ref", "TDD obligation reference (repeatable)")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	requirements := []struct {
+		name  string
+		value string
+	}{
+		{"--effort-root", effortRoot},
+		{"--lane-history-file", laneHistoryFile},
+		{"--plan-progress-file", planProgressFile},
+		{"--verification-file", verificationFile},
+		{"--product-evidence-id", productEvidenceID},
+		{"--product-evidence-path", productEvidencePath},
+		{"--release-evidence-id", releaseEvidenceID},
+		{"--release-evidence-path", releaseEvidencePath},
+		{"--brief-path", briefPath},
+	}
+	for _, req := range requirements {
+		if strings.TrimSpace(req.value) == "" {
+			fmt.Fprintf(stderr, "product feedback: %s is required\n", req.name)
+			return 2
+		}
+	}
+	if len(changedPaths.values) == 0 {
+		fmt.Fprintln(stderr, "product feedback: at least one --changed-path is required")
+		return 2
+	}
+	if len(tddRefs.values) == 0 {
+		fmt.Fprintln(stderr, "product feedback: at least one --tdd-obligation-ref is required")
+		return 2
+	}
+
+	absRoot, err := filepath.Abs(effortRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product feedback: resolve effort root: %v\n", err)
+		return 2
+	}
+	readJSONFile := func(kind, relPath string, target any, scanPrivacy bool) error {
+		absPath, _, resolveErr := resolveProductFeedbackReferencePath(absRoot, relPath)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		data, readErr := os.ReadFile(absPath)
+		if readErr != nil {
+			return readErr
+		}
+		if scanPrivacy {
+			if marker := findProductFeedbackPrivacyMarker(string(data)); marker != "" {
+				return fmt.Errorf("%s contains forbidden privacy marker %q", kind, marker)
+			}
+		}
+		if err := json.Unmarshal(data, target); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	var laneHistory []productworkflow.ExecutionLaneEventRef
+	if err := readJSONFile("lane history reference", laneHistoryFile, &laneHistory, true); err != nil {
+		fmt.Fprintf(stderr, "product feedback: lane history reference invalid: %v\n", err)
+		return 1
+	}
+	var planProgress productworkflow.PlanExecuteProgressRef
+	if err := readJSONFile("plan progress reference", planProgressFile, &planProgress, true); err != nil {
+		fmt.Fprintf(stderr, "product feedback: plan progress reference invalid: %v\n", err)
+		return 1
+	}
+	var verification productworkflow.VerificationRef
+	if err := readJSONFile("verification reference", verificationFile, &verification, true); err != nil {
+		fmt.Fprintf(stderr, "product feedback: verification reference invalid: %v\n", err)
+		return 1
+	}
+	if strings.TrimSpace(verificationStatus) != "" {
+		verification.Status = strings.TrimSpace(verificationStatus)
+	}
+	if marker := findProductFeedbackPrivacyMarker(strings.Join(changedPaths.values, "\n")); marker != "" {
+		fmt.Fprintf(stderr, "product feedback: changed-path contains forbidden privacy marker %q\n", marker)
+		return 1
+	}
+	if marker := findProductFeedbackPrivacyMarker(strings.Join(tddRefs.values, "\n")); marker != "" {
+		fmt.Fprintf(stderr, "product feedback: tdd-obligation-ref contains forbidden privacy marker %q\n", marker)
+		return 1
+	}
+	if marker := findProductFeedbackPrivacyMarker(strings.Join([]string{
+		productEvidenceID, productEvidencePath, releaseEvidenceID, releaseEvidencePath, briefPath, verification.Status,
+		strings.Join(verification.Commands, "\n"),
+	}, "\n")); marker != "" {
+		fmt.Fprintf(stderr, "product feedback: references contain forbidden privacy marker %q\n", marker)
+		return 1
+	}
+
+	var workflowState productworkflow.WorkflowState
+	if err := readJSONFile("workflow_state", "workflow_state.json", &workflowState, false); err != nil {
+		fmt.Fprintf(stderr, "product feedback: workflow_state.json invalid: %v\n", err)
+		return 1
+	}
+	if _, err := productworkflow.ParseWorkflowStateJSON(mustJSONMarshal(workflowState)); err != nil {
+		fmt.Fprintf(stderr, "product feedback: workflow_state.json parse failed: %v\n", err)
+		return 1
+	}
+	var tddLedger productworkflow.TDDLedger
+	if err := readJSONFile("tdd", "tdd.json", &tddLedger, false); err != nil {
+		fmt.Fprintf(stderr, "product feedback: tdd.json invalid: %v\n", err)
+		return 1
+	}
+	if _, err := productworkflow.ParseTDDLedgerJSON(mustJSONMarshal(tddLedger)); err != nil {
+		fmt.Fprintf(stderr, "product feedback: tdd.json parse failed: %v\n", err)
+		return 1
+	}
+	summary := productworkflow.SummarizeExecutionFeedback(productworkflow.ExecutionFeedbackInput{
+		EffortRoot:        absRoot,
+		WorkflowState:     workflowState,
+		TDDLedger:         tddLedger,
+		LaneHistory:       laneHistory,
+		PlanProgress:      planProgress,
+		ProductEvidence:   productworkflow.EvidenceBundleRef{ID: strings.TrimSpace(productEvidenceID), Path: strings.TrimSpace(productEvidencePath)},
+		ReleaseEvidence:   productworkflow.EvidenceBundleRef{ID: strings.TrimSpace(releaseEvidenceID), Path: strings.TrimSpace(releaseEvidencePath)},
+		ChangedPaths:      changedPaths.values,
+		Verification:      verification,
+		BriefPath:         strings.TrimSpace(briefPath),
+		TDDObligationRefs: tddRefs.values,
+	})
+
+	logCLIPhase(rec, "product_feedback", map[string]any{
+		"status":          summary.Status,
+		"finding_count":   len(summary.Findings),
+		"blocker_count":   len(summary.Blockers),
+		"next_valid_step": summary.NextValidAction,
+	})
+	out := productFeedbackOutput{
+		Status:          summary.Status,
+		EffortRoot:      absRoot,
+		Summary:         summary,
+		NextValidAction: summary.NextValidAction,
+	}
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			fmt.Fprintf(stderr, "product feedback: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintf(stdout, "product feedback: %s\n", out.Status)
+		fmt.Fprintf(stdout, "effort: %s\n", filepath.Base(absRoot))
+		fmt.Fprintf(stdout, "phase: %s / %s\n", summary.PlanPhase, summary.PlanState)
+		fmt.Fprintf(stdout, "verification: %s\n", summary.Verification.Status)
+		if len(summary.Blockers) > 0 {
+			fmt.Fprintf(stdout, "blockers: %d\n", len(summary.Blockers))
+			for _, blocker := range summary.Blockers {
+				fmt.Fprintf(stdout, "  [%s] %s\n", blocker.Kind, blocker.Message)
+			}
+		}
+		fmt.Fprintf(stdout, "next: %s\n", summary.NextValidAction)
+	}
+	if out.Status != "pass" {
+		return 1
+	}
+	return 0
+}
+
+func mustJSONMarshal(v any) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return []byte("{}")
+	}
+	return data
+}
+
+func resolveProductFeedbackReferencePath(effortRoot, relPath string) (string, string, error) {
+	clean, ok := cleanProductRelativePath(relPath)
+	if !ok {
+		return "", "", fmt.Errorf("path %q must be effort-relative and must not contain path traversal", relPath)
+	}
+	absPath := filepath.Join(effortRoot, clean)
+	if info, err := os.Lstat(absPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", "", fmt.Errorf("path %q must not be a symlink", clean)
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", "", fmt.Errorf("inspect path %q: %w", clean, err)
+	}
+	rootEval, err := filepath.EvalSymlinks(effortRoot)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve effort root: %w", err)
+	}
+	existing := absPath
+	for {
+		eval, evalErr := filepath.EvalSymlinks(existing)
+		if evalErr == nil {
+			rel, relErr := filepath.Rel(filepath.Clean(rootEval), filepath.Clean(eval))
+			if relErr != nil || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
+				return "", "", fmt.Errorf("path %q resolves outside effort root", clean)
+			}
+			return absPath, clean, nil
+		}
+		if !os.IsNotExist(evalErr) {
+			return "", "", fmt.Errorf("resolve path %q: %w", clean, evalErr)
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", "", fmt.Errorf("resolve path %q: no existing ancestor", clean)
+		}
+		existing = parent
+	}
+}
+
+func findProductFeedbackPrivacyMarker(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return ""
+	}
+	for _, marker := range productFeedbackPrivacyMarkers {
+		if strings.Contains(normalized, marker) {
+			return marker
+		}
+	}
+	return ""
+}
+
+type multiValueFlag struct {
+	values []string
+}
+
+func (m *multiValueFlag) String() string {
+	return strings.Join(m.values, ",")
+}
+
+func (m *multiValueFlag) Set(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fmt.Errorf("empty value")
+	}
+	m.values = append(m.values, trimmed)
+	return nil
 }
 
 type productBriefOutput struct {

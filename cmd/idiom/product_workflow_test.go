@@ -4219,6 +4219,289 @@ func TestProductTDDCoverageGateUsageErrors(t *testing.T) {
 	}
 }
 
+func TestProductFeedbackPassesWithValidReferences(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/lane_history.json", `[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z"}]`)
+	writeTestFile(t, dir, "references/plan_progress.json", `{"phase":"phase-5","state":"feedback","status":"completed"}`)
+	writeTestFile(t, dir, "references/verification.json", `{"status":"passed","commands":["go test ./cmd/idiom"]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "references/lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productFeedbackOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "pass" || out.Summary.Status != "pass" {
+		t.Fatalf("expected pass output, got %#v", out)
+	}
+	if len(out.Summary.ChangedPaths) != 1 || out.Summary.ChangedPaths[0] != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("expected changed paths in summary, got %#v", out.Summary.ChangedPaths)
+	}
+	if out.Summary.Verification.Status != "passed" || len(out.Summary.Verification.Commands) != 1 {
+		t.Fatalf("expected verification summary details, got %#v", out.Summary.Verification)
+	}
+	if out.Summary.BriefPath != "briefs/test.md" {
+		t.Fatalf("expected brief path in summary, got %q", out.Summary.BriefPath)
+	}
+	if out.Summary.ProductEvidence.Path != "product_evidence/export-1.json" || out.Summary.ReleaseEvidence.Path != "release_evidence/bundle-1.json" {
+		t.Fatalf("expected evidence references in summary, got product=%#v release=%#v", out.Summary.ProductEvidence, out.Summary.ReleaseEvidence)
+	}
+	if len(out.Summary.TDDObligations) != 1 || out.Summary.TDDObligations[0] != "TDD-001" {
+		t.Fatalf("expected TDD refs in summary, got %#v", out.Summary.TDDObligations)
+	}
+}
+
+func TestProductFeedbackTextOutputIsActionable(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/lane_history.json", `[{"lane":"implement","event":"closed","status":"completed","timestamp":"2026-05-18T00:00:00Z"}]`)
+	writeTestFile(t, dir, "references/plan_progress.json", `{"phase":"phase-5","state":"feedback","status":"completed"}`)
+	writeTestFile(t, dir, "references/verification.json", `{"status":"passed","commands":["go test ./cmd/idiom"]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "references/lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{"product feedback: pass", "verification: passed", "next:"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected text output to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestProductFeedbackFailsClosedOnMalformedReferences(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/lane_history.json", `{"bad":"shape"}`)
+	writeTestFile(t, dir, "references/plan_progress.json", `{"phase":"phase-5","state":"feedback","status":"pass"}`)
+	writeTestFile(t, dir, "references/verification.json", `{"status":"pass","commands":["go test ./cmd/idiom"]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "references/lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for malformed lane history, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "lane history reference invalid") {
+		t.Fatalf("expected lane history parse failure in stderr, got %s", stderr.String())
+	}
+}
+
+func TestProductFeedbackBlocksUnsafeArtifactReferences(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/lane_history.json", `[{"lane":"implement","event":"closed","status":"completed","timestamp":"2026-05-18T00:00:00Z"}]`)
+	writeTestFile(t, dir, "references/plan_progress.json", `{"phase":"phase-5","state":"feedback","status":"completed"}`)
+	writeTestFile(t, dir, "references/verification.json", `{"status":"passed","commands":["go test ./cmd/idiom"]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "references/lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "../product.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for unsafe artifact ref, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productFeedbackOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(out.NextValidAction, "safe relative evidence artifact path") {
+		t.Fatalf("expected actionable unsafe path next action, got %#v", out)
+	}
+}
+
+func TestProductFeedbackUsageErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected code 2 for usage error, got %d", code)
+	}
+}
+
+func TestProductFeedbackBlocksTraversalReferencePath(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "../lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for traversal path, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "must be effort-relative") {
+		t.Fatalf("expected effort-relative failure, got %s", stderr.String())
+	}
+}
+
+func TestProductFeedbackBlocksAbsoluteReferencePath(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	absLane := filepath.Join(dir, "references", "lane_history.json")
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", absLane,
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for absolute path, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "must be effort-relative") {
+		t.Fatalf("expected effort-relative failure, got %s", stderr.String())
+	}
+}
+
+func TestProductFeedbackBlocksSymlinkReferencePath(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	writeTestFile(t, filepath.Dir(outside), filepath.Base(outside), `[]`)
+	if err := os.MkdirAll(filepath.Join(dir, "references"), 0o755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "references", "lane_history.json")); err != nil {
+		if os.IsPermission(err) {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		t.Fatalf("create symlink: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "references/lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for symlink path, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "must not be a symlink") {
+		t.Fatalf("expected symlink failure, got %s", stderr.String())
+	}
+}
+
+func TestProductFeedbackBlocksPrivacyMarkersInReferences(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/lane_history.json", `[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z","note":"raw transcript attached"}]`)
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "references/lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for privacy marker, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "forbidden privacy marker") {
+		t.Fatalf("expected privacy marker failure, got %s", stderr.String())
+	}
+}
+
+func TestProductFeedbackBlocksSecretOnlyMarkerInReferences(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/lane_history.json", `[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z","note":"secret"}]`)
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "references/lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for secret marker, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `forbidden privacy marker "secret"`) {
+		t.Fatalf("expected secret marker failure, got %s", stderr.String())
+	}
+}
+
 func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
