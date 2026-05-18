@@ -6,8 +6,8 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0023-phase-3-prd-draft-prompt-rendering`
-- Active atom: `impl-0024-phase-3-adr-draft-prompt-rendering`
+- Last completed atom: `impl-0024-phase-3-adr-draft-prompt-rendering`
+- Active atom: none planned; next action is to plan acceptance state and supersession links
 - Status bucket: `started`
 - Current phase: `phase-3-prd-adr-generation`
 - Context pack: `c4fb4dbdee75e163`
@@ -76,11 +76,14 @@ This effort is the durable implementation state for delivering
   `prd.md`, changing ADRs, accepting material decisions, or mutating the
   evidence ledger. It fails closed on missing/invalid evidence, unsafe paths,
   prompt symlink targets, and symlinked prompt ancestors.
-- Atom 24: planned. Add deterministic ADR draft prompt rendering from the
-  evidence ledger and parsed PRD context. This Phase 3 slice should write a
-  bounded ADR prompt file and emit an `idiom artifact --no-tools` command recipe
-  without executing models, writing ADR markdown or the ADR index, accepting
-  decisions, adding supersession links, or mutating PRD/evidence artifacts.
+- Atom 24: all TDD obligations satisfied. Added deterministic ADR draft prompt
+  rendering from the evidence ledger and parsed PRD context. The new
+  `idiom product adr --render-prompt` surface writes a bounded ADR prompt file
+  and emits an `idiom artifact --no-tools` command recipe without executing
+  models, writing ADR markdown or the ADR index, accepting decisions, adding
+  supersession links, or mutating PRD/evidence artifacts. It fails closed on
+  missing/invalid evidence or PRD inputs, unsafe paths, prompt symlink targets,
+  and symlinked prompt ancestors.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -264,7 +267,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Implement Atom 24 for ADR draft prompt rendering from `evidence/evidence.jsonl`
-and parsed `prd.md`. Keep the slice deterministic and model-free: render the ADR
-prompt, report command metadata, and leave ADR acceptance and supersession for
-later Phase 3 atoms.
+Plan the next Phase 3 atom for acceptance state and supersession links. Keep the
+slice deterministic and human-acceptance-first: add typed metadata validation and
+audit/reporting before any model-driven acceptance or artifact promotion.
