@@ -122,6 +122,12 @@ func SummarizeExecutionFeedback(input ExecutionFeedbackInput) ExecutionFeedbackS
 			"lane history reference is empty",
 			"provide lane-history events showing phase execution transitions",
 		)
+	} else if failingLane, ok := executionFeedbackFirstNonPassingLane(out.LaneHistory); ok {
+		addBlocker(
+			"lane_history_not_pass",
+			fmt.Sprintf("lane history event %q/%q has non-passing status %q", failingLane.Lane, failingLane.Event, failingLane.Status),
+			"attach only passing or source-satisfied lane-history outcomes before feedback closeout",
+		)
 	} else if !executionFeedbackHasPassingLane(out.LaneHistory) {
 		addBlocker(
 			"lane_history_not_pass",
@@ -218,6 +224,15 @@ func executionFeedbackHasPassingLane(events []ExecutionLaneEventRef) bool {
 		}
 	}
 	return false
+}
+
+func executionFeedbackFirstNonPassingLane(events []ExecutionLaneEventRef) (ExecutionLaneEventRef, bool) {
+	for _, event := range events {
+		if !executionFeedbackPassingStatus(event.Status) {
+			return event, true
+		}
+	}
+	return ExecutionLaneEventRef{}, false
 }
 
 func safeExecutionFeedbackArtifactPath(value string) bool {

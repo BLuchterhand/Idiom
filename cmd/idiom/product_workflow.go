@@ -1422,7 +1422,6 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	var releaseEvidenceID string
 	var releaseEvidencePath string
 	var briefPath string
-	var verificationStatus string
 	var jsonOutput bool
 	var changedPaths multiValueFlag
 	var tddRefs multiValueFlag
@@ -1430,7 +1429,6 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	fs.StringVar(&laneHistoryFile, "lane-history-file", "", "effort-relative JSON file with lane history references")
 	fs.StringVar(&planProgressFile, "plan-progress-file", "", "effort-relative JSON file with plan progress reference")
 	fs.StringVar(&verificationFile, "verification-file", "", "effort-relative JSON file with verification status and commands")
-	fs.StringVar(&verificationStatus, "verification-status", "", "override verification status")
 	fs.StringVar(&productEvidenceID, "product-evidence-id", "", "product evidence export id reference")
 	fs.StringVar(&productEvidencePath, "product-evidence-path", "", "product evidence export path reference")
 	fs.StringVar(&releaseEvidenceID, "release-evidence-id", "", "release evidence bundle id reference")
@@ -1513,9 +1511,6 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 	if err := readJSONFile("verification reference", verificationFile, &verification, true); err != nil {
 		fmt.Fprintf(stderr, "product feedback: verification reference invalid: %v\n", err)
 		return 1
-	}
-	if strings.TrimSpace(verificationStatus) != "" {
-		verification.Status = strings.TrimSpace(verificationStatus)
 	}
 	if marker := findProductFeedbackPrivacyMarker(strings.Join(changedPaths.values, "\n")); marker != "" {
 		fmt.Fprintf(stderr, "product feedback: changed-path contains forbidden privacy marker %q\n", marker)

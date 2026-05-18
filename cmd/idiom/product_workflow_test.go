@@ -4360,6 +4360,36 @@ func TestProductFeedbackBlocksUnsafeArtifactReferences(t *testing.T) {
 	}
 }
 
+func TestProductFeedbackDoesNotOverrideReferencedVerificationStatus(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/lane_history.json", `[{"lane":"implement","event":"closed","status":"pass","timestamp":"2026-05-18T00:00:00Z"}]`)
+	writeTestFile(t, dir, "references/plan_progress.json", `{"phase":"phase-5","state":"feedback","status":"pass"}`)
+	writeTestFile(t, dir, "references/verification.json", `{"status":"fail","commands":["go test ./cmd/idiom"]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductFeedback([]string{
+		"--effort-root", dir,
+		"--lane-history-file", "references/lane_history.json",
+		"--plan-progress-file", "references/plan_progress.json",
+		"--verification-file", "references/verification.json",
+		"--verification-status", "pass",
+		"--product-evidence-id", "pe-1",
+		"--product-evidence-path", "product_evidence/export-1.json",
+		"--release-evidence-id", "re-1",
+		"--release-evidence-path", "release_evidence/bundle-1.json",
+		"--brief-path", "briefs/test.md",
+		"--changed-path", "cmd/idiom/product_workflow.go",
+		"--tdd-obligation-ref", "TDD-001",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected unknown override flag to be rejected, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "flag provided but not defined") {
+		t.Fatalf("expected unknown flag failure, got %s", stderr.String())
+	}
+}
+
 func TestProductFeedbackUsageErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runProductFeedback([]string{}, &stdout, &stderr, nil)

@@ -114,6 +114,37 @@ func TestExecutionFeedbackBlocksWhenObligationRefUnknown(t *testing.T) {
 	}
 }
 
+func TestExecutionFeedbackBlocksMixedLaneHistoryWithFailure(t *testing.T) {
+	out := SummarizeExecutionFeedback(ExecutionFeedbackInput{
+		WorkflowState: WorkflowState{EffortID: "eff-1", TaskID: "task-1"},
+		TDDLedger:     TDDLedger{Obligations: []TDDObligation{{ID: "TDD-001"}}},
+		LaneHistory: []ExecutionLaneEventRef{
+			{Lane: "implement", Event: "closed", Status: "pass"},
+			{Lane: "verify", Event: "closed", Status: "fail"},
+		},
+		PlanProgress:      PlanExecuteProgressRef{Status: "pass"},
+		Verification:      VerificationRef{Status: "pass"},
+		BriefPath:         "briefs/test.md",
+		ProductEvidence:   EvidenceBundleRef{ID: "pe-1", Path: "product-evidence/export.json"},
+		ReleaseEvidence:   EvidenceBundleRef{ID: "re-1", Path: "release-evidence/bundle.json"},
+		ChangedPaths:      []string{"cmd/idiom/product_workflow.go"},
+		TDDObligationRefs: []string{"TDD-001"},
+	})
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", out.Status)
+	}
+	found := false
+	for _, blocker := range out.Blockers {
+		if blocker.Kind == "lane_history_not_pass" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lane_history_not_pass blocker, got %#v", out.Blockers)
+	}
+}
+
 func TestExecutionFeedbackBlocksOnPrivacyMarkers(t *testing.T) {
 	out := SummarizeExecutionFeedback(ExecutionFeedbackInput{
 		WorkflowState: WorkflowState{EffortID: "eff-1", TaskID: "task-1"},
