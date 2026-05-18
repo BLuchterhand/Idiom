@@ -64,7 +64,7 @@ research profile planning/merge/prompt rendering, PRD/ADR prompt rendering,
 acceptance metadata validation, ADR supersession link validation, plan-only TDD
 obligation synthesis, tiered coverage-gate evaluation, lint-verified brief
 generation, read-only execution feedback linking, and durable feedback
-reconciliation exist. The next design-doc slice is product-workflow metrics.
+reconciliation exist. Atom 31 is planned for product-workflow metrics.
 
 ### Schemas and Types
 
