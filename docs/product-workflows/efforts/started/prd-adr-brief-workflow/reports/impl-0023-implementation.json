@@ -1,0 +1,25 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0023-phase-3-prd-draft-prompt-rendering",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0023",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.3-codex",
+  "completed_at": "",
+  "complexity_tier": "C2",
+  "scope_statement": "Add deterministic PRD draft prompt rendering from the evidence ledger without executing models, writing prd.md, changing ADRs, accepting decisions, or mutating evidence.",
+  "code_changes": false,
+  "changed_paths": [],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [],
+    "status": "pending"
+  },
+  "privacy_note": "durable reports and workflow state will not embed rendered prompt bodies, raw transcripts, file bodies, secrets, or customer-identifying data; the PRD prompt file is an intentional generated artifact under the configured effort-relative prompt path",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0023"
+}

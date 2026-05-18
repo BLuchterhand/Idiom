@@ -7,7 +7,7 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0022-phase-2-research-artifact-prompt-rendering`
-- Active atom: none planned; next action is to plan the first Phase 3 atom
+- Active atom: `impl-0023-phase-3-prd-draft-prompt-rendering`
 - Status bucket: `started`
 - Current phase: `phase-3-prd-adr-generation`
 - Context pack: `c4fb4dbdee75e163`
@@ -69,6 +69,11 @@ This effort is the durable implementation state for delivering
   PRDs. The render surface fails closed for missing profiles and unsafe prompt
   paths, blocks symlink prompt targets before partial writes, and leaves rendered
   prompt bodies out of durable reports and workflow state.
+- Atom 23: planned. Add deterministic PRD draft prompt rendering from the
+  evidence ledger. This Phase 3 slice should write a bounded PRD prompt file and
+  emit an `idiom artifact --no-tools` command recipe without executing models,
+  writing `prd.md`, changing ADRs, accepting material decisions, or mutating the
+  evidence ledger.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -252,6 +257,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the first Phase 3 atom for PRD and ADR generation. Phase 2 is complete:
-profile storage, deterministic run planning, role-specific prompt rendering,
-evidence merge, and conflict preservation are in place.
+Implement Atom 23 for PRD draft prompt rendering from `evidence/evidence.jsonl`.
+Keep the slice deterministic and model-free: render the prompt, report command
+metadata, and leave PRD/ADR acceptance for later Phase 3 atoms.

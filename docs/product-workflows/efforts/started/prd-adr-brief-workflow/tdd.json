@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0022-phase-2-research-artifact-prompt-rendering",
+  "task_id": "impl-0023-phase-3-prd-draft-prompt-rendering",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -19,57 +19,50 @@
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [
-      "atom_planned",
-      "research_artifact_prompt_rendering",
-      "research_artifact_command_recipe",
-      "product_research_render_prompts_json_surface",
-      "product_research_render_prompts_no_model_or_output_writes",
-      "focused_go_tests",
-      "full_go_tests",
-      "durable_json_jsonl_validation",
-      "privacy_secret_scan",
-      "diff_whitespace_check",
-      "review_passed",
-      "atom_closed"
+      "atom_planned"
     ],
-    "gates_blocked": []
+    "gates_blocked": [
+      "implementation_pending",
+      "verification_pending",
+      "review_pending"
+    ]
   },
   "obligations": [
     {
-      "id": "TDD-IMPL-0022-001",
+      "id": "TDD-IMPL-0023-001",
       "type": "contract",
-      "behavior": "Research artifact prompt rendering turns a deterministic research run plan into stable role-specific prompt documents that include researcher id, alignment, question, required sources, allowed capabilities, output path, and research-card JSON output contract metadata.",
-      "owner": "internal/productworkflow/research_artifact_prompts_test.go",
-      "command": "go test ./internal/productworkflow -run TestResearchArtifactPrompt",
+      "behavior": "PRD draft prompt planning reads the validated evidence ledger and produces a deterministic prompt plan containing bounded evidence summaries, explicit unsupported/conflict handling instructions, the PRD output path, and no raw file bodies.",
+      "owner": "internal/productworkflow/prd_draft_prompts_test.go",
+      "command": "go test ./internal/productworkflow -run TestPRDDraftPrompt",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0022-002",
+      "id": "TDD-IMPL-0023-002",
       "type": "contract",
-      "behavior": "Each rendered run includes a deterministic idiom artifact command recipe using --prompt-file, --output, --json-out, --report-out, --no-tools, and --mechanical-repair without executing the command.",
-      "owner": "internal/productworkflow/research_artifact_prompts_test.go",
-      "command": "go test ./internal/productworkflow -run TestResearchArtifactPrompt",
+      "behavior": "The PRD draft prompt plan includes a deterministic idiom artifact command recipe using --prompt-file, --output, --json-out, --report-out, --no-tools, and --mechanical-repair without executing the command.",
+      "owner": "internal/productworkflow/prd_draft_prompts_test.go",
+      "command": "go test ./internal/productworkflow -run TestPRDDraftPrompt",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0022-003",
+      "id": "TDD-IMPL-0023-003",
       "type": "acceptance",
-      "behavior": "idiom product research --render-prompts writes deterministic prompt files under an effort-relative prompt directory, exposes JSON metadata, reuses explicit profile selection semantics, and does not run models, write researcher outputs, merge evidence, or draft PRDs.",
+      "behavior": "idiom product prd --render-prompt writes exactly the configured effort-relative prompt file, exposes JSON metadata, fails closed for missing or invalid evidence ledgers and unsafe prompt paths, and does not write prd.md, ADR files, traceability, or evidence.",
       "owner": "cmd/idiom/product_workflow_test.go",
-      "command": "go test ./cmd/idiom -run TestProductResearchRenderPrompts",
+      "command": "go test ./cmd/idiom -run TestProductPRDRenderPrompt",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     },
     {
-      "id": "TDD-IMPL-0022-004",
+      "id": "TDD-IMPL-0023-004",
       "type": "audit",
-      "behavior": "The prompt rendering surface records only profile identifiers, researcher metadata, prompt/output paths, command recipes, counts, and typed findings; durable reports and state do not embed rendered prompt bodies, raw transcripts, file bodies, secrets, or customer-identifying data.",
-      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0022-review.json",
+      "behavior": "The PRD draft prompt rendering surface records only effort-relative paths, evidence card identifiers, counts, command recipes, and typed findings in reports/state; durable workflow metadata does not embed rendered prompt bodies, raw transcripts, file bodies, secrets, or customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0023-review.json",
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
-      "status": "satisfied"
+      "status": "pending"
     }
   ]
 }
