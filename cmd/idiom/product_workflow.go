@@ -70,6 +70,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product prd --effort-root <path> --render-prompt [--prd-prompt prd.prompt.md] [--prd-output prd.md] [--json]")
 	fmt.Fprintln(w, "  idiom product adr --effort-root <path> --render-prompt [--adr-prompt adrs/adr.prompt.md] [--adr-output adrs/ADR-draft.md] [--json]")
 	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --plan-obligations [--json]")
+	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --evaluate-coverage [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -1145,9 +1146,11 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 	fs.SetOutput(stderr)
 	var effortRoot string
 	var planObligations bool
+	var evaluateCoverage bool
 	var jsonOutput bool
 	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
 	fs.BoolVar(&planObligations, "plan-obligations", false, "plan deterministic TDD obligations from accepted PRD and ADR artifacts")
+	fs.BoolVar(&evaluateCoverage, "evaluate-coverage", false, "evaluate deterministic coverage gate from accepted PRD/ADR/TDD/traceability artifacts")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -1155,8 +1158,8 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		}
 		return 2
 	}
-	if !planObligations {
-		fmt.Fprintln(stderr, "product tdd: --plan-obligations is required")
+	if planObligations == evaluateCoverage {
+		fmt.Fprintln(stderr, "product tdd: exactly one of --plan-obligations or --evaluate-coverage is required")
 		return 2
 	}
 	if strings.TrimSpace(effortRoot) == "" {
@@ -1233,6 +1236,100 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		} else {
 			ledger = parsed
 		}
+	}
+
+	if evaluateCoverage {
+		var traceability productworkflow.TraceabilityMatrix
+		if data, ok := readFile(filepath.Join("evidence", "traceability_matrix.json")); ok {
+			parsed, parseErr := productworkflow.ParseTraceabilityMatrixJSON(data)
+			if parseErr != nil {
+				addFinding("parse_error", parseErr.Error(), filepath.Join("evidence", "traceability_matrix.json"))
+			} else {
+				traceability = parsed
+			}
+		}
+		var implementationRecords []productworkflow.ImplementationLedgerRecord
+		if data, ok := readFile("implementation_ledger.jsonl"); ok {
+			parsed, parseErr := productworkflow.ParseImplementationLedgerJSONL(data)
+			if parseErr != nil {
+				addFinding("parse_error", parseErr.Error(), "implementation_ledger.jsonl")
+			} else {
+				implementationRecords = parsed
+			}
+		}
+
+		eval := productworkflow.CoverageGateEvaluation{
+			EffortID:     ledger.EffortID,
+			TaskID:       ledger.TaskID,
+			CoverageTier: ledger.CoverageTier,
+			Status:       "blocked",
+			Criteria:     []productworkflow.CoverageGateCriterion{},
+			Findings:     []productworkflow.CoverageGateFinding{},
+			Blockers:     []productworkflow.CoverageGateBlocker{},
+		}
+		if len(findings) == 0 {
+			knownTDDIDs := productworkflow.BuildKnownTDDObligationIDs(ledger, implementationRecords, prdDoc.FrontMatter.TaskID)
+			eval = productworkflow.EvaluateCoverageGate(prdDoc, adrIndex, parsedADRs, ledger, traceability, knownTDDIDs)
+		} else {
+			for _, f := range findings {
+				msg := f.Message
+				if strings.TrimSpace(msg) == "" {
+					msg = f.Kind
+				}
+				eval.Findings = append(eval.Findings, productworkflow.CoverageGateFinding{
+					Kind:      f.Kind,
+					Criterion: "input",
+					Message:   msg,
+					File:      f.File,
+					Severity:  f.Severity,
+				})
+				eval.Blockers = append(eval.Blockers, productworkflow.CoverageGateBlocker{
+					Kind:      f.Kind,
+					Criterion: "input",
+					Message:   msg,
+					File:      f.File,
+				})
+			}
+		}
+		logCLIPhase(rec, "product_tdd_coverage_gate_evaluated", map[string]any{
+			"status":         eval.Status,
+			"finding_count":  len(eval.Findings),
+			"blocker_count":  len(eval.Blockers),
+			"criteria_count": len(eval.Criteria),
+		})
+		type coverageOutput struct {
+			Status     string                                 `json:"status"`
+			EffortRoot string                                 `json:"effort_root"`
+			Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+		}
+		out := coverageOutput{
+			Status:     eval.Status,
+			EffortRoot: absRoot,
+			Evaluation: eval,
+		}
+		if out.Evaluation.Criteria == nil {
+			out.Evaluation.Criteria = []productworkflow.CoverageGateCriterion{}
+		}
+		if out.Evaluation.Findings == nil {
+			out.Evaluation.Findings = []productworkflow.CoverageGateFinding{}
+		}
+		if out.Evaluation.Blockers == nil {
+			out.Evaluation.Blockers = []productworkflow.CoverageGateBlocker{}
+		}
+		if jsonOutput {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(out); err != nil {
+				fmt.Fprintf(stderr, "product tdd: encode JSON: %v\n", err)
+				return 1
+			}
+		} else {
+			fmt.Fprintf(stdout, "product tdd evaluate-coverage: %s (%d criteria, %d blockers)\n", out.Status, len(out.Evaluation.Criteria), len(out.Evaluation.Blockers))
+		}
+		if out.Status != "pass" {
+			return 1
+		}
+		return 0
 	}
 
 	plan := productworkflow.TDDObligationSynthesisPlan{

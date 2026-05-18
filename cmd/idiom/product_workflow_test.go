@@ -3663,6 +3663,214 @@ func TestProductTDDPlanObligationsUsageErrors(t *testing.T) {
 	}
 }
 
+func TestProductTDDCoverageGatePassesDeterministicFixture(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "tdd.json", `{
+		"schema_version":"idiom.tdd_obligations.v2.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"coverage_tier":"behavior_standard",
+		"coverage":{
+			"ears_total":1,
+			"ears_mapped":1,
+			"bdd_total":1,
+			"bdd_with_concrete_data":1,
+			"mutation_min_score":80,
+			"mutation_score":90,
+			"gates_passed":["contract"]
+		},
+		"obligations":[{
+			"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test","required_before":"close","status":"pending"
+		}]
+	}`)
+	beforeTDD, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforePRD, err := os.ReadFile(filepath.Join(dir, "prd.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeADR, err := os.ReadFile(filepath.Join(dir, "adrs", "ADR-001-test.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeTraceability, err := os.ReadFile(filepath.Join(dir, "evidence", "traceability_matrix.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--evaluate-coverage",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status     string                                 `json:"status"`
+		Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "pass" || out.Evaluation.Status != "pass" {
+		t.Fatalf("expected pass output, got %#v", out)
+	}
+	afterTDD, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterPRD, err := os.ReadFile(filepath.Join(dir, "prd.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterADR, err := os.ReadFile(filepath.Join(dir, "adrs", "ADR-001-test.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterTraceability, err := os.ReadFile(filepath.Join(dir, "evidence", "traceability_matrix.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeTDD, afterTDD) || !bytes.Equal(beforePRD, afterPRD) || !bytes.Equal(beforeADR, afterADR) || !bytes.Equal(beforeTraceability, afterTraceability) {
+		t.Fatal("product tdd evaluate-coverage must not mutate TDD, PRD, ADR, or traceability artifacts")
+	}
+}
+
+func TestProductTDDCoverageGatePassesCurrentDurableEffortFixture(t *testing.T) {
+	root := repoRoot(t)
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", effortRoot,
+		"--evaluate-coverage",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected durable coverage gate to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status     string                                 `json:"status"`
+		Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "pass" || out.Evaluation.Status != "pass" {
+		t.Fatalf("expected pass output, got %#v", out)
+	}
+}
+
+func TestProductTDDCoverageGateBlocksUnknownPRDTDDObligation(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "tdd.json", strings.Replace(validTestTDDJSON(), `"id":"TDD-001"`, `"id":"TDD-OTHER"`, 1))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--evaluate-coverage",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status     string                                 `json:"status"`
+		Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked status, got %q", out.Status)
+	}
+	found := false
+	for _, blocker := range out.Evaluation.Blockers {
+		if blocker.Criterion == "evidence_acceptance" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected evidence_acceptance blocker, got %#v", out.Evaluation.Blockers)
+	}
+}
+
+func TestProductTDDCoverageGateIgnoresOtherTaskHistoricalTDDObligations(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	acceptedPRD = strings.ReplaceAll(acceptedPRD, "TDD-001", "TDD-OTHER-TASK")
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", strings.ReplaceAll(validTestADRMarkdown(), "TDD-001", "TDD-OTHER-TASK"))
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", strings.ReplaceAll(validTestTraceabilityMatrixJSON(), "TDD-001", "TDD-OTHER-TASK"))
+	writeTestFile(t, dir, "tdd.json", strings.Replace(validTestTDDJSON(), `"id":"TDD-001"`, `"id":"TDD-DIFFERENT"`, 1))
+	writeTestFile(t, dir, "implementation_ledger.jsonl", validTestImplementationLedgerJSONL()+"\n"+`{"record_type":"verification_completed","task_id":"other-task","effort_id":"test-effort","timestamp":"2026-05-18T00:06:00Z","tdd_obligations_satisfied":["TDD-OTHER-TASK"]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--evaluate-coverage",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status     string                                 `json:"status"`
+		Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked status, got %q", out.Status)
+	}
+}
+
+func TestProductTDDCoverageGateFailsClosedOnMissingTraceability(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	if err := os.Remove(filepath.Join(dir, "evidence", "traceability_matrix.json")); err != nil {
+		t.Fatalf("remove traceability: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--evaluate-coverage",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status     string                                 `json:"status"`
+		Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked status, got %q", out.Status)
+	}
+}
+
+func TestProductTDDCoverageGateUsageErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{"--effort-root", ".", "--plan-obligations", "--evaluate-coverage"}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected code 2 for mutually exclusive flags, got %d", code)
+	}
+}
+
 func TestProductLintPerAtomCommitCoverageDetectsUnderReporting(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {

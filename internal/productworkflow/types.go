@@ -489,6 +489,38 @@ type TDDObligationPlanFinding struct {
 	Severity string `json:"severity"`
 }
 
+type CoverageGateEvaluation struct {
+	EffortID     string                  `json:"effort_id"`
+	TaskID       string                  `json:"task_id"`
+	CoverageTier string                  `json:"coverage_tier"`
+	Status       string                  `json:"status"`
+	Criteria     []CoverageGateCriterion `json:"criteria"`
+	Findings     []CoverageGateFinding   `json:"findings"`
+	Blockers     []CoverageGateBlocker   `json:"blockers"`
+}
+
+type CoverageGateCriterion struct {
+	Key      string `json:"key"`
+	Required bool   `json:"required"`
+	Status   string `json:"status"`
+	Details  string `json:"details,omitempty"`
+}
+
+type CoverageGateFinding struct {
+	Kind      string `json:"kind"`
+	Criterion string `json:"criterion"`
+	Message   string `json:"message"`
+	File      string `json:"file,omitempty"`
+	Severity  string `json:"severity"`
+}
+
+type CoverageGateBlocker struct {
+	Kind      string `json:"kind"`
+	Criterion string `json:"criterion"`
+	Message   string `json:"message"`
+	File      string `json:"file,omitempty"`
+}
+
 type ADREvidenceCardSummary struct {
 	CardID      string `json:"card_id"`
 	Kind        string `json:"kind"`
