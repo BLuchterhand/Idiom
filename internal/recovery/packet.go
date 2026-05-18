@@ -125,6 +125,21 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 	return packet, nil
 }
 
+func WriteDecompositionPacketForFailureRecord(root string, record FailureRecord, now time.Time) (DecompositionPacket, string, error) {
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{
+		Now:          now,
+		PartialState: record.PartialState,
+	})
+	if err != nil {
+		return DecompositionPacket{}, "", err
+	}
+	_, relPath, err := WriteDecompositionPacket(root, packet, "")
+	if err != nil {
+		return DecompositionPacket{}, "", err
+	}
+	return packet, relPath, nil
+}
+
 func WriteDecompositionPacket(root string, packet DecompositionPacket, outputPath string) (string, string, error) {
 	fullPath, relPath, err := DecompositionPacketPath(root, packet.FailureID, outputPath)
 	if err != nil {

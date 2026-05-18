@@ -437,7 +437,8 @@ func saveRunProgressState(root string, state *ProgressState, jsonEvents bool, st
 	}
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType, ProgressStateEventFields(*state, statePath))
 	if state.Status == ProgressStatusFailed {
-		record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, RecoveryInputFromProgress(*state, statePath), time.Now().UTC())
+		now := time.Now().UTC()
+		record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, RecoveryInputFromProgress(*state, statePath), now)
 		if err != nil {
 			emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_failure_record_failed", map[string]any{
 				"session_id": state.SessionID,
@@ -453,6 +454,24 @@ func saveRunProgressState(root string, state *ProgressState, jsonEvents bool, st
 			"failure_kind":      record.Failure.Kind,
 			"record_path":       recordPath,
 			"next_valid_action": record.NextAction,
+		})
+		packet, packetPath, err := recovery.WriteDecompositionPacketForFailureRecord(root, record, now)
+		if err != nil {
+			emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_decomposition_packet_failed", map[string]any{
+				"session_id":  state.SessionID,
+				"failure_id":  record.FailureID,
+				"record_path": recordPath,
+				"reason":      err.Error(),
+			})
+			return statePath, err
+		}
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_decomposition_packet_written", map[string]any{
+			"session_id":        state.SessionID,
+			"failure_id":        record.FailureID,
+			"packet_id":         packet.PacketID,
+			"packet_path":       packetPath,
+			"candidate_atoms":   len(packet.CandidateAtoms),
+			"next_valid_action": packet.NextAction,
 		})
 	}
 	return statePath, nil

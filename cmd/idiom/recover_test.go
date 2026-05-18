@@ -232,6 +232,37 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	}
 }
 
+func TestSavePlanExecuteProgressStateWritesRecoveryDecompositionPacket(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	state := planexecute.NewProgressState("recover-session-5", "make a change", "", []string{"allowed.go"}, nil, time.Now().UTC())
+	state.Status = planexecute.ProgressStatusFailed
+	state.FailureKind = "executor_failed"
+	state.FailureReason = "executor failed"
+	var stdout bytes.Buffer
+	if _, err := savePlanExecuteProgressState(root, &state, true, &stdout, "test_state_saved"); err != nil {
+		t.Fatalf("savePlanExecuteProgressState: %v", err)
+	}
+	record, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, state.SessionID)
+	if err != nil || !found {
+		t.Fatalf("TryLoadPlanExecuteFailureRecord found=%v err=%v", found, err)
+	}
+	packetPath, _, err := recovery.DecompositionPacketPath(root, record.FailureID, "")
+	if err != nil {
+		t.Fatalf("DecompositionPacketPath: %v", err)
+	}
+	packet, _, found, err := recovery.TryLoadDecompositionPacket(packetPath)
+	if err != nil || !found {
+		t.Fatalf("TryLoadDecompositionPacket found=%v err=%v", found, err)
+	}
+	if packet.NextAction != recovery.NextActionReviewDecomposition || len(packet.CandidateAtoms) != 1 {
+		t.Fatalf("unexpected packet: %#v", packet)
+	}
+	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.recovery_decomposition_packet_written"`) {
+		t.Fatalf("packet event missing from stdout=%s", stdout.String())
+	}
+}
+
 func initRecoverTestGitRepo(t *testing.T, root string) {
 	t.Helper()
 	cmd := exec.Command("git", "-C", root, "init")
