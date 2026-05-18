@@ -4,10 +4,10 @@
   "task_id": "impl-0038-phase-6-status-migration-apply-cli",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T18:28:48.47921Z",
-  "state_revision": 116,
-  "last_event_id": "evt-status-migration-1779128928479210000",
-  "workspace_fingerprint": "idiom product status-migration CLI",
+  "updated_at": "2026-05-18T22:55:00Z",
+  "state_revision": 117,
+  "last_event_id": "evt-0340",
+  "workspace_fingerprint": "idiom@93fec2c",
   "status_bucket": "closed",
   "current_phase": "phase-6-operator-continuation",
   "current_state": "closed",
@@ -234,7 +234,7 @@
       {
         "gate": "status_migration_apply_cli",
         "status": "passed",
-        "checked_at": "2026-05-18T22:30:00Z"
+        "checked_at": "2026-05-18T22:55:00Z"
       }
     ],
     "blocking_criteria": [],

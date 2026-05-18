@@ -14,7 +14,7 @@ import (
 
 func TestProductLintPassesOnCurrentDurableEffortFixture(t *testing.T) {
 	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 
 	var stdout, stderr bytes.Buffer
 	code := runProductLint([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
@@ -100,7 +100,7 @@ func TestProductLintFailsOnInvalidImplementationLedgerCloseout(t *testing.T) {
 
 func TestProductLintIncludesPRDAndADRInCheckedFiles(t *testing.T) {
 	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 
 	var stdout, stderr bytes.Buffer
 	code := runProductLint([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
@@ -381,7 +381,7 @@ func TestProductLintAcceptsHistoricalTDDObligationIDs(t *testing.T) {
 
 func TestProductLintTraceabilityMatrixInCheckedFiles(t *testing.T) {
 	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 
 	var stdout, stderr bytes.Buffer
 	code := runProductLint([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
@@ -708,7 +708,7 @@ func TestProductLintPassesWithValidReportFixtures(t *testing.T) {
 
 func TestProductAuditPassesOnDurableEffortFixture(t *testing.T) {
 	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 
 	var stdout, stderr bytes.Buffer
 	code := runProductAudit([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
@@ -2220,7 +2220,7 @@ created_at: 2026-05-17T00:00:00Z
 
 func TestProductStatusJSONOnDurableFixture(t *testing.T) {
 	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 
 	ws := loadDurableFixtureWorkflowState(t)
 
@@ -2321,7 +2321,7 @@ func TestProductStatusMetricsFailsClosedOnUnknownGateStatus(t *testing.T) {
 
 func TestProductStatusTextIncludesKeyFields(t *testing.T) {
 	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 
 	ws := loadDurableFixtureWorkflowState(t)
 	currentState, _ := ws["current_state"].(string)
@@ -2563,7 +2563,7 @@ func TestProductAuditNextValidActionParity(t *testing.T) {
 func TestProductStatusTextOutputIsActionable(t *testing.T) {
 	t.Run("pass", func(t *testing.T) {
 		root := repoRoot(t)
-		effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+		effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 
 		var jsonStdout, jsonStderr bytes.Buffer
 		jsonCode := runProductStatus([]string{"--effort-root", effortRoot, "--json"}, &jsonStdout, &jsonStderr, nil)
@@ -3246,7 +3246,7 @@ func repoRoot(t *testing.T) string {
 func loadDurableFixtureWorkflowState(t *testing.T) map[string]any {
 	t.Helper()
 	root := repoRoot(t)
-	wsPath := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow", "workflow_state.json")
+	wsPath := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow", "workflow_state.json")
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
 		t.Fatalf("failed to read workflow_state.json: %v", err)
@@ -5016,7 +5016,7 @@ func TestProductTDDCoverageGatePassesDeterministicFixture(t *testing.T) {
 
 func TestProductTDDCoverageGatePassesCurrentDurableEffortFixture(t *testing.T) {
 	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 	var stdout, stderr bytes.Buffer
 	code := runProductTDD([]string{
 		"--effort-root", effortRoot,
@@ -5306,7 +5306,7 @@ func TestProductBriefRenderScopesReadFirstPathsToEffortRoot(t *testing.T) {
 		t.Fatalf("read-first paths must be scoped to requested effort root, got %#v", out.Generated.FilesToReadFirst)
 	}
 	for _, path := range out.Generated.FilesToReadFirst {
-		if strings.Contains(path, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md") {
+		if strings.Contains(path, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/prd.md") {
 			t.Fatalf("read-first path leaked durable fixture path: %#v", out.Generated.FilesToReadFirst)
 		}
 	}
@@ -5409,7 +5409,7 @@ func TestProductBriefRenderTextOutputIsActionable(t *testing.T) {
 
 func TestProductBriefRenderPassesCurrentDurableEffortFixture(t *testing.T) {
 	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "prd-adr-brief-workflow")
+	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
 	var stdout, stderr bytes.Buffer
 	code := runProductBrief([]string{
 		"--effort-root", effortRoot,

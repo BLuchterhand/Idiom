@@ -22,26 +22,26 @@ func TestParseCommittedPhase0Fixtures(t *testing.T) {
 	if _, err := ParseEffortIndexJSON(read("docs/product-workflows/efforts/index.json")); err != nil {
 		t.Fatalf("parse effort index: %v", err)
 	}
-	if _, err := ParseWorkflowStateJSON(read("docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json")); err != nil {
+	if _, err := ParseWorkflowStateJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/workflow_state.json")); err != nil {
 		t.Fatalf("parse workflow state: %v", err)
 	}
-	if _, err := ParseTDDLedgerJSON(read("docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json")); err != nil {
+	if _, err := ParseTDDLedgerJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/tdd.json")); err != nil {
 		t.Fatalf("parse tdd ledger: %v", err)
 	}
-	if _, err := ParseEvidenceCardsJSONL(read("docs/product-workflows/efforts/started/prd-adr-brief-workflow/evidence/evidence.jsonl")); err != nil {
+	if _, err := ParseEvidenceCardsJSONL(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/evidence/evidence.jsonl")); err != nil {
 		t.Fatalf("parse evidence JSONL: %v", err)
 	}
-	if _, err := ParseTraceabilityMatrixJSON(read("docs/product-workflows/efforts/started/prd-adr-brief-workflow/evidence/traceability_matrix.json")); err != nil {
+	if _, err := ParseTraceabilityMatrixJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/evidence/traceability_matrix.json")); err != nil {
 		t.Fatalf("parse traceability matrix: %v", err)
 	}
-	if _, err := ParseImplementationLedgerJSONL(read("docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl")); err != nil {
+	if _, err := ParseImplementationLedgerJSONL(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/implementation_ledger.jsonl")); err != nil {
 		t.Fatalf("parse implementation ledger: %v", err)
 	}
 }
 
 func TestParsePRDFixturePasses(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md"))
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/prd.md"))
 	if err != nil {
 		t.Fatalf("read prd.md: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestParsePRDFixturePasses(t *testing.T) {
 
 func TestParseADRIndexFixturePasses(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/index.json"))
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/index.json"))
 	if err != nil {
 		t.Fatalf("read ADR index: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestParseADRIndexFixturePasses(t *testing.T) {
 
 func TestParseADRMarkdownFixturePasses(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
 	if err != nil {
 		t.Fatalf("read ADR markdown: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestWorkflowStateRejectsRawPrivacyExposureFlags(t *testing.T) {
 		"context":{"context_pack_id":"pack","freshness_state":"current"},
 		"coverage":{"coverage_tier":"unit"},
 		"privacy":{"redaction_status":"applied","raw_prompts_stored":true},
-		"folder_path":"docs/product-workflows/efforts/started/prd-adr-brief-workflow",
+		"folder_path":"docs/product-workflows/efforts/closed/prd-adr-brief-workflow",
 		"durability_level":"source_controlled",
 		"next_valid_actions":["complete"]
 	}`)
@@ -588,7 +588,7 @@ func TestInvalidResearchProfileNoResearchersFailsClosed(t *testing.T) {
 
 func TestValidCurrentDurableTDDFixturePasses(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json"))
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/tdd.json"))
 	if err != nil {
 		t.Fatalf("read tdd.json: %v", err)
 	}
@@ -900,7 +900,7 @@ func TestDurableTraceabilityMatrixPassesCrossLinkValidation(t *testing.T) {
 		}
 		return data
 	}
-	rel := "docs/product-workflows/efforts/started/prd-adr-brief-workflow"
+	rel := "docs/product-workflows/efforts/closed/prd-adr-brief-workflow"
 
 	matrixData := read(filepath.Join(rel, "evidence/traceability_matrix.json"))
 	matrix, err := ParseTraceabilityMatrixJSON(matrixData)
@@ -1237,7 +1237,7 @@ created_at: 2026-05-17T00:00:00Z
 
 func TestDurablePRDFixtureStillPasses(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md"))
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/prd.md"))
 	if err != nil {
 		t.Fatalf("read prd.md: %v", err)
 	}
@@ -1259,7 +1259,7 @@ func TestInvalidADRIndexStatusFailsClosed(t *testing.T) {
 
 func TestDurableADRIndexFixtureStillPasses(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/index.json"))
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/index.json"))
 	if err != nil {
 		t.Fatalf("read ADR index: %v", err)
 	}
@@ -1331,7 +1331,7 @@ None.
 
 func TestDurableADRMarkdownFixtureStillPasses(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
+	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
 	if err != nil {
 		t.Fatalf("read ADR markdown: %v", err)
 	}
@@ -1896,7 +1896,7 @@ func TestClassifyReportFileNameKnownSuffixes(t *testing.T) {
 
 func TestDurableImplementationReportFixturesPassValidation(t *testing.T) {
 	root := repoRoot(t)
-	reportDir := filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports")
+	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
 		t.Fatalf("read reports dir: %v", err)
@@ -1917,7 +1917,7 @@ func TestDurableImplementationReportFixturesPassValidation(t *testing.T) {
 
 func TestDurableReviewReportFixturesPassValidation(t *testing.T) {
 	root := repoRoot(t)
-	reportDir := filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports")
+	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
 		t.Fatalf("read reports dir: %v", err)
@@ -1938,7 +1938,7 @@ func TestDurableReviewReportFixturesPassValidation(t *testing.T) {
 
 func TestDurableInvestigationReportFixturesPassValidation(t *testing.T) {
 	root := repoRoot(t)
-	reportDir := filepath.Join(root, "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports")
+	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
 		t.Fatalf("read reports dir: %v", err)
