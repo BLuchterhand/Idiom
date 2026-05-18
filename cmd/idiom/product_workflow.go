@@ -42,6 +42,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductStatus(args[1:], stdout, stderr, rec)
 	case "research":
 		return runProductResearch(args[1:], stdout, stderr, rec)
+	case "prd":
+		return runProductPRD(args[1:], stdout, stderr, rec)
 	case "-h", "--help", "help":
 		printProductUsage(stdout)
 		return 0
@@ -61,6 +63,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --plan-runs [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --merge-evidence [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --effort-root <path> --render-prompts [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--research-prompt-dir research/prompts] [--json]")
+	fmt.Fprintln(w, "  idiom product prd --effort-root <path> --render-prompt [--prd-prompt prd.prompt.md] [--prd-output prd.md] [--json]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Deterministic lint for product workflow effort folders.")
 	fmt.Fprintln(w, "Validates workflow_state.json, tdd.json, evidence artifacts,")
@@ -860,6 +863,132 @@ func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *
 		if f.Severity == "error" {
 			return 1
 		}
+	}
+	return 0
+}
+
+func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product prd", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var effortRoot string
+	var renderPrompt bool
+	var prdPromptPath string
+	var prdOutputPath string
+	var jsonOutput bool
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
+	fs.BoolVar(&renderPrompt, "render-prompt", false, "write deterministic PRD draft prompt file from evidence ledger")
+	fs.StringVar(&prdPromptPath, "prd-prompt", "prd.prompt.md", "effort-relative prompt file path to write")
+	fs.StringVar(&prdOutputPath, "prd-output", "prd.md", "effort-relative PRD output path used in command recipe")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if !renderPrompt {
+		fmt.Fprintln(stderr, "product prd: --render-prompt is required")
+		return 2
+	}
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product prd: --effort-root is required")
+		return 2
+	}
+	absRoot, err := filepath.Abs(effortRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "product prd: resolve effort root: %v\n", err)
+		return 2
+	}
+	evidencePath := filepath.Join(absRoot, "evidence", "evidence.jsonl")
+	evidenceData, err := os.ReadFile(evidencePath)
+	var evidenceCards []productworkflow.EvidenceCard
+	var findings []productworkflow.ProfileFinding
+	if err != nil {
+		if os.IsNotExist(err) {
+			findings = append(findings, productworkflow.ProfileFinding{
+				Kind:     "missing_evidence_ledger",
+				Message:  "required evidence/evidence.jsonl not found",
+				File:     "evidence/evidence.jsonl",
+				Severity: "error",
+			})
+		} else {
+			findings = append(findings, productworkflow.ProfileFinding{
+				Kind:     "read_error",
+				Message:  fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", err),
+				File:     "evidence/evidence.jsonl",
+				Severity: "error",
+			})
+		}
+	} else {
+		evidenceCards, err = productworkflow.ParseEvidenceCardsJSONL(evidenceData)
+		if err != nil {
+			findings = append(findings, productworkflow.ProfileFinding{
+				Kind:     "validation_error",
+				Message:  fmt.Sprintf("existing evidence ledger failed validation: %v", err),
+				File:     "evidence/evidence.jsonl",
+				Severity: "error",
+			})
+		}
+	}
+	plan := productworkflow.PlanPRDDraftPrompt(absRoot, prdPromptPath, prdOutputPath, evidenceCards)
+	plan.Findings = append(findings, plan.Findings...)
+	productworkflow.SortProfileFindings(plan.Findings)
+	writeBlocked := hasResearchErrorFinding(plan.Findings)
+	promptWriteCount := 0
+	if !writeBlocked {
+		promptAbs := filepath.Join(absRoot, plan.PromptPath)
+		if err := os.MkdirAll(filepath.Dir(promptAbs), 0o755); err != nil {
+			fmt.Fprintf(stderr, "product prd: create prompt directory: %v\n", err)
+			return 2
+		}
+		if err := os.WriteFile(promptAbs, []byte(productworkflow.RenderPRDDraftPromptText(plan)), 0o644); err != nil {
+			fmt.Fprintf(stderr, "product prd: write prompt file: %v\n", err)
+			return 2
+		}
+		promptWriteCount = 1
+	}
+	logCLIPhase(rec, "product_prd_render_prompt", map[string]any{
+		"finding_count":       len(plan.Findings),
+		"evidence_card_count": plan.EvidenceCardCount,
+		"prompt_write_count":  promptWriteCount,
+	})
+	status := "pass"
+	if writeBlocked {
+		status = "blocked"
+	}
+	type prdOutput struct {
+		Status           string                             `json:"status"`
+		EffortRoot       string                             `json:"effort_root"`
+		PromptWriteCount int                                `json:"prompt_write_count"`
+		Plan             productworkflow.PRDDraftPromptPlan `json:"plan"`
+	}
+	out := prdOutput{
+		Status:           status,
+		EffortRoot:       absRoot,
+		PromptWriteCount: promptWriteCount,
+		Plan:             plan,
+	}
+	if out.Plan.EvidenceCardIDs == nil {
+		out.Plan.EvidenceCardIDs = []string{}
+	}
+	if out.Plan.EvidenceSummaries == nil {
+		out.Plan.EvidenceSummaries = []productworkflow.PRDEvidenceCardSummary{}
+	}
+	if out.Plan.Findings == nil {
+		out.Plan.Findings = []productworkflow.ProfileFinding{}
+	}
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			fmt.Fprintf(stderr, "product prd: encode JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintf(stdout, "product prd render-prompt: %s (%d findings)\n", status, len(plan.Findings))
+	}
+	if writeBlocked {
+		return 1
 	}
 	return 0
 }

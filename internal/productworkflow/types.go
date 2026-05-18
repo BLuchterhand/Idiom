@@ -418,6 +418,28 @@ type ResearchArtifactPromptRunSpec struct {
 	Command             string                    `json:"command"`
 }
 
+type PRDDraftPromptPlan struct {
+	EvidenceLedgerPath string                   `json:"evidence_ledger_path"`
+	PromptPath         string                   `json:"prompt_path"`
+	PRDOutputPath      string                   `json:"prd_output_path"`
+	EventsPath         string                   `json:"events_path"`
+	ReportPath         string                   `json:"report_path"`
+	Command            string                   `json:"command"`
+	EvidenceCardCount  int                      `json:"evidence_card_count"`
+	EvidenceCardIDs    []string                 `json:"evidence_card_ids"`
+	EvidenceSummaries  []PRDEvidenceCardSummary `json:"evidence_summaries"`
+	Findings           []ProfileFinding         `json:"findings"`
+}
+
+type PRDEvidenceCardSummary struct {
+	CardID      string `json:"card_id"`
+	Kind        string `json:"kind"`
+	Confidence  string `json:"confidence"`
+	Freshness   string `json:"freshness"`
+	Claim       string `json:"claim"`
+	Uncertainty string `json:"uncertainty"`
+}
+
 type ADRDocument struct {
 	FrontMatter ADRFrontMatter
 	Sections    ADRSections
