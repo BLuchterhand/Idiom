@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0031-phase-5-product-workflow-metrics",
+  "task_id": "impl-0032-phase-5-obsidian-parity-check",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T15:55:00Z",
-  "state_revision": 94,
-  "last_event_id": "evt-0272",
-  "workspace_fingerprint": "idiom@6b6e684",
+  "updated_at": "2026-05-18T16:05:00Z",
+  "state_revision": 95,
+  "last_event_id": "evt-0274",
+  "workspace_fingerprint": "idiom@d40c88a",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -33,7 +33,7 @@
     "release_evidence": "references/release_evidence_impl_0030.json"
   },
   "context": {
-    "context_pack_id": "dd185841859a40b8",
+    "context_pack_id": "688124fae36b08eb",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -44,12 +44,18 @@
       "internal/productworkflow/transition.go",
       "internal/productworkflow/metrics.go",
       "internal/workspace/harness_audit.go",
+      "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md",
+      "docs/obsidian/22 - Product Workflow ROADMAP.md",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json"
     ],
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
         "description": "Context pack dd185841859a40b8 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow metrics planning scope."
+      },
+      {
+        "kind": "stale_runtime_trace",
+        "description": "Context pack 688124fae36b08eb reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to Obsidian parity planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -111,6 +117,11 @@
         "gate": "product_workflow_metrics",
         "status": "passed",
         "checked_at": "2026-05-18T15:45:00Z"
+      },
+      {
+        "gate": "obsidian_parity_check_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T16:05:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -127,10 +138,15 @@
       "Atom 29 complete: idiom product feedback links explicit lane/progress/evidence references into privacy-safe execution feedback summaries without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
       "Atom 30 complete: idiom product feedback reconciliation consumes passing feedback summaries and writes deterministic reconciled workflow-state output with bounded artifact/evidence links, while preserving dispatch, .idiom runtime mutation, evidence export generation, and ranker-learning boundaries.",
       "Atom 31 complete: product audit and product status expose deterministic product-workflow metrics for progress, gates, blockers, TDD, ledger, reports, artifacts, and evidence-link counts without dispatching lanes, mutating .idiom runtime state, writing evidence exports, promoting ranker learning, or enforcing Obsidian parity.",
-      "Next Phase 5 slice after product-workflow metrics: add an Obsidian parity check to product lint/audit or closeout reporting."
+      "Atom 32 planned: add deterministic Obsidian parity checks to product lint/audit so stale proposal/roadmap status is detected before closeout or an explicit no-change rationale is recorded."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0032-001",
+    "TDD-IMPL-0032-002",
+    "TDD-IMPL-0032-003",
+    "TDD-IMPL-0032-004"
+  ],
   "open_questions": [],
   "blockers": [],
   "privacy": {
@@ -161,7 +177,9 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_5_obsidian_parity_check_atom",
+    "start_impl_0032_obsidian_parity_check",
+    "run_c2_codex_gpt_worker_impl_0032",
+    "review_impl_0032_with_codex_gpt_review",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"

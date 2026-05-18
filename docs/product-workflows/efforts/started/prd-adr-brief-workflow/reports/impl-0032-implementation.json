@@ -1,0 +1,44 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0032-phase-5-obsidian-parity-check",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0032",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.3-codex",
+  "completed_at": null,
+  "complexity_tier": "C2",
+  "scope_statement": "Planned deterministic Obsidian parity checks for product lint/audit so stale proposal and roadmap status is detected before closeout, or an explicit no-change rationale is recorded.",
+  "code_changes": false,
+  "changed_paths": [],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [
+      "idiom tool context_pack --input {\"task\":\"phase 5 Obsidian parity check product lint audit closeout reporting proposal roadmap stale status no-change rationale\",\"mode\":\"plan\",\"limit\":12}",
+      "idiom tool context_query --input {\"query\":\"product lint audit Obsidian parity proposal roadmap closeout reports stale status no-change rationale\",\"resolution\":\"symbol\"}",
+      "go test ./internal/productworkflow -run TestObsidianParity -count=1",
+      "go test ./cmd/idiom -run TestProductObsidianParity -count=1",
+      "go test ./internal/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "privacy secret-pattern scan over durable effort artifacts",
+      "git diff --check"
+    ],
+    "status": "implementation_pending"
+  },
+  "discovery_evidence": [
+    "context_pack:688124fae36b08eb",
+    "context_query:product lint audit Obsidian parity proposal roadmap closeout reports stale status no-change rationale"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0032",
+  "commit_hash": null,
+  "privacy_note": "planning report stores only scope, model assignment, command names, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0030-phase-5-feedback-reconciliation",
+  "task_id": "impl-0032-phase-5-obsidian-parity-check",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -25,6 +25,7 @@
       "execution_feedback_linker",
       "execution_feedback_reconciliation",
       "feedback_reconciliation_planned",
+      "obsidian_parity_check_planned",
       "product_workflow_metrics",
       "product_workflow_metrics_planned",
       "tdd_obligation_synthesis_plan"
@@ -247,6 +248,42 @@
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0032-001",
+      "type": "contract",
+      "behavior": "Obsidian parity checking deterministically compares the workflow proposal and roadmap notes against durable workflow state, detecting stale status labels, phase checkboxes, and roadmap bullets before atom closeout.",
+      "owner": "internal/productworkflow/obsidian_parity_test.go",
+      "command": "go test ./internal/productworkflow -run TestObsidianParity",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0032-002",
+      "type": "acceptance",
+      "behavior": "idiom product lint and idiom product audit expose typed Obsidian parity findings in JSON and human-readable output for stale proposal/roadmap status, while preserving the current durable fixture pass path.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProductObsidianParity",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0032-003",
+      "type": "contract",
+      "behavior": "The parity gate accepts an explicit no-change rationale recorded in the atom investigation report when Obsidian notes do not need content edits, and fails closed when both updated notes and rationale are absent.",
+      "owner": "internal/productworkflow/obsidian_parity_test.go",
+      "command": "go test ./internal/productworkflow -run TestObsidianParity",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0032-004",
+      "type": "audit",
+      "behavior": "The atom records GPT Codex implementor/reviewer selection, Idiom discovery evidence, parity verification, and privacy-safe durable reports without storing raw prompts/transcripts/file bodies/secrets/generated brief bodies/customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0032-review.json",
+      "command": "privacy secret-value scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

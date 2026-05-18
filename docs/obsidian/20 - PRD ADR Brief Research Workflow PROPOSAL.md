@@ -14,11 +14,11 @@ tags:
 > **Status: PARTIALLY IMPLEMENTED** — This upstream artifact pipeline is being
 > delivered through the durable effort at
 > `docs/product-workflows/efforts/started/prd-adr-brief-workflow/`. As of
-> 2026-05-18, implementation is complete through Phase 4 and the first two
-> Phase 5 slices: read-only execution feedback linking and deterministic durable
-> feedback reconciliation into bounded workflow-state/evidence-link output.
-> Product workflow metrics are implemented in product audit/status; Obsidian
-> parity enforcement and operator surfaces remain.
+> 2026-05-18, implementation is complete through Phase 4 and three Phase 5
+> slices: read-only execution feedback linking, deterministic durable feedback
+> reconciliation into bounded workflow-state/evidence-link output, and product
+> workflow metrics in product audit/status. The active slice is Obsidian parity
+> enforcement; operator surfaces remain.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 
@@ -183,7 +183,7 @@ stateDiagram-v2
 - [x] **Phase 4**: TDD planner, coverage gate, and brief generator
 - [ ] **Phase 5**: Execution feedback loop linking outcomes to obligations;
   read-only feedback linking, durable reconciliation, and product-workflow
-  metrics are implemented, while Obsidian parity enforcement and operator
+  metrics are implemented; Obsidian parity enforcement is active, and operator
   surfaces remain
 - [ ] **Phase 6**: Sidecar and external agent use
 

@@ -65,7 +65,7 @@ acceptance metadata validation, ADR supersession link validation, plan-only TDD
 obligation synthesis, tiered coverage-gate evaluation, lint-verified brief
 generation, read-only execution feedback linking, durable feedback
 reconciliation, and product-workflow metrics in product audit/status exist. The
-next design-doc slice is Obsidian parity enforcement.
+active design-doc slice is Obsidian parity enforcement.
 
 ### Schemas and Types
 
@@ -154,6 +154,7 @@ next design-doc slice is Obsidian parity enforcement.
   evidence links
 - [x] Product-workflow metrics in product audit/status
 - [ ] Obsidian parity check in product lint/audit or closeout reporting
+  (active Atom 32)
 
 ## NOT STARTED: Behavioral TDD Coverage Pipeline
 
