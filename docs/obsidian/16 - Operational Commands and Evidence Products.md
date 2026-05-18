@@ -104,6 +104,13 @@ idiom tool recovery_status --profile discovery --input '{"packet_path":".idiom/r
 `recovery_decompose` writes local `.idiom/recovery` artifacts, so it is exposed
 only through the default tool profile. `recovery_promote` remains CLI-only.
 
+Product workflow status can surface recovery packets when durable
+`workflow_state.json` includes `artifact_paths.recovery_packet`. The shared
+operator status view exposes recovery packet status, gates, required tests,
+product links, blockers, and a runnable `idiom recover status --packet ...`
+hint. While a recovery packet is open, normal workflow continuation actions are
+not dispatchable.
+
 Relevant JSON events include:
 
 - `idiom.plan_execute.resume_state_saved`
@@ -112,6 +119,8 @@ Relevant JSON events include:
 - `idiom.plan_execute.required_edit_paths_resolved`
 - `idiom.plan_execute.recovery_failure_record_written`
 - `idiom.plan_execute.recovery_decomposition_packet_written`
+- `idiom.plan_execute.recovery_failure_record_failed`
+- `idiom.plan_execute.recovery_decomposition_packet_failed`
 
 `idiom plan-execute --resume <session-id>` is intentionally strict. It fails if
 the progress file does not exist, if the supplied prompt or prompt file does not
@@ -153,10 +162,13 @@ Useful triggers include:
 - High-risk stop reasons.
 - Malformed tool input.
 - Stale-context reports.
+- Recovery failure-record and decomposition-packet events.
 - `harness_feedback` events.
 
 Audit watch is a local monitoring loop. It should emit deterministic review
-packets, not raw prompt or transcript dumps.
+packets, not raw prompt or transcript dumps. When recovery events trigger a
+review, the packet includes a bounded `recovery` summary with failure classes,
+candidate atom counts, next valid actions, sessions, and artifact paths.
 
 ## Product Evidence Export
 

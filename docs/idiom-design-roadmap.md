@@ -57,8 +57,9 @@ The executable implementation plan is
   The plan-execute slice now writes failure records and decomposition packets
   automatically, with `recover inspect/status/decompose/promote` covering the
   operator loop and read-only `recovery_inspect`/`recovery_status` exposed
-  through the sidecar/MCP tool surface. Reconciliation, TUI/product/audit-watch
-  projections, deeper residual-work evidence, and non-plan-execute failure
+  through the sidecar/MCP tool surface. Product/operator status and audit-watch
+  now project recovery packet state through bounded summaries. Reconciliation,
+  TUI presenters, deeper residual-work evidence, and non-plan-execute failure
   sources remain follow-up work.
 
 ## System Shape

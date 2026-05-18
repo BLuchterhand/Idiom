@@ -363,6 +363,60 @@ func TestAuditWatchTriggersOnBlockedCompletionStatus(t *testing.T) {
 	}
 }
 
+func TestAuditWatchTriggersOnRecoveryEvents(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "recovery.jsonl")
+	writeAuditWatchFile(t, logPath, strings.Join([]string{
+		`{"type":"idiom.plan_execute.recovery_failure_record_written","session_id":"session-recovery","failure_id":"plan-execute-session-recovery","failure_class":"executor_edit_failed","failure_kind":"executor_failed","record_path":".idiom/recovery/plan-execute-session-recovery/failure.json","next_valid_action":"review_decomposition","summary":"RAW_SENTINEL"}`,
+		`{"type":"idiom.plan_execute.recovery_decomposition_packet_written","session_id":"session-recovery","failure_id":"plan-execute-session-recovery","packet_id":"packet-plan-execute-session-recovery","packet_path":".idiom/recovery/plan-execute-session-recovery/packet.json","candidate_atoms":2,"next_valid_action":"review_decomposition","raw_prompt":"RAW_SENTINEL"}`,
+		"",
+	}, "\n"))
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("stat recovery log: %v", err)
+	}
+	trigger, ok := auditWatchTriggerForFile(auditWatchFile{
+		Path:        logPath,
+		DisplayPath: "logs/telemetry/recovery.jsonl",
+		ModUnixNano: info.ModTime().UnixNano(),
+		Size:        info.Size(),
+	}, auditWatchSeenFile{})
+	if !ok {
+		t.Fatal("expected recovery trigger")
+	}
+	if !slicesContains(trigger.Reasons, "recovery_failure_record_written:executor_edit_failed") || !slicesContains(trigger.Reasons, "recovery_decomposition_packet_written") {
+		t.Fatalf("expected recovery reasons, got %#v", trigger.Reasons)
+	}
+	if len(trigger.RecoveryEvents) != 2 {
+		t.Fatalf("expected bounded recovery events, got %#v", trigger.RecoveryEvents)
+	}
+
+	review := auditWatchReview{TriggerFiles: []auditWatchTriggerFile{trigger}}
+	auditWatchFinalizeReview(&review, auditWatchOptions{Limit: 5}, root)
+	if review.Recovery == nil {
+		t.Fatalf("expected recovery summary, got %#v", review)
+	}
+	if review.Recovery.Status != "ready" || review.Recovery.FailureRecordCount != 1 || review.Recovery.DecompositionPacketCount != 1 || review.Recovery.CandidateAtomCount != 2 {
+		t.Fatalf("unexpected recovery summary: %#v", review.Recovery)
+	}
+	if !slicesContains(review.Recovery.FailureClasses, "executor_edit_failed") || !slicesContains(review.Recovery.NextValidActions, "review_decomposition") {
+		t.Fatalf("expected recovery classes and actions, got %#v", review.Recovery)
+	}
+	if len(review.Findings) == 0 || review.Findings[0].Category != "failure_recovery" || review.Findings[0].OwnerSurface != "recovery" {
+		t.Fatalf("expected failure recovery finding, got %#v", review.Findings)
+	}
+	if !slicesContains(review.Findings[0].Promotion.CandidateTargets, "recovery_atom") {
+		t.Fatalf("expected recovery promotion target, got %#v", review.Findings[0].Promotion)
+	}
+	data, err := json.Marshal(review)
+	if err != nil {
+		t.Fatalf("marshal recovery review: %v", err)
+	}
+	if strings.Contains(string(data), "RAW_SENTINEL") || strings.Contains(string(data), root) {
+		t.Fatalf("recovery audit packet leaked raw log content or root: %s", string(data))
+	}
+}
+
 func TestAuditWatchFailedRunsGetPromotionAndClosureWorkflow(t *testing.T) {
 	reasons := auditWatchTriggerReasons(map[string]any{
 		"type":      "process_exit",

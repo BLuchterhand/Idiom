@@ -38,7 +38,9 @@ in [[23 - Decompose On Failure PROPOSAL]] now writes a durable failure record,
 classified failure shape, and decomposition packet automatically when a
 plan-execute session fails. The CLI surface is `idiom recover inspect`,
 `idiom recover status`, `idiom recover decompose`, and `idiom recover promote`.
-Reconciliation back to the original failed atom remains a follow-up adapter.
+Product operator status now projects referenced recovery packets and blocks
+normal workflow dispatch while recovery is open. Reconciliation back to the
+original failed atom remains a follow-up adapter.
 
 ## Operator Surface Map
 
@@ -76,10 +78,11 @@ flowchart TD
 | `idiom atom` | Atom/spec intake and classification |
 | `idiom brief lint` | Pre-dispatch brief linting |
 | `idiom lane postflight` | Diff QC after lane output |
+| `idiom recover` | Failure-record inspection, packet status, decomposition, and promotion into a gated brief |
 | `idiom local-ops benchmark` | Activation and local readiness evidence |
 | `idiom product-evidence export` | Product go/no-go evidence |
 | `idiom release evidence` | Release evidence bundle |
-| `idiom audit watch` | Local behavior monitoring and review packets |
+| `idiom audit watch` | Local behavior monitoring, including recovery event summaries, and review packets |
 | `idiom ranker` | Ranker learning inspection and manual adjustment |
 | `idiom mcp serve` | Experimental inbound MCP stdio server |
 

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"idiom/internal/recovery"
 )
 
 type StatusBlocker struct {
@@ -38,6 +40,7 @@ type ProductStatusView struct {
 	NextValidActions []string                `json:"next_valid_actions"`
 	Findings         []StatusBlocker         `json:"findings,omitempty"`
 	Metrics          *ProductWorkflowMetrics `json:"metrics,omitempty"`
+	Recovery         *ProductRecoveryStatus  `json:"recovery,omitempty"`
 }
 
 type ProductOperatorStatusView struct {
@@ -60,6 +63,7 @@ type ProductOperatorStatusView struct {
 	OpenObligations       []string                  `json:"open_obligations"`
 	ArtifactPaths         []ProductOperatorArtifact `json:"artifact_paths"`
 	NextValidActions      []ProductOperatorAction   `json:"next_valid_actions"`
+	Recovery              *ProductRecoveryStatus    `json:"recovery,omitempty"`
 }
 
 type ProductOperatorAction struct {
@@ -84,6 +88,36 @@ type ProductOperatorBlocker struct {
 type ProductOperatorArtifact struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+}
+
+type ProductRecoveryStatus struct {
+	Status             string                 `json:"status"`
+	PacketPath         string                 `json:"packet_path,omitempty"`
+	FailureRecordPath  string                 `json:"failure_record_path,omitempty"`
+	FailureID          string                 `json:"failure_id,omitempty"`
+	PacketID           string                 `json:"packet_id,omitempty"`
+	FailureClass       string                 `json:"failure_class,omitempty"`
+	FailureKind        string                 `json:"failure_kind,omitempty"`
+	SourceSessionID    string                 `json:"source_session_id,omitempty"`
+	NextValidAction    string                 `json:"next_valid_action,omitempty"`
+	CandidateAtomCount int                    `json:"candidate_atom_count,omitempty"`
+	ResidualWorkCount  int                    `json:"residual_work_count,omitempty"`
+	Gates              []string               `json:"gates,omitempty"`
+	RequiredTests      []string               `json:"required_tests,omitempty"`
+	ProductLinks       ProductRecoveryLinks   `json:"product_links,omitempty"`
+	Blockers           []ProductRecoveryBlock `json:"blockers,omitempty"`
+}
+
+type ProductRecoveryLinks struct {
+	PRDPaths    []string `json:"prd_paths,omitempty"`
+	ADRPaths    []string `json:"adr_paths,omitempty"`
+	TDDPaths    []string `json:"tdd_paths,omitempty"`
+	LedgerPaths []string `json:"ledger_paths,omitempty"`
+}
+
+type ProductRecoveryBlock struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductStatusView, error) {
@@ -141,6 +175,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 		Blockers:         []StatusBlocker{},
 		Findings:         []StatusBlocker{},
 		Sections:         []StatusSection{},
+		Recovery:         loadProductRecoveryStatus(absRoot, ws.ArtifactPaths),
 	}
 
 	if len(ws.Blockers) > 0 {
@@ -214,6 +249,7 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 		Blockers:              []ProductOperatorBlocker{},
 		ArtifactPaths:         []ProductOperatorArtifact{},
 		NextValidActions:      []ProductOperatorAction{},
+		Recovery:              status.Recovery,
 	}
 
 	if workflowState != nil {
@@ -278,6 +314,22 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 			Message: fmt.Sprintf("%d open obligations remain", len(status.OpenObligations)),
 			Source:  "workflow_state",
 		})
+	}
+	if status.Recovery != nil {
+		if status.Recovery.Status != "closed" {
+			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
+				Code:    "recovery_packet_open",
+				Message: "review recovery packet before continuing workflow dispatch",
+				Source:  "recovery_packet",
+			})
+		}
+		for _, blocker := range status.Recovery.Blockers {
+			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
+				Code:    blocker.Code,
+				Message: blocker.Message,
+				Source:  "recovery_packet",
+			})
+		}
 	}
 
 	transitionActions, transitionBlockers := NextActionsForState(status.StatusBucket, status.CurrentState)
@@ -354,8 +406,232 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 			Blockers:     append([]ProductOperatorBlocker{}, blockingReasons...),
 		})
 	}
+	if status.Recovery != nil {
+		view.NextValidActions = append(view.NextValidActions, productRecoveryOperatorAction(*status.Recovery, blockerCodes, blockingReasons))
+	}
 
 	return view
+}
+
+func loadProductRecoveryStatus(absRoot string, artifactPaths map[string]string) *ProductRecoveryStatus {
+	packetPath := firstArtifactPath(artifactPaths, "recovery_packet", "recovery_decomposition_packet")
+	failurePath := firstArtifactPath(artifactPaths, "recovery_failure", "recovery_failure_record")
+	if packetPath == "" && failurePath == "" {
+		return nil
+	}
+	status := &ProductRecoveryStatus{
+		Status:            "blocked",
+		PacketPath:        productRecoveryArtifactDisplayPath(absRoot, packetPath),
+		FailureRecordPath: productRecoveryArtifactDisplayPath(absRoot, failurePath),
+		Blockers:          []ProductRecoveryBlock{},
+	}
+	if packetPath == "" {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
+			Code:    "missing_recovery_packet",
+			Message: "workflow_state artifact_paths includes recovery metadata without a recovery_packet artifact",
+		})
+		return status
+	}
+	fullPath, safeRel, ok := resolveProductRecoveryArtifactPath(absRoot, packetPath)
+	if !ok {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
+			Code:    "unsafe_recovery_packet_path",
+			Message: "recovery packet path must stay under the effort root",
+		})
+		return status
+	}
+	status.PacketPath = safeRel
+	packet, _, found, err := recovery.TryLoadDecompositionPacket(fullPath)
+	if err != nil {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
+			Code:    "invalid_recovery_packet",
+			Message: "recovery packet could not be decoded",
+		})
+		return status
+	}
+	if !found {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
+			Code:    "missing_recovery_packet",
+			Message: "recovery packet artifact was not found under the effort root",
+		})
+		return status
+	}
+	status.Status = productRecoveryPacketStatus(packet)
+	status.PacketID = packet.PacketID
+	status.FailureID = packet.FailureID
+	status.FailureClass = packet.Failure.Class
+	status.FailureKind = packet.Failure.Kind
+	status.SourceSessionID = packet.SourceRun.SessionID
+	status.NextValidAction = packet.NextAction
+	status.CandidateAtomCount = len(packet.CandidateAtoms)
+	status.ResidualWorkCount = len(packet.ResidualWork)
+	status.Gates = productRecoveryPacketGates(packet)
+	status.RequiredTests = productRecoveryPacketRequiredTests(packet)
+	status.ProductLinks = productRecoveryLinks(packet.ProductLinks)
+	if status.Status == "blocked" {
+		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
+			Code:    "recovery_requires_human_action",
+			Message: fmt.Sprintf("recovery next_valid_action is %q", packet.NextAction),
+		})
+	}
+	return status
+}
+
+func firstArtifactPath(paths map[string]string, names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(paths[name]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func productRecoveryArtifactDisplayPath(absRoot string, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if _, rel, ok := resolveProductRecoveryArtifactPath(absRoot, path); ok {
+		return rel
+	}
+	return "outside_effort_root"
+}
+
+func resolveProductRecoveryArtifactPath(absRoot string, relPath string) (string, string, bool) {
+	absRoot = filepath.Clean(strings.TrimSpace(absRoot))
+	relPath = strings.TrimSpace(relPath)
+	if absRoot == "" || relPath == "" {
+		return "", "", false
+	}
+	fullPath := relPath
+	if !filepath.IsAbs(fullPath) {
+		fullPath = filepath.Join(absRoot, filepath.FromSlash(relPath))
+	}
+	fullPath = filepath.Clean(fullPath)
+	rel, err := filepath.Rel(absRoot, fullPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return "", "", false
+	}
+	return fullPath, filepath.ToSlash(rel), true
+}
+
+func productRecoveryPacketStatus(packet recovery.DecompositionPacket) string {
+	switch packet.NextAction {
+	case recovery.NextActionReviewDecomposition:
+		if len(packet.CandidateAtoms) > 0 {
+			return "ready"
+		}
+		return "needs_inspection"
+	case recovery.NextActionInspectFailure:
+		return "needs_inspection"
+	case recovery.NextActionNone:
+		return "closed"
+	case recovery.NextActionAnswerBlocker, recovery.NextActionHumanIntervention:
+		return "blocked"
+	default:
+		return "pending"
+	}
+}
+
+func productRecoveryPacketGates(packet recovery.DecompositionPacket) []string {
+	seen := map[string]bool{}
+	var gates []string
+	for _, atom := range packet.CandidateAtoms {
+		for _, gate := range atom.Gates {
+			gate = strings.TrimSpace(gate)
+			if gate == "" || seen[gate] {
+				continue
+			}
+			seen[gate] = true
+			gates = append(gates, gate)
+		}
+	}
+	sort.Strings(gates)
+	return gates
+}
+
+func productRecoveryPacketRequiredTests(packet recovery.DecompositionPacket) []string {
+	seen := map[string]bool{}
+	var tests []string
+	for _, atom := range packet.CandidateAtoms {
+		for _, test := range atom.RequiredTests {
+			test = strings.TrimSpace(test)
+			if test == "" || seen[test] {
+				continue
+			}
+			seen[test] = true
+			tests = append(tests, test)
+		}
+	}
+	sort.Strings(tests)
+	return tests
+}
+
+func productRecoveryLinks(links recovery.ProductLinks) ProductRecoveryLinks {
+	return ProductRecoveryLinks{
+		PRDPaths:    productRecoverySafePaths(links.PRDPaths),
+		ADRPaths:    productRecoverySafePaths(links.ADRPaths),
+		TDDPaths:    productRecoverySafePaths(links.TDDPaths),
+		LedgerPaths: productRecoverySafePaths(links.LedgerPaths),
+	}
+}
+
+func productRecoverySafePaths(paths []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, path := range paths {
+		path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+		if path == "" || path == "." || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) || seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func productRecoveryOperatorAction(recoveryStatus ProductRecoveryStatus, blockerCodes []string, blockers []ProductOperatorBlocker) ProductOperatorAction {
+	action := strings.TrimSpace(recoveryStatus.NextValidAction)
+	if action == "" {
+		action = "inspect_failure"
+	}
+	id := "recovery_" + productOperatorFallbackActionID(action)
+	if id == "recovery_" {
+		id = "recovery_inspect_failure"
+	}
+	return ProductOperatorAction{
+		Action:       action,
+		ID:           id,
+		Label:        productOperatorActionLabel(action),
+		Owner:        "operator",
+		Dispatchable: false,
+		RunnableNow:  true,
+		Message:      productRecoveryOperatorMessage(recoveryStatus),
+		BlockedBy:    append([]string{}, blockerCodes...),
+		Blockers:     append([]ProductOperatorBlocker{}, blockers...),
+		CommandHint:  productRecoveryCommandHint(recoveryStatus),
+	}
+}
+
+func productRecoveryOperatorMessage(recoveryStatus ProductRecoveryStatus) string {
+	if recoveryStatus.CandidateAtomCount > 0 {
+		return fmt.Sprintf("review %d recovery candidate atom(s) before continuing", recoveryStatus.CandidateAtomCount)
+	}
+	if recoveryStatus.Status == "blocked" {
+		return "resolve recovery blockers before continuing"
+	}
+	return "inspect recovery packet before continuing"
+}
+
+func productRecoveryCommandHint(recoveryStatus ProductRecoveryStatus) string {
+	if recoveryStatus.PacketPath != "" {
+		return "idiom recover status --packet " + recoveryStatus.PacketPath
+	}
+	if recoveryStatus.SourceSessionID != "" {
+		return "idiom recover inspect --session " + recoveryStatus.SourceSessionID
+	}
+	return "idiom recover status"
 }
 
 func productOperatorArtifacts(paths map[string]string) []ProductOperatorArtifact {

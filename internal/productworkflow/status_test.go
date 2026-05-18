@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"idiom/internal/recovery"
 )
 
 func TestLoadProductStatusMissingWorkflowState(t *testing.T) {
@@ -198,6 +201,86 @@ func TestProductOperatorStatusViewUsesTypedContinuationActions(t *testing.T) {
 	}
 	if len(action.Blockers) != 0 {
 		t.Fatalf("expected no blockers on dispatchable action, got %#v", action.Blockers)
+	}
+}
+
+func TestProductOperatorStatusViewIncludesRecoveryPacketState(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusTestFile(t, dir, "references/recovery_packet.json", statusTestRecoveryPacketJSON(t))
+	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"open_obligations":["TDD-001"]`, `"open_obligations":[]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"artifact_paths":{"events":"events.jsonl"}`, `"artifact_paths":{"events":"events.jsonl","recovery_packet":"references/recovery_packet.json"}`, 1)
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{Status: "pass"})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+	if status.Recovery == nil {
+		t.Fatal("expected recovery projection")
+	}
+	if status.Recovery.Status != "ready" || status.Recovery.FailureClass != recovery.FailureClassExecutorEdit {
+		t.Fatalf("expected ready executor recovery status, got %#v", status.Recovery)
+	}
+	if status.Recovery.CandidateAtomCount != 1 || !statusStringsContain(status.Recovery.Gates, recovery.GateWorkspaceState) {
+		t.Fatalf("expected recovery candidate gate summary, got %#v", status.Recovery)
+	}
+	if !statusStringsContain(status.Recovery.RequiredTests, "go test ./internal/productworkflow") {
+		t.Fatalf("expected recovery required test summary, got %#v", status.Recovery.RequiredTests)
+	}
+	if !statusStringsContain(status.Recovery.ProductLinks.PRDPaths, "docs/product-workflows/prd.md") {
+		t.Fatalf("expected bounded product links, got %#v", status.Recovery.ProductLinks)
+	}
+
+	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	if view.Recovery == nil || view.Recovery.PacketID == "" {
+		t.Fatalf("expected operator recovery projection, got %#v", view.Recovery)
+	}
+	if !operatorBlockerCodesContain(view.Blockers, "recovery_packet_open") {
+		t.Fatalf("expected open recovery packet to block workflow dispatch, got %#v", view.Blockers)
+	}
+	workflowAction := findOperatorContinuationAction(t, view.NextValidActions, "complete")
+	if workflowAction.Dispatchable || workflowAction.RunnableNow {
+		t.Fatalf("expected normal workflow action blocked while recovery packet is open, got %#v", workflowAction)
+	}
+	recoveryAction := findOperatorContinuationAction(t, view.NextValidActions, "recovery_review_decomposition")
+	if recoveryAction.Owner != "operator" || recoveryAction.Dispatchable || !recoveryAction.RunnableNow {
+		t.Fatalf("expected non-dispatchable runnable recovery action, got %#v", recoveryAction)
+	}
+	if recoveryAction.CommandHint != "idiom recover status --packet references/recovery_packet.json" {
+		t.Fatalf("expected recovery status command hint, got %#v", recoveryAction)
+	}
+}
+
+func TestLoadProductStatusRedactsUnsafeRecoveryPacketPath(t *testing.T) {
+	dir := t.TempDir()
+	outsidePath := filepath.Join(t.TempDir(), "packet.json")
+	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"open_obligations":["TDD-001"]`, `"open_obligations":[]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"artifact_paths":{"events":"events.jsonl"}`, `"artifact_paths":{"events":"events.jsonl","recovery_packet":`+strconvQuoteStatus(outsidePath)+`}`, 1)
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{Status: "pass"})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+	if status.Recovery == nil {
+		t.Fatal("expected recovery projection")
+	}
+	if status.Recovery.PacketPath != "outside_effort_root" {
+		t.Fatalf("expected unsafe packet path to be redacted, got %#v", status.Recovery)
+	}
+	if len(status.Recovery.Blockers) != 1 || status.Recovery.Blockers[0].Code != "unsafe_recovery_packet_path" {
+		t.Fatalf("expected unsafe recovery packet blocker, got %#v", status.Recovery.Blockers)
+	}
+	body, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal status: %v", err)
+	}
+	if strings.Contains(string(body), outsidePath) {
+		t.Fatalf("status leaked unsafe recovery packet path: %s", string(body))
 	}
 }
 
@@ -502,6 +585,53 @@ func writeStatusTestFile(t *testing.T, dir, relPath, content string) {
 	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", fullPath, err)
 	}
+}
+
+func statusTestRecoveryPacketJSON(t *testing.T) string {
+	t.Helper()
+	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
+		SessionID:         "session-product",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		PromptFile:        "docs/product-workflows/prd.md",
+		RequiredEditPaths: []string{"internal/productworkflow/status.go"},
+		ChangedPaths:      []string{"internal/productworkflow/status.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{
+		Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		PartialState: recovery.PartialStateForDirtyPaths(
+			nil,
+			record.PartialState.ChangedPaths,
+			record.SourceRun.RequiredEditPaths,
+			record.SourceRun.AllowedEditPaths,
+			record.PartialState.TotalEdits,
+		),
+	})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	body, err := json.MarshalIndent(packet, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal recovery packet: %v", err)
+	}
+	return string(body)
+}
+
+func statusStringsContain(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func strconvQuoteStatus(value string) string {
+	data, _ := json.Marshal(value)
+	return string(data)
 }
 
 func statusTestWorkflowStateJSON() string {

@@ -14,9 +14,10 @@ Operators can inspect the failed session, inspect packet status, rebuild the
 packet, and promote one candidate recovery atom into a normal brief after brief
 lint, atom intake, and recovery scope gates pass. Promotion is deliberately not
 dispatch authority; the promoted brief still enters the usual lane workflow.
-Remaining extensions are product-ledger reconciliation, TUI presenters,
-audit-watch summaries, deeper residual-work evidence, and non-plan-execute
-adapters.
+Product/operator status and audit-watch now project recovery state from bounded
+artifacts and telemetry events. Remaining extensions are product-ledger
+reconciliation, TUI presenters, deeper residual-work evidence, and
+non-plan-execute adapters.
 
 Verified adjacent implementation:
 
@@ -45,6 +46,15 @@ Verified adjacent implementation:
   `recovery_status` through `idiom tool --profile discovery` and MCP with the
   normal sidecar envelope. `recovery_decompose` is available only through the
   default tool profile because it writes `.idiom/recovery` artifacts.
+- `internal/productworkflow/status.go` projects `workflow_state.artifact_paths`
+  recovery packets into `idiom product status` and the shared operator status
+  view. Open recovery packets block normal workflow dispatch and add a runnable
+  recovery inspection action without making the packet itself dispatch
+  authority.
+- `cmd/idiom/audit.go` treats recovery failure-record and decomposition-packet
+  events as audit-watch triggers, summarizes failure classes, candidate atom
+  counts, next valid actions, and artifact paths, and keeps the packet
+  metadata-only.
 
 Those pieces now cover the operator-facing plan-execute loop. The remaining
 design work is to broaden adapters and close reconciliation surfaces without
@@ -285,8 +295,8 @@ not-applicable for a given failure class.
 | `git_status` and `git_diff` | Classify partial state, changed paths, dirty ownership, and scope before retry, promotion, or dispatch. |
 | Shell and verification commands | Store command, exit code, bounded output refs, failing test names, and timestamps; do not store raw private output by default. |
 | `harness_audit` and `harness_feedback` | Report recovery coverage, repeated failure classes, malformed recovery packets, loop risk, and gaps in tool/event correlation. |
-| `idiom audit watch` | Treat repeated failure classes and recovery-packet creation as audit triggers; write review packets without raw transcripts. |
-| Product workflow commands | Link recovery packets to effort ID, PRD requirement IDs, ADR IDs, TDD obligations, implementation ledger records, status buckets, and product lint/audit/status next actions. |
+| `idiom audit watch` | Treat recovery failure-record and decomposition-packet events as first-class triggers; summarize failure classes, candidate atom counts, next valid actions, and artifact paths without raw transcripts. |
+| Product workflow commands | Link recovery packets through `workflow_state.artifact_paths.recovery_packet`; product status and operator status expose packet status, gates, required tests, product links, blockers, and a non-dispatchable recovery action while normal dispatch remains blocked until the packet is closed. |
 | Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. |
 | `idiom ranker` | Accept only deterministic, verified recovery outcomes as learning input; record whether recovery improved localization or packet quality. |
 | Queue/backend/local-ops/doctor | Classify readiness, queue, backend, timeout, or capacity failures separately from implementation failures so decomposition does not hide environment problems. |
@@ -425,6 +435,9 @@ it moved into a recovery state, not like it vanished into a separate tool.
 - Status: sidecar read-only parity landed for `recovery_inspect` and
   `recovery_status`; artifact-writing `recovery_decompose` is intentionally
   default-profile only, and `recovery_promote` remains CLI-only.
+- Status: product/operator status now projects recovery packets referenced from
+  durable workflow state, and audit-watch packets now include a bounded
+  `recovery` summary plus `failure_recovery` findings.
 - Expose read-only failure records and packets through `idiom tool` and MCP.
 - Feed recurring failure classes into eval fixtures, harness audit, and ranker
   learning only through deterministic evidence adapters.
@@ -471,6 +484,8 @@ The feature is useful when a team can:
   sidecar consumers
 - prove read-only parity for `idiom tool` and MCP through sidecar-envelope
   fixtures, while keeping write/promote actions out of the discovery profile
+- project open recovery packets into product/operator status so normal workflow
+  dispatch is blocked until the operator inspects or closes recovery work
 - report recovery evidence in harness audit, audit watch, product evidence,
   release evidence, and ranker-learning summaries without raw prompt,
   transcript, or file-body leakage

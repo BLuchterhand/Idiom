@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"cmp"
 	"slices"
 	"sort"
 	"strings"
@@ -60,12 +60,13 @@ type auditWatchChangedFile struct {
 }
 
 type auditWatchTriggerFile struct {
-	Path        string   `json:"path"`
-	ModUnixNano int64    `json:"mod_unix_nano"`
-	Size        int64    `json:"size"`
-	Reasons     []string `json:"reasons"`
-	Sessions    []string `json:"sessions,omitempty"`
-	EventCount  int      `json:"event_count"`
+	Path           string                    `json:"path"`
+	ModUnixNano    int64                     `json:"mod_unix_nano"`
+	Size           int64                     `json:"size"`
+	Reasons        []string                  `json:"reasons"`
+	Sessions       []string                  `json:"sessions,omitempty"`
+	EventCount     int                       `json:"event_count"`
+	RecoveryEvents []auditWatchRecoveryEvent `json:"recovery_events,omitempty"`
 }
 
 type auditWatchReview struct {
@@ -81,6 +82,7 @@ type auditWatchReview struct {
 	CandidateRegressions      []string                              `json:"candidate_regressions,omitempty"`
 	CandidateLearningEvents   []string                              `json:"candidate_learning_events,omitempty"`
 	OwnerSurface              string                                `json:"owner_surface,omitempty"`
+	Recovery                  *auditWatchRecoverySummary            `json:"recovery,omitempty"`
 	Status                    string                                `json:"status"`
 	PromotionStatus           string                                `json:"promotion_status"`
 	Reproduce                 auditWatchReproducer                  `json:"reproduce"`
@@ -89,6 +91,32 @@ type auditWatchReview struct {
 	ClientClassifications     []auditWatchClientClassificationRow   `json:"client_classifications"`
 	ProductSuccessGateImpacts []auditWatchProductSuccessGateImpact  `json:"product_success_gate_impacts"`
 	Privacy                   auditWatchEvidencePrivacy             `json:"privacy"`
+}
+
+type auditWatchRecoveryEvent struct {
+	Type            string `json:"type"`
+	Status          string `json:"status"`
+	SessionID       string `json:"session_id,omitempty"`
+	FailureID       string `json:"failure_id,omitempty"`
+	FailureClass    string `json:"failure_class,omitempty"`
+	FailureKind     string `json:"failure_kind,omitempty"`
+	PacketID        string `json:"packet_id,omitempty"`
+	CandidateAtoms  int    `json:"candidate_atoms,omitempty"`
+	NextValidAction string `json:"next_valid_action,omitempty"`
+	ArtifactPath    string `json:"artifact_path,omitempty"`
+}
+
+type auditWatchRecoverySummary struct {
+	Status                   string   `json:"status"`
+	EventCount               int      `json:"event_count"`
+	FailureRecordCount       int      `json:"failure_record_count"`
+	DecompositionPacketCount int      `json:"decomposition_packet_count"`
+	FailedRecoveryEventCount int      `json:"failed_recovery_event_count,omitempty"`
+	CandidateAtomCount       int      `json:"candidate_atom_count,omitempty"`
+	FailureClasses           []string `json:"failure_classes,omitempty"`
+	NextValidActions         []string `json:"next_valid_actions,omitempty"`
+	Sessions                 []string `json:"sessions,omitempty"`
+	ArtifactPaths            []string `json:"artifact_paths,omitempty"`
 }
 
 type auditWatchRun struct {
@@ -393,6 +421,7 @@ func auditWatchFinalizeReview(review *auditWatchReview, opts auditWatchOptions, 
 	review.TriggerFiles = auditWatchSanitizeTriggerFiles(root, review.TriggerFiles)
 	review.TriggerReasons = auditWatchTriggerReasonList(review.TriggerFiles)
 	review.Sessions = auditWatchSessionList(review.TriggerFiles)
+	review.Recovery = auditWatchRecoverySummaryFromTriggers(review.TriggerFiles)
 	review.Findings = auditWatchDeduplicateFindings(append(
 		auditWatchFindingsFromTriggers(review.TriggerFiles, opts, root),
 		auditWatchFindingsFromAuditRuns(review.Audits, opts, root)...,
@@ -415,13 +444,17 @@ func auditWatchFindingsFromTriggers(triggers []auditWatchTriggerFile, opts audit
 			category := auditWatchCategoryForReason(reason)
 			source := auditWatchSanitizeText(root, trigger.Path, 240)
 			evidence := fmt.Sprintf("trigger_file=%s; reason=%s; events=%d", source, reason, trigger.EventCount)
+			recommendation := "triage the owner surface and promote the smallest reproducible check or document a bounded non-goal"
+			if category == "failure_recovery" {
+				recommendation = "inspect the recovery packet, promote the smallest gated atom, and convert repeats into eval or audit fixtures"
+			}
 			findings = append(findings, auditWatchNewFinding(auditWatchFinding{
 				ID:             "trigger_" + auditWatchSlug(reason, 72),
 				Severity:       auditWatchSeverityForReason(reason),
 				Category:       category,
 				Source:         source,
 				Evidence:       evidence,
-				Recommendation: "triage the owner surface and promote the smallest reproducible check or document a bounded non-goal",
+				Recommendation: recommendation,
 				OwnerSurface:   auditWatchOwnerSurfaceForCategory(category),
 			}, opts))
 		}
@@ -496,6 +529,8 @@ func auditWatchPromotionForFinding(finding auditWatchFinding, opts auditWatchOpt
 		targets = append(targets, "prompt_contract_fix")
 	case "telemetry_gap", "audit_coverage":
 		targets = append(targets, "telemetry_or_audit_rule")
+	case "failure_recovery":
+		targets = append(targets, "recovery_atom", "recovery_eval_fixture", "telemetry_or_audit_rule")
 	}
 	slices.Sort(targets)
 	return auditWatchFindingPromotion{
@@ -709,13 +744,71 @@ func auditWatchTriggerPaths(triggers []auditWatchTriggerFile) []string {
 	return auditWatchUniqueStrings(values)
 }
 
+func auditWatchRecoverySummaryFromTriggers(triggers []auditWatchTriggerFile) *auditWatchRecoverySummary {
+	summary := auditWatchRecoverySummary{
+		Status: "ready",
+	}
+	var classes []string
+	var actions []string
+	var sessions []string
+	var artifactPaths []string
+	for _, trigger := range triggers {
+		for _, event := range trigger.RecoveryEvents {
+			summary.EventCount++
+			switch event.Type {
+			case "idiom.plan_execute.recovery_failure_record_written":
+				summary.FailureRecordCount++
+			case "idiom.plan_execute.recovery_decomposition_packet_written":
+				summary.DecompositionPacketCount++
+				summary.CandidateAtomCount += event.CandidateAtoms
+			case "idiom.plan_execute.recovery_failure_record_failed", "idiom.plan_execute.recovery_decomposition_packet_failed":
+				summary.FailedRecoveryEventCount++
+				summary.Status = "blocked"
+			}
+			classes = append(classes, event.FailureClass)
+			actions = append(actions, event.NextValidAction)
+			sessions = append(sessions, event.SessionID)
+			artifactPaths = append(artifactPaths, event.ArtifactPath)
+		}
+	}
+	if summary.EventCount == 0 {
+		return nil
+	}
+	if summary.Status != "blocked" && summary.DecompositionPacketCount == 0 {
+		summary.Status = "recorded"
+	}
+	summary.FailureClasses = auditWatchUniqueStrings(classes)
+	summary.NextValidActions = auditWatchUniqueStrings(actions)
+	summary.Sessions = auditWatchUniqueStrings(sessions)
+	summary.ArtifactPaths = auditWatchUniqueStrings(artifactPaths)
+	return &summary
+}
+
 func auditWatchSanitizeTriggerFiles(root string, triggers []auditWatchTriggerFile) []auditWatchTriggerFile {
 	out := make([]auditWatchTriggerFile, 0, len(triggers))
 	for _, trigger := range triggers {
 		trigger.Path = auditWatchSanitizeText(root, trigger.Path, 240)
 		trigger.Reasons = auditWatchSanitizeStrings(root, trigger.Reasons, 160)
 		trigger.Sessions = auditWatchSanitizeStrings(root, trigger.Sessions, 160)
+		trigger.RecoveryEvents = auditWatchSanitizeRecoveryEvents(root, trigger.RecoveryEvents)
 		out = append(out, trigger)
+	}
+	return out
+}
+
+func auditWatchSanitizeRecoveryEvents(root string, events []auditWatchRecoveryEvent) []auditWatchRecoveryEvent {
+	out := make([]auditWatchRecoveryEvent, 0, len(events))
+	for _, event := range events {
+		event.Type = auditWatchSanitizeText(root, event.Type, 120)
+		event.Status = auditWatchSanitizeText(root, event.Status, 80)
+		event.SessionID = auditWatchSanitizeText(root, event.SessionID, 160)
+		event.FailureID = auditWatchSanitizeText(root, event.FailureID, 160)
+		event.FailureClass = auditWatchSanitizeText(root, event.FailureClass, 120)
+		event.FailureKind = auditWatchSanitizeText(root, event.FailureKind, 120)
+		event.PacketID = auditWatchSanitizeText(root, event.PacketID, 160)
+		event.NextValidAction = auditWatchSanitizeText(root, event.NextValidAction, 120)
+		event.ArtifactPath = auditWatchSanitizeText(root, event.ArtifactPath, 240)
+		out = append(out, event)
 	}
 	return out
 }
@@ -745,6 +838,8 @@ func auditWatchSeverityRank(severity string) int {
 func auditWatchSeverityForReason(reason string) string {
 	lower := strings.ToLower(strings.TrimSpace(reason))
 	switch {
+	case strings.Contains(lower, "recovery_artifact_write_failed"):
+		return "high"
 	case strings.Contains(lower, "completion_gate"),
 		strings.Contains(lower, "completion_status_blocked"),
 		strings.Contains(lower, "required_paths_remaining"),
@@ -760,6 +855,8 @@ func auditWatchSeverityForReason(reason string) string {
 func auditWatchCategoryForReason(reason string) string {
 	lower := strings.ToLower(strings.TrimSpace(reason))
 	switch {
+	case strings.Contains(lower, "recovery_"):
+		return "failure_recovery"
 	case strings.Contains(lower, "completion_gate"), strings.Contains(lower, "completion_status_blocked"), strings.Contains(lower, "required_paths_remaining"):
 		return "completion_contract"
 	case strings.Contains(lower, "verification_required"):
@@ -799,6 +896,8 @@ func auditWatchCategoryForAuditFinding(id string, evidence string) string {
 
 func auditWatchOwnerSurfaceForCategory(category string) string {
 	switch category {
+	case "failure_recovery":
+		return "recovery"
 	case "completion_contract":
 		return "contract"
 	case "verification_gap":
@@ -961,6 +1060,7 @@ func auditWatchTriggerForFile(file auditWatchFile, previous auditWatchSeenFile) 
 
 	reasons := make(map[string]struct{})
 	sessions := make(map[string]struct{})
+	var recoveryEvents []auditWatchRecoveryEvent
 	eventCount := 0
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
@@ -972,6 +1072,12 @@ func auditWatchTriggerForFile(file auditWatchFile, previous auditWatchSeenFile) 
 		if sessionID := auditWatchString(record, "session_id"); sessionID != "" {
 			sessions[sessionID] = struct{}{}
 		}
+		if event, ok := auditWatchRecoveryEventForRecord(record); ok {
+			recoveryEvents = append(recoveryEvents, event)
+			if event.SessionID != "" {
+				sessions[event.SessionID] = struct{}{}
+			}
+		}
 		for _, reason := range auditWatchTriggerReasons(record) {
 			reasons[reason] = struct{}{}
 			eventCount++
@@ -981,12 +1087,13 @@ func auditWatchTriggerForFile(file auditWatchFile, previous auditWatchSeenFile) 
 		return auditWatchTriggerFile{}, false
 	}
 	out := auditWatchTriggerFile{
-		Path:        file.DisplayPath,
-		ModUnixNano: file.ModUnixNano,
-		Size:        file.Size,
-		EventCount:  eventCount,
-		Reasons:     make([]string, 0, len(reasons)),
-		Sessions:    make([]string, 0, len(sessions)),
+		Path:           file.DisplayPath,
+		ModUnixNano:    file.ModUnixNano,
+		Size:           file.Size,
+		EventCount:     eventCount,
+		Reasons:        make([]string, 0, len(reasons)),
+		Sessions:       make([]string, 0, len(sessions)),
+		RecoveryEvents: recoveryEvents,
 	}
 	for reason := range reasons {
 		out.Reasons = append(out.Reasons, reason)
@@ -1028,6 +1135,20 @@ func auditWatchTriggerReasons(record map[string]any) []string {
 		reason := firstAuditWatchString(auditWatchString(record, "reason"), auditWatchString(record, "blocker_kind"), "blocked")
 		reasons = append(reasons, "completion_status_blocked:"+auditWatchBoundedReasonFragment(reason))
 	}
+	switch eventType {
+	case "idiom.plan_execute.recovery_failure_record_written":
+		class := auditWatchString(record, "failure_class")
+		if class == "" {
+			class = "unknown_failure"
+		} else {
+			class = auditWatchBoundedReasonFragment(class)
+		}
+		reasons = append(reasons, "recovery_failure_record_written:"+class)
+	case "idiom.plan_execute.recovery_decomposition_packet_written":
+		reasons = append(reasons, "recovery_decomposition_packet_written")
+	case "idiom.plan_execute.recovery_failure_record_failed", "idiom.plan_execute.recovery_decomposition_packet_failed":
+		reasons = append(reasons, "recovery_artifact_write_failed")
+	}
 	combined := summary + " " + errText
 	if strings.Contains(combined, "malformed") ||
 		strings.Contains(combined, "invalid input json") ||
@@ -1039,6 +1160,37 @@ func auditWatchTriggerReasons(record map[string]any) []string {
 		reasons = append(reasons, "stale_context")
 	}
 	return reasons
+}
+
+func auditWatchRecoveryEventForRecord(record map[string]any) (auditWatchRecoveryEvent, bool) {
+	eventType := auditWatchString(record, "type")
+	status := ""
+	artifactPath := ""
+	switch eventType {
+	case "idiom.plan_execute.recovery_failure_record_written":
+		status = "recorded"
+		artifactPath = auditWatchString(record, "record_path")
+	case "idiom.plan_execute.recovery_decomposition_packet_written":
+		status = "decomposed"
+		artifactPath = auditWatchString(record, "packet_path")
+	case "idiom.plan_execute.recovery_failure_record_failed", "idiom.plan_execute.recovery_decomposition_packet_failed":
+		status = "artifact_write_failed"
+		artifactPath = firstAuditWatchString(auditWatchString(record, "record_path"), auditWatchString(record, "packet_path"))
+	default:
+		return auditWatchRecoveryEvent{}, false
+	}
+	return auditWatchRecoveryEvent{
+		Type:            eventType,
+		Status:          status,
+		SessionID:       auditWatchString(record, "session_id"),
+		FailureID:       auditWatchString(record, "failure_id"),
+		FailureClass:    auditWatchString(record, "failure_class"),
+		FailureKind:     auditWatchString(record, "failure_kind"),
+		PacketID:        auditWatchString(record, "packet_id"),
+		CandidateAtoms:  int(auditWatchNumber(record, "candidate_atoms")),
+		NextValidAction: auditWatchString(record, "next_valid_action"),
+		ArtifactPath:    artifactPath,
+	}, true
 }
 
 func auditWatchHighRiskStopReason(reason string) bool {

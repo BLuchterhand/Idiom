@@ -175,7 +175,9 @@ Other useful subcommands:
   Recovery state is available through `recovery_inspect` and `recovery_status`
   in the discovery profile; `recovery_decompose` writes local recovery artifacts
   and therefore requires the default profile. `recovery_promote` remains a
-  first-party `idiom recover` command.
+  first-party `idiom recover` command. Product operator status also surfaces
+  recovery packets referenced from `workflow_state.artifact_paths` and blocks
+  normal workflow dispatch while a recovery packet is open.
   See [docs/sidecar-recipes.md](docs/sidecar-recipes.md) for external caller
   recipes covering shell/CI scripts, coding-agent harnesses, local/private-code
   users, and the replayed discovery-profile smoke transcript.
@@ -602,8 +604,9 @@ component, confidence, and severity.
 For autonomous local monitoring, run `idiom audit watch`. The watcher polls
 telemetry and conversation JSONL streams, debounces high-signal trigger events
 such as completed `implement` processes, completion-gate records, high-risk stop
-reasons, malformed tool input, stale-context reports, and `harness_feedback`,
-then writes deterministic review packets under `.idiom/audits/watch`.
+reasons, malformed tool input, stale-context reports, recovery record/packet
+events, and `harness_feedback`, then writes deterministic review packets under
+`.idiom/audits/watch` with bounded recovery summaries when applicable.
 
 ```bash
 ./idiom audit watch --config config.json

@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/productworkflow"
+	"idiom/internal/recovery"
 )
 
 func TestProductLintPassesOnCurrentDurableEffortFixture(t *testing.T) {
@@ -2392,6 +2394,56 @@ func TestProductStatusOperatorViewJSON(t *testing.T) {
 	}
 }
 
+func TestProductStatusOperatorViewIncludesRecoveryPacket(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "references/recovery_packet.json", productWorkflowTestRecoveryPacketJSON(t))
+	ws := strings.Replace(
+		validTestWorkflowStateJSON(),
+		`"artifact_paths":{"events":"events.jsonl"}`,
+		`"artifact_paths":{"events":"events.jsonl","recovery_packet":"references/recovery_packet.json"}`,
+		1,
+	)
+	writeTestFile(t, dir, "workflow_state.json", ws)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--operator-view", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected operator status to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result productworkflow.ProductOperatorStatusView
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("operator output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Recovery == nil || result.Recovery.Status != "ready" || result.Recovery.CandidateAtomCount != 1 {
+		t.Fatalf("expected recovery status projection, got %#v", result.Recovery)
+	}
+	workflowAction := findProductOperatorAction(t, result.NextValidActions, "complete")
+	if workflowAction.Dispatchable || workflowAction.RunnableNow {
+		t.Fatalf("expected workflow action blocked while recovery is open, got %#v", workflowAction)
+	}
+	recoveryAction := findProductOperatorAction(t, result.NextValidActions, "recovery_review_decomposition")
+	if recoveryAction.Dispatchable || !recoveryAction.RunnableNow || recoveryAction.CommandHint != "idiom recover status --packet references/recovery_packet.json" {
+		t.Fatalf("expected runnable recovery inspect action, got %#v", recoveryAction)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runProductStatus([]string{"--effort-root", dir, "--operator-view"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected operator status text to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		"recovery: ready next=review_decomposition candidate_atoms=1 packet=references/recovery_packet.json",
+		"[recovery_packet_open] review recovery packet before continuing workflow dispatch",
+		"command_hint=idiom recover status --packet references/recovery_packet.json",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected operator recovery text to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestProductStatusOperatorViewTextFailsClosedOnStaleContext(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	ws := strings.Replace(validTestWorkflowStateJSON(), `"freshness_state":"current"`, `"freshness_state":"stale"`, 1)
@@ -3267,6 +3319,50 @@ func writeTestFile(t *testing.T, dir, relPath, content string) {
 	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", fullPath, err)
 	}
+}
+
+func productWorkflowTestRecoveryPacketJSON(t *testing.T) string {
+	t.Helper()
+	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
+		SessionID:         "session-product-cli",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		PromptFile:        "docs/product-workflows/prd.md",
+		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		ChangedPaths:      []string{"cmd/idiom/product_workflow.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{
+		Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		PartialState: recovery.PartialStateForDirtyPaths(
+			nil,
+			record.PartialState.ChangedPaths,
+			record.SourceRun.RequiredEditPaths,
+			record.SourceRun.AllowedEditPaths,
+			record.PartialState.TotalEdits,
+		),
+	})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	body, err := json.MarshalIndent(packet, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal recovery packet: %v", err)
+	}
+	return string(body)
+}
+
+func findProductOperatorAction(t *testing.T, actions []productworkflow.ProductOperatorAction, id string) productworkflow.ProductOperatorAction {
+	t.Helper()
+	for _, action := range actions {
+		if action.ID == id {
+			return action
+		}
+	}
+	t.Fatalf("operator action %q not found in %#v", id, actions)
+	return productworkflow.ProductOperatorAction{}
 }
 
 func validTestWorkflowStateJSON() string {

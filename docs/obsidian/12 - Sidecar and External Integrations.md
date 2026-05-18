@@ -76,7 +76,10 @@ Recovery inspection is part of the read-only sidecar surface. Use
 `recovery_inspect` and `recovery_status` in the `discovery` profile to inspect
 failure records and decomposition packets without dispatching or promoting
 follow-up work. `recovery_decompose` writes `.idiom/recovery` artifacts and
-therefore requires the default profile.
+therefore requires the default profile. Product/operator status consumes the
+same bounded recovery packet contract when `workflow_state.artifact_paths`
+references a recovery packet; it does not make sidecar recovery packets
+dispatch authority.
 
 ## MCP Surfaces
 

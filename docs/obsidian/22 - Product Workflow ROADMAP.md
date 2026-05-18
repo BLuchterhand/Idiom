@@ -120,8 +120,8 @@ shipped; and closed-effort/missing-state/JSON usage-error UX parity gaps remain.
 
 ### CLI Commands
 
-- [x] `idiom product status` — summarize durable workflow state, gates, blockers,
-  and next valid actions
+- [x] `idiom product status` — summarize durable workflow state, gates,
+  blockers, recovery packet state, and next valid actions
 - [x] `idiom product research` — inspect profiles, plan research runs, merge
   existing researcher outputs, and render prompt files without executing models
 - [x] `idiom product prd --render-prompt` — render deterministic PRD prompt from
@@ -349,7 +349,8 @@ claim that Atom 38 completed the design.
 
 ### Phase 6: TUI Operator and Continuation Surface
 
-- [x] Shared CLI-ready operator status view model
+- [x] Shared CLI-ready operator status view model, including recovery packet
+  projections and fail-closed dispatch blocking while recovery is open
 - [x] Read-only effort browser over `unstarted`, `started`, and `closed`
   buckets
 - [x] Status migration planning and apply semantics

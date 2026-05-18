@@ -1207,6 +1207,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		fmt.Fprintf(stdout, "  revision: %d  last_event: %s\n", view.StateRevision, view.LastEventID)
 	}
 	fmt.Fprintf(stdout, "  context_pack: %s  freshness: %s\n", view.ContextPackID, view.FreshnessState)
+	printProductRecoveryStatus(stdout, view.Recovery)
 	if len(view.Blockers) > 0 {
 		fmt.Fprintf(stdout, "  blockers (%d):\n", len(view.Blockers))
 		for _, b := range view.Blockers {
@@ -1266,6 +1267,7 @@ func printProductOperatorStatus(stdout io.Writer, effortName string, view produc
 	fmt.Fprintf(stdout, "  authority: %s\n", view.ContinuationAuthority)
 	fmt.Fprintf(stdout, "  state: %s/%s  audit: %s\n", view.CurrentPhase, view.CurrentState, view.AuditStatus)
 	fmt.Fprintf(stdout, "  context_pack: %s  freshness: %s\n", view.ContextPackID, view.FreshnessState)
+	printProductRecoveryStatus(stdout, view.Recovery)
 	if len(view.Blockers) > 0 {
 		fmt.Fprintf(stdout, "  blockers (%d):\n", len(view.Blockers))
 		for _, blocker := range view.Blockers {
@@ -1317,6 +1319,29 @@ func printProductOperatorStatus(stdout io.Writer, effortName string, view produc
 		fmt.Fprintf(stdout, "  artifacts (%d):\n", len(view.ArtifactPaths))
 		for _, artifact := range view.ArtifactPaths {
 			fmt.Fprintf(stdout, "    %s: %s\n", artifact.Name, artifact.Path)
+		}
+	}
+}
+
+func printProductRecoveryStatus(stdout io.Writer, recoveryStatus *productworkflow.ProductRecoveryStatus) {
+	if recoveryStatus == nil {
+		return
+	}
+	fmt.Fprintf(stdout, "  recovery: %s", recoveryStatus.Status)
+	if recoveryStatus.NextValidAction != "" {
+		fmt.Fprintf(stdout, " next=%s", recoveryStatus.NextValidAction)
+	}
+	if recoveryStatus.CandidateAtomCount > 0 {
+		fmt.Fprintf(stdout, " candidate_atoms=%d", recoveryStatus.CandidateAtomCount)
+	}
+	if recoveryStatus.PacketPath != "" {
+		fmt.Fprintf(stdout, " packet=%s", recoveryStatus.PacketPath)
+	}
+	fmt.Fprintln(stdout)
+	if len(recoveryStatus.Blockers) > 0 {
+		fmt.Fprintf(stdout, "  recovery_blockers (%d):\n", len(recoveryStatus.Blockers))
+		for _, blocker := range recoveryStatus.Blockers {
+			fmt.Fprintf(stdout, "    [%s] %s\n", blocker.Code, blocker.Message)
 		}
 	}
 }

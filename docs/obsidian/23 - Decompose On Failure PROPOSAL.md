@@ -16,6 +16,7 @@ tags:
 > `idiom recover inspect`, `status`, `decompose`, and `promote` provide the
 > operator-facing loop. Read-only `recovery_inspect` and `recovery_status` are
 > also exposed through `idiom tool`/MCP with the normal sidecar envelope.
+> Product/operator status and audit-watch now project bounded recovery state.
 > Promotion writes a normal gated brief; it does not dispatch or reconcile the
 > original failure automatically yet.
 >
@@ -53,9 +54,14 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] `idiom tool --profile discovery recovery_inspect` and `recovery_status`
   expose the read-only recovery state; `recovery_decompose` stays out of the
   discovery profile because it writes artifacts.
+- [x] `idiom product status --operator-view` surfaces recovery packets from
+  `workflow_state.artifact_paths.recovery_packet` and blocks normal dispatch
+  while recovery is open.
+- [x] `idiom audit watch` emits `failure_recovery` findings and bounded
+  recovery summaries for recovery record and decomposition-packet events.
 - [ ] Recovery success is not yet reconciled back to the original failure.
-- [ ] TUI/product projections, audit-watch summaries, deeper residual-work
-  evidence, and non-plan-execute adapters are not yet complete.
+- [ ] TUI projections, deeper residual-work evidence, and non-plan-execute
+  adapters are not yet complete.
 
 ## Target Lifecycle
 
@@ -100,6 +106,8 @@ flowchart TD
 - CLI, TUI, product workflow, `idiom tool`, and MCP expose the same read-only
   recovery status model: typed blockers, gates, evidence links,
   dispatchability, and one next valid action.
+- Audit-watch review packets include bounded recovery summaries and
+  `failure_recovery` findings without raw transcripts.
 - Write/promote recovery actions stay out of the sidecar discovery profile until
   a dedicated write-authorization contract exists.
 
