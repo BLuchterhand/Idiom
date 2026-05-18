@@ -4,38 +4,59 @@
   "effort_id": "prd-adr-brief-workflow",
   "reviewer": {
     "agent_id": "codex-gpt-review-impl-0038",
-    "agent_path": null,
+    "agent_path": "019e3c4c-4d68-7460-8582-6a724a5d4299",
     "model": "gpt-5.4",
     "reasoning_effort": "medium",
     "independent_from_implementor": true
   },
-  "status": "pending",
-  "findings": [],
+  "status": "pass_after_repair",
+  "findings": [
+    {
+      "severity": "P1",
+      "code": "symlinked_effort_root_escape",
+      "status": "resolved",
+      "message": "Initial review found symlinked effort roots could mutate files outside the efforts tree during status-migration apply; repair rejects symlinked effort roots, index/workflow/events paths, and target parents before mutation.",
+      "repair_commit": "56675313f1f7fab5ff969796081d5f27298f14e5"
+    }
+  ],
   "checks": {
-    "atomic_folder_state_index_event_update": "pending",
-    "stable_effort_id_and_prior_paths_preserved": "pending",
-    "stale_unsafe_conflicting_state_fails_closed": "pending",
-    "cli_json_and_text_contract": "pending",
-    "no_dispatch_model_execution_or_runtime_mutation": "pending"
+    "atomic_folder_state_index_event_update": "pass",
+    "stable_effort_id_and_prior_paths_preserved": "pass",
+    "stale_unsafe_conflicting_state_fails_closed": "pass_after_symlink_repair",
+    "cli_json_and_text_contract": "pass",
+    "no_dispatch_model_execution_or_runtime_mutation": "pass"
   },
-  "reviewed_at": "",
+  "reviewed_at": "2026-05-18T22:30:00Z",
   "commands_reviewed": [
-    "idiom tool context_pack --input '{\"task\":\"phase 6 next atom after status migration contract product workflow design doc closeout CLI TUI status folder migration\",\"mode\":\"plan\",\"limit\":8}'",
-    "idiom tool context_query --input '{\"query\":\"product workflow apply status migration atomically move effort folder update workflow_state events effort index CLI no dispatch no model execution\",\"resolution\":\"symbol\",\"limit\":12}'",
+    "idiom tool context_pack --input {\"task\":\"impl-0038 phase 6 status migration apply cli repair failing tests\",\"mode\":\"plan\",\"limit\":8}",
+    "idiom tool context_query --input {\"query\":\"product workflow apply status migration atomically move effort folder update workflow_state events effort index CLI no dispatch no model execution\",\"resolution\":\"symbol\",\"limit\":12}",
+    "idiom tool context_query --input {\"query\":\"product workflow path validators EvalSymlinks Lstat symlink unsafe root fail closed\",\"resolution\":\"symbol\",\"limit\":12}",
     "go test ./internal/productworkflow -run TestProductStatusMigrationApply -count=1",
     "go test ./cmd/idiom -run 'TestProductStatusMigrationApply|TestProductEfforts' -count=1",
     "go test ./internal/productworkflow ./cmd/idiom",
     "go run ./cmd/idiom product status-migration --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --target-status closed --plan --json",
-    "go run ./cmd/idiom product status-migration --effort-root <temp-started-effort> --target-status closed --apply --json",
+    "go run ./cmd/idiom product status-migration --effort-root <temp-started-effort> --target-status closed --apply --expected-revision 114 --json",
+    "go run ./cmd/idiom product status-migration --effort-root <temp-symlinked-effort> --target-status closed --apply --expected-revision 114 --json",
     "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --json",
     "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go test ./...",
-    "JSON/JSONL validation for durable workflow artifacts",
+    "jq JSON validation for durable workflow artifacts",
+    "jq JSONL validation for durable workflow artifacts",
     "privacy secret-pattern scan over durable effort artifacts",
     "git diff --check"
   ],
-  "residual_risk": "pending review",
-  "created_at": "2026-05-18T22:05:00Z"
+  "residual_risk": "Low. Apply requires an expected workflow_state revision and rejects symlinked write paths; remaining risk is filesystem crash consistency, mitigated with temp writes, rename rollback, and best-effort fsync calls.",
+  "created_at": "2026-05-18T22:05:00Z",
+  "focused_re_review": {
+    "reviewer_id": "codex-gpt-review-impl-0038-symlink-repair",
+    "agent_path": "019e3c53-4a8a-7142-857b-b571a2d56554",
+    "model": "gpt-5.4-mini",
+    "reasoning_effort": "medium",
+    "reviewed_at": "2026-05-18T22:30:00Z",
+    "scope": "status-migration apply symlink escape repair at current HEAD",
+    "decision": "pass",
+    "findings": []
+  }
 }

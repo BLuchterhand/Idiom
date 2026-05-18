@@ -6,13 +6,13 @@ This effort is the durable implementation state for delivering
 ## Current State
 
 - Effort ID: `prd-adr-brief-workflow`
-- Last completed atom: `impl-0037-phase-6-status-migration-contract`
-- Active atom: `impl-0038-phase-6-status-migration-apply-cli`
+- Last completed atom: `impl-0038-phase-6-status-migration-apply-cli`
+- Active atom: none; ready for status-folder migration to `closed`
 - Status bucket: `started`
 - Current phase: `phase-6-operator-continuation`
-- Context pack: `5636955570c7b36d`
+- Context pack: `b1e7a03548be8af5`
 - Coverage tier: `unit`
-- Blocker status: Atom 38 implementation, verification, review, and investigation pending
+- Blocker status: none
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
 - Atom 10 product audit command: all TDD obligations satisfied, 9 audit tests pass, product lint unchanged
 - Atom 11 PRD audit hard checks: all TDD obligations satisfied; DS4-through-Codex
@@ -206,14 +206,23 @@ This effort is the durable implementation state for delivering
   No workflow mutation, status-folder migration, model execution, lane dispatch,
   or broad TUI behavior was added.
 - Atom 37: all TDD obligations satisfied. Added deterministic in-memory status-migration planning contracts that preserve stable `effort_id` identity across `unstarted`, `started`, and `closed` folders, compute updated workflow-state/index/event payloads, record workflow and index prior paths, derive next actions, and fail closed for invalid transitions or unsafe paths. Review repairs hardened absolute-path rejection and redacted blocker output. The planned GPT Codex worker stalled before final response; Codex orchestration completed the scoped patch and verification without any GLM/OpenCode implementor. No folder moves, lane dispatch, model execution, `.idiom` runtime mutation, or broad TUI behavior was added.
-- Atom 38 is planned as a C3 Phase 6 operator-continuation slice. It should add an apply-level status-migration use case and CLI surface over the Atom 37 planner, atomically updating the durable effort folder, `workflow_state.json`, status-migration event, and effort index while preserving stable `effort_id` and prior paths. It must fail closed for stale revisions, unsafe paths, conflicting target/source folders, malformed durable state, and cross-root paths. Keep lane dispatch, model execution, `.idiom` runtime mutation, and broad TUI interaction behavior outside the atom.
+- Atom 38: all TDD obligations satisfied. Added the apply-level
+  `idiom product status-migration` use case and CLI surface over the Atom 37
+  planner. Apply now requires an expected workflow-state revision, updates the
+  durable effort folder, `workflow_state.json`, status-migration event, and
+  effort index, preserves stable `effort_id` and prior paths, and fails closed
+  for stale state, unsafe traversal, symlinked write paths, conflicting
+  target/source folders, malformed durable state, and cross-root paths. A GPT
+  Codex review found and the repair closed a P1 symlink escape; focused
+  re-review found no residual issues. No lane dispatch, model execution,
+  `.idiom` runtime mutation, or broad TUI behavior was added.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
   changed-path/scope gate. This was not produced by the GLM implementor; the
   orchestrator should preserve it during Atom 15 reconciliation.
 
-The workflow implementation remains in progress after Atom 37 closeout. These
+The workflow implementation is ready to close after Atom 38 closeout. These
 files are source-controlled fixtures and resumable implementation state; shipped
 behavior includes deterministic product lint/audit/status, research planning and
 prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
@@ -222,7 +231,10 @@ lint-verified brief generation, read-only execution feedback linking,
 deterministic feedback reconciliation into bounded workflow-state/evidence-link
 output, product-workflow metrics in product audit/status, Obsidian parity
 checks, human-readable product CLI next-action coverage, ranker-learning
-evidence adapter tracking, a shared CLI-ready operator status view model, a read-only product effort browser by status bucket, and status-migration planning contracts. The next slice should continue Phase 6 with an apply-level status-migration CLI/use case before broad TUI behavior.
+evidence adapter tracking, a shared CLI-ready operator status view model, a
+read-only product effort browser by status bucket, status-migration planning
+contracts, and status-migration apply semantics. The next action is to apply the
+status-folder migration that moves this effort from `started` to `closed`.
 
 ## Implementation Guidelines
 
@@ -447,4 +459,6 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Run the planned C3 GPT Codex worker for `impl-0038-phase-6-status-migration-apply-cli`. Keep the slice focused on the apply-level status-migration use case and CLI surface; do not add lane dispatch, model execution, `.idiom` runtime mutation, or broad TUI interaction behavior.
+Apply the status migration for this effort with
+`idiom product status-migration --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --target-status closed --apply --expected-revision 115`,
+then inspect the moved effort under `docs/product-workflows/efforts/closed/prd-adr-brief-workflow`.

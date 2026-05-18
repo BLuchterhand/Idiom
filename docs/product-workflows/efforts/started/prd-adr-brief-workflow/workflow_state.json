@@ -4,9 +4,9 @@
   "task_id": "impl-0038-phase-6-status-migration-apply-cli",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T22:06:00Z",
-  "state_revision": 114,
-  "last_event_id": "evt-0334",
+  "updated_at": "2026-05-18T22:30:00Z",
+  "state_revision": 115,
+  "last_event_id": "evt-0339",
   "workspace_fingerprint": "idiom@f6a00c6",
   "status_bucket": "started",
   "current_phase": "phase-6-operator-continuation",
@@ -230,6 +230,11 @@
         "gate": "status_migration_apply_cli_planned",
         "status": "passed",
         "checked_at": "2026-05-18T22:05:00Z"
+      },
+      {
+        "gate": "status_migration_apply_cli",
+        "status": "passed",
+        "checked_at": "2026-05-18T22:30:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -256,19 +261,9 @@
       "Next design-doc slice: plan Phase 6 status-folder migration behavior through shared workflow use cases, preserving stable effort IDs and fail-closed continuation boundaries."
     ]
   },
-  "open_obligations": [
-    "TDD-IMPL-0038-001",
-    "TDD-IMPL-0038-002",
-    "TDD-IMPL-0038-003",
-    "TDD-IMPL-0038-004"
-  ],
+  "open_obligations": [],
   "open_questions": [],
-  "blockers": [
-    "implementation_pending",
-    "verification_pending",
-    "review_pending",
-    "investigation_pending"
-  ],
+  "blockers": [],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -297,7 +292,7 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "run_impl_0038_status_migration_apply_cli_worker"
+    "apply_status_migration_to_closed_effort"
   ],
   "durability_level": "source_controlled"
 }
