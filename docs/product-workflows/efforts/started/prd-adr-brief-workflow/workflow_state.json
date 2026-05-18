@@ -1,16 +1,16 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0023-phase-3-prd-draft-prompt-rendering",
+  "task_id": "impl-0024-phase-3-adr-draft-prompt-rendering",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T12:25:00Z",
-  "state_revision": 71,
-  "last_event_id": "evt-0204",
-  "workspace_fingerprint": "idiom@51e3849",
+  "updated_at": "2026-05-18T12:35:00Z",
+  "state_revision": 72,
+  "last_event_id": "evt-0206",
+  "workspace_fingerprint": "idiom@b1c6bcb",
   "status_bucket": "started",
   "current_phase": "phase-3-prd-adr-generation",
-  "current_state": "planned",
+  "current_state": "implementing",
   "artifact_paths": {
     "evidence_ledger": "evidence/evidence.jsonl",
     "traceability_matrix": "evidence/traceability_matrix.json",
@@ -26,10 +26,11 @@
     "readme": "README.md",
     "research_profiles": ".idiom/research/profiles/",
       "research_outputs": "research/outputs/",
-      "prd_prompt": "prd.prompt.md"
+      "prd_prompt": "prd.prompt.md",
+      "adr_prompt": "adrs/adr.prompt.md"
   },
   "context": {
-    "context_pack_id": "caffaf265a6ca614",
+    "context_pack_id": "97f6d6c645947842",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -45,6 +46,8 @@
       "internal/productworkflow/research_runs_test.go",
       "internal/productworkflow/research_artifact_prompts.go",
       "internal/productworkflow/research_artifact_prompts_test.go",
+      "internal/productworkflow/prd_draft_prompts.go",
+      "internal/productworkflow/prd_draft_prompts_test.go",
       "internal/productworkflow/types.go",
       "internal/productworkflow/validate.go",
       "internal/productworkflow/validate_test.go",
@@ -54,7 +57,7 @@
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack caffaf265a6ca614 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow PRD draft prompt rendering."
+        "description": "Context pack 97f6d6c645947842 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow ADR draft prompt rendering."
       }
     ],
     "refresh_policy": "on_demand"
@@ -65,52 +68,17 @@
       {
         "gate": "atom_planned",
         "status": "passed",
-        "checked_at": "2026-05-18T12:15:00Z"
+        "checked_at": "2026-05-18T12:35:00Z"
       },
       {
-        "gate": "prd_draft_prompt_rendering",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
+        "gate": "adr_draft_prompt_rendering",
+        "status": "pending",
+        "checked_at": "2026-05-18T12:35:00Z"
       },
       {
-        "gate": "prd_draft_command_recipe",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
-      },
-      {
-        "gate": "product_prd_render_prompt_json_surface",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
-      },
-      {
-        "gate": "product_prd_render_prompt_no_model_or_artifact_writes",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
-      },
-      {
-        "gate": "focused_go_tests",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
-      },
-      {
-        "gate": "full_go_tests",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
-      },
-      {
-        "gate": "durable_json_jsonl_validation",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
-      },
-      {
-        "gate": "privacy_secret_scan",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
-      },
-      {
-        "gate": "diff_whitespace_check",
-        "status": "passed",
-        "checked_at": "2026-05-18T12:25:00Z"
+        "gate": "product_adr_render_prompt_json_surface",
+        "status": "pending",
+        "checked_at": "2026-05-18T12:35:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -124,7 +92,12 @@
       "Deferred follow-up: continue remaining design-doc product surfaces after Phase 1 hardening, including research profiles, generation, acceptance/supersession, brief dispatch, coverage gates, feedback, and operator surfaces."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0024-001",
+    "TDD-IMPL-0024-002",
+    "TDD-IMPL-0024-003",
+    "TDD-IMPL-0024-004"
+  ],
   "open_questions": [],
   "blockers": [],
   "privacy": {
@@ -152,10 +125,12 @@
   },
   "folder_path": "docs/product-workflows/efforts/started/prd-adr-brief-workflow",
   "prior_folder_paths": [],
-  "last_reconciliation_at": "2026-05-18T12:25:00Z",
+  "last_reconciliation_at": "2026-05-18T12:35:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_3_adr_draft_prompt_rendering_atom",
+    "implement_impl_0024_adr_draft_prompt_rendering",
+    "verify_impl_0024_adr_draft_prompt_rendering",
+    "review_impl_0024_adr_draft_prompt_rendering",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms"
   ],
