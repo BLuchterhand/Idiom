@@ -25,6 +25,7 @@
       "execution_feedback_linker",
       "execution_feedback_reconciliation",
       "feedback_reconciliation_planned",
+      "product_workflow_metrics_planned",
       "tdd_obligation_synthesis_plan"
     ],
     "gates_blocked": []
@@ -209,6 +210,42 @@
       "command": "privacy secret-value scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0031-001",
+      "type": "contract",
+      "behavior": "Product workflow metrics deterministically summarize workflow state, gate results, blockers, open obligations, evidence/artifact links, implementation ledger atom states, report statuses, and privacy-safe progress counts without reading raw prompts, transcripts, file bodies, or .idiom runtime state.",
+      "owner": "internal/productworkflow/metrics_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductWorkflowMetrics",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0031-002",
+      "type": "acceptance",
+      "behavior": "A product audit metrics surface emits JSON and human-readable output with stable metric names, counts, and actionable next valid actions, and fails closed for malformed durable effort artifacts.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run TestProductWorkflowMetrics",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0031-003",
+      "type": "contract",
+      "behavior": "Metrics preserve authority boundaries: they report observed workflow state and evidence-link counts only, and do not become dispatch authority, mutate workflow_state.json, write evidence exports, promote ranker learning, or enforce Obsidian parity.",
+      "owner": "internal/productworkflow/metrics_test.go",
+      "command": "go test ./internal/productworkflow -run TestProductWorkflowMetrics",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0031-004",
+      "type": "audit",
+      "behavior": "The atom records GPT Codex implementor/reviewer selection, Idiom discovery evidence, metrics verification, Obsidian parity/no-change rationale, and privacy-safe durable reports without storing raw prompts/transcripts/file bodies/secrets/generated brief bodies/customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0031-review.json",
+      "command": "privacy secret-value scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

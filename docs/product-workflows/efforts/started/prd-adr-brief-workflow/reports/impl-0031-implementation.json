@@ -1,0 +1,38 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0031-phase-5-product-workflow-metrics",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0031",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.3-codex",
+  "completed_at": null,
+  "complexity_tier": "C2",
+  "scope_statement": "Add deterministic product-workflow metrics to product audit or a dedicated product audit surface, reporting progress/gates/blockers/evidence links with bounded metadata only.",
+  "code_changes": false,
+  "changed_paths": [
+    "cmd/idiom/product_workflow.go",
+    "cmd/idiom/product_workflow_test.go",
+    "internal/productworkflow/types.go",
+    "internal/productworkflow/metrics.go",
+    "internal/productworkflow/metrics_test.go"
+  ],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [],
+    "status": "pending"
+  },
+  "discovery_evidence": [
+    "context_pack:dd185841859a40b8",
+    "context_query:product workflow metrics audit status gates blockers evidence links harness_audit product audit"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0031",
+  "commit_hash": null,
+  "planning_checkpoint_commit": null,
+  "privacy_note": "report stores only scope, model assignment, command names, commit hashes, and blocker state; it must not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, or customer-identifying data",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ]
+}

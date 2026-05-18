@@ -7,10 +7,10 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0030-phase-5-feedback-reconciliation`
-- Active atom: none; next valid action is `plan_phase_5_product_workflow_metrics_atom`
+- Active atom: `impl-0031-phase-5-product-workflow-metrics`
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
-- Context pack: `aabb32deaa458ac7`
+- Context pack: `dd185841859a40b8`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -134,6 +134,12 @@ This effort is the durable implementation state for delivering
   state through a rooted effort filesystem boundary, and does not dispatch lanes,
   mutate `.idiom` runtime state, generate evidence exports, promote ranker
   learning, or store raw transcript/file bodies.
+- Atom 31 is planned as the next Phase 5 execution-feedback slice. It should add
+  deterministic product-workflow metrics to product audit or a dedicated product
+  audit surface, reporting progress, gates, blockers, open obligations, reports,
+  and bounded evidence-link counts without dispatching lanes, mutating `.idiom`
+  runtime state, writing evidence exports, promoting ranker learning, or
+  enforcing Obsidian parity.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -147,9 +153,9 @@ prompt rendering, PRD/ADR prompt rendering, acceptance/supersession validation,
 plan-only TDD obligation synthesis, deterministic coverage-gate evaluation,
 lint-verified brief generation, read-only execution feedback linking, and
 deterministic feedback reconciliation into bounded workflow-state/evidence-link
-output. The next Phase 5 slice should add product-workflow metrics to
-`harness_audit` or a dedicated product audit command; Obsidian parity checks and
-operator surfaces remain later atoms.
+output. The active Phase 5 slice adds product-workflow metrics to product audit
+or a dedicated product audit surface; Obsidian parity checks and operator
+surfaces remain later atoms.
 
 ## Implementation Guidelines
 
@@ -374,4 +380,4 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the next Phase 5 product-workflow metrics atom. Keep the slice deterministic: expose workflow progress, gate, blocker, and evidence-link counts through `harness_audit` or a dedicated product audit command, and keep lane dispatch, `.idiom` runtime mutation, evidence export generation, ranker-learning promotion, and Obsidian parity enforcement outside the atom unless the plan explicitly scopes them.
+Start the Atom 31 implementation. Keep the slice deterministic: expose workflow progress, gate, blocker, report, and evidence-link counts through product audit or a dedicated product audit surface, and keep lane dispatch, `.idiom` runtime mutation, evidence export generation, ranker-learning promotion, and Obsidian parity enforcement outside the atom unless the implementation explicitly scopes them.

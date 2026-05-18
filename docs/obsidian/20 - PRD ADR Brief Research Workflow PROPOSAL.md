@@ -17,8 +17,8 @@ tags:
 > 2026-05-18, implementation is complete through Phase 4 and the first two
 > Phase 5 slices: read-only execution feedback linking and deterministic durable
 > feedback reconciliation into bounded workflow-state/evidence-link output.
-> Product workflow metrics, Obsidian parity enforcement, and operator surfaces
-> remain.
+> Atom 31 is planned for product workflow metrics; Obsidian parity enforcement
+> and operator surfaces remain.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 

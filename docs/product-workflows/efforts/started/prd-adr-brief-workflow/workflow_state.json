@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0030-phase-5-feedback-reconciliation",
+  "task_id": "impl-0031-phase-5-product-workflow-metrics",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T15:20:00Z",
-  "state_revision": 89,
-  "last_event_id": "evt-0261",
-  "workspace_fingerprint": "idiom@6e8d2f8",
+  "updated_at": "2026-05-18T15:30:00Z",
+  "state_revision": 90,
+  "last_event_id": "evt-0263",
+  "workspace_fingerprint": "idiom@bad48d1",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -33,23 +33,23 @@
     "release_evidence": "references/release_evidence_impl_0030.json"
   },
   "context": {
-    "context_pack_id": "aabb32deaa458ac7",
+    "context_pack_id": "dd185841859a40b8",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
       "cmd/idiom/product_workflow.go",
       "cmd/idiom/product_workflow_test.go",
-      "internal/productworkflow/execution_feedback.go",
-      "internal/productworkflow/execution_feedback_test.go",
       "internal/productworkflow/types.go",
       "internal/productworkflow/status.go",
       "internal/productworkflow/transition.go",
+      "internal/productworkflow/metrics.go",
+      "internal/workspace/harness_audit.go",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json"
     ],
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack aabb32deaa458ac7 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to the feedback reconciliation planning scope."
+        "description": "Context pack dd185841859a40b8 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow metrics planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -101,6 +101,11 @@
         "gate": "execution_feedback_reconciliation",
         "status": "passed",
         "checked_at": "2026-05-18T15:20:00Z"
+      },
+      {
+        "gate": "product_workflow_metrics_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T15:30:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -116,12 +121,23 @@
       "Deferred follow-up: make coverage gate reuse product lint/audit validators or run them as blocking preconditions before brief generation.",
       "Atom 29 complete: idiom product feedback links explicit lane/progress/evidence references into privacy-safe execution feedback summaries without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
       "Atom 30 complete: idiom product feedback reconciliation consumes passing feedback summaries and writes deterministic reconciled workflow-state output with bounded artifact/evidence links, while preserving dispatch, .idiom runtime mutation, evidence export generation, and ranker-learning boundaries.",
-      "Next Phase 5 slice after feedback reconciliation: add product workflow metrics to harness_audit or a dedicated product audit command."
+      "Next Phase 5 slice after feedback reconciliation: add product workflow metrics to harness_audit or a dedicated product audit command.",
+      "Atom 31 planned: add deterministic product-workflow metrics to product audit or a dedicated product audit surface without dispatching lanes, mutating .idiom runtime state, exporting evidence, promoting ranker learning, or enforcing Obsidian parity."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0031-001",
+    "TDD-IMPL-0031-002",
+    "TDD-IMPL-0031-003",
+    "TDD-IMPL-0031-004"
+  ],
   "open_questions": [],
-  "blockers": [],
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -150,7 +166,8 @@
   "last_reconciliation_at": "2026-05-18T15:20:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "plan_phase_5_product_workflow_metrics_atom",
+    "start_implementation",
+    "start_investigation",
     "track_deferred_parser_hardening_after_do_now_atoms",
     "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
     "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"
