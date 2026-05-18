@@ -1,7 +1,7 @@
 {
   "schema_version": "idiom.tdd_obligations.v2.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0033-phase-5-human-readable-cli-coverage",
+  "task_id": "impl-0034-phase-5-ranker-learning-evidence-adapter",
   "coverage_tier": "unit",
   "coverage": {
     "ears_total": 0,
@@ -31,7 +31,8 @@
       "product_workflow_metrics_planned",
       "tdd_obligation_synthesis_plan",
       "human_readable_cli_coverage_planned",
-      "human_readable_cli_coverage"
+      "human_readable_cli_coverage",
+      "ranker_learning_evidence_adapter_planned"
     ],
     "gates_blocked": []
   },
@@ -323,6 +324,42 @@
       "command": "privacy secret-pattern scan over durable effort artifacts",
       "required_before": "atom_close",
       "status": "passed"
+    },
+    {
+      "id": "TDD-IMPL-0034-001",
+      "type": "contract",
+      "behavior": "The product workflow exposes a deterministic ranker-learning evidence adapter from verified execution feedback, including task id, changed paths, verification status, commands, context pack id, and TDD obligation refs, without mutating ranker weights.",
+      "owner": "internal/productworkflow/execution_feedback_test.go",
+      "command": "go test ./internal/productworkflow -run TestRankerLearningEvidenceAdapter -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0034-002",
+      "type": "contract",
+      "behavior": "The adapter fails closed for unverified or blocked execution feedback, missing context/test evidence, unknown obligations, unsafe paths, and privacy-marker references; rejected inputs do not call or imply ranker learning promotion.",
+      "owner": "internal/productworkflow/execution_feedback_test.go",
+      "command": "go test ./internal/productworkflow -run TestRankerLearningEvidenceAdapter -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0034-003",
+      "type": "acceptance",
+      "behavior": "The product CLI surfaces the adapter output in JSON and human-readable form with typed findings/blockers and bounded next valid action text, while keeping lane dispatch, .idiom runtime mutation, evidence export writes, and ranker-weight promotion outside the command.",
+      "owner": "cmd/idiom/product_workflow_test.go",
+      "command": "go test ./cmd/idiom -run 'TestProductFeedback.*RankerLearning|TestProduct.*RankerLearningEvidence' -count=1",
+      "required_before": "atom_close",
+      "status": "pending"
+    },
+    {
+      "id": "TDD-IMPL-0034-004",
+      "type": "audit",
+      "behavior": "The atom records C3 GPT Codex worker/reviewer selection, Idiom discovery evidence, focused/full verification, and privacy-safe durable reports without storing raw prompts, raw transcripts, file bodies, secrets, generated briefs, ranker weight payloads, or customer-identifying data.",
+      "owner": "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0034-review.json",
+      "command": "privacy secret-pattern scan over durable effort artifacts",
+      "required_before": "atom_close",
+      "status": "pending"
     }
   ]
 }

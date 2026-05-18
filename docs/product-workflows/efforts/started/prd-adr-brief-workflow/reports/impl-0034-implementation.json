@@ -1,0 +1,46 @@
+{
+  "schema_version": "idiom.implementation_report.v1.fixture",
+  "task_id": "impl-0034-phase-5-ranker-learning-evidence-adapter",
+  "effort_id": "prd-adr-brief-workflow",
+  "implementor_id": "codex-gpt-worker-impl-0034",
+  "runtime": "codex_subagent",
+  "model": "gpt-5.4",
+  "completed_at": "",
+  "complexity_tier": "C3",
+  "scope_statement": "Plan a deterministic product-workflow ranker-learning evidence adapter that shapes verified execution feedback context and test outcomes for the existing ranker-learning gate without promoting weights, dispatching lanes, mutating .idiom runtime state, writing evidence exports, or storing raw content.",
+  "code_changes": false,
+  "changed_paths": [],
+  "verification": {
+    "run_by_implementor": false,
+    "commands": [
+      "idiom tool context_pack --input '{\"task\":\"phase 5 ranker-learning evidence adapter tracking verified context and test outcomes product workflow feedback deterministic no promotion\",\"mode\":\"plan\",\"limit\":12}'",
+      "idiom tool context_query --input '{\"query\":\"ranker learning product workflow feedback evidence adapter verified context test outcomes no promotion\",\"resolution\":\"symbol\",\"limit\":12}'",
+      "go test ./internal/productworkflow -run TestRankerLearningEvidenceAdapter -count=1",
+      "go test ./cmd/idiom -run 'TestProductFeedback.*RankerLearning|TestProduct.*RankerLearningEvidence' -count=1",
+      "go test ./internal/comprehension -run TestApplyVerifiedRankerLearning -count=1",
+      "go test ./internal/productworkflow ./cmd/idiom ./internal/comprehension",
+      "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
+      "go test ./...",
+      "JSON/JSONL validation for durable workflow artifacts",
+      "privacy secret-pattern scan over durable effort artifacts",
+      "git diff --check"
+    ],
+    "status": "pending"
+  },
+  "discovery_evidence": [
+    "context_pack:512bb3db3ddfbe5d",
+    "context_query:ranker learning product workflow feedback evidence adapter verified context test outcomes no promotion"
+  ],
+  "reviewer_id": "codex-gpt-review-impl-0034",
+  "commit_hash": "",
+  "planning_checkpoint_commit": "",
+  "privacy_note": "planning report stores only scope, model assignment, command names, bounded findings, and blocker state; it does not store raw prompts, raw transcripts, file bodies, secrets, generated briefs, ranker weights, or customer-identifying data",
+  "open_blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ]
+}

@@ -19,8 +19,8 @@ tags:
 > reconciliation into bounded workflow-state/evidence-link output, and product
 > workflow metrics in product audit/status, and Obsidian parity enforcement in
 > product lint/audit/status, and human-readable CLI next-action coverage for
-> operator-facing product commands. Ranker-learning adapters and operator
-> surfaces remain.
+> operator-facing product commands. The active slice is ranker-learning evidence
+> adapter tracking; operator surfaces remain.
 >
 > Source: [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 

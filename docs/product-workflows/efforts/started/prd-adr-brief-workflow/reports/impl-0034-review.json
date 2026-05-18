@@ -1,0 +1,36 @@
+{
+  "schema_version": "idiom.review_report.v1.fixture",
+  "effort_id": "prd-adr-brief-workflow",
+  "task_id": "impl-0034-phase-5-ranker-learning-evidence-adapter",
+  "reviewer": {
+    "agent_id": "codex-gpt-review-impl-0034",
+    "agent_path": null,
+    "model": "gpt-5.4",
+    "reasoning_effort": "medium",
+    "independent_from_implementor": true
+  },
+  "status": "pending",
+  "findings": [],
+  "checks": {
+    "adapter_contract": "pending",
+    "no_ranker_weight_promotion": "pending",
+    "verified_evidence_only": "pending",
+    "authority_boundaries": "pending",
+    "privacy_secret_marker_regression": "pending"
+  },
+  "reviewed_at": "",
+  "commands_reviewed": [
+    "idiom tool context_pack --input '{\"task\":\"phase 5 ranker-learning evidence adapter tracking verified context and test outcomes product workflow feedback deterministic no promotion\",\"mode\":\"plan\",\"limit\":12}'",
+    "idiom tool context_query --input '{\"query\":\"ranker learning product workflow feedback evidence adapter verified context test outcomes no promotion\",\"resolution\":\"symbol\",\"limit\":12}'",
+    "go test ./internal/productworkflow -run TestRankerLearningEvidenceAdapter -count=1",
+    "go test ./cmd/idiom -run 'TestProductFeedback.*RankerLearning|TestProduct.*RankerLearningEvidence' -count=1",
+    "go test ./internal/comprehension -run TestApplyVerifiedRankerLearning -count=1",
+    "go test ./internal/productworkflow ./cmd/idiom ./internal/comprehension",
+    "go test ./...",
+    "JSON/JSONL validation for durable workflow artifacts",
+    "privacy secret-pattern scan over durable effort artifacts",
+    "git diff --check"
+  ],
+  "residual_risk": "pending review",
+  "created_at": "2026-05-18T18:00:00Z"
+}

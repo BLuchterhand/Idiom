@@ -7,10 +7,10 @@ This effort is the durable implementation state for delivering
 
 - Effort ID: `prd-adr-brief-workflow`
 - Last completed atom: `impl-0033-phase-5-human-readable-cli-coverage`
-- Active atom: none; next valid action is `track_phase_5_ranker_learning_evidence_adapter_atom`
+- Active atom: `impl-0034-phase-5-ranker-learning-evidence-adapter`
 - Status bucket: `started`
 - Current phase: `phase-5-execution-feedback`
-- Context pack: `b946625388f049d8`
+- Context pack: `512bb3db3ddfbe5d`
 - Coverage tier: `unit`
 - Blocker status: none open; fixture-status conflict resolved before Atom 8b
 - Atom 9 report schema validation: all TDD obligations satisfied, product lint passes on 33 durable reports
@@ -164,6 +164,11 @@ This effort is the durable implementation state for delivering
   privacy-safe workflow-state error recovery actions, and a repair ensuring
   current product status failures surface remediation before stale workflow
   progression.
+- Atom 34 is planned as a C3 Phase 5 execution-feedback slice. It should add a
+  deterministic ranker-learning evidence adapter from verified product workflow
+  execution feedback into bounded learning-gate input, while keeping ranker
+  weight promotion, lane dispatch, `.idiom` runtime mutation, evidence export
+  generation, and raw prompt/transcript/file-body storage outside the atom.
 - Helper-agent injection for Atom 15: at user request on
   2026-05-17T21:12:38Z, a side-conversation helper added
   `TDD-IMPL-0015-005` as a blocking closeout obligation for the automated
@@ -405,7 +410,7 @@ Do not use raw chat transcript memory as the source of truth for this effort.
 
 ## Next Valid Action
 
-Plan the Phase 5 ranker-learning evidence adapter atom. Keep the slice focused
-on deterministic evidence tracking and adapter boundaries; keep lane dispatch,
-`.idiom` runtime mutation beyond the explicit adapter contract, evidence export
-generation, and operator/TUI surfaces outside the atom.
+Start `impl-0034-phase-5-ranker-learning-evidence-adapter` with the planned C3
+GPT Codex worker. Keep the slice focused on deterministic adapter output from
+verified feedback; keep ranker-weight promotion, lane dispatch, `.idiom` runtime
+mutation, evidence export generation, and operator/TUI surfaces outside the atom.

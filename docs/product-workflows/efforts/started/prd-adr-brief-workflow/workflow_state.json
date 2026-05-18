@@ -1,13 +1,13 @@
 {
   "schema_version": "idiom.product_workflow_state.v0.fixture",
   "effort_id": "prd-adr-brief-workflow",
-  "task_id": "impl-0033-phase-5-human-readable-cli-coverage",
+  "task_id": "impl-0034-phase-5-ranker-learning-evidence-adapter",
   "title": "PRD/ADR/Brief Research Workflow",
   "created_at": "2026-05-17T15:20:00Z",
-  "updated_at": "2026-05-18T17:05:00Z",
-  "state_revision": 100,
-  "last_event_id": "evt-0290",
-  "workspace_fingerprint": "idiom@031298a",
+  "updated_at": "2026-05-18T18:00:00Z",
+  "state_revision": 101,
+  "last_event_id": "evt-0292",
+  "workspace_fingerprint": "idiom@9859a2d",
   "status_bucket": "started",
   "current_phase": "phase-5-execution-feedback",
   "current_state": "planned",
@@ -33,10 +33,13 @@
     "release_evidence": "references/release_evidence_impl_0030.json",
     "impl_0033_implementation_report": "reports/impl-0033-implementation.json",
     "impl_0033_review_report": "reports/impl-0033-review.json",
-    "impl_0033_investigation_report": "reports/impl-0033-investigation.json"
+    "impl_0033_investigation_report": "reports/impl-0033-investigation.json",
+    "impl_0034_implementation_report": "reports/impl-0034-implementation.json",
+    "impl_0034_review_report": "reports/impl-0034-review.json",
+    "impl_0034_investigation_report": "reports/impl-0034-investigation.json"
   },
   "context": {
-    "context_pack_id": "b946625388f049d8",
+    "context_pack_id": "512bb3db3ddfbe5d",
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
@@ -46,6 +49,10 @@
       "internal/productworkflow/status.go",
       "internal/productworkflow/transition.go",
       "internal/productworkflow/metrics.go",
+      "internal/productworkflow/execution_feedback.go",
+      "internal/productworkflow/execution_feedback_test.go",
+      "internal/comprehension/ranker_learning.go",
+      "internal/comprehension/ranker_learning_test.go",
       "cmd/idiom/product_workflow.go",
       "cmd/idiom/product_workflow_test.go",
       "internal/workspace/harness_audit.go",
@@ -67,6 +74,10 @@
       {
         "kind": "stale_runtime_trace",
         "description": "Context pack b946625388f049d8 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to human-readable product CLI coverage scope."
+      },
+      {
+        "kind": "stale_runtime_trace",
+        "description": "Context pack 512bb3db3ddfbe5d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to ranker-learning evidence adapter planning scope."
       }
     ],
     "refresh_policy": "on_demand"
@@ -148,6 +159,11 @@
         "gate": "human_readable_cli_coverage",
         "status": "passed",
         "checked_at": "2026-05-18T17:45:00Z"
+      },
+      {
+        "gate": "ranker_learning_evidence_adapter_planned",
+        "status": "passed",
+        "checked_at": "2026-05-18T18:00:00Z"
       }
     ],
     "blocking_criteria": [],
@@ -165,14 +181,25 @@
       "Atom 30 complete: idiom product feedback reconciliation consumes passing feedback summaries and writes deterministic reconciled workflow-state output with bounded artifact/evidence links, while preserving dispatch, .idiom runtime mutation, evidence export generation, and ranker-learning boundaries.",
       "Atom 31 complete: product audit and product status expose deterministic product-workflow metrics for progress, gates, blockers, TDD, ledger, reports, artifacts, and evidence-link counts without dispatching lanes, mutating .idiom runtime state, writing evidence exports, promoting ranker learning, or enforcing Obsidian parity.",
       "Atom 32 complete: product lint/audit/status now include deterministic Obsidian parity checks for stale proposal/roadmap status, with an explicit no-change rationale path and fail-closed missing-note behavior.",
-      "Atom 33 complete: product lint/audit/status JSON and human-readable outputs expose deterministic status labels, typed finding or blocker identities, and actionable next-valid-action text; audit-fail status output now prioritizes live remediation over stale workflow-state progression."
+      "Atom 33 complete: product lint/audit/status JSON and human-readable outputs expose deterministic status labels, typed finding or blocker identities, and actionable next-valid-action text; audit-fail status output now prioritizes live remediation over stale workflow-state progression.",
+      "Atom 34 planned: add a deterministic ranker-learning evidence adapter that shapes verified product workflow context/test outcomes for the existing learning gate without promoting ranker weights or writing .idiom runtime state."
     ]
   },
-  "open_obligations": [],
+  "open_obligations": [
+    "TDD-IMPL-0034-001",
+    "TDD-IMPL-0034-002",
+    "TDD-IMPL-0034-003",
+    "TDD-IMPL-0034-004"
+  ],
   "open_questions": [
     "Whether the ranker-learning evidence adapter should live under product workflow feedback, context ranker infrastructure, or a narrow bridge package."
   ],
-  "blockers": [],
+  "blockers": [
+    "implementation_pending",
+    "verification_pending",
+    "review_pending",
+    "investigation_pending"
+  ],
   "privacy": {
     "redaction_status": "applied",
     "fields_excluded": [
@@ -201,10 +228,9 @@
   "last_reconciliation_at": "2026-05-18T15:45:00Z",
   "reconciliation_mismatch": false,
   "next_valid_actions": [
-    "track_phase_5_ranker_learning_evidence_adapter_atom",
-    "track_deferred_parser_hardening_after_do_now_atoms",
-    "track_deferred_tdd_reference_authority_policy_after_do_now_atoms",
-    "track_deferred_coverage_gate_lint_audit_authority_after_do_now_atoms"
+    "run_impl_0034_ranker_learning_evidence_adapter_worker",
+    "review_impl_0034_ranker_learning_evidence_adapter_atom",
+    "verify_impl_0034_ranker_learning_adapter_no_promotion"
   ],
   "durability_level": "source_controlled"
 }

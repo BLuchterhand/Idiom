@@ -157,6 +157,7 @@ design-doc slice is ranker-learning evidence adapter tracking.
 - [x] Obsidian parity check in product lint/audit or closeout reporting
 - [x] Human-readable CLI coverage for operator-facing product commands
 - [ ] Ranker-learning evidence adapter tracking
+  (active Atom 34)
 
 ## NOT STARTED: Behavioral TDD Coverage Pipeline
 
