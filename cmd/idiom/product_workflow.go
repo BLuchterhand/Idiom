@@ -370,6 +370,10 @@ func lintEffortFolder(root string) productLintResult {
 		for _, le := range adrLinkErrs {
 			addFinding("broken_link", le.ADRPath, le.Message)
 		}
+		supersessionErrs := productworkflow.ValidateADRSupersessionLinks(parsedADRs)
+		for _, se := range supersessionErrs {
+			addFinding(se.Code, se.ADRPath, se.Message)
+		}
 	}
 
 	if parsedPRD != nil {

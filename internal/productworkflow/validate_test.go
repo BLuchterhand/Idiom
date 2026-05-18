@@ -52,6 +52,9 @@ func TestParsePRDFixturePasses(t *testing.T) {
 	if doc.FrontMatter.PRDID != "prd-impl-0001-phase-0" {
 		t.Fatalf("expected prd_id prd-impl-0001-phase-0, got %q", doc.FrontMatter.PRDID)
 	}
+	if doc.FrontMatter.AcceptedAt == "" || doc.FrontMatter.AcceptedBy == "" || doc.FrontMatter.AcceptanceProfile == "" {
+		t.Fatalf("expected accepted PRD fixture to include acceptance metadata, got %#v", doc.FrontMatter)
+	}
 	if len(doc.Requirements) == 0 {
 		t.Fatal("expected at least one requirement")
 	}
@@ -1339,12 +1342,17 @@ func TestDurableADRMarkdownFixtureStillPasses(t *testing.T) {
 
 func TestPRDWithEachCanonicalStatusPasses(t *testing.T) {
 	for _, status := range []string{"draft", "audited", "accepted", "blocked", "dispatched"} {
+		acceptance := ""
+		if status == "accepted" {
+			acceptance = "accepted_at: 2026-05-17T00:00:00Z\naccepted_by: reviewer-1\nacceptance_profile: human-review\n"
+		}
 		prd := fmt.Sprintf(`---
 schema_version: idiom.prd.v1
 prd_id: prd-test
 status: %s
 task_id: task-test
 created_at: 2026-05-17T00:00:00Z
+%s
 ---
 
 # PRD: Test
@@ -1362,7 +1370,7 @@ created_at: 2026-05-17T00:00:00Z
 - **evidence_refs**: ["EV-001"]
 - **tdd_obligations**: ["TDD-001"]
 - **open_questions**: []
-`, status)
+`, status, acceptance)
 		if _, err := ParsePRDMarkdown([]byte(prd)); err != nil {
 			t.Fatalf("expected PRD status %q to pass, got %v", status, err)
 		}
@@ -1380,6 +1388,10 @@ func TestADRIndexWithEachCanonicalStatusPasses(t *testing.T) {
 
 func TestADRMarkdownWithEachCanonicalStatusPasses(t *testing.T) {
 	for _, status := range []string{"draft", "audited", "accepted", "blocked", "dispatched"} {
+		acceptance := ""
+		if status == "accepted" {
+			acceptance = "accepted_at: 2026-05-17T00:00:00Z\naccepted_by: reviewer-1\nacceptance_profile: human-review\n"
+		}
 		adr := fmt.Sprintf(`---
 schema_version: idiom.adr.v1
 adr_id: ADR-TEST
@@ -1391,6 +1403,7 @@ evidence_refs:
 tdd_obligations:
   - TDD-001
 coverage_tier: unit
+%s
 ---
 
 # ADR-TEST: Test
@@ -1430,7 +1443,7 @@ Revert.
 ## Open Questions
 
 None.
-`, status)
+`, status, acceptance)
 		if _, err := ParseADRMarkdown([]byte(adr)); err != nil {
 			t.Fatalf("expected ADR markdown status %q to pass, got %v", status, err)
 		}
@@ -2283,7 +2296,7 @@ func TestADRParsesBodySectionPresence(t *testing.T) {
 	doc, err := ParseADRMarkdown([]byte(`---
 schema_version: idiom.adr.v1
 adr_id: ADR-TEST
-status: accepted
+status: draft
 prd_refs:
   - REQ-1
 evidence_refs:
@@ -2368,7 +2381,7 @@ func TestADRAcceptsShortSectionNames(t *testing.T) {
 	doc, err := ParseADRMarkdown([]byte(`---
 schema_version: idiom.adr.v1
 adr_id: ADR-TEST
-status: accepted
+status: draft
 prd_refs:
   - REQ-1
 evidence_refs:
@@ -2424,6 +2437,199 @@ None.
 	}
 	if !doc.Sections.HasCompatibilityAndMigration {
 		t.Fatal("expected HasCompatibilityAndMigration true for ## Compatibility")
+	}
+}
+
+func TestPRDAcceptedStatusRequiresAcceptanceMetadata(t *testing.T) {
+	prd := `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: accepted
+task_id: task-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`
+	_, err := ParsePRDMarkdown([]byte(prd))
+	if err == nil {
+		t.Fatal("expected accepted PRD without acceptance metadata to fail")
+	}
+	for _, want := range []string{"missing accepted_at", "missing accepted_by", "missing acceptance_profile"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestADRAcceptedStatusRequiresAcceptanceMetadata(t *testing.T) {
+	adr := `---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: accepted
+prd_refs:
+  - REQ-1
+evidence_refs:
+  - EV-1
+tdd_obligations:
+  - TDD-1
+coverage_tier: unit
+---
+
+# ADR-TEST: Test
+
+## Context
+
+Test.
+
+## Decision
+
+Test.
+
+## Alternatives Considered
+
+None.
+
+## Evidence
+
+- EV-1: Test.
+
+## Consequences
+
+None.
+
+## Compatibility and Migration
+
+Compatible.
+
+## TDD Obligations
+
+- TDD-1: Test.
+
+## Rollback
+
+Revert.
+
+## Open Questions
+
+None.
+`
+	_, err := ParseADRMarkdown([]byte(adr))
+	if err == nil {
+		t.Fatal("expected accepted ADR without acceptance metadata to fail")
+	}
+	for _, want := range []string{"missing accepted_at", "missing accepted_by", "missing acceptance_profile"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
+func TestValidateADRSupersessionLinksDetectsBrokenSelfDuplicateAndNonReciprocal(t *testing.T) {
+	adrs := []ParsedADR{
+		{
+			RelPath: "adrs/ADR-1.md",
+			Doc: ADRDocument{FrontMatter: ADRFrontMatter{
+				ADRID:        "ADR-1",
+				Supersedes:   []string{"ADR-2", "ADR-2", "ADR-1", "ADR-MISSING"},
+				SupersededBy: []string{"ADR-3"},
+			}},
+		},
+		{
+			RelPath: "adrs/ADR-2.md",
+			Doc: ADRDocument{FrontMatter: ADRFrontMatter{
+				ADRID:        "ADR-2",
+				SupersededBy: []string{},
+			}},
+		},
+		{
+			RelPath: "adrs/ADR-3.md",
+			Doc: ADRDocument{FrontMatter: ADRFrontMatter{
+				ADRID:      "ADR-3",
+				Supersedes: []string{},
+			}},
+		},
+	}
+	errs := ValidateADRSupersessionLinks(adrs)
+	if len(errs) < 5 {
+		t.Fatalf("expected at least 5 supersession errors, got %v", errs)
+	}
+	codes := map[string]bool{}
+	for _, err := range errs {
+		codes[err.Code] = true
+	}
+	for _, code := range []string{
+		"adr_supersession_duplicate_ref",
+		"adr_supersession_self_ref",
+		"adr_supersession_broken_ref",
+		"adr_supersession_non_reciprocal",
+	} {
+		if !codes[code] {
+			t.Fatalf("expected code %q in errors, got %v", code, errs)
+		}
+	}
+}
+
+func TestADRIndexSupersessionLinksDetectBrokenSelfDuplicateAndNonReciprocal(t *testing.T) {
+	idx := ADRIndex{
+		SchemaVersion: "idiom.adr_index.v1",
+		EffortID:      "test-effort",
+		ADRs: []ADRIndexEntry{
+			{
+				ADRID:        "ADR-1",
+				Status:       "accepted",
+				Path:         "ADR-1.md",
+				PRDRefs:      []string{"REQ-1"},
+				Supersedes:   []string{"ADR-2", "ADR-2", "ADR-1", "ADR-MISSING"},
+				SupersededBy: []string{"ADR-3"},
+			},
+			{
+				ADRID:        "ADR-2",
+				Status:       "accepted",
+				Path:         "ADR-2.md",
+				PRDRefs:      []string{"REQ-1"},
+				SupersededBy: []string{},
+			},
+			{
+				ADRID:      "ADR-3",
+				Status:     "accepted",
+				Path:       "ADR-3.md",
+				PRDRefs:    []string{"REQ-1"},
+				Supersedes: []string{},
+			},
+		},
+	}
+	errs := ValidateADRIndexSupersessionLinks(idx)
+	if len(errs) < 5 {
+		t.Fatalf("expected at least 5 supersession errors, got %v", errs)
+	}
+	codes := map[string]bool{}
+	for _, err := range errs {
+		codes[err.Code] = true
+	}
+	for _, code := range []string{
+		"adr_supersession_duplicate_ref",
+		"adr_supersession_self_ref",
+		"adr_supersession_broken_ref",
+		"adr_supersession_non_reciprocal",
+	} {
+		if !codes[code] {
+			t.Fatalf("expected code %q in errors, got %v", code, errs)
+		}
 	}
 }
 

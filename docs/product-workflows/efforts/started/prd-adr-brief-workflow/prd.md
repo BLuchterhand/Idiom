@@ -6,6 +6,9 @@ task_id: impl-0001-phase-0-durable-workflow-substrate
 evidence_ledger: evidence/evidence.jsonl
 created_at: 2026-05-17T15:20:00Z
 durability: source_controlled
+accepted_at: 2026-05-17T15:20:00Z
+accepted_by: codex-orchestrator
+acceptance_profile: fixture_seed_human_review
 ---
 
 # PRD: Phase 0 Durable Workflow Substrate

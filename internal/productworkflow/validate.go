@@ -491,11 +491,14 @@ func ParsePRDMarkdown(data []byte) (PRDDocument, error) {
 		return PRDDocument{}, fmt.Errorf("parse PRD: %w", err)
 	}
 	fm := PRDFrontMatter{
-		SchemaVersion: fields["schema_version"],
-		PRDID:         fields["prd_id"],
-		Status:        fields["status"],
-		TaskID:        fields["task_id"],
-		CreatedAt:     fields["created_at"],
+		SchemaVersion:     fields["schema_version"],
+		PRDID:             fields["prd_id"],
+		Status:            fields["status"],
+		TaskID:            fields["task_id"],
+		CreatedAt:         fields["created_at"],
+		AcceptedAt:        fields["accepted_at"],
+		AcceptedBy:        fields["accepted_by"],
+		AcceptanceProfile: fields["acceptance_profile"],
 	}
 	doc := PRDDocument{FrontMatter: fm}
 	doc.Requirements = parsePRDRequirements(body)
@@ -568,6 +571,8 @@ func ParseADRMarkdown(data []byte) (ADRDocument, error) {
 		AcceptedAt:        fields["accepted_at"],
 		AcceptedBy:        fields["accepted_by"],
 		AcceptanceProfile: fields["acceptance_profile"],
+		Supersedes:        parseFrontMatterList(fields, "supersedes"),
+		SupersededBy:      parseFrontMatterList(fields, "superseded_by"),
 	}
 	sections := ADRSections{
 		HasContext:                   strings.Contains(body, "## Context"),
@@ -738,6 +743,15 @@ func validatePRD(doc PRDDocument) error {
 			errs = append(errs, fmt.Errorf("PRD front matter: %w", err))
 		}
 	}
+	if err := validateAcceptanceMetadata(
+		"PRD front matter",
+		doc.FrontMatter.Status,
+		doc.FrontMatter.AcceptedAt,
+		doc.FrontMatter.AcceptedBy,
+		doc.FrontMatter.AcceptanceProfile,
+	); err != nil {
+		errs = append(errs, err)
+	}
 	if len(doc.Requirements) == 0 {
 		errs = append(errs, errors.New("PRD has no requirements"))
 	}
@@ -783,6 +797,9 @@ func validateADRIndex(idx ADRIndex) error {
 			errs = append(errs, fmt.Errorf("%s missing prd_refs", prefix))
 		}
 	}
+	for _, linkErr := range ValidateADRIndexSupersessionLinks(idx) {
+		errs = append(errs, errors.New(linkErr.Message))
+	}
 	return errors.Join(errs...)
 }
 
@@ -795,6 +812,15 @@ func validateADR(doc ADRDocument) error {
 		if err := ValidateArtifactState(doc.FrontMatter.Status); err != nil {
 			errs = append(errs, fmt.Errorf("ADR front matter: %w", err))
 		}
+	}
+	if err := validateAcceptanceMetadata(
+		"ADR front matter",
+		doc.FrontMatter.Status,
+		doc.FrontMatter.AcceptedAt,
+		doc.FrontMatter.AcceptedBy,
+		doc.FrontMatter.AcceptanceProfile,
+	); err != nil {
+		errs = append(errs, err)
 	}
 	if len(doc.FrontMatter.PRDRefs) == 0 {
 		errs = append(errs, errors.New("ADR front matter missing prd_refs"))
@@ -921,6 +947,163 @@ type ParsedADR struct {
 	RelPath string
 }
 
+type ADRSupersessionLinkError struct {
+	Code    string
+	ADRPath string
+	ADRID   string
+	Field   string
+	Ref     string
+	Message string
+}
+
+func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
+	var errs []ADRSupersessionLinkError
+	byID := make(map[string]ParsedADR, len(adrs))
+	for _, a := range adrs {
+		byID[a.Doc.FrontMatter.ADRID] = a
+	}
+	for _, a := range adrs {
+		id := a.Doc.FrontMatter.ADRID
+		checkList := func(field string, refs []string) {
+			seen := map[string]bool{}
+			for _, ref := range refs {
+				if seen[ref] {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_duplicate_ref",
+						ADRPath: a.RelPath,
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR %s has duplicate %s reference %q", id, field, ref),
+					})
+					continue
+				}
+				seen[ref] = true
+				if ref == id {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_self_ref",
+						ADRPath: a.RelPath,
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR %s has self-reference in %s", id, field),
+					})
+					continue
+				}
+				peer, ok := byID[ref]
+				if !ok {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_broken_ref",
+						ADRPath: a.RelPath,
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR %s references missing ADR %q in %s", id, ref, field),
+					})
+					continue
+				}
+				if field == "supersedes" && !containsString(peer.Doc.FrontMatter.SupersededBy, id) {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_non_reciprocal",
+						ADRPath: a.RelPath,
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR %s supersedes %s but %s does not list %s in superseded_by", id, ref, ref, id),
+					})
+				}
+				if field == "superseded_by" && !containsString(peer.Doc.FrontMatter.Supersedes, id) {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_non_reciprocal",
+						ADRPath: a.RelPath,
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR %s lists superseded_by %s but %s does not list %s in supersedes", id, ref, ref, id),
+					})
+				}
+			}
+		}
+		checkList("supersedes", a.Doc.FrontMatter.Supersedes)
+		checkList("superseded_by", a.Doc.FrontMatter.SupersededBy)
+	}
+	return errs
+}
+
+func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError {
+	var errs []ADRSupersessionLinkError
+	byID := make(map[string]ADRIndexEntry, len(idx.ADRs))
+	for _, entry := range idx.ADRs {
+		byID[entry.ADRID] = entry
+	}
+	for _, entry := range idx.ADRs {
+		id := entry.ADRID
+		checkList := func(field string, refs []string) {
+			seen := map[string]bool{}
+			for _, ref := range refs {
+				if seen[ref] {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_duplicate_ref",
+						ADRPath: "adrs/index.json",
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR index entry %s has duplicate %s reference %q", id, field, ref),
+					})
+					continue
+				}
+				seen[ref] = true
+				if ref == id {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_self_ref",
+						ADRPath: "adrs/index.json",
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR index entry %s has self-reference in %s", id, field),
+					})
+					continue
+				}
+				peer, ok := byID[ref]
+				if !ok {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_broken_ref",
+						ADRPath: "adrs/index.json",
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR index entry %s references missing ADR %q in %s", id, ref, field),
+					})
+					continue
+				}
+				if field == "supersedes" && !containsString(peer.SupersededBy, id) {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_non_reciprocal",
+						ADRPath: "adrs/index.json",
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR index entry %s supersedes %s but %s does not list %s in superseded_by", id, ref, ref, id),
+					})
+				}
+				if field == "superseded_by" && !containsString(peer.Supersedes, id) {
+					errs = append(errs, ADRSupersessionLinkError{
+						Code:    "adr_supersession_non_reciprocal",
+						ADRPath: "adrs/index.json",
+						ADRID:   id,
+						Field:   field,
+						Ref:     ref,
+						Message: fmt.Sprintf("ADR index entry %s lists superseded_by %s but %s does not list %s in supersedes", id, ref, ref, id),
+					})
+				}
+			}
+		}
+		checkList("supersedes", entry.Supersedes)
+		checkList("superseded_by", entry.SupersededBy)
+	}
+	return errs
+}
+
 type TraceabilityLinkError struct {
 	RowIndex int
 	Field    string
@@ -1017,6 +1200,17 @@ func ValidateArtifactState(status string) error {
 		return fmt.Errorf("invalid artifact status %q; valid states: draft, audited, accepted, blocked, dispatched", status)
 	}
 	return nil
+}
+
+func validateAcceptanceMetadata(context, status, acceptedAt, acceptedBy, acceptanceProfile string) error {
+	if status != string(ArtifactStateAccepted) {
+		return nil
+	}
+	var errs []error
+	require(&errs, acceptedAt, context+" missing accepted_at for accepted artifact")
+	require(&errs, acceptedBy, context+" missing accepted_by for accepted artifact")
+	require(&errs, acceptanceProfile, context+" missing acceptance_profile for accepted artifact")
+	return errors.Join(errs...)
 }
 
 func require(errs *[]error, value string, message string) {

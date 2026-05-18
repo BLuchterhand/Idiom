@@ -309,11 +309,14 @@ type PRDDocument struct {
 }
 
 type PRDFrontMatter struct {
-	SchemaVersion string
-	PRDID         string
-	Status        string
-	TaskID        string
-	CreatedAt     string
+	SchemaVersion     string
+	PRDID             string
+	Status            string
+	TaskID            string
+	CreatedAt         string
+	AcceptedAt        string
+	AcceptedBy        string
+	AcceptanceProfile string
 }
 
 type PRDRequirement struct {
@@ -343,6 +346,8 @@ type ADRIndexEntry struct {
 	CoverageTier string   `json:"coverage_tier"`
 	PRDRefs      []string `json:"prd_refs"`
 	CreatedAt    string   `json:"created_at"`
+	Supersedes   []string `json:"supersedes,omitempty"`
+	SupersededBy []string `json:"superseded_by,omitempty"`
 }
 
 type ResearchProfile struct {
@@ -502,4 +507,6 @@ type ADRFrontMatter struct {
 	AcceptedAt        string
 	AcceptedBy        string
 	AcceptanceProfile string
+	Supersedes        []string
+	SupersededBy      []string
 }

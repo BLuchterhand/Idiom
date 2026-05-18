@@ -970,6 +970,9 @@ func TestProductLintDetectsADRWithMissingEvidenceRef(t *testing.T) {
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
 prd_refs:
   - REQ-TEST-001
 evidence_refs:
@@ -1046,6 +1049,9 @@ func TestProductLintDetectsADRWithMissingTDDObligation(t *testing.T) {
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
 prd_refs:
   - REQ-TEST-001
 evidence_refs:
@@ -1122,6 +1128,9 @@ func TestProductLintDetectsADRWithMissingPRDRef(t *testing.T) {
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
 prd_refs:
   - REQ-MISSING
 evidence_refs:
@@ -1197,6 +1206,9 @@ func TestProductAuditFailsOnADRMissingEvidenceRef(t *testing.T) {
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
 prd_refs:
   - REQ-TEST-001
 evidence_refs:
@@ -1277,6 +1289,9 @@ func TestProductAuditFailsOnADRMissingTDDObligationRef(t *testing.T) {
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
 prd_refs:
   - REQ-TEST-001
 evidence_refs:
@@ -1357,6 +1372,9 @@ func TestProductAuditFailsOnADRMissingPRDRef(t *testing.T) {
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
 prd_refs:
   - REQ-MISSING
 evidence_refs:
@@ -1427,6 +1445,181 @@ None.
 	}
 	if !found {
 		t.Fatalf("expected broken_link finding in adr section mentioning REQ-MISSING, got: %#v", adrSection.Findings)
+	}
+}
+
+func TestProductLintAcceptanceRejectsAcceptedPRDWithoutAcceptanceMetadata(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "prd.md", `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: accepted
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: must
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: ["EV-001"]
+- **tdd_obligations**: ["TDD-001"]
+- **open_questions**: []
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint failure, got %d", code)
+	}
+	var result productLintResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Path == "prd.md" && f.Code == "parse_error" && strings.Contains(f.Message, "missing accepted_at") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected PRD accepted metadata parse error, got %#v", result.Findings)
+	}
+}
+
+func TestProductAuditSupersessionDetectsNonReciprocalADRLinks(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
+prd_refs:
+  - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
+supersedes:
+  - ADR-002
+---
+
+# ADR-001: Test
+
+## Context
+Test.
+## Decision
+Test.
+## Alternatives Considered
+None.
+## Evidence
+- EV-001: Test.
+## Consequences
+None.
+## Compatibility and Migration
+Compatible.
+## TDD Obligations
+- TDD-001: Test.
+## Rollback
+Revert.
+## Open Questions
+None.
+`)
+	writeTestFile(t, dir, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR 1","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]},{"adr_id":"ADR-002","title":"Test ADR 2","status":"accepted","path":"ADR-002-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]}]}`)
+	writeTestFile(t, dir, "adrs/ADR-002-test.md", `---
+schema_version: idiom.adr.v1
+adr_id: ADR-002
+status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
+prd_refs:
+  - REQ-TEST-001
+evidence_refs:
+  - EV-001
+tdd_obligations:
+  - TDD-001
+coverage_tier: unit
+---
+
+# ADR-002: Test
+## Context
+Test.
+## Decision
+Test.
+## Alternatives Considered
+None.
+## Evidence
+- EV-001: Test.
+## Consequences
+None.
+## Compatibility and Migration
+Compatible.
+## TDD Obligations
+- TDD-001: Test.
+## Rollback
+Revert.
+## Open Questions
+None.
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit failure, got %d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	adrSection := findAuditSection(t, result, "adr")
+	found := false
+	for _, f := range adrSection.Findings {
+		if f.Code == "adr_supersession_non_reciprocal" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected supersession non-reciprocal finding, got %#v", adrSection.Findings)
+	}
+}
+
+func TestProductAuditSupersessionDetectsBrokenADRIndexLinks(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"],"supersedes":["ADR-MISSING"]}]}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductAudit([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected audit failure, got %d", code)
+	}
+	var result productAuditResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	adrSection := findAuditSection(t, result, "adr")
+	found := false
+	for _, f := range adrSection.Findings {
+		if f.Path == "adrs/index.json" && f.Code == "parse_error" && strings.Contains(f.Message, "ADR-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected ADR index supersession finding, got %#v", adrSection.Findings)
 	}
 }
 
@@ -2041,6 +2234,9 @@ func validTestADRMarkdown() string {
 schema_version: idiom.adr.v1
 adr_id: ADR-001
 status: accepted
+accepted_at: 2026-05-17T00:00:00Z
+accepted_by: test-reviewer
+acceptance_profile: human-review
 prd_refs:
   - REQ-TEST-001
 evidence_refs:
