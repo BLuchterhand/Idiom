@@ -4738,6 +4738,42 @@ func TestProductPRDRenderPromptRejectsUnsafePromptOrOutputPath(t *testing.T) {
 	}
 }
 
+func TestProductValidateArtifactFailsClosedForInvalidGeneratedPRD(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "prd.md", `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: impl-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+| id | priority | statement |
+| --- | --- | --- |
+| REQ-1 | must | do it |
+`)
+	var stdout, stderr bytes.Buffer
+	code := runProductValidateArtifact([]string{
+		"--kind", "prd",
+		"--path", filepath.Join(dir, "prd.md"),
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for parser-invalid PRD, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productValidateArtifactOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "fail" || !strings.Contains(out.Error, "PRD has no requirements") {
+		t.Fatalf("expected PRD parser failure, got %#v", out)
+	}
+}
+
 func TestProductADRRenderPromptWritesPromptOnly(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
@@ -4894,6 +4930,27 @@ func TestProductADRRenderPromptRejectsUnsafePromptOrOutputPath(t *testing.T) {
 	}, &stdout, &stderr, nil)
 	if code != 1 {
 		t.Fatalf("expected blocked code for traversal output path, got %d", code)
+	}
+}
+
+func TestProductValidateArtifactFailsClosedForInvalidGeneratedADR(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "adr.md", strings.Replace(validTestADRMarkdown(), "coverage_tier: unit", "coverage_tier: must", 1))
+	var stdout, stderr bytes.Buffer
+	code := runProductValidateArtifact([]string{
+		"--kind", "adr",
+		"--path", filepath.Join(dir, "adr.md"),
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for parser-invalid ADR, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productValidateArtifactOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "fail" || !strings.Contains(out.Error, "invalid coverage_tier") {
+		t.Fatalf("expected ADR coverage tier failure, got %#v", out)
 	}
 }
 
